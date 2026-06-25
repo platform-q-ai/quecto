@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::provider::EffortLevel;
 use crate::domain::tool::ToolDefinition;
 
 #[test]
@@ -84,7 +85,27 @@ fn test_build_request_body() {
     assert!(body.get("tools").is_none());
 }
 
-// --- prompt_cache_key ---
+#[test]
+fn test_build_request_body_uses_effort_level() {
+    let messages = vec![Message::system("Be concise."), Message::user("Hi")];
+    let tools = vec![];
+    let request = ChatRequest {
+        messages: &messages,
+        tools: &tools,
+        model: "gpt-5.4",
+        max_tokens: 4096,
+        temperature: 0.7,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: Some(EffortLevel::High),
+    };
+    let body = CodexProvider::build_request_body(&request);
+    assert_eq!(body["reasoning"]["effort"], "high");
+    assert_eq!(body["text"]["verbosity"], "high");
+}
 
 #[test]
 fn test_build_request_body_includes_prompt_cache_key_when_session_id_set() {

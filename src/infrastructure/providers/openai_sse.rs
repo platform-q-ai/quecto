@@ -59,18 +59,29 @@ impl SseHandler for OpenAiSseHandler {
             // Emitted with an empty `choices` array and a populated `usage`.
             if let Some(usage) = chunk.get("usage").and_then(|u| u.as_object()) {
                 self.usage = Some(UsageInfo {
-                    prompt_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                    completion_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                    prompt_tokens: usage
+                        .get("prompt_tokens")
+                        .and_then(|v| v.as_u64())
+                        .and_then(|n| u32::try_from(n).ok())
+                        .unwrap_or(0),
+                    completion_tokens: usage
+                        .get("completion_tokens")
+                        .and_then(|v| v.as_u64())
+                        .and_then(|n| u32::try_from(n).ok())
+                        .unwrap_or(0),
                     cache_read_tokens: None,
                     cache_write_tokens: None,
-                    context_tokens: None,
+                    context_tokens: usage
+                        .get("total_tokens")
+                        .and_then(|v| v.as_u64())
+                        .and_then(|n| u32::try_from(n).ok()),
                     cost: None,
                 });
             }
-            if let Some(choices) = chunk["choices"].as_array() {
+            if let Some(choices) = chunk.get("choices").and_then(|v| v.as_array()) {
                 for choice in choices {
-                    let delta = &choice["delta"];
-                    if let Some(text) = delta["content"].as_str() {
+                    let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
+                    if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
                         self.content.push_str(text);
                         let _ = tx.send(StreamEvent::TextDelta(text.to_string())).await;
                     }
