@@ -247,6 +247,7 @@ impl AgentLoopImpl {
             && !first.is_manifest
         {
             first.content = prompt;
+            first.invalidate_token_cache();
         } else {
             messages.insert(0, Message::system(prompt));
         }
@@ -398,6 +399,7 @@ impl AgentLoopImpl {
             Some(context_pruning::truncate_utf8_safe(&args.tc.arguments, 100).into_owned());
         tool_msg.spill_id = Some(args.spill_id);
         tool_msg.image_blocks = args.image_blocks;
+        tool_msg.invalidate_token_cache();
         tool_msg.is_error = args.is_error;
         tool_msg
     }
@@ -426,6 +428,7 @@ impl AgentLoopImpl {
         }
         // Restore content back into the message (entry is consumed here).
         tool_msg.content = entry.content;
+        tool_msg.invalidate_token_cache();
     }
 
     fn finalize_text_response(

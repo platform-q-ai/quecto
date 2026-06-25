@@ -5,6 +5,8 @@
 //! a stub provider and a `tokio::io::sink()` writer. No real socket is opened;
 //! events are written to the sink (or dropped). The socket accept loop itself
 //! is covered by BDD tests, not here.
+use std::sync::Arc;
+
 use super::{
     dispatch_command, dispatch_ext_command, handle_abort, handle_clear_history, handle_new_session,
     handle_resume_session, handle_rewind_to, handle_steer, persist_current_session,
@@ -61,12 +63,12 @@ impl ContextSpillStore for RecordingSpillStore {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<Vec<SpillIndex>, crate::domain::error::DomainError>,
+                    Output = Result<Arc<Vec<SpillIndex>>, crate::domain::error::DomainError>,
                 > + Send
                 + '_,
         >,
     > {
-        Box::pin(async { Ok(Vec::new()) })
+        Box::pin(async { Ok(Arc::new(Vec::new())) })
     }
 
     fn clear(

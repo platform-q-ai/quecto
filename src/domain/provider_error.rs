@@ -48,15 +48,20 @@ impl std::fmt::Display for ProviderErrorClass {
 
 pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
     let msg = match err {
-        DomainError::Provider(msg) => msg,
+        DomainError::Provider(msg) => msg.as_str(),
         _ => return ProviderErrorClass::Unknown,
     };
 
-    if let Some(status) = extract_http_status(msg) {
+    let lowered = msg.to_ascii_lowercase();
+
+    if let Some(status) = extract_http_status(&lowered) {
         return ProviderErrorClass::from_status(status);
     }
 
-    let lowered = msg.to_ascii_lowercase();
+    classify_keyword_paths(&lowered)
+}
+
+fn classify_keyword_paths(lowered: &str) -> ProviderErrorClass {
     if lowered.contains("request cancelled") || lowered.contains("request canceled") {
         ProviderErrorClass::Cancelled
     } else if lowered.contains("rate limit") {
@@ -88,8 +93,7 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
     }
 }
 
-fn extract_http_status(msg: &str) -> Option<u16> {
-    let lowered = msg.to_ascii_lowercase();
+fn extract_http_status(lowered: &str) -> Option<u16> {
     for marker in ["http", "status", "code"] {
         let mut search_from = 0;
         while let Some(rel) = lowered[search_from..].find(marker) {

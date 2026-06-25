@@ -115,7 +115,7 @@ impl RecallTool {
         }
 
         let mut output = format!("Spilled outputs ({} entries):\n", entries.len());
-        for entry in &entries {
+        for entry in entries.iter() {
             output.push_str(&format!(
                 "  {} — {} ({} tokens)\n",
                 entry.id, entry.input_preview, entry.tokens
@@ -190,7 +190,7 @@ mod tests {
         fn list_entries(
             &self,
             _session_key: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<SpillIndex>, DomainError>> + Send + '_>>
+        ) -> Pin<Box<dyn Future<Output = Result<Arc<Vec<SpillIndex>>, DomainError>> + Send + '_>>
         {
             let entries: Vec<SpillIndex> = self
                 .entries
@@ -204,7 +204,7 @@ mod tests {
                     tokens: e.tokens,
                 })
                 .collect();
-            Box::pin(async move { Ok(entries) })
+            Box::pin(async move { Ok(Arc::new(entries)) })
         }
 
         fn clear(
@@ -266,7 +266,7 @@ mod tests {
         fn list_entries(
             &self,
             session_key: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<SpillIndex>, DomainError>> + Send + '_>>
+        ) -> Pin<Box<dyn Future<Output = Result<Arc<Vec<SpillIndex>>, DomainError>> + Send + '_>>
         {
             let entries: Vec<SpillIndex> = self
                 .entries
@@ -282,7 +282,7 @@ mod tests {
                     tokens: e.tokens,
                 })
                 .collect();
-            Box::pin(async move { Ok(entries) })
+            Box::pin(async move { Ok(Arc::new(entries)) })
         }
 
         fn clear(

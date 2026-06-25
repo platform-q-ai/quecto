@@ -37,50 +37,15 @@ pub const COLLAPSE_DISABLED: u32 = u32::MAX;
 /// The estimate is intentionally slightly conservative — it is better to
 /// prune a turn early than to exceed the provider's context limit.
 pub fn estimate_tokens(text: &str) -> usize {
-    let (ascii, non_ascii) = text.chars().fold((0usize, 0usize), |(a, n), c| {
-        if c.is_ascii() { (a + 1, n) } else { (a, n + 1) }
-    });
-    ascii.div_ceil(4) + non_ascii
+    crate::domain::message::Message::estimate_tokens(text)
 }
 
-/// Estimate total tokens for a slice of messages.
-/// Includes both text content and base64-encoded image blocks so that
-/// the context ceiling accounts for image data (typically 100KB–1MB each).
 pub fn estimate_total_tokens(messages: &[Message]) -> usize {
-    messages.iter().map(estimate_message_tokens).sum()
+    messages.iter().map(Message::estimated_tokens).sum()
 }
 
-/// Estimate tokens for a single message including image blocks.
 pub fn estimate_message_tokens(msg: &Message) -> usize {
-    let text_tokens = estimate_tokens(&msg.content);
-    // Assistant tool-call requests: the function name and JSON-encoded
-    // arguments are serialized into every subsequent request, so they
-    // occupy real context. Streaming OpenAI-compatible providers (e.g.
-    // Fireworks) report no `usage`, so this estimate is the only signal —
-    // omitting tool calls under-reports tool-heavy turns dramatically.
-    let tool_call_tokens: usize = msg
-        .tool_calls
-        .iter()
-        .map(|tc| estimate_tokens(&tc.name) + estimate_tokens(&tc.arguments))
-        .sum();
-    // Tool-result messages carry the tool_call_id they respond to.
-    let tool_call_id_tokens = msg
-        .tool_call_id
-        .as_deref()
-        .map(estimate_tokens)
-        .unwrap_or(0);
-    // Count user-message inline images.
-    let user_image_tokens: usize = msg
-        .user_image_blocks
-        .iter()
-        .map(|img| estimate_tokens(&img.data))
-        .sum();
-    let image_tokens: usize = msg
-        .image_blocks
-        .iter()
-        .map(|img| estimate_tokens(&img.data))
-        .sum();
-    text_tokens + tool_call_tokens + tool_call_id_tokens + image_tokens + user_image_tokens
+    msg.estimated_tokens()
 }
 
 /// Truncate a string to at most `max_chars` characters, appending "..."
@@ -127,6 +92,7 @@ pub fn collapse_old_tool_results(
                 let spill_id = msg.spill_id.as_deref().unwrap_or("unknown");
                 let tokens = estimate_tokens(&msg.content);
                 msg.content = collapse_stub(tool_name, input_preview, tokens, spill_id);
+                msg.invalidate_token_cache();
                 msg.is_collapsed = true;
                 // Release image data — no longer needed after collapse (spilled to disk).
                 msg.image_blocks.clear();
@@ -214,6 +180,7 @@ pub async fn update_spill_manifest(
     // Find existing manifest message and update, or insert one
     if let Some(msg) = messages.iter_mut().find(|m| m.is_manifest) {
         msg.content = manifest;
+        msg.invalidate_token_cache();
     } else {
         let mut msg = Message::system(manifest);
         msg.is_pinned = true;

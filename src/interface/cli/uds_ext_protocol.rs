@@ -311,19 +311,20 @@ pub fn build_extensions_changed_event(
     extension_names: &[String],
     agent: &crate::application::agent_loop::AgentLoopImpl,
 ) -> AgentEvent {
-    let extensions: Vec<ExtensionInfo> = extension_names
-        .iter()
-        .filter_map(|name| {
-            // Look up the tool definition for the description.
-            let defs = agent.tool_definitions();
-            defs.iter()
-                .find(|d| d.name.as_ref() == name)
-                .map(|d| ExtensionInfo {
-                    name: d.name.to_string(),
-                    description: d.description.to_string(),
-                })
-        })
-        .collect();
+    let extensions: Vec<ExtensionInfo> = {
+        let defs = agent.tool_definitions();
+        extension_names
+            .iter()
+            .filter_map(|name| {
+                defs.iter()
+                    .find(|d| d.name.as_ref() == name)
+                    .map(|d| ExtensionInfo {
+                        name: d.name.to_string(),
+                        description: d.description.to_string(),
+                    })
+            })
+            .collect()
+    };
     AgentEvent::ExtensionsChanged { extensions }
 }
 
