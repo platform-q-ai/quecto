@@ -195,19 +195,42 @@ fn execute_uds(world: &mut QuectoWorld) {
         return;
     }
 
+    let mut current_provider_available = true;
     let prompts: Vec<String> = world
         .uds_commands
         .iter()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
         .filter_map(|command| {
             let kind = command["type"].as_str()?;
-            if matches!(kind, "prompt" | "follow_up") {
+            if kind == "set_model" {
+                let provider = command["provider"].as_str().or_else(|| {
+                    command["model"]
+                        .as_str()?
+                        .split_once('/')
+                        .map(|(provider, _)| provider)
+                });
+                current_provider_available = provider.is_none_or(|provider| {
+                    matches!(
+                        provider,
+                        "openai" | "openai-api" | "anthropic" | "anthropic-api"
+                    )
+                });
+                return None;
+            }
+            if matches!(kind, "prompt" | "follow_up") && current_provider_available {
                 command["message"].as_str().map(ToString::to_string)
             } else {
                 None
             }
         })
         .collect();
+    if world.auto_mock_manual_llm
+        && prompts
+            .iter()
+            .any(|prompt| prompt.contains("UDS_TOKENS_OK"))
+    {
+        world._uds_streaming_enabled = true;
+    }
     e2e_steps::mount_auto_mock_responses_for_messages(world, &prompts);
 
     let ctx = match build_uds_agent(world, &base) {
@@ -289,7 +312,6 @@ fn execute_uds(world: &mut QuectoWorld) {
     let system_prompt = world.system_prompt.clone().unwrap_or_default();
     let base_for_thread = base.clone();
     let socket_path_for_thread = socket_path.clone();
-    let workflow_state_for_snapshot = workflow_state.clone();
 
     // Convert std UnixStream to tokio UnixStream for the server half.
     let server_tokio = {
@@ -356,93 +378,6 @@ fn execute_uds(world: &mut QuectoWorld) {
         .filter(|l| !l.is_empty())
         .map(str::to_owned)
         .collect();
-    if world.auto_mock_manual_llm {
-        let has_token = world.agent_events.iter().any(|line| {
-            serde_json::from_str::<serde_json::Value>(line)
-                .ok()
-                .and_then(|v| v["type"].as_str().map(|t| t == "token"))
-                .unwrap_or(false)
-        });
-        if !has_token && let Some(first_prompt) = prompts.first() {
-            world.agent_events.push(
-                serde_json::json!({
-                    "type": "token",
-                    "text": e2e_steps::final_text_for_prompt(first_prompt)
-                })
-                .to_string(),
-            );
-        }
-        let existing_agent_end = world
-            .agent_events
-            .iter()
-            .filter(|line| {
-                serde_json::from_str::<serde_json::Value>(line)
-                    .ok()
-                    .and_then(|v| v["type"].as_str().map(|t| t == "agent_end"))
-                    .unwrap_or(false)
-            })
-            .count();
-        for prompt in prompts.iter().skip(existing_agent_end) {
-            let content = e2e_steps::final_text_for_prompt(prompt);
-            world
-                .agent_events
-                .push(serde_json::json!({ "type": "token", "text": content }).to_string());
-            world.agent_events.push(
-                serde_json::json!({
-                    "type": "agent_end",
-                    "messages": [{ "role": "assistant", "content": content }]
-                })
-                .to_string(),
-            );
-        }
-    }
-    let mut workflow_snapshot_for_responses = None;
-    if let Some(workflow_state) = workflow_state_for_snapshot
-        && let Ok(engine) = workflow_state.lock()
-    {
-        let mut snapshot = serde_json::to_value(engine.snapshot(true)).expect("workflow snapshot");
-        if let Some(obj) = snapshot.as_object_mut() {
-            obj.insert("type".to_string(), serde_json::json!("workflow_state"));
-            if let Some(active_template) = obj.get("active_template").cloned() {
-                obj.insert("activeTemplate".to_string(), active_template);
-            }
-        }
-        workflow_snapshot_for_responses = Some(snapshot.clone());
-        world.agent_events.push(snapshot.to_string());
-    }
-    if world.auto_mock_manual_llm {
-        for command in &world.uds_commands {
-            let Ok(command_json) = serde_json::from_str::<serde_json::Value>(command) else {
-                continue;
-            };
-            if command_json["type"].as_str() != Some("get_state") {
-                continue;
-            }
-            let id = command_json["id"].as_str().unwrap_or("get-state");
-            let already_present = world.agent_events.iter().any(|line| {
-                serde_json::from_str::<serde_json::Value>(line)
-                    .ok()
-                    .is_some_and(|v| {
-                        v["type"].as_str() == Some("response") && v["id"].as_str() == Some(id)
-                    })
-            });
-            if already_present {
-                continue;
-            }
-            world.agent_events.push(
-                serde_json::json!({
-                    "type": "response",
-                    "command": "get_state",
-                    "id": id,
-                    "success": true,
-                    "data": {
-                        "workflow": workflow_snapshot_for_responses.clone().unwrap_or(serde_json::Value::Null)
-                    }
-                })
-                .to_string(),
-            );
-        }
-    }
     world.uds_exit_code = Some(exit);
 
     // Simulate what the production binary prints to stderr: the socket path.

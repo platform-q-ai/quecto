@@ -726,6 +726,34 @@ pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, me
         return;
     }
 
+    if messages
+        .iter()
+        .any(|message| message.contains("UDS_TOKENS_OK"))
+    {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let server = wiremock::MockServer::start().await;
+            let new_uri = server.uri();
+            let sse_body = "data: {\"id\":\"chatcmpl-auto\",\"choices\":[{\"delta\":{\"content\":\"UDS_\"}}]}\n\n\
+                            data: {\"id\":\"chatcmpl-auto\",\"choices\":[{\"delta\":{\"content\":\"TOKENS_OK\"}}]}\n\n\
+                            data: [DONE]\n\n";
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/chat/completions"))
+                .respond_with(
+                    wiremock::ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_string(sse_body),
+                )
+                .mount(&server)
+                .await;
+            rewrite_config_to_uri(world, &new_uri);
+            rewrite_config_to_provider_uri(world, "anthropic", &new_uri);
+            std::mem::forget(server);
+        });
+        std::mem::forget(rt);
+        return;
+    }
+
     let responses: Vec<serde_json::Value> = messages
         .iter()
         .flat_map(|message| responses_for_prompt(message))
@@ -734,17 +762,47 @@ pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, me
         .iter()
         .map(|message| anthropic_text_json(&final_text_for_prompt(message)))
         .collect();
+    let marker_responses: Vec<(String, String)> = messages
+        .iter()
+        .flat_map(|message| {
+            requested_markers(message)
+                .into_iter()
+                .filter(|marker| marker.starts_with("UDS_"))
+                .map(|marker| (marker.clone(), marker))
+        })
+        .collect();
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let server = wiremock::MockServer::start().await;
         let new_uri = server.uri();
+        for (i, (marker, text)) in marker_responses.iter().rev().enumerate() {
+            let priority = u8::try_from(i + 1).expect("too many auto mock marker responses");
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/chat/completions"))
+                .and(wiremock::matchers::body_string_contains(marker))
+                .respond_with(
+                    wiremock::ResponseTemplate::new(200).set_body_json(openai_text_json(text)),
+                )
+                .with_priority(priority)
+                .mount(&server)
+                .await;
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/v1/messages"))
+                .and(wiremock::matchers::body_string_contains(marker))
+                .respond_with(
+                    wiremock::ResponseTemplate::new(200).set_body_json(anthropic_text_json(text)),
+                )
+                .with_priority(priority)
+                .mount(&server)
+                .await;
+        }
         let last = responses.len().saturating_sub(1);
         for (i, body) in responses.into_iter().enumerate() {
             let mock = wiremock::Mock::given(wiremock::matchers::method("POST"))
                 .and(wiremock::matchers::path("/chat/completions"))
                 .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
-                .with_priority(u8::try_from(i + 1).expect("too many auto mock responses"));
+                .with_priority(u8::try_from(i + 50).expect("too many auto mock responses"));
             if i < last {
                 mock.up_to_n_times(1).mount(&server).await;
             } else {
@@ -756,7 +814,7 @@ pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, me
             let mock = wiremock::Mock::given(wiremock::matchers::method("POST"))
                 .and(wiremock::matchers::path("/v1/messages"))
                 .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
-                .with_priority(u8::try_from(i + 1).expect("too many auto mock responses"));
+                .with_priority(u8::try_from(i + 50).expect("too many auto mock responses"));
             if i < anthropic_last {
                 mock.up_to_n_times(1).mount(&server).await;
             } else {
@@ -2261,6 +2319,9 @@ fn copy_openai_oauth_credential_to_smoke_base(base: &Path) {
 fn given_real_llm_workspace(world: &mut QuectoWorld) {
     if std::env::var("QUECTO_REAL_LLM").unwrap_or_default() != "1" {
         configure_mock_provider_workspace(world, "openai");
+        if let Some(uri) = world._wiremock_server_uri.clone() {
+            rewrite_config_to_provider_uri(world, "anthropic", &uri);
+        }
         world.auto_mock_manual_llm = true;
         return;
     }
