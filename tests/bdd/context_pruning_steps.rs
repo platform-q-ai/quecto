@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::agent_loop_steps::ensure_mock_llm;
 use super::*;
 use quecto::application::context_pruning;
@@ -50,7 +52,7 @@ impl ContextSpillStore for InMemorySpillStore {
     fn list_entries(
         &self,
         _session_key: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<SpillIndex>, DomainError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Arc<Vec<SpillIndex>>, DomainError>> + Send + '_>> {
         let entries: Vec<SpillIndex> = self
             .entries
             .lock()
@@ -63,7 +65,7 @@ impl ContextSpillStore for InMemorySpillStore {
                 tokens: e.tokens,
             })
             .collect();
-        Box::pin(async move { Ok(entries) })
+        Box::pin(async move { Ok(Arc::new(entries)) })
     }
 
     fn clear(
@@ -192,7 +194,7 @@ fn when_agent_calls_recall(world: &mut QuectoWorld, id: String) {
                 };
             }
             let mut output = format!("Spilled outputs ({} entries):\n", entries.len());
-            for entry in &entries {
+            for entry in entries.iter() {
                 output.push_str(&format!(
                     "  {} — {} ({} tokens)\n",
                     entry.id, entry.input_preview, entry.tokens

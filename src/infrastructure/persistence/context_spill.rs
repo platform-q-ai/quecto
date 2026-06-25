@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::domain::error::DomainError;
-use crate::domain::session::{ContextSpillStore, SpillEntry, SpillIndex};
+use crate::domain::session::{ContextSpillStore, SpillEntry, SpillIndex, SpillIndexList};
 
 /// JSONL-based spill store for context pruning.
 ///
@@ -198,9 +198,7 @@ impl ContextSpillStore for FileContextSpillStore {
             };
             let mut cache = self.index_cache.write().await;
             if let Some(existing) = cache.get_mut(&session_key) {
-                let mut entries = (**existing).clone();
-                entries.push(index);
-                *existing = Arc::new(entries);
+                Arc::make_mut(existing).push(index);
             }
 
             Ok(())
@@ -254,10 +252,7 @@ impl ContextSpillStore for FileContextSpillStore {
         })
     }
 
-    fn list_entries(
-        &self,
-        session_key: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<SpillIndex>, DomainError>> + Send + '_>> {
+    fn list_entries(&self, session_key: &str) -> SpillIndexList<'_> {
         let path = self.spill_path(session_key);
         let session_key = session_key.to_string();
         Box::pin(async move {
@@ -265,7 +260,7 @@ impl ContextSpillStore for FileContextSpillStore {
             {
                 let cache = self.index_cache.read().await;
                 if let Some(cached) = cache.get(&session_key) {
-                    return Ok((**cached).clone());
+                    return Ok(cached.clone());
                 }
             }
 
@@ -290,7 +285,7 @@ impl ContextSpillStore for FileContextSpillStore {
                 .entry(session_key)
                 .or_insert_with(|| arc.clone());
 
-            Ok((*arc).clone())
+            Ok(arc)
         })
     }
 

@@ -1,8 +1,13 @@
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use super::{error::DomainError, message::Message};
+
+pub type SpillEntries = Arc<Vec<SpillIndex>>;
+pub type SpillIndexList<'a> =
+    Pin<Box<dyn Future<Output = Result<SpillEntries, DomainError>> + Send + 'a>>;
 
 /// Prefix for user-facing interactive chat sessions.
 pub const USER_CHAT_PREFIX: &str = "chat-";
@@ -153,6 +158,7 @@ pub fn strip_tool_history(messages: &[Message]) -> Vec<Message> {
                     // Non-recall tool call with narrative text: keep text, clear tool_calls
                     let mut kept = msg.clone();
                     kept.tool_calls = vec![];
+                    kept.invalidate_token_cache();
                     filtered.push(kept);
                 }
                 // else: pure dispatch (no text) — drop
@@ -262,10 +268,7 @@ pub trait ContextSpillStore: Send + Sync {
         id: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>>;
 
-    fn list_entries(
-        &self,
-        session_key: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<SpillIndex>, DomainError>> + Send + '_>>;
+    fn list_entries(&self, session_key: &str) -> SpillIndexList<'_>;
 
     /// Clear all spill entries for a session (e.g. on /reload).
     /// Truncates spill.jsonl to empty so the manifest rebuilds clean.
