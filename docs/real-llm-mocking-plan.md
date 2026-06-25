@@ -169,6 +169,38 @@ After mocked equivalents exist, remove `@real-llm` from behavioral coverage or m
 
 The goal is to avoid paying for full behavioral e2e on every push. Live provider calls should answer only one question: can this provider still accept a minimal request and return a valid response?
 
+## Implemented: duplicated (not converted) mocked e2e lane (issue #791)
+
+Rather than convert the live suite in place, the `@real-llm` suite is kept
+exactly as-is (`tests/features/e2e_real_llm*.feature`) for occasional on-demand
+runs, and a parallel **zero-cost mocked copy** drives the default gate:
+
+- **Structure — consolidated, not 1:1.** The mocked copy is a single
+  representative feature, `tests/features/e2e_mock_llm.feature` (plus the
+  pre-existing `e2e_mock_llm_agent_matrix.feature`), tagged `@mock-llm`. It is
+  deliberately NOT a file-per-file mirror of every `e2e_real_llm*.feature`:
+  PR #780's WireMock helpers (`configure_mock_provider_workspace`, the mock
+  provider/tool-call response steps) let one deterministic feature reproduce the
+  behaviours that many prompt-dependent `@real-llm` scenarios exercise — plain
+  text/token responses, single and chained tool-call loops (write/read/edit/
+  bash), multi-tool tasks, tool-error recovery, system-prompt influence, and
+  session-memory persistence across turns. Coverage parity is enforced
+  behaviourally by the `@architecture` guard
+  (`tests/features/architecture.feature` →
+  `then_mock_e2e_preserves_coverage`), which asserts the `@mock-llm` features
+  collectively cover each of those capabilities rather than checking filename
+  symmetry.
+- **Default lane is free.** `scripts/pre-push.sh` step 9 runs
+  `run-bdd-shards.sh --suite mock-llm-bdd --tag mock-llm` (no `--real-llm`, no
+  `.env` sourced), so a normal push makes zero paid provider calls and passes
+  with no API key.
+- **No key auto-trigger.** The old `REAL_LLM_STATE` key-probe was removed; a
+  provider key in `.env` no longer auto-enables the paid suite.
+- **Documented opt-in.** The live `@real-llm` suite still runs on demand via
+  `QUECTO_RUN_REAL_LLM=1 git push` (or the `run-bdd-shards.sh ... --real-llm`
+  command in the README), so occasional real-provider validation stays a
+  one-liner.
+
 ## Acceptance Criteria
 
 - Default test and pre-push paths do not require LLM provider credentials.

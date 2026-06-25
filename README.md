@@ -688,7 +688,7 @@ All test commands pipe through `scripts/test-filter.sh` which strips the per-tes
 
 `--no-fail-fast` ensures all failures are reported in a single run, not just the first.
 
-Two-tier hooks: pre-commit (~20-40s: quality+fmt+clippy) and pre-push (tests + 24-shard BDD + coverage + machete + deny + the real-LLM suite, skippable via QUECTO_SKIP_REAL_LLM=1). SHA-based caching. Install via `scripts/install-hooks.sh`.
+Two-tier hooks: pre-commit (~20-40s: quality+fmt+clippy) and pre-push (tests + 24-shard BDD + coverage + machete + deny + the zero-cost mocked e2e suite `@mock-llm`). The paid `@real-llm` suite is NOT run on push by default; opt in on demand with `QUECTO_RUN_REAL_LLM=1 git push`. SHA-based caching. Install via `scripts/install-hooks.sh`.
 
 ### Sharded BDD (24-way parallel)
 
@@ -726,18 +726,27 @@ cargo test --test bdd
 # Core suite (24-way sharded, fastest local full run)
 bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
 
+# Mocked e2e suite (free, deterministic, default pre-push e2e lane — no API key)
+bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 12m --tag mock-llm
+
 # Provider smoke subset (paid, opt-in)
 QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --features test-support --test bdd
 
-# Legacy Real-LLM full suite
+# Live Real-LLM full suite (paid, occasional/on-demand — needs OPENAI_API_KEY in .env)
 bash scripts/run-bdd-shards.sh --suite real-llm-bdd --shards 24 --timeout 12m --tag real-llm --real-llm
 ```
 
-`scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test --lib`, `cargo test --test architecture`, `cargo test --test contracts`, `cargo test --test repo_docs`, and 24-way sharded non-real BDD), caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`.
+The e2e suite exists in two parallel lanes that assert the same behaviours:
+- **`@mock-llm` (default, free):** WireMock-backed deterministic copy under `tests/features/e2e_mock_llm*.feature`. Makes zero paid provider calls and passes with no API key. This is what every `git push` runs.
+- **`@real-llm` (occasional, paid):** the live-provider suite under `tests/features/e2e_real_llm*.feature`, retained unchanged for genuine end-to-end validation. Run it on demand with the command above, or fold it into a push via `QUECTO_RUN_REAL_LLM=1 git push`.
+
+`scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test --lib`, `cargo test --test architecture`, `cargo test --test contracts`, `cargo test --test repo_docs`, and 24-way sharded non-real BDD), then the zero-cost mocked e2e lane, caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`. A `.env` provider key alone never triggers paid calls — the paid `@real-llm` lane runs only under the explicit `QUECTO_RUN_REAL_LLM=1` opt-in.
 
 Pre-push controls:
 - `QUECTO_E2E_TIMEOUT` timeout per BDD shard (default `12m`)
 - `QUECTO_BDD_SHARDS` shard count for non-real BDD (default `24`)
+- `QUECTO_MOCK_LLM_SHARDS` / `QUECTO_MOCK_LLM_TIMEOUT` shard count / timeout for the mocked e2e lane (defaults `24` / `12m`)
+- `QUECTO_RUN_REAL_LLM=1` opt in to also run the live paid `@real-llm` suite on push
 - `QUECTO_PREPUSH_FORCE=1` to bypass cache and rerun all checks
 
 Pre-merge controls (real-LLM lane):

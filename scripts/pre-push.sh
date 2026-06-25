@@ -2,7 +2,8 @@
 # pre-push.sh — Runs on every git push.
 # Full local quality gate: static checks + parallel test wave (lib + architecture
 # + contracts + repo docs + 24-way non-real BDD) + coverage + machete + deny +
-# the real-LLM end-to-end suite (skippable with QUECTO_SKIP_REAL_LLM=1).
+# the zero-cost mocked end-to-end suite (@mock-llm). The live, paid @real-llm
+# suite is NOT run by default; opt in on demand with QUECTO_RUN_REAL_LLM=1.
 set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -21,21 +22,13 @@ FORCE_RUN="${QUECTO_PREPUSH_FORCE:-0}"
 
 HEAD_SHA="$(git rev-parse HEAD)"
 SCRIPT_HASH="$(sha256sum "$ROOT/scripts/pre-push.sh" | awk '{print $1}')"
-# Fold the real-LLM run-state into the cache key, so a cached pass with real-LLM
-# skipped (no key / opt-out) doesn't suppress a later real-LLM run for the same
-# SHA. Probe key presence in a SUBSHELL so .env never leaks into the
-# deterministic wave below.
-if [[ "${QUECTO_SKIP_REAL_LLM:-0}" == "1" ]]; then
-    REAL_LLM_STATE="skip"
-elif (
-    source "$ROOT/scripts/load-dotenv.sh"
-    [[ -n "${OPENAI_API_KEY:-}${QUECTO_PROVIDERS_OPENAI_API_KEY:-}" ]]
-); then
-    REAL_LLM_STATE="run"
-else
-    REAL_LLM_STATE="nokey"
-fi
-CACHE_FILE="$ROOT/.git/pre-push.passed.${HEAD_SHA}.${SCRIPT_HASH}.${REAL_LLM_STATE}"
+# Default lane runs the zero-cost mocked e2e suite — no provider key is probed
+# and no .env is sourced before the deterministic wave, so a key in .env can
+# NEVER auto-trigger paid provider calls. The live @real-llm suite runs only on
+# explicit opt-in. Fold that opt-in into the cache key so a cached mock-only pass
+# doesn't suppress a later opted-in real-LLM run for the same SHA.
+REAL_LLM_LANE="${QUECTO_RUN_REAL_LLM:-0}"
+CACHE_FILE="$ROOT/.git/pre-push.passed.${HEAD_SHA}.${SCRIPT_HASH}.real${REAL_LLM_LANE}"
 LOG_FILE="$ROOT/.git/pre-push.last.log"
 
 if [[ "$FORCE_RUN" != "1" && -f "$CACHE_FILE" ]]; then
@@ -171,20 +164,32 @@ else
     echo "  Install with: cargo install cargo-deny --locked"
 fi
 
-step "9/10" "Real-LLM end-to-end tests"
+step "9/10" "Mocked end-to-end tests (@mock-llm, zero-cost, default)"
 
-# .env carries provider API keys; source it ONLY here. The deterministic wave
-# above must run WITHOUT provider keys, or the "no providers configured" tests
-# break. Skip cleanly when no key is present (CI, fresh checkout) or on opt-out.
-source "$ROOT/scripts/load-dotenv.sh"
+# Default e2e lane: deterministic WireMock-backed copy of the @real-llm
+# behaviours. Makes ZERO paid provider calls and needs no API key — .env is
+# never sourced here, so a key in .env can't turn this into a paid run.
+MOCK_LLM_SHARDS="${QUECTO_MOCK_LLM_SHARDS:-24}"
+MOCK_LLM_TIMEOUT="${QUECTO_MOCK_LLM_TIMEOUT:-12m}"
+if ! bash "$ROOT/scripts/run-bdd-shards.sh" \
+    --suite "mock-llm-bdd" \
+    --shards "$MOCK_LLM_SHARDS" \
+    --timeout "$MOCK_LLM_TIMEOUT" \
+    --tag "mock-llm"; then
+    echo -e "${RED}FAIL${NC}: mocked end-to-end tests"
+    exit 1
+fi
 
-REAL_LLM_SHARDS="${QUECTO_REAL_LLM_SHARDS:-24}"
-REAL_LLM_TIMEOUT="${QUECTO_REAL_LLM_TIMEOUT:-12m}"
-if [[ "${QUECTO_SKIP_REAL_LLM:-0}" == "1" ]]; then
-    echo "  SKIP: QUECTO_SKIP_REAL_LLM=1"
-elif [[ -z "${OPENAI_API_KEY:-}${QUECTO_PROVIDERS_OPENAI_API_KEY:-}" ]]; then
-    echo "  SKIP: no provider API key present (add OPENAI_API_KEY to .env to enable)"
-else
+# Optional live lane: the paid @real-llm suite is retained for occasional
+# on-demand validation. It runs ONLY when explicitly opted in — a .env key alone
+# never triggers it. Enable with: QUECTO_RUN_REAL_LLM=1 git push
+if [[ "${QUECTO_RUN_REAL_LLM:-0}" == "1" ]]; then
+    echo -e "\n${BLUE}[9b/10]${NC} Live real-LLM end-to-end tests (opt-in)"
+    # run-bdd-shards.sh --real-llm sources .env (provider credentials) itself.
+    # If no key is configured the real-LLM workspace step fails loudly, which is
+    # the correct outcome for an explicit opt-in run.
+    REAL_LLM_SHARDS="${QUECTO_REAL_LLM_SHARDS:-24}"
+    REAL_LLM_TIMEOUT="${QUECTO_REAL_LLM_TIMEOUT:-12m}"
     if ! bash "$ROOT/scripts/run-bdd-shards.sh" \
         --suite "real-llm-bdd" \
         --shards "$REAL_LLM_SHARDS" \
@@ -194,6 +199,8 @@ else
         echo -e "${RED}FAIL${NC}: real-LLM end-to-end tests"
         exit 1
     fi
+else
+    echo "  Live @real-llm suite skipped (opt in with QUECTO_RUN_REAL_LLM=1)."
 fi
 
 step "10/10" "Pre-push summary"
