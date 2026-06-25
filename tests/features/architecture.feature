@@ -19,5 +19,5 @@ Feature: Architecture boundaries and ports
   Scenario: Pre-push exposes a documented opt-in for the live real-LLM suite
     Then the pre-push script should gate the live real-LLM suite behind an explicit opt-in flag
 
-  Scenario: The mocked e2e suite preserves real-LLM behavioural coverage
-    Then the mocked e2e suite should preserve the real-LLM behavioural coverage
+  Scenario: The mocked e2e suite covers the curated real-LLM capability checklist
+    Then the mocked e2e suite should cover the curated real-LLM capability checklist

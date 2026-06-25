@@ -160,30 +160,46 @@ fn then_pre_push_real_llm_optin(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the mocked e2e suite should preserve the real-LLM behavioural coverage")]
+#[then("the mocked e2e suite should cover the curated real-LLM capability checklist")]
 fn then_mock_e2e_preserves_coverage(_world: &mut QuectoWorld) {
     // The mocked copy is a CONSOLIDATED suite (per docs/real-llm-mocking-plan.md),
     // not a 1:1 file-per-file mirror: PR #780's WireMock helpers let one
     // deterministic feature cover the behaviours many prompt-dependent @real-llm
-    // scenarios exercise. We therefore assert behavioural-capability parity
-    // (no net coverage loss), not filename symmetry.
-    let mut mock = String::new();
-    let mut mock_files = Vec::new();
-    for entry in std::fs::read_dir("tests/features").expect("read tests/features") {
-        let path = entry.expect("dir entry").path();
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if name.starts_with("e2e_mock_llm") && name.ends_with(".feature") {
-            mock.push_str(&std::fs::read_to_string(&path).expect("read mock feature"));
-            mock.push('\n');
-            mock_files.push(name);
+    // scenarios exercise. The two suites also use different phrasings (live NL
+    // prompts vs WireMock helper steps), so a literal scenario-by-scenario diff
+    // is impossible. This guard is therefore a HAND-MAINTAINED behavioural-
+    // capability checklist, not an automatic drift detector: each capability is
+    // anchored to a marker in BOTH the live @real-llm suite and the mocked copy,
+    // so dropping a capability from either side trips the check. When a NEW
+    // @real-llm capability is added, extend `required` below.
+    let read_features = |prefix: &str| -> (String, Vec<String>) {
+        let mut joined = String::new();
+        let mut files = Vec::new();
+        for entry in std::fs::read_dir("tests/features").expect("read tests/features") {
+            let path = entry.expect("dir entry").path();
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if name.starts_with(prefix) && name.ends_with(".feature") {
+                joined.push_str(&std::fs::read_to_string(&path).expect("read feature"));
+                joined.push('\n');
+                files.push(name);
+            }
         }
-    }
+        (joined, files)
+    };
+
+    let (mock, mock_files) = read_features("e2e_mock_llm");
+    let (real_raw, real_files) = read_features("e2e_real_llm");
+    let real = real_raw.to_lowercase();
     assert!(
         !mock_files.is_empty(),
         "no e2e_mock_llm*.feature files found — the zero-cost mocked e2e copy is missing"
+    );
+    assert!(
+        !real_files.is_empty(),
+        "no e2e_real_llm*.feature files found — the live suite this checklist mirrors is missing"
     );
 
     // Every mocked e2e scenario must carry the @mock-llm tag so the pre-push
@@ -209,35 +225,47 @@ fn then_mock_e2e_preserves_coverage(_world: &mut QuectoWorld) {
         "the mocked e2e copy must not carry @real-llm tags (that would make it paid/skipped)"
     );
 
-    // Behavioural capabilities the @real-llm suite asserts that the mocked copy
-    // must reproduce deterministically. Each is keyed off a genuine behavioural
-    // marker (a tool-call schema, a multi-step loop, a session-memory scenario),
-    // not an incidental string, so a token/empty mock file cannot pass.
-    let required: [(&str, &str); 8] = [
+    // Each capability is anchored on BOTH sides: `real_marker` (matched
+    // case-insensitively against the live suite) proves the live suite still
+    // exercises the behaviour, and `mock_marker` proves the deterministic copy
+    // reproduces it. A capability silently dropped from either suite fails here.
+    let required: [(&str, &str, &str); 8] = [
         (
             "plain text / token response",
+            "token",
             "the mock LLM returns a text response",
         ),
-        ("file write tool-call", r#"tool call for "write""#),
-        ("file read tool-call", r#"tool call for "read""#),
-        ("file edit tool-call", r#"tool call for "edit""#),
-        ("shell exec tool-call", r#"tool call for "bash""#),
-        ("multi-step tool-call loop", "tool call sequence"),
-        ("system-prompt influence", "--system"),
+        ("file write tool-call", "write", r#"tool call for "write""#),
+        ("file read tool-call", "read", r#"tool call for "read""#),
+        ("file edit tool-call", "edit", r#"tool call for "edit""#),
+        ("shell exec tool-call", "shell", r#"tool call for "bash""#),
+        ("multi-step tool-call loop", "multi", "tool call sequence"),
+        ("system-prompt influence", "--system", "--system"),
         (
             "session memory across turns",
-            "Scenario: Mocked agent remembers context across session turns",
+            "session",
+            "remembers context across session turns",
         ),
     ];
-    let mut missing = Vec::new();
-    for (label, marker) in required {
-        if !mock.contains(marker) {
-            missing.push(label);
+    let mut missing_real = Vec::new();
+    let mut missing_mock = Vec::new();
+    for (label, real_marker, mock_marker) in required {
+        if !real.contains(real_marker) {
+            missing_real.push(label);
+        }
+        if !mock.contains(mock_marker) {
+            missing_mock.push(label);
         }
     }
     assert!(
-        missing.is_empty(),
+        missing_real.is_empty(),
+        "the live @real-llm suite ({real_files:?}) no longer exercises checklisted \
+         capabilities: {missing_real:?} — update the checklist if the behaviour was \
+         intentionally removed"
+    );
+    assert!(
+        missing_mock.is_empty(),
         "mocked e2e suite ({mock_files:?}) is missing behavioural coverage present in the \
-         @real-llm suite: {missing:?}"
+         @real-llm suite: {missing_mock:?}"
     );
 }

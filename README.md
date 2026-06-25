@@ -727,7 +727,7 @@ cargo test --test bdd
 bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
 
 # Mocked e2e suite (free, deterministic, default pre-push e2e lane — no API key)
-bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 12m --tag mock-llm
+bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 4 --timeout 12m --tag mock-llm
 
 # Provider smoke subset (paid, opt-in)
 QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --features test-support --test bdd
@@ -745,7 +745,7 @@ The e2e suite exists in two parallel lanes that assert the same behaviours:
 Pre-push controls:
 - `QUECTO_E2E_TIMEOUT` timeout per BDD shard (default `12m`)
 - `QUECTO_BDD_SHARDS` shard count for non-real BDD (default `24`)
-- `QUECTO_MOCK_LLM_SHARDS` / `QUECTO_MOCK_LLM_TIMEOUT` shard count / timeout for the mocked e2e lane (defaults `24` / `12m`)
+- `QUECTO_MOCK_LLM_SHARDS` / `QUECTO_MOCK_LLM_TIMEOUT` shard count / timeout for the mocked e2e lane (defaults `4` / `12m`; the suite is small, so a handful of shards avoids idle process startup overhead)
 - `QUECTO_RUN_REAL_LLM=1` opt in to also run the live paid `@real-llm` suite on push
 - `QUECTO_PREPUSH_FORCE=1` to bypass cache and rerun all checks
 

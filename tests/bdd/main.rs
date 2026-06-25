@@ -1017,6 +1017,17 @@ fn main() {
                 if sc.tags.iter().any(|t| t == "provider-smoke") && !provider_smoke_enabled {
                     return false;
                 }
+                // Partition the zero-cost mocked e2e lane from the default wave.
+                // @mock-llm scenarios are also tagged @done, so the untagged
+                // pre-push wave (step 5) would otherwise run them — and the
+                // dedicated mock lane (step 9, QUECTO_TAG=mock-llm) re-runs them,
+                // executing the mock suite twice per push. Only include @mock-llm
+                // when the mock lane explicitly selects it.
+                let is_mock_llm = feat.tags.iter().any(|t| t == "mock-llm")
+                    || sc.tags.iter().any(|t| t == "mock-llm");
+                if is_mock_llm && tag_filter.as_deref() != Some("mock-llm") {
+                    return false;
+                }
                 // If a tag filter is set, require matching scenarios, but still
                 // allow optional sharding to apply.
                 if let Some(ref tag) = tag_filter {

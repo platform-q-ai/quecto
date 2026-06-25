@@ -169,7 +169,10 @@ step "9/10" "Mocked end-to-end tests (@mock-llm, zero-cost, default)"
 # Default e2e lane: deterministic WireMock-backed copy of the @real-llm
 # behaviours. Makes ZERO paid provider calls and needs no API key — .env is
 # never sourced here, so a key in .env can't turn this into a paid run.
-MOCK_LLM_SHARDS="${QUECTO_MOCK_LLM_SHARDS:-24}"
+# The mocked suite is small (~14 scenarios); each shard pays full bdd-binary
+# startup, so 24 shards would launch >10 idle heavyweight processes. Default to a
+# handful — override with QUECTO_MOCK_LLM_SHARDS for the larger non-real wave.
+MOCK_LLM_SHARDS="${QUECTO_MOCK_LLM_SHARDS:-4}"
 MOCK_LLM_TIMEOUT="${QUECTO_MOCK_LLM_TIMEOUT:-12m}"
 if ! bash "$ROOT/scripts/run-bdd-shards.sh" \
     --suite "mock-llm-bdd" \
