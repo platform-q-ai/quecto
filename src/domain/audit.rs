@@ -124,33 +124,23 @@ impl AuditEvent {
     ///
     /// Subagent command lines can carry credentials or PII as arguments
     /// (`sk-...` tokens, `Bearer <tok>`, `--api-key=...`, `*_API_KEY=...`).
-    /// Persisting them verbatim is a leak risk (#790), so the command is passed
-    /// through [`redact_secrets`] which replaces only the secret-bearing spans
-    /// with `[REDACTED]`, leaving the rest of the command intact and useful.
+    /// Persisting them verbatim would be a leak risk (#790), so the command is
+    /// passed through the shared [`crate::domain::redaction::redact_secrets`],
+    /// which replaces only the secret-bearing spans with `[REDACTED]`, leaving
+    /// the rest of the command intact and useful.
+    ///
+    /// The [`AuditEvent::SubagentCmd`] variant itself is currently
+    /// test-support-only (no production code emits it yet); this constructor is
+    /// the redacting entry point any future production emitter must route
+    /// through. The redaction helper lives in
+    /// [`crate::domain::redaction`] and compiles into release builds, so wiring
+    /// up an emitter cannot accidentally bypass it.
     pub fn subagent_cmd(agent_id: String, command: &str) -> Self {
         AuditEvent::SubagentCmd {
             agent_id,
-            command: redact_secrets(command),
+            command: crate::domain::redaction::redact_secrets(command),
         }
     }
-}
-
-/// Replace known secret shapes in a command string with `[REDACTED]`.
-///
-/// Targets common credential patterns — `Bearer <tok>`, `sk-<token>`, and
-/// `<api_key|token|password|secret|access_token>=<value>` assignments — so the
-/// audit log stays useful (non-secret tokens are preserved) while never
-/// persisting the secret value itself. Pure; no I/O.
-#[cfg(any(test, feature = "test-support"))]
-fn redact_secrets(command: &str) -> String {
-    use std::sync::LazyLock;
-    static PATTERNS: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(
-            r"(?i)(bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|(?:api[_-]?key|token|password|secret|access[_-]?token)\s*[=:]\s*\S+)",
-        )
-        .expect("static redaction regex is valid")
-    });
-    PATTERNS.replace_all(command, "[REDACTED]").into_owned()
 }
 
 /// Generate a content preview capped at `max_chars` characters.
@@ -438,15 +428,24 @@ mod tests {
     }
 
     #[test]
-    fn redact_secrets_passes_through_plain_text() {
-        assert_eq!(redact_secrets("ls -la /tmp"), "ls -la /tmp");
+    fn subagent_cmd_passes_through_plain_text() {
+        let AuditEvent::SubagentCmd { command, .. } =
+            AuditEvent::subagent_cmd("a1".into(), "ls -la /tmp")
+        else {
+            panic!("expected SubagentCmd");
+        };
+        assert_eq!(command, "ls -la /tmp");
     }
 
     #[test]
-    fn redact_secrets_scrubs_flag_api_key() {
-        let out = redact_secrets("tool --api-key=sk-livedeadbeef0001");
-        assert!(!out.contains("sk-livedeadbeef0001"), "out={out}");
-        assert!(out.contains("[REDACTED]"));
+    fn subagent_cmd_scrubs_flag_api_key() {
+        let AuditEvent::SubagentCmd { command, .. } =
+            AuditEvent::subagent_cmd("a1".into(), "tool --api-key=sk-livedeadbeef0001")
+        else {
+            panic!("expected SubagentCmd");
+        };
+        assert!(!command.contains("sk-livedeadbeef0001"), "out={command}");
+        assert!(command.contains("[REDACTED]"));
     }
 
     #[test]

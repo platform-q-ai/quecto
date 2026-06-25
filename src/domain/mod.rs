@@ -7,6 +7,7 @@ pub mod extension_tool;
 pub mod message;
 pub mod provider;
 pub mod provider_error;
+pub mod redaction;
 pub mod session;
 pub mod subagent;
 pub mod tool;
