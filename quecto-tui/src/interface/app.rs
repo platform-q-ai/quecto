@@ -211,8 +211,6 @@ pub(crate) struct SessionView {
     /// by its forwarded `get_state` / `turn_end` / session-stats events so a
     /// selected sub-agent shows ITS usage, not the master's (#805).
     footer: Footer,
-    /// The child's current model id, for parity with `App::current_model`.
-    current_model: Option<String>,
 }
 
 impl SessionView {
@@ -224,7 +222,6 @@ impl SessionView {
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             running: false,
             footer,
-            current_model: None,
         }
     }
 }

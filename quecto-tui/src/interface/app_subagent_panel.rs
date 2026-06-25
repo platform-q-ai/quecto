@@ -79,12 +79,14 @@ impl App {
     /// no sub-agent is selected, otherwise the selected agent's per-session
     /// footer (#805). Falls back to the master footer if the session is missing.
     pub(super) fn active_footer_render(&mut self, width: usize) -> Vec<String> {
-        match self.active_agent_id.clone() {
-            None => self.footer.render(width),
-            Some(id) => match self.sessions.get_mut(&id) {
-                Some(session) => session.footer.render(width),
-                None => self.footer.render(width),
-            },
+        // Borrow-split the disjoint fields (`active_agent_id`, `sessions`,
+        // `footer`) so we read the id by reference — no per-frame allocation on
+        // the render hot path while a sub-agent is selected.
+        match self.active_agent_id.as_deref() {
+            Some(id) if self.sessions.contains_key(id) => {
+                self.sessions.get_mut(id).unwrap().footer.render(width)
+            }
+            _ => self.footer.render(width),
         }
     }
 
@@ -435,14 +437,7 @@ impl App {
                 success: true,
                 ..
             } if command == "get_state" => {
-                if let Some(model) = data.get("model").and_then(|m| m.as_str()) {
-                    let sanitized = crate::interface::ansi::sanitize_control(model);
-                    session.footer.set_model(&sanitized);
-                    session.current_model = Some(sanitized);
-                }
-                if let Some(max_ctx) = data.get("maxContextTokens").and_then(|v| v.as_u64()) {
-                    session.footer.set_context_window(max_ctx as usize);
-                }
+                session.footer.apply_get_state(data);
             }
             Event::Response {
                 command,
@@ -451,12 +446,7 @@ impl App {
                 ..
             } if command == "get_session_stats" => {
                 let stats = session_payloads::parse_session_stats(data);
-                if let Some((used, window)) = stats.context_usage {
-                    session.footer.update_context_usage(used, window);
-                }
-                session
-                    .footer
-                    .set_cost((stats.cost > 0.0).then_some(stats.cost));
+                session.footer.apply_session_stats(&stats);
             }
             Event::TurnEnd { message, .. } => {
                 let used = message.get("contextTokens").and_then(|v| v.as_u64());

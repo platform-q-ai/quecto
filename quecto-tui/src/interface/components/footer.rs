@@ -89,6 +89,36 @@ impl Footer {
     pub fn set_cost(&mut self, cost: Option<f64>) {
         self.session_cost = cost;
     }
+
+    /// Apply a `get_state` payload's model + context-window to this footer.
+    /// Returns the sanitized model id when present so callers can track it.
+    /// Single source of truth for the get_state→footer mapping shared by the
+    /// master footer path and per-session sub-agent footers (#805).
+    pub fn apply_get_state(&mut self, data: &serde_json::Value) -> Option<String> {
+        let model = data.get("model").and_then(|m| m.as_str()).map(|m| {
+            let sanitized = crate::interface::ansi::sanitize_control(m);
+            self.set_model(&sanitized);
+            sanitized
+        });
+        if let Some(max_ctx) = data.get("maxContextTokens").and_then(|v| v.as_u64()) {
+            self.set_context_window(max_ctx as usize);
+        }
+        model
+    }
+
+    /// Apply a parsed session-stats snapshot to the context + cost gauges.
+    /// Single source of truth for the stats→footer mapping shared by the master
+    /// footer path and per-session sub-agent footers (#805) — keeps the cost
+    /// gate (`cost > 0`) from drifting between the two.
+    pub fn apply_session_stats(
+        &mut self,
+        stats: &crate::application::session_payloads::SessionStats,
+    ) {
+        if let Some((used, window)) = stats.context_usage {
+            self.update_context_usage(used, window);
+        }
+        self.set_cost((stats.cost > 0.0).then_some(stats.cost));
+    }
 }
 
 impl Component for Footer {
