@@ -143,8 +143,8 @@ Add BDD steps that configure each live provider from credentials only when the c
 Suggested environment variables:
 
 - `QUECTO_PROVIDER_SMOKE=1` to enable the lane.
-- `QUECTO_PROVIDERS_OPENAI_API_KEY` or `OPENAI_API_KEY` for OpenAI.
-- `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY` for Anthropic.
+- `OPENAI_API_KEY` for OpenAI.
+- `ANTHROPIC_API_KEY` for Anthropic.
 - Existing OAuth credential storage for Codex/OpenAI OAuth, if supported in CI.
 
 ### Phase 4: Update Runner and Hook Behavior
@@ -211,9 +211,8 @@ explicitly opt-in:
 - The BDD runner excludes `@provider-smoke` unless `QUECTO_PROVIDER_SMOKE=1` is
   set, independently from `QUECTO_REAL_LLM`.
 - Provider-specific tags filter missing credentials before execution:
-  `@provider-smoke-openai` checks `QUECTO_PROVIDERS_OPENAI_API_KEY` or
-  `OPENAI_API_KEY`, `@provider-smoke-anthropic` checks
-  `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY`, and
+  `@provider-smoke-openai` checks `OPENAI_API_KEY`,
+  `@provider-smoke-anthropic` checks `ANTHROPIC_API_KEY`, and
   `@provider-smoke-codex` checks for an existing OpenAI OAuth credential in the
   `quecto` credential store.
 - Smoke workspaces are temporary and configured with minimal output settings,

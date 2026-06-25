@@ -61,17 +61,11 @@ async fn test_exec_inherits_quecto_env_vars() {
     let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
 
     let mut env_vars = HashMap::new();
-    env_vars.insert(
-        "QUECTO_PROVIDERS_OPENAI_API_KEY".to_string(),
-        "sk-secret".to_string(),
-    );
+    env_vars.insert("OPENAI_API_KEY".to_string(), "sk-secret".to_string());
     env_vars.insert("HOME".to_string(), "/home/testuser".to_string());
 
     let result = tool
-        .execute_with_env(
-            r#"{"command": "printenv QUECTO_PROVIDERS_OPENAI_API_KEY"}"#,
-            &env_vars,
-        )
+        .execute_with_env(r#"{"command": "printenv OPENAI_API_KEY"}"#, &env_vars)
         .await
         .unwrap();
     assert!(result.content.contains("sk-secret"));

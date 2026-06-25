@@ -1062,18 +1062,12 @@ fn main() {
                 // providers rather than failing unrelated smoke scenarios.
                 if provider_smoke_enabled {
                     if sc.tags.iter().any(|t| t == "provider-smoke-openai")
-                        && !any_env_or_dotenv(&[
-                            "QUECTO_PROVIDERS_OPENAI_API_KEY",
-                            "OPENAI_API_KEY",
-                        ])
+                        && !any_env_or_dotenv(&["OPENAI_API_KEY"])
                     {
                         return false;
                     }
                     if sc.tags.iter().any(|t| t == "provider-smoke-anthropic")
-                        && !any_env_or_dotenv(&[
-                            "QUECTO_PROVIDERS_ANTHROPIC_API_KEY",
-                            "ANTHROPIC_API_KEY",
-                        ])
+                        && !any_env_or_dotenv(&["ANTHROPIC_API_KEY"])
                     {
                         return false;
                     }

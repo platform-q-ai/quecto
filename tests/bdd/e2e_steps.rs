@@ -1785,24 +1785,13 @@ fn resolve_api_key_from_env_or_dotenv(vars: &[&str]) -> Option<String> {
 }
 
 fn resolve_openai_api_key() -> String {
-    resolve_api_key_from_env_or_dotenv(&["QUECTO_PROVIDERS_OPENAI_API_KEY", "OPENAI_API_KEY"])
-        .unwrap_or_else(|| {
-            panic!(
-                "QUECTO_PROVIDERS_OPENAI_API_KEY or OPENAI_API_KEY must be set (via env var or .env file)"
-            )
-        })
+    resolve_api_key_from_env_or_dotenv(&["OPENAI_API_KEY"])
+        .unwrap_or_else(|| panic!("OPENAI_API_KEY must be set (via env var or .env file)"))
 }
 
 fn resolve_anthropic_api_key() -> String {
-    resolve_api_key_from_env_or_dotenv(&[
-        "QUECTO_PROVIDERS_ANTHROPIC_API_KEY",
-        "ANTHROPIC_API_KEY",
-    ])
-    .unwrap_or_else(|| {
-        panic!(
-            "QUECTO_PROVIDERS_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY must be set (via env var or .env file)"
-        )
-    })
+    resolve_api_key_from_env_or_dotenv(&["ANTHROPIC_API_KEY"])
+        .unwrap_or_else(|| panic!("ANTHROPIC_API_KEY must be set (via env var or .env file)"))
 }
 
 fn default_quecto_base_dir_for_smoke() -> PathBuf {
@@ -2469,8 +2458,7 @@ fn then_llm_request_included_tool(world: &mut QuectoWorld, tool_name: String) {
 
 /// Set up a workspace for real-LLM UDS tests.
 ///
-/// Prefers a static Anthropic API key (env `QUECTO_PROVIDERS_ANTHROPIC_API_KEY`
-/// or `ANTHROPIC_API_KEY`) so these tests run in CI without a local
+/// Prefers a static Anthropic API key (env `ANTHROPIC_API_KEY`) so these tests run in CI without a local
 /// `quecto auth login`. Falls back to copying `~/.quecto/credentials.json` and
 /// `auth_method: "oauth"` for subscription-based local runs. The default model
 /// is `anthropic/claude-haiku-4-5` for fast, cheap tests.
@@ -2481,8 +2469,7 @@ fn given_real_llm_uds_workspace(world: &mut QuectoWorld) {
     let workspace = base.join("workspace");
     std::fs::create_dir_all(&workspace).expect("create workspace");
 
-    let has_api_key = std::env::var("QUECTO_PROVIDERS_ANTHROPIC_API_KEY").is_ok()
-        || std::env::var("ANTHROPIC_API_KEY").is_ok();
+    let has_api_key = std::env::var("ANTHROPIC_API_KEY").is_ok();
 
     // API-key auth (CI-friendly): the key is supplied via env override at load
     // time, so no credentials.json is needed in the isolated base dir.
@@ -2496,7 +2483,7 @@ fn given_real_llm_uds_workspace(world: &mut QuectoWorld) {
             .join("credentials.json");
         if !home_creds.exists() {
             panic!(
-                "set QUECTO_PROVIDERS_ANTHROPIC_API_KEY / ANTHROPIC_API_KEY, or run \
+                "set ANTHROPIC_API_KEY, or run \
                  'quecto auth login' (credentials.json not found)"
             );
         }

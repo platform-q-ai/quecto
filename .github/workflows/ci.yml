@@ -63,12 +63,10 @@ jobs:
 
       - name: Provider smoke tests
         env:
-          QUECTO_PROVIDERS_OPENAI_API_KEY: ${{ secrets.QUECTO_PROVIDERS_OPENAI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          QUECTO_PROVIDERS_ANTHROPIC_API_KEY: ${{ secrets.QUECTO_PROVIDERS_ANTHROPIC_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          if [ -z "${QUECTO_PROVIDERS_OPENAI_API_KEY:-}${OPENAI_API_KEY:-}${QUECTO_PROVIDERS_ANTHROPIC_API_KEY:-}${ANTHROPIC_API_KEY:-}" ]; then
+          if [ -z "${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}" ]; then
             echo "Skipping provider smoke tests: no provider API key secret configured"
             exit 0
           fi

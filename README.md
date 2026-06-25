@@ -502,9 +502,9 @@ Use `~/.quecto/models.json` for community-extensible providers and model metadat
 
 Auth modes are explicit provider keys. The built-in vendor slots are split so quecto never silently switches between OAuth monthly-plan credentials and token-billed API keys:
 
-- `openai-api/...` uses `providers.openai.api_key` / `QUECTO_PROVIDERS_OPENAI_API_KEY`.
+- `openai-api/...` uses `providers.openai.api_key` / `OPENAI_API_KEY`.
 - `openai-oauth/...` uses the stored `quecto auth login openai` credential.
-- `anthropic-api/...` uses `providers.anthropic.api_key` / `QUECTO_PROVIDERS_ANTHROPIC_API_KEY`.
+- `anthropic-api/...` uses `providers.anthropic.api_key` / `ANTHROPIC_API_KEY`.
 - `anthropic-oauth/...` uses the stored `quecto auth login anthropic` credential.
 
 Community providers use the same explicit model. API-key providers are fully data-driven. OAuth providers may reference only kernel-known OAuth identities (`openai`, `anthropic`); adding a brand-new OAuth identity requires kernel code because OAuth client IDs, scopes, token URLs, and refresh handling are security-sensitive.
@@ -576,8 +576,8 @@ To use an OAuth-backed registry provider, first run `quecto auth login openai` o
 | `QUECTO_MAX_CONTEXT_TOKENS` | `agents.defaults.max_context_tokens` |
 | `QUECTO_AGENTS_DEFAULTS_EFFORT` | `agents.defaults.effort` (`low`/`medium`/`high`/`max`; invalid values ignored) |
 | `QUECTO_TOOLS_WEB_BRAVE_API_KEY` | `tools.web.brave.api_key` |
-| `QUECTO_PROVIDERS_OPENAI_API_KEY` | `providers.openai.api_key` |
-| `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
+| `OPENAI_API_KEY` | `providers.openai.api_key` |
+| `ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
 | `QUECTO_OFFLINE` | Set to `1`/`true`/`yes` to disable auto-download of tool binaries (rg, fd) |
 | `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS` | Set to `1` to allow custom provider hosts, including remote HTTP for explicit OpenAI-compatible endpoints |
 
@@ -705,7 +705,7 @@ Provider smoke (paid, opt-in, minimal live request):
 QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh
 ```
 
-Provider smoke runs only provider-specific scenarios with available credentials: OpenAI uses `QUECTO_PROVIDERS_OPENAI_API_KEY` or `OPENAI_API_KEY`, Anthropic uses `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY`, and Codex uses an existing OpenAI OAuth credential in the `quecto` credential store. Missing provider credentials filter out that provider's smoke scenario without failing unrelated smoke checks.
+Provider smoke runs only provider-specific scenarios with available credentials: OpenAI uses `OPENAI_API_KEY`, Anthropic uses `ANTHROPIC_API_KEY`, and Codex uses an existing OpenAI OAuth credential in the `quecto` credential store. Missing provider credentials filter out that provider's smoke scenario without failing unrelated smoke checks.
 
 Legacy real-LLM suites are still gated by `QUECTO_REAL_LLM=1`, but behavioral e2e coverage should prefer mocked provider responses so normal test runs do not incur provider costs.
 
@@ -751,8 +751,8 @@ Pre-push controls:
 
 Pre-merge controls (real-LLM lane):
 - `QUECTO_PROVIDER_SMOKE=1` enables `@provider-smoke` live provider checks (excluded by default)
-- `QUECTO_PROVIDERS_OPENAI_API_KEY` or `OPENAI_API_KEY` supplies the OpenAI API smoke credential
-- `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY` supplies the Anthropic API smoke credential
+- `OPENAI_API_KEY` supplies the OpenAI API smoke credential
+- `ANTHROPIC_API_KEY` supplies the Anthropic API smoke credential
 - An existing OpenAI OAuth credential in the `quecto` credential store enables the Codex smoke scenario
 - `QUECTO_REAL_LLM_TIMEOUT` timeout per real-LLM shard (default `12m`)
 - `QUECTO_REAL_LLM_SHARDS` shard count for real-LLM BDD (default `24`)
