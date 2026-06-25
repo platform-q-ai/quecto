@@ -96,23 +96,27 @@ impl App {
     }
 
     /// Send a command to the active sub-agent's own connection (#802). Returns
-    /// `true` if it was routed (a sub-agent is active with a live socket).
+    /// `true` only if it was actually enqueued onto a live matching sender.
+    ///
+    /// Enqueues synchronously with `try_send` rather than spawning a task per
+    /// call: independent tasks gave no ordering guarantee, so a routed `Abort`
+    /// could overtake the `Prompt` it was meant to cancel (#804 review). A
+    /// single bounded channel drained by the connection task now preserves
+    /// submit order. A missing/mismatched sender (older kernel, or the
+    /// connection task failed `Client::connect`) or a full channel returns
+    /// `false` so the caller can surface the dropped command rather than
+    /// reporting a phantom success.
     pub(super) fn send_to_active_subagent(&mut self, cmd: Command) -> bool {
         let Some(id) = self.active_agent_id.clone() else {
             return false;
         };
-        if let Some((conn_id, tx)) = &self.active_subagent_cmd_tx {
-            if conn_id == &id {
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let _ = tx.send(cmd).await;
-                });
-            }
+        let Some((conn_id, tx)) = &self.active_subagent_cmd_tx else {
+            return false;
+        };
+        if conn_id != &id {
+            return false;
         }
-        // Routed by virtue of a sub-agent being active, even when its socket is
-        // unknown (older kernel): the prompt belongs to that session, never the
-        // master, so we still report it as handled.
-        true
+        tx.try_send(cmd).is_ok()
     }
 
     // ── Selection / switching ──────────────────────────────────────────

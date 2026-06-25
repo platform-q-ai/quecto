@@ -265,13 +265,53 @@ fn normalize(line: &str) -> String {
 
 /// A `SubagentInfoEvent`, optionally carrying a workflow snapshot `(mode, done, total)`.
 pub fn subagent(id: &str, status: &str, wf: Option<(&str, u32, u32)>) -> SubagentInfoEvent {
+    subagent_with_socket(id, status, wf, None)
+}
+
+/// Bind a real, drained Unix socket for a sub-agent and return its path. The
+/// listener task accepts one connection and drains its lines, so a TUI
+/// `connect-on-select` to this path succeeds and the per-child command channel
+/// stays live (its receiver is NOT dropped) — letting routing tests exercise
+/// the real `try_send` delivery path rather than the older-kernel `None` case.
+pub fn spawn_subagent_socket(id: &str) -> std::path::PathBuf {
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "quecto-tui-harness-sub-{}-{}-{}",
+        std::process::id(),
+        id,
+        n
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let socket_path = dir.join("agent.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    tokio::spawn(async move {
+        // Loop accepting so reselecting the same agent (teardown + reconnect)
+        // still finds a live listener.
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(stream).lines();
+                while let Ok(Some(_line)) = lines.next_line().await {}
+            });
+        }
+    });
+    socket_path
+}
+
+/// A `SubagentInfoEvent` carrying an explicit `socket_path` (live connection).
+pub fn subagent_with_socket(
+    id: &str,
+    status: &str,
+    wf: Option<(&str, u32, u32)>,
+    socket_path: Option<std::path::PathBuf>,
+) -> SubagentInfoEvent {
     SubagentInfoEvent {
         agent_id: id.to_string(),
         status: status.to_string(),
         last_tool: None,
         last_error: None,
         pid: 0,
-        socket_path: None,
+        socket_path: socket_path.map(|p| p.to_string_lossy().into_owned()),
         parent_id: None,
         workflow: wf.map(|(mode, d, t)| SubagentWorkflow {
             mode: mode.to_string(),

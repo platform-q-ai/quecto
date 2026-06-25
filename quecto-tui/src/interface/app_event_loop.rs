@@ -376,9 +376,15 @@ impl App {
         // the panel (highlight move, digit-jump, commit, cancel) rather than the
         // editor. An open autocomplete already returned above, so Tab reaching
         // here is the focus toggle, never a completion.
+        // Guard on panel visibility: if every sub-agent left while focus was
+        // `Panel`, the panel handler would swallow all typing and lock out the
+        // editor — reset to `Input` so the editor stays usable (#804 review).
         if matches!(self.focus, Focus::Panel) {
-            self.handle_panel_focus_key(&key);
-            return;
+            if self.subagent_panel_visible() {
+                self.handle_panel_focus_key(&key);
+                return;
+            }
+            self.focus = Focus::Input;
         }
         // Tab toggles focus to the panel when it is visible (the autocomplete
         // popups consumed Tab above when active, preserving completion).
@@ -670,15 +676,21 @@ impl App {
         // transcript, never the master's.
         if self.active_agent_id.is_some() {
             let steer = self.active_subagent_running();
-            self.active_chat_mut().add_entry(ChatEntry::User {
-                text: text.to_string(),
-            });
             let cmd = Command::Prompt {
                 id: None,
                 message: text.to_string(),
                 streaming_behavior: steer.then(|| "steer".to_string()),
             };
-            self.send_to_active_subagent(cmd);
+            // Append the prompt to the sub-agent transcript ONLY when the route
+            // actually enqueued it (#804 review). On a failed route (no live
+            // sender / full channel) the prompt was never delivered, so showing
+            // it in the body would leave a User entry that the agent never
+            // answers — UI/state divergence.
+            if self.send_to_active_subagent(cmd) {
+                self.active_chat_mut().add_entry(ChatEntry::User {
+                    text: text.to_string(),
+                });
+            }
             return;
         }
 

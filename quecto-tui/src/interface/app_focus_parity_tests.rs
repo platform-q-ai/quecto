@@ -20,7 +20,16 @@ async fn harness_with_subagents(n: usize) -> TuiHarness {
     for i in 1..=n {
         let id = format!("a{i}");
         h.event(spawn_start(&id));
-        infos.push(subagent(&id, "running", Some(("active", 0, 3))));
+        // Give each sub-agent a live, drained socket so connect-on-commit
+        // succeeds and the per-child command channel stays live — routing tests
+        // then exercise the real `try_send` delivery path (#804 review).
+        let socket = spawn_subagent_socket(&id);
+        infos.push(subagent_with_socket(
+            &id,
+            "running",
+            Some(("active", 0, 3)),
+            Some(socket),
+        ));
     }
     h.event(subagents_changed(infos));
     h
