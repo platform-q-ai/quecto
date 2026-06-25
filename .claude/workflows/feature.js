@@ -10,6 +10,7 @@ export const meta = {
     { title: 'Ship', detail: 'Commit, push (full gate), open PR' },
     { title: 'PR Review', detail: 'Parallel Architecture/Security/Performance reviewers' },
     { title: 'Fix Reviews', detail: 'Triage findings, fix, push, resolve threads' },
+    { title: 'Conformance', detail: 'Systematic check the PR meets every issue acceptance criterion before merge' },
     { title: 'Merge', detail: 'Confirm gate, merge, sync local master, cleanup' },
   ],
 }
@@ -115,12 +116,47 @@ await agent(
   { label: 'fix-resolve', phase: 'Fix Reviews' }
 )
 
+// ── Conformance: systematic PR-vs-issue acceptance-criteria gate ────────────
+phase('Conformance')
+let conformance = await agent(
+  `Task: ${TASK}. PR: ${pr}\n\n` +
+  `SYSTEMATIC ACCEPTANCE REVIEW — a hard gate before merge. Read the ORIGINAL issue's acceptance ` +
+  `criteria (gh issue view the issue number referenced in TASK) and the PR diff (gh pr diff <PR>), and ` +
+  `inspect the actual branch code. For EVERY acceptance criterion, decide met / partial / unmet and cite ` +
+  `concrete file:line evidence — a criterion counts as met ONLY with evidence in the code, never on the ` +
+  `strength of the PR description's claims. Be skeptical. Do NOT modify code. Output a per-criterion table, ` +
+  `then a final line that is EXACTLY "CONFORMANCE: PASS" if every criterion is fully met, otherwise ` +
+  `"CONFORMANCE: FAIL" followed by the specific unmet/partial criteria.`,
+  { label: 'conformance', phase: 'Conformance' }
+)
+// On FAIL, run one targeted fix round against the unmet criteria, then re-verify.
+if (/CONFORMANCE:\s*FAIL/i.test(conformance)) {
+  log('Conformance FAIL — fixing unmet acceptance criteria, then re-verifying before merge.')
+  await agent(
+    `Task: ${TASK}. PR: ${pr}\n\n` +
+    `The systematic acceptance review FAILED:\n${conformance}\n\n` +
+    `Fix ONLY the unmet/partial acceptance criteria in the same branch; keep changes minimal; push (the ` +
+    `full pre-push gate must pass). Do NOT merge.`,
+    { label: 'conformance-fix', phase: 'Conformance' }
+  )
+  conformance = await agent(
+    `Task: ${TASK}. PR: ${pr}\n\n` +
+    `Re-run the systematic acceptance review after the fix round, same rules: verify each issue criterion ` +
+    `against the branch code with file:line evidence; end with EXACTLY "CONFORMANCE: PASS" or ` +
+    `"CONFORMANCE: FAIL" + the remaining gaps. Do NOT modify code.`,
+    { label: 'conformance-recheck', phase: 'Conformance' }
+  )
+}
+
 // ── Merge, sync, cleanup ───────────────────────────────────────────────────
 phase('Merge')
 const result = await agent(
   `Task: ${TASK}. PR: ${pr}\n\n` +
+  `Acceptance-conformance verdict:\n${conformance}\n\n` +
   `STEP — Confirm the pre-push gate passed in full (coverage threshold, real-LLM, machete, deny) and the ` +
-  `CI Smoke Test is green. GUARD: review and gate must be done before merging.\n` +
+  `required CI checks are green. GUARD: do NOT merge unless (a) all review findings are addressed AND ` +
+  `(b) the conformance verdict above is "CONFORMANCE: PASS". If conformance is FAIL, do NOT merge — ` +
+  `report the unmet criteria and stop.\n` +
   `STEP — Merge with: gh pr merge <PR> --merge --auto --delete-branch (auto-merge waits for the required ` +
   `Smoke Test). The default branch is protected with enforce_admins; do not force or bypass.\n` +
   `STEP — Move to local master: git checkout master && git pull --ff-only to sync the merge.\n` +
