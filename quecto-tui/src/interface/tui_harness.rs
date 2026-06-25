@@ -14,7 +14,9 @@
 //! the chat, so that's what the harness records.
 
 use super::App;
+use super::Focus;
 use super::app_methods::strip_ansi;
+use super::keys::Key;
 use crate::infrastructure::client::{Client, Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::infrastructure::terminal::Terminal;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -201,6 +203,76 @@ impl TuiHarness {
     /// Escape hatch for driving fields the event API doesn't cover.
     pub fn app_mut(&mut self) -> &mut App {
         &mut self.app
+    }
+
+    // ── High-level driving surface for the workspace `bdd` target (#805) ──
+    // These wrap crate-internal `App` methods so external integration tests can
+    // drive the real render/key path without touching `pub(super)` internals.
+
+    /// Feed one key through the real key handler and capture the frame.
+    pub fn press(&mut self, key: Key) -> &mut Self {
+        self.app.handle_key(key);
+        self.capture();
+        self
+    }
+
+    /// Select an agent's session (`None` = master) and capture the frame.
+    pub fn select(&mut self, agent_id: Option<&str>) -> &mut Self {
+        self.app.select_agent(agent_id);
+        self.capture();
+        self
+    }
+
+    /// Route one event from a sub-agent's direct connection into its session.
+    pub fn route(&mut self, agent_id: &str, ev: Event) -> &mut Self {
+        self.app.route_subagent_event(agent_id, ev);
+        self.capture();
+        self
+    }
+
+    /// Submit a prompt through the real submit path (steers the active session).
+    pub fn submit(&mut self, text: &str) -> &mut Self {
+        self.app.handle_submit(text);
+        self.capture();
+        self
+    }
+
+    /// Abort through the real abort path (targets the active session).
+    pub fn abort(&mut self) -> &mut Self {
+        self.app.handle_abort();
+        self.capture();
+        self
+    }
+
+    /// Whether keyboard focus is currently on the side panel (vs. the input).
+    pub fn focus_on_panel(&self) -> bool {
+        self.app.focus_region() == Focus::Panel
+    }
+
+    /// The 0-based panel highlight index.
+    pub fn highlight(&self) -> usize {
+        self.app.panel_highlight_index()
+    }
+
+    /// The active agent's id (`None` = master).
+    pub fn active_agent(&self) -> Option<String> {
+        self.app.active_agent_id().map(str::to_string)
+    }
+
+    /// The full screen frame (ANSI-stripped), joined into one string.
+    pub fn full_frame(&mut self) -> String {
+        self.app
+            .compose_frame()
+            .iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The full screen frame WITH ANSI styling, joined into one string — for
+    /// asserting style changes (e.g. the focus-highlighted divider).
+    pub fn full_frame_raw(&mut self) -> String {
+        self.app.compose_frame().join("\n")
     }
 
     pub async fn drain_commands(&mut self) -> Vec<String> {

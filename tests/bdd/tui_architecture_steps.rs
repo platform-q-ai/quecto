@@ -855,13 +855,30 @@ fn then_show_session_stats_delegates(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the quecto-tui footer context-usage update should appear once in app_methods")]
+#[then("the quecto-tui session-stats footer mapping should live in a single Footer owner")]
 fn then_footer_update_appears_once(_world: &mut QuectoWorld) {
-    let content = tui_read("interface/app_methods.rs");
+    // The session-stats -> footer mapping (context-usage + cost gate) is owned by
+    // Footer::apply_session_stats so the master and per-session sub-agent footer
+    // paths share one source of truth (#805). It must not be re-inlined in
+    // app_methods; the caller delegates to apply_session_stats instead.
+    let methods = tui_read("interface/app_methods.rs");
     assert_eq!(
-        count_occurrences(&content, "self.footer.update_context_usage("),
+        count_occurrences(&methods, "self.footer.update_context_usage("),
+        0,
+        "session-stats footer mapping must not be inlined in app_methods; \
+         delegate to Footer::apply_session_stats"
+    );
+    let body = rust_fn_body(&methods, "update_footer_stats")
+        .expect("update_footer_stats must exist in app_methods.rs");
+    assert!(
+        body.contains("apply_session_stats"),
+        "update_footer_stats should delegate to Footer::apply_session_stats"
+    );
+    let footer = tui_read("interface/components/footer.rs");
+    assert_eq!(
+        count_occurrences(&footer, "pub fn apply_session_stats("),
         1,
-        "footer context-usage update logic must live in a single owner (update_footer_stats)"
+        "Footer::apply_session_stats must be the single owner of the stats->footer mapping"
     );
 }
 

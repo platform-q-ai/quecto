@@ -5,6 +5,12 @@ edition = "2024"
 description = "Lightweight terminal UI client for quecto"
 license = "LicenseRef-Proprietary"
 
+[features]
+# Exposes the headless render harness (`interface::app::tui_harness`) and a few
+# read-only App accessors to integration tests in the workspace `bdd` target so
+# they can drive the real render/key path without a TTY (#805).
+test-harness = []
+
 [dependencies]
 # Async runtime — UDS client + stdin reader
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-util", "io-std", "sync", "net"] }

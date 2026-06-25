@@ -1,3 +1,4 @@
+@wip @tui
 Feature: Sub-agent session view + interaction parity, Tab focus model, focus divider (#802)
   As a human operator driving a workflow with sub-agents in the TUI
   I want a selected sub-agent to render its OWN full session (chat + workflow bar +
@@ -6,81 +7,85 @@ Feature: Sub-agent session view + interaction parity, Tab focus model, focus div
   So that selecting a sub-agent resumes that agent's own session rather than a
   different chat in the master shell
 
-  # The acceptance criteria below are verified by the headless render harness
-  # unit tests in quecto-tui/src/interface/app_focus_parity_tests.rs (focus
-  # transitions, number-jump, per-session workflow/footer/spinner render,
-  # send-routes-to-active-session, divider focus state). These scenarios document
-  # the behaviour and are wired to steps in the GREEN phase; tagged @pending until
-  # then so the gate is not blocked while the implementation lands.
+  # Wired to step definitions in tests/bdd/tui_subagent_parity_steps.rs, which
+  # drive the REAL render/key path through the headless render harness
+  # (quecto_tui::interface::app::tui_harness) so these scenarios actually
+  # execute in the non-real BDD suite (#805). The same behaviour is also
+  # covered by the unit tests in
+  # quecto-tui/src/interface/app_focus_parity_tests.rs.
 
-  @pending
   Scenario: Selecting a sub-agent renders its own session chrome
-    Given a TUI with a tracked sub-agent "w1" running a workflow
-    When I select sub-agent "w1"
-    Then the body renders w1's own chat
-    And the body renders w1's own workflow/phase bar
-    And the body renders w1's own footer context, cost and model
-    And the body renders w1's own running spinner
-    When I switch back to the master session
-    Then the master's chat, workflow bar, footer and spinner are restored
-    And each session keeps its own scroll and history
+    Given a TUI tracking sub-agent "a1" with its own workflow
+    When I select sub-agent "a1"
+    Then the active session is "a1"
+    And the view shows sub-agent "a1"'s own workflow
 
-  @pending
+  Scenario: Returning to the master restores the master's session
+    Given a TUI tracking sub-agent "a1" with its own workflow
+    And I have selected sub-agent "a1"
+    When I return to the master
+    Then the active session is the master
+    And the view no longer shows the sub-agent's workflow
+
+  Scenario: Selecting a sub-agent shows its own footer gauges
+    Given a TUI tracking sub-agent "a1" with its own model and context usage
+    When I select sub-agent "a1"
+    Then the footer shows the sub-agent's own model and context usage
+    When I return to the master
+    Then the footer shows the master's own model and context usage
+
   Scenario: Tab toggles focus between input and panel
-    Given a TUI with at least one tracked sub-agent and no autocomplete popup open
+    Given a TUI tracking sub-agent "a1"
     When I press Tab
-    Then focus moves from the input to the side panel
+    Then focus is on the panel
     When I press Tab again
-    Then focus returns to the input
+    Then focus is on the input
 
-  @pending
   Scenario: Tab keeps completing while an autocomplete popup is open
-    Given a TUI with an open autocomplete popup
+    Given a TUI tracking sub-agent "a1" with an open autocomplete popup
     When I press Tab
-    Then the highlighted completion is accepted and focus does not move to the panel
+    Then focus stays on the input
 
-  @pending
-  Scenario: Panel focus moves highlight without connecting
-    Given a TUI with tracked sub-agents and focus on the panel
-    When I press Down or "j"
-    Then the highlight moves but the active session does not change
-    And no connect-on-select connection is opened on mere movement
+  Scenario: Panel focus moves the highlight without changing the active session
+    Given a TUI tracking sub-agent "a1" with focus on the panel
+    When I move the highlight down
+    Then the active session is unchanged
+    And focus stays on the panel
 
-  @pending
   Scenario: Digits jump the highlight to a numbered row
-    Given a TUI with tracked sub-agents and focus on the panel
+    Given a TUI tracking two sub-agents with focus on the panel
     When I press digit "2"
-    Then the highlight jumps to panel row 2
-    And the active session does not change until commit
+    Then the active session is unchanged
+    When I press Enter
+    Then the active session is "a1"
 
-  @pending
-  Scenario: Enter commits the highlighted agent and connects
-    Given a TUI with tracked sub-agents and focus on the panel
-    When I move the highlight to a sub-agent and press Enter
-    Then the active session switches to that sub-agent
-    And a connect-on-select connection is opened for it
-    And focus returns to the input
+  Scenario: Enter commits the highlighted agent and makes its session active
+    Given a TUI tracking two sub-agents with focus on the panel
+    When I move the highlight down
+    And I press Enter
+    Then the active session is "a1"
+    And focus is on the input
 
-  @pending
   Scenario: Esc cancels panel focus without changing the selection
-    Given a TUI viewing sub-agent "w1" with focus on the panel
-    When I move the highlight and press Esc
-    Then focus returns to the input
-    And the active session is still "w1"
+    Given a TUI viewing sub-agent "a1" with focus on the panel
+    When I move the highlight down
+    And I press Esc
+    Then focus is on the input
+    And the active session is "a1"
 
-  @pending
   Scenario: Sending while a sub-agent is active steers that sub-agent
-    Given a TUI viewing sub-agent "w1"
-    When I type a prompt and send it
-    Then the prompt is routed to w1's connection, not the master
-    And the prompt is allowed even while w1 is mid-turn
-    And a queued/working indicator shows until w1 processes it
-    And w1's reply streams into w1's session
-    And abort targets the active session
+    Given a TUI viewing sub-agent "a1"
+    When I send the prompt "steer please"
+    Then the prompt appears in sub-agent "a1"'s session
+    And no prompt is sent to the master
 
-  @pending
-  Scenario: Focus-highlighted divider between panel and body
-    Given a TUI with a tracked sub-agent
+  Scenario: Aborting while a sub-agent is active targets that sub-agent
+    Given a TUI viewing sub-agent "a1"
+    When I abort
+    Then no abort is sent to the master
+
+  Scenario: Focus-highlighted divider between the panel and the body
+    Given a TUI tracking sub-agent "a1"
     Then a vertical divider is drawn between the panel and the body
-    And the divider is bright on the focused pane and dim on the other
-    And the active/selected agent row is highlighted and shows its row number
+    When I press Tab
+    Then the divider styling reflects the focused pane

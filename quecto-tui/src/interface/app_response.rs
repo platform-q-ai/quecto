@@ -77,13 +77,15 @@ impl App {
 
     fn handle_get_state(&mut self, data: Option<serde_json::Value>) {
         let Some(data) = data else { return };
-        if let Some(model) = data.get("model").and_then(|m| m.as_str()) {
-            let sanitized = crate::interface::ansi::sanitize_control(model);
-            self.footer.set_model(&sanitized);
-            self.current_model = Some(sanitized);
+        // Shared get_state→footer mapping (model + context-window); see #805.
+        if let Some(model) = self.footer.apply_get_state(&data) {
+            self.current_model = Some(model);
         }
-        if let Some(max_ctx) = data.get("maxContextTokens").and_then(|v| v.as_u64()) {
-            self.footer.set_context_window(max_ctx as usize);
+        if data
+            .get("maxContextTokens")
+            .and_then(|v| v.as_u64())
+            .is_some()
+        {
             self.context_stats_requested = true;
         }
         // Learn the connected agent's own id from its sessionKey ("cli:<name>").

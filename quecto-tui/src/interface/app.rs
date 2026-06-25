@@ -207,14 +207,21 @@ pub(crate) struct SessionView {
     /// Whether the child is mid-turn — drives a per-session working indicator so
     /// a steered sub-agent never looks dead while it processes a queued prompt.
     running: bool,
+    /// The child's OWN status footer — context-window / cost / model gauges, fed
+    /// by its forwarded `get_state` / `turn_end` / session-stats events so a
+    /// selected sub-agent shows ITS usage, not the master's (#805).
+    footer: Footer,
 }
 
 impl SessionView {
-    fn new() -> Self {
+    fn new(git_branch: Option<String>) -> Self {
+        let mut footer = Footer::new();
+        footer.set_git_branch(git_branch);
         Self {
             chat: Chat::new(),
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             running: false,
+            footer,
         }
     }
 }
@@ -718,9 +725,11 @@ mod subagent_selection_tests;
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
-#[cfg(test)]
+// The headless render harness is also exposed (read-only driving surface) to the
+// workspace `bdd` integration target via the `test-harness` feature (#805).
+#[cfg(any(test, feature = "test-harness"))]
 #[path = "tui_harness.rs"]
-mod tui_harness;
+pub mod tui_harness;
 #[cfg(test)]
 #[path = "tui_harness_tests.rs"]
 mod tui_harness_tests;

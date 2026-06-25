@@ -110,7 +110,7 @@ Feature: TUI Clean Architecture and executable BDD enforcement
   @issue-759
   Scenario: TUI footer stats update has a single owner
     Then the quecto-tui show_session_stats should delegate to update_footer_stats
-    And the quecto-tui footer context-usage update should appear once in app_methods
+    And the quecto-tui session-stats footer mapping should live in a single Footer owner
 
   @issue-759
   Scenario: TUI slash and file autocomplete share one suggestion list

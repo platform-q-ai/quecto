@@ -159,15 +159,11 @@ impl App {
     /// payload without emitting a chat entry.
     pub(super) fn update_footer_stats(&mut self, data: &serde_json::Value) {
         let stats = session_payloads::parse_session_stats(data);
-        if let Some((used, window)) = stats.context_usage {
-            self.footer.update_context_usage(used, window);
+        if stats.context_usage.is_some() {
             self.context_stats_requested = true;
         }
-        self.footer.set_cost(if stats.cost > 0.0 {
-            Some(stats.cost)
-        } else {
-            None
-        });
+        // Shared session-stats→footer mapping (context + cost gate); see #805.
+        self.footer.apply_session_stats(&stats);
     }
 
     pub(super) fn send_list_sessions(&mut self) {
@@ -375,8 +371,10 @@ impl App {
         bottom.extend(self.editor.render(width));
         // Notifications.
         bottom.extend(self.notifications.render(width));
-        // Footer.
-        bottom.extend(self.footer.render(width));
+        // Footer — render the ACTIVE session's gauges (master's own, or the
+        // selected sub-agent's context-window / cost / model), so a selected
+        // sub-agent shows ITS usage rather than the master's (#805).
+        bottom.extend(self.active_footer_render(width));
 
         bottom
     }

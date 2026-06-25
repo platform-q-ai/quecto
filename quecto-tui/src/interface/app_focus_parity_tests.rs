@@ -248,3 +248,118 @@ async fn divider_brightens_on_focused_pane() {
         "the divider styling must differ between input-focused and panel-focused"
     );
 }
+
+// ── Goal 1: full VIEW parity (per-session FOOTER render) ─────────────────
+
+#[tokio::test]
+async fn footer_reflects_active_session() {
+    // #805 Gap 1 / Criterion 1: the footer's context-window / cost / model
+    // gauges must reflect the ACTIVE session. A selected sub-agent must show
+    // ITS OWN footer (fed by its forwarded get_state / turn_end / session-stats
+    // events), and switching back to master must restore the master's footer.
+    //
+    // Today `compose_bottom` always renders `self.footer` (the master's), and
+    // `route_subagent_event` never updates a sub-agent's footer — so a selected
+    // sub-agent shows the MASTER's gauges. These assertions are expected to FAIL
+    // until the per-session footer lands (RED).
+    let mut h = harness_with_subagents(1).await;
+
+    // Master footer: distinct model + context usage (50.0% of a 200k window).
+    h.event(Event::Response {
+        id: None,
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({
+            "model": "mastrmdl",
+            "maxContextTokens": 200_000,
+        })),
+        error: None,
+    });
+    h.event(Event::TurnEnd {
+        message: serde_json::json!({
+            "contextTokens": 100_000,
+            "maxContextTokens": 200_000,
+        }),
+        tool_results: vec![],
+    });
+
+    // Sub-agent a1's OWN footer, delivered over its direct connection: a
+    // distinct model, a different context usage (25.0%), and a session cost.
+    h.app_mut().route_subagent_event(
+        "a1",
+        Event::Response {
+            id: None,
+            command: "get_state".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "model": "subbymdl",
+                "maxContextTokens": 200_000,
+            })),
+            error: None,
+        },
+    );
+    h.app_mut().route_subagent_event(
+        "a1",
+        Event::TurnEnd {
+            message: serde_json::json!({
+                "contextTokens": 50_000,
+                "maxContextTokens": 200_000,
+            }),
+            tool_results: vec![],
+        },
+    );
+    h.app_mut().route_subagent_event(
+        "a1",
+        Event::Response {
+            id: None,
+            command: "get_session_stats".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "cost": 0.0777,
+                "contextTokens": 50_000,
+                "maxContextTokens": 200_000,
+            })),
+            error: None,
+        },
+    );
+
+    // With the sub-agent active the footer must show ITS gauges, not master's.
+    h.app_mut().select_agent(Some("a1"));
+    let on_sub = frame_text(&mut h);
+    assert!(
+        on_sub.contains("50k"),
+        "active sub-agent footer must show its own context usage (50k), got:\n{on_sub}"
+    );
+    assert!(
+        on_sub.contains("subbymdl"),
+        "active sub-agent footer must show its own model, got:\n{on_sub}"
+    );
+    assert!(
+        on_sub.contains("$0.0777"),
+        "active sub-agent footer must show its own session cost, got:\n{on_sub}"
+    );
+    assert!(
+        !on_sub.contains("mastrmdl"),
+        "the master's model must NOT show while a sub-agent is active, got:\n{on_sub}"
+    );
+    assert!(
+        !on_sub.contains("100k"),
+        "the master's context usage (100k) must NOT show while a sub-agent is active, got:\n{on_sub}"
+    );
+
+    // Switching back to master must restore the master's footer.
+    h.app_mut().select_agent(None);
+    let on_master = frame_text(&mut h);
+    assert!(
+        on_master.contains("100k") && on_master.contains("mastrmdl"),
+        "master footer must be restored (100k + mastrmdl), got:\n{on_master}"
+    );
+    assert!(
+        !on_master.contains("50k"),
+        "the sub-agent's context usage (50k) must NOT show while master is active, got:\n{on_master}"
+    );
+    assert!(
+        !on_master.contains("subbymdl") && !on_master.contains("$0.0777"),
+        "the sub-agent's footer must NOT show while master is active, got:\n{on_master}"
+    );
+}
