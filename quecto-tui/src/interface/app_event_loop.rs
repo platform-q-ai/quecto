@@ -154,6 +154,12 @@ impl App {
                     self.handle_command_send_failure(failure);
                     self.render();
                 }
+                // Events fanned in from the active sub-agent's direct
+                // connect-on-select connection (#800).
+                Some((agent_id, ev)) = self.subagent_event_rx.recv() => {
+                    self.route_subagent_event(&agent_id, ev);
+                    self.render();
+                }
                 Some(files) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;
                     self.files_autocomplete.apply_loaded_files(files);
@@ -271,11 +277,6 @@ impl App {
         if !matches!(key, Key::Escape) {
             self.last_idle_escape = None;
         }
-        // Reset the double-Up arming on any non-Up key so an Up, an edit, then
-        // an Up does not spuriously open the inspector (#795).
-        if !matches!(key, Key::Up) {
-            self.last_up_press = None;
-        }
 
         // Unconditional exit — Ctrl+D must work regardless of overlays,
         // autocomplete state, or agent activity (#478).
@@ -284,14 +285,6 @@ impl App {
                 self.handle_abort();
             }
             self.should_exit = true;
-            return;
-        }
-
-        // If the sub-agent inspector is open, it claims all input first (#795).
-        if self.inspector_open() {
-            self.last_idle_escape = None;
-            self.last_up_press = None;
-            self.handle_subagent_inspector_key(&key);
             return;
         }
 
@@ -396,6 +389,13 @@ impl App {
                 return;
             }
             Key::Escape => {
+                // When viewing a sub-agent's session, Esc returns to the master
+                // session before any abort/rewind handling (#800).
+                if self.active_agent_id.is_some() {
+                    self.last_idle_escape = None;
+                    self.select_agent(None);
+                    return;
+                }
                 if self.agent_state.is_running() {
                     self.last_idle_escape = None;
                     self.handle_abort();
@@ -515,11 +515,22 @@ impl App {
             _ => {}
         }
 
-        // Double-Up opens the sub-agent inspector when sub-agents are tracked;
-        // a single Up (or any Up while typing) falls through to the editor's
-        // history/cursor navigation unchanged (#795).
-        if matches!(key, Key::Up) && self.try_open_inspector_on_up() {
-            return;
+        // When the sub-agent panel is visible and the editor is empty, Up/Down
+        // move the panel selection and switch the active session (#800). With a
+        // non-empty editor the keys fall through to cursor/history navigation,
+        // so typing is never hijacked.
+        if self.subagent_panel_visible() && self.editor.text().is_empty() {
+            match key {
+                Key::Up => {
+                    self.panel_select_previous();
+                    return;
+                }
+                Key::Down => {
+                    self.panel_select_next();
+                    return;
+                }
+                _ => {}
+            }
         }
 
         // Forward to editor.

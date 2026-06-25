@@ -217,6 +217,11 @@ pub struct SubagentInfoEvent {
     pub last_tool: Option<String>,
     pub last_error: Option<String>,
     pub pid: u32,
+    /// Path to this sub-agent's own UDS socket, used to open a direct
+    /// connect-on-select connection to its live stream (#800). `None` when the
+    /// kernel did not surface it (older servers / non-local agents).
+    #[serde(default)]
+    pub socket_path: Option<String>,
     /// Spawning agent's id, for reconstructing the unit tree (PRD Stage B).
     #[serde(default)]
     pub parent_id: Option<String>,

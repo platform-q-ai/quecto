@@ -255,6 +255,7 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
             last_tool: None,
             last_error: None,
             pid: 0,
+            socket_path: None,
             parent_id: None,
             workflow: None,
         }],
@@ -357,6 +358,7 @@ async fn handles_subagent_workflow_and_error_events() {
         last_tool: Some("read".into()),
         last_error: None,
         pid: 42,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     };

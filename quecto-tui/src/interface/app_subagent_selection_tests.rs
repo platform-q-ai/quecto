@@ -9,6 +9,7 @@ fn make_tracked(id: &str, status: &str) -> (String, super::TrackedSubagent) {
             last_tool: None,
             last_error: None,
             pid: 0,
+            socket_path: None,
             parent_id: None,
             workflow: None,
         }),
@@ -123,6 +124,7 @@ fn tracked_subagent_new_sets_exited_at_for_exited() {
         last_tool: None,
         last_error: None,
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     });
@@ -137,6 +139,7 @@ fn tracked_subagent_new_no_exited_at_for_running() {
         last_tool: None,
         last_error: None,
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     });
@@ -151,6 +154,7 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
         last_tool: None,
         last_error: None,
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     });
@@ -162,6 +166,7 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
         last_tool: None,
         last_error: None,
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     });
@@ -176,6 +181,7 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
         last_tool: None,
         last_error: None,
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     });
@@ -187,6 +193,7 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
         last_tool: None,
         last_error: None,
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     });
@@ -287,6 +294,7 @@ fn mk_info(id: &str, status: &str) -> crate::infrastructure::client::SubagentInf
         last_tool: None,
         last_error: None,
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     }

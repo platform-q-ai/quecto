@@ -31,6 +31,7 @@ fn given_bar_with_agents(world: &mut QuectoWorld, step: &cucumber::gherkin::Step
                 Some(row[3].clone())
             },
             pid: 0,
+            socket_path: None,
             parent_id: None,
             workflow: None,
         })
