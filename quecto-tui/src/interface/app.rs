@@ -186,6 +186,11 @@ pub struct App {
     /// The agent id of the currently-open connect-on-select connection and a
     /// handle to abort its forwarding task on deselect/teardown (#800).
     active_conn: Option<(String, tokio::task::JoinHandle<()>)>,
+    /// Debounced connect-on-select: the selected agent id and the instant at
+    /// which its UDS connection should actually open. Re-armed on every
+    /// selection change so key-repeat scrolling across rows opens (and aborts)
+    /// at most one connection — the one the cursor settles on (#800 review).
+    pending_conn: Option<(String, tokio::time::Instant)>,
 }
 
 /// Per-sub-agent session state for the multi-session UI (#800). Holds the
@@ -206,6 +211,11 @@ const SUBAGENT_PANEL_WIDTH: usize = 26;
 
 /// Maximum retained sub-agent sessions before the oldest non-active is evicted.
 const MAX_RETAINED_SESSIONS: usize = 16;
+
+/// Settle window before a selected sub-agent's connect-on-select UDS
+/// connection actually opens. Debounces key-repeat scrolling so passing over
+/// a row does not connect/abort its socket or fire a history backfill (#800).
+const CONNECT_DEBOUNCE: Duration = Duration::from_millis(160);
 
 struct CommandSendFailure {
     command_kind: &'static str,
@@ -269,6 +279,7 @@ impl App {
             subagent_event_tx,
             subagent_event_rx,
             active_conn: None,
+            pending_conn: None,
         }
     }
 

@@ -133,6 +133,9 @@ impl App {
                     if self.tick_subagent_animation() {
                         needs_render = true;
                     }
+                    // Open a debounced connect-on-select connection once the
+                    // panel selection has settled (#800 review).
+                    self.poll_pending_subagent_connection();
                     // Kitty fallback — enable modifyOtherKeys if no response.
                     if !kitty_fallback_done && tokio::time::Instant::now() >= kitty_deadline {
                         if !self.kitty.active {

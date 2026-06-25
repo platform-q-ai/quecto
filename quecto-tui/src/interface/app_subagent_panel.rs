@@ -76,12 +76,49 @@ impl App {
         self.sync_panel_selection_to_active();
 
         let Some(id) = new_active else {
+            // Master selected: nothing to dial, drop any pending connect.
+            self.pending_conn = None;
             return;
         };
         // Ensure a session exists (retained for later viewing).
         self.ensure_session(&id);
-        // Open the connect-on-select connection if the kernel surfaced a socket.
-        self.open_subagent_connection(&id);
+        // Defer the connect-on-select connection behind a settle timer so that
+        // key-repeat scrolling across rows does not open and immediately abort
+        // a socket (and fire a history backfill) for every row passed over
+        // (#800 review). `poll_pending_subagent_connection` opens it once the
+        // cursor lands.
+        self.pending_conn = Some((id, tokio::time::Instant::now() + CONNECT_DEBOUNCE));
+    }
+
+    /// Open the deferred connect-on-select connection once its debounce window
+    /// has elapsed (driven by the spinner tick). No-op while the selection is
+    /// still settling or when nothing is pending (#800 review).
+    pub(super) fn poll_pending_subagent_connection(&mut self) {
+        let Some((_, at)) = &self.pending_conn else {
+            return;
+        };
+        if tokio::time::Instant::now() < *at {
+            return;
+        }
+        let (id, _) = self.pending_conn.take().expect("pending checked above");
+        // The selection may have moved on; only dial the still-active agent.
+        if self.active_agent_id.as_deref() == Some(id.as_str()) {
+            self.open_subagent_connection(&id);
+        }
+    }
+
+    /// Reconcile the active/pending session when the viewed sub-agent leaves
+    /// the live list (e.g. it exited and its grace period elapsed). The panel
+    /// only lists tracked agents, so an `active_agent_id` that is no longer
+    /// tracked would leave the body rendering a session with no matching panel
+    /// row — and the panel itself may have vanished. Fall back to the master so
+    /// body and panel always agree (#800 review).
+    fn reconcile_active_agent(&mut self) {
+        if let Some(active) = self.active_agent_id.clone() {
+            if !self.subagent_local.contains_key(&active) {
+                self.select_agent(None);
+            }
+        }
     }
 
     /// Create the session for `id` if missing, recording retention order and
@@ -142,6 +179,9 @@ impl App {
     /// Keep the panel cursor pointing at the active agent (or the master row)
     /// after the underlying list changes.
     pub(super) fn clamp_panel_selection(&mut self) {
+        // If the active agent dropped out of the live list, fall back to the
+        // master before reconciling the cursor (#800 review).
+        self.reconcile_active_agent();
         let rows = self.panel_rows();
         self.panel_nav.clamp(rows.len());
         self.sync_panel_selection_to_active_with(&rows);
@@ -210,6 +250,14 @@ impl App {
     /// `SessionView`, mirroring the master render path so the body is visibly
     /// equivalent to how the master renders (#800).
     pub(super) fn route_subagent_event(&mut self, agent_id: &str, ev: Event) {
+        // Tearing down a connection mid-stream can leave already-queued
+        // `(old_id, ev)` items in `subagent_event_rx`. Drop events for agents
+        // that are neither still tracked nor have a retained session, so a
+        // stale frame cannot resurrect a session `evict_retained_sessions`
+        // just dropped (#800 review).
+        if !self.sessions.contains_key(agent_id) && !self.subagent_local.contains_key(agent_id) {
+            return;
+        }
         self.ensure_session(agent_id);
         let Some(session) = self.sessions.get_mut(agent_id) else {
             return;

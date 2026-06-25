@@ -259,6 +259,60 @@ async fn switching_updates_body_and_preserves_each_session() {
 }
 
 #[tokio::test]
+async fn active_resets_to_master_when_viewed_agent_leaves_the_list() {
+    // #800 review: when the viewed sub-agent exits and drops out of the live
+    // list, the panel only lists tracked agents, so body and panel must agree —
+    // the active session falls back to the master.
+    let mut h = with_two_subagents().await;
+    h.app_mut().select_agent(Some("worker"));
+    assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
+    // Only "worker" exits; "other" remains so the panel stays visible.
+    h.event(subagents_changed(vec![subagent(
+        "other",
+        "running",
+        Some(("active", 2, 3)),
+    )]));
+    assert_eq!(
+        h.app_mut().active_agent_id(),
+        None,
+        "a viewed agent leaving the live list must reset the body to the master"
+    );
+
+    // And when the *only* agent leaves (panel vanishes), active must still be
+    // the master — never a dangling sub-agent id with no panel.
+    h.app_mut().select_agent(Some("other"));
+    assert_eq!(h.app_mut().active_agent_id(), Some("other"));
+    h.event(subagents_changed(vec![]));
+    assert!(!h.app_mut().subagent_panel_visible());
+    assert_eq!(
+        h.app_mut().active_agent_id(),
+        None,
+        "with the panel gone the body must be the master, not a hidden session"
+    );
+}
+
+#[tokio::test]
+async fn stale_event_for_untracked_agent_does_not_create_a_session() {
+    // #800 review: a frame queued from a torn-down connection must not
+    // resurrect (or newly create) a session for an agent that is neither
+    // tracked nor retained.
+    let mut h = with_two_subagents().await;
+    h.app_mut().route_subagent_event(
+        "ghost",
+        Event::Token {
+            token: "STALE".into(),
+        },
+    );
+    assert!(
+        !h.app_mut()
+            .retained_session_ids()
+            .iter()
+            .any(|id| id == "ghost"),
+        "a stale event for an untracked agent must be dropped, not create a session"
+    );
+}
+
+#[tokio::test]
 async fn tui_consumes_socket_path_from_the_wire() {
     // The single sanctioned kernel change surfaces `socketPath`; prove the TUI
     // deserializes and stores it (the value connect-on-select dials), via the
