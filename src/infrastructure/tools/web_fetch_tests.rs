@@ -138,7 +138,17 @@ fn test_decode_entities_in_text() {
     assert_eq!(decode_entities("&#65;"), "A");
 }
 
-// ─── Truncation ──────────────────────────────────────────────────────────
+#[test]
+fn test_tags_to_text_preserves_non_ascii() {
+    let html = "<p>café résumé naïve</p>";
+    assert_eq!(tags_to_text(html), "\ncafé résumé naïve\n");
+}
+
+#[test]
+fn test_decode_entities_preserves_non_ascii() {
+    assert_eq!(decode_entities("&#233;"), "é");
+    assert_eq!(decode_entities("café"), "café");
+}
 
 #[test]
 fn test_truncate_utf8_ascii() {

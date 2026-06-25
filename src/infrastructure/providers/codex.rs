@@ -208,11 +208,11 @@ impl CodexProvider {
             "tool_choice": "auto",
             "parallel_tool_calls": true,
             "reasoning": {
-                "effort": "medium",
+                "effort": request.effort.map_or("medium", |e| e.as_str()),
                 "summary": "auto",
             },
             "text": {
-                "verbosity": "medium",
+                "verbosity": request.effort.map_or("medium", |e| e.as_str()),
             },
             "include": ["reasoning.encrypted_content"],
         });

@@ -200,6 +200,10 @@ fn render_templates(templates: Vec<WorkflowTemplateSummary>) -> String {
     out
 }
 
+fn truncate_at_100(s: &str) -> String {
+    s.chars().take(100).collect()
+}
+
 fn parse_step(args: &serde_json::Value) -> Result<u32, String> {
     let val = args.get("step").ok_or("missing field: step")?;
     if let Some(n) = val.as_u64() {
@@ -209,12 +213,15 @@ fn parse_step(args: &serde_json::Value) -> Result<u32, String> {
         return Ok(n as u32);
     }
     if let Some(s) = val.as_str() {
-        let display = if s.len() > 100 { &s[..100] } else { s };
+        let display = truncate_at_100(s);
         return s
             .parse::<u32>()
             .map_err(|_| format!("invalid step value: {}", display));
     }
-    Err(format!("invalid step value: {}", val))
+    Err(format!(
+        "invalid step value: {}",
+        truncate_at_100(&val.to_string())
+    ))
 }
 
 fn parse_issue(args: &serde_json::Value) -> Result<(u32, String), String> {
@@ -232,11 +239,14 @@ fn parse_optional_issue(args: &serde_json::Value) -> Result<Option<(u32, String)
         }
         n as u32
     } else if let Some(s) = val.as_str() {
-        let display = if s.len() > 100 { &s[..100] } else { s };
+        let display = truncate_at_100(s);
         s.parse::<u32>()
             .map_err(|_| format!("invalid issueNumber: {}", display))?
     } else {
-        return Err(format!("invalid issueNumber: {}", val));
+        return Err(format!(
+            "invalid issueNumber: {}",
+            truncate_at_100(&val.to_string())
+        ));
     };
     let title = args
         .get("issueTitle")
@@ -454,6 +464,22 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("select_template"));
+    }
+
+    #[test]
+    fn parse_step_accepts_non_ascii_string_value() {
+        let val = serde_json::json!("étape 1");
+        let result = parse_step(&serde_json::json!({"step": val}));
+        // A non-ASCII string is not a valid u32, so it should return a graceful
+        // error rather than panicking or corrupting the display string.
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_issue_number_accepts_non_ascii_string_value() {
+        let val = serde_json::json!("numéro 1");
+        let result = parse_optional_issue(&serde_json::json!({"issueNumber": val}));
+        assert!(result.is_err());
     }
 
     #[test]

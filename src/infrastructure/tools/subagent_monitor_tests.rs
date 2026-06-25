@@ -25,7 +25,21 @@ fn test_agent_start_clears_last_error() {
     assert!(entry.last_error.is_none());
 }
 
-// --- apply_event: agent_end ---
+#[test]
+fn test_truncate_string_char_boundary() {
+    let s = "café résumé naïve";
+    let max = 5; // within the "é" (2 bytes) after 5 ASCII chars "café " (6 bytes)
+    let result = truncate_string(s, max);
+    assert!(result.chars().count() <= max + 1); // allow ellipsis
+    assert!(!result.is_empty());
+}
+
+#[test]
+fn test_truncate_string_no_panic_on_multibyte() {
+    // max_len falls inside a multi-byte char boundary; must not panic.
+    let _ = truncate_string("é", 1);
+    let _ = truncate_string("日本語", 3);
+}
 
 #[test]
 fn test_agent_end_sets_idle() {
