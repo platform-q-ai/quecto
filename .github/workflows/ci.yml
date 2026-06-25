@@ -65,9 +65,11 @@ jobs:
         env:
           QUECTO_PROVIDERS_OPENAI_API_KEY: ${{ secrets.QUECTO_PROVIDERS_OPENAI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          QUECTO_PROVIDERS_ANTHROPIC_API_KEY: ${{ secrets.QUECTO_PROVIDERS_ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          if [ -z "${QUECTO_PROVIDERS_OPENAI_API_KEY:-}${OPENAI_API_KEY:-}" ]; then
-            echo "Skipping provider smoke tests: no OpenAI API key secret configured"
+          if [ -z "${QUECTO_PROVIDERS_OPENAI_API_KEY:-}${OPENAI_API_KEY:-}${QUECTO_PROVIDERS_ANTHROPIC_API_KEY:-}${ANTHROPIC_API_KEY:-}" ]; then
+            echo "Skipping provider smoke tests: no provider API key secret configured"
             exit 0
           fi
           QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --features test-support --test bdd

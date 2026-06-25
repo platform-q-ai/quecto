@@ -705,7 +705,7 @@ Provider smoke (paid, opt-in, minimal live request):
 QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh
 ```
 
-Provider smoke requires either `QUECTO_PROVIDERS_OPENAI_API_KEY` or `OPENAI_API_KEY`. CI maps both secret names and skips the paid smoke step when neither secret is configured.
+Provider smoke runs only provider-specific scenarios with available credentials: OpenAI uses `QUECTO_PROVIDERS_OPENAI_API_KEY` or `OPENAI_API_KEY`, Anthropic uses `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY`, and Codex uses an existing OpenAI OAuth credential in the `quecto` credential store. Missing provider credentials filter out that provider's smoke scenario without failing unrelated smoke checks.
 
 Legacy real-LLM suites are still gated by `QUECTO_REAL_LLM=1`, but behavioral e2e coverage should prefer mocked provider responses so normal test runs do not incur provider costs.
 
@@ -729,7 +729,7 @@ bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
 # Mocked e2e suite (free, deterministic, default pre-push e2e lane — no API key)
 bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 4 --timeout 12m --tag mock-llm
 
-# Provider smoke subset (paid, opt-in)
+# Provider smoke subset (paid, opt-in; filters providers without credentials)
 QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --features test-support --test bdd
 
 # Live Real-LLM full suite (paid, occasional/on-demand — needs OPENAI_API_KEY in .env)
@@ -751,7 +751,9 @@ Pre-push controls:
 
 Pre-merge controls (real-LLM lane):
 - `QUECTO_PROVIDER_SMOKE=1` enables `@provider-smoke` live provider checks (excluded by default)
-- `QUECTO_PROVIDERS_OPENAI_API_KEY` or `OPENAI_API_KEY` supplies the OpenAI credential for the current provider smoke scenario
+- `QUECTO_PROVIDERS_OPENAI_API_KEY` or `OPENAI_API_KEY` supplies the OpenAI API smoke credential
+- `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY` supplies the Anthropic API smoke credential
+- An existing OpenAI OAuth credential in the `quecto` credential store enables the Codex smoke scenario
 - `QUECTO_REAL_LLM_TIMEOUT` timeout per real-LLM shard (default `12m`)
 - `QUECTO_REAL_LLM_SHARDS` shard count for real-LLM BDD (default `24`)
 - `QUECTO_REAL_LLM_TAG` scenario tag to run (default `real-llm`; use `real-llm-smoke` for smoke)

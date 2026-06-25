@@ -1756,32 +1756,76 @@ fn then_subprocess_stderr_contains(world: &mut QuectoWorld, expected: String) {
 // E2E Real LLM Steps
 // ===========================================================================
 
-/// Resolve an OpenAI API key: check env vars first, then fall back to `.env`.
-fn resolve_openai_api_key() -> String {
-    for var in ["QUECTO_PROVIDERS_OPENAI_API_KEY", "OPENAI_API_KEY"] {
+/// Resolve provider API keys: check env vars first, then fall back to `.env`.
+fn resolve_api_key_from_env_or_dotenv(vars: &[&str]) -> Option<String> {
+    for var in vars {
         if let Ok(key) = std::env::var(var) {
             if !key.trim().is_empty() {
-                return key;
+                return Some(key);
             }
         }
     }
-    // Fall back to .env file at repo root
     if let Ok(contents) = std::fs::read_to_string(".env") {
         for line in contents.lines() {
             let line = line.trim();
-            for var in ["QUECTO_PROVIDERS_OPENAI_API_KEY", "OPENAI_API_KEY"] {
+            if line.starts_with('#') {
+                continue;
+            }
+            for var in vars {
                 if let Some(value) = line.strip_prefix(&format!("{var}=")) {
-                    let value = value.trim();
+                    let value = value.trim().trim_matches('"').trim_matches('\'');
                     if !value.is_empty() {
-                        return value.to_string();
+                        return Some(value.to_string());
                     }
                 }
             }
         }
     }
-    panic!(
-        "QUECTO_PROVIDERS_OPENAI_API_KEY or OPENAI_API_KEY must be set (via env var or .env file)"
+    None
+}
+
+fn resolve_openai_api_key() -> String {
+    resolve_api_key_from_env_or_dotenv(&["QUECTO_PROVIDERS_OPENAI_API_KEY", "OPENAI_API_KEY"])
+        .unwrap_or_else(|| {
+            panic!(
+                "QUECTO_PROVIDERS_OPENAI_API_KEY or OPENAI_API_KEY must be set (via env var or .env file)"
+            )
+        })
+}
+
+fn resolve_anthropic_api_key() -> String {
+    resolve_api_key_from_env_or_dotenv(&[
+        "QUECTO_PROVIDERS_ANTHROPIC_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ])
+    .unwrap_or_else(|| {
+        panic!(
+            "QUECTO_PROVIDERS_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY must be set (via env var or .env file)"
+        )
+    })
+}
+
+fn default_quecto_base_dir_for_smoke() -> PathBuf {
+    std::env::var("QUECTO_BASE_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".quecto")))
+        .unwrap_or_else(|| PathBuf::from(".quecto"))
+}
+
+fn copy_openai_oauth_credential_to_smoke_base(base: &Path) {
+    let source_store = CredentialStore::new(default_quecto_base_dir_for_smoke());
+    let Some(credential) = source_store.get("openai").ok().flatten() else {
+        panic!("OpenAI OAuth credential is required for Codex provider smoke");
+    };
+    assert_eq!(
+        credential.method,
+        AuthMethod::OAuth,
+        "OpenAI OAuth credential is required for Codex provider smoke"
     );
+    CredentialStore::new(base)
+        .store(credential)
+        .expect("copy OpenAI OAuth credential to smoke base dir");
 }
 
 /// Set up a workspace configured to use a real OpenAI endpoint.
@@ -1890,6 +1934,51 @@ fn given_openai_provider_smoke_workspace(world: &mut QuectoWorld) {
     std::fs::write(base.join("config.json"), config_json).expect("write smoke config");
 }
 
+#[given("an Anthropic provider smoke workspace is configured")]
+fn given_anthropic_provider_smoke_workspace(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+
+    let api_key = resolve_anthropic_api_key();
+    let config = serde_json::json!({
+        "providers": {
+            "anthropic": { "api_key": api_key }
+        },
+        "agents": {
+            "defaults": {
+                "workspace": workspace.to_string_lossy(),
+                "max_tokens": 4,
+                "temperature": 0.0
+            }
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(base.join("config.json"), config_json).expect("write smoke config");
+}
+
+#[given("a Codex provider smoke workspace is configured")]
+fn given_codex_provider_smoke_workspace(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+    copy_openai_oauth_credential_to_smoke_base(&base);
+
+    let config = serde_json::json!({
+        "agents": {
+            "defaults": {
+                "workspace": workspace.to_string_lossy(),
+                "max_tokens": 4,
+                "temperature": 0.0
+            }
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(base.join("config.json"), config_json).expect("write smoke config");
+}
+
 /// Run the agent against the real OpenAI endpoint with a cheap model, bounded iterations,
 /// and a wall-clock timeout to prevent hung HTTP requests from blocking the suite.
 #[when(expr = "I run the real LLM agent with message {string}")]
@@ -1972,6 +2061,52 @@ fn when_run_openai_provider_smoke_agent(world: &mut QuectoWorld, message: String
         "1".to_string(),
         "--max-time".to_string(),
         "30".to_string(),
+        "-s".to_string(),
+        "-".to_string(),
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+#[when(expr = "I run the Anthropic provider smoke agent with message {string}")]
+fn when_run_anthropic_provider_smoke_agent(world: &mut QuectoWorld, message: String) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--model".to_string(),
+        "anthropic-api/claude-sonnet-4-5".to_string(),
+        "--max-iterations".to_string(),
+        "1".to_string(),
+        "--max-time".to_string(),
+        "30".to_string(),
+        "-s".to_string(),
+        "-".to_string(),
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+#[when(expr = "I run the Codex provider smoke agent with message {string}")]
+fn when_run_codex_provider_smoke_agent(world: &mut QuectoWorld, message: String) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--model".to_string(),
+        "openai-oauth/gpt-5.3-codex".to_string(),
+        "--max-iterations".to_string(),
+        "1".to_string(),
+        "--max-time".to_string(),
+        "30".to_string(),
+        "--system".to_string(),
+        "You are concise.".to_string(),
         "-s".to_string(),
         "-".to_string(),
         "-m".to_string(),

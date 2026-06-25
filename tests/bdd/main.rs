@@ -861,6 +861,47 @@ fn stable_hash(feature: &str, scenario: &str) -> u64 {
     hasher.finish()
 }
 
+fn dotenv_value(var: &str) -> Option<String> {
+    let contents = std::fs::read_to_string(".env").ok()?;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix(&format!("{var}=")) {
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn any_env_or_dotenv(vars: &[&str]) -> bool {
+    vars.iter().any(|var| {
+        std::env::var(var).is_ok_and(|value| !value.trim().is_empty())
+            || dotenv_value(var).is_some()
+    })
+}
+
+fn default_quecto_base_dir() -> PathBuf {
+    std::env::var("QUECTO_BASE_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".quecto")))
+        .unwrap_or_else(|| PathBuf::from(".quecto"))
+}
+
+fn has_openai_oauth_credential() -> bool {
+    let store = CredentialStore::new(default_quecto_base_dir());
+    store
+        .get("openai")
+        .ok()
+        .flatten()
+        .is_some_and(|credential| credential.method == AuthMethod::OAuth)
+}
+
 fn build_shard_plan(features_dir: &str, shard_total: u64) -> HashMap<(String, String), u64> {
     let mut scenarios = discover_scenarios(features_dir);
     scenarios.sort_by(|a, b| {
@@ -1016,6 +1057,31 @@ fn main() {
                 // Exclude live provider smoke scenarios unless explicitly enabled.
                 if sc.tags.iter().any(|t| t == "provider-smoke") && !provider_smoke_enabled {
                     return false;
+                }
+                // Provider-specific smoke credentials are optional: filter absent
+                // providers rather than failing unrelated smoke scenarios.
+                if provider_smoke_enabled {
+                    if sc.tags.iter().any(|t| t == "provider-smoke-openai")
+                        && !any_env_or_dotenv(&[
+                            "QUECTO_PROVIDERS_OPENAI_API_KEY",
+                            "OPENAI_API_KEY",
+                        ])
+                    {
+                        return false;
+                    }
+                    if sc.tags.iter().any(|t| t == "provider-smoke-anthropic")
+                        && !any_env_or_dotenv(&[
+                            "QUECTO_PROVIDERS_ANTHROPIC_API_KEY",
+                            "ANTHROPIC_API_KEY",
+                        ])
+                    {
+                        return false;
+                    }
+                    if sc.tags.iter().any(|t| t == "provider-smoke-codex")
+                        && !has_openai_oauth_credential()
+                    {
+                        return false;
+                    }
                 }
                 // Partition the zero-cost mocked e2e lane from the default wave.
                 // @mock-llm scenarios are also tagged @done, so the untagged
