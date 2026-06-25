@@ -226,24 +226,45 @@ impl App {
                 return;
             }
         }
-        let mut event = serde_json::json!({
-            "steps": steps,
-            "progress": progress,
-        });
-        if let Some(issue) = active_issue {
-            event["activeIssue"] = issue;
-        }
-        if let Some(m) = mode {
-            event["mode"] = serde_json::json!(m);
-        }
-        if let Some(tpl) = active_template {
-            event["activeTemplate"] = tpl;
-        }
-        if let Some(templates) = available_templates {
-            event["availableTemplates"] = serde_json::json!(templates);
-        }
-        self.workflow_bar = workflow_bar::parse_workflow_event(&event);
+        self.workflow_bar = build_workflow_state(
+            &steps,
+            &progress,
+            &active_issue,
+            &mode,
+            &active_template,
+            &available_templates,
+        );
     }
+}
+
+/// Build a `WorkflowBarState` from the parts of a `workflow_state` event. Shared
+/// by the master path (`handle_workflow_state`) and the per-sub-agent routing
+/// (`route_subagent_event`) so both render an identical bar (#802).
+pub(super) fn build_workflow_state(
+    steps: &[serde_json::Value],
+    progress: &serde_json::Value,
+    active_issue: &Option<serde_json::Value>,
+    mode: &Option<String>,
+    active_template: &Option<serde_json::Value>,
+    available_templates: &Option<Vec<serde_json::Value>>,
+) -> workflow_bar::WorkflowBarState {
+    let mut event = serde_json::json!({
+        "steps": steps,
+        "progress": progress,
+    });
+    if let Some(issue) = active_issue {
+        event["activeIssue"] = issue.clone();
+    }
+    if let Some(m) = mode {
+        event["mode"] = serde_json::json!(m);
+    }
+    if let Some(tpl) = active_template {
+        event["activeTemplate"] = tpl.clone();
+    }
+    if let Some(templates) = available_templates {
+        event["availableTemplates"] = serde_json::json!(templates);
+    }
+    workflow_bar::parse_workflow_event(&event)
 }
 
 struct WorkflowStateEvent {

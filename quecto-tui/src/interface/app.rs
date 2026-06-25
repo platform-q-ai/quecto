@@ -186,24 +186,45 @@ pub struct App {
     /// The agent id of the currently-open connect-on-select connection and a
     /// handle to abort its forwarding task on deselect/teardown (#800).
     active_conn: Option<(String, tokio::task::JoinHandle<()>)>,
-    /// Debounced connect-on-select: the selected agent id and the instant at
-    /// which its UDS connection should actually open. Re-armed on every
-    /// selection change so key-repeat scrolling across rows opens (and aborts)
-    /// at most one connection — the one the cursor settles on (#800 review).
-    pending_conn: Option<(String, tokio::time::Instant)>,
+    /// Outbound command channel to the active sub-agent's own UDS connection
+    /// (#802). Lets the editor's send/abort path steer the selected sub-agent —
+    /// its dispatch loop queues the prompt until its current turn ends. `None`
+    /// when the master is active or the child's socket is unknown.
+    active_subagent_cmd_tx: Option<(String, mpsc::Sender<Command>)>,
+    /// Which pane has keyboard focus: the editor or the side panel (#802).
+    focus: Focus,
 }
 
-/// Per-sub-agent session state for the multi-session UI (#800). Holds the
-/// child's own chat transcript, accumulated from its direct live stream. Chrome
-/// (editor, footer, overlays) stays single-instance on `App`.
+/// Per-sub-agent session state for the multi-session UI (#800/#802). Holds the
+/// child's own chat transcript and its OWN workflow/phase bar, accumulated from
+/// its direct live stream, plus a running flag driving the per-session working
+/// indicator. The editor and overlays stay single-instance on `App`.
 pub(crate) struct SessionView {
     chat: Chat,
+    /// The child's own workflow/phase bar, fed by its forwarded `workflow_state`
+    /// events so a selected sub-agent renders the same bar the master would.
+    workflow_bar: workflow_bar::WorkflowBarState,
+    /// Whether the child is mid-turn — drives a per-session working indicator so
+    /// a steered sub-agent never looks dead while it processes a queued prompt.
+    running: bool,
 }
 
 impl SessionView {
     fn new() -> Self {
-        Self { chat: Chat::new() }
+        Self {
+            chat: Chat::new(),
+            workflow_bar: workflow_bar::WorkflowBarState::default(),
+            running: false,
+        }
     }
+}
+
+/// Which pane currently has keyboard focus (#802). The editor (`Input`) is the
+/// default; `Tab` toggles to the side `Panel` when sub-agents are listed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Focus {
+    Input,
+    Panel,
 }
 
 /// Width of the persistent left sub-agent panel (#800).
@@ -211,11 +232,6 @@ const SUBAGENT_PANEL_WIDTH: usize = 26;
 
 /// Maximum retained sub-agent sessions before the oldest non-active is evicted.
 const MAX_RETAINED_SESSIONS: usize = 16;
-
-/// Settle window before a selected sub-agent's connect-on-select UDS
-/// connection actually opens. Debounces key-repeat scrolling so passing over
-/// a row does not connect/abort its socket or fire a history backfill (#800).
-const CONNECT_DEBOUNCE: Duration = Duration::from_millis(160);
 
 struct CommandSendFailure {
     command_kind: &'static str,
@@ -279,7 +295,8 @@ impl App {
             subagent_event_tx,
             subagent_event_rx,
             active_conn: None,
-            pending_conn: None,
+            active_subagent_cmd_tx: None,
+            focus: Focus::Input,
         }
     }
 
@@ -692,6 +709,9 @@ mod app_subagents_tests;
 #[cfg(test)]
 #[path = "app_chat_session_tests.rs"]
 mod chat_session_tests;
+#[cfg(test)]
+#[path = "app_focus_parity_tests.rs"]
+mod focus_parity_tests;
 #[cfg(test)]
 #[path = "app_subagent_selection_tests.rs"]
 mod subagent_selection_tests;

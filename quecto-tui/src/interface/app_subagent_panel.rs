@@ -60,6 +60,61 @@ impl App {
         }
     }
 
+    /// The active session's workflow bar: the master's own when no sub-agent is
+    /// selected, otherwise the selected agent's (#802). Falls back to the master
+    /// bar if the session is somehow missing.
+    pub(super) fn active_workflow_bar(&self) -> &workflow_bar::WorkflowBarState {
+        match &self.active_agent_id {
+            None => &self.workflow_bar,
+            Some(id) => self
+                .sessions
+                .get(id)
+                .map(|s| &s.workflow_bar)
+                .unwrap_or(&self.workflow_bar),
+        }
+    }
+
+    /// Whether the active sub-agent is mid-turn (drives the per-session working
+    /// indicator). Always `false` for the master, whose spinner is separate.
+    pub(super) fn active_subagent_running(&self) -> bool {
+        match &self.active_agent_id {
+            None => false,
+            Some(id) => self.sessions.get(id).is_some_and(|s| s.running),
+        }
+    }
+
+    /// The focus region currently holding keyboard input (#802, tests).
+    #[cfg(test)]
+    pub(super) fn focus_region(&self) -> Focus {
+        self.focus
+    }
+
+    /// The 0-based panel highlight index (#802, tests).
+    #[cfg(test)]
+    pub(super) fn panel_highlight_index(&self) -> usize {
+        self.panel_nav.selected()
+    }
+
+    /// Send a command to the active sub-agent's own connection (#802). Returns
+    /// `true` if it was routed (a sub-agent is active with a live socket).
+    pub(super) fn send_to_active_subagent(&mut self, cmd: Command) -> bool {
+        let Some(id) = self.active_agent_id.clone() else {
+            return false;
+        };
+        if let Some((conn_id, tx)) = &self.active_subagent_cmd_tx {
+            if conn_id == &id {
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let _ = tx.send(cmd).await;
+                });
+            }
+        }
+        // Routed by virtue of a sub-agent being active, even when its socket is
+        // unknown (older kernel): the prompt belongs to that session, never the
+        // master, so we still report it as handled.
+        true
+    }
+
     // ── Selection / switching ──────────────────────────────────────────
 
     /// Switch the active session. `None` selects the master; `Some(id)` selects
@@ -76,35 +131,15 @@ impl App {
         self.sync_panel_selection_to_active();
 
         let Some(id) = new_active else {
-            // Master selected: nothing to dial, drop any pending connect.
-            self.pending_conn = None;
+            // Master selected: nothing to dial.
             return;
         };
         // Ensure a session exists (retained for later viewing).
         self.ensure_session(&id);
-        // Defer the connect-on-select connection behind a settle timer so that
-        // key-repeat scrolling across rows does not open and immediately abort
-        // a socket (and fire a history backfill) for every row passed over
-        // (#800 review). `poll_pending_subagent_connection` opens it once the
-        // cursor lands.
-        self.pending_conn = Some((id, tokio::time::Instant::now() + CONNECT_DEBOUNCE));
-    }
-
-    /// Open the deferred connect-on-select connection once its debounce window
-    /// has elapsed (driven by the spinner tick). No-op while the selection is
-    /// still settling or when nothing is pending (#800 review).
-    pub(super) fn poll_pending_subagent_connection(&mut self) {
-        let Some((_, at)) = &self.pending_conn else {
-            return;
-        };
-        if tokio::time::Instant::now() < *at {
-            return;
-        }
-        let (id, _) = self.pending_conn.take().expect("pending checked above");
-        // The selection may have moved on; only dial the still-active agent.
-        if self.active_agent_id.as_deref() == Some(id.as_str()) {
-            self.open_subagent_connection(&id);
-        }
+        // Connect-on-commit: the selection only changes on an explicit commit
+        // (Enter/Tab/digit-jump) now that highlight movement is decoupled from
+        // selection (#802), so the old debounce is gone — open immediately.
+        self.open_subagent_connection(&id);
     }
 
     /// Reconcile the active/pending session when the viewed sub-agent leaves
@@ -153,24 +188,35 @@ impl App {
         }
     }
 
-    // ── Panel keyboard navigation ──────────────────────────────────────
+    // ── Panel keyboard navigation (#802 focus model) ──────────────────
 
-    /// Move the panel selection up (toward the master) and switch sessions.
-    pub(super) fn panel_select_previous(&mut self) {
-        let rows = self.panel_rows();
-        self.panel_nav.move_previous(rows.len());
-        self.activate_panel_selection(&rows);
+    /// Move the panel highlight up (toward the master) WITHOUT switching the
+    /// active session — commit happens only on Enter/Tab (#802).
+    pub(super) fn panel_highlight_previous(&mut self) {
+        let len = self.panel_rows().len();
+        self.panel_nav.move_previous(len);
     }
 
-    /// Move the panel selection down and switch sessions.
-    pub(super) fn panel_select_next(&mut self) {
-        let rows = self.panel_rows();
-        self.panel_nav.move_next(rows.len());
-        self.activate_panel_selection(&rows);
+    /// Move the panel highlight down WITHOUT switching the active session.
+    pub(super) fn panel_highlight_next(&mut self) {
+        let len = self.panel_rows().len();
+        self.panel_nav.move_next(len);
     }
 
-    fn activate_panel_selection(&mut self, rows: &[PanelRow]) {
-        let target = rows
+    /// Jump the panel highlight to a 1-based row number (digits 1–9). Row 1 is
+    /// the master; row N+1 is the Nth listed sub-agent. No-op past the end.
+    pub(super) fn panel_highlight_row(&mut self, one_based: usize) {
+        let len = self.panel_rows().len();
+        if one_based >= 1 && one_based <= len {
+            self.panel_nav.set_selected(one_based - 1);
+        }
+    }
+
+    /// Commit the highlighted panel row: switch the active session to that agent
+    /// (the master when row 1 is highlighted) and open its connection (#802).
+    pub(super) fn commit_panel_selection(&mut self) {
+        let target = self
+            .panel_rows()
             .get(self.panel_nav.selected())
             .and_then(|r| r.id.clone());
         self.select_agent(target.as_deref());
@@ -187,7 +233,7 @@ impl App {
         self.sync_panel_selection_to_active_with(&rows);
     }
 
-    fn sync_panel_selection_to_active(&mut self) {
+    pub(super) fn sync_panel_selection_to_active(&mut self) {
         let rows = self.panel_rows();
         self.sync_panel_selection_to_active_with(&rows);
     }
@@ -217,6 +263,9 @@ impl App {
         let tx = self.subagent_event_tx.clone();
         let agent_id = id.to_string();
         let path = std::path::PathBuf::from(socket);
+        // Outbound channel so the editor's send/abort path can steer this child
+        // (#802); the connection task forwards queued commands onto its socket.
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<Command>(32);
         let handle = tokio::spawn(async move {
             let Ok(mut client) = Client::connect(&path).await else {
                 return;
@@ -228,13 +277,29 @@ impl App {
                     id: Some("subagent-history".into()),
                 })
                 .await;
-            while let Some(ev) = client.recv().await {
-                if tx.send((agent_id.clone(), ev)).await.is_err() {
-                    break;
+            loop {
+                tokio::select! {
+                    ev = client.recv() => match ev {
+                        Some(ev) => {
+                            if tx.send((agent_id.clone(), ev)).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break,
+                    },
+                    cmd = cmd_rx.recv() => match cmd {
+                        // Steer/abort routed from the editor; the child's single
+                        // dispatch loop queues a prompt until its turn ends.
+                        Some(cmd) => {
+                            let _ = client.send(&cmd).await;
+                        }
+                        None => break,
+                    },
                 }
             }
         });
         self.active_conn = Some((id.to_string(), handle));
+        self.active_subagent_cmd_tx = Some((id.to_string(), cmd_tx));
     }
 
     /// Abort the active sub-agent connection's forwarding task, if any.
@@ -242,6 +307,7 @@ impl App {
         if let Some((_, handle)) = self.active_conn.take() {
             handle.abort();
         }
+        self.active_subagent_cmd_tx = None;
     }
 
     // ── Routing the sub-agent stream into its session ──────────────────
@@ -262,6 +328,33 @@ impl App {
         let Some(session) = self.sessions.get_mut(agent_id) else {
             return;
         };
+        // Per-session workflow bar so a selected sub-agent renders its OWN
+        // workflow/phase bar, footer-equivalent chrome and running state (#802).
+        if let Event::WorkflowState {
+            agent_id: _,
+            steps,
+            progress,
+            active_issue,
+            mode,
+            active_template,
+            available_templates,
+        } = &ev
+        {
+            session.workflow_bar = super::app_events::build_workflow_state(
+                steps,
+                progress,
+                active_issue,
+                mode,
+                active_template,
+                available_templates,
+            );
+            return;
+        }
+        match &ev {
+            Event::AgentStart | Event::TurnStart => session.running = true,
+            Event::AgentEnd { .. } | Event::TurnEnd { .. } => session.running = false,
+            _ => {}
+        }
         let chat = &mut session.chat;
         match ev {
             Event::Token { token } => chat.append_token(&token),
@@ -393,7 +486,9 @@ impl App {
             let indent = " ".repeat(row.depth * 2);
             let glyph = panel_glyph(&row.status);
             let label = sanitize_panel_label(&row.label);
-            let text = format!("{indent}{glyph} {label}");
+            // Number the visible rows so digits 1–9 can jump to them (#802).
+            let num = theme::dim(&format!("{}", i + 1));
+            let text = format!("{indent}{num} {glyph} {label}");
             let cell = if i == selected {
                 pad_cell(&theme::reverse(&text), width)
             } else {
