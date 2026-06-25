@@ -143,8 +143,8 @@ Add BDD steps that configure each live provider from credentials only when the c
 Suggested environment variables:
 
 - `QUECTO_PROVIDER_SMOKE=1` to enable the lane.
-- `QUECTO_PROVIDERS_OPENAI_API_KEY` or `OPENAI_API_KEY` for OpenAI.
-- `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY` for Anthropic.
+- `OPENAI_API_KEY` for OpenAI.
+- `ANTHROPIC_API_KEY` for Anthropic.
 - Existing OAuth credential storage for Codex/OpenAI OAuth, if supported in CI.
 
 ### Phase 4: Update Runner and Hook Behavior
@@ -200,6 +200,28 @@ runs, and a parallel **zero-cost mocked copy** drives the default gate:
   `QUECTO_RUN_REAL_LLM=1 git push` (or the `run-bdd-shards.sh ... --real-llm`
   command in the README), so occasional real-provider validation stays a
   one-liner.
+
+## Implemented: provider smoke lane
+
+The live provider smoke lane is now separate from `@real-llm` and remains
+explicitly opt-in:
+
+- `tests/features/provider_smoke.feature` carries `@provider-smoke` scenarios
+  for OpenAI API, Anthropic API, and Codex/OpenAI OAuth.
+- The BDD runner excludes `@provider-smoke` unless `QUECTO_PROVIDER_SMOKE=1` is
+  set, independently from `QUECTO_REAL_LLM`.
+- Provider-specific tags filter missing credentials before execution:
+  `@provider-smoke-openai` checks `OPENAI_API_KEY`,
+  `@provider-smoke-anthropic` checks `ANTHROPIC_API_KEY`, and
+  `@provider-smoke-codex` checks for an existing OpenAI OAuth credential in the
+  `quecto` credential store.
+- Smoke workspaces are temporary and configured with minimal output settings,
+  one agent iteration, ephemeral sessions, and short wall-clock timeouts. Codex
+  copies the OpenAI OAuth credential into the temporary smoke base directory so
+  the user's real config is not modified.
+- CI and README test instructions document the provider split. CI runs the lane
+  only when at least one API-key provider secret is configured; within the lane,
+  unavailable providers are filtered rather than failing unrelated scenarios.
 
 ## Acceptance Criteria
 

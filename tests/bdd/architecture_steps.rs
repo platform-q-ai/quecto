@@ -133,8 +133,8 @@ fn then_pre_push_runs_mock_e2e(_world: &mut QuectoWorld) {
 fn then_pre_push_no_key_autorun(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("scripts/pre-push.sh").expect("read scripts/pre-push.sh");
     // Behaviour under test: a `.env` provider key must NOT auto-trigger the paid
-    // suite. The old design probed key presence (`OPENAI_API_KEY` /
-    // `QUECTO_PROVIDERS_OPENAI_API_KEY`) to fold a `REAL_LLM_STATE=run` decision
+    // suite. The old design probed key presence (`OPENAI_API_KEY`) to fold a
+    // `REAL_LLM_STATE=run` decision
     // and then auto-run real-LLM. Assert that whole probe mechanism is gone:
     // pre-push.sh no longer inspects a provider key at all to decide what runs.
     // Keying off the absence of key inspection (not a `="run"` literal) means a

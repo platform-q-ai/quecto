@@ -22,7 +22,7 @@ So: **edit the file, save, send the next prompt or reopen `/model` — the new p
 
 | Provider kind | Where the API key lives | Example |
 |---|---|---|
-| Built-in `openai-api` / `anthropic-api` | `~/.quecto/config.json` `providers.openai.api_key` / `providers.anthropic.api_key`, or env `QUECTO_PROVIDERS_OPENAI_API_KEY` / `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` | `"providers": {"openai": {"api_key": "sk-..."}}` |
+| Built-in `openai-api` / `anthropic-api` | `~/.quecto/config.json` `providers.openai.api_key` / `providers.anthropic.api_key`, or env `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `"providers": {"openai": {"api_key": "sk-..."}}` |
 | Community / custom API providers | `~/.quecto/models.json` under the provider's `auth.apiKey` | `"auth": {"mode":"apiKey","apiKey":"$FIREWORKS_API_KEY"}` |
 | OAuth providers | Kernel credential store via `quecto auth login`; referenced from `models.json` by `auth.oauthProvider` | `"auth": {"mode":"oauth","oauthProvider":"anthropic"}` |
 
@@ -34,9 +34,9 @@ Provider keys are auth-specific. Do not overload a single `openai` or `anthropic
 
 Built-in provider names:
 
-- `openai-api` — OpenAI API key (`QUECTO_PROVIDERS_OPENAI_API_KEY` or config).
+- `openai-api` — OpenAI API key (`OPENAI_API_KEY` or config).
 - `openai-oauth` — OpenAI OAuth credential from `quecto auth login openai`.
-- `anthropic-api` — Anthropic API key (`QUECTO_PROVIDERS_ANTHROPIC_API_KEY` or config).
+- `anthropic-api` — Anthropic API key (`ANTHROPIC_API_KEY` or config).
 - `anthropic-oauth` — Anthropic OAuth credential from `quecto auth login anthropic`.
 
 The `/model` selector surfaces auth as `[apiKey]` or `[oauth]` so the billing mode is visible before selection. Bare vendor prefixes (`openai/...`, `anthropic/...`) should not be used for new configs because they hide billing mode.

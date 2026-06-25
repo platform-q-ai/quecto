@@ -296,8 +296,8 @@ impl Config {
     /// - `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` → agents.defaults.max_session_messages
     /// - `QUECTO_MAX_CONTEXT_TOKENS` → agents.defaults.max_context_tokens
     /// - `QUECTO_AGENTS_DEFAULTS_EFFORT` → agents.defaults.effort
-    /// - `QUECTO_PROVIDERS_OPENAI_API_KEY` → providers.openai.api_key
-    /// - `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` → providers.anthropic.api_key
+    /// - `OPENAI_API_KEY` → providers.openai.api_key
+    /// - `ANTHROPIC_API_KEY` → providers.anthropic.api_key
     fn apply_env_overrides(config: &mut Config, env: &HashMap<String, String>) {
         if let Some(v) = env.get("QUECTO_AGENTS_DEFAULTS_MODEL") {
             config.agents.defaults.model = v.clone();
@@ -325,10 +325,10 @@ impl Config {
         {
             config.agents.defaults.max_context_tokens = n;
         }
-        if let Some(v) = env.get("QUECTO_PROVIDERS_OPENAI_API_KEY") {
+        if let Some(v) = env.get("OPENAI_API_KEY") {
             config.providers.openai.api_key = v.clone();
         }
-        if let Some(v) = env.get("QUECTO_PROVIDERS_ANTHROPIC_API_KEY") {
+        if let Some(v) = env.get("ANTHROPIC_API_KEY") {
             config.providers.anthropic.api_key = v.clone();
         }
         if let Some(v) = env.get("QUECTO_AGENTS_DEFAULTS_EFFORT") {
@@ -501,10 +501,7 @@ mod tests {
             "42".to_string(),
         );
         env.insert("QUECTO_MAX_CONTEXT_TOKENS".to_string(), "12345".to_string());
-        env.insert(
-            "QUECTO_PROVIDERS_ANTHROPIC_API_KEY".to_string(),
-            "ant-key".to_string(),
-        );
+        env.insert("ANTHROPIC_API_KEY".to_string(), "ant-key".to_string());
         env.insert(
             "QUECTO_AGENTS_DEFAULTS_EFFORT".to_string(),
             "high".to_string(),
@@ -572,10 +569,7 @@ mod tests {
         write!(tmp, "{{}}").unwrap();
 
         let mut env = HashMap::new();
-        env.insert(
-            "QUECTO_PROVIDERS_OPENAI_API_KEY".to_string(),
-            "sk-from-env".to_string(),
-        );
+        env.insert("OPENAI_API_KEY".to_string(), "sk-from-env".to_string());
 
         let config = Config::load_with_env(tmp.path().to_str().unwrap(), &env).unwrap();
         assert_eq!(config.providers.openai.api_key, "sk-from-env");
