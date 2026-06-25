@@ -42,9 +42,6 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "reload_extensions",
 ];
 
-/// Timeout for reading a response from a subagent UDS socket.
-const RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
-
 /// Default timeout for `await` command (seconds).
 const AWAIT_DEFAULT_TIMEOUT: u64 = 300;
 
@@ -296,11 +293,7 @@ impl AgentCmdTool {
 
     /// Look up the socket path for an agent ID.
     fn lookup_socket(&self, agent_id: &str) -> Result<std::path::PathBuf, String> {
-        let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        entries
-            .get(agent_id)
-            .map(|e| e.socket_path.clone())
-            .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
+        super::subagent_registry::lookup_subagent_socket(&self.registry, agent_id)
     }
 }
 
@@ -317,78 +310,7 @@ impl Drop for AwaitGuard {
     }
 }
 
-/// Send a JSON-lines command to a UDS socket and read the first response line.
-///
-/// Each call opens a new connection, sends the command, and reads one response
-/// line. The connection is closed after each call.
-// TODO: consider connection pooling for frequent polling patterns.
-async fn send_uds_command(
-    socket_path: &std::path::Path,
-    command: &str,
-) -> Result<String, DomainError> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-    let stream = tokio::net::UnixStream::connect(socket_path)
-        .await
-        .map_err(|e| {
-            DomainError::Tool(format!(
-                "connect to subagent at {} failed: {e}",
-                socket_path.display()
-            ))
-        })?;
-
-    let (reader, mut writer) = tokio::io::split(stream);
-
-    writer
-        .write_all(command.as_bytes())
-        .await
-        .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
-    writer
-        .write_all(b"\n")
-        .await
-        .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
-    // Do NOT shutdown or drop the write half (#557). In multi-client mode,
-    // the server's reader loop exits on EOF → aborts the broadcast writer
-    // task → response is never delivered. `writer` must stay alive (even
-    // unused) to keep the write half open until the response is read.
-    let _keep_alive = writer;
-
-    let mut lines = BufReader::new(reader).lines();
-
-    // Read lines until we find a "response" event (#555).
-    // In multi-client mode, the broadcast delivers all events to all clients.
-    // Skip non-response events (tokens, agent_start, etc.).
-    let deadline = tokio::time::Instant::now() + RESPONSE_TIMEOUT;
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(DomainError::Tool(
-                "subagent response timed out (300s)".into(),
-            ));
-        }
-        let line = tokio::time::timeout(remaining, lines.next_line())
-            .await
-            .map_err(|_| DomainError::Tool("subagent response timed out (300s)".into()))?
-            .map_err(|e| DomainError::Tool(format!("read from subagent failed: {e}")))?;
-
-        match line {
-            Some(l) => {
-                // Parse to check event type — avoids false positives from substring matching.
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&l) {
-                    if json.get("type").and_then(|v| v.as_str()) == Some("response") {
-                        return Ok(l);
-                    }
-                }
-                // Not a response event — skip.
-            }
-            None => {
-                return Err(DomainError::Tool(
-                    "subagent closed connection without sending a response".into(),
-                ));
-            }
-        }
-    }
-}
+use super::subagent_registry::send_subagent_uds_command as send_uds_command;
 
 impl Tool for AgentCmdTool {
     fn definition(&self) -> ToolDefinition {

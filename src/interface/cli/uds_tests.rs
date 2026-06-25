@@ -357,7 +357,11 @@ fn test_parse_get_messages_tail_line() {
 
 #[test]
 fn test_get_messages_tail_type_name() {
-    let cmd = AgentCommand::GetMessagesTail { id: None, count: 5 };
+    let cmd = AgentCommand::GetMessagesTail {
+        id: None,
+        count: 5,
+        agent_id: None,
+    };
     assert_eq!(cmd.type_name(), "get_messages_tail");
 }
 

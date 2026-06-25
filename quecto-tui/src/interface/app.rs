@@ -30,6 +30,7 @@ use crate::interface::components::notification::{Notification, NotificationStack
 use crate::interface::components::select_list::{SelectItem, SelectList, SelectResult};
 use crate::interface::components::spinner::Spinner;
 use crate::interface::components::subagent_bar::{SubagentBar, SubagentRow};
+use crate::interface::components::subagent_inspector::SubagentInspector;
 use crate::interface::components::widget::WidgetContainer;
 use crate::interface::components::workflow_bar;
 use crate::interface::keys::{self, Key};
@@ -37,6 +38,14 @@ use crate::interface::kitty::KittyProtocol;
 
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 const MOUSE_SCROLL_LINES: usize = 3;
+
+/// Window for detecting a double-Up press to open the sub-agent inspector (#795).
+/// Mirrors the rewind double-Escape window.
+const DOUBLE_UP_WINDOW: Duration = Duration::from_millis(750);
+
+/// How often to refresh the selected sub-agent's output tail while the
+/// inspector is open (#795).
+const INSPECTOR_TAIL_POLL: Duration = Duration::from_secs(1);
 
 /// Maximum retry iterations for reassembling multi-fragment escape sequences.
 /// Handles up to 5-fragment CSI splits on slow SSH/serial connections.
@@ -128,6 +137,11 @@ pub struct App {
     rewind_selector: Option<SelectList>,
     /// Last idle bare Escape used to detect double-Escape for rewind.
     last_idle_escape: Option<tokio::time::Instant>,
+    /// Full-screen sub-agent inspection panel, when open (#795). Follows the
+    /// `resume_selector`/`model_selector` Option pattern.
+    subagent_inspector: Option<SubagentInspector>,
+    /// Last bare Up press, used to detect double-Up for opening the inspector.
+    last_up_press: Option<tokio::time::Instant>,
     /// Locally-issued get_messages id for opening the rewind selector.
     pending_rewind_open_id: Option<String>,
     /// Locally-issued rewind_to id awaiting acknowledgement.
@@ -206,6 +220,8 @@ impl App {
             resume_selector: None,
             rewind_selector: None,
             last_idle_escape: None,
+            subagent_inspector: None,
+            last_up_press: None,
             pending_rewind_open_id: None,
             pending_rewind_apply_id: None,
             rewind_request_seq: 0,
@@ -286,6 +302,8 @@ mod app_response;
 mod app_rewind;
 #[path = "app_selection.rs"]
 mod app_selection;
+#[path = "app_subagent_inspector.rs"]
+mod app_subagent_inspector;
 #[path = "app_subagents.rs"]
 mod app_subagents;
 

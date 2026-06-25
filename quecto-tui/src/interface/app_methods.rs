@@ -389,6 +389,14 @@ impl App {
         let width = self.terminal.width;
         let height = self.terminal.height;
 
+        // When the sub-agent inspector is open it takes over the whole screen,
+        // replacing the normal chat/editor body (#795).
+        if self.subagent_inspector.is_some() {
+            self.selection = None;
+            self.last_rendered_lines.clear();
+            return self.compose_subagent_inspector_frame();
+        }
+
         let mut lines = Vec::new();
 
         // ── Render bottom section first to know its height ──────────

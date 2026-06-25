@@ -111,6 +111,94 @@ pub fn new_registry() -> SubagentRegistry {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
+/// Maximum wall-clock time to wait for a forwarded sub-agent UDS response.
+const SUBAGENT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Look up the UDS socket path for a spawned sub-agent by id.
+///
+/// Single source of truth for both `agent_cmd` forwarding and the TUI's
+/// agent-targeted `get_messages_tail` so the lookup rule never diverges (#795).
+pub fn lookup_subagent_socket(
+    registry: &SubagentRegistry,
+    agent_id: &str,
+) -> Result<PathBuf, String> {
+    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    entries
+        .get(agent_id)
+        .map(|e| e.socket_path.clone())
+        .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
+}
+
+/// Send a JSON-lines command to a sub-agent's UDS socket and read the first
+/// `response` line back.
+///
+/// Each call opens a new connection, writes `command` + newline, and reads
+/// lines until a `{"type":"response",...}` event arrives (skipping tokens,
+/// agent_start, etc. that the broadcast delivers to all clients). Shared by
+/// `agent_cmd` and the TUI agent-targeted tail forwarder so the framing rule
+/// lives in one place (#795).
+pub async fn send_subagent_uds_command(
+    socket_path: &std::path::Path,
+    command: &str,
+) -> Result<String, crate::domain::error::DomainError> {
+    use crate::domain::error::DomainError;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let stream = tokio::net::UnixStream::connect(socket_path)
+        .await
+        .map_err(|e| {
+            DomainError::Tool(format!(
+                "connect to subagent at {} failed: {e}",
+                socket_path.display()
+            ))
+        })?;
+
+    let (reader, mut writer) = tokio::io::split(stream);
+
+    writer
+        .write_all(command.as_bytes())
+        .await
+        .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
+    writer
+        .write_all(b"\n")
+        .await
+        .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
+    // Do NOT shutdown or drop the write half (#557): in multi-client mode the
+    // server's reader loop exits on EOF and aborts the broadcast writer, so the
+    // response would never arrive. Keep the write half alive until we're done.
+    let _keep_alive = writer;
+
+    let mut lines = BufReader::new(reader).lines();
+    let deadline = tokio::time::Instant::now() + SUBAGENT_RESPONSE_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(DomainError::Tool(
+                "subagent response timed out (300s)".into(),
+            ));
+        }
+        let line = tokio::time::timeout(remaining, lines.next_line())
+            .await
+            .map_err(|_| DomainError::Tool("subagent response timed out (300s)".into()))?
+            .map_err(|e| DomainError::Tool(format!("read from subagent failed: {e}")))?;
+        match line {
+            Some(l) => {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&l) {
+                    if json.get("type").and_then(|v| v.as_str()) == Some("response") {
+                        return Ok(l);
+                    }
+                }
+                // Not a response event — skip.
+            }
+            None => {
+                return Err(DomainError::Tool(
+                    "subagent closed connection without sending a response".into(),
+                ));
+            }
+        }
+    }
+}
+
 // ─── Await support (#612) ────────────────────────────────────────────────────
 
 /// Result of an `agent_cmd await` call.

@@ -2,6 +2,19 @@ use super::*;
 use crate::interface::cli::uds_ext_protocol;
 
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
+    // Agent-targeted message tail forwards to the named sub-agent's own UDS
+    // before the local-history fast path can answer it (#795).
+    if let AgentCommand::GetMessagesTail {
+        count,
+        agent_id: Some(agent_id),
+        id,
+    } = &cmd
+    {
+        let tn = cmd.type_name();
+        let ev = forward_subagent_messages_tail(ctx, id.as_deref(), tn, agent_id, *count).await;
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     // Fast path: queries + clear_history (defers id/type_name clones).
     if let Some(result) = dispatch_fieldless_command(&cmd, ctx).await {
         return result;
@@ -82,7 +95,8 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         | AgentCommand::ToolResult { .. } => {
             dispatch_ext_command(cmd, ctx, id.as_deref(), &type_name).await
         }
-        // Exhaustive: variants handled by dispatch_fieldless_command above.
+        // Exhaustive: variants handled above (queries by dispatch_fieldless_command,
+        // agent-targeted tails by the early intercept at the top).
         AgentCommand::ClearHistory { .. }
         | AgentCommand::ListModels { .. }
         | AgentCommand::GetExtensions { .. }
@@ -97,6 +111,43 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             false
         }
+    }
+}
+
+/// Forward a `get_messages_tail` request to a spawned sub-agent and wrap its
+/// response as this command's reply (#795).
+///
+/// Reuses the shared sub-agent socket lookup and UDS round-trip helpers (the
+/// same path `agent_cmd get_messages_tail` uses) rather than re-deriving the
+/// tail locally — the sub-agent answers from its own conversation history.
+async fn forward_subagent_messages_tail(
+    ctx: &DispatchCtx<'_>,
+    id: Option<&str>,
+    tn: &str,
+    agent_id: &str,
+    count: usize,
+) -> AgentEvent {
+    use crate::infrastructure::tools::subagent_registry::{
+        lookup_subagent_socket, send_subagent_uds_command,
+    };
+    let Some(registry) = ctx.subagent_registry.as_ref() else {
+        return AgentEvent::err(id, tn, "no sub-agent registry available");
+    };
+    let socket_path = match lookup_subagent_socket(registry, agent_id) {
+        Ok(path) => path,
+        Err(e) => return AgentEvent::err(id, tn, e),
+    };
+    let cmd = serde_json::json!({ "type": "get_messages_tail", "count": count }).to_string();
+    match send_subagent_uds_command(&socket_path, &cmd).await {
+        Ok(line) => {
+            // The sub-agent replies with a full `response` event; unwrap its
+            // `data` payload so the caller sees the tail in the usual shape.
+            let data = serde_json::from_str::<serde_json::Value>(&line)
+                .ok()
+                .and_then(|v| v.get("data").cloned());
+            AgentEvent::ok(id, tn, data)
+        }
+        Err(e) => AgentEvent::err(id, tn, e.to_string()),
     }
 }
 

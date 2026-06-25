@@ -58,10 +58,16 @@ pub enum AgentCommand {
         id: Option<String>,
     },
     /// Return the last `count` messages from the conversation history.
+    ///
+    /// When `agent_id` is set, the request is forwarded to that spawned
+    /// sub-agent (reusing the `agent_cmd get_messages_tail` capability) and its
+    /// message tail is returned instead of the connected agent's own history.
     GetMessagesTail {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         count: usize,
+        #[serde(rename = "agent_id", default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
     /// Return token usage and cost statistics.
     GetSessionStats {
