@@ -3,6 +3,26 @@
 use crate::domain::error::DomainError;
 use serde::Deserialize;
 
+/// Overall request timeout for OAuth HTTP calls.
+const OAUTH_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Connect timeout for OAuth HTTP calls (#811). A cold or unreachable token
+/// endpoint must fail fast instead of blocking for the full request timeout.
+/// Token refresh is lazy (refresh-on-401, after the socket announce), but a slow
+/// endpoint at first use should surface quickly rather than stall the request.
+const OAUTH_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Build the shared HTTP client used for every OAuth flow (device code,
+/// authorization-code exchange, and token refresh). Centralises the request and
+/// connect timeouts so no OAuth path can regress to a missing `connect_timeout`.
+fn oauth_http_client() -> Result<reqwest::Client, DomainError> {
+    reqwest::Client::builder()
+        .timeout(OAUTH_REQUEST_TIMEOUT)
+        .connect_timeout(OAUTH_CONNECT_TIMEOUT)
+        .build()
+        .map_err(|e| DomainError::Provider(format!("failed to build HTTP client: {}", e)))
+}
+
 /// Provider-specific OAuth configuration.
 #[derive(Debug, Clone)]
 pub struct OAuthConfig {
@@ -117,10 +137,7 @@ pub async fn exchange_anthropic_code(
     let code = parts[0];
     let state = parts.get(1).copied().unwrap_or("");
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| DomainError::Provider(format!("failed to build HTTP client: {}", e)))?;
+    let client = oauth_http_client()?;
 
     let body = serde_json::json!({
         "grant_type": "authorization_code",
@@ -158,10 +175,7 @@ pub async fn refresh_anthropic_token(
     config: &OAuthConfig,
     refresh_token: &str,
 ) -> Result<OAuthTokenResponse, DomainError> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| DomainError::Provider(format!("failed to build HTTP client: {}", e)))?;
+    let client = oauth_http_client()?;
 
     let body = serde_json::json!({
         "grant_type": "refresh_token",
@@ -230,10 +244,7 @@ pub async fn exchange_openai_code(
     code: &str,
     pkce_verifier: &str,
 ) -> Result<OAuthTokenResponse, DomainError> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| DomainError::Provider(format!("failed to build HTTP client: {}", e)))?;
+    let client = oauth_http_client()?;
 
     let resp = client
         .post(&config.token_url)
@@ -267,10 +278,7 @@ pub async fn refresh_openai_token(
     config: &OAuthConfig,
     refresh_token: &str,
 ) -> Result<OAuthTokenResponse, DomainError> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| DomainError::Provider(format!("failed to build HTTP client: {}", e)))?;
+    let client = oauth_http_client()?;
 
     let resp = client
         .post(&config.token_url)
@@ -458,10 +466,7 @@ const MAX_ERROR_BODY_BYTES: usize = 4096;
 /// Initiate a device code flow: POST to the device code endpoint and
 /// return the response containing the user code and verification URI.
 pub async fn request_device_code(config: &OAuthConfig) -> Result<DeviceCodeResponse, DomainError> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| DomainError::Provider(format!("failed to build HTTP client: {}", e)))?;
+    let client = oauth_http_client()?;
 
     let resp = client
         .post(&config.device_code_url)
