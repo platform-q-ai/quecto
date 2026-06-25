@@ -327,6 +327,15 @@ pub enum AgentEvent {
     /// Broadcast when a subagent's status changes (#524).
     /// Contains the full list of subagents (clients do a simple replace).
     SubagentStateChanged { subagents: Vec<SubagentInfo> },
+    /// Emitted when an agent completes a turn, carrying the messages appended
+    /// during that turn (assistant message + any tool results). A sub-agent
+    /// emits this on its own stream with an empty `agent_id`; the parent's
+    /// monitor re-stamps it with the child's id and forwards it so the TUI
+    /// inspector can stream the sub-agent's output turn-by-turn (#797).
+    SubagentMessagesAppended {
+        agent_id: String,
+        messages: Vec<serde_json::Value>,
+    },
     /// Broadcast when workflow state changes.
     #[serde(rename_all = "camelCase")]
     WorkflowState {

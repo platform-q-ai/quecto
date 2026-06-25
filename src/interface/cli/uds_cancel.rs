@@ -329,6 +329,19 @@ pub(crate) async fn forward_progress_event(
             )
             .await;
         }
+        AgentProgressEvent::TurnCompleted { messages } => {
+            // Stream this turn's output (assistant + tool results) on the agent's
+            // own stream; a parent monitor re-stamps it with the child id (#797).
+            let json: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
+            emit_event(
+                stdout,
+                &AgentEvent::SubagentMessagesAppended {
+                    agent_id: String::new(),
+                    messages: json,
+                },
+            )
+            .await;
+        }
         _ => {}
     }
 }

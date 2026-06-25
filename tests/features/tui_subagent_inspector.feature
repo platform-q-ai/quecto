@@ -19,3 +19,11 @@ Feature: Sub-agent inspector — agent-targeted message tail (#795)
     Given a get_messages_tail wire line with no agent_id
     When the kernel parses the command
     Then the parsed command targets no agent
+
+  # Per-turn streaming (#797): a child emits subagent_messages_appended on its
+  # own stream; the parent monitor re-stamps it with the child's id and forwards
+  # it so the TUI inspector updates turn-by-turn without polling.
+  Scenario: A child's per-turn messages event is re-stamped with the child id
+    Given a child subagent_messages_appended wire line
+    When the parent monitor forwards it for agent "worker" under parent "root"
+    Then the forwarded event targets agent "worker" with parent "root"

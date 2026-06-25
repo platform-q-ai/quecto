@@ -52,6 +52,14 @@ pub enum AgentProgressEvent {
     },
     /// An incremental text token arrived from the LLM during streaming.
     Token(String),
+    /// One agent turn completed: the messages appended during that turn
+    /// (the assistant message plus any tool-result messages). Emitted on the
+    /// live progress path so a parent/inspector can stream a sub-agent's output
+    /// turn-by-turn, rather than only at completion (#797).
+    TurnCompleted {
+        /// Messages appended to the conversation during the just-completed turn.
+        messages: Vec<crate::domain::message::Message>,
+    },
     /// The agent loop has produced a final text response and is done.
     Done,
 }

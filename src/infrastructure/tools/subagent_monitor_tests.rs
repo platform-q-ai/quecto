@@ -434,6 +434,23 @@ fn forward_child_workflow_event_ignores_non_workflow_lines() {
 }
 
 #[test]
+fn forward_child_messages_appended_retags_with_child_id() {
+    let line = r#"{"type":"subagent_messages_appended","agent_id":"","messages":[{"role":"assistant","content":"hi"}]}"#;
+    let out = forward_child_messages_appended(line, "child", Some("root")).expect("forwarded");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["type"], "subagent_messages_appended");
+    assert_eq!(v["agent_id"], "child");
+    assert_eq!(v["parent_id"], "root");
+    assert_eq!(v["messages"][0]["role"], "assistant");
+}
+
+#[test]
+fn forward_child_messages_appended_ignores_other_lines() {
+    assert!(forward_child_messages_appended(r#"{"type":"agent_end"}"#, "child", None).is_none());
+    assert!(forward_child_messages_appended("not json", "child", None).is_none());
+}
+
+#[test]
 fn apply_event_parsed_records_workflow_snapshot() {
     let mut entry = test_entry();
     let value: serde_json::Value = serde_json::from_str(

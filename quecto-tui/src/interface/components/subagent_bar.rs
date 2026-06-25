@@ -16,6 +16,9 @@ use crate::interface::theme;
 /// so a running subagent animates identically to the agent spinner.
 use crate::interface::theme::SPINNER_FRAMES;
 
+/// Discoverability hint for the double-Up sub-agent inspector gesture (#797).
+const INSPECT_HINT: &str = "↑↑ inspect agents";
+
 /// A single subagent's display row: wire info plus client-computed liveness.
 #[derive(Debug, Clone)]
 pub struct SubagentRow {
@@ -147,14 +150,20 @@ fn header_line(rows: &[SubagentRow]) -> String {
         counts.push(theme::dim(&format!("{done} done")));
     }
     let title = theme::accent(&theme::bold("Subagents"));
+    // Discoverability hint for the double-Up inspector gesture. Only ever
+    // rendered as part of this header, which itself only exists when ≥1
+    // sub-agent is tracked — exactly the condition under which double-Up is
+    // active — so it never implies a gesture that does nothing (#797).
+    let hint = theme::dim(INSPECT_HINT);
     if counts.is_empty() {
-        format!("  {} {}", theme::dim("▸"), title)
+        format!("  {} {}  {}", theme::dim("▸"), title, hint)
     } else {
         format!(
-            "  {} {}  {}",
+            "  {} {}  {}  {}",
             theme::dim("▸"),
             title,
-            counts.join(theme::dim(" · ").as_str())
+            counts.join(theme::dim(" · ").as_str()),
+            hint,
         )
     }
 }
@@ -315,6 +324,26 @@ mod tests {
     fn empty_bar_renders_nothing() {
         let mut bar = SubagentBar::new();
         assert!(bar.render(80).is_empty());
+    }
+
+    #[test]
+    fn header_shows_inspect_hint_when_agents_present() {
+        let mut bar = SubagentBar::new();
+        update(&mut bar, vec![row("a", "running", None, None)]);
+        let lines = bar.render(80);
+        assert!(
+            lines[0].contains("inspect agents"),
+            "header must carry the double-Up discoverability hint: {:?}",
+            lines[0]
+        );
+    }
+
+    #[test]
+    fn no_inspect_hint_when_no_agents() {
+        let mut bar = SubagentBar::new();
+        // No rows → nothing rendered at all, so the hint can never appear when
+        // the double-Up gesture would do nothing.
+        assert!(!any_contains(&bar.render(80), "inspect agents"));
     }
 
     #[test]
