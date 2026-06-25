@@ -267,6 +267,19 @@ fn forward_progress_event_broadcast(
                 },
             );
         }
+        AgentProgressEvent::TurnCompleted { messages } => {
+            // Stream this turn's output on the agent's own broadcast stream. A
+            // sub-agent emits this with an empty agent_id; the parent's monitor
+            // re-stamps it with the child id before forwarding to the TUI (#797).
+            let json: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
+            broadcast_event(
+                tx,
+                &AgentEvent::SubagentMessagesAppended {
+                    agent_id: String::new(),
+                    messages: json,
+                },
+            );
+        }
         _ => {}
     }
 }
@@ -315,5 +328,31 @@ pub(super) fn try_intercept_tool_result(line: &str) -> Option<ParsedToolResult> 
             is_error,
         }),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::agent::AgentProgressEvent;
+    use crate::domain::message::Message;
+
+    #[test]
+    fn turn_completed_broadcasts_subagent_messages_appended() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+        forward_progress_event_broadcast(
+            AgentProgressEvent::TurnCompleted {
+                messages: vec![
+                    Message::assistant("hello from turn", vec![]),
+                    Message::tool("call-1", "tool body"),
+                ],
+            },
+            &tx,
+        );
+        let line = rx.try_recv().expect("an event should be broadcast");
+        assert!(line.contains("subagent_messages_appended"), "got: {line}");
+        assert!(line.contains("\"agent_id\":\"\""), "got: {line}");
+        assert!(line.contains("hello from turn"), "got: {line}");
+        assert!(line.contains("tool body"), "got: {line}");
     }
 }

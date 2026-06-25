@@ -647,8 +647,16 @@ impl AgentLoopImpl {
                 ));
             }
 
+            let appended_from = messages.len();
             self.execute_tool_calls_for_response(messages, current_turn, response)
                 .await;
+            // Stream this turn's output (assistant message + tool results) over
+            // the live progress path so a parent/inspector sees it turn-by-turn,
+            // not only at completion (#797). The clone is only paid when a
+            // progress callback is registered (UDS mode), via `notify`'s guard.
+            self.notify(|| AgentProgressEvent::TurnCompleted {
+                messages: messages[appended_from..].to_vec(),
+            });
             // Tool calls were executed and spilled — mark dirty for next iteration
             spills_dirty = self.spill_store.is_some();
             iterations += 1;

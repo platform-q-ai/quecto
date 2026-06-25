@@ -28,6 +28,9 @@ impl App {
                 error,
             } => self.handle_response(id, command, success, data, error),
             Event::SubagentStateChanged { subagents } => self.update_subagent_bar(subagents),
+            Event::SubagentMessagesAppended { agent_id, messages } => {
+                self.append_subagent_messages(&agent_id, &messages)
+            }
             Event::WorkflowState {
                 agent_id,
                 steps,

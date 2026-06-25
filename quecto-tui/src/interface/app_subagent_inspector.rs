@@ -2,7 +2,8 @@
 //!
 //! Glue between the `App` and the `subagent_inspector` component: opening/closing
 //! via double-Up, key routing while open, building the master-detail data from
-//! `subagent_local`, polling the selected agent's output tail by `agent_id`, and
+//! `subagent_local`, a one-shot output-tail fetch on open/select/idle by
+//! `agent_id` plus live per-turn appends pushed over the broadcast, and
 //! rendering the full-screen frame.
 
 use super::*;
@@ -134,19 +135,21 @@ impl App {
         });
     }
 
-    /// Poll the highlighted agent's tail on the timer while the panel is open.
-    /// Skips while a request is already outstanding so polls can't stack on the
-    /// UDS faster than the kernel round-trip drains them (#795).
-    pub(super) fn poll_inspector_tail(&mut self) {
-        if self.inspector_tail_inflight.is_some() {
+    /// Append a sub-agent's just-completed turn output to the inspector's
+    /// per-agent tail cache so the right panel updates live, turn by turn
+    /// (#797). No-op when the panel is closed — the one-shot backfill on
+    /// open/select re-fetches any turns missed while it wasn't subscribed.
+    pub(super) fn append_subagent_messages(
+        &mut self,
+        agent_id: &str,
+        messages: &[serde_json::Value],
+    ) {
+        if agent_id.is_empty() {
             return;
         }
-        if let Some(agent_id) = self
-            .subagent_inspector
-            .as_ref()
-            .and_then(|i| i.selected_agent_id())
-        {
-            self.request_inspector_tail(&agent_id);
+        let lines = messages_array_to_lines(messages);
+        if let Some(inspector) = &mut self.subagent_inspector {
+            inspector.append_tail(agent_id, lines);
         }
     }
 
@@ -216,6 +219,12 @@ fn messages_tail_to_lines(data: &serde_json::Value) -> Vec<String> {
     let Some(messages) = data.get("messages").and_then(|v| v.as_array()) else {
         return Vec::new();
     };
+    messages_array_to_lines(messages)
+}
+
+/// Flatten a `[{role,content,...}]` message array into display lines. Shared by
+/// the one-shot tail-response path and the per-turn push path (#797).
+fn messages_array_to_lines(messages: &[serde_json::Value]) -> Vec<String> {
     let mut out = Vec::new();
     for msg in messages {
         let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("?");

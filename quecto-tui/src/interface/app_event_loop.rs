@@ -63,11 +63,6 @@ impl App {
         let (files_autocomplete_tx, mut files_autocomplete_rx) = mpsc::channel::<Vec<String>>(1);
         let mut files_autocomplete_load_in_flight = false;
 
-        // Sub-agent inspector output-tail poll (#795). Fires regardless of panel
-        // state; the handler is a no-op while the panel is closed.
-        let mut inspector_tail_interval = tokio::time::interval(INSPECTOR_TAIL_POLL);
-        inspector_tail_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
         // Timeout for incomplete escape sequences (matches Quecto TUI's 10ms).
         let escape_timeout = Duration::from_millis(10);
 
@@ -164,12 +159,6 @@ impl App {
                     self.files_autocomplete.apply_loaded_files(files);
                     self.refresh_files_autocomplete_from_editor();
                     self.render();
-                }
-                // Sub-agent inspector output-tail poll tick (#795).
-                _ = inspector_tail_interval.tick() => {
-                    if self.inspector_open() {
-                        self.poll_inspector_tail();
-                    }
                 }
                 // Git branch footer refresh tick.
                 _ = git_branch_interval.tick() => {

@@ -8,6 +8,7 @@
 //! introduces, via a real serde round-trip rather than source inspection.
 
 use super::*;
+use quecto::infrastructure::tools::subagent_monitor::forward_child_messages_appended;
 use quecto::interface::cli::protocol::AgentCommand;
 
 #[given(expr = "a get_messages_tail wire line targeting agent {string}")]
@@ -48,4 +49,31 @@ fn then_targets_no_agent(world: &mut QuectoWorld) {
         "absent agent_id must stay absent (parent-targeted), got {}",
         world.stdout
     );
+}
+
+#[given("a child subagent_messages_appended wire line")]
+fn given_messages_appended_line(world: &mut QuectoWorld) {
+    // A child emits this with an empty agent_id; the monitor force-stamps it.
+    world.stdout = r#"{"type":"subagent_messages_appended","agent_id":"","messages":[{"role":"assistant","content":"hi"}]}"#.to_string();
+}
+
+#[when(expr = "the parent monitor forwards it for agent {string} under parent {string}")]
+fn when_monitor_forwards(world: &mut QuectoWorld, agent: String, parent: String) {
+    world.stdout = forward_child_messages_appended(&world.stdout, &agent, Some(&parent))
+        .expect("subagent_messages_appended line should forward");
+}
+
+#[then(expr = "the forwarded event targets agent {string} with parent {string}")]
+fn then_forwarded_targets(world: &mut QuectoWorld, agent: String, parent: String) {
+    let value: serde_json::Value = serde_json::from_str(&world.stdout).unwrap();
+    assert_eq!(value["type"], "subagent_messages_appended");
+    assert_eq!(
+        value.get("agent_id").and_then(|v| v.as_str()),
+        Some(agent.as_str())
+    );
+    assert_eq!(
+        value.get("parent_id").and_then(|v| v.as_str()),
+        Some(parent.as_str())
+    );
+    assert_eq!(value["messages"][0]["role"], "assistant");
 }

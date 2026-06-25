@@ -126,27 +126,52 @@ async fn opening_requests_an_agent_targeted_tail() {
 }
 
 #[tokio::test]
-async fn poll_skips_while_a_tail_request_is_in_flight() {
+async fn pushed_turn_messages_append_live_to_the_open_panel() {
     let mut h = with_one_subagent().await;
     h.app_mut().handle_key(Key::Up);
     h.app_mut().handle_key(Key::Up);
-    let _ = h.drain_commands().await; // open-time fetch arms the in-flight guard
-    h.app_mut().poll_inspector_tail();
-    let cmds = h.drain_commands().await;
+    assert!(h.app_mut().inspector_open());
+    // A completed turn for the selected agent ("other") is pushed over the
+    // broadcast — its output must appear in the detail panel without any poll.
+    h.event(Event::SubagentMessagesAppended {
+        agent_id: "other".into(),
+        messages: vec![serde_json::json!({
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "streamed turn one" }]
+        })],
+    });
+    let plain = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
-        cmds.is_empty(),
-        "poll must not stack a second request while one is outstanding: {cmds:?}"
+        plain.contains("streamed turn one"),
+        "pushed turn output must append live:\n{plain}"
     );
-    // Delivering the response clears the guard so the next poll can fetch again.
-    let data = serde_json::json!({ "messages": [] });
-    h.app_mut()
-        .handle_inspector_tail_response(Some("inspector-tail:other"), Some(&data));
-    h.app_mut().poll_inspector_tail();
-    let cmds = h.drain_commands().await;
+    // A second turn appends after the first (it does not replace it).
+    h.event(Event::SubagentMessagesAppended {
+        agent_id: "other".into(),
+        messages: vec![serde_json::json!({
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "streamed turn two" }]
+        })],
+    });
+    let plain = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
-        cmds.iter().any(|c| c.contains("get_messages_tail")),
-        "poll should resume once the in-flight request resolved: {cmds:?}"
+        plain.contains("streamed turn one") && plain.contains("streamed turn two"),
+        "successive turns must accumulate:\n{plain}"
     );
+}
+
+#[tokio::test]
+async fn pushed_messages_are_ignored_while_panel_closed() {
+    let mut h = with_one_subagent().await;
+    // Panel never opened: a push must be a no-op (no panic, nothing cached).
+    h.event(Event::SubagentMessagesAppended {
+        agent_id: "other".into(),
+        messages: vec![serde_json::json!({
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "dropped" }]
+        })],
+    });
+    assert!(!h.app_mut().inspector_open());
 }
 
 #[tokio::test]
@@ -197,4 +222,22 @@ fn double_up_window_logic() {
     assert!(App::double_up_should_open(Some(recent), now));
     let stale = now - std::time::Duration::from_millis(2000);
     assert!(!App::double_up_should_open(Some(stale), now));
+}
+
+#[test]
+fn double_up_window_is_a_quick_tap_boundary() {
+    use super::App;
+    let now = tokio::time::Instant::now();
+    // A pair just inside ~300ms opens; a pair clearly slower does not — so two
+    // slowish Up presses navigate history instead of opening the panel (#797).
+    let inside = now - std::time::Duration::from_millis(250);
+    assert!(
+        App::double_up_should_open(Some(inside), now),
+        "a quick double-tap (<300ms) must open the inspector"
+    );
+    let outside = now - std::time::Duration::from_millis(500);
+    assert!(
+        !App::double_up_should_open(Some(outside), now),
+        "presses ≥~500ms apart must NOT open the inspector"
+    );
 }

@@ -64,6 +64,37 @@ async fn test_forward_progress_event_emits_tool_finished_with_tool_call_id() {
     );
 }
 
+#[tokio::test]
+async fn test_forward_progress_event_emits_subagent_messages_appended() {
+    use crate::domain::agent::AgentProgressEvent;
+    use crate::interface::cli::uds_cancel::forward_progress_event;
+
+    let mut buf = Vec::new();
+    let ev = AgentProgressEvent::TurnCompleted {
+        messages: vec![
+            Message::assistant("turn output", vec![]),
+            Message::tool("call-1", "tool result body"),
+        ],
+    };
+    forward_progress_event(ev, &mut buf).await;
+
+    let output = String::from_utf8(buf).unwrap();
+    assert!(
+        output.contains("subagent_messages_appended"),
+        "expected subagent_messages_appended event, got: {output}"
+    );
+    // Emitted with an empty agent_id on the child's own stream (the parent
+    // monitor re-stamps it before forwarding).
+    assert!(
+        output.contains("\"agent_id\":\"\""),
+        "child emits empty agent_id, got: {output}"
+    );
+    assert!(
+        output.contains("turn output") && output.contains("tool result body"),
+        "turn messages must be carried, got: {output}"
+    );
+}
+
 // ─── clear_history (#408) ────────────────────────────────────────────────────
 
 #[test]

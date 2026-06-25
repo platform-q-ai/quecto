@@ -127,6 +127,19 @@ impl SubagentInspector {
         self.tails.contains_key(agent_id)
     }
 
+    /// Append freshly-streamed output lines to an agent's cached tail, creating
+    /// the cache entry if needed. Used by the per-turn push path so the detail
+    /// panel grows live, turn by turn (#797).
+    pub fn append_tail(&mut self, agent_id: &str, mut lines: Vec<String>) {
+        if lines.is_empty() {
+            return;
+        }
+        self.tails
+            .entry(agent_id.to_string())
+            .or_default()
+            .append(&mut lines);
+    }
+
     /// Route a key. The focus state machine:
     /// - List: ↑/↓ navigate (→ `SelectionChanged`), Enter → Detail focus,
     ///   Esc → `Close`.

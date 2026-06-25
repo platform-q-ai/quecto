@@ -232,6 +232,18 @@ fn test_subagent_state_changed_event_serializes() {
 }
 
 #[test]
+fn test_subagent_messages_appended_event_serializes() {
+    let ev = AgentEvent::SubagentMessagesAppended {
+        agent_id: String::new(),
+        messages: vec![serde_json::json!({"role": "assistant", "content": "done"})],
+    };
+    let json = ev.to_json_line();
+    assert!(json.contains("\"type\":\"subagent_messages_appended\""));
+    assert!(json.contains("\"agent_id\":\"\""));
+    assert!(json.contains("\"content\":\"done\""));
+}
+
+#[test]
 fn test_subagent_info_null_fields_omitted() {
     let info = SubagentInfo {
         agent_id: "idle-agent".to_string(),

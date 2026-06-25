@@ -171,6 +171,13 @@ pub enum Event {
     SubagentStateChanged {
         subagents: Vec<SubagentInfoEvent>,
     },
+    /// A sub-agent completed a turn; carries that turn's appended messages
+    /// (assistant + tool results), re-stamped by the parent monitor with the
+    /// child's id. Lets the inspector stream output turn-by-turn (#797).
+    SubagentMessagesAppended {
+        agent_id: String,
+        messages: Vec<serde_json::Value>,
+    },
     /// Workflow state changed — step checked/unchecked/reset (#563).
     WorkflowState {
         /// Identity of the emitting agent (PRD Stage B). `None` for the

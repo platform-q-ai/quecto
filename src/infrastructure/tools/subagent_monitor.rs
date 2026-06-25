@@ -275,6 +275,16 @@ fn handle_monitor_line(
         tracing::warn!(agent = %agent_id, len = line.len(), "monitor: dropping oversized line");
         return;
     }
+    // Per-turn message stream: forward re-stamped onto the parent's stream so
+    // the TUI inspector updates turn-by-turn (#797). This event does not change
+    // the child's tracked status, so it bypasses the state-changing path below.
+    if let Some(tx) = broadcast_tx {
+        if let Some(mut fwd) = forward_child_messages_appended(line, agent_id, parent_id) {
+            fwd.push('\n');
+            let _ = tx.send(fwd);
+            return;
+        }
+    }
     // Cheap substring pre-filter: any line that isn't a tracked event type
     // (including high-volume `token` lines) is skipped before the JSON parse.
     if !STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
@@ -321,6 +331,47 @@ pub fn canonical_workflow_forward(
         "progress": value.get("progress").cloned().unwrap_or(serde_json::Value::Null),
     });
     serde_json::to_string(&canonical).ok()
+}
+
+/// If `line` is a child's `subagent_messages_appended` event, re-stamp it with
+/// the child's identity so it can be forwarded onto the parent's event stream
+/// (#797). The child emits these with an empty `agent_id`; we force-stamp the
+/// authoritative child id (and `parent_id`) so the TUI can route the turn's
+/// messages to the right inspector pane. Returns the re-tagged JSON line, or
+/// `None` for any line that is not a `subagent_messages_appended` event.
+pub fn canonical_messages_appended_forward(
+    value: &serde_json::Value,
+    child_id: &str,
+    parent_id: Option<&str>,
+) -> Option<String> {
+    if value.get("type").and_then(|t| t.as_str()) != Some("subagent_messages_appended") {
+        return None;
+    }
+    let messages = value
+        .get("messages")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::Array(vec![]));
+    let canonical = serde_json::json!({
+        "type": "subagent_messages_appended",
+        "agent_id": child_id,
+        "parent_id": parent_id,
+        "messages": messages,
+    });
+    serde_json::to_string(&canonical).ok()
+}
+
+/// Line-based wrapper around [`canonical_messages_appended_forward`]: cheap
+/// substring pre-filter, then parse once. Returns `None` for non-message lines.
+pub fn forward_child_messages_appended(
+    line: &str,
+    child_id: &str,
+    parent_id: Option<&str>,
+) -> Option<String> {
+    if !line.contains("\"type\":\"subagent_messages_appended\"") {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    canonical_messages_appended_forward(&value, child_id, parent_id)
 }
 
 /// Line-based wrapper around [`canonical_workflow_forward`]: cheap substring

@@ -39,13 +39,11 @@ use crate::interface::kitty::KittyProtocol;
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 const MOUSE_SCROLL_LINES: usize = 3;
 
-/// Window for detecting a double-Up press to open the sub-agent inspector (#795).
-/// Mirrors the rewind double-Escape window.
-const DOUBLE_UP_WINDOW: Duration = Duration::from_millis(750);
-
-/// How often to refresh the selected sub-agent's output tail while the
-/// inspector is open (#795).
-const INSPECTOR_TAIL_POLL: Duration = Duration::from_secs(1);
+/// Window for detecting a double-Up press to open the sub-agent inspector.
+/// Deliberately shorter than the rewind double-Escape window so the gesture is
+/// a quick intentional double-tap: two slowish Up presses navigate history
+/// rather than opening the panel (#797).
+const DOUBLE_UP_WINDOW: Duration = Duration::from_millis(300);
 
 /// Maximum retry iterations for reassembling multi-fragment escape sequences.
 /// Handles up to 5-fragment CSI splits on slow SSH/serial connections.
