@@ -199,6 +199,17 @@ impl std::ops::Deref for DebugSpillStore {
     }
 }
 
+// Opaque Debug wrapper for the headless TUI render harness (#805). The harness
+// holds a live `App` (and background tokio tasks) and isn't `Debug`, so wrap it
+// to satisfy the derived `Debug`/`Default` on `QuectoWorld`.
+pub struct TuiParityHarness(pub quecto_tui::interface::app::tui_harness::TuiHarness);
+
+impl std::fmt::Debug for TuiParityHarness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<TuiParityHarness>")
+    }
+}
+
 #[derive(Debug, Default, World)]
 pub struct QuectoWorld {
     /// Exit code from the last CLI invocation
@@ -322,6 +333,11 @@ pub struct QuectoWorld {
         Option<quecto_tui::interface::components::files_autocomplete::FilesAutocomplete>,
     /// TUI @files BDD: last consumed background-load request.
     pub tui_files_load_requested: bool,
+    /// TUI sub-agent session-parity BDD (#805): tokio runtime backing the
+    /// headless render harness (its background tasks need a live runtime).
+    pub tui_parity_rt: Option<tokio::runtime::Runtime>,
+    /// TUI sub-agent session-parity BDD (#805): the headless render harness.
+    pub tui_parity: Option<TuiParityHarness>,
     /// TUI scrollback BDD: viewport captured before streaming growth.
     pub tui_viewport_before_stream: Vec<String>,
     /// TUI scrollback BDD: viewport captured after streaming growth.
@@ -960,6 +976,7 @@ mod tool_empty_args_steps;
 mod truncate_steps;
 mod tui_architecture_steps;
 mod tui_file_mention_steps;
+mod tui_subagent_parity_steps;
 mod uds_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;

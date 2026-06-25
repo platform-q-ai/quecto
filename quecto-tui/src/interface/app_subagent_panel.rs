@@ -19,7 +19,7 @@ impl App {
     }
 
     /// The agent whose session is currently shown in the body. `None` = master.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     pub(super) fn active_agent_id(&self) -> Option<&str> {
         self.active_agent_id.as_deref()
     }
@@ -48,12 +48,13 @@ impl App {
             None => &mut self.chat,
             Some(id) => {
                 let id = id.clone();
+                let git_branch = self.git_branch.clone();
                 &mut self
                     .sessions
                     .entry(id.clone())
                     .or_insert_with(|| {
                         Self::remember_session(&mut self.session_order, &id);
-                        SessionView::new()
+                        SessionView::new(git_branch)
                     })
                     .chat
             }
@@ -74,6 +75,19 @@ impl App {
         }
     }
 
+    /// Render the active session's footer: the master's own `self.footer` when
+    /// no sub-agent is selected, otherwise the selected agent's per-session
+    /// footer (#805). Falls back to the master footer if the session is missing.
+    pub(super) fn active_footer_render(&mut self, width: usize) -> Vec<String> {
+        match self.active_agent_id.clone() {
+            None => self.footer.render(width),
+            Some(id) => match self.sessions.get_mut(&id) {
+                Some(session) => session.footer.render(width),
+                None => self.footer.render(width),
+            },
+        }
+    }
+
     /// Whether the active sub-agent is mid-turn (drives the per-session working
     /// indicator). Always `false` for the master, whose spinner is separate.
     pub(super) fn active_subagent_running(&self) -> bool {
@@ -84,13 +98,13 @@ impl App {
     }
 
     /// The focus region currently holding keyboard input (#802, tests).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     pub(super) fn focus_region(&self) -> Focus {
         self.focus
     }
 
     /// The 0-based panel highlight index (#802, tests).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     pub(super) fn panel_highlight_index(&self) -> usize {
         self.panel_nav.selected()
     }
@@ -164,7 +178,8 @@ impl App {
     /// evicting the oldest non-active session beyond the cap.
     fn ensure_session(&mut self, id: &str) {
         if !self.sessions.contains_key(id) {
-            self.sessions.insert(id.to_string(), SessionView::new());
+            self.sessions
+                .insert(id.to_string(), SessionView::new(self.git_branch.clone()));
             Self::remember_session(&mut self.session_order, id);
             self.evict_retained_sessions();
         }
@@ -355,10 +370,20 @@ impl App {
             return;
         }
         match &ev {
-            Event::AgentStart | Event::TurnStart => session.running = true,
-            Event::AgentEnd { .. } | Event::TurnEnd { .. } => session.running = false,
+            Event::AgentStart | Event::TurnStart => {
+                session.running = true;
+                session.footer.set_streaming(true);
+            }
+            Event::AgentEnd { .. } | Event::TurnEnd { .. } => {
+                session.running = false;
+                session.footer.set_streaming(false);
+            }
             _ => {}
         }
+        // Per-session FOOTER: feed the child's OWN context-window / cost / model
+        // gauges from its forwarded events so a selected sub-agent shows ITS
+        // usage, not the master's (#805).
+        Self::update_session_footer(session, &ev);
         let chat = &mut session.chat;
         match ev {
             Event::Token { token } => chat.append_token(&token),
@@ -392,6 +417,56 @@ impl App {
                 ..
             } if command == "get_messages" => {
                 Self::replace_session_chat(chat, &data);
+            }
+            _ => {}
+        }
+    }
+
+    /// Update a session's OWN footer (context-window / cost / model) from a
+    /// forwarded sub-agent event, mirroring the master footer path (#805):
+    /// `get_state` carries the model and window, `turn_end` the live context
+    /// usage, and `get_session_stats` the cumulative cost (plus usage fallback).
+    fn update_session_footer(session: &mut SessionView, ev: &Event) {
+        use crate::application::session_payloads;
+        match ev {
+            Event::Response {
+                command,
+                data: Some(data),
+                success: true,
+                ..
+            } if command == "get_state" => {
+                if let Some(model) = data.get("model").and_then(|m| m.as_str()) {
+                    let sanitized = crate::interface::ansi::sanitize_control(model);
+                    session.footer.set_model(&sanitized);
+                    session.current_model = Some(sanitized);
+                }
+                if let Some(max_ctx) = data.get("maxContextTokens").and_then(|v| v.as_u64()) {
+                    session.footer.set_context_window(max_ctx as usize);
+                }
+            }
+            Event::Response {
+                command,
+                data: Some(data),
+                success: true,
+                ..
+            } if command == "get_session_stats" => {
+                let stats = session_payloads::parse_session_stats(data);
+                if let Some((used, window)) = stats.context_usage {
+                    session.footer.update_context_usage(used, window);
+                }
+                session
+                    .footer
+                    .set_cost((stats.cost > 0.0).then_some(stats.cost));
+            }
+            Event::TurnEnd { message, .. } => {
+                let used = message.get("contextTokens").and_then(|v| v.as_u64());
+                let window = message
+                    .get("maxContextTokens")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize);
+                if let (Some(used), Some(window)) = (used, window) {
+                    session.footer.update_context_usage(used, window);
+                }
             }
             _ => {}
         }

@@ -375,8 +375,10 @@ impl App {
         bottom.extend(self.editor.render(width));
         // Notifications.
         bottom.extend(self.notifications.render(width));
-        // Footer.
-        bottom.extend(self.footer.render(width));
+        // Footer — render the ACTIVE session's gauges (master's own, or the
+        // selected sub-agent's context-window / cost / model), so a selected
+        // sub-agent shows ITS usage rather than the master's (#805).
+        bottom.extend(self.active_footer_render(width));
 
         bottom
     }
