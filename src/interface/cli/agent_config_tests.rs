@@ -479,6 +479,114 @@ fn test_build_agent_provider_registry_openai_oauth_uses_default_base_url() {
     );
 }
 
+// ===================================================================
+// Issue #811: OAuth refresh must be lazy — never on the build (pre-announce)
+// critical path. build_agent_provider must construct providers from the
+// stored (possibly stale/expired) token WITHOUT any network refresh; the
+// existing RefreshableProvider refreshes on-demand on a 401 at first use,
+// AFTER the socket is announced.
+// ===================================================================
+
+/// Store an expired OAuth credential whose refresh token is bogus. If
+/// `build_agent_provider` eagerly refreshes (the #811 regression) the refresh
+/// fails (invalid_grant / network) and the built-in `<vendor>-oauth` provider is
+/// dropped. With lazy construction the provider is present (stale token), and
+/// refresh is deferred to first request.
+fn store_expired_oauth(tmp: &std::path::Path, provider: &str, token: &str) {
+    let store = CredentialStore::new(tmp);
+    store
+        .store(Credential {
+            provider: provider.to_string(),
+            token: token.to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(0), // epoch — always expired
+            refresh_token: Some("bogus-refresh-token".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+}
+
+#[test]
+fn test_build_agent_provider_expired_anthropic_oauth_constructed_without_refresh() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    store_expired_oauth(tmp.path(), "anthropic", "sk-ant-oat01-stale");
+    // Empty registry so only the built-in anthropic-oauth path is exercised.
+    std::fs::write(tmp.path().join("models.json"), r#"{"providers":{}}"#).unwrap();
+    let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+
+    let start = std::time::Instant::now();
+    let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+    let elapsed = start.elapsed();
+
+    let names = router_provider_names(&provider);
+    assert!(
+        names.iter().any(|n| n == "anthropic-oauth"),
+        "expired anthropic OAuth credential must still produce an anthropic-oauth \
+         provider built from the stale token (no eager refresh); got: {names:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "build_agent_provider must not perform a blocking OAuth network refresh on \
+         the startup path (took {elapsed:?})"
+    );
+}
+
+#[test]
+fn test_build_agent_provider_expired_openai_oauth_constructed_without_refresh() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    // Use a JWT-shaped OAuth token so the codex routing path is exercised too.
+    store_expired_oauth(tmp.path(), "openai", &openai_oauth_jwt("acct-stale"));
+    std::fs::write(tmp.path().join("models.json"), r#"{"providers":{}}"#).unwrap();
+    let config = config_from_str(r#"{"providers":{"anthropic":{"api_key":"sk-ant"}}}"#);
+
+    let start = std::time::Instant::now();
+    let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+    let elapsed = start.elapsed();
+
+    let names = router_provider_names(&provider);
+    assert!(
+        names.iter().any(|n| n == "openai-oauth"),
+        "expired openai OAuth credential must still produce an openai-oauth provider \
+         built from the stale token (no eager refresh); got: {names:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "build_agent_provider must not perform a blocking OAuth network refresh on \
+         the startup path (took {elapsed:?})"
+    );
+}
+
+/// Issue #811 de-duplication: the double-refresh in the trace came from the SAME
+/// OAuth credential backing both the built-in `anthropic-oauth` provider and a
+/// `models.json` provider also named `anthropic-oauth`. The registry loop must
+/// skip a provider whose name is already present, so the vendor is constructed
+/// exactly once — never twice. (With lazy construction the refresh is gone
+/// entirely; this guards the structural de-dup that previously multiplied the
+/// stall.)
+#[test]
+fn test_build_agent_provider_oauth_provider_constructed_exactly_once() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    store_expired_oauth(tmp.path(), "anthropic", "sk-ant-oat01-stale");
+    // models.json redeclares anthropic-oauth referencing the same kernel
+    // credential — without de-dup this would build the provider a second time.
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"anthropic-oauth":{"api":"anthropic-messages","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-4-8"}]}}}"#,
+    )
+    .unwrap();
+    let config = config_from_str(r#"{"providers":{}}"#);
+
+    let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+
+    let names = router_provider_names(&provider);
+    let count = names.iter().filter(|n| *n == "anthropic-oauth").count();
+    assert_eq!(
+        count, 1,
+        "anthropic-oauth must be constructed exactly once (no duplicate from the \
+         models.json registry loop); got names: {names:?}"
+    );
+}
+
 #[test]
 fn test_build_agent_provider_oauth_and_api_key_coexist_for_same_vendor() {
     let tmp = tempfile::TempDir::new().unwrap();

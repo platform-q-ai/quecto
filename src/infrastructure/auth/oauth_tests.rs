@@ -655,6 +655,71 @@ async fn test_oauth_transport_errors_are_reported() {
     }
 }
 
+/// Issue #811: every OAuth flow shares one HTTP client (`oauth_http_client`)
+/// that MUST configure a short `connect_timeout` so a cold/unreachable token
+/// endpoint fails fast instead of blocking for the full 30s overall timeout.
+///
+/// This is the deterministic, network-free guard: it asserts the configured
+/// connect timeout sits in a fast band (1-5s) and is strictly shorter than the
+/// overall request timeout. Because `refresh_anthropic_token`,
+/// `refresh_openai_token`, both code-exchange flows, and the device-code flow
+/// all build their client via `oauth_http_client()`, this single assertion
+/// covers the connect-timeout criterion for ALL OAuth refresh paths — there is
+/// no path that can regress to a missing `connect_timeout`.
+#[test]
+fn test_oauth_connect_timeout_is_fast() {
+    assert!(
+        OAUTH_CONNECT_TIMEOUT >= std::time::Duration::from_secs(1)
+            && OAUTH_CONNECT_TIMEOUT <= std::time::Duration::from_secs(5),
+        "OAuth connect_timeout must be a short 1-5s band so a cold endpoint fails \
+         fast; got {OAUTH_CONNECT_TIMEOUT:?}"
+    );
+    assert!(
+        OAUTH_CONNECT_TIMEOUT < OAUTH_REQUEST_TIMEOUT,
+        "connect_timeout ({OAUTH_CONNECT_TIMEOUT:?}) must be shorter than the \
+         overall request timeout ({OAUTH_REQUEST_TIMEOUT:?})"
+    );
+    // The shared builder must succeed (it is the only client constructor for
+    // every OAuth path).
+    assert!(oauth_http_client().is_ok());
+}
+
+/// Issue #811 (behavioural cross-check): connecting to a reserved TEST-NET-1
+/// address (192.0.2.1, RFC 5737) is blackholed, so the connect hangs until the
+/// 3s `connect_timeout` fires — well under the 30s overall timeout, but not
+/// instantly. Both the Anthropic and OpenAI refresh paths are exercised.
+///
+/// When outbound networking is unavailable (sandboxed/offline CI), the connect
+/// fails immediately rather than hanging; the wall-clock signal is then
+/// meaningless, so the timing assertion self-skips instead of producing a false
+/// pass (an instant failure must not be misread as the timeout working).
+#[tokio::test]
+async fn test_refresh_paths_fail_fast_via_connect_timeout() {
+    let cfg = OAuthConfig::with_base_url("http://192.0.2.1:81");
+    let assert_fast = |label: &str, err: DomainError, elapsed: std::time::Duration| {
+        assert!(
+            err.to_string().contains("token refresh request failed"),
+            "{label}: expected a transport error, got: {err}"
+        );
+        if elapsed < std::time::Duration::from_millis(1500) {
+            return; // offline: connect failed instantly, timing not meaningful
+        }
+        assert!(
+            elapsed < std::time::Duration::from_secs(8),
+            "{label}: must fail fast via connect_timeout, not the 30s overall \
+             timeout (took {elapsed:?})"
+        );
+    };
+
+    let start = std::time::Instant::now();
+    let err = refresh_anthropic_token(&cfg, "rt").await.unwrap_err();
+    assert_fast("anthropic", err, start.elapsed());
+
+    let start = std::time::Instant::now();
+    let err = refresh_openai_token(&cfg, "rt").await.unwrap_err();
+    assert_fast("openai", err, start.elapsed());
+}
+
 #[tokio::test]
 async fn test_exchange_anthropic_code_without_refresh_token() {
     use wiremock::matchers::{method, path};

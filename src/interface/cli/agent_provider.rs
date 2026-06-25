@@ -12,20 +12,6 @@ use crate::infrastructure::providers::router::ProviderRouter;
 
 const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
 
-fn refresh_runtime(
-    rt: &mut Option<tokio::runtime::Runtime>,
-) -> Result<&tokio::runtime::Runtime, String> {
-    if rt.is_none() {
-        *rt = Some(
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| format!("failed to create runtime for token refresh: {}", e))?,
-        );
-    }
-    Ok(rt.as_ref().expect("runtime was just initialized"))
-}
-
 /// Build a ProviderRouter from config + credential store, suitable for the agent CLI.
 ///
 /// OAuth-backed providers are wrapped in [`RefreshableProvider`] so that
@@ -36,8 +22,6 @@ pub fn build_agent_provider(
     http_client: &reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, String> {
     let store = CredentialStore::new(base_dir);
-
-    let mut refresh_rt: Option<tokio::runtime::Runtime> = None;
 
     let mut provider_list: Vec<Arc<dyn crate::domain::provider::LlmProvider>> = Vec::new();
     let store_arc = Arc::new(CredentialStore::new(base_dir));
@@ -75,15 +59,15 @@ pub fn build_agent_provider(
             .map_err(|e| format!("openai-api provider configuration error: {}", e))?,
         );
     }
-    if store.get("openai").ok().flatten().is_some_and(|c| {
-        c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
-    }) {
-        let openai_oauth_key = crate::interface::shared::resolve_api_key_with_refresh(
-            "",
-            &store,
-            "openai",
-            refresh_runtime(&mut refresh_rt)?,
-        );
+    if let Some(openai_oauth_cred) =
+        store.get("openai").ok().flatten().filter(|c| {
+            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
+        })
+    {
+        // #811: construct from the stored (possibly stale) token — no eager
+        // network refresh on the pre-announce startup path. RefreshableProvider
+        // refreshes lazily on a 401 at first real request, after socket announce.
+        let openai_oauth_key = openai_oauth_cred.token;
         if !openai_oauth_key.is_empty() {
             let inner = build_single_provider(
                 "openai",
@@ -135,15 +119,15 @@ pub fn build_agent_provider(
             .map_err(|e| format!("anthropic-api provider configuration error: {}", e))?,
         );
     }
-    if store.get("anthropic").ok().flatten().is_some_and(|c| {
-        c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
-    }) {
-        let anthropic_oauth_key = crate::interface::shared::resolve_api_key_with_refresh(
-            "",
-            &store,
-            "anthropic",
-            refresh_runtime(&mut refresh_rt)?,
-        );
+    if let Some(anthropic_oauth_cred) =
+        store.get("anthropic").ok().flatten().filter(|c| {
+            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
+        })
+    {
+        // #811: construct from the stored (possibly stale) token — no eager
+        // network refresh on the pre-announce startup path. RefreshableProvider
+        // refreshes lazily on a 401 at first real request, after socket announce.
+        let anthropic_oauth_key = anthropic_oauth_cred.token;
         if !anthropic_oauth_key.is_empty() {
             let inner = providers::create_anthropic_compatible_provider(
                 "anthropic-oauth",
@@ -196,14 +180,8 @@ pub fn build_agent_provider(
         {
             continue;
         }
-        let Some(provider) = build_registry_provider(
-            model,
-            base_dir,
-            &store_arc,
-            &refresh_fn,
-            http_client,
-            &mut refresh_rt,
-        )?
+        let Some(provider) =
+            build_registry_provider(model, base_dir, &store_arc, &refresh_fn, http_client)?
         else {
             continue;
         };
@@ -347,7 +325,6 @@ fn build_registry_provider(
     store: &Arc<CredentialStore>,
     refresh_fn: &crate::infrastructure::providers::refreshable::RefreshFn,
     http_client: &reqwest::Client,
-    refresh_rt: &mut Option<tokio::runtime::Runtime>,
 ) -> Result<Option<Arc<dyn LlmProvider>>, String> {
     use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
 
@@ -380,13 +357,13 @@ fn build_registry_provider(
             if cred.method != crate::infrastructure::auth::credential_store::AuthMethod::OAuth {
                 return Ok(None);
             }
+            if cred.token.is_empty() {
+                return Ok(None);
+            }
             api_base = oauth_registry_base_url(model, oauth_provider)?;
-            crate::interface::shared::resolve_api_key_with_refresh(
-                "",
-                store,
-                oauth_provider,
-                refresh_runtime(refresh_rt)?,
-            )
+            // #811: use the stored (possibly stale) token; no eager network
+            // refresh. RefreshableProvider refreshes lazily on 401 at first use.
+            cred.token
         }
     };
 
