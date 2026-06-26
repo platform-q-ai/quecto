@@ -74,12 +74,16 @@ fn given_child_state_changed_with_two_grandchildren(
 #[when("the monitor forwards the child's subagent_state_changed event")]
 fn when_monitor_forwards_state_changed(world: &mut QuectoWorld) {
     use quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed;
+    use quecto::infrastructure::tools::subagent_registry::new_registry;
     let line = world
         .event_identity_last
         .as_ref()
         .expect("no child event prepared")
         .to_string();
-    let forwarded = forward_child_state_changed(&line)
+    // A fresh root registry: the forward merges the descendants in and emits the
+    // union, so the forwarded event lists the grandchildren with real identity.
+    let registry = new_registry();
+    let forwarded = forward_child_state_changed(&line, &registry)
         .expect("a subagent_state_changed line should be forwarded");
     world.event_identity_last = Some(serde_json::from_str(&forwarded).unwrap());
 }

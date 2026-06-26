@@ -275,24 +275,34 @@ fn handle_monitor_line(
         tracing::warn!(agent = %agent_id, len = line.len(), "monitor: dropping oversized line");
         return;
     }
-    // Per-turn message stream: forward re-stamped onto the parent's stream so
-    // the TUI inspector updates turn-by-turn (#797). This event does not change
-    // the child's tracked status, so it bypasses the state-changing path below.
+    // Sub-agent stream events (per-turn messages and descendant state) are the
+    // only lines forwarded onto the parent's stream from here. Gate both behind
+    // one cheap substring fail-fast so high-volume `token` lines pay a single
+    // scan instead of one per forward check (perf review).
     if let Some(tx) = broadcast_tx {
-        if let Some(mut fwd) = forward_child_messages_appended(line, agent_id, parent_id) {
-            fwd.push('\n');
-            let _ = tx.send(fwd);
-            return;
-        }
-        // Descendant sub-agent state (a grandchild, or deeper, spawned by this
-        // child) must be re-broadcast up the chain so the root — and the TUI —
-        // sees it. Forwarded identity-preserving, never re-stamped (#815). This
-        // is not a status change for the immediate child, so it returns early
-        // and bypasses the registry/notification path below.
-        if let Some(mut fwd) = forward_child_state_changed(line) {
-            fwd.push('\n');
-            let _ = tx.send(fwd);
-            return;
+        if line.contains("\"subagent_") {
+            // Per-turn message stream: forward re-stamped onto the parent's
+            // stream so the TUI inspector updates turn-by-turn (#797). This
+            // event does not change the child's tracked status, so it bypasses
+            // the state-changing path below.
+            if let Some(mut fwd) = forward_child_messages_appended(line, agent_id, parent_id) {
+                fwd.push('\n');
+                let _ = tx.send(fwd);
+                return;
+            }
+            // Descendant sub-agent state (a grandchild, or deeper, spawned by
+            // this child) must reach the root — and the TUI. We MERGE the
+            // descendants into the registry preserving each entry's real
+            // identity, then re-broadcast the WHOLE tree from the registry so
+            // the event keeps full-replace semantics and never evicts the
+            // root's own children (#815, architecture review). This is not a
+            // status change for the immediate child, so it returns early and
+            // bypasses the registry-update/notification path below.
+            if let Some(mut fwd) = forward_child_state_changed(line, registry) {
+                fwd.push('\n');
+                let _ = tx.send(fwd);
+                return;
+            }
         }
     }
     // Cheap substring pre-filter: any line that isn't a tracked event type
@@ -398,46 +408,154 @@ pub fn forward_child_workflow_event(
     canonical_workflow_forward(&value, child_id, parent_id)
 }
 
-/// If `value` is a child's `subagent_state_changed` event, rebuild a canonical
-/// event for re-broadcast up the monitor chain (#815). Unlike the
-/// `canonical_*_forward` helpers, this MUST preserve every descendant's REAL
-/// `agentId`/`parentId` — the child's list already carries the authoritative
-/// identity for each grandchild (and deeper), so re-stamping to the immediate
-/// child's id would mis-attribute grandchildren to the child. Returns the
-/// re-built JSON line, or `None` for any line that is not a
-/// `subagent_state_changed` event.
+/// Maximum number of descendant entries accepted from a single child's
+/// `subagent_state_changed` event (#815 security review). A child sits inside
+/// the same-user trust boundary, but this is a new re-broadcast path: capping
+/// the merged count stops a misbehaving/compromised child from injecting an
+/// unbounded number of fabricated descendants into the root registry (which is
+/// then re-serialized at every ancestor hop).
+const MAX_FORWARDED_SUBAGENTS: usize = 256;
+
+/// Merge the descendants from a child's `subagent_state_changed` `value` into
+/// the registry (preserving each entry's REAL `agentId`/`parentId`), then build
+/// a single canonical `subagent_state_changed` event carrying the WHOLE current
+/// registry — the union of the root's own children and all merged descendants
+/// (#815, architecture review).
 ///
-/// `subagent_state_changed` events are passed through with the descendant
-/// `subagents` list intact — never re-stamped — so identity survives every hop.
-pub fn canonical_state_changed_forward(value: &serde_json::Value) -> Option<String> {
+/// Why merge instead of forwarding the grandchildren-only list verbatim: the
+/// consumer (`update_subagent_bar`) and `build_subagent_info_list` polling both
+/// treat each `subagent_state_changed` as a FULL replace. A partial push that
+/// listed only grandchildren would evict the root's direct children (and vice
+/// versa, the root's own push would evict the grandchildren), so the bar would
+/// oscillate and grandchildren would never appear stably. Carrying the union on
+/// every push fixes that and keeps `get_subagents` polling in agreement.
+///
+/// Each descendant keeps its authoritative identity — never re-stamped to the
+/// immediate child's id, which would mis-attribute grandchildren — so an
+/// already-forwarded great-grandchild entry chains up to arbitrary depth.
+/// Returns `None` for any value that is not a `subagent_state_changed` event.
+pub fn merge_and_forward_state_changed(
+    value: &serde_json::Value,
+    registry: &SubagentRegistry,
+) -> Option<String> {
     if value.get("type").and_then(|t| t.as_str()) != Some("subagent_state_changed") {
         return None;
     }
-    // Pass the descendant list through verbatim. Each entry already carries the
-    // authoritative `agentId`/`parentId` for that grandchild (or deeper); the
-    // forward must NOT collapse or re-stamp them, which would mis-attribute
-    // grandchildren to the immediate child. This also means an already-forwarded
-    // event (a great-grandchild's entry) is re-broadcast unchanged at each
-    // ancestor, so propagation chains to arbitrary depth up to the root.
-    let subagents = value
-        .get("subagents")
-        .cloned()
-        .unwrap_or_else(|| serde_json::Value::Array(vec![]));
-    let canonical = serde_json::json!({
-        "type": "subagent_state_changed",
-        "subagents": subagents,
-    });
-    serde_json::to_string(&canonical).ok()
+    if let Some(descendants) = value.get("subagents").and_then(|v| v.as_array()) {
+        merge_descendants(registry, descendants);
+    }
+    Some(build_state_changed_event(registry))
 }
 
-/// Line-based wrapper around [`canonical_state_changed_forward`]: cheap
+/// Merge descendant `SubagentInfo` entries (camelCase wire fields) into the
+/// registry. Bounded by [`MAX_FORWARDED_SUBAGENTS`]; entries are upserted so a
+/// re-report updates an existing merged descendant rather than duplicating it.
+fn merge_descendants(registry: &SubagentRegistry, descendants: &[serde_json::Value]) {
+    if descendants.len() > MAX_FORWARDED_SUBAGENTS {
+        tracing::warn!(
+            count = descendants.len(),
+            cap = MAX_FORWARDED_SUBAGENTS,
+            "monitor: truncating forwarded descendant list over cap"
+        );
+    }
+    let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+    for d in descendants.iter().take(MAX_FORWARDED_SUBAGENTS) {
+        let Some(agent_id) = d.get("agentId").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let socket_path = d
+            .get("socketPath")
+            .and_then(|v| v.as_str())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        let pid = d.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let entry = guard
+            .entry(agent_id.to_string())
+            .or_insert_with(|| SubagentEntry::new(socket_path.clone(), pid));
+        entry.status = d
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(SubagentStatus::from_wire_str)
+            .unwrap_or(SubagentStatus::Starting);
+        entry.last_tool = d
+            .get("lastTool")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        entry.last_error = d
+            .get("lastError")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        entry.pid = pid;
+        if !socket_path.as_os_str().is_empty() {
+            entry.socket_path = socket_path;
+        }
+        entry.parent_id = d
+            .get("parentId")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        entry.workflow = d
+            .get("workflow")
+            .and_then(|w| serde_json::from_value(w.clone()).ok());
+        entry.updated_at = Instant::now();
+    }
+}
+
+/// Build a canonical `subagent_state_changed` event (camelCase per
+/// `SubagentInfo`) from the registry's current entries, sorted by id for stable
+/// ordering. Projects to KNOWN fields only — no arbitrary child-supplied keys
+/// cross onto the parent stream (trust-boundary pattern, review).
+fn build_state_changed_event(registry: &SubagentRegistry) -> String {
+    let subagents: Vec<serde_json::Value> = {
+        let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+        let mut entries: Vec<(&String, &SubagentEntry)> = guard.iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
+        entries
+            .into_iter()
+            .map(|(id, entry)| {
+                let mut obj = serde_json::Map::new();
+                obj.insert("agentId".into(), serde_json::json!(id));
+                obj.insert(
+                    "status".into(),
+                    serde_json::json!(entry.status.to_wire_str()),
+                );
+                if let Some(tool) = &entry.last_tool {
+                    obj.insert("lastTool".into(), serde_json::json!(tool));
+                }
+                if let Some(err) = &entry.last_error {
+                    obj.insert("lastError".into(), serde_json::json!(err));
+                }
+                obj.insert("pid".into(), serde_json::json!(entry.pid));
+                obj.insert(
+                    "socketPath".into(),
+                    serde_json::json!(entry.socket_path.to_string_lossy()),
+                );
+                if let Some(parent) = &entry.parent_id {
+                    obj.insert("parentId".into(), serde_json::json!(parent));
+                }
+                if let Some(workflow) = &entry.workflow {
+                    if let Ok(w) = serde_json::to_value(workflow) {
+                        obj.insert("workflow".into(), w);
+                    }
+                }
+                serde_json::Value::Object(obj)
+            })
+            .collect()
+    };
+    serde_json::json!({
+        "type": "subagent_state_changed",
+        "subagents": subagents,
+    })
+    .to_string()
+}
+
+/// Line-based wrapper around [`merge_and_forward_state_changed`]: cheap
 /// substring pre-filter, then parse once. Returns `None` for non-state lines.
-pub fn forward_child_state_changed(line: &str) -> Option<String> {
+pub fn forward_child_state_changed(line: &str, registry: &SubagentRegistry) -> Option<String> {
     if !line.contains("\"type\":\"subagent_state_changed\"") {
         return None;
     }
     let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
-    canonical_state_changed_forward(&value)
+    merge_and_forward_state_changed(&value, registry)
 }
 
 /// Check if a JSON-lines event should trigger a notification and send it.
@@ -583,3 +701,7 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 #[path = "subagent_monitor_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "subagent_monitor_forward_tests.rs"]
+mod forward_tests;
