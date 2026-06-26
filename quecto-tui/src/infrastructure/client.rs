@@ -171,6 +171,16 @@ pub enum Event {
     SubagentStateChanged {
         subagents: Vec<SubagentInfoEvent>,
     },
+    /// A passive one-line completion note from a spawned sub-agent (#816). The
+    /// kernel emits this when a child completes/idles/errors while the parent is
+    /// idle; the TUI renders it as a single non-interactive status line.
+    #[serde(rename_all = "camelCase")]
+    SubagentNotification {
+        agent_id: String,
+        #[serde(default)]
+        sequence: u64,
+        message: String,
+    },
     /// A sub-agent completed a turn; carries that turn's appended messages
     /// (assistant + tool results), re-stamped by the parent monitor with the
     /// child's id. Lets the inspector stream output turn-by-turn (#797).

@@ -70,6 +70,10 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             entry.status = SubagentStatus::Running;
             entry.last_error = None;
             entry.run_error = None;
+            // Re-arm the auto-await dedupe (#auto-await-idle): a new run means a
+            // future terminal completion must notify again, even if a prior run's
+            // completion was consumed by a manual `await`.
+            entry.completion_consumed_by_await = false;
             entry.updated_at = Instant::now();
         }
         "agent_end" => {

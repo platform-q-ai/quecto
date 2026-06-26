@@ -182,9 +182,13 @@ async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> To
                 forward_progress_event_broadcast(ev, broadcast_tx);
             }
             Some(notif) = notif_recv => {
-                // Broadcast state-changed event to TUI AND collect message for LLM injection.
-                notifications.push(notif.clone());
-                forward_notification_broadcast(notif, broadcast_tx, subagent_registry);
+                // Broadcast state-changed event to TUI AND collect message for LLM
+                // injection — unless a manual `await` already consumed this
+                // completion (auto-await dedupe), in which case the note is
+                // suppressed and only the panel update fires.
+                if forward_notification_broadcast(notif.clone(), broadcast_tx, subagent_registry) {
+                    notifications.push(notif);
+                }
             }
             result = &mut process_fut => {
                 while let Ok(ev) = progress_rx.try_recv() {
@@ -192,8 +196,13 @@ async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> To
                 }
                 if let Some(rx) = notification_rx.as_mut() {
                     while let Ok(notif) = rx.try_recv() {
-                        notifications.push(notif.clone());
-                        forward_notification_broadcast(notif, broadcast_tx, subagent_registry);
+                        if forward_notification_broadcast(
+                            notif.clone(),
+                            broadcast_tx,
+                            subagent_registry,
+                        ) {
+                            notifications.push(notif);
+                        }
                     }
                 }
                 break Some(result);
@@ -207,24 +216,44 @@ async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> To
     }
 }
 
-/// Forward a subagent notification as a SubagentStateChanged broadcast event (#534).
+/// Forward a subagent notification as broadcast events (#534).
+///
+/// Returns `true` when the passive completion note was delivered (so the caller
+/// should also collect it for LLM injection), or `false` when it was SUPPRESSED
+/// because a manual `await` already consumed this terminal completion
+/// (auto-await dedupe). The `SubagentStateChanged` panel update is always
+/// emitted regardless. Race-free because the dispatch/drain loop is
+/// single-threaded: the await tool set the flag before this notification is
+/// processed.
 fn forward_notification_broadcast(
     notif: crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification,
     broadcast_tx: &tokio::sync::broadcast::Sender<String>,
     subagent_registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-) {
+) -> bool {
     let (agent_id, sequence) = notif.dedupe_key();
-    tracing::info!(%agent_id, sequence, "broadcasting passive subagent notification during prompt");
-    let ev = AgentEvent::SubagentNotification {
-        agent_id,
-        sequence,
-        message: notif.to_message(),
-    };
-    broadcast_event(broadcast_tx, &ev);
+    let suppress = subagent_registry.as_ref().is_some_and(|reg| {
+        crate::infrastructure::tools::subagent_registry::take_completion_consumed_by_await(
+            reg, &agent_id,
+        )
+    });
+    if !suppress {
+        tracing::info!(
+            %agent_id,
+            sequence,
+            "broadcasting passive subagent notification during prompt"
+        );
+        let ev = AgentEvent::SubagentNotification {
+            agent_id,
+            sequence,
+            message: notif.to_message(),
+        };
+        broadcast_event(broadcast_tx, &ev);
+    }
     // Build full subagent info list from registry for the state-changed event.
     let list = protocol::build_subagent_info_list(subagent_registry);
     let ev = AgentEvent::SubagentStateChanged { subagents: list };
     broadcast_event(broadcast_tx, &ev);
+    !suppress
 }
 
 fn forward_progress_event_broadcast(

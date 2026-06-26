@@ -1,5 +1,7 @@
 use super::*;
-use crate::infrastructure::tools::subagent_registry::SubagentStatus;
+use crate::infrastructure::tools::subagent_registry::{
+    SubagentStatus, mark_completion_consumed_by_await,
+};
 
 fn await_tool_result(
     status: &str,
@@ -207,6 +209,7 @@ impl AgentCmdTool {
                         } else {
                             Some("exit_code_0".to_string())
                         };
+                        mark_completion_consumed_by_await(&self.registry, &agent_id);
                         return Ok(await_tool_result(
                             "exited",
                             reason.as_deref(),
@@ -251,6 +254,7 @@ impl AgentCmdTool {
                             })
                             .or(Some("exit_code_0".into()))
                     };
+                    mark_completion_consumed_by_await(&self.registry, &agent_id);
                     return Ok(await_tool_result(
                         "exited",
                         reason.as_deref(),
@@ -267,6 +271,7 @@ impl AgentCmdTool {
                             idle_since = Some(now);
                             if idle_timeout_secs == 0 {
                                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
+                                mark_completion_consumed_by_await(&self.registry, &agent_id);
                                 return Ok(await_tool_result(
                                     "idle",
                                     Some("idle"),
@@ -279,6 +284,7 @@ impl AgentCmdTool {
                         Some(since) => {
                             if now.duration_since(since) >= Duration::from_secs(idle_timeout_secs) {
                                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
+                                mark_completion_consumed_by_await(&self.registry, &agent_id);
                                 return Ok(await_tool_result(
                                     "idle",
                                     Some("idle"),
@@ -310,6 +316,7 @@ impl AgentCmdTool {
                             || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
                         {
                             let workflow = self.fetch_workflow_snapshot(&agent_id).await;
+                            mark_completion_consumed_by_await(&self.registry, &agent_id);
                             return Ok(await_tool_result_with_error(
                                 "error",
                                 Some("agent_error"),
@@ -335,6 +342,7 @@ impl AgentCmdTool {
                             || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
                         {
                             let workflow = self.fetch_workflow_snapshot(&agent_id).await;
+                            mark_completion_consumed_by_await(&self.registry, &agent_id);
                             return Ok(await_tool_result(
                                 "idle",
                                 Some("idle"),

@@ -28,6 +28,9 @@ impl App {
                 error,
             } => self.handle_response(id, command, success, data, error),
             Event::SubagentStateChanged { subagents } => self.update_subagent_bar(subagents),
+            Event::SubagentNotification {
+                agent_id, message, ..
+            } => self.handle_subagent_notification(agent_id, message),
             // Parent-forwarded per-turn appends (#797) are superseded by the
             // direct connect-on-select stream (#800); the active sub-agent's own
             // connection now carries its live content. Ignored here.
@@ -144,6 +147,18 @@ impl App {
             _ => format!("{} {}...", tool_name, truncate_args(args_str)),
         };
         spinner.set_message(&msg);
+    }
+
+    /// Render a passive one-line sub-agent completion note (#816) as a single
+    /// chat status line. It must NOT steal focus, open the inspector panel, or
+    /// require interaction — it is purely informational. Both the agent id and
+    /// the message are sanitized for terminal-control sequences before display.
+    fn handle_subagent_notification(&mut self, agent_id: String, message: String) {
+        let agent_id = crate::interface::ansi::sanitize_control(&agent_id);
+        let message = crate::interface::ansi::sanitize_control(&message);
+        self.chat.add_entry(ChatEntry::Status {
+            text: format!("◆ sub-agent {agent_id}: {message}"),
+        });
     }
 
     fn track_starting_subagent(&mut self, args: &serde_json::Value) {

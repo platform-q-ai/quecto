@@ -35,6 +35,43 @@ fn unique_suffix() -> u128 {
 }
 
 #[tokio::test]
+async fn subagent_notification_appends_one_status_line() {
+    let mut app = test_app().await;
+    let before = app.chat.entry_count();
+    app.handle_event(Event::SubagentNotification {
+        agent_id: "researcher".into(),
+        sequence: 1,
+        message: "[subagent] Agent 'researcher' completed. Last output: all tests pass".into(),
+    });
+    // Exactly one status entry is appended — passive, non-interactive.
+    assert_eq!(app.chat.entry_count(), before + 1);
+    let text = app
+        .chat
+        .last_status_text()
+        .expect("expected a Status entry");
+    assert!(text.contains("sub-agent researcher"));
+    assert!(text.contains("all tests pass"));
+}
+
+#[tokio::test]
+async fn subagent_notification_sanitizes_control_sequences() {
+    let mut app = test_app().await;
+    app.handle_event(Event::SubagentNotification {
+        agent_id: "evil".into(),
+        sequence: 1,
+        message: "done\u{1b}[31m hijack".into(),
+    });
+    let text = app
+        .chat
+        .last_status_text()
+        .expect("expected a Status entry");
+    assert!(
+        !text.contains('\u{1b}'),
+        "control sequences must be stripped"
+    );
+}
+
+#[tokio::test]
 async fn handles_agent_lifecycle_and_token_events() {
     let mut app = test_app().await;
     app.handle_event(Event::AgentStart);
