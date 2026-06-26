@@ -37,6 +37,20 @@ impl SubagentStatus {
             Self::Exited => "exited",
         }
     }
+
+    /// Parse a wire-format status string back into a [`SubagentStatus`].
+    /// Unknown values map to `Starting` (the conservative default). Inverse of
+    /// [`to_wire_str`](Self::to_wire_str); used when merging a descendant's
+    /// forwarded state into the registry (#815).
+    pub fn from_wire_str(s: &str) -> Self {
+        match s {
+            "idle" => Self::Idle,
+            "running" => Self::Running,
+            "error" => Self::Error,
+            "exited" => Self::Exited,
+            _ => Self::Starting,
+        }
+    }
 }
 
 impl fmt::Display for SubagentStatus {
