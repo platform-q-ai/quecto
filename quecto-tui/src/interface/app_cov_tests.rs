@@ -539,16 +539,14 @@ async fn compose_bottom_shows_subagent_activity_when_idle_with_active_child() {
     assert!(joined.contains("working"), "{joined}");
 }
 
-// Render-order invariant (issue #534): in the below-chat section the
-// sub-agent bar (widgets_above) must appear ABOVE the spinner. Previously
-// "verified by code review" in a body-less, assertion-free test; this drives
-// the real `compose_bottom` and checks the actual line ordering.
+// Sub-agent-first (#820): the sub-agent bar left the below-chat section for the
+// always-on left panel. The spinner still renders in the bottom stack, but the
+// sub-agent row must NOT — it now lives in the panel (full frame).
 #[tokio::test]
-async fn subagent_bar_renders_above_spinner_in_bottom_section() {
+async fn spinner_renders_in_bottom_subagent_moved_to_panel() {
     let mut h = harness().await;
-    // Register an active sub-agent so the sub-agent bar is in widgets_above.
     h.event(super::tui_harness::subagents_changed(vec![
-        super::tui_harness::subagent("orderchild", "running", None),
+        super::tui_harness::subagent("orderworker", "running", None),
     ]));
     // Parent is actively working -> a real spinner line is rendered.
     h.app_mut().spinner = Some(Spinner::new("order-spinner-marker"));
@@ -560,17 +558,18 @@ async fn subagent_bar_renders_above_spinner_in_bottom_section() {
         .map(|l| super::app_methods::strip_ansi(l))
         .collect();
 
-    let bar_idx = bottom
-        .iter()
-        .position(|l| l.contains("orderchild"))
-        .unwrap_or_else(|| panic!("sub-agent bar not found in bottom: {bottom:?}"));
-    let spinner_idx = bottom
-        .iter()
-        .position(|l| l.contains("order-spinner-marker"))
-        .unwrap_or_else(|| panic!("spinner line not found in bottom: {bottom:?}"));
     assert!(
-        bar_idx < spinner_idx,
-        "sub-agent bar (line {bar_idx}) must render above the spinner (line {spinner_idx}): {bottom:?}"
+        bottom.iter().any(|l| l.contains("order-spinner-marker")),
+        "the spinner must still render in the bottom stack: {bottom:?}"
+    );
+    assert!(
+        !bottom.iter().any(|l| l.contains("orderworker")),
+        "the sub-agent must NOT render in the bottom stack any more: {bottom:?}"
+    );
+    let frame = super::app_methods::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("orderworker"),
+        "the sub-agent must render in the left panel instead:\n{frame}"
     );
 }
 

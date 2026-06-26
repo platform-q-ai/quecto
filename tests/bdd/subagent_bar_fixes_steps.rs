@@ -13,24 +13,20 @@ fn given_render_bottom(world: &mut QuectoWorld) {
     world.stdout = String::new();
 }
 
-#[then("widgets_above should come before spinner in the output order")]
-fn then_widgets_above_before_spinner(_world: &mut QuectoWorld) {
-    // Verify the render order by reading the source file and checking
-    // that widgets_above.render() appears before spinner.render() in
-    // the bottom section. The render composition lives in app_methods.rs.
+#[then("the bottom section no longer renders the sub-agent bar")]
+fn then_bottom_section_has_no_subagent_bar(_world: &mut QuectoWorld) {
+    // Sub-agent-first layout (#820): the sub-agent bar (widgets_above) moved to
+    // the always-on left panel, so compose_bottom must no longer render it; the
+    // spinner remains the only reserved indicator there.
     let source = std::fs::read_to_string("quecto-tui/src/interface/app_methods.rs")
         .expect("should be able to read interface/app_methods.rs");
-    let widgets_pos = source
-        .find("widgets_above.render(width)")
-        .expect("widgets_above.render not found");
-    let spinner_pos = source
-        .find("spinner.render(width)")
-        .expect("spinner.render not found");
     assert!(
-        widgets_pos < spinner_pos,
-        "widgets_above.render() (at byte {}) should appear before spinner.render() (at byte {})",
-        widgets_pos,
-        spinner_pos
+        !source.contains("bottom.extend(self.widgets_above.render(width))"),
+        "the sub-agent bar (widgets_above) must no longer render in the bottom section"
+    );
+    assert!(
+        source.contains("spinner.render(width)"),
+        "the spinner must still render in the bottom section"
     );
 }
 

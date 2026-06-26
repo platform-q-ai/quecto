@@ -1,5 +1,5 @@
-//! Tests for `app_subagents.rs` — the `update_subagent_bar` merge logic,
-//! `rebuild_subagent_bar`, and `tick_subagent_animation` methods (issue #729).
+//! Tests for `app_subagents.rs` — the `update_subagent_bar` merge logic
+//! and `tick_subagent_animation` methods (issue #729).
 //!
 //! These drive the real `App` via the headless render harness (no TTY,
 //! drained socket) to exercise the subagent bar lifecycle.
@@ -156,47 +156,6 @@ async fn update_subagent_bar_preserves_workflow_on_workflowless_poll() {
     );
 }
 
-// ── rebuild_subagent_bar ──────────────────────────────────────────────
-
-#[tokio::test]
-async fn rebuild_subagent_bar_with_no_agents_clears_widget() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.rebuild_subagent_bar();
-    assert!(
-        a.widgets_above.render(80).is_empty(),
-        "no agents → no subagent widget"
-    );
-}
-
-#[tokio::test]
-async fn rebuild_subagent_bar_with_agents_sets_widget() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.update_subagent_bar(vec![info("w1", "running")]);
-    a.rebuild_subagent_bar();
-    assert!(
-        !a.widgets_above.render(80).is_empty(),
-        "agents present → widget should be set"
-    );
-}
-
-#[tokio::test]
-async fn rebuild_subagent_bar_clears_widget_when_agents_drop_to_zero() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.update_subagent_bar(vec![info("w1", "running")]);
-    a.rebuild_subagent_bar();
-    assert!(!a.widgets_above.render(80).is_empty());
-    // Remove all agents.
-    a.subagent_local.clear();
-    a.rebuild_subagent_bar();
-    assert!(
-        a.widgets_above.render(80).is_empty(),
-        "widget should be cleared when no agents"
-    );
-}
-
 // ── tick_subagent_animation ───────────────────────────────────────────
 
 #[tokio::test]
@@ -306,15 +265,22 @@ async fn gc_exited_subagents_removes_expired_exit() {
 // ── subagent bar rendering via compose_bottom ─────────────────────────
 
 #[tokio::test]
-async fn subagent_bar_renders_in_compose_bottom() {
+async fn subagent_bar_no_longer_renders_in_compose_bottom() {
+    // Sub-agent-first (#820): sub-agents moved out of the bottom stack into the
+    // always-on left panel, so compose_bottom must NOT list them; compose_frame
+    // (which prefixes the panel) does.
     let mut h = harness().await;
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("worker-1", "running")]);
-    let bottom = a.compose_bottom(120);
-    let joined = bottom.join("\n");
+    let bottom = a.compose_bottom(120).join("\n");
     assert!(
-        joined.contains("worker-1"),
-        "subagent bar should render in compose_bottom: {joined}"
+        !bottom.contains("worker-1"),
+        "subagent must NOT render in the bottom stack any more: {bottom}"
+    );
+    let frame = super::app_methods::strip_ansi(&a.compose_frame().join("\n"));
+    assert!(
+        frame.contains("worker-1"),
+        "subagent must render in the left panel instead:\n{frame}"
     );
 }
 

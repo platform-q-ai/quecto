@@ -29,8 +29,6 @@ use crate::interface::components::model_selector::{
 use crate::interface::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::interface::components::select_list::{SelectItem, SelectList, SelectResult};
 use crate::interface::components::spinner::Spinner;
-use crate::interface::components::subagent_bar::{SubagentBar, SubagentRow};
-use crate::interface::components::widget::WidgetContainer;
 use crate::interface::components::workflow_bar;
 use crate::interface::keys::{self, Key};
 use crate::interface::kitty::KittyProtocol;
@@ -109,7 +107,6 @@ pub struct App {
     autocomplete: Autocomplete,
     files_autocomplete: FilesAutocomplete,
     notifications: NotificationStack,
-    widgets_above: WidgetContainer,
     kitty: KittyProtocol,
     agent_state: AgentRunState,
     should_exit: bool,
@@ -193,6 +190,8 @@ pub struct App {
     active_subagent_cmd_tx: Option<(String, mpsc::Sender<Command>)>,
     /// Which pane has keyboard focus: the editor or the side panel (#802).
     focus: Focus,
+    /// When the TUI session started — drives the Master row's uptime timer (#820).
+    started_at: tokio::time::Instant,
 }
 
 /// Per-sub-agent session state for the multi-session UI (#800/#802). Holds the
@@ -265,7 +264,6 @@ impl App {
             autocomplete: Autocomplete::new(builtin_commands(), 8),
             files_autocomplete: FilesAutocomplete::new(8),
             notifications: NotificationStack::new(),
-            widgets_above: WidgetContainer::new(),
             kitty: KittyProtocol::new(),
             agent_state: AgentRunState::new(),
             should_exit: false,
@@ -304,6 +302,7 @@ impl App {
             active_conn: None,
             active_subagent_cmd_tx: None,
             focus: Focus::Input,
+            started_at: tokio::time::Instant::now(),
         }
     }
 
@@ -707,6 +706,9 @@ mod app_rewind_response_tests;
 #[cfg(test)]
 #[path = "app_selection_tests.rs"]
 mod app_selection_tests;
+#[cfg(test)]
+#[path = "app_subagent_first_tests.rs"]
+mod app_subagent_first_tests;
 #[cfg(test)]
 #[path = "app_subagent_panel_tests.rs"]
 mod app_subagent_panel_tests;

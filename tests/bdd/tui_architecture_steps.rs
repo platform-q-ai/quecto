@@ -408,10 +408,14 @@ fn then_tui_workflow_widget_matches_quecto_plain_text(_world: &mut QuectoWorld) 
             && !bar.contains("BG_WORKFLOW_WIDGET"),
         "workflow widget should be plain Quecto-style text without a full-width yellow background"
     );
+    // Sub-agent-first layout (#820): the workflow indicator moved OUT of the
+    // bottom stack into the boxed main-pane bar. The composition now lives in
+    // compose_frame (app_methods.rs → render_main_pane_workflow) which renders
+    // the selected agent's workflow as a single boxed line.
     assert!(
-        app.contains("workflow_bar::render_widget")
-            && app.contains("bottom.extend(workflow_bar::render_widget("),
-        "app should render the workflow widget in the bottom section above the editor"
+        app.contains("render_main_pane_workflow")
+            && !app.contains("bottom.extend(workflow_bar::render_widget("),
+        "app should render the workflow as a boxed main-pane bar, not in the bottom stack"
     );
 }
 

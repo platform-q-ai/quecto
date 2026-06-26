@@ -12,10 +12,11 @@ use crate::interface::theme;
 impl App {
     // ── Visibility / active session ────────────────────────────────────
 
-    /// Whether the persistent left panel is shown: as soon as ≥1 sub-agent is
-    /// tracked (no separate mode; with none the layout is unchanged).
+    /// Whether the persistent left panel is shown. Sub-agent-first default
+    /// (#820): ALWAYS on once connected — the Master is pinned as the top row
+    /// even with no sub-agents, so the panel is not gated on the tree.
     pub(super) fn subagent_panel_visible(&self) -> bool {
-        !self.subagent_local.is_empty()
+        self.agent_connected
     }
 
     /// The agent whose session is currently shown in the body. `None` = master.
@@ -484,12 +485,21 @@ impl App {
 
     /// Flattened panel rows: the master pinned at the top, then the sub-agent
     /// tree depth-ordered by `parent_id` (grandchildren under their parent).
+    /// Master's live status: `running` while processing, else `idle` (#820).
+    fn master_status(&self) -> &'static str {
+        if self.agent_state.is_running() {
+            "running"
+        } else {
+            "idle"
+        }
+    }
+
     fn panel_rows(&self) -> Vec<PanelRow> {
         let mut rows = vec![PanelRow {
             id: None,
             depth: 0,
             label: "Master Agent".to_string(),
-            status: "running".to_string(),
+            status: self.master_status().to_string(),
         }];
         for (id, depth) in self.subagent_tree_order() {
             let info = self.subagent_local.get(&id).map(|t| &t.info);
@@ -539,25 +549,40 @@ impl App {
     /// Render the persistent left panel into exactly `height` rows, each padded
     /// to `width` visible columns. Row 0 is a panel header; the selected row is
     /// highlighted. Width-aware so the horizontal split joins cleanly (#800).
-    pub(super) fn render_subagent_panel(&self, width: usize, height: usize) -> Vec<String> {
+    pub(super) fn render_subagent_panel(
+        &self,
+        width: usize,
+        height: usize,
+        now: tokio::time::Instant,
+    ) -> Vec<String> {
         let rows = self.panel_rows();
         let selected = self.panel_nav.selected();
+        let active = self.active_agent_id.as_deref();
+        // Header doubles as the panel's `Agents` summary, with the live count
+        // (replacing the removed bottom sub-agent bar's count line, #820).
         let mut lines: Vec<String> = Vec::with_capacity(height);
         lines.push(pad_cell(
             &format!(
                 "  {} {}",
-                theme::dim("▸"),
-                theme::accent(&theme::bold("Agents"))
+                theme::accent(&theme::bold("Agents")),
+                theme::dim(&format!("{}", self.subagent_local.len() + 1))
             ),
             width,
         ));
         for (i, row) in rows.iter().enumerate() {
+            // Sub-agent-first row (#820): `<caret><indent> name <elapsed>` — NO
+            // status dot/glyph; the NAME TEXT carries the status colour and the
+            // `▸` caret marks the active session shown in the main pane.
+            let is_active = row.id.as_deref() == active;
+            let caret = if is_active {
+                theme::accent("▸ ")
+            } else {
+                "  ".to_string()
+            };
             let indent = " ".repeat(row.depth * 2);
-            let glyph = panel_glyph(&row.status);
-            let label = sanitize_panel_label(&row.label);
-            // Number the visible rows so digits 1–9 can jump to them (#802).
-            let num = theme::dim(&format!("{}", i + 1));
-            let text = format!("{indent}{num} {glyph} {label}");
+            let label = status_colored_name(&row.status, &sanitize_panel_label(&row.label));
+            let elapsed = theme::dim(&self.panel_row_elapsed(row.id.as_deref(), now));
+            let text = format!("{caret}{indent}{label} {elapsed}");
             let cell = if i == selected {
                 pad_cell(&theme::reverse(&text), width)
             } else {
@@ -574,6 +599,117 @@ impl App {
         lines.truncate(height);
         lines
     }
+
+    /// The per-row elapsed label for the panel (#820): the Master row shows the
+    /// session uptime; a sub-agent row shows its running/idle/frozen timer.
+    fn panel_row_elapsed(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
+        let Some(id) = id else {
+            // Master row → session uptime.
+            return fmt_mss(now.saturating_duration_since(self.started_at).as_secs());
+        };
+        let Some(t) = self.subagent_local.get(id) else {
+            return String::new();
+        };
+        // Per-row timer: idle → `idle m:ss` (time since it went idle); running →
+        // live `m:ss`; errored/exited → frozen running `m:ss` (#820).
+        if t.info.status == "idle" {
+            let since = t
+                .stopped_at
+                .map(|s| now.saturating_duration_since(s).as_secs())
+                .unwrap_or(0);
+            format!("idle {}", fmt_mss(since))
+        } else {
+            fmt_mss(t.elapsed_secs(now))
+        }
+    }
+
+    // ── Main-pane workflow indicator (selected agent) ──────────────────
+
+    /// The main pane's top chrome for the selected agent (#820): a title line
+    /// (`agent · status · elapsed · #issue workflow`) followed by the EXISTING
+    /// yellow workflow bar rendered BOXED as a single content line
+    /// (`progress-bar PHASE n/total`) — dropping the phase-pills and hints lines.
+    /// Title always renders; the boxed bar is appended only when a workflow exists.
+    pub(super) fn render_main_pane_workflow(
+        &self,
+        width: usize,
+        now: tokio::time::Instant,
+    ) -> Vec<String> {
+        if width < 4 {
+            return Vec::new();
+        }
+        let state = self.active_workflow_bar();
+        // Title ALWAYS renders; the boxed bar is conditional on a workflow (#820).
+        let mut out = vec![pad_cell(&self.main_pane_title(state, now), width)];
+        if let Some(content) = workflow_bar::render_compact_line(state) {
+            // Box the single workflow line for breathing space (#820).
+            let inner = width - 2;
+            out.push(theme::dim(&format!("┌{}┐", "─".repeat(inner))));
+            out.push(format!(
+                "{}{}{}",
+                theme::dim("│"),
+                boxed_inner(&content, inner),
+                theme::dim("│")
+            ));
+            out.push(theme::dim(&format!("└{}┘", "─".repeat(inner))));
+        }
+        out
+    }
+
+    /// Build the main-pane title line for the active agent (#820).
+    fn main_pane_title(
+        &self,
+        state: &workflow_bar::WorkflowBarState,
+        now: tokio::time::Instant,
+    ) -> String {
+        let (name, status) = match self.active_agent_id.as_deref() {
+            None => ("Master".to_string(), self.master_status().to_string()),
+            Some(id) => (
+                id.to_string(),
+                self.subagent_local
+                    .get(id)
+                    .map(|t| t.info.status.clone())
+                    .unwrap_or_default(),
+            ),
+        };
+        let elapsed = self.panel_row_elapsed(self.active_agent_id.as_deref(), now);
+        let mut title = format!(
+            "{} {} {} {}",
+            theme::bold(&sanitize_panel_label(&name)),
+            theme::dim("·"),
+            status_colored_name(&status, &sanitize_panel_label(&status)),
+            theme::dim(&elapsed),
+        );
+        if let Some(n) = state.issue_number {
+            title.push_str(&format!(
+                " {} {} {}",
+                theme::dim("·"),
+                theme::accent(&theme::bold(&format!("#{n}"))),
+                theme::dim("workflow"),
+            ));
+        }
+        title
+    }
+}
+
+/// Format an elapsed duration as `m:ss` (or `h:mm:ss` past an hour) for the
+/// sub-agent-first panel's per-row timers (#820).
+fn fmt_mss(secs: u64) -> String {
+    if secs >= 3600 {
+        format!("{}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
+    } else {
+        format!("{}:{:02}", secs / 60, secs % 60)
+    }
+}
+
+/// Pad (ANSI-aware) a boxed workflow line's content to exactly `inner` columns.
+fn boxed_inner(content: &str, inner: usize) -> String {
+    let visible = crate::interface::utils::visible_width(content);
+    if visible >= inner {
+        crate::interface::utils::truncate_to_width(content, inner, None)
+    } else {
+        format!("{}{}", content, " ".repeat(inner - visible))
+    }
 }
 
 /// One flattened entry in the left panel: the master (`id == None`) or a
@@ -585,14 +721,16 @@ struct PanelRow {
     status: String,
 }
 
-/// Status glyph for a panel row (mirrors the sub-agent bar semantics).
-fn panel_glyph(status: &str) -> String {
+/// Colour a panel row's NAME by status (#820): green = running, orange/yellow =
+/// idle, red = errored. Exited names dim out; unknown states stay uncoloured.
+/// No glyph is emitted — the colour alone conveys the state.
+fn status_colored_name(status: &str, name: &str) -> String {
     match status {
-        "running" | "starting" => theme::accent("●"),
-        "idle" => theme::green("✓"),
-        "error" => theme::red("✗"),
-        "exited" => theme::dim("•"),
-        _ => theme::dim("○"),
+        "running" | "starting" => theme::green(name),
+        "idle" => theme::yellow(name),
+        "error" | "errored" => theme::red(name),
+        "exited" => theme::dim(name),
+        _ => name.to_string(),
     }
 }
 

@@ -115,7 +115,6 @@ impl App {
                 .get("agent_id")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
-            self.rebuild_subagent_bar();
         }
         let is_spawn = tool_name == "spawn";
         if !suppress_tool_box(&tool_name, &args) {
@@ -165,7 +164,6 @@ impl App {
                 workflow: None,
             }),
         );
-        self.rebuild_subagent_bar();
     }
 
     fn handle_tool_end(
@@ -186,7 +184,6 @@ impl App {
         }
         if self.awaited_agent_id.is_some() {
             self.awaited_agent_id = None;
-            self.rebuild_subagent_bar();
         }
         if let Some(spinner) = &mut self.spinner {
             spinner.set_message("Working... (Esc to interrupt)");
@@ -205,7 +202,6 @@ impl App {
         if let Some(entry) = self.subagent_local.get_mut(&sanitized) {
             entry.info.status = "running".to_string();
         }
-        self.rebuild_subagent_bar();
     }
 
     fn handle_workflow_state(&mut self, workflow: WorkflowStateEvent) {
