@@ -134,6 +134,18 @@ pub fn build_agent_provider(
             )
             .map_err(|e| format!("anthropic-api provider configuration error: {}", e))?,
         );
+        #[cfg(feature = "test-support")]
+        if mock_llm_bare_anthropic_alias_enabled(&anthropic_base) {
+            provider_list.push(
+                providers::create_provider_with_client(
+                    "anthropic",
+                    config.providers.anthropic.api_key.clone(),
+                    anthropic_base.clone(),
+                    http_client.clone(),
+                )
+                .map_err(|e| format!("anthropic provider configuration error: {}", e))?,
+            );
+        }
     }
     if store.get("anthropic").ok().flatten().is_some_and(|c| {
         c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
@@ -245,6 +257,14 @@ pub fn build_agent_provider(
     }
 
     Ok(Arc::new(ProviderRouter::new(provider_list)))
+}
+
+#[cfg(feature = "test-support")]
+fn mock_llm_bare_anthropic_alias_enabled(api_base: &Option<String>) -> bool {
+    std::env::var("QUECTO_TAG").ok().as_deref() == Some("mock-llm")
+        && api_base.as_deref().is_some_and(|base| {
+            base.starts_with("http://127.0.0.1:") || base.starts_with("http://localhost:")
+        })
 }
 
 fn registry_provider_factory(

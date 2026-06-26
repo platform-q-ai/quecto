@@ -119,6 +119,11 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         Session::build_key("cli", world.session_name.as_deref().unwrap_or("default"))
     };
 
+    let max_tool_iterations = if world.auto_mock_manual_llm && world._workflow_enabled {
+        32
+    } else {
+        config.agents.defaults.max_tool_iterations
+    };
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -134,7 +139,8 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
-    });
+    })
+    .with_max_tool_iterations(max_tool_iterations);
     // Enable streaming when the scenario has set the flag (e.g. SSE mock).
     if world._uds_streaming_enabled {
         agent.set_streaming(true);
@@ -232,6 +238,10 @@ fn execute_uds(world: &mut QuectoWorld) {
         world._uds_streaming_enabled = true;
     }
     e2e_steps::mount_auto_mock_responses_for_messages(world, &prompts);
+    if world.auto_mock_manual_llm && world._workflow_enabled {
+        execute_mock_workflow_uds_with_real_socket(world);
+        return;
+    }
 
     let ctx = match build_uds_agent(world, &base) {
         Ok(c) => c,
@@ -251,7 +261,7 @@ fn execute_uds(world: &mut QuectoWorld) {
         persist: _,
         workflow_state,
         workflow_config,
-        broadcast_tx,
+        broadcast_tx: _,
         mut provider_reload,
         provider_reload_inputs,
     } = ctx;
@@ -336,7 +346,7 @@ fn execute_uds(world: &mut QuectoWorld) {
             subagent_registry: None,
             workflow_state,
             workflow_config,
-            broadcast_tx,
+            broadcast_tx: None,
             provider_reload: Some(&mut provider_reload),
             provider_reload_inputs: Some(&provider_reload_inputs),
         })
@@ -387,6 +397,22 @@ fn execute_uds(world: &mut QuectoWorld) {
 
     // Capture socket path for transport assertions.
     world._uds_socket_path = Some(socket_path);
+}
+
+fn execute_mock_workflow_uds_with_real_socket(world: &mut QuectoWorld) {
+    world.mc_mode = true;
+    world.mc_connected_clients = vec![1];
+    world.mc_disconnected_clients.clear();
+    world
+        .mc_client_commands
+        .insert(1, world.uds_commands.clone());
+    world.mc_client_events.entry(1).or_default();
+
+    execute_multi_client_uds(world);
+
+    world.uds_exit_code = world.mc_exit_code;
+    world.agent_events = world.mc_client_events.get(&1).cloned().unwrap_or_default();
+    world.stdout = world.agent_events.join("\n");
 }
 
 // ─── Given steps ─────────────────────────────────────────────────────────────
@@ -1669,13 +1695,28 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
 
     mc_disconnect_early(&mut streams, disconnected);
     mc_send_commands(&mut streams, connected, disconnected, commands);
+    if world.auto_mock_manual_llm && world._workflow_enabled {
+        mc_collect_events_live(
+            world,
+            &mut streams,
+            connected,
+            disconnected,
+            std::time::Duration::from_secs(30),
+        );
+        return;
+    }
     // Reactive phase: if any client has auto-replies queued (e.g. for
     // execute_tool events that only exist after the LLM is consulted),
     // read-and-react on its stream before the final collection step.
     if !world.mc_auto_replies.is_empty() {
         mc_reactive_auto_replies(world, &mut streams, connected, disconnected);
     }
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    let settle_secs = if world.auto_mock_manual_llm && world._workflow_enabled {
+        20
+    } else {
+        2
+    };
+    std::thread::sleep(std::time::Duration::from_secs(settle_secs));
     mc_collect_events(world, &mut streams, connected, disconnected);
 
     // Persist mode: reconnect clients after all initial clients have disconnected (#348).
@@ -1705,6 +1746,102 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
         std::thread::sleep(std::time::Duration::from_secs(2));
         // Collect events and close reconnect clients.
         mc_collect_events(world, &mut streams, reconnect_clients, &[]);
+    }
+}
+
+fn mc_collect_events_live(
+    world: &mut QuectoWorld,
+    streams: &mut HashMap<u32, std::os::unix::net::UnixStream>,
+    connected: &[u32],
+    disconnected: &[u32],
+    timeout: std::time::Duration,
+) {
+    use std::io::BufRead;
+
+    let deadline = std::time::Instant::now() + timeout;
+    for &cid in connected {
+        if disconnected.contains(&cid) {
+            continue;
+        }
+        let Some(stream) = streams.remove(&cid) else {
+            continue;
+        };
+        let Ok(reader_stream) = stream.try_clone() else {
+            continue;
+        };
+        let expected_agent_end = world
+            .mc_client_commands
+            .get(&cid)
+            .map(|commands| {
+                commands
+                    .iter()
+                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                    .filter(|command| {
+                        matches!(command["type"].as_str(), Some("prompt" | "follow_up"))
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        let expected_responses = world
+            .mc_client_commands
+            .get(&cid)
+            .map(|commands| {
+                commands
+                    .iter()
+                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                    .filter(|command| {
+                        !matches!(command["type"].as_str(), Some("prompt" | "follow_up"))
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        let mut agent_end_count = 0;
+        let mut response_count = 0;
+        reader_stream
+            .set_read_timeout(Some(std::time::Duration::from_millis(250)))
+            .ok();
+        let mut reader = std::io::BufReader::new(reader_stream);
+        let events = world.mc_client_events.entry(cid).or_default();
+        loop {
+            if std::time::Instant::now() > deadline {
+                break;
+            }
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let line = line.trim_end().to_string();
+                    if !line.is_empty() {
+                        let is_agent_end = line.contains(r#""type":"agent_end""#);
+                        let is_response = serde_json::from_str::<serde_json::Value>(&line)
+                            .ok()
+                            .is_some_and(|event| {
+                                event["type"].as_str() == Some("response")
+                                    && event["command"].as_str() != Some("prompt")
+                            });
+                        events.push(line);
+                        if is_agent_end {
+                            agent_end_count += 1;
+                        }
+                        if is_response {
+                            response_count += 1;
+                        }
+                        if (expected_agent_end == 0 || agent_end_count >= expected_agent_end)
+                            && response_count >= expected_responses
+                        {
+                            break;
+                        }
+                    }
+                }
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(_) => break,
+            }
+        }
+        let _ = stream.shutdown(std::net::Shutdown::Both);
     }
 }
 
