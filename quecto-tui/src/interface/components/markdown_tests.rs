@@ -549,7 +549,7 @@ fn render_cache_hit_matches_miss_output() {
 #[test]
 fn flush_code_block_renders_gutter_body_without_fence_markers() {
     let mut lines: Vec<RenderedLine> = Vec::new();
-    flush_code_block("rust", "let x = 1;\nlet y = 2;", &mut lines);
+    flush_code_block("rust", "let x = 1;\nlet y = 2;", false, &mut lines);
     let texts: Vec<String> = lines.iter().map(|l| strip_ansi(&l.text)).collect();
     // No literal fence markers anywhere.
     assert!(
@@ -562,6 +562,38 @@ fn flush_code_block_renders_gutter_body_without_fence_markers() {
     assert!(texts.iter().any(|t| t == "│ let y = 2;"), "{:?}", texts);
     // Trailing blank line preserved.
     assert_eq!(texts.last().map(String::as_str), Some(""));
+}
+
+#[test]
+fn empty_info_fenced_block_is_not_stripped() {
+    // Regression for the #818 review finding: a genuine empty-info-string FENCED
+    // block (``` with no language) whose body merely looks like a fence must be
+    // rendered verbatim, NOT silently stripped. `indented = false` distinguishes
+    // it from a demoted indented fence.
+    let mut lines: Vec<RenderedLine> = Vec::new();
+    flush_code_block("", "```bash\nx = 1\n```", false, &mut lines);
+    let texts: Vec<String> = lines.iter().map(|l| strip_ansi(&l.text)).collect();
+    assert!(
+        texts.iter().any(|t| t.contains("```bash")),
+        "empty-info fenced body must render verbatim: {:?}",
+        texts
+    );
+    assert!(texts.iter().any(|t| t.contains("x = 1")), "{:?}", texts);
+}
+
+#[test]
+fn indented_demoted_fence_via_flush_is_stripped() {
+    // Counterpart: when the block IS an indented (demoted) fence, the literal
+    // markers ARE suppressed — same body, opposite `indented` flag.
+    let mut lines: Vec<RenderedLine> = Vec::new();
+    flush_code_block("", "```bash\nx = 1\n```", true, &mut lines);
+    let texts: Vec<String> = lines.iter().map(|l| strip_ansi(&l.text)).collect();
+    assert!(
+        texts.iter().all(|t| !t.contains("```")),
+        "indented demoted-fence markers must be stripped: {:?}",
+        texts
+    );
+    assert!(texts.iter().any(|t| t.contains("x = 1")), "{:?}", texts);
 }
 
 #[test]
