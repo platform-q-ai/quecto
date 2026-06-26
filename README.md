@@ -696,7 +696,7 @@ All test commands pipe through `scripts/test-filter.sh` which strips the per-tes
 
 `--no-fail-fast` ensures all failures are reported in a single run, not just the first.
 
-Two-tier hooks: pre-commit (~20-40s: quality+fmt+clippy) and pre-push (tests + 24-shard BDD + coverage + machete + deny + the zero-cost mocked e2e suite `@mock-llm`). The paid `@real-llm` suite is NOT run on push by default; opt in on demand with `QUECTO_RUN_REAL_LLM=1 git push`. SHA-based caching. Install via `scripts/install-hooks.sh`.
+Two-tier hooks: pre-commit (~20-40s: quality+fmt+clippy) and pre-push (tests + 24-shard BDD + coverage + machete + deny + the zero-cost mocked e2e suite `@mock-llm`). The paid `@manual-real-llm` suite is NOT run on push by default; opt in on demand with `QUECTO_RUN_REAL_LLM=1 git push`. SHA-based caching. Install via `scripts/install-hooks.sh`.
 
 ### Sharded BDD (24-way parallel)
 
@@ -715,7 +715,7 @@ QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --fe
 
 Provider smoke runs only provider-specific scenarios with available credentials: OpenAI uses `OPENAI_API_KEY`, Anthropic uses `ANTHROPIC_API_KEY`, and Codex uses an existing OpenAI OAuth credential in the `quecto` credential store. Missing provider credentials filter out that provider's smoke scenario without failing unrelated smoke checks.
 
-Legacy real-LLM suites are still gated by `QUECTO_REAL_LLM=1`, but behavioral e2e coverage should prefer mocked provider responses so normal test runs do not incur provider costs.
+Legacy live behavioral suites are tagged `@manual-real-llm` and still gated by `QUECTO_REAL_LLM=1`, but behavioral e2e coverage should prefer mocked provider responses so normal test runs do not incur provider costs.
 
 ### Running individual features or scenarios
 
@@ -735,26 +735,35 @@ cargo test --test bdd
 bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
 
 # Mocked e2e suite (free, deterministic, default pre-push e2e lane — no API key)
-bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 4 --timeout 12m --tag mock-llm
+bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 12m --tag mock-llm
 
 # Provider smoke subset (paid, opt-in; filters providers without credentials)
 QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --features test-support --test bdd
 
-# Live Real-LLM full suite (paid, occasional/on-demand — needs OPENAI_API_KEY in .env)
-bash scripts/run-bdd-shards.sh --suite real-llm-bdd --shards 24 --timeout 12m --tag real-llm --real-llm
+# Live Real-LLM full suite (paid, manual/on-demand — needs OPENAI_API_KEY in .env)
+bash scripts/run-bdd-shards.sh --suite real-llm-bdd --shards 24 --timeout 12m --tag manual-real-llm --real-llm
 ```
 
 The e2e suite exists in two parallel lanes that assert the same behaviours:
-- **`@mock-llm` (default, free):** WireMock-backed deterministic copy under `tests/features/e2e_mock_llm*.feature`. Makes zero paid provider calls and passes with no API key. This is what every `git push` runs.
-- **`@real-llm` (occasional, paid):** the live-provider suite under `tests/features/e2e_real_llm*.feature`, retained unchanged for genuine end-to-end validation. Run it on demand with the command above, or fold it into a push via `QUECTO_RUN_REAL_LLM=1 git push`.
+- **`@mock-llm` (default, free):** WireMock-backed deterministic coverage under `tests/features/e2e_mock_llm*.feature` plus the full `@manual-real-llm` behavioral mirror. Makes zero paid provider calls and passes with no API key. This is what every `git push` runs.
+- **`@manual-real-llm` (manual, paid):** the retired live behavioral suite under `tests/features/e2e_real_llm*.feature`, retained for occasional exploratory end-to-end validation. Run it on demand with the command above, or fold it into a push via `QUECTO_RUN_REAL_LLM=1 git push`.
 
-`scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test --lib`, `cargo test --test architecture`, `cargo test --test contracts`, `cargo test --test repo_docs`, and 24-way sharded non-real BDD), then the zero-cost mocked e2e lane, caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`. A `.env` provider key alone never triggers paid calls — the paid `@real-llm` lane runs only under the explicit `QUECTO_RUN_REAL_LLM=1` opt-in.
+Contributor rules for the live/mock e2e split:
+- Keep behavioral scenarios dual-tagged with `@manual-real-llm @mock-llm` when they should run in both lanes.
+- Mock only external provider HTTP responses in the `@mock-llm` lane. Do not synthesize app-level events such as UDS `agent_end`, `token`, `workflow_state`, or `get_state` responses.
+- Preserve scenario inputs used by the live/manual lane. If mock routing needs a test-only provider alias, keep it behind `test-support`, `QUECTO_TAG=mock-llm`, and loopback mock URLs rather than editing live scenario text.
+- Put provider protocol edge cases in provider/unit tests. BDD e2e mocks should stay focused on application behavior: tools run, files change, sessions persist, REPL/UDS/subprocess output appears, and workflow events are produced by real app paths.
+- When a scenario asserts tool or workflow behavior, the mocked provider must return the relevant tool-call response(s) before the final text marker. Do not make those scenarios pass by returning only the marker text.
+- For UDS workflow scenarios, use the real multi-client socket path when asserting broadcast-only events. The test harness should read the socket while the run is active to avoid backpressure on large workflow event streams.
+- Keep `@provider-smoke` tiny and live-provider only: it validates credentials/provider availability, not tools, sessions, workflow, REPL, or UDS behavior.
+
+`scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test --lib`, `cargo test --test architecture`, `cargo test --test contracts`, `cargo test --test repo_docs`, and 24-way sharded non-real BDD), then the zero-cost mocked e2e lane, caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`. A `.env` provider key alone never triggers paid calls — the paid `@manual-real-llm` lane runs only under the explicit `QUECTO_RUN_REAL_LLM=1` opt-in.
 
 Pre-push controls:
 - `QUECTO_E2E_TIMEOUT` timeout per BDD shard (default `12m`)
 - `QUECTO_BDD_SHARDS` shard count for non-real BDD (default `24`)
-- `QUECTO_MOCK_LLM_SHARDS` / `QUECTO_MOCK_LLM_TIMEOUT` shard count / timeout for the mocked e2e lane (defaults `4` / `12m`; the suite is small, so a handful of shards avoids idle process startup overhead)
-- `QUECTO_RUN_REAL_LLM=1` opt in to also run the live paid `@real-llm` suite on push
+- `QUECTO_MOCK_LLM_SHARDS` / `QUECTO_MOCK_LLM_TIMEOUT` shard count / timeout for the mocked e2e lane (defaults `24` / `12m`)
+- `QUECTO_RUN_REAL_LLM=1` opt in to also run the live paid `@manual-real-llm` suite on push
 - `QUECTO_PREPUSH_FORCE=1` to bypass cache and rerun all checks
 
 Pre-merge controls (real-LLM lane):
@@ -764,7 +773,7 @@ Pre-merge controls (real-LLM lane):
 - An existing OpenAI OAuth credential in the `quecto` credential store enables the Codex smoke scenario
 - `QUECTO_REAL_LLM_TIMEOUT` timeout per real-LLM shard (default `12m`)
 - `QUECTO_REAL_LLM_SHARDS` shard count for real-LLM BDD (default `24`)
-- `QUECTO_REAL_LLM_TAG` scenario tag to run (default `real-llm`; use `real-llm-smoke` for smoke)
+- `QUECTO_REAL_LLM_TAG` scenario tag to run (default `manual-real-llm`; use `real-llm-smoke` for the old smoke subset)
 - `QUECTO_PREMERGE_FORCE=1` to bypass cache and rerun merge-time checks
 
 Coverage is intentionally not part of git hooks. Run coverage in nightly CI (recommended with `cargo llvm-cov`) to keep local dev loops fast.

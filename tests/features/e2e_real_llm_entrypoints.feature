@@ -4,13 +4,13 @@ Feature: E2E Real LLM Entry Points
   Background:
     Given a real LLM workspace is configured
 
-  @done @real-llm @real-llm-smoke
+  @done @manual-real-llm @mock-llm @real-llm-smoke
   Scenario: Real LLM works through agent subprocess entry point
     When I spawn quecto as a subprocess with args: agent --model gpt-5.2 --max-iterations 5 --max-time 60 -s - -m "Reply with exactly ENTRYPOINT_AGENT_OK"
     Then the subprocess exit code should be 0
     And the subprocess stdout should contain "ENTRYPOINT_AGENT_OK"
 
-  @done @real-llm @real-llm-smoke
+  @done @manual-real-llm @mock-llm @real-llm-smoke
   Scenario: Real LLM works through no-args REPL subprocess entry point
     When I spawn quecto as a subprocess with no args and stdin:
       """

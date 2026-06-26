@@ -308,6 +308,8 @@ pub struct QuectoWorld {
     pub _wiremock_server_uri: Option<String>,
     /// Provider protocol currently backed by the generic mock provider helpers.
     pub mock_provider_kind: Option<String>,
+    /// True when a retired live behavioral scenario is running in the @mock-llm lane.
+    pub auto_mock_manual_llm: bool,
     /// Fireworks-compatible mock server URI for provider reload scenarios
     pub _fireworks_mock_uri: Option<String>,
     /// Leaked Fireworks-compatible mock server ref for request inspection
@@ -766,7 +768,7 @@ struct ScenarioShardEntry {
 
 fn scenario_weight(tags: &[String], step_lines: &[String], _feature: &str, _scenario: &str) -> u64 {
     let mut w = 1_u64;
-    if tags.iter().any(|t| t == "real-llm") {
+    if tags.iter().any(|t| t == "manual-real-llm") {
         w += 4;
     }
     if tags.iter().any(|t| t == "real-llm-smoke") {
@@ -1029,7 +1031,7 @@ mod workflow_event_identity_steps;
 fn main() {
     let real_llm_enabled = std::env::var("QUECTO_REAL_LLM").unwrap_or_default() == "1";
     let provider_smoke_enabled = std::env::var("QUECTO_PROVIDER_SMOKE").unwrap_or_default() == "1";
-    // Optional tag filter: QUECTO_TAG=real-llm runs only scenarios with that tag.
+    // Optional tag filter: QUECTO_TAG=manual-real-llm runs only the retired live suite.
     let tag_filter = std::env::var("QUECTO_TAG").ok();
     // Optional deterministic scenario sharding across separate bdd processes.
     // Example: QUECTO_BDD_SHARD_INDEX=0 QUECTO_BDD_SHARD_TOTAL=4
@@ -1068,8 +1070,13 @@ fn main() {
                 if sc.tags.iter().any(|t| t == "pending") {
                     return false;
                 }
-                // Exclude @real-llm scenarios unless QUECTO_REAL_LLM=1
-                if sc.tags.iter().any(|t| t == "real-llm") && !real_llm_enabled {
+                // Exclude the retired live behavioral suite unless it is either
+                // explicitly enabled for live credentials or selected through
+                // the zero-cost @mock-llm mirror lane.
+                if sc.tags.iter().any(|t| t == "manual-real-llm")
+                    && !real_llm_enabled
+                    && tag_filter.as_deref() != Some("mock-llm")
+                {
                     return false;
                 }
                 // Exclude live provider smoke scenarios unless explicitly enabled.

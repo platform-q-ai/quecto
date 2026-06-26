@@ -21,3 +21,9 @@ Feature: Architecture boundaries and ports
 
   Scenario: The mocked e2e suite covers the curated real-LLM capability checklist
     Then the mocked e2e suite should cover the curated real-LLM capability checklist
+
+  Scenario: Retired live behavioral e2e scenarios are manual-only
+    Then the retired live behavioral e2e suite should be tagged manual-only
+
+  Scenario: Provider smoke scenarios stay out of automocked lanes
+    Then provider smoke scenarios should not be tagged as mocked or manual real LLM

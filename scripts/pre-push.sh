@@ -2,8 +2,9 @@
 # pre-push.sh — Runs on every git push.
 # Full local quality gate: static checks + parallel test wave (lib + architecture
 # + contracts + repo docs + 24-way non-real BDD) + coverage + machete + deny +
-# the zero-cost mocked end-to-end suite (@mock-llm). The live, paid @real-llm
-# suite is NOT run by default; opt in on demand with QUECTO_RUN_REAL_LLM=1.
+# the zero-cost mocked end-to-end suite (@mock-llm). The live, paid
+# @manual-real-llm suite is NOT run by default; opt in on demand with
+# QUECTO_RUN_REAL_LLM=1.
 set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -24,7 +25,7 @@ HEAD_SHA="$(git rev-parse HEAD)"
 SCRIPT_HASH="$(sha256sum "$ROOT/scripts/pre-push.sh" | awk '{print $1}')"
 # Default lane runs the zero-cost mocked e2e suite — no provider key is probed
 # and no .env is sourced before the deterministic wave, so a key in .env can
-# NEVER auto-trigger paid provider calls. The live @real-llm suite runs only on
+# NEVER auto-trigger paid provider calls. The live @manual-real-llm suite runs only on
 # explicit opt-in. Fold that opt-in into the cache key so a cached mock-only pass
 # doesn't suppress a later opted-in real-LLM run for the same SHA.
 REAL_LLM_LANE="${QUECTO_RUN_REAL_LLM:-0}"
@@ -169,10 +170,9 @@ step "9/10" "Mocked end-to-end tests (@mock-llm, zero-cost, default)"
 # Default e2e lane: deterministic WireMock-backed copy of the @real-llm
 # behaviours. Makes ZERO paid provider calls and needs no API key — .env is
 # never sourced here, so a key in .env can't turn this into a paid run.
-# The mocked suite is small (~14 scenarios); each shard pays full bdd-binary
-# startup, so 24 shards would launch >10 idle heavyweight processes. Default to a
-# handful — override with QUECTO_MOCK_LLM_SHARDS for the larger non-real wave.
-MOCK_LLM_SHARDS="${QUECTO_MOCK_LLM_SHARDS:-4}"
+# The mocked suite mirrors the retired live behavioral suite, so shard it like
+# the broader BDD lanes. Override with QUECTO_MOCK_LLM_SHARDS if needed locally.
+MOCK_LLM_SHARDS="${QUECTO_MOCK_LLM_SHARDS:-24}"
 MOCK_LLM_TIMEOUT="${QUECTO_MOCK_LLM_TIMEOUT:-12m}"
 if ! bash "$ROOT/scripts/run-bdd-shards.sh" \
     --suite "mock-llm-bdd" \
@@ -183,7 +183,7 @@ if ! bash "$ROOT/scripts/run-bdd-shards.sh" \
     exit 1
 fi
 
-# Optional live lane: the paid @real-llm suite is retained for occasional
+# Optional live lane: the paid @manual-real-llm suite is retained for occasional
 # on-demand validation. It runs ONLY when explicitly opted in — a .env key alone
 # never triggers it. Enable with: QUECTO_RUN_REAL_LLM=1 git push
 if [[ "${QUECTO_RUN_REAL_LLM:-0}" == "1" ]]; then
@@ -197,13 +197,13 @@ if [[ "${QUECTO_RUN_REAL_LLM:-0}" == "1" ]]; then
         --suite "real-llm-bdd" \
         --shards "$REAL_LLM_SHARDS" \
         --timeout "$REAL_LLM_TIMEOUT" \
-        --tag "real-llm" \
+        --tag "manual-real-llm" \
         --real-llm; then
         echo -e "${RED}FAIL${NC}: real-LLM end-to-end tests"
         exit 1
     fi
 else
-    echo "  Live @real-llm suite skipped (opt in with QUECTO_RUN_REAL_LLM=1)."
+    echo "  Live @manual-real-llm suite skipped (opt in with QUECTO_RUN_REAL_LLM=1)."
 fi
 
 step "10/10" "Pre-push summary"
