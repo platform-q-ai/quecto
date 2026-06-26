@@ -13,7 +13,7 @@
   "workflow": {
     "auto_continue": true,
     "completion_nudge": true,
-    "selector_prompt": "Select the single Quecto repository workflow template, 'feature', before checking steps. If this is the post-completion handoff, first query the issue tracker for issues authored by the authenticated user only (for GitHub: gh issue list --author @me) and choose only from that filtered set.",
+    "selector_prompt": "Select the single Quecto repository workflow template, 'feature', before checking steps. If this is the post-completion handoff, first query the issue tracker for issues authored by the authenticated user only (for GitHub: gh issue list --author @me) and choose only from that filtered set. Shared sub-agent review mechanic (used by both the `bdd_review` and `reviewers` steps): launch each reviewer with `spawn`, binding it to its OWN dedicated review workflow via `workflow_spec`/`template` (never this feature workflow); then wait for it with `agent_cmd` `command: 'await'` (with a suitable `timeout`); then read its findings with `get_messages_tail`; record each spawned sub-agent id for the cleanup step.",
     "templates": [
       {
         "id": "feature",
@@ -25,37 +25,37 @@
             "key": "hooks",
             "label": "Install/check local quality hooks",
             "phase": "setup",
-            "guidance": "Run scripts/install-hooks.sh, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code. Never bypass hooks with --no-verify."
+            "guidance": "Run scripts/install-hooks.sh, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code. Never bypass hooks with --no-verify. Done when all three hooks are installed and active."
           },
           {
             "key": "scenarios",
             "label": "Update Scenarios / Add new features",
             "phase": "red",
-            "guidance": "Update BDD feature files and task-facing scenarios first, and identify explicit, checkable acceptance criteria for the change."
+            "guidance": "Update BDD feature files and task-facing scenarios first, and identify explicit, checkable acceptance criteria for the change. The acceptance criteria identified here are the SAME checklist the later `conformance` step verifies against the branch code, so make them concrete and testable. Done when the scenarios are updated and the acceptance criteria are written down."
           },
           {
             "key": "tests",
             "label": "Write/update unit tests (run a quick smoke check; full suite runs on push)",
             "phase": "red",
-            "guidance": "Write or update the unit tests for the change. Run a quick targeted smoke check to confirm they compile; the full suite and coverage run on push."
+            "guidance": "Write or update the unit tests for the change. Run a quick targeted smoke check to confirm they compile; the full suite and coverage run on push. Done when the new/modified tests compile and target the new behaviour."
           },
           {
             "key": "red",
             "label": "Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite",
             "phase": "red",
-            "guidance": "Run only the new/modified tests to confirm they fail before any implementation."
+            "guidance": "Run only the new/modified tests to confirm they fail before any implementation. Done when the new tests fail for the expected reason. If it fails to fail — i.e. a new test passes before implementation — it isn't exercising the new behaviour, so fix the test."
           },
           {
             "key": "bdd_review",
             "label": "Despatch BDD sub-agent to review BDD feature, step tests and unit tests",
             "phase": "review",
-            "guidance": "Launch a sub-agent with `spawn` and bind it to a dedicated BDD review workflow by passing `workflow_spec` with a `template` (e.g., `bdd-review`) containing steps: read the changed BDD feature files, step tests, and unit tests; verify they follow BDD best practice; return a report with file:line findings. Use `agent_id='bdd-review'`, then use `agent_cmd` with `command: 'await'` (and a suitable `timeout`) to wait for it to finish, followed by `get_messages_tail` to read its findings. The reviewer runs its OWN independent review (NOT this feature workflow): give it the issue details, the changed files, and the single review dimension 'BDD/test quality'. It must verify that scenarios follow BDD best practice (clear Given-When-Then structure, explicit and testable acceptance criteria, one logical scenario per feature, no implementation details in scenario steps, appropriate step abstraction and reusability), and that unit tests are behavioural, well-named, focused, and assert the right things. The reviewer must be skeptical (report only real issues), must NOT modify code, and must return a report with file:line findings, severity, the problem, and a concrete fix. Fix any valid BDD/test-quality concerns before moving to the GREEN step."
+            "guidance": "Using the shared sub-agent review mechanic described in the selector prompt, run an independent BDD/test-quality review (its OWN review workflow, not this one). Give the reviewer the issue details, the changed BDD feature files, step tests and unit tests, and its single dimension 'BDD/test quality': verify scenarios follow BDD best practice (clear Given-When-Then, explicit and testable acceptance criteria, one logical scenario per feature, no implementation detail in steps, appropriate step abstraction and reuse), and that unit tests are behavioural, well-named, focused and assert the right things. The reviewer must be skeptical (report only real issues), must NOT modify code, and must return file:line findings with severity, the problem and a concrete fix. Fix any valid concerns before the GREEN step. Done when the BDD review has returned and valid concerns are fixed."
           },
           {
             "key": "green",
             "label": "Implement code (GREEN)",
             "phase": "green",
-            "guidance": "Write the code needed to satisfy the failing tests. Do NOT worry about the size of a change — implement it in full."
+            "guidance": "Write the code needed to satisfy the failing tests. Do NOT worry about the size of a change — implement it in full. Done when the previously-failing tests pass."
           },
           {
             "key": "refactor",
@@ -67,37 +67,37 @@
             "key": "verify",
             "label": "Ensure tests still pass",
             "phase": "green",
-            "guidance": "Re-run the targeted tests and confirm GREEN. Respect the file-size cap and strict clippy before pushing."
+            "guidance": "Run `cargo fmt` and a targeted `clippy -D warnings` locally first (the push gate fails on both), then re-run the targeted tests and confirm GREEN. Respect the file-size cap and strict clippy before pushing. Done when targeted tests pass and fmt/clippy are clean. If it fails, fix the code — never silence clippy — before pushing."
           },
           {
             "key": "commit",
             "label": "Commit",
             "phase": "ci_cd",
-            "guidance": "If on the default branch, create a feature branch first. Write a clear, descriptive commit message and include any commit trailers your harness requires."
+            "guidance": "If on the default branch, create a feature branch first. Stage only the files you changed (`git add <paths>`); never `git add -A` or `git add .` — that sweeps untracked tooling (e.g. `.claude/`) and build artifacts (e.g. `target*/`) into the commit. Write a clear, descriptive commit message and include any commit trailers your harness requires. Done when only the intended files are staged and committed on a feature branch."
           },
           {
             "key": "push",
             "label": "Push (pre-push hook will run tests and linting)",
             "phase": "ci_cd",
-            "guidance": "Push triggers the full local gate: fmt, strict clippy, unit/architecture/contracts/repo_docs, the 24-shard non-real BDD suite, region coverage at or above the project threshold (quecto and quecto-tui), machete, deny, and the real-LLM e2e suite (~140s; set QUECTO_SKIP_REAL_LLM=1 only for throwaway WIP pushes). Fix every failure; never use --no-verify."
+            "guidance": "Push triggers the full local gate: fmt, strict clippy, unit/architecture/contracts/repo_docs, the 24-shard non-real BDD suite, region coverage at or above the project threshold (quecto and quecto-tui), machete and deny. The zero-cost mocked `@mock-llm` e2e lane runs by default; the live LLM suite (tagged `@manual-real-llm`) is opt-in via `QUECTO_RUN_REAL_LLM=1`. The `find.feature` \"Nested .gitignore … in git repo\" scenario is load-flaky under the parallel shard wave — re-run the shard before treating it as a real failure (it passes in isolation). Fix every failure; never use --no-verify. Done when the full gate is green. If it fails only on the flaky find.feature scenario, re-run the shard; otherwise fix the failure."
           },
           {
             "key": "pr",
             "label": "Create PR",
             "phase": "ci_cd",
-            "guidance": "Open the PR against the default branch with gh, with a clear title and a body that summarizes the change. The required Smoke Test check runs in CI. Do not claim to co-author it."
+            "guidance": "Open the PR against the default branch with gh, with a clear title and a body that summarizes the change. The required CI checks are \"Unit Tests\" and \"Mock LLM E2E Tests\". Do not claim to co-author it. Done when the PR is open and the required checks are running."
           },
           {
             "key": "reviewers",
             "label": "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)",
             "phase": "review",
-            "guidance": "Dispatch the reviewers as parallel sub-agents in a SINGLE batch (one message, multiple subagent calls) so they run concurrently. Bind each reviewer to a dedicated review workflow by passing `workflow_spec` with a `template` (e.g., `review-pr`) containing steps: fetch the PR diff, analyze the assigned dimension, and post findings as inline PR comments. At minimum Architecture, Security, and Performance; add Correctness and Test-quality for larger changes. Each reviewer runs its OWN independent review (NOT this feature workflow): give it only the PR number, the head commit SHA, its single review dimension, and the file scope; it reads the diff with gh pr diff <PR>, forms findings, and posts them. Reviewers must be skeptical (report only real issues) and must NOT modify code. Every reviewer MUST post findings as INLINE review comments on the PR via the GitHub GraphQL API (gh api graphql) — not a summary, not just a returned report: fetch the PR node id and head SHA with gh pr view <PR> --json id,headRefOid, then submit one review carrying inline comments using the addPullRequestReview mutation (event COMMENT, with a comments array of path/line/body entries anchored to the head commit) or addPullRequestReviewThread per finding. If a line anchor is rejected (line outside the diff, or the PR is already merged), fall back to a review comment that still cites file:line for every finding — inline is the default. Each finding states file:line, severity, the problem, and a concrete fix. After spawning, await each reviewer with `agent_cmd` `command: 'await'` (and a suitable `timeout`) so the parent is notified when every review has finished; verify the posted findings on the PR before moving to the fix step. Record each spawned reviewer's sub-agent id for the cleanup step."
+            "guidance": "Using the shared sub-agent review mechanic described in the selector prompt, dispatch the reviewers in a SINGLE parallel batch (one message, multiple subagent calls) so they run concurrently, each bound to its OWN `review-pr` workflow and given only the PR number, the head commit SHA, its single review dimension and the file scope. Dimensions: at minimum Architecture, Security and Performance; add Correctness and Test-quality for larger changes. Each reviewer reads the diff with gh pr diff <PR>, is skeptical (report only real issues) and must NOT modify code. Every reviewer MUST post findings as INLINE review comments on the PR via the GitHub GraphQL API (gh api graphql) — not a summary, not just a returned report: fetch the PR node id and head SHA with gh pr view <PR> --json id,headRefOid, then submit one review carrying inline comments using the addPullRequestReview mutation (event COMMENT, with a comments array of path/line/body entries anchored to the head commit) or addPullRequestReviewThread per finding. If a line anchor is rejected (line outside the diff, or the PR is already merged), fall back to a review comment that still cites file:line — inline is the default. Each finding states file:line, severity, the problem and a concrete fix. Verify the findings were actually posted on the PR before the fix step. Done when every reviewer has posted inline findings on the PR."
           },
           {
             "key": "fix_reviews",
             "label": "Fix all valid review concerns",
             "phase": "review",
-            "guidance": "Triage each inline finding — confirm it is genuinely valid before changing anything (reviewers can be wrong). Fix forward in the same branch. Track which findings you accept versus decline; you reply to all of them in the resolve step."
+            "guidance": "Triage each inline finding — confirm it is genuinely valid before changing anything (reviewers can be wrong). Fix forward in the same branch. Track which findings you accept versus decline; you reply to all of them in the resolve step. Done when every valid finding has a fix in the branch."
           },
           {
             "key": "push_fixes",
@@ -109,19 +109,25 @@
             "key": "resolve_threads",
             "label": "Reply to the reviewers comments on the PR and mark resolved (use graphql)",
             "phase": "review",
-            "guidance": "Reply to EVERY review comment on the PR — for accepted findings note the fix and commit, for declined ones explain why — then resolve each thread with the GraphQL resolveReviewThread mutation. Thread ids come from the PR reviewThreads connection."
+            "guidance": "Reply to EVERY review comment on the PR — for accepted findings note the fix and commit, for declined ones explain why — then resolve each thread with the GraphQL resolveReviewThread mutation. Thread ids come from the PR reviewThreads connection. Done when every review thread is resolved."
+          },
+          {
+            "key": "conformance",
+            "label": "Verify the PR meets every issue acceptance criterion",
+            "phase": "review",
+            "guidance": "Systematically verify EACH acceptance criterion from the issue (the same checklist captured in the `scenarios` step) against the ACTUAL branch code, citing file:line evidence. A criterion counts as met only when the evidence is in the code — never on the PR description's claims; be skeptical. Output a per-criterion table marking each met/partial/unmet with its file:line evidence, then a final verdict line: `CONFORMANCE: PASS` only if every criterion is fully met, otherwise `CONFORMANCE: FAIL` listing the gaps. On `CONFORMANCE: FAIL`, fix the gaps and re-verify before merging — do NOT merge on a FAIL. Done when the verdict is `CONFORMANCE: PASS` with file:line evidence for every criterion."
           },
           {
             "key": "pre_merge",
             "label": "Confirm the pre-push gate passed (real-LLM, machete, deny run on push)",
             "phase": "ci_cd",
-            "guidance": "Confirm the latest push's pre-push gate passed in full (coverage threshold, real-LLM, machete, deny) and the CI Smoke Test is green before merging."
+            "guidance": "Confirm the latest push's pre-push gate passed in full (coverage threshold, machete, deny, and the mocked `@mock-llm` e2e lane that runs by default; the live LLM suite is opt-in via `QUECTO_RUN_REAL_LLM=1`) and the required CI checks \"Unit Tests\" and \"Mock LLM E2E Tests\" are green. Also confirm the reviewers actually POSTED inline findings on the PR (not just a returned summary) and that all review threads are resolved. The `find.feature` \"Nested .gitignore … in git repo\" scenario is load-flaky — re-run the shard before treating it as a real failure. Done when the gate and required checks are green, inline findings were posted, and all threads are resolved."
           },
           {
             "key": "merge",
             "label": "Merge",
             "phase": "ci_cd",
-            "guidance": "Merge with gh pr merge <PR> --merge --auto --delete-branch (auto-merge waits for the required Smoke Test). The default branch is protected with enforce_admins; do not force or bypass."
+            "guidance": "Merge with gh pr merge <PR> --merge --auto --delete-branch (auto-merge waits for the required \"Unit Tests\" and \"Mock LLM E2E Tests\" checks). The default branch is protected with enforce_admins; do not force or bypass. Done when the PR is merged and the branch is deleted."
           },
           {
             "key": "pull",
@@ -151,7 +157,7 @@
               "gh pr merge"
             ],
             "before_step_key": "merge",
-            "message": "Complete code review and verify the pre-push gate passed before merging."
+            "message": "Complete code review, pass the conformance gate (CONFORMANCE: PASS), and verify the pre-push gate passed before merging."
           }
         ]
       }
