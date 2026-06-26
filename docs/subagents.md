@@ -192,13 +192,25 @@ its result rather than picking a new workflow.
 
 ## Notification model
 
-Spawned agents do **not** push completion, error, or exit notifications to the
-parent. After `spawn` returns, the parent's agent loop continues — it has no
-automatic signal that the child has finished, failed, or crashed.
+Spawned agents are **auto-awaited**. When a child reaches a terminal state
+(completed / errored / exited) the parent automatically receives a single
+**one-line completion note** — no `await` call required. The note is delivered
+as a `role:"system"` (operator-channel) message and surfaces **only at the
+parent's next idle/turn boundary**: a completion that arrives while the parent
+is mid-turn is buffered and delivered after that turn finishes, never injected
+into an in-flight turn.
 
-The only reliable way to learn about a child's terminal state is to `await` it.
-Without `await`, errors are silent unless the parent happens to poll with
-`get_state` or `get_messages_tail` at the right moment.
+- The note carries the child's id and a concise outcome, e.g.
+  `[subagent] Agent 'worker' completed. Last output: …`,
+  `[subagent] Agent 'linter' errored: …`, or
+  `[subagent] Agent 'worker' exited unexpectedly …`.
+- Multiple completions from the same child are **coalesced** (latest wins) and
+  duplicates are **deduplicated**, so a noisy child costs at most one extra turn.
+- The note is a *summary only*. To read the child's full output, call
+  `get_messages_tail` / `get_messages`.
+- `await` is still available when you want to **block** until the child finishes
+  before continuing (see below) — but it is no longer required to learn the
+  outcome.
 
 ### What you can see without `await`
 
@@ -210,43 +222,44 @@ Without `await`, errors are silent unless the parent happens to poll with
   but they don't register as notifications. A single call that catches the
   agent mid-run tells you nothing about what happens next.
 
-### What you cannot see without `await`
+### The auto-note is a summary, not the result
 
-- Process-level errors, crashes, or clean exits.
-- The final assistant message after a run completes.
-- The `workflow` completion snapshot (steps completed vs total).
-
-**Rule of thumb:** if you care about the outcome, `await` the child, then
-inspect its output with `get_messages_tail`. If you don't care, fire-and-forget
-is fine — but treat any un-awaited child as "result unknown."
-
-### Canonical pattern: await + tail
-
-The correct sequence is always `await` followed by `get_messages_tail`,
-regardless of whether `await` reports success or failure:
+The one-line completion note tells you *that* a child finished and gives a brief
+outcome — it does **not** contain the child's full output. If you care about the
+result, read it explicitly:
 
 ```json
-// 1. Spawn (fire-and-forget)
+// 1. Spawn — the child is auto-awaited from here on.
 {"name": "spawn", "arguments": {"agent_id": "worker", "task": "do the thing"}}
 
-// 2. Await completion (blocks until idle, exited, error, or timeout)
+// 2. (do other work) — at your next idle turn you receive, automatically:
+//    [subagent] Agent 'worker' completed. Last output: …
+
+// 3. Inspect the full output when the note tells you the child is done.
+{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages_tail", "count": 5}}
+```
+
+**Common mistake:** treating the one-line note as the child's result. Always
+tail the output to see what the agent actually produced.
+
+### Canonical pattern (blocking): await + tail
+
+When you must not continue until the child has finished — for example a reviewer
+whose verdict gates the next step — `await` it, then `get_messages_tail`:
+
+```json
+// 1. Spawn
+{"name": "spawn", "arguments": {"agent_id": "worker", "task": "do the thing"}}
+
+// 2. Block until idle, exited, error, or timeout
 {"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "await", "timeout": 60}}
 
 // 3. Inspect output (check the actual result or error)
 {"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages_tail", "count": 5}}
 ```
 
-**Why both steps matter:**
-
-- `await` tells you *that* something happened (status: idle/exited/error/timeout),
-  but not *what* happened. An `agent_error` status tells you the agent failed,
-  but not why.
-- `get_messages_tail` shows you the conversation history, including the final
-  assistant message or error details. Without it, you're flying blind.
-
-**Common mistake:** calling `await` and assuming success because it returned
-without a timeout. Always tail the output to verify the agent actually
-completed its task and to see the result.
+`await` reports *that* something happened (idle/exited/error/timeout) but not
+*what*; `get_messages_tail` shows the final assistant message or error details.
 
 ### `await` — block until a subagent finishes
 
@@ -524,15 +537,18 @@ Read results with agent_cmd get_messages_tail and compile a summary."
 ```
 
 All three run concurrently — total time is the max of the three, not the sum.
-No polling loop needed — `await` blocks efficiently until each finishes.
+Using `await` here is the *blocking* choice: it pauses the parent until each
+reviewer finishes, which is what you want when their verdicts gate the next step.
+If you don't need to block, you can skip `await` entirely — each reviewer's
+one-line completion note arrives automatically at your next idle turn, and you
+read full results with `get_messages_tail` once notified.
 
-### Fire-and-forget with later collection
+### Fire-and-forget with auto-await
 
 ```
 "Spawn agent_id='researcher' with task='Analyze the codebase and write findings to /tmp/report.md'.
-Continue working on other tasks. When ready:
-  agent_cmd(agent_id='researcher', command='await', idle_timeout=0)
-Read the report."
+Continue working on other tasks. You'll automatically get a one-line note when the
+researcher finishes; then read the report with agent_cmd get_messages_tail."
 ```
 
 ### Idle agents with on-demand prompts

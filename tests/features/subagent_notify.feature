@@ -92,3 +92,49 @@ Feature: Auto-notify parent LLM when subagents complete or error
     Given a monitor with notification sender
     When the monitor processes an agent_start event
     Then no notification should be sent
+
+  # --- #816: auto-await — completion notes surface only at the parent's idle boundary ---
+
+  Scenario: A completed child auto-delivers one idle note with no manual await
+    Given a parent session with no pending notes
+    When subagent "researcher" reports completion with note "researcher complete: all tests pass"
+    Then the parent should have 1 pending subagent note
+    And the parent's next idle note should be delivered on the operator channel
+    And the parent's next idle note should be a single line
+    And the parent's next idle note should contain "researcher complete"
+
+  Scenario: A note arriving while the parent is busy waits until the parent is idle
+    Given a parent session with no pending notes
+    And the parent is busy processing a turn
+    When subagent "researcher" reports completion with note "researcher complete"
+    Then the busy parent should not have consumed the note yet
+    And the parent's next idle note should contain "researcher complete"
+
+  Scenario: The same completion reported twice is delivered only once
+    Given a parent session with no pending notes
+    When subagent "researcher" reports completion with note "done"
+    And subagent "researcher" reports the same completion again
+    Then the second report should be ignored
+    And the parent should have 1 pending subagent note
+
+  Scenario: A newer completion from one child replaces its earlier pending note
+    Given a parent session with no pending notes
+    When subagent "worker" reports completion with note "first"
+    And subagent "worker" reports a newer completion with note "worker complete: latest"
+    Then the parent should have 1 pending subagent note
+    And the parent's next idle note should contain "latest"
+
+  Scenario: An errored child still produces a one-line failure note
+    Given a parent session with no pending notes
+    When subagent "linter" reports completion with note "linter failed: rate limit exceeded"
+    Then the parent should have 1 pending subagent note
+    And the parent's next idle note should contain "failed"
+
+  Scenario: A spawned child's completion reaches the parent with no manual await
+    Given a parent session with no pending notes
+    And a monitor with notification sender
+    When the monitor processes an agent_end event with messages
+    And the parent drains its subagent notifications
+    Then the parent should have 1 pending subagent note
+    And the parent's next idle note should be delivered on the operator channel
+    And the parent's next idle note should contain "completed"

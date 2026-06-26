@@ -322,10 +322,17 @@ async fn run_dispatch_loop(
             }
             DispatchMsg::Notification(notif) => {
                 let (agent_id, sequence) = notif.dedupe_key();
-                tracing::info!(%agent_id, sequence, "recording passive subagent notification");
-                let is_new = ctx
-                    .session
-                    .record_subagent_notification(agent_id.clone(), sequence);
+                tracing::info!(%agent_id, sequence, "recording subagent completion note");
+                // Auto-await (#816): enqueue the one-line note for delivery at the
+                // parent's NEXT idle boundary. `enqueue_subagent_notification`
+                // records the dedupe sequence internally and returns whether this
+                // completion is new — so we don't also call
+                // `record_subagent_notification` (that would double-dedupe).
+                let is_new = ctx.session.enqueue_subagent_notification(
+                    agent_id.clone(),
+                    sequence,
+                    notif.to_message(),
+                );
                 if is_new {
                     let ev = AgentEvent::SubagentNotification {
                         agent_id,

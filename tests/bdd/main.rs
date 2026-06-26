@@ -585,6 +585,15 @@ pub struct QuectoWorld {
     pub notify_rx: Option<quecto::infrastructure::tools::subagent_registry::NotificationRx>,
     /// Count from drain operation
     pub notify_drain_count: Option<usize>,
+    /// Parent session under test for #816 auto-await idle delivery
+    pub notify_parent_session: Option<quecto::interface::cli::uds_session::AgentSession>,
+    /// Per-agent completion sequence counter (kept out of the Gherkin, #816)
+    pub notify_seq: std::collections::HashMap<String, u64>,
+    /// Result of the most recent enqueue (true=delivered, false=ignored) (#816)
+    pub notify_last_enqueued: Option<bool>,
+    /// The parent's first drained idle note, cached so multiple assertions in a
+    /// scenario inspect the same note rather than re-draining the queue (#816)
+    pub notify_drained_note: Option<quecto::domain::message::Message>,
     // --- Subagent monitor (#522) ---
     /// SubagentEntry under test for monitor BDD scenarios
     pub monitor_entry: Option<quecto::infrastructure::tools::subagent_registry::SubagentEntry>,

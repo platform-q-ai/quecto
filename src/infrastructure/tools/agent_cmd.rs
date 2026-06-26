@@ -321,10 +321,12 @@ impl Tool for AgentCmdTool {
                 get_state, get_messages, get_messages_tail, get_session_stats, \
                 get_subagents, get_extensions, set_model, clear_history, \
                 reload_extensions. \
-                The await command blocks until the sub-agent reaches idle, exited, \
-                timeout, or error. After await returns, inspect output explicitly \
-                with get_messages_tail or get_messages; do not rely on passive \
-                completion notifications as final results."
+                Spawned subagents are auto-awaited: you automatically receive a \
+                one-line completion note at your next idle turn, so await is optional. \
+                Use the await command only when you need to BLOCK until the sub-agent \
+                reaches idle, exited, timeout, or error before continuing. Either way, \
+                inspect the child's full output explicitly with get_messages_tail or \
+                get_messages — the auto-note is a one-line summary, not the result."
                 .into(),
             parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_messages_tail","get_session_stats","get_subagents","get_extensions","set_model","clear_history","reload_extensions"],"description":"Command to send. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages_tail or get_messages."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages_tail (default: 1)"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds the agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#.into(),
         }
