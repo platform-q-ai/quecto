@@ -392,6 +392,10 @@ impl SpawnTool {
         {
             let mut entry = SubagentEntry::new(socket_path.clone(), pid);
             entry.exit_signal_tx = Some(exit_tx.clone());
+            // Stamp the child's parent as THIS agent's own id (#820 panel tree):
+            // without it every entry's parent_id stayed None, so grandchildren
+            // could never nest under their real parent in the sub-agent panel.
+            entry.parent_id = self.parent_id.clone();
             self.registry
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -572,18 +576,17 @@ impl Tool for SpawnTool {
                         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 
                         // Register in stub mode too so BDD tests can verify registry.
+                        let mut stub_entry = SubagentEntry::new(
+                            PathBuf::from(format!("/stub/quecto-agent-{session_name}.sock")),
+                            0,
+                        );
+                        // Mirror the real path: stamp the child's parent as this
+                        // agent's own id so the panel tree nests correctly.
+                        stub_entry.parent_id = self.parent_id.clone();
                         self.registry
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
-                            .insert(
-                                session_name.to_string(),
-                                SubagentEntry::new(
-                                    PathBuf::from(format!(
-                                        "/stub/quecto-agent-{session_name}.sock"
-                                    )),
-                                    0,
-                                ),
-                            );
+                            .insert(session_name.to_string(), stub_entry);
 
                         let msg = format!(
                             "Subagent '{}' is running. Use agent_cmd to interact.",

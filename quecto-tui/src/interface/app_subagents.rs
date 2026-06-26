@@ -1,6 +1,44 @@
 use super::*;
 
 impl App {
+    /// Update a session's OWN footer (context-window / cost / model) from a
+    /// forwarded sub-agent event, mirroring the master footer path (#805):
+    /// `get_state` carries the model and window, `turn_end` the live context
+    /// usage, and `get_session_stats` the cumulative cost (plus usage fallback).
+    pub(super) fn update_session_footer(session: &mut SessionView, ev: &Event) {
+        use crate::application::session_payloads;
+        match ev {
+            Event::Response {
+                command,
+                data: Some(data),
+                success: true,
+                ..
+            } if command == "get_state" => {
+                session.footer.apply_get_state(data);
+            }
+            Event::Response {
+                command,
+                data: Some(data),
+                success: true,
+                ..
+            } if command == "get_session_stats" => {
+                let stats = session_payloads::parse_session_stats(data);
+                session.footer.apply_session_stats(&stats);
+            }
+            Event::TurnEnd { message, .. } => {
+                let used = message.get("contextTokens").and_then(|v| v.as_u64());
+                let window = message
+                    .get("maxContextTokens")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize);
+                if let (Some(used), Some(window)) = (used, window) {
+                    session.footer.update_context_usage(used, window);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn update_subagent_bar(
         &mut self,
         subagents: Vec<crate::infrastructure::client::SubagentInfoEvent>,

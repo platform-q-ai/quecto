@@ -214,6 +214,10 @@ pub(crate) struct SessionView {
     /// by its forwarded `get_state` / `turn_end` / session-stats events so a
     /// selected sub-agent shows ITS usage, not the master's (#805).
     footer: Footer,
+    /// Completion notes from THIS child's own sub-agents (grandchildren) received
+    /// while this child is mid-turn; flushed when it goes idle so a note never
+    /// splits the child's streaming response (#816).
+    deferred_subagent_notes: Vec<String>,
 }
 
 impl SessionView {
@@ -225,6 +229,7 @@ impl SessionView {
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             running: false,
             footer,
+            deferred_subagent_notes: Vec::new(),
         }
     }
 }
