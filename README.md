@@ -740,6 +740,14 @@ The e2e suite exists in two parallel lanes that assert the same behaviours:
 - **`@mock-llm` (default, free):** WireMock-backed deterministic coverage under `tests/features/e2e_mock_llm*.feature` plus the full `@manual-real-llm` behavioral mirror. Makes zero paid provider calls and passes with no API key. This is what every `git push` runs.
 - **`@manual-real-llm` (manual, paid):** the retired live behavioral suite under `tests/features/e2e_real_llm*.feature`, retained for occasional exploratory end-to-end validation. Run it on demand with the command above, or fold it into a push via `QUECTO_RUN_REAL_LLM=1 git push`.
 
+Contributor rules for the live/mock e2e split:
+- Keep behavioral scenarios dual-tagged with `@manual-real-llm @mock-llm` when they should run in both lanes.
+- Mock only external provider HTTP responses in the `@mock-llm` lane. Do not synthesize app-level events such as UDS `agent_end`, `token`, `workflow_state`, or `get_state` responses.
+- Preserve scenario inputs used by the live/manual lane. If mock routing needs a test-only provider alias, keep it behind `test-support`, `QUECTO_TAG=mock-llm`, and loopback mock URLs rather than editing live scenario text.
+- Put provider protocol edge cases in provider/unit tests. BDD e2e mocks should stay focused on application behavior: tools run, files change, sessions persist, REPL/UDS/subprocess output appears, and workflow events are produced by real app paths.
+- For UDS workflow scenarios, use the real multi-client socket path when asserting broadcast-only events. The test harness should read the socket while the run is active to avoid backpressure on large workflow event streams.
+- Keep `@provider-smoke` tiny and live-provider only: it validates credentials/provider availability, not tools, sessions, workflow, REPL, or UDS behavior.
+
 `scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test --lib`, `cargo test --test architecture`, `cargo test --test contracts`, `cargo test --test repo_docs`, and 24-way sharded non-real BDD), then the zero-cost mocked e2e lane, caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`. A `.env` provider key alone never triggers paid calls — the paid `@manual-real-llm` lane runs only under the explicit `QUECTO_RUN_REAL_LLM=1` opt-in.
 
 Pre-push controls:
