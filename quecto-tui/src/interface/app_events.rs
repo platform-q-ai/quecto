@@ -66,6 +66,13 @@ impl App {
         self.footer.set_streaming(false);
         self.spinner = None;
         self.chat.finalize_assistant();
+        // Parent is now idle — flush any sub-agent completion notes that arrived
+        // mid-turn, so they appear after the finished response instead of in it.
+        for note in std::mem::take(&mut self.deferred_subagent_notes) {
+            self.chat.add_entry(ChatEntry::Status {
+                text: format!("◆ {note}"),
+            });
+        }
     }
 
     fn handle_turn_end(&mut self, message: serde_json::Value) {
@@ -158,6 +165,12 @@ impl App {
         // (e.g. "Agent 'poet-2' completed and is ready for inspection"), so we do
         // NOT re-prefix the agent id here — that just duplicated the name.
         let message = crate::interface::ansi::sanitize_control(&message);
+        // Never split an in-flight streaming response: if the parent is mid-turn,
+        // defer the note and flush it when the parent goes idle (handle_agent_end).
+        if self.agent_state.is_running() {
+            self.deferred_subagent_notes.push(message);
+            return;
+        }
         self.chat.add_entry(ChatEntry::Status {
             text: format!("◆ {message}"),
         });

@@ -109,6 +109,10 @@ pub struct App {
     notifications: NotificationStack,
     kitty: KittyProtocol,
     agent_state: AgentRunState,
+    /// Passive sub-agent completion notes (#816) received while the parent is
+    /// mid-turn; flushed to the chat when the parent next goes idle so a note
+    /// never splits an in-flight streaming response.
+    deferred_subagent_notes: Vec<String>,
     should_exit: bool,
     stdin_buffer: crate::interface::stdin_buffer::StdinBuffer,
     agent_connected: bool,
@@ -266,6 +270,7 @@ impl App {
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
             agent_state: AgentRunState::new(),
+            deferred_subagent_notes: Vec::new(),
             should_exit: false,
             stdin_buffer: crate::interface::stdin_buffer::StdinBuffer::new(),
             agent_connected: true,
