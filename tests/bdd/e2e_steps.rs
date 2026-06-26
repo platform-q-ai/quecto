@@ -671,41 +671,67 @@ fn responses_for_prompt(prompt: &str) -> Vec<serde_json::Value> {
             ));
         }
     } else if lower.contains("workflow tool") || lower.contains("using the workflow tool") {
-        let needs_workflow_state = lower.contains("workflow_state")
-            || lower.contains("progress")
-            || lower.contains("get_state")
-            || lower.contains("reset")
-            || lower.contains("all steps complete")
-            || lower.contains("current workflow template")
-            || lower.contains("shown in your system prompt")
-            || lower.contains("select_template")
-            || lower.contains("template_selected")
-            || lower.contains("reply selected")
-            || lower.contains("reply done");
-        if !needs_workflow_state {
-            responses.push(openai_text_json(&final_text_for_prompt(prompt)));
-            return responses;
-        }
         if lower.contains("select_template")
             || lower.contains("select_template feature")
             || lower.contains("select template")
             || lower.contains("current workflow template")
+            || lower.contains("check_guards")
+            || lower.contains("check every step")
+            || lower.contains("check step")
+            || lower.contains("skip step")
+            || lower.contains("reset")
         {
             responses.push(workflow_call(
                 "select_template",
                 serde_json::json!({ "template": "feature", "issueNumber": 77, "issueTitle": "Auth regression" }),
             ));
         }
+        if lower.contains("list_templates") {
+            responses.push(workflow_call("list_templates", serde_json::json!({})));
+        }
         if lower.contains("all steps complete") {
             for step in 1..=19 {
                 responses.push(workflow_call("check", serde_json::json!({ "step": step })));
             }
+            responses.push(workflow_call("status", serde_json::json!({})));
+        } else if lower.contains("check every step from 1 through 7") {
+            for step in 1..=7 {
+                responses.push(workflow_call("check", serde_json::json!({ "step": step })));
+            }
+            responses.push(workflow_call(
+                "check_guards",
+                serde_json::json!({ "command": "git commit" }),
+            ));
+        } else if lower.contains("try to check step 3") {
+            responses.push(workflow_call("check", serde_json::json!({ "step": 3 })));
+        } else if lower.contains("skip step 5") {
+            responses.push(workflow_call("skip", serde_json::json!({ "step": 5 })));
+            responses.push(workflow_call("status", serde_json::json!({})));
+        } else if lower.contains("check_guards") {
+            responses.push(workflow_call(
+                "check_guards",
+                serde_json::json!({ "command": "git commit" }),
+            ));
+        } else if lower.contains("set_issue") {
+            responses.push(workflow_call(
+                "set_issue",
+                serde_json::json!({ "issueNumber": 99, "issueTitle": "Fix auth" }),
+            ));
         }
-        if lower.contains("check step 1") || lower.contains("check every step") {
+        let scripted_many_checks = lower.contains("all steps complete")
+            || lower.contains("check every step from 1 through 7");
+        if !scripted_many_checks
+            && (lower.contains("check step 1") || lower.contains("check every step"))
+        {
             responses.push(workflow_call("check", serde_json::json!({ "step": 1 })));
         }
-        if lower.contains("check step 2") || lower.contains("progress done 2") {
+        if !scripted_many_checks
+            && (lower.contains("check step 2") || lower.contains("progress done 2"))
+        {
             responses.push(workflow_call("check", serde_json::json!({ "step": 2 })));
+        }
+        if lower.contains("clear_issue") {
+            responses.push(workflow_call("clear_issue", serde_json::json!({})));
         }
         if lower.contains("reset") {
             responses.push(workflow_call("reset", serde_json::json!({})));
