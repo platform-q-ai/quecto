@@ -56,6 +56,7 @@ impl Markdown {
         let mut current_line_hanging_indent: Option<usize> = None;
         let mut in_code_block = false;
         let mut code_block_lang = String::new();
+        let mut code_block_indented = false;
         let mut code_block_content = String::new();
         let mut list_depth: usize = 0;
         let mut list_stack: Vec<ListState> = Vec::new();
@@ -95,9 +96,13 @@ impl Markdown {
                         in_code_block = true;
                         code_block_lang = match kind {
                             pulldown_cmark::CodeBlockKind::Fenced(lang) => {
+                                code_block_indented = false;
                                 sanitize_for_display(&lang)
                             }
-                            _ => String::new(),
+                            _ => {
+                                code_block_indented = true;
+                                String::new()
+                            }
                         };
                         code_block_content.clear();
                     }
@@ -189,7 +194,12 @@ impl Markdown {
                         lines.push(RenderedLine::blank()); // spacing after paragraph
                     }
                     TagEnd::CodeBlock => {
-                        flush_code_block(&code_block_lang, &code_block_content, &mut lines);
+                        flush_code_block(
+                            &code_block_lang,
+                            &code_block_content,
+                            code_block_indented,
+                            &mut lines,
+                        );
                         in_code_block = false;
                         code_block_content.clear();
                     }
@@ -506,14 +516,16 @@ fn flush_table(table_rows: &[Vec<String>], content_width: usize, lines: &mut Vec
 /// gutter bar (`│ `), preceded by an optional dimmed language label, and
 /// followed by a trailing blank line. The gutter bar is a deliberate,
 /// locked-in design choice (see #799), so the tests assert it explicitly.
-fn flush_code_block(lang: &str, content: &str, lines: &mut Vec<RenderedLine>) {
+fn flush_code_block(lang: &str, content: &str, indented: bool, lines: &mut Vec<RenderedLine>) {
     // CommonMark demotes a 4+-space-indented fence to an *indented* code block,
     // so the literal ```` ```lang ````/```` ``` ```` markers survive as body text
     // with an empty language (#799). Detect that and re-parse the inner fence so
-    // those markers are suppressed rather than shown verbatim.
-    if lang.is_empty() {
+    // those markers are suppressed rather than shown verbatim. Gate on `indented`
+    // so a genuine empty-info-string *fenced* block (``` with no language) whose
+    // body merely looks like a fence is rendered verbatim, not silently stripped.
+    if indented {
         if let Some((inner_lang, inner_body)) = strip_literal_fence(content) {
-            flush_code_block(&inner_lang, &inner_body, lines);
+            flush_code_block(&inner_lang, &inner_body, false, lines);
             return;
         }
     }
