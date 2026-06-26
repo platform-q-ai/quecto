@@ -153,11 +153,13 @@ impl App {
     /// chat status line. It must NOT steal focus, open the inspector panel, or
     /// require interaction — it is purely informational. Both the agent id and
     /// the message are sanitized for terminal-control sequences before display.
-    fn handle_subagent_notification(&mut self, agent_id: String, message: String) {
-        let agent_id = crate::interface::ansi::sanitize_control(&agent_id);
+    fn handle_subagent_notification(&mut self, _agent_id: String, message: String) {
+        // The message is already a concise, self-naming one-liner from the kernel
+        // (e.g. "Agent 'poet-2' completed and is ready for inspection"), so we do
+        // NOT re-prefix the agent id here — that just duplicated the name.
         let message = crate::interface::ansi::sanitize_control(&message);
         self.chat.add_entry(ChatEntry::Status {
-            text: format!("◆ sub-agent {agent_id}: {message}"),
+            text: format!("◆ {message}"),
         });
     }
 

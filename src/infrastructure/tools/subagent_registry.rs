@@ -593,21 +593,18 @@ impl SubagentNotification {
     /// Format this notification as a human-readable message suitable for
     /// injection into the parent LLM's conversation.
     pub fn to_message(&self) -> String {
+        // Keep this a single concise line — it surfaces as a passive one-line note
+        // in the TUI and as a system note in the parent's context. The child's full
+        // output is NOT repeated here; inspect it with `agent_cmd get_messages_tail`.
         match self {
-            Self::Completed { agent_id, summary } => {
-                format!(
-                    "[subagent] Agent '{}' completed. Last output: {}",
-                    agent_id, summary
-                )
+            Self::Completed { agent_id, .. } => {
+                format!("Agent '{agent_id}' completed and is ready for inspection")
             }
             Self::Errored { agent_id, error } => {
-                format!("[subagent] Agent '{}' errored: {}", agent_id, error)
+                format!("Agent '{agent_id}' failed: {error}")
             }
             Self::Exited { agent_id } => {
-                format!(
-                    "[subagent] Agent '{}' exited unexpectedly (process terminated)",
-                    agent_id
-                )
+                format!("Agent '{agent_id}' exited unexpectedly")
             }
         }
     }

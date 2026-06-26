@@ -41,7 +41,7 @@ async fn subagent_notification_appends_one_status_line() {
     app.handle_event(Event::SubagentNotification {
         agent_id: "researcher".into(),
         sequence: 1,
-        message: "[subagent] Agent 'researcher' completed. Last output: all tests pass".into(),
+        message: "Agent 'researcher' completed and is ready for inspection".into(),
     });
     // Exactly one status entry is appended — passive, non-interactive.
     assert_eq!(app.chat.entry_count(), before + 1);
@@ -49,8 +49,10 @@ async fn subagent_notification_appends_one_status_line() {
         .chat
         .last_status_text()
         .expect("expected a Status entry");
-    assert!(text.contains("sub-agent researcher"));
-    assert!(text.contains("all tests pass"));
+    assert!(text.contains("Agent 'researcher' completed"));
+    assert!(text.contains("ready for inspection"));
+    // The TUI must NOT re-prefix the agent id — the message already names it.
+    assert!(!text.contains("sub-agent researcher"));
 }
 
 #[tokio::test]

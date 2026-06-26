@@ -206,10 +206,11 @@ state (completed / errored / exited) the parent automatically receives a single
   and surfaces **only at the parent's next idle/turn boundary**: a completion
   that arrives while the parent is mid-turn is buffered and delivered after that
   turn finishes, never injected into an in-flight turn.
-- A **one-line summary**, carrying the child's id and a concise outcome, e.g.
-  `[subagent] Agent 'worker' completed. Last output: …`,
-  `[subagent] Agent 'linter' errored: …`, or
-  `[subagent] Agent 'worker' exited unexpectedly …`.
+- A **one-line note**, naming the child and its outcome — it does **not** repeat
+  the child's output, e.g.
+  `Agent 'worker' completed and is ready for inspection`,
+  `Agent 'linter' failed: …`, or
+  `Agent 'worker' exited unexpectedly`.
 - **Coalesced + deduplicated** — multiple completions from the same child
   collapse to one note (latest wins), so a noisy child costs at most one extra
   turn.
@@ -254,7 +255,7 @@ result, read it explicitly:
 {"name": "spawn", "arguments": {"agent_id": "worker", "task": "do the thing"}}
 
 // 2. (do other work) — at your next idle turn you receive, automatically:
-//    [subagent] Agent 'worker' completed. Last output: …
+//    Agent 'worker' completed and is ready for inspection
 
 // 3. Inspect the full output when the note tells you the child is done.
 {"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages_tail", "count": 5}}
