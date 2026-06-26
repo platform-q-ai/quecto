@@ -219,17 +219,18 @@ async fn active_subagent_renders_its_own_workflow_bar() {
         .route_subagent_event("a1", forwarded_workflow("a1", 2, 5));
     h.app_mut().select_agent(Some("a1"));
     let frame = frame_text(&mut h);
-    // "child" is the routed active-issue title, unique to a1's forwarded
-    // workflow — proving the bar is THIS agent's own, not generic chrome.
+    // The sub-agent-first main pane (#820) shows the active agent's workflow as a
+    // boxed bar whose title line carries its OWN active issue (`#7`), unique to
+    // a1's forwarded workflow — proving the bar is THIS agent's, not chrome.
     assert!(
-        frame.contains("child"),
+        frame.contains("#7"),
         "active sub-agent must render its own workflow bar (active issue), got:\n{frame}"
     );
     // Switching back to master must NOT show the sub-agent's workflow issue.
     h.app_mut().select_agent(None);
     let master = frame_text(&mut h);
     assert!(
-        !master.contains("child"),
+        !master.contains("#7"),
         "master view must not show the sub-agent's workflow bar, got:\n{master}"
     );
 }

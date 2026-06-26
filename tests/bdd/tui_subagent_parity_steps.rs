@@ -284,9 +284,11 @@ fn then_active_unchanged(world: &mut QuectoWorld) {
 #[then(expr = "the view shows sub-agent {string}'s own workflow")]
 fn then_view_shows_workflow(world: &mut QuectoWorld, _id: String) {
     let frame = drive(world, |h| h.full_frame());
+    // Sub-agent-first (#820): the boxed main-pane bar shows the agent's OWN
+    // active issue (`#7`) on its title line — the issue title is dropped.
     assert!(
-        frame.contains("child"),
-        "the active sub-agent's own workflow (issue title) must show, got:\n{frame}"
+        frame.contains("#7"),
+        "the active sub-agent's own workflow (active issue) must show, got:\n{frame}"
     );
 }
 
@@ -294,7 +296,7 @@ fn then_view_shows_workflow(world: &mut QuectoWorld, _id: String) {
 fn then_view_hides_workflow(world: &mut QuectoWorld) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
-        !frame.contains("child"),
+        !frame.contains("#7"),
         "the master view must not show the sub-agent's workflow, got:\n{frame}"
     );
 }

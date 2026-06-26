@@ -306,15 +306,22 @@ async fn gc_exited_subagents_removes_expired_exit() {
 // ── subagent bar rendering via compose_bottom ─────────────────────────
 
 #[tokio::test]
-async fn subagent_bar_renders_in_compose_bottom() {
+async fn subagent_bar_no_longer_renders_in_compose_bottom() {
+    // Sub-agent-first (#820): sub-agents moved out of the bottom stack into the
+    // always-on left panel, so compose_bottom must NOT list them; compose_frame
+    // (which prefixes the panel) does.
     let mut h = harness().await;
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("worker-1", "running")]);
-    let bottom = a.compose_bottom(120);
-    let joined = bottom.join("\n");
+    let bottom = a.compose_bottom(120).join("\n");
     assert!(
-        joined.contains("worker-1"),
-        "subagent bar should render in compose_bottom: {joined}"
+        !bottom.contains("worker-1"),
+        "subagent must NOT render in the bottom stack any more: {bottom}"
+    );
+    let frame = super::app_methods::strip_ansi(&a.compose_frame().join("\n"));
+    assert!(
+        frame.contains("worker-1"),
+        "subagent must render in the left panel instead:\n{frame}"
     );
 }
 

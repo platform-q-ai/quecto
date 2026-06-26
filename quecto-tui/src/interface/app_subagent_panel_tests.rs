@@ -49,12 +49,14 @@ async fn with_two_subagents() -> TuiHarness {
 }
 
 #[tokio::test]
-async fn no_panel_without_subagents() {
+async fn panel_always_visible_even_without_subagents() {
+    // Sub-agent-first default (#820): the panel is ALWAYS on once connected,
+    // with the Master pinned as the top row even when no sub-agents exist.
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     assert!(
-        !h.app_mut().subagent_panel_visible(),
-        "with no sub-agents there must be no left panel (layout unchanged)"
+        h.app_mut().subagent_panel_visible(),
+        "the left panel must be always visible (Master row), not gated on sub-agents"
     );
 }
 
@@ -283,7 +285,8 @@ async fn active_resets_to_master_when_viewed_agent_leaves_the_list() {
     h.app_mut().select_agent(Some("other"));
     assert_eq!(h.app_mut().active_agent_id(), Some("other"));
     h.event(subagents_changed(vec![]));
-    assert!(!h.app_mut().subagent_panel_visible());
+    // Sub-agent-first (#820): the panel stays on (Master row) even with none.
+    assert!(h.app_mut().subagent_panel_visible());
     assert_eq!(
         h.app_mut().active_agent_id(),
         None,

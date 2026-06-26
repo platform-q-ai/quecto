@@ -159,6 +159,25 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
     out
 }
 
+/// Render the workflow as a SINGLE content line for the sub-agent-first main
+/// pane (#820): `progress-bar  PHASE n/total` (e.g. `███████░░░  GREEN 3/4`).
+/// Drops the phase-pills and hints lines of `render_widget`. Returns `None`
+/// when the workflow is not visible (no issue / nothing started).
+pub fn render_compact_line(state: &WorkflowBarState) -> Option<String> {
+    if !is_widget_visible(state) {
+        return None;
+    }
+    let total = state.total.max(state.steps.len() as u32).max(1);
+    let bar = progress_bar(state.done, total, 10);
+    let phase = phase_display(state.current_phase().unwrap_or("done"));
+    Some(format!(
+        "{}  {} {}",
+        bar,
+        theme::accent(&theme::bold(&phase)),
+        theme::muted(&format!("{}/{}", state.done, total)),
+    ))
+}
+
 /// Normalise phase keys so synonyms collapse to one pill (`ci` → `ci_cd`).
 fn normalize_phase(phase: &str) -> &str {
     match phase {

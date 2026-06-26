@@ -193,6 +193,8 @@ pub struct App {
     active_subagent_cmd_tx: Option<(String, mpsc::Sender<Command>)>,
     /// Which pane has keyboard focus: the editor or the side panel (#802).
     focus: Focus,
+    /// When the TUI session started — drives the Master row's uptime timer (#820).
+    started_at: tokio::time::Instant,
 }
 
 /// Per-sub-agent session state for the multi-session UI (#800/#802). Holds the
@@ -246,6 +248,13 @@ struct CommandSendFailure {
 }
 
 impl App {
+    /// The current terminal width — accessor for the headless render harness so
+    /// it can compose the bottom stack / main pane at the live width (#820).
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(super) fn terminal_width(&self) -> usize {
+        self.terminal.width
+    }
+
     pub fn new(terminal: Terminal, client: Client) -> Self {
         let mut footer = Footer::new();
         let git_repo = std::env::current_dir().ok();
@@ -304,6 +313,7 @@ impl App {
             active_conn: None,
             active_subagent_cmd_tx: None,
             focus: Focus::Input,
+            started_at: tokio::time::Instant::now(),
         }
     }
 
@@ -707,6 +717,9 @@ mod app_rewind_response_tests;
 #[cfg(test)]
 #[path = "app_selection_tests.rs"]
 mod app_selection_tests;
+#[cfg(test)]
+#[path = "app_subagent_first_tests.rs"]
+mod app_subagent_first_tests;
 #[cfg(test)]
 #[path = "app_subagent_panel_tests.rs"]
 mod app_subagent_panel_tests;

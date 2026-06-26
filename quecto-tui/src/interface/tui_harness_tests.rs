@@ -87,10 +87,12 @@ async fn forwarded_child_workflow_never_renders_parent_bar() {
     );
 }
 
-/// The `awaiting` indicator marks only the awaited row, and clears when the
-/// await tool ends — with no shared, oscillating await line.
+/// Sub-agent-first layout (#820): the bottom sub-agent bar — and with it the
+/// per-row `awaiting` indicator — no longer renders. Agents now live in the
+/// always-on left panel, so the bottom stack must never carry an await line and
+/// the agent rows appear in the panel (full frame) instead.
 #[tokio::test]
-async fn await_indicator_marks_only_the_awaited_row() {
+async fn awaiting_indicator_gone_agents_live_in_panel() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![
@@ -101,21 +103,20 @@ async fn await_indicator_marks_only_the_awaited_row() {
     h.event(await_start("worker"));
     let dump = h.dump();
     assert!(
-        dump.lines()
-            .any(|l| l.contains("worker") && l.contains("awaiting")),
-        "awaited row should show the indicator:\n{dump}"
+        !dump.contains("awaiting"),
+        "the awaiting indicator moved out of the bottom stack with the bar:\n{dump}"
     );
+    // The agents themselves are listed in the always-on panel (full frame).
+    let full = h.dump_full();
     assert!(
-        dump.lines()
-            .filter(|l| l.contains("other"))
-            .all(|l| !l.contains("awaiting")),
-        "non-awaited row must not show the indicator:\n{dump}"
+        full.contains("worker") && full.contains("other"),
+        "sub-agent rows must appear in the left panel:\n{full}"
     );
 
     h.event(tool_end("tc-await-worker", "agent_cmd"));
     assert!(
         !h.last().contains("awaiting"),
-        "await indicator should clear when the await tool ends:\n{}",
+        "no await indicator may render in the bottom stack:\n{}",
         h.last()
     );
 }
@@ -202,10 +203,12 @@ async fn forwarded_canonical_wire_line_parses_and_does_not_leak() {
     );
 }
 
-/// A `get_subagents` poll carries no workflow snapshot; it must NOT erase the
-/// `n/n` that `subagent_state_changed` provided (the missing step-info bug).
+/// A `get_subagents` poll carries no workflow snapshot. Sub-agent-first (#820):
+/// the per-row `n/n` workflow snapshot no longer renders (the bottom bar is
+/// gone), but the agent row itself must survive a workflowless poll — it stays
+/// listed in the always-on left panel rather than vanishing.
 #[tokio::test]
-async fn workflow_snapshot_survives_workflowless_poll() {
+async fn subagent_row_survives_workflowless_poll() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![subagent(
@@ -214,16 +217,16 @@ async fn workflow_snapshot_survives_workflowless_poll() {
         Some(("active", 2, 3)),
     )]));
     assert!(
-        h.last().contains("wf active 2/3"),
-        "wf should show:\n{}",
-        h.last()
+        h.dump_full().contains("a1"),
+        "agent row should show in the panel:\n{}",
+        h.dump_full()
     );
     // get_subagents response shape: status only, no workflow.
     h.event(subagents_changed(vec![subagent("a1", "running", None)]));
     assert!(
-        h.last().contains("wf active 2/3"),
-        "wf must persist through a workflowless poll:\n{}",
-        h.last()
+        h.dump_full().contains("a1"),
+        "agent row must persist through a workflowless poll:\n{}",
+        h.dump_full()
     );
 }
 

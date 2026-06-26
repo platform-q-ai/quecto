@@ -316,26 +316,21 @@ impl App {
         }
     }
 
-    /// Build the below-chat section (sub-agent panel → workflow bar → spinner →
-    /// autocomplete → editor → notifications → footer). This is
-    /// the region whose height changes reflow the chat, so the headless harness
-    /// captures it directly to assert on layout stability.
+    /// Build the below-chat section (spinner → autocomplete → editor →
+    /// notifications → footer). The sub-agent and workflow bars moved out of this
+    /// stack under the sub-agent-first layout (#820). This is the region whose
+    /// height changes reflow the chat, so the headless harness captures it
+    /// directly to assert on layout stability.
     pub(super) fn compose_bottom(&mut self, width: usize) -> Vec<String> {
-        // Render the ACTIVE session's workflow bar (master's own, or the selected
-        // sub-agent's), so a selected sub-agent shows its OWN phase bar (#802).
-        let mut workflow_bar_state = self.active_workflow_bar().clone();
-        workflow_bar_state.workflow_auto_continue = self.workflow_auto_continue;
-        workflow_bar_state.workflow_completion_nudge = self.workflow_completion_nudge;
-
         let mut bottom = Vec::new();
 
-        // Widgets above editor (subagent bars stay on top, visible).
-        bottom.extend(self.widgets_above.render(width));
+        // Sub-agent-first layout (#820): the sub-agent bar and the workflow bar
+        // no longer live in the bottom stack — the always-on left panel and the
+        // boxed main-pane workflow bar carry that information now. Only the
+        // spinner / "N working" indicator, autocompletes, editor, notifications
+        // and footer remain below the chat.
 
-        // Quecto-style workflow widget above the editor.
-        bottom.extend(workflow_bar::render_widget(&workflow_bar_state, width));
-
-        // Spinner sits between widgets_above and autocomplete (#534). While
+        // Spinner sits above autocomplete (#534). While
         // sub-agents are tracked, RESERVE its line (spinner when active, blank
         // when idle): workflow children fire notifications that make the parent
         // do many short runs, each creating/dropping the spinner — a toggling
@@ -421,10 +416,17 @@ impl App {
             version
         )));
 
+        // Sub-agent-first main pane (#820): the selected agent's title line and
+        // boxed single-line workflow bar sit at the top of the body, above the
+        // chat (replacing the removed bottom workflow bar).
+        let main_pane_workflow = self.render_main_pane_workflow(width);
+        let workflow_height = main_pane_workflow.len();
+        lines.extend(main_pane_workflow);
+
         // Chat — render into available space above the bottom section.
         // Reserve MIN_CHAT_GAP lines for spacing between chat and editor (#480).
         const MIN_CHAT_GAP: usize = 3;
-        let chat_height = height.saturating_sub(bottom_height + 2 + MIN_CHAT_GAP);
+        let chat_height = height.saturating_sub(bottom_height + workflow_height + 2 + MIN_CHAT_GAP);
         let chat = self.active_chat_mut();
         chat.set_viewport_height(chat_height);
         let mut chat_lines = chat.render(width);

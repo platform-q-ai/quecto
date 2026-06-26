@@ -4,13 +4,14 @@ Feature: Subagent status bar fixes (#534)
   and bars to clear after subagent kill
   So that the TUI provides accurate real-time feedback
 
-  # ── Fix 1: Spinner renders below widgets_above ─────────────────────
-  # Verified by unit tests in quecto-tui/src/interface/app.rs and code structure.
+  # ── Fix 1: sub-agent bar relocated to the always-on left panel (#820) ──
+  # The sub-agent bar (widgets_above) no longer renders in the bottom section;
+  # it moved to the always-on left panel, so the bottom keeps only the spinner.
 
   @wip
-  Scenario: Render order places widgets_above before spinner
+  Scenario: The sub-agent bar no longer renders in the bottom section
     Given a render bottom section layout
-    Then widgets_above should come before spinner in the output order
+    Then the bottom section no longer renders the sub-agent bar
 
   # ── Fix 2: Notifications drain during prompt execution ─────────────
   # Verified by the notification_rx integration in run_with_token_drain_broadcast.

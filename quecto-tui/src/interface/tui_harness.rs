@@ -275,6 +275,31 @@ impl TuiHarness {
         self.app.compose_frame().join("\n")
     }
 
+    /// The bottom stack (below-chat section), ANSI-stripped — for asserting on
+    /// what does (or no longer does) render in the input/footer area (#820).
+    pub fn bottom_stack(&mut self) -> String {
+        let width = self.app.terminal_width();
+        self.app
+            .compose_bottom(width)
+            .iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The main-pane (top) region of the frame — everything above the bottom
+    /// stack — ANSI-stripped, for asserting on the relocated workflow bar (#820).
+    pub fn main_pane(&mut self) -> String {
+        let width = self.app.terminal_width();
+        let bottom_len = self.app.compose_bottom(width).len();
+        let frame = self.app.compose_frame();
+        let top = &frame[..frame.len().saturating_sub(bottom_len)];
+        top.iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     pub async fn drain_commands(&mut self) -> Vec<String> {
         for _ in 0..5 {
             tokio::task::yield_now().await;
