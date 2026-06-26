@@ -204,7 +204,10 @@ fn phase_display(phase: &str) -> String {
         "refactor" => "REFACTOR".to_string(),
         "ci_cd" => "CI/CD".to_string(),
         "review" => "REVIEW".to_string(),
-        other => other.to_uppercase(),
+        // Unknown phases come from wire data (forwarded sub-agent events) and
+        // must be sanitized to prevent terminal control-sequence injection into
+        // the always-visible main pane.
+        other => sanitize_text(&other.to_uppercase()),
     }
 }
 
