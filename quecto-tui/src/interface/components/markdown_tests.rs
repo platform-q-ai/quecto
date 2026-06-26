@@ -102,8 +102,8 @@ fn code_block() {
         plain
     );
     assert!(
-        plain.contains("```"),
-        "should contain code block borders: {}",
+        !plain.contains("```"),
+        "fence markers must not render literally: {}",
         plain
     );
 }
@@ -547,16 +547,66 @@ fn render_cache_hit_matches_miss_output() {
 }
 
 #[test]
-fn flush_code_block_emits_bordered_body() {
+fn flush_code_block_renders_gutter_body_without_fence_markers() {
     let mut lines: Vec<RenderedLine> = Vec::new();
     flush_code_block("rust", "let x = 1;\nlet y = 2;", &mut lines);
     let texts: Vec<String> = lines.iter().map(|l| strip_ansi(&l.text)).collect();
-    assert_eq!(texts.first().map(String::as_str), Some("```rust"));
-    assert!(texts.iter().any(|t| t == "  let x = 1;"));
-    assert!(texts.iter().any(|t| t == "  let y = 2;"));
-    // Closing fence then a trailing blank line.
-    assert_eq!(texts[texts.len() - 2], "```");
-    assert_eq!(texts[texts.len() - 1], "");
+    // No literal fence markers anywhere.
+    assert!(
+        texts.iter().all(|t| !t.contains("```")),
+        "fence markers must not be emitted: {:?}",
+        texts
+    );
+    // Code body rendered with a left gutter bar, in order.
+    assert!(texts.iter().any(|t| t == "│ let x = 1;"), "{:?}", texts);
+    assert!(texts.iter().any(|t| t == "│ let y = 2;"), "{:?}", texts);
+    // Trailing blank line preserved.
+    assert_eq!(texts.last().map(String::as_str), Some(""));
+}
+
+#[test]
+fn indented_fence_text_block_renders_without_backticks() {
+    // Exact snippet from issue #799 — fence indented by the model.
+    let md = "    ```text\n    4–6 concurrent cargo test/check/build workflows\n    ```";
+    let plain = render_plain(md, 80);
+    assert!(
+        plain.contains("4–6 concurrent cargo test/check/build workflows"),
+        "code content must render: {}",
+        plain
+    );
+    assert!(
+        !plain.contains("```"),
+        "indented fence markers must not render literally: {}",
+        plain
+    );
+}
+
+#[test]
+fn indented_fence_bash_block_renders_without_backticks() {
+    // Exact snippet from issue #799 — fence indented by the model.
+    let md = "    ```bash\n    CARGO_BUILD_JOBS=2RUST_TEST_THREADS=2\n    ```";
+    let plain = render_plain(md, 80);
+    assert!(
+        plain.contains("CARGO_BUILD_JOBS=2RUST_TEST_THREADS=2"),
+        "code content must render: {}",
+        plain
+    );
+    assert!(
+        !plain.contains("```"),
+        "indented fence markers must not render literally: {}",
+        plain
+    );
+}
+
+#[test]
+fn inline_code_still_renders_with_backticks() {
+    // Regression guard: inline code must keep its single backticks.
+    let plain = render_plain("Use the `cargo build` command", 80);
+    assert!(
+        plain.contains("`cargo build`"),
+        "inline code must keep backticks: {}",
+        plain
+    );
 }
 
 #[test]
