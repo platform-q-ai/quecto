@@ -49,6 +49,60 @@ fn given_entry_with_socket_and_pid(world: &mut QuectoWorld, socket_path: String,
     world.monitor_entry = Some(entry);
 }
 
+// --- Grandchild propagation (#815) ---
+
+#[given(
+    expr = "a child's subagent_state_changed listing grandchild {string} under {string} and grandchild {string} under {string}"
+)]
+fn given_child_state_changed_with_two_grandchildren(
+    world: &mut QuectoWorld,
+    gc_a: String,
+    parent_a: String,
+    gc_b: String,
+    parent_b: String,
+) {
+    // Build the full event JSON in the Given so the When is purely "forward".
+    world.event_identity_last = Some(serde_json::json!({
+        "type": "subagent_state_changed",
+        "subagents": [
+            { "agentId": gc_a, "status": "running", "parentId": parent_a, "pid": 0 },
+            { "agentId": gc_b, "status": "idle", "parentId": parent_b, "pid": 0 },
+        ],
+    }));
+}
+
+#[when("the monitor forwards the child's subagent_state_changed event")]
+fn when_monitor_forwards_state_changed(world: &mut QuectoWorld) {
+    use quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed;
+    let line = world
+        .event_identity_last
+        .as_ref()
+        .expect("no child event prepared")
+        .to_string();
+    let forwarded = forward_child_state_changed(&line)
+        .expect("a subagent_state_changed line should be forwarded");
+    world.event_identity_last = Some(serde_json::from_str(&forwarded).unwrap());
+}
+
+#[then(expr = "the forwarded event should list {string} with parent_id {string}")]
+fn then_forwarded_lists_descendant(world: &mut QuectoWorld, grandchild: String, parent: String) {
+    let ev = world
+        .event_identity_last
+        .as_ref()
+        .expect("no forwarded event");
+    assert_eq!(ev["type"].as_str(), Some("subagent_state_changed"));
+    let arr = ev["subagents"].as_array().expect("subagents array");
+    let entry = arr
+        .iter()
+        .find(|s| s["agentId"].as_str() == Some(grandchild.as_str()))
+        .expect("forwarded event should contain the grandchild");
+    assert_eq!(
+        entry["parentId"].as_str(),
+        Some(parent.as_str()),
+        "grandchild must keep its real parent_id (not be re-stamped to the child)"
+    );
+}
+
 #[given("a monitor abort handle")]
 fn given_abort_handle(world: &mut QuectoWorld) {
     // Create a JoinHandle for a long-running task we can abort

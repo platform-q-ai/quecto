@@ -450,6 +450,99 @@ fn forward_child_messages_appended_ignores_other_lines() {
     assert!(forward_child_messages_appended("not json", "child", None).is_none());
 }
 
+// ─── #815: forward descendant subagent_state_changed up the monitor chain ───
+
+#[test]
+fn forward_child_state_changed_preserves_descendant_identity() {
+    // A child's subagent_state_changed lists its OWN children (grandchildren of
+    // the root). The forward MUST preserve each entry's real agentId/parentId —
+    // it must NOT re-stamp them to the immediate child's id (#815).
+    let line = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"grandchild","status":"running","parentId":"child","pid":42}]}"#;
+    let out = forward_child_state_changed(line).expect("state_changed line should be forwarded");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["type"], "subagent_state_changed");
+    let arr = v["subagents"].as_array().expect("subagents array");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(
+        arr[0]["agentId"], "grandchild",
+        "descendant's real agent_id must be preserved (not re-stamped to the child)"
+    );
+    assert_eq!(
+        arr[0]["parentId"], "child",
+        "descendant's real parent_id must be preserved so it nests under its true parent"
+    );
+    assert_eq!(arr[0]["status"], "running");
+}
+
+#[test]
+fn forward_child_state_changed_ignores_other_lines() {
+    assert!(forward_child_state_changed(r#"{"type":"agent_end"}"#).is_none());
+    assert!(forward_child_state_changed("not json").is_none());
+}
+
+#[test]
+fn forward_child_state_changed_preserves_multiple_descendants() {
+    // Two grandchildren under DIFFERENT parents in one event. A buggy impl that
+    // stamps the whole list with a single id (or collapses it) would fail here;
+    // each entry must keep its own agentId/parentId (#815).
+    let line = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"gc-a","status":"running","parentId":"child-1"},{"agentId":"gc-b","status":"idle","parentId":"child-2"}]}"#;
+    let out = forward_child_state_changed(line).expect("forwarded");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let arr = v["subagents"].as_array().expect("subagents array");
+    assert_eq!(arr.len(), 2);
+    let find = |id: &str| {
+        arr.iter()
+            .find(|s| s["agentId"] == id)
+            .unwrap_or_else(|| panic!("missing {id}"))
+    };
+    assert_eq!(find("gc-a")["parentId"], "child-1");
+    assert_eq!(find("gc-a")["status"], "running");
+    assert_eq!(find("gc-b")["parentId"], "child-2");
+    assert_eq!(find("gc-b")["status"], "idle");
+}
+
+#[test]
+fn forward_child_state_changed_chains_already_forwarded_descendants() {
+    // Multi-hop: a great-grandchild's entry (parentId is itself a grandchild,
+    // NOT the immediate child reporting it) arrives at this monitor. Forwarding
+    // must NOT be gated on `parentId == agent_id`, or great-grandchildren stay
+    // invisible — the original bug class (#815).
+    let line = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"great-grandchild","status":"running","parentId":"grandchild"}]}"#;
+    let out = forward_child_state_changed(line).expect("forwarded regardless of parentId");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let arr = v["subagents"].as_array().expect("subagents array");
+    assert_eq!(arr[0]["agentId"], "great-grandchild");
+    assert_eq!(
+        arr[0]["parentId"], "grandchild",
+        "deep descendant identity must survive the hop unchanged"
+    );
+}
+
+#[test]
+fn handle_monitor_line_forwards_descendant_state_changed() {
+    // Through the real handler: a child's subagent_state_changed (carrying a
+    // grandchild) must be forwarded onto the parent/root broadcast so the TUI
+    // panel can list it. Regression for #815: previously dropped by the
+    // STATE_CHANGING_EVENTS pre-filter and never forwarded.
+    let registry = super::super::subagent_registry::new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("child".to_string(), test_entry());
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+    let line = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"grandchild","status":"running","parentId":"child","pid":7}]}"#;
+    super::handle_monitor_line(line, "child", &registry, None, Some(&tx), Some("root"));
+    let fwd: serde_json::Value = serde_json::from_str(
+        &rx.try_recv()
+            .expect("descendant state_changed must be forwarded to the parent stream"),
+    )
+    .unwrap();
+    assert_eq!(fwd["type"], "subagent_state_changed");
+    let arr = fwd["subagents"].as_array().expect("subagents array");
+    assert_eq!(arr[0]["agentId"], "grandchild");
+    assert_eq!(arr[0]["parentId"], "child");
+}
+
 #[test]
 fn apply_event_parsed_records_workflow_snapshot() {
     let mut entry = test_entry();

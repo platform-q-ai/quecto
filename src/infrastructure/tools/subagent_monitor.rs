@@ -284,6 +284,16 @@ fn handle_monitor_line(
             let _ = tx.send(fwd);
             return;
         }
+        // Descendant sub-agent state (a grandchild, or deeper, spawned by this
+        // child) must be re-broadcast up the chain so the root — and the TUI —
+        // sees it. Forwarded identity-preserving, never re-stamped (#815). This
+        // is not a status change for the immediate child, so it returns early
+        // and bypasses the registry/notification path below.
+        if let Some(mut fwd) = forward_child_state_changed(line) {
+            fwd.push('\n');
+            let _ = tx.send(fwd);
+            return;
+        }
     }
     // Cheap substring pre-filter: any line that isn't a tracked event type
     // (including high-volume `token` lines) is skipped before the JSON parse.
@@ -386,6 +396,48 @@ pub fn forward_child_workflow_event(
     }
     let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
     canonical_workflow_forward(&value, child_id, parent_id)
+}
+
+/// If `value` is a child's `subagent_state_changed` event, rebuild a canonical
+/// event for re-broadcast up the monitor chain (#815). Unlike the
+/// `canonical_*_forward` helpers, this MUST preserve every descendant's REAL
+/// `agentId`/`parentId` — the child's list already carries the authoritative
+/// identity for each grandchild (and deeper), so re-stamping to the immediate
+/// child's id would mis-attribute grandchildren to the child. Returns the
+/// re-built JSON line, or `None` for any line that is not a
+/// `subagent_state_changed` event.
+///
+/// `subagent_state_changed` events are passed through with the descendant
+/// `subagents` list intact — never re-stamped — so identity survives every hop.
+pub fn canonical_state_changed_forward(value: &serde_json::Value) -> Option<String> {
+    if value.get("type").and_then(|t| t.as_str()) != Some("subagent_state_changed") {
+        return None;
+    }
+    // Pass the descendant list through verbatim. Each entry already carries the
+    // authoritative `agentId`/`parentId` for that grandchild (or deeper); the
+    // forward must NOT collapse or re-stamp them, which would mis-attribute
+    // grandchildren to the immediate child. This also means an already-forwarded
+    // event (a great-grandchild's entry) is re-broadcast unchanged at each
+    // ancestor, so propagation chains to arbitrary depth up to the root.
+    let subagents = value
+        .get("subagents")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::Array(vec![]));
+    let canonical = serde_json::json!({
+        "type": "subagent_state_changed",
+        "subagents": subagents,
+    });
+    serde_json::to_string(&canonical).ok()
+}
+
+/// Line-based wrapper around [`canonical_state_changed_forward`]: cheap
+/// substring pre-filter, then parse once. Returns `None` for non-state lines.
+pub fn forward_child_state_changed(line: &str) -> Option<String> {
+    if !line.contains("\"type\":\"subagent_state_changed\"") {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    canonical_state_changed_forward(&value)
 }
 
 /// Check if a JSON-lines event should trigger a notification and send it.

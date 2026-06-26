@@ -111,6 +111,14 @@ Feature: Persistent subagent monitor — live event stream from child agents
     Then the subagent registry should contain "monitor-test"
     And the subagent registry entry "monitor-test" should have status "Starting"
 
+  # --- Grandchild propagation (#815) ---
+
+  Scenario: a child's subagent_state_changed is forwarded preserving every descendant's identity
+    Given a child's subagent_state_changed listing grandchild "gc-a" under "child-1" and grandchild "gc-b" under "child-2"
+    When the monitor forwards the child's subagent_state_changed event
+    Then the forwarded event should list "gc-a" with parent_id "child-1"
+    And the forwarded event should list "gc-b" with parent_id "child-2"
+
   # --- Monitor task abort handle ---
 
   Scenario: Monitor task can be aborted via JoinHandle
