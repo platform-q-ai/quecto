@@ -79,7 +79,9 @@ const pr = await agent(
   `done first.\n` +
   `STEP — Push. This triggers the full local gate: fmt, strict clippy, unit/architecture/contracts/` +
   `repo_docs, the 24-shard non-real BDD suite, region coverage at/above threshold (quecto and quecto-tui), ` +
-  `machete, deny, and the real-LLM e2e suite (~140s). Fix every failure; never use --no-verify.\n` +
+  `machete, deny, and the zero-cost mocked @mock-llm e2e lane (the live suite is opt-in via ` +
+  `QUECTO_RUN_REAL_LLM=1). Fix every failure; never use --no-verify — a bypassed gate does NOT count as ` +
+  `passing. If only the load-flaky find.feature scenario fails, re-run the shard.\n` +
   `STEP — Create PR. Open the PR against master with gh, clear title and a body summarizing the change. ` +
   `Do not claim Claude co-authorship. Return the PR number and head commit SHA.`,
   { label: 'commit-push-pr', phase: 'Ship' }
@@ -104,7 +106,7 @@ const reviews = await parallel(DIMENSIONS.map(dim => () => agent(
 
 // ── Fix reviews, push fixes, resolve threads ───────────────────────────────
 phase('Fix Reviews')
-await agent(
+const fixResolve = await agent(
   `Task: ${TASK}. PR: ${pr}\n\n` +
   `Reviewer findings posted inline:\n${reviews.filter(Boolean).join('\n\n---\n\n')}\n\n` +
   `STEP — Fix all valid review concerns. Triage each inline finding; confirm it is genuinely valid before ` +
@@ -148,17 +150,40 @@ if (/CONFORMANCE:\s*FAIL/i.test(conformance)) {
   )
 }
 
+// ── Merge gate: refuse to merge if any upstream phase ERRORED or conformance failed ──
+// agent() returns null when a phase agent dies on a terminal error (e.g. API/
+// connectivity). A null reviewer/fix/conformance means that phase did NOT run —
+// merging anyway is exactly how a PR can land without real review/conformance
+// (the #818 incident). Block the merge instead of riding through on auto-merge.
+const reviewsCompleted = reviews.filter(Boolean).length
+const conformancePass = !!conformance && /CONFORMANCE:\s*PASS/i.test(conformance)
+if (reviewsCompleted < DIMENSIONS.length || fixResolve === null || !conformancePass) {
+  const reason = [
+    reviewsCompleted < DIMENSIONS.length
+      ? `only ${reviewsCompleted}/${DIMENSIONS.length} reviewers completed (a reviewer phase errored)`
+      : null,
+    fixResolve === null ? 'the fix/resolve phase errored' : null,
+    !conformancePass ? 'conformance did not return CONFORMANCE: PASS' : null,
+  ].filter(Boolean).join('; ')
+  log(`MERGE BLOCKED — ${reason}. Leaving PR ${pr} open for manual attention; NOT merging.`)
+  return { pr, merged: false, blocked: reason, conformance }
+}
+
 // ── Merge, sync, cleanup ───────────────────────────────────────────────────
 phase('Merge')
 const result = await agent(
   `Task: ${TASK}. PR: ${pr}\n\n` +
   `Acceptance-conformance verdict:\n${conformance}\n\n` +
-  `STEP — Confirm the pre-push gate passed in full (coverage threshold, real-LLM, machete, deny) and the ` +
-  `required CI checks are green. GUARD: do NOT merge unless (a) all review findings are addressed AND ` +
-  `(b) the conformance verdict above is "CONFORMANCE: PASS". If conformance is FAIL, do NOT merge — ` +
-  `report the unmet criteria and stop.\n` +
+  `STEP — Confirm the pre-push gate passed IN FULL on the latest pushed commit (coverage threshold, ` +
+  `machete, deny, and the mocked @mock-llm e2e lane) WITHOUT --no-verify, and the required CI checks ` +
+  `"Unit Tests" and "Mock LLM E2E Tests" are green. A push that bypassed the gate with --no-verify does ` +
+  `NOT count as passing — if the gate was bypassed, do NOT merge; re-push cleanly or report and stop. ` +
+  `GUARD: do NOT merge unless (a) all review findings are addressed, (b) the conformance verdict above is ` +
+  `"CONFORMANCE: PASS", and (c) the gate genuinely passed (not bypassed). If any is false, do NOT merge — ` +
+  `report and stop.\n` +
   `STEP — Merge with: gh pr merge <PR> --merge --auto --delete-branch (auto-merge waits for the required ` +
-  `Smoke Test). The default branch is protected with enforce_admins; do not force or bypass.\n` +
+  `"Unit Tests" and "Mock LLM E2E Tests" checks). The default branch is protected with enforce_admins; ` +
+  `do not force or bypass.\n` +
   `STEP — Move to local master: git checkout master && git pull --ff-only to sync the merge.\n` +
   `Return the final merge status.`,
   { label: 'merge-sync', phase: 'Merge' }
