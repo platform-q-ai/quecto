@@ -18,11 +18,17 @@ Feature: TUI Phase 3 — Markdown Rendering and Tool Output Display
     Then the rendered output should contain bold "bold"
     And the rendered output should contain italic "italic"
 
-  Scenario: Markdown renders code blocks with borders
+  Scenario: Markdown renders code blocks as styled code without literal fence markers
     Given a markdown component with text "```rust\nfn main() {}\n```"
     When the component renders at width 80
     Then the rendered output should contain "fn main()"
-    And the rendered output should contain code block borders
+    And the rendered output should not contain literal fence markers "```"
+
+  Scenario: Markdown renders an indented fenced code block without literal fence markers
+    Given a markdown component with text "    ```bash\n    CARGO_BUILD_JOBS=2RUST_TEST_THREADS=2\n    ```"
+    When the component renders at width 80
+    Then the rendered output should contain "CARGO_BUILD_JOBS=2RUST_TEST_THREADS=2"
+    And the rendered output should not contain literal fence markers "```"
 
   Scenario: Markdown renders inline code
     Given a markdown component with text "Use `cargo build` to compile"

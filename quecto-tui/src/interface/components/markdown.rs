@@ -243,7 +243,12 @@ impl Markdown {
                     if in_table {
                         current_cell.push_str(&sanitize_for_display(&text));
                     } else if in_code_block {
-                        code_block_content.push_str(&sanitize_for_display(&text));
+                        // Preserve newlines: an *indented* fence arrives as Text
+                        // events with embedded `\n` (rather than SoftBreaks), and
+                        // those newlines are needed to detect/strip a literal
+                        // inner fence in `flush_code_block` (#799).
+                        code_block_content
+                            .push_str(&strip_terminal_control_preserve_newlines(&text));
                     } else if in_blockquote {
                         blockquote_lines.push(sanitize_for_display(&text));
                     } else {
@@ -494,16 +499,54 @@ fn flush_table(table_rows: &[Vec<String>], content_width: usize, lines: &mut Vec
     lines.push(RenderedLine::blank());
 }
 
-/// Flush a fenced code block into rendered lines: a dimmed `\`\`\`lang` border,
-/// the indented dimmed code body, a closing border, and a trailing blank.
+/// Flush a fenced code block into rendered lines as styled code (#799).
+///
+/// The fence markers (```` ```lang ````/```` ``` ````) are intentionally NOT
+/// emitted as visible text. Each code line is rendered behind a dimmed left
+/// gutter bar (`│ `), preceded by an optional dimmed language label, and
+/// followed by a trailing blank line. The gutter bar is a deliberate,
+/// locked-in design choice (see #799), so the tests assert it explicitly.
 fn flush_code_block(lang: &str, content: &str, lines: &mut Vec<RenderedLine>) {
-    let border_text = format!("```{lang}");
-    lines.push(RenderedLine::plain(theme::dim(&border_text)));
-    for code_line in content.lines() {
-        lines.push(RenderedLine::plain(format!("  {}", theme::dim(code_line))));
+    // CommonMark demotes a 4+-space-indented fence to an *indented* code block,
+    // so the literal ```` ```lang ````/```` ``` ```` markers survive as body text
+    // with an empty language (#799). Detect that and re-parse the inner fence so
+    // those markers are suppressed rather than shown verbatim.
+    if lang.is_empty() {
+        if let Some((inner_lang, inner_body)) = strip_literal_fence(content) {
+            flush_code_block(&inner_lang, &inner_body, lines);
+            return;
+        }
     }
-    lines.push(RenderedLine::plain(theme::dim("```")));
+
+    if !lang.is_empty() {
+        lines.push(RenderedLine::plain(theme::dim(lang)));
+    }
+    for code_line in content.lines() {
+        lines.push(RenderedLine::plain(format!(
+            "{}{}",
+            theme::dim("│ "),
+            theme::dim(code_line)
+        )));
+    }
     lines.push(RenderedLine::blank());
+}
+
+/// Detect an indented code block whose body is itself a literal ```` ``` ````
+/// fence and split it into `(language, body)` so it can be rendered as a proper
+/// fenced block (#799). Returns `None` when the content is not a wrapped fence.
+fn strip_literal_fence(content: &str) -> Option<(String, String)> {
+    let lines: Vec<&str> = content.lines().collect();
+    let first_idx = lines.iter().position(|l| !l.trim().is_empty())?;
+    let last_idx = lines.iter().rposition(|l| !l.trim().is_empty())?;
+    if last_idx <= first_idx {
+        return None;
+    }
+    let lang = lines[first_idx].trim_start().strip_prefix("```")?.trim();
+    if lines[last_idx].trim() != "```" {
+        return None;
+    }
+    let body = lines[first_idx + 1..last_idx].join("\n");
+    Some((lang.to_string(), body))
 }
 
 /// Render a table as aligned text columns.
