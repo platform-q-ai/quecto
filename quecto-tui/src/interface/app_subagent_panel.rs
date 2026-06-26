@@ -485,12 +485,21 @@ impl App {
 
     /// Flattened panel rows: the master pinned at the top, then the sub-agent
     /// tree depth-ordered by `parent_id` (grandchildren under their parent).
+    /// Master's live status: `running` while processing, else `idle` (#820).
+    fn master_status(&self) -> &'static str {
+        if self.agent_state.is_running() {
+            "running"
+        } else {
+            "idle"
+        }
+    }
+
     fn panel_rows(&self) -> Vec<PanelRow> {
         let mut rows = vec![PanelRow {
             id: None,
             depth: 0,
             label: "Master Agent".to_string(),
-            status: "running".to_string(),
+            status: self.master_status().to_string(),
         }];
         for (id, depth) in self.subagent_tree_order() {
             let info = self.subagent_local.get(&id).map(|t| &t.info);
@@ -620,7 +629,7 @@ impl App {
     /// (`agent · status · elapsed · #issue workflow`) followed by the EXISTING
     /// yellow workflow bar rendered BOXED as a single content line
     /// (`progress-bar PHASE n/total`) — dropping the phase-pills and hints lines.
-    /// Empty when the active agent has no visible workflow.
+    /// Title always renders; the boxed bar is appended only when a workflow exists.
     pub(super) fn render_main_pane_workflow(
         &self,
         width: usize,
@@ -630,20 +639,20 @@ impl App {
             return Vec::new();
         }
         let state = self.active_workflow_bar();
-        let Some(content) = workflow_bar::render_compact_line(state) else {
-            return Vec::new();
-        };
+        // Title ALWAYS renders; the boxed bar is conditional on a workflow (#820).
         let mut out = vec![pad_cell(&self.main_pane_title(state, now), width)];
-        // Box the single workflow line for breathing space (#820).
-        let inner = width - 2;
-        out.push(theme::dim(&format!("┌{}┐", "─".repeat(inner))));
-        out.push(format!(
-            "{}{}{}",
-            theme::dim("│"),
-            boxed_inner(&content, inner),
-            theme::dim("│")
-        ));
-        out.push(theme::dim(&format!("└{}┘", "─".repeat(inner))));
+        if let Some(content) = workflow_bar::render_compact_line(state) {
+            // Box the single workflow line for breathing space (#820).
+            let inner = width - 2;
+            out.push(theme::dim(&format!("┌{}┐", "─".repeat(inner))));
+            out.push(format!(
+                "{}{}{}",
+                theme::dim("│"),
+                boxed_inner(&content, inner),
+                theme::dim("│")
+            ));
+            out.push(theme::dim(&format!("└{}┘", "─".repeat(inner))));
+        }
         out
     }
 
@@ -654,7 +663,7 @@ impl App {
         now: tokio::time::Instant,
     ) -> String {
         let (name, status) = match self.active_agent_id.as_deref() {
-            None => ("Master".to_string(), "running".to_string()),
+            None => ("Master".to_string(), self.master_status().to_string()),
             Some(id) => (
                 id.to_string(),
                 self.subagent_local

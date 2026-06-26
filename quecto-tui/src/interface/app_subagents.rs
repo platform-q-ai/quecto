@@ -29,27 +29,8 @@ impl App {
             }
         }
         self.subagent_local = new_map;
-        self.rebuild_subagent_bar();
         // Keep the panel cursor in bounds after the list changes (#800).
         self.clamp_panel_selection();
-    }
-
-    /// Rebuild the widget from local state.
-    pub(super) fn rebuild_subagent_bar(&mut self) {
-        if self.subagent_local.is_empty() {
-            self.widgets_above.clear("subagents");
-        } else {
-            let now = tokio::time::Instant::now();
-            let rows: Vec<SubagentRow> = self
-                .subagent_local
-                .values()
-                .map(|t| SubagentRow::new(t.info.clone(), t.elapsed_secs(now)))
-                .collect();
-            let mut bar = SubagentBar::new();
-            bar.update(rows, self.subagent_frame);
-            bar.set_awaited(self.awaited_agent_id.clone());
-            self.widgets_above.set("subagents", Box::new(bar));
-        }
     }
 
     /// Advance the subagent spinner animation. Returns `true` if a re-render is
@@ -64,10 +45,9 @@ impl App {
             return false;
         }
         self.subagent_frame = self.subagent_frame.wrapping_add(1);
-        // Don't rebuild the (now unrendered) `widgets_above` bar on this 80ms
-        // hot path — the sub-agent-first panel reads live state directly, so the
-        // only consumer of `subagent_frame` is the "N working" activity line
-        // (#820 review). The frame bump above is all this tick needs.
+        // The sub-agent-first panel reads live state directly, so the only
+        // consumer of `subagent_frame` is the "N working" activity line (#820
+        // review). The frame bump above is all this tick needs.
         true
     }
 
@@ -77,14 +57,10 @@ impl App {
         if self.subagent_local.is_empty() {
             return false;
         }
-        let removed = gc_exited_subagents(
+        gc_exited_subagents(
             &mut self.subagent_local,
             tokio::time::Instant::now(),
             EXITED_SUBAGENT_GRACE,
-        );
-        if removed {
-            self.rebuild_subagent_bar();
-        }
-        removed
+        )
     }
 }

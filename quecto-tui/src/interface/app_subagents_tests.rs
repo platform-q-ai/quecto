@@ -1,5 +1,5 @@
-//! Tests for `app_subagents.rs` — the `update_subagent_bar` merge logic,
-//! `rebuild_subagent_bar`, and `tick_subagent_animation` methods (issue #729).
+//! Tests for `app_subagents.rs` — the `update_subagent_bar` merge logic
+//! and `tick_subagent_animation` methods (issue #729).
 //!
 //! These drive the real `App` via the headless render harness (no TTY,
 //! drained socket) to exercise the subagent bar lifecycle.
@@ -153,47 +153,6 @@ async fn update_subagent_bar_preserves_workflow_on_workflowless_poll() {
     assert!(
         a.subagent_local["w1"].info.workflow.is_some(),
         "workflow should be preserved through workflowless poll"
-    );
-}
-
-// ── rebuild_subagent_bar ──────────────────────────────────────────────
-
-#[tokio::test]
-async fn rebuild_subagent_bar_with_no_agents_clears_widget() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.rebuild_subagent_bar();
-    assert!(
-        a.widgets_above.render(80).is_empty(),
-        "no agents → no subagent widget"
-    );
-}
-
-#[tokio::test]
-async fn rebuild_subagent_bar_with_agents_sets_widget() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.update_subagent_bar(vec![info("w1", "running")]);
-    a.rebuild_subagent_bar();
-    assert!(
-        !a.widgets_above.render(80).is_empty(),
-        "agents present → widget should be set"
-    );
-}
-
-#[tokio::test]
-async fn rebuild_subagent_bar_clears_widget_when_agents_drop_to_zero() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.update_subagent_bar(vec![info("w1", "running")]);
-    a.rebuild_subagent_bar();
-    assert!(!a.widgets_above.render(80).is_empty());
-    // Remove all agents.
-    a.subagent_local.clear();
-    a.rebuild_subagent_bar();
-    assert!(
-        a.widgets_above.render(80).is_empty(),
-        "widget should be cleared when no agents"
     );
 }
 

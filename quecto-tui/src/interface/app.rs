@@ -29,8 +29,6 @@ use crate::interface::components::model_selector::{
 use crate::interface::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::interface::components::select_list::{SelectItem, SelectList, SelectResult};
 use crate::interface::components::spinner::Spinner;
-use crate::interface::components::subagent_bar::{SubagentBar, SubagentRow};
-use crate::interface::components::widget::WidgetContainer;
 use crate::interface::components::workflow_bar;
 use crate::interface::keys::{self, Key};
 use crate::interface::kitty::KittyProtocol;
@@ -109,7 +107,6 @@ pub struct App {
     autocomplete: Autocomplete,
     files_autocomplete: FilesAutocomplete,
     notifications: NotificationStack,
-    widgets_above: WidgetContainer,
     kitty: KittyProtocol,
     agent_state: AgentRunState,
     should_exit: bool,
@@ -267,7 +264,6 @@ impl App {
             autocomplete: Autocomplete::new(builtin_commands(), 8),
             files_autocomplete: FilesAutocomplete::new(8),
             notifications: NotificationStack::new(),
-            widgets_above: WidgetContainer::new(),
             kitty: KittyProtocol::new(),
             agent_state: AgentRunState::new(),
             should_exit: false,

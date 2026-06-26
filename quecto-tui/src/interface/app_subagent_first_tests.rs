@@ -262,6 +262,26 @@ async fn main_pane_shows_boxed_workflow_for_selected_agent() {
 }
 
 #[tokio::test]
+async fn main_pane_title_renders_when_agent_has_no_workflow() {
+    // #820 review (Finding 2): the title line must ALWAYS render for the selected
+    // agent; only the boxed workflow bar is conditional on a workflow.
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent("worker", "running", None)]));
+    h.app_mut().select_agent(Some("worker"));
+    // No workflow_state routed → compact line is None.
+    let top = strip_ansi(&top_region(&mut h));
+    assert!(
+        top.contains("worker"),
+        "the main-pane TITLE must render for the selected agent even with no workflow:\n{top}"
+    );
+    assert!(
+        !top.contains('┌') && !top.contains('╭'),
+        "no boxed workflow bar should render when the agent has no workflow:\n{top}"
+    );
+}
+
+#[tokio::test]
 async fn boxed_workflow_bar_drops_pills_and_hints() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);

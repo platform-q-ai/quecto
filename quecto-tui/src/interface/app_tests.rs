@@ -173,11 +173,6 @@ fn start_clears_pending_aborts() {
     assert!(!state.is_running());
 }
 
-// ── Render order tests (issue #534) ──────────────────────────────
-// The render-order invariant (sub-agent bar above the spinner) is now a real
-// harness test: see `subagent_bar_renders_above_spinner_in_bottom_section` in
-// `app_cov_tests.rs`. The old assertion-free placeholder here was deleted.
-
 // ── Base64 encoding tests (issue #528) ────────────────────────────
 
 #[test]
