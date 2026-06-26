@@ -117,6 +117,26 @@ fn merge_guard_requires_conformance() {
 }
 
 #[test]
+fn merge_blocks_on_errored_phase_or_bypassed_gate() {
+    // Hardening after the #818 incident: the merge step must refuse to merge when
+    // an upstream review/fix/conformance phase errored, and must reject a push
+    // that bypassed the local gate with --no-verify.
+    let config = read_native_config();
+    let merge_guidance = step(&config, "merge")["guidance"]
+        .as_str()
+        .expect("merge step should have guidance")
+        .to_lowercase();
+    assert!(
+        merge_guidance.contains("errored") || merge_guidance.contains("did not actually run"),
+        "merge guidance should block merging when a review/fix/conformance step errored, got: {merge_guidance}"
+    );
+    assert!(
+        merge_guidance.contains("--no-verify") || merge_guidance.contains("bypass"),
+        "merge guidance should reject a gate bypassed with --no-verify, got: {merge_guidance}"
+    );
+}
+
+#[test]
 fn no_stale_strings_remain() {
     // The native config and its example mirror must both be free of the stale
     // required-check / opt-out facts, otherwise the acceptance criterion can
