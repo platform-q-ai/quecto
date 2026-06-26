@@ -745,6 +745,7 @@ Contributor rules for the live/mock e2e split:
 - Mock only external provider HTTP responses in the `@mock-llm` lane. Do not synthesize app-level events such as UDS `agent_end`, `token`, `workflow_state`, or `get_state` responses.
 - Preserve scenario inputs used by the live/manual lane. If mock routing needs a test-only provider alias, keep it behind `test-support`, `QUECTO_TAG=mock-llm`, and loopback mock URLs rather than editing live scenario text.
 - Put provider protocol edge cases in provider/unit tests. BDD e2e mocks should stay focused on application behavior: tools run, files change, sessions persist, REPL/UDS/subprocess output appears, and workflow events are produced by real app paths.
+- When a scenario asserts tool or workflow behavior, the mocked provider must return the relevant tool-call response(s) before the final text marker. Do not make those scenarios pass by returning only the marker text.
 - For UDS workflow scenarios, use the real multi-client socket path when asserting broadcast-only events. The test harness should read the socket while the run is active to avoid backpressure on large workflow event streams.
 - Keep `@provider-smoke` tiny and live-provider only: it validates credentials/provider availability, not tools, sessions, workflow, REPL, or UDS behavior.
 
