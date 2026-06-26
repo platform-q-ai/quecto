@@ -4,6 +4,7 @@ use quecto::infrastructure::tools::subagent_registry::{
     SequencedSubagentNotification, SubagentEntry, SubagentNotification, extract_summary,
     new_notification_channel, new_registry,
 };
+use quecto::interface::cli::uds_session::AgentSession;
 use tokio::io::AsyncWriteExt;
 
 // ===========================================================================
@@ -304,5 +305,168 @@ fn then_no_notification(world: &mut QuectoWorld) {
     assert!(
         rx.try_recv().is_err(),
         "expected no notification, but one was received"
+    );
+}
+
+// ===========================================================================
+// #816: auto-await — completion notes surface at the parent's idle boundary
+// ===========================================================================
+
+/// Next monotonic completion sequence for `agent_id` — kept here, out of the
+/// Gherkin, so scenarios read in business language and never surface the
+/// internal `notification_sequence` counter.
+fn next_sequence(world: &mut QuectoWorld, agent_id: &str) -> u64 {
+    let seq = world.notify_seq.entry(agent_id.to_string()).or_insert(0);
+    *seq += 1;
+    *seq
+}
+
+#[given("a parent session with no pending notes")]
+fn given_parent_session(world: &mut QuectoWorld) {
+    world.notify_parent_session = Some(AgentSession::new(
+        "model".to_string(),
+        "cli:parent".to_string(),
+    ));
+}
+
+#[given("the parent is busy processing a turn")]
+fn given_parent_busy(_world: &mut QuectoWorld) {
+    // Marker step: the assertions that follow verify the note is only buffered
+    // (never injected into a turn) until the parent reaches idle. Buffering is a
+    // property of enqueue itself, so no extra state is needed here.
+}
+
+#[when(expr = "subagent {string} reports completion with note {string}")]
+fn when_subagent_completes(world: &mut QuectoWorld, agent_id: String, note: String) {
+    let sequence = next_sequence(world, &agent_id);
+    let session = world
+        .notify_parent_session
+        .as_mut()
+        .expect("no parent session");
+    world.notify_last_enqueued =
+        Some(session.enqueue_subagent_notification(agent_id, sequence, note));
+}
+
+#[when(expr = "subagent {string} reports a newer completion with note {string}")]
+fn when_subagent_newer_completion(world: &mut QuectoWorld, agent_id: String, note: String) {
+    when_subagent_completes(world, agent_id, note);
+}
+
+#[when(expr = "subagent {string} reports the same completion again")]
+fn when_subagent_same_completion(world: &mut QuectoWorld, agent_id: String) {
+    let sequence = *world
+        .notify_seq
+        .get(&agent_id)
+        .expect("no prior completion");
+    let session = world
+        .notify_parent_session
+        .as_mut()
+        .expect("no parent session");
+    world.notify_last_enqueued =
+        Some(session.enqueue_subagent_notification(agent_id, sequence, "done".to_string()));
+}
+
+#[when("the parent drains its subagent notifications")]
+fn when_parent_drains_channel(world: &mut QuectoWorld) {
+    // Route monitor-produced notifications into the parent session exactly as the
+    // live dispatch loop does on receive — proving the spawn→monitor→note path
+    // with no manual await call.
+    let mut rx = world.notify_rx.take().expect("no notification rx");
+    drop(world.notify_tx.take());
+    let session = world
+        .notify_parent_session
+        .as_mut()
+        .expect("no parent session");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        while let Some(notif) = rx.recv().await {
+            let (agent_id, sequence) = notif.dedupe_key();
+            session.enqueue_subagent_notification(agent_id, sequence, notif.to_message());
+        }
+    });
+}
+
+#[then(expr = "the parent should have {int} pending subagent note")]
+#[then(expr = "the parent should have {int} pending subagent notes")]
+fn then_pending_note_count(world: &mut QuectoWorld, expected: usize) {
+    let session = world
+        .notify_parent_session
+        .as_ref()
+        .expect("no parent session");
+    let count = session.state_snapshot(0, None, 0).pending_message_count;
+    assert_eq!(count, expected, "unexpected pending note count");
+}
+
+#[then("the second report should be ignored")]
+fn then_second_report_ignored(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.notify_last_enqueued,
+        Some(false),
+        "a duplicate completion must be ignored, not re-delivered"
+    );
+}
+
+#[then("the busy parent should not have consumed the note yet")]
+fn then_busy_not_consumed(world: &mut QuectoWorld) {
+    let session = world
+        .notify_parent_session
+        .as_ref()
+        .expect("no parent session");
+    assert_eq!(
+        session.state_snapshot(0, None, 0).pending_message_count,
+        1,
+        "while busy the note stays buffered and is not injected into the turn"
+    );
+}
+
+/// Drain the first idle note once and cache it, so several assertions in one
+/// scenario inspect the same delivered note instead of re-draining the queue.
+fn idle_note(world: &mut QuectoWorld) -> &quecto::domain::message::Message {
+    if world.notify_drained_note.is_none() {
+        let session = world
+            .notify_parent_session
+            .as_mut()
+            .expect("no parent session");
+        let msg = session
+            .drain_pending()
+            .into_iter()
+            .next()
+            .expect("no pending note")
+            .into_message();
+        world.notify_drained_note = Some(msg);
+    }
+    world.notify_drained_note.as_ref().unwrap()
+}
+
+#[then("the parent's next idle note should be delivered on the operator channel")]
+fn then_next_note_is_system(world: &mut QuectoWorld) {
+    use quecto::domain::message::Role;
+    assert_eq!(idle_note(world).role, Role::System);
+}
+
+#[then("the parent's next idle note should be a single line")]
+fn then_next_note_single_line(world: &mut QuectoWorld) {
+    // The operator-facing summary is a single line; only the provenance envelope
+    // tags add structural newlines around it.
+    let content = idle_note(world).content.clone();
+    let body: Vec<&str> = content
+        .lines()
+        .filter(|l| {
+            !l.starts_with("<subagent_notification") && !l.starts_with("</subagent_notification")
+        })
+        .collect();
+    assert_eq!(
+        body.len(),
+        1,
+        "expected a single-line summary, got: {content:?}"
+    );
+}
+
+#[then(expr = "the parent's next idle note should contain {string}")]
+fn then_next_note_contains(world: &mut QuectoWorld, needle: String) {
+    let content = idle_note(world).content.clone();
+    assert!(
+        content.contains(&needle),
+        "note {content:?} did not contain {needle:?}"
     );
 }

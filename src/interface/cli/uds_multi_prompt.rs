@@ -59,12 +59,15 @@ pub(crate) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
     agent.set_progress_callback(None);
     session.set_streaming(false);
 
-    // Record notifications collected during prompt execution without queuing
-    // follow-up prompts. Subagent completion is a passive UI/state event; the
-    // model should explicitly use agent_cmd await/get_messages to inspect output.
+    // Auto-await (#816): completions that arrived mid-turn are buffered here as
+    // pending notes — NOT injected into the turn that just ran. They surface at
+    // the parent's NEXT idle boundary, drained by `drain_pending_and_nudge`
+    // immediately after this prompt returns. This is what guarantees a note never
+    // appears mid-turn. `enqueue_subagent_notification` dedupes/coalesces per
+    // agent internally.
     for notif in drain_result.notifications {
         let (agent_id, sequence) = notif.dedupe_key();
-        session.record_subagent_notification(agent_id, sequence);
+        session.enqueue_subagent_notification(agent_id, sequence, notif.to_message());
     }
 
     match drain_result.result {

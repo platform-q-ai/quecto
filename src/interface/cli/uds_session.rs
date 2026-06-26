@@ -7,6 +7,7 @@ use super::protocol::{SessionState, SessionStats, TokenStats};
 // ─── Session state tracker ────────────────────────────────────────────────────
 
 /// In-memory state for an active UDS session.
+#[derive(Debug)]
 pub struct AgentSession {
     model: String,
     session_key: String,
@@ -202,6 +203,50 @@ impl AgentSession {
             self.last_subagent_notification.remove(&oldest);
         }
         self.last_subagent_notification.insert(agent_id, sequence);
+        true
+    }
+
+    /// Enqueue a subagent completion note for delivery at the parent's NEXT
+    /// idle boundary (#816). The note is buffered as a
+    /// [`PendingMessage::SubagentNotification`] so it is drained as a single
+    /// `role:"system"` turn by `drain_pending_and_nudge` — never injected into
+    /// an in-flight parent turn.
+    ///
+    /// Deduped per-agent via [`Self::record_subagent_notification`] (a stale or
+    /// repeated `sequence` is ignored). Multiple still-pending completions for
+    /// the SAME agent are coalesced into one note (the latest replaces the
+    /// earlier) so a noisy child does not cost N extra LLM turns. Returns `true`
+    /// if a new note was enqueued, `false` if it was deduped/dropped.
+    pub fn enqueue_subagent_notification(
+        &mut self,
+        agent_id: String,
+        sequence: u64,
+        content: String,
+    ) -> bool {
+        // Dedupe against the monotonic per-agent sequence — the passive broadcast
+        // path also records completions, so a repeated/stale sequence is dropped
+        // and the note is injected exactly once.
+        if !self.record_subagent_notification(agent_id.clone(), sequence) {
+            return false;
+        }
+        // Coalesce: if a still-pending note for this same agent has not yet been
+        // drained, replace it in place (latest wins) instead of queuing a second
+        // turn — a noisy child must not cost N extra LLM turns.
+        if let Some(existing) = self.pending.iter_mut().find_map(|m| match m {
+            PendingMessage::SubagentNotification { agent_id: id, .. } if *id == agent_id => Some(m),
+            _ => None,
+        }) {
+            *existing = PendingMessage::subagent_notification(agent_id, sequence, content);
+            return true;
+        }
+        if self.pending.len() < Self::MAX_PENDING {
+            self.pending
+                .push_back(PendingMessage::subagent_notification(
+                    agent_id, sequence, content,
+                ));
+        }
+        // If the queue is full the dedupe state is still advanced above, so this
+        // completion is considered delivered and won't be retried.
         true
     }
 

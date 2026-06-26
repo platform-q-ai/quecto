@@ -20,7 +20,7 @@
         "label": "Feature",
         "description": "New capability with local hook verification, BDD/TDD, code review, and merge.",
         "when_to_use": "Use for all Quecto development work in this repository.",
-        "shared_guidance": "Shared sub-agent review mechanic (used by both the `bdd_review` and `reviewers` steps): launch each reviewer with `spawn`, binding it to its OWN dedicated review workflow via `workflow_spec`/`template` (never this feature workflow); then wait for it with `agent_cmd` `command: 'await'` (with a suitable `timeout`); then read its findings with `get_messages_tail`; record each spawned sub-agent id for the cleanup step.",
+        "shared_guidance": "Shared sub-agent review mechanic (used by both the `bdd_review` and `reviewers` steps): launch each reviewer with `spawn`, binding it to its OWN dedicated review workflow via `workflow_spec`/`template` (never this feature workflow). Spawned reviewers are auto-awaited — you automatically receive a one-line completion note for each at your next idle turn, so an explicit `agent_cmd` `command: 'await'` is optional; use it only if you must block before doing anything else. When you need a reviewer's findings to proceed, read them with `get_messages_tail` (after its completion note, or after an explicit await). Record each spawned sub-agent id for the cleanup step.",
         "steps": [
           {
             "key": "hooks",
@@ -140,7 +140,7 @@
             "key": "cleanup",
             "label": "Clean up sub agents",
             "phase": "ci_cd",
-            "guidance": "Terminate any sub agents spawned during this workflow now that it is complete (use agent_cmd to abort them, or get_subagents then kill each) so no orphaned sub agents remain."
+            "guidance": "Reviewers that have already reported completion (you received their one-line completion notes) have exited and need no cleanup. Check `get_subagents` for any sub agent still running, and only then terminate the stragglers (use agent_cmd to abort, or kill each) so no orphaned sub agents remain."
           }
         ],
         "guards": [
