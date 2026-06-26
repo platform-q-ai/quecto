@@ -79,13 +79,13 @@
             "key": "push",
             "label": "Push (pre-push hook will run tests and linting)",
             "phase": "ci_cd",
-            "guidance": "Push triggers the full local gate: fmt, strict clippy, unit/architecture/contracts/repo_docs, the 24-shard non-real BDD suite, region coverage at or above the project threshold (quecto and quecto-tui), machete, deny, and the real-LLM e2e suite (~140s; set QUECTO_SKIP_REAL_LLM=1 only for throwaway WIP pushes). Fix every failure; never use --no-verify."
+            "guidance": "Push triggers the full local gate: fmt, strict clippy, unit/architecture/contracts/repo_docs, the 24-shard non-real BDD suite, region coverage at or above the project threshold (quecto and quecto-tui), machete and deny. The zero-cost mocked @mock-llm e2e lane runs by default; the live LLM suite (tagged @manual-real-llm) is opt-in via QUECTO_RUN_REAL_LLM=1. Fix every failure; never use --no-verify."
           },
           {
             "key": "pr",
             "label": "Create PR",
             "phase": "ci_cd",
-            "guidance": "Open the PR against the default branch with gh, with a clear title and a body that summarizes the change. The required Smoke Test check runs in CI."
+            "guidance": "Open the PR against the default branch with gh, with a clear title and a body that summarizes the change. The required CI checks are \"Unit Tests\" and \"Mock LLM E2E Tests\"."
           },
           {
             "key": "reviewers",
@@ -115,13 +115,13 @@
             "key": "pre_merge",
             "label": "Confirm the pre-push gate passed (real-LLM, machete, deny run on push)",
             "phase": "ci_cd",
-            "guidance": "Confirm the latest push's pre-push gate passed in full (coverage threshold, real-LLM, machete, deny) and the CI Smoke Test is green before merging."
+            "guidance": "Confirm the latest push's pre-push gate passed in full (coverage threshold, the mocked @mock-llm e2e lane that runs by default, machete, deny) and the required CI checks \"Unit Tests\" and \"Mock LLM E2E Tests\" are green before merging."
           },
           {
             "key": "merge",
             "label": "Merge",
             "phase": "ci_cd",
-            "guidance": "Merge with gh pr merge <PR> --merge --auto --delete-branch (auto-merge waits for the required Smoke Test). The default branch is protected with enforce_admins; do not force or bypass."
+            "guidance": "Merge with gh pr merge <PR> --merge --auto --delete-branch (auto-merge waits for the required \"Unit Tests\" and \"Mock LLM E2E Tests\" checks). The default branch is protected with enforce_admins; do not force or bypass."
           },
           {
             "key": "pull",
