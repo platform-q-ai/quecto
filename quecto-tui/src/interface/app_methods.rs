@@ -374,6 +374,33 @@ impl App {
         bottom
     }
 
+    /// The current frame's horizontal split: `(panel_width, divider_width,
+    /// body_width)`. The persistent left panel is always on once connected
+    /// (#820); `compose_frame` and the headless harness both derive widths from
+    /// here so the harness reproduces the exact body width the user sees.
+    pub(super) fn frame_split(&self) -> (usize, usize, usize) {
+        let full_width = self.terminal.width;
+        let panel_visible = self.subagent_panel_visible();
+        let panel_width = if panel_visible {
+            SUBAGENT_PANEL_WIDTH.min(full_width / 2)
+        } else {
+            0
+        };
+        // One column for the focus-highlighted vertical divider (#802).
+        let divider_width = if panel_visible { 1 } else { 0 };
+        (
+            panel_width,
+            divider_width,
+            full_width - panel_width - divider_width,
+        )
+    }
+
+    /// The reduced body width the chat/bottom stack render into (#820 review).
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(super) fn body_width(&self) -> usize {
+        self.frame_split().2
+    }
+
     /// Build the full screen frame (chat + bottom section + overlays), clean
     /// (pre-selection-highlight) and width-enforced, WITHOUT writing it.
     /// `render()` writes the result; the headless harness (`tui_harness`)
@@ -385,22 +412,19 @@ impl App {
     /// model mutation. The harness relies on this (it composes per capture); a
     /// future non-idempotent step would make captures diverge from real renders.
     pub(super) fn compose_frame(&mut self) -> Vec<String> {
-        let full_width = self.terminal.width;
         let height = self.terminal.height;
 
-        // A persistent left panel (#800) splits the screen horizontally once a
-        // sub-agent exists: the body renders into the reduced right column and
-        // the panel cell is prefixed onto each row afterward.
+        // A persistent left panel (#800/#820) splits the screen horizontally:
+        // the body renders into the reduced right column and the panel cell is
+        // prefixed onto each row afterward.
         let panel_visible = self.subagent_panel_visible();
-        let panel_width = if panel_visible {
-            SUBAGENT_PANEL_WIDTH.min(full_width / 2)
-        } else {
-            0
-        };
-        // One column for the focus-highlighted vertical divider between the
-        // panel and the body (#802).
-        let divider_width = if panel_visible { 1 } else { 0 };
-        let width = full_width - panel_width - divider_width;
+        let (panel_width, _divider_width, width) = self.frame_split();
+
+        // Sample the wall clock ONCE per frame and thread it through every
+        // elapsed-timer render path (panel rows, Master uptime, main-pane
+        // title). compose_frame is contractually render-idempotent, so the
+        // clock must not be re-sampled deeper in the call tree (#820 review).
+        let now = tokio::time::Instant::now();
 
         let mut lines = Vec::new();
 
@@ -419,7 +443,7 @@ impl App {
         // Sub-agent-first main pane (#820): the selected agent's title line and
         // boxed single-line workflow bar sit at the top of the body, above the
         // chat (replacing the removed bottom workflow bar).
-        let main_pane_workflow = self.render_main_pane_workflow(width);
+        let main_pane_workflow = self.render_main_pane_workflow(width, now);
         let workflow_height = main_pane_workflow.len();
         lines.extend(main_pane_workflow);
 
@@ -486,7 +510,7 @@ impl App {
         // pre-padded to exactly `panel_width` visible columns, so concatenation
         // yields full-width rows.
         if panel_visible {
-            let panel = self.render_subagent_panel(panel_width, height);
+            let panel = self.render_subagent_panel(panel_width, height, now);
             // The divider is bright/colored on the focused pane and dim on the
             // other, so it doubles as the focus indicator (#802). Panel focused
             // → the panel side is "lit" (accent rule); else dim.

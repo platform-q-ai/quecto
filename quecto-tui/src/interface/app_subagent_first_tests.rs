@@ -61,12 +61,10 @@ fn workflow_event(agent: Option<&str>) -> Event {
 }
 
 /// The top (main-pane) region of the frame: everything above the bottom stack.
+/// Delegates to the harness so the body-width split matches the live frame
+/// (#820 review — both must slice at the reduced body width, not full width).
 fn top_region(h: &mut TuiHarness) -> String {
-    let width = h.app_mut().terminal.width;
-    let bottom_len = h.app_mut().compose_bottom(width).len();
-    let frame = h.app_mut().compose_frame();
-    let top = &frame[..frame.len().saturating_sub(bottom_len)];
-    strip_ansi(&top.join("\n"))
+    h.main_pane()
 }
 
 // ── Always-on panel (Master row present even with no sub-agents) ─────────────
@@ -347,5 +345,49 @@ async fn master_only_compose_frame_is_idempotent() {
     assert_eq!(
         a, b,
         "compose_frame must be render-idempotent (no flash) with the always-on panel"
+    );
+}
+
+#[tokio::test]
+async fn selected_agent_compose_frame_is_idempotent() {
+    // With a sub-agent selected, the panel rows + main-pane title both render
+    // elapsed timers. compose_frame must sample the clock ONCE per frame and
+    // thread it through, so two back-to-back composes are byte-identical even
+    // across a possible second boundary (#820 review — render-idempotency).
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent(
+        "worker",
+        "running",
+        Some(("active", 3, 5)),
+    )]));
+    h.app_mut().select_agent(Some("worker"));
+    let a = h.app_mut().compose_frame();
+    let b = h.app_mut().compose_frame();
+    assert_eq!(
+        a, b,
+        "elapsed timers must not re-sample the clock mid-frame (no flash)"
+    );
+}
+
+#[tokio::test]
+async fn main_pane_title_sanitizes_status_text() {
+    // The status string crosses a trust boundary (kernel/daemon over UDS) and is
+    // printed as title text. It must be stripped of terminal control sequences,
+    // mirroring the adjacent agent-name path (#820 security review).
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![child(
+        "worker",
+        "run\u{1b}[2Jning",
+        None,
+    )]));
+    h.app_mut().select_agent(Some("worker"));
+    // Inspect the RAW (un-stripped) frame: theme colours add ANSI, but only an
+    // unsanitized status would inject the `[2J` clear-screen CSI payload.
+    let raw = h.full_frame_raw();
+    assert!(
+        !raw.contains("2J"),
+        "the clear-screen CSI from the status field must be stripped before render"
     );
 }

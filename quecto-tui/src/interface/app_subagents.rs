@@ -64,7 +64,10 @@ impl App {
             return false;
         }
         self.subagent_frame = self.subagent_frame.wrapping_add(1);
-        self.rebuild_subagent_bar();
+        // Don't rebuild the (now unrendered) `widgets_above` bar on this 80ms
+        // hot path — the sub-agent-first panel reads live state directly, so the
+        // only consumer of `subagent_frame` is the "N working" activity line
+        // (#820 review). The frame bump above is all this tick needs.
         true
     }
 

@@ -248,13 +248,6 @@ struct CommandSendFailure {
 }
 
 impl App {
-    /// The current terminal width — accessor for the headless render harness so
-    /// it can compose the bottom stack / main pane at the live width (#820).
-    #[cfg(any(test, feature = "test-harness"))]
-    pub(super) fn terminal_width(&self) -> usize {
-        self.terminal.width
-    }
-
     pub fn new(terminal: Terminal, client: Client) -> Self {
         let mut footer = Footer::new();
         let git_repo = std::env::current_dir().ok();

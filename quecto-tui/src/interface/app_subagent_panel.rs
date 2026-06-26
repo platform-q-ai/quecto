@@ -540,10 +540,14 @@ impl App {
     /// Render the persistent left panel into exactly `height` rows, each padded
     /// to `width` visible columns. Row 0 is a panel header; the selected row is
     /// highlighted. Width-aware so the horizontal split joins cleanly (#800).
-    pub(super) fn render_subagent_panel(&self, width: usize, height: usize) -> Vec<String> {
+    pub(super) fn render_subagent_panel(
+        &self,
+        width: usize,
+        height: usize,
+        now: tokio::time::Instant,
+    ) -> Vec<String> {
         let rows = self.panel_rows();
         let selected = self.panel_nav.selected();
-        let now = tokio::time::Instant::now();
         let active = self.active_agent_id.as_deref();
         // Header doubles as the panel's `Agents` summary, with the live count
         // (replacing the removed bottom sub-agent bar's count line, #820).
@@ -617,7 +621,11 @@ impl App {
     /// yellow workflow bar rendered BOXED as a single content line
     /// (`progress-bar PHASE n/total`) — dropping the phase-pills and hints lines.
     /// Empty when the active agent has no visible workflow.
-    pub(super) fn render_main_pane_workflow(&self, width: usize) -> Vec<String> {
+    pub(super) fn render_main_pane_workflow(
+        &self,
+        width: usize,
+        now: tokio::time::Instant,
+    ) -> Vec<String> {
         if width < 4 {
             return Vec::new();
         }
@@ -625,7 +633,7 @@ impl App {
         let Some(content) = workflow_bar::render_compact_line(state) else {
             return Vec::new();
         };
-        let mut out = vec![pad_cell(&self.main_pane_title(state), width)];
+        let mut out = vec![pad_cell(&self.main_pane_title(state, now), width)];
         // Box the single workflow line for breathing space (#820).
         let inner = width - 2;
         out.push(theme::dim(&format!("┌{}┐", "─".repeat(inner))));
@@ -640,8 +648,11 @@ impl App {
     }
 
     /// Build the main-pane title line for the active agent (#820).
-    fn main_pane_title(&self, state: &workflow_bar::WorkflowBarState) -> String {
-        let now = tokio::time::Instant::now();
+    fn main_pane_title(
+        &self,
+        state: &workflow_bar::WorkflowBarState,
+        now: tokio::time::Instant,
+    ) -> String {
         let (name, status) = match self.active_agent_id.as_deref() {
             None => ("Master".to_string(), "running".to_string()),
             Some(id) => (
@@ -657,7 +668,7 @@ impl App {
             "{} {} {} {}",
             theme::bold(&sanitize_panel_label(&name)),
             theme::dim("·"),
-            status_colored_name(&status, &status),
+            status_colored_name(&status, &sanitize_panel_label(&status)),
             theme::dim(&elapsed),
         );
         if let Some(n) = state.issue_number {
