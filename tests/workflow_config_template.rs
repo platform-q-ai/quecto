@@ -257,26 +257,47 @@ fn pre_merge_confirms_inline_findings_and_resolved_threads() {
 #[test]
 fn reviewer_mechanic_deduplicated() {
     let config = read_native_config();
-    let bdd = guidance(&config, "bdd_review");
-    let reviewers = guidance(&config, "reviewers");
 
-    // The shared spawn -> await -> read mechanic must live in one place
-    // (the selector_prompt), not be re-embedded in both review steps. At most
-    // one of the two review steps may still spell out the full mechanic.
-    let bdd_has = bdd.contains("get_messages_tail");
-    let reviewers_has = reviewers.contains("get_messages_tail");
-    assert!(
-        !(bdd_has && reviewers_has),
-        "the spawn/await/get_messages_tail mechanic should not be duplicated across both bdd_review and reviewers"
+    // The shared spawn -> await -> read mechanic must be documented in exactly
+    // one shared location and not re-embedded in both review steps. We assert
+    // the structural property ("documented once, not duplicated") rather than
+    // pinning it to a specific host field or harness tool name, so the mechanic
+    // can be relocated without churning this test.
+    //
+    // Candidate shared homes: the template `shared_guidance`/`notes`/
+    // `description`, or the workflow `selector_prompt`. The two review steps
+    // (`bdd_review`, `reviewers`) must reference, not restate, the mechanic.
+    let needle = "spawn";
+
+    let mut shared_locations = 0;
+    let feature = feature_template(&config);
+    for field in ["shared_guidance", "notes", "description"] {
+        if feature
+            .get(field)
+            .and_then(Value::as_str)
+            .is_some_and(|s| s.contains("await") && s.contains("get_messages_tail"))
+        {
+            shared_locations += 1;
+        }
+    }
+    if config["workflow"]["selector_prompt"]
+        .as_str()
+        .is_some_and(|s| s.contains("await") && s.contains("get_messages_tail"))
+    {
+        shared_locations += 1;
+    }
+    assert_eq!(
+        shared_locations, 1,
+        "the shared sub-agent review mechanic should be documented in exactly one shared location"
     );
 
-    // ...and it must actually be documented somewhere shared, so the mechanic
-    // isn't simply deleted from both steps.
-    let selector = config["workflow"]["selector_prompt"]
-        .as_str()
-        .expect("workflow selector_prompt should be a string");
+    // Neither review step should re-spell the full mechanic; they reference it.
+    let bdd = guidance(&config, "bdd_review");
+    let reviewers = guidance(&config, "reviewers");
+    let bdd_restates = bdd.contains("await") && bdd.contains(needle);
+    let reviewers_restates = reviewers.contains("await") && reviewers.contains(needle);
     assert!(
-        selector.contains("get_messages_tail") && selector.contains("await"),
-        "the shared sub-agent review mechanic should be documented once in selector_prompt"
+        !bdd_restates && !reviewers_restates,
+        "review steps should reference the shared mechanic, not restate the spawn/await flow"
     );
 }
