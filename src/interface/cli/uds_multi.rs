@@ -336,6 +336,7 @@ async fn run_dispatch_loop(
                         reg, &agent_id,
                     )
                 });
+                let mut should_deliver = false;
                 if !suppress {
                     // Auto-await (#816): enqueue the one-line note for delivery at
                     // the parent's NEXT idle boundary.
@@ -349,8 +350,9 @@ async fn run_dispatch_loop(
                         notif.to_message(),
                     );
                     if is_new {
+                        should_deliver = true;
                         let ev = AgentEvent::SubagentNotification {
-                            agent_id,
+                            agent_id: agent_id.clone(),
                             sequence,
                             message: notif.to_message(),
                         };
@@ -361,11 +363,16 @@ async fn run_dispatch_loop(
                 let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
                 let ev = AgentEvent::SubagentStateChanged { subagents: list };
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                // Note (#816): the one-line note is delivered PASSIVELY — the
-                // SubagentNotification event above is rendered by the TUI as a
-                // single status line, and the enqueued note enters the parent's
-                // context at its NEXT turn. We deliberately do NOT drain/run a turn
-                // here, so a completing child never makes the idle parent act.
+                // Auto-await (#816): this branch runs only while the parent is IDLE
+                // (mid-turn completions are buffered and drained after that turn).
+                // Deliver the just-enqueued note NOW so the parent processes it and
+                // can CONTINUE its task — e.g. score a poem the child just wrote —
+                // instead of stalling until the next user message. The TUI defers
+                // DISPLAY of the note until the parent is idle, so acting here never
+                // splits an in-flight response.
+                if should_deliver {
+                    super::uds::drain_pending_and_nudge(ctx).await;
+                }
             }
         }
     }
