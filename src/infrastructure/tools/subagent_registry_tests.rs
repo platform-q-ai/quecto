@@ -515,3 +515,55 @@ async fn test_notification_drain() {
 
 // Cascade-remove tests moved to `subagent_cascade_tests.rs` alongside the
 // extracted `subagent_cascade` module (#831).
+
+#[test]
+fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
+    let messages_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_messages",
+        "data": { "messages": [] }
+    });
+    assert!(subagent_snapshot::response_is_valid_answer(
+        &messages_snapshot,
+        r#"{"type":"get_messages"}"#
+    ));
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &messages_snapshot,
+        r#"{"type":"get_messages","count":1}"#
+    ));
+
+    let state_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_state",
+        "data": { "isStreaming": true, "messageCount": 2 }
+    });
+    assert!(subagent_snapshot::response_is_valid_answer(
+        &state_snapshot,
+        r#"{"type":"get_state"}"#
+    ));
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &state_snapshot,
+        r#"{"type":"get_session_stats"}"#
+    ));
+}
+
+#[test]
+fn snapshot_response_rejects_invalid_or_mismatched_commands() {
+    let state_snapshot = serde_json::json!({"type":"response","command":"get_state","data":{}});
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &state_snapshot,
+        "not-json"
+    ));
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &state_snapshot,
+        r#"{"count":1}"#
+    ));
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &state_snapshot,
+        r#"{"type":"get_state","agent_id":"child"}"#
+    ));
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &state_snapshot,
+        r#"{"type":"get_messages"}"#
+    ));
+}

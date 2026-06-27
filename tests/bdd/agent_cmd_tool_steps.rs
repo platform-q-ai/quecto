@@ -150,6 +150,78 @@ fn given_agent_cmd_with_busy_mock_entry(world: &mut QuectoWorld, agent_id: Strin
     world.agent_cmd_last_command = Some(last_cmd);
 }
 
+#[given(expr = "an AgentCmdTool with a busy snapshot registry entry {string}")]
+fn given_agent_cmd_with_busy_snapshot_entry(world: &mut QuectoWorld, agent_id: String) {
+    let registry = AgentCmdTool::new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock_path = tmp.path().join("busy-snapshot-agent.sock");
+    let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let std_listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    let last_cmd_clone = last_cmd.clone();
+
+    let _handle = std::thread::spawn(move || {
+        for stream in std_listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let last_cmd_inner = last_cmd_clone.clone();
+            std::thread::spawn(move || {
+                use std::io::{BufRead, BufReader, Write};
+                let snapshot = r#"{"type":"response","command":"get_messages","data":{"messages":[{"role":"assistant","content":"FIRST MESSAGE ONLY"}]}}"#;
+                let _ = writeln!(stream, "{}", snapshot);
+                let reader = BufReader::new(stream.try_clone().unwrap());
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    *last_cmd_inner.lock().unwrap() = line;
+                }
+            });
+        }
+    });
+
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(sock_path, 0));
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+    world._agent_cmd_mock_tmp = Some(tmp);
+    world.agent_cmd_last_command = Some(last_cmd);
+}
+
+#[given(expr = "an AgentCmdTool with a busy state snapshot registry entry {string}")]
+fn given_agent_cmd_with_busy_state_snapshot_entry(world: &mut QuectoWorld, agent_id: String) {
+    let registry = AgentCmdTool::new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock_path = tmp.path().join("busy-state-agent.sock");
+    let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let std_listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    let last_cmd_clone = last_cmd.clone();
+
+    let _handle = std::thread::spawn(move || {
+        for stream in std_listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let last_cmd_inner = last_cmd_clone.clone();
+            std::thread::spawn(move || {
+                use std::io::{BufRead, BufReader, Write};
+                let snapshot = r#"{"type":"response","command":"get_state","data":{"isStreaming":true,"messageCount":2,"model":"mock"}}"#;
+                let _ = writeln!(stream, "{}", snapshot);
+                let reader = BufReader::new(stream.try_clone().unwrap());
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    *last_cmd_inner.lock().unwrap() = line;
+                }
+            });
+        }
+    });
+
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(sock_path, 0));
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+    world._agent_cmd_mock_tmp = Some(tmp);
+    world.agent_cmd_last_command = Some(last_cmd);
+}
+
 // --- When ---
 
 #[when(expr = "I execute agent_cmd with {string}")]
@@ -183,6 +255,20 @@ fn then_agent_cmd_def_desc_not_empty(world: &mut QuectoWorld) {
         .expect("agent_cmd_tool not set");
     let def = tool.definition();
     assert!(!def.description.is_empty());
+}
+
+#[then(expr = "the agent_cmd tool definition description should not contain {string}")]
+fn then_agent_cmd_def_desc_not_contains(world: &mut QuectoWorld, unexpected: String) {
+    let tool = world
+        .agent_cmd_tool
+        .as_ref()
+        .expect("agent_cmd_tool not set");
+    let def = tool.definition();
+    assert!(
+        !def.description.contains(&unexpected),
+        "expected description not to contain '{unexpected}', got: {}",
+        def.description
+    );
 }
 
 #[then(expr = "the agent_cmd tool definition schema should require {string}")]
@@ -281,3 +367,59 @@ fn then_agent_cmd_sent_type(world: &mut QuectoWorld, expected_type: String) {
 }
 
 // ===========================================================================
+
+#[then(expr = "the agent_cmd should have sent count {int}")]
+fn then_agent_cmd_sent_count(world: &mut QuectoWorld, expected: u64) {
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let last_cmd = world
+        .agent_cmd_last_command
+        .as_ref()
+        .expect("no last command captured");
+    let cmd_str = last_cmd.lock().unwrap().clone();
+    assert!(
+        !cmd_str.is_empty(),
+        "no command was sent to mock UDS server"
+    );
+    let cmd: serde_json::Value = serde_json::from_str(&cmd_str)
+        .unwrap_or_else(|e| panic!("invalid JSON sent to mock: {} — raw: {}", e, cmd_str));
+    assert_eq!(cmd["count"].as_u64(), Some(expected), "sent command: {cmd}");
+}
+
+fn parse_agent_cmd_response(world: &QuectoWorld, command: &str) -> serde_json::Value {
+    let result = world
+        .agent_cmd_result
+        .as_ref()
+        .expect("no agent_cmd result");
+    let json: serde_json::Value = serde_json::from_str(result.content.trim())
+        .unwrap_or_else(|e| panic!("agent_cmd result is not JSON: {e}; raw: {}", result.content));
+    assert_eq!(json["type"].as_str(), Some("response"), "response: {json}");
+    assert_eq!(json["command"].as_str(), Some(command), "response: {json}");
+    json
+}
+
+#[then(expr = "the agent_cmd response command {string} should include a {string} array")]
+fn then_agent_cmd_response_array(world: &mut QuectoWorld, command: String, field: String) {
+    let json = parse_agent_cmd_response(world, &command);
+    assert!(
+        json["data"][&field].is_array(),
+        "expected data.{field} array in response: {json}"
+    );
+}
+
+#[then(expr = "the agent_cmd response command {string} should include boolean field {string}")]
+fn then_agent_cmd_response_bool(world: &mut QuectoWorld, command: String, field: String) {
+    let json = parse_agent_cmd_response(world, &command);
+    assert!(
+        json["data"][&field].is_boolean(),
+        "expected data.{field} boolean in response: {json}"
+    );
+}
+
+#[then(expr = "the agent_cmd response command {string} should include integer field {string}")]
+fn then_agent_cmd_response_integer(world: &mut QuectoWorld, command: String, field: String) {
+    let json = parse_agent_cmd_response(world, &command);
+    assert!(
+        json["data"][&field].as_i64().is_some(),
+        "expected data.{field} integer in response: {json}"
+    );
+}

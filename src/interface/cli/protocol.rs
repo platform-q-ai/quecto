@@ -52,15 +52,23 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
-    /// Return the full conversation history.
+    /// Return conversation history. Optional `count` returns the last N messages.
+    ///
+    /// When `agent_id` is set with `count`, the request is forwarded to that
+    /// spawned sub-agent and its message tail is returned instead of the
+    /// connected agent's own history.
     GetMessages {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        count: Option<usize>,
+        #[serde(rename = "agent_id", default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
-    /// Return the last `count` messages from the conversation history.
+    /// Deprecated alias for `get_messages` with `count`.
     ///
     /// When `agent_id` is set, the request is forwarded to that spawned
-    /// sub-agent (reusing the `agent_cmd get_messages_tail` capability) and its
+    /// sub-agent (reusing the `agent_cmd get_messages` capability) and its
     /// message tail is returned instead of the connected agent's own history.
     GetMessagesTail {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -195,7 +203,7 @@ impl AgentCommand {
             Self::FollowUp { id, .. } => id.as_deref(),
             Self::Abort { id } => id.as_deref(),
             Self::GetState { id } => id.as_deref(),
-            Self::GetMessages { id } => id.as_deref(),
+            Self::GetMessages { id, .. } => id.as_deref(),
             Self::GetExtensions { id } => id.as_deref(),
             Self::Reload { id } => id.as_deref(),
             Self::ReloadExtensions { id } => id.as_deref(),

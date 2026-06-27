@@ -11,8 +11,10 @@ mod uds_ext_protocol;
 mod uds_extensions;
 mod uds_models;
 mod uds_multi;
+mod uds_query;
 mod uds_reload;
 pub mod uds_session;
+mod uds_snapshots;
 mod uds_socket;
 
 use std::path::PathBuf;

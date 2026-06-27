@@ -306,6 +306,9 @@ pub async fn send_subagent_uds_command_with_timeout(
                                 if json.get("id").and_then(|v| v.as_str()) == Some(expected) {
                                     return Ok(l);
                                 }
+                                if subagent_snapshot::response_is_valid_answer(&json, command) {
+                                    return Ok(l);
+                                }
                                 // Unsolicited / mismatched response — skip.
                             }
                             // Command wasn't a JSON object we could stamp: fall
@@ -729,20 +732,18 @@ fn truncate_summary(s: &str) -> String {
 
 /// Validate an agent_id string for format (shared between spawn and agent_cmd).
 pub fn validate_agent_id_format(agent_id: &str) -> Result<(), String> {
-    let len = agent_id.len();
-    if len == 0 || len > 64 {
+    if agent_id.is_empty() || agent_id.len() > 64 {
         return Err("agent_id must be 1-64 characters".to_string());
     }
-    if agent_id
+    agent_id
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-    {
-        Ok(())
-    } else {
-        Err("agent_id must use only [a-zA-Z0-9_-]".to_string())
-    }
+        .then_some(())
+        .ok_or_else(|| "agent_id must use only [a-zA-Z0-9_-]".to_string())
 }
 
+#[path = "subagent_snapshot.rs"]
+mod subagent_snapshot;
 #[cfg(test)]
 #[path = "subagent_registry_tests.rs"]
 mod tests;

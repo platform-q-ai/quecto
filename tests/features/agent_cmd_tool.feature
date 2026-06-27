@@ -68,15 +68,17 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_state"}'
     Then the agent_cmd should have sent command type "get_state"
 
-  Scenario: get_messages_tail command uses count parameter
+  Scenario: get_messages command uses count parameter for tail reads
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":5}'
+    Then the agent_cmd should have sent command type "get_messages"
+    And the agent_cmd should have sent count 5
+
+  Scenario: deprecated get_messages_tail aliases to get_messages count
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages_tail","count":5}'
-    Then the agent_cmd should have sent command type "get_messages_tail"
-
-  Scenario: get_messages_tail defaults count to 1
-    Given an AgentCmdTool with a mock registry entry "w1"
-    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages_tail"}'
-    Then the agent_cmd should have sent command type "get_messages_tail"
+    Then the agent_cmd should have sent command type "get_messages"
+    And the agent_cmd should have sent count 5
 
   Scenario: prompt command requires message
     Given an AgentCmdTool with a mock registry entry "w1"
@@ -128,6 +130,12 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
     Then the agent_cmd should have sent command type "get_messages"
 
+  Scenario: tool description presents one conversation inspection command
+    Given an AgentCmdTool with an empty registry
+    Then the agent_cmd tool definition description should contain "get_messages"
+    And the agent_cmd tool definition description should contain "count"
+    And the agent_cmd tool definition description should not contain "get_messages_tail"
+
   Scenario: set_model command requires model parameter
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"set_model"}'
@@ -176,25 +184,35 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
   # --- UDS transport (#557) ---
   # Verified via unit tests in agent_cmd.rs (mock UDS server).
 
-  # --- Busy-child snapshot skip (#831) ---
+  # --- Busy-child snapshots (#837) ---
 
-  # Generic across commands: the reader stamps a unique `id` on the request and
-  # only accepts the response that echoes it. The connect-time snapshot carries
-  # no id, so it is skipped for EVERY command — including get_messages, whose
-  # command string the snapshot shares (id-correlation disambiguates them where
-  # command-type matching could not).
-  Scenario Outline: <command> against a busy child skips the connect-time snapshot
+  # Acceptance criteria for #837:
+  # - get_messages and get_state against a busy child return a useful snapshot within the inspector timeout.
+  # - Snapshot responses are correct-shaped and reflect at least the child's last completed turn/state.
+  # - id-correlation is still required for commands where a connect-time snapshot is not a valid answer.
+  # - get_messages_tail is folded into get_messages count in the task-facing tool surface.
+  # - Idle behaviour remains unchanged while consolidated parsing is covered.
+
+  Scenario: get_messages against a busy child accepts the connect-time snapshot
+    Given an AgentCmdTool with a busy snapshot registry entry "busy-snapshot"
+    When I execute agent_cmd with '{"agent_id":"busy-snapshot","command":"get_messages"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd response command "get_messages" should include a "messages" array
+    And the agent_cmd result should contain "FIRST MESSAGE ONLY"
+
+  Scenario: get_state against a busy child returns a status snapshot
+    Given an AgentCmdTool with a busy state snapshot registry entry "busy-state"
+    When I execute agent_cmd with '{"agent_id":"busy-state","command":"get_state"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd response command "get_state" should include boolean field "isStreaming"
+    And the agent_cmd response command "get_state" should include integer field "messageCount"
+
+  Scenario: non-snapshot command against a busy child preserves id-correlation
     Given an AgentCmdTool with a busy mock registry entry "busy-skip"
-    When I execute agent_cmd with '{"agent_id":"busy-skip","command":"<command>"}'
+    When I execute agent_cmd with '{"agent_id":"busy-skip","command":"get_messages","count":1}'
     Then the agent_cmd result should not be an error
     And the agent_cmd result should contain "LATEST TURNS"
     And the agent_cmd result should not contain "FIRST MESSAGE ONLY"
-
-    Examples:
-      | command           |
-      | get_messages_tail |
-      | get_state         |
-      | get_messages      |
 
   @pending
   Scenario: UDS connection keeps write half open until response received
@@ -204,7 +222,7 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the response should be valid JSON with type "response"
 
   @pending
-  Scenario: get_messages_tail returns conversation history
+  Scenario: get_messages with count returns conversation tail
     Given a live UDS subagent with conversation history
-    When I send get_messages_tail with count 2 via agent_cmd
+    When I send get_messages with count 2 via agent_cmd
     Then the response should contain [message] data

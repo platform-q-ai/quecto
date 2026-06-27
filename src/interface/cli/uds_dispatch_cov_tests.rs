@@ -1,5 +1,3 @@
-//! Region-coverage tests for the UDS dispatch routing + handlers.
-//!
 //! These exercise the pure routing/decision logic of `dispatch_command` and
 //! the individual `handle_*` helpers using an in-memory `DispatchCtx` backed by
 //! a stub provider and a `tokio::io::sink()` writer. No real socket is opened;
@@ -192,6 +190,9 @@ impl Fixture {
             agent: &mut self.agent,
             messages: &mut self.messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+                self.session.state_snapshot(0, None, 0),
+            )),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: &mut self.writer,
@@ -732,8 +733,6 @@ async fn forward_tail_unknown_agent_is_error_event() {
     );
 }
 
-/// `refresh_conversation_snapshot` clones the dispatch loop's current messages
-/// into the shared snapshot served to busy-connecting clients (#828).
 #[tokio::test]
 async fn refresh_conversation_snapshot_clones_current_messages() {
     let mut fx = Fixture::new();
@@ -743,7 +742,9 @@ async fn refresh_conversation_snapshot_clones_current_messages() {
         ctx.conversation_snapshot.read().await.is_empty(),
         "starts empty"
     );
-    crate::interface::cli::uds_multi::refresh_conversation_snapshot(&ctx).await;
+    crate::interface::cli::uds_snapshots::refresh_conversation_snapshot(&ctx).await;
     let snap = ctx.conversation_snapshot.read().await;
     assert_eq!(snap.len(), 2, "snapshot now mirrors the current messages");
+    crate::interface::cli::uds_snapshots::refresh_state_snapshot(&ctx).await;
+    assert_eq!(ctx.state_snapshot.read().await.message_count, 2);
 }

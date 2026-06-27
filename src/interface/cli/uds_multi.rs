@@ -17,6 +17,10 @@ use super::uds::{
 };
 use super::uds_cancel::{CancelHandle, CancelSlot, PromptOutcome, fire_cancel};
 use super::uds_session::{AgentSession, message_to_json};
+pub(crate) use super::uds_snapshots::{
+    ConversationSnapshot, StateSnapshot, build_get_messages_line, build_get_state_line,
+};
+use super::uds_snapshots::{refresh_conversation_snapshot, refresh_state_snapshot};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -29,15 +33,6 @@ pub(super) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
 
 /// Atomic counter for assigning unique client IDs (#352).
 static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
-// ─── Connect-time conversation snapshot (#828) ──────────────────────────────────
-
-/// Shared pre-turn conversation snapshot. Holds a clone of the dispatch loop's
-/// `messages` as of the last turn boundary. A newly-connected client is served
-/// this immediately by the accept loop — independent of the (possibly busy)
-/// single dispatch loop — so selecting a BUSY sub-agent shows its prior
-/// conversation at once, with live tokens streaming over the broadcast on top.
-pub(crate) type ConversationSnapshot = std::sync::Arc<tokio::sync::RwLock<Vec<Message>>>;
 
 /// Shared "agent is mid-turn" flag (#828). Set by the dispatch loop for the
 /// duration of `agent.process()` (via [`BusyGuard`]), read by the accept loop.
@@ -63,28 +58,6 @@ impl Drop for BusyGuard {
     fn drop(&mut self) {
         self.0.store(false, std::sync::atomic::Ordering::SeqCst);
     }
-}
-
-/// Refresh the shared pre-turn conversation snapshot from the current messages.
-/// Called at each turn boundary — a cheap clone, never per token (#828).
-pub(super) async fn refresh_conversation_snapshot(ctx: &super::uds::DispatchCtx<'_>) {
-    let mut snap = ctx.conversation_snapshot.write().await;
-    *snap = ctx.messages.clone();
-}
-
-/// Build the `get_messages`-shaped response line from a slice of messages.
-/// Reuses the same serialization as `AgentCommand::GetMessages` so the TUI's
-/// existing `route_subagent_event` get_messages handler consumes it unchanged.
-pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
-    let msgs: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
-    let ev = AgentEvent::ok(
-        None,
-        "get_messages",
-        Some(serde_json::json!({ "messages": msgs })),
-    );
-    let mut line = ev.to_json_line();
-    line.push('\n');
-    line
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -201,11 +174,15 @@ pub(super) async fn multi_client_loop(
     let conversation_snapshot: ConversationSnapshot =
         std::sync::Arc::new(tokio::sync::RwLock::new(messages.clone()));
 
+    let mut agent_session = AgentSession::new(model, session_key.clone());
+    let initial_state =
+        agent_session.state_snapshot(messages.len(), None, agent.max_context_tokens());
+    let state_snapshot: StateSnapshot =
+        std::sync::Arc::new(tokio::sync::RwLock::new(initial_state));
+
     // Shared mid-turn flag (#828): gates the connect-time snapshot push so it
     // only fires while the agent is busy (see `BusyFlag`).
     let busy: BusyFlag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-    let mut agent_session = AgentSession::new(model, session_key.clone());
 
     // Use the pre-created broadcast channel when available (workflow emitter
     // is already wired to it), otherwise create a fresh one (#598).
@@ -225,6 +202,7 @@ pub(super) async fn multi_client_loop(
         live_clients: live_clients.clone(),
         client_tool_registry: client_tool_registry.clone(),
         conversation_snapshot: conversation_snapshot.clone(),
+        state_snapshot: state_snapshot.clone(),
         busy: busy.clone(),
     });
 
@@ -240,6 +218,7 @@ pub(super) async fn multi_client_loop(
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: conversation_snapshot.clone(),
+        state_snapshot: state_snapshot.clone(),
         busy: busy.clone(),
         session: &mut agent_session,
         stdout: &mut *null_writer,
@@ -301,6 +280,8 @@ struct AcceptLoopArgs {
     /// connected client BEFORE/independent of the dispatch loop, so a busy
     /// child's client gets its prior history instantly.
     conversation_snapshot: ConversationSnapshot,
+    /// Shared pre-turn state snapshot (#837), served to busy `get_state` callers.
+    state_snapshot: StateSnapshot,
     /// Mid-turn flag (#828): the connect-time snapshot is pushed ONLY when the
     /// agent is busy. When idle, the dispatch loop answers `get_messages` in
     /// FIFO order and no unsolicited bytes are written.
@@ -317,6 +298,7 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
         live_clients,
         client_tool_registry,
         conversation_snapshot,
+        state_snapshot,
         busy,
     } = args;
     tokio::spawn(async move {
@@ -378,12 +360,19 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                     // no protocol change and ordering-sensitive flows are unaffected.
                     if busy.load(std::sync::atomic::Ordering::SeqCst) {
                         use tokio::io::AsyncWriteExt;
-                        let line = {
+                        let messages_line = {
                             let snap = conversation_snapshot.read().await;
                             build_get_messages_line(&snap)
                         };
-                        if let Err(e) = stream.write_all(line.as_bytes()).await {
-                            tracing::debug!("connect-time snapshot not delivered: {e}");
+                        if let Err(e) = stream.write_all(messages_line.as_bytes()).await {
+                            tracing::debug!("connect-time message snapshot not delivered: {e}");
+                        }
+                        let state_line = {
+                            let snap = state_snapshot.read().await;
+                            build_get_state_line(&snap)
+                        };
+                        if let Err(e) = stream.write_all(state_line.as_bytes()).await {
+                            tracing::debug!("connect-time state snapshot not delivered: {e}");
                         }
                     }
 
@@ -493,6 +482,7 @@ async fn run_dispatch_loop(
         // Turn boundary: refresh the shared snapshot so a newly-connected client
         // is served the up-to-date prior conversation on connect (#828).
         refresh_conversation_snapshot(ctx).await;
+        refresh_state_snapshot(ctx).await;
     }
 }
 

@@ -115,6 +115,16 @@ fn test_parse_get_messages_command() {
 }
 
 #[test]
+fn test_parse_get_messages_with_count_command() {
+    let json = r#"{"type":"get_messages","id":"gm-1","count":5}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(cmd.id(), Some("gm-1"));
+    assert_eq!(cmd.type_name(), "get_messages");
+    let wire = serde_json::to_value(&cmd).unwrap();
+    assert_eq!(wire["count"], 5);
+}
+
+#[test]
 fn test_parse_get_messages_tail_command() {
     let json = r#"{"type":"get_messages_tail","count":5}"#;
     let cmd: AgentCommand = serde_json::from_str(json).unwrap();

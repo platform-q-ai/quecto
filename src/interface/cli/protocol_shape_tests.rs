@@ -620,11 +620,6 @@ fn core_command_type_names() {
     assert_eq!(AgentCommand::Abort { id: None }.type_name(), "abort");
     assert_eq!(AgentCommand::GetState { id: None }.type_name(), "get_state");
     assert_eq!(
-        AgentCommand::GetMessages { id: None }.type_name(),
-        "get_messages"
-    );
-    // get_messages_tail type_name is covered by uds_tests::test_get_messages_tail_type_name.
-    assert_eq!(
         AgentCommand::GetSessionStats { id: None }.type_name(),
         "get_session_stats"
     );
