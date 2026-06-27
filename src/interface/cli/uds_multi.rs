@@ -583,7 +583,7 @@ use uds_multi_prompt::try_intercept_tool_result;
 pub(crate) use uds_multi_prompt::{PromptArgsBroadcast, run_agent_prompt_broadcast};
 // Re-exported for the auto-await dedupe unit tests (uds_subagent_notify_tests).
 #[cfg(test)]
-pub(crate) use uds_multi_prompt::forward_notification_broadcast;
+pub(in crate::interface::cli) use uds_multi_prompt::forward_notification_broadcast;
 #[cfg(test)]
 #[path = "uds_multi_interception_tests.rs"]
 mod interception_tests;

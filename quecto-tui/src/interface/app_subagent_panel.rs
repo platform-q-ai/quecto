@@ -45,21 +45,18 @@ impl App {
     /// when no sub-agent is selected, otherwise the selected agent's session
     /// (created lazily so a selection always has a body to render).
     pub(super) fn active_chat_mut(&mut self) -> &mut Chat {
-        match &self.active_agent_id {
-            None => &mut self.chat,
-            Some(id) => {
-                let id = id.clone();
-                let git_branch = self.git_branch.clone();
-                &mut self
-                    .sessions
-                    .entry(id.clone())
-                    .or_insert_with(|| {
-                        Self::remember_session(&mut self.session_order, &id);
-                        SessionView::new(git_branch)
-                    })
-                    .chat
-            }
+        let Some(id) = self.active_agent_id.clone() else {
+            return &mut self.chat;
+        };
+        if !self.sessions.contains_key(&id) {
+            // Cold path only: clone git_branch and build the session here, so the
+            // common already-exists render path allocates nothing extra (#827 perf).
+            let git_branch = self.git_branch.clone();
+            Self::remember_session(&mut self.session_order, &id);
+            self.sessions
+                .insert(id.clone(), SessionView::new(git_branch));
         }
+        &mut self.sessions.get_mut(&id).unwrap().chat
     }
 
     /// The active session's workflow bar: the master's own when no sub-agent is
