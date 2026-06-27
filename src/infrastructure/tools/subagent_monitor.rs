@@ -339,7 +339,8 @@ fn handle_monitor_line(
 /// clients instead of waiting for a later polling rebuild (#839).
 fn should_broadcast_state_changed_after_event(value: &serde_json::Value) -> bool {
     match value.get("type").and_then(|v| v.as_str()) {
-        Some("agent_start" | "agent_end" | "tool_execution_start" | "tool_execution_end") => true,
+        Some("agent_end") => true,
+        Some("tool_execution_end") => value.get("isError").and_then(|v| v.as_bool()) == Some(true),
         Some("response") => value.get("command").and_then(|v| v.as_str()) == Some("agent_error"),
         _ => false,
     }

@@ -183,6 +183,67 @@ fn forward_child_state_changed_preserves_existing_status_when_status_omitted() {
 }
 
 #[test]
+fn handle_monitor_line_skips_full_state_broadcast_for_tool_boundaries() {
+    let registry = super::super::subagent_registry::new_registry();
+    let mut child = test_entry();
+    child.status = SubagentStatus::Idle;
+    registry.lock().unwrap().insert("child".to_string(), child);
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+
+    super::handle_monitor_line(
+        r#"{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{}}"#,
+        "child",
+        &registry,
+        None,
+        Some(&tx),
+        None,
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "tool start should not broadcast a full state snapshot; polling/notifications cover it"
+    );
+
+    super::handle_monitor_line(
+        r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":false}"#,
+        "child",
+        &registry,
+        None,
+        Some(&tx),
+        None,
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "successful tool end should not broadcast a redundant full state snapshot"
+    );
+}
+
+#[test]
+fn handle_monitor_line_tool_error_broadcasts_subagent_state_changed_promptly() {
+    let registry = super::super::subagent_registry::new_registry();
+    let mut child = test_entry();
+    child.status = SubagentStatus::Running;
+    registry.lock().unwrap().insert("child".to_string(), child);
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+
+    super::handle_monitor_line(
+        r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":true}"#,
+        "child",
+        &registry,
+        None,
+        Some(&tx),
+        None,
+    );
+
+    let event: serde_json::Value = serde_json::from_str(
+        &rx.try_recv()
+            .expect("tool error should promptly broadcast subagent_state_changed"),
+    )
+    .unwrap();
+    assert_eq!(event["type"], "subagent_state_changed");
+    assert_eq!(find_subagent(&event, "child")["status"], "error");
+}
+
+#[test]
 fn handle_monitor_line_agent_end_broadcasts_subagent_state_changed_promptly() {
     let registry = super::super::subagent_registry::new_registry();
     let mut child = test_entry();
