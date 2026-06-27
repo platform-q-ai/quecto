@@ -135,6 +135,13 @@ Feature: Persistent subagent monitor — live event stream from child agents
     And the registry should no longer contain "p", "c", or "gc"
     And the registry should still contain "live"
 
+  Scenario: a forwarded push prunes a grandchild the child no longer reports
+    Given a root registry with child "child" and a previously-merged grandchild "gc" under it
+    When the child "child" forwards a subagent_state_changed with no descendants
+    Then the forwarded event should not list "gc"
+    And the registry should no longer contain "gc"
+    And the registry should still contain "child"
+
   Scenario: a removal request for an unknown agent emits no broadcast
     Given a root registry with parent "p", child "c" under "p", and grandchild "gc" under "c", plus a live agent "live"
     When an unknown agent "ghost" is reported gone

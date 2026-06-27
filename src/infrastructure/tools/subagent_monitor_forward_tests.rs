@@ -29,7 +29,7 @@ fn forward_child_state_changed_preserves_descendant_identity() {
     // it must NOT re-stamp them to the immediate child's id (#815).
     let registry = super::super::subagent_registry::new_registry();
     let line = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"grandchild","status":"running","parentId":"child","pid":42}]}"#;
-    let out = forward_child_state_changed(line, &registry)
+    let out = forward_child_state_changed(line, &registry, "child")
         .expect("state_changed line should be forwarded");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["type"], "subagent_state_changed");
@@ -46,8 +46,8 @@ fn forward_child_state_changed_preserves_descendant_identity() {
 #[test]
 fn forward_child_state_changed_ignores_other_lines() {
     let registry = super::super::subagent_registry::new_registry();
-    assert!(forward_child_state_changed(r#"{"type":"agent_end"}"#, &registry).is_none());
-    assert!(forward_child_state_changed("not json", &registry).is_none());
+    assert!(forward_child_state_changed(r#"{"type":"agent_end"}"#, &registry, "child").is_none());
+    assert!(forward_child_state_changed("not json", &registry, "child").is_none());
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn forward_child_state_changed_carries_union_not_partial_push() {
         .unwrap()
         .insert("child".to_string(), test_entry());
     let line = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"grandchild","status":"running","parentId":"child"}]}"#;
-    let out = forward_child_state_changed(line, &registry).expect("forwarded");
+    let out = forward_child_state_changed(line, &registry, "child").expect("forwarded");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     let arr = v["subagents"].as_array().expect("subagents array");
     assert_eq!(
@@ -81,7 +81,7 @@ fn forward_child_state_changed_preserves_multiple_descendants() {
     // each entry must keep its own agentId/parentId (#815).
     let registry = super::super::subagent_registry::new_registry();
     let line = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"gc-a","status":"running","parentId":"child-1"},{"agentId":"gc-b","status":"idle","parentId":"child-2"}]}"#;
-    let out = forward_child_state_changed(line, &registry).expect("forwarded");
+    let out = forward_child_state_changed(line, &registry, "child-1").expect("forwarded");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(find_subagent(&v, "gc-a")["parentId"], "child-1");
     assert_eq!(find_subagent(&v, "gc-a")["status"], "running");
@@ -97,8 +97,8 @@ fn forward_child_state_changed_chains_already_forwarded_descendants() {
     // invisible — the original bug class (#815).
     let registry = super::super::subagent_registry::new_registry();
     let line = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"great-grandchild","status":"running","parentId":"grandchild"}]}"#;
-    let out =
-        forward_child_state_changed(line, &registry).expect("forwarded regardless of parentId");
+    let out = forward_child_state_changed(line, &registry, "grandchild")
+        .expect("forwarded regardless of parentId");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(
         find_subagent(&v, "great-grandchild")["parentId"],
@@ -119,7 +119,7 @@ fn forward_child_state_changed_caps_descendant_count() {
         r#"{{"type":"subagent_state_changed","subagents":[{}]}}"#,
         entries.join(",")
     );
-    forward_child_state_changed(&line, &registry).expect("forwarded");
+    forward_child_state_changed(&line, &registry, "child").expect("forwarded");
     assert_eq!(
         registry.lock().unwrap().len(),
         256,
@@ -159,49 +159,48 @@ fn handle_monitor_line_forwards_descendant_state_changed() {
     );
 }
 
-// --- #831: cascade-remove on exit/kill broadcasts the survivor set ---
-
-use super::super::subagent_registry::new_registry;
-
-fn seed_tree() -> super::super::subagent_registry::SubagentRegistry {
-    let r = new_registry();
-    let mut g = r.lock().unwrap();
-    g.insert("p".into(), SubagentEntry::new(PathBuf::from("/s"), 1));
-    let mut c = SubagentEntry::new(PathBuf::from("/s"), 2);
-    c.parent_id = Some("p".into());
-    g.insert("c".into(), c);
-    let mut gc = SubagentEntry::new(PathBuf::from("/s"), 3);
-    gc.parent_id = Some("c".into());
-    g.insert("gc".into(), gc);
-    g.insert("live".into(), SubagentEntry::new(PathBuf::from("/s"), 4));
-    drop(g);
-    r
-}
-
 #[test]
-fn cascade_remove_and_state_changed_emits_survivors_only() {
-    let r = seed_tree();
-    let event = cascade_remove_and_state_changed(&r, "p")
-        .expect("removing a live subtree must yield a broadcast event");
-    let v: serde_json::Value = serde_json::from_str(&event).unwrap();
-    assert_eq!(v["type"], "subagent_state_changed");
+fn forward_child_state_changed_prunes_grandchild_absent_from_push() {
+    // #831 nested case: a grandchild that was previously merged into the root
+    // registry must be REMOVED when the forwarding child's next authoritative
+    // push no longer lists it (it exited/was killed under the child). The
+    // pure-upsert merge could never drop it, so it lingered in the TUI panel.
+    let registry = super::super::subagent_registry::new_registry();
+    {
+        let mut g = registry.lock().unwrap();
+        // root's direct child, plus a previously-merged grandchild under it.
+        g.insert("child".to_string(), test_entry());
+        let mut gc = test_entry();
+        gc.parent_id = Some("child".to_string());
+        g.insert("grandchild".to_string(), gc);
+        // an unrelated sibling sub-tree that must survive the scoped prune.
+        let mut sib = test_entry();
+        sib.parent_id = Some("other".to_string());
+        g.insert("sibling".to_string(), sib);
+        g.insert("other".to_string(), test_entry());
+    }
+    // The child now reports an EMPTY descendant set (the grandchild is gone).
+    let line = r#"{"type":"subagent_state_changed","subagents":[]}"#;
+    let out = forward_child_state_changed(line, &registry, "child").expect("forwarded");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     let ids: Vec<&str> = v["subagents"]
         .as_array()
         .unwrap()
         .iter()
         .filter_map(|s| s["agentId"].as_str())
         .collect();
-    // The whole dead subtree is gone; the unrelated live agent remains.
-    assert_eq!(ids, vec!["live"], "broadcast must list only survivors");
-    let g = r.lock().unwrap();
-    assert!(!g.contains_key("p") && !g.contains_key("c") && !g.contains_key("gc"));
-    assert!(g.contains_key("live"));
+    // Grandchild pruned; the child itself and the unrelated tree are untouched.
+    assert!(
+        !ids.contains(&"grandchild"),
+        "dead grandchild must be pruned"
+    );
+    assert!(ids.contains(&"child"));
+    assert!(ids.contains(&"sibling"), "unrelated sub-tree must survive");
+    assert!(ids.contains(&"other"));
+    let g = registry.lock().unwrap();
+    assert!(!g.contains_key("grandchild"));
+    assert!(g.contains_key("sibling"));
 }
 
-#[test]
-fn cascade_remove_and_state_changed_noop_returns_none() {
-    let r = seed_tree();
-    // Nothing to remove -> no broadcast (avoid redundant churn).
-    assert!(cascade_remove_and_state_changed(&r, "ghost").is_none());
-    assert_eq!(r.lock().unwrap().len(), 4);
-}
+// cascade_remove_and_state_changed tests moved to `subagent_cascade_tests.rs`
+// alongside the extracted `subagent_cascade` module (#831).

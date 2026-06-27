@@ -83,7 +83,7 @@ fn when_monitor_forwards_state_changed(world: &mut QuectoWorld) {
     // A fresh root registry: the forward merges the descendants in and emits the
     // union, so the forwarded event lists the grandchildren with real identity.
     let registry = new_registry();
-    let forwarded = forward_child_state_changed(&line, &registry)
+    let forwarded = forward_child_state_changed(&line, &registry, "child")
         .expect("a subagent_state_changed line should be forwarded");
     world.event_identity_last = Some(serde_json::from_str(&forwarded).unwrap());
 }
@@ -336,12 +336,13 @@ fn given_root_registry_tree(
 
 #[when(expr = "the parent {string} is killed")]
 fn when_parent_exits_cascade(world: &mut QuectoWorld, parent: String) {
-    use quecto::infrastructure::tools::subagent_monitor::cascade_remove_and_state_changed;
+    use quecto::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed;
     let r = world
         .cascade_registry
         .as_ref()
         .expect("no cascade registry");
     let event = cascade_remove_and_state_changed(r, &parent)
+        .event
         .map(|s: String| serde_json::from_str::<serde_json::Value>(&s).unwrap());
     world.cascade_broadcast = Some(event);
 }
@@ -394,6 +395,68 @@ fn then_registry_contains(world: &mut QuectoWorld, id: String) {
     assert!(
         r.lock().unwrap().contains_key(&id),
         "registry must contain {id}"
+    );
+}
+
+// --- Scoped-replace prune of a forwarded subtree (#831 nested case) ---
+
+#[given(
+    expr = "a root registry with child {string} and a previously-merged grandchild {string} under it"
+)]
+fn given_root_with_merged_grandchild(world: &mut QuectoWorld, child: String, grandchild: String) {
+    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    let r = new_registry();
+    {
+        let mut g = r.lock().unwrap();
+        g.insert(
+            child.clone(),
+            SubagentEntry::new(std::path::PathBuf::from("/s"), 1),
+        );
+        let mut gc = SubagentEntry::new(std::path::PathBuf::from("/s"), 2);
+        gc.parent_id = Some(child);
+        g.insert(grandchild, gc);
+    }
+    world.cascade_registry = Some(r);
+}
+
+#[when(expr = "the child {string} forwards a subagent_state_changed with no descendants")]
+fn when_child_forwards_empty(world: &mut QuectoWorld, child: String) {
+    use quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed;
+    let r = world
+        .cascade_registry
+        .as_ref()
+        .expect("no cascade registry");
+    let line = r#"{"type":"subagent_state_changed","subagents":[]}"#;
+    let event = forward_child_state_changed(line, r, &child)
+        .map(|s| serde_json::from_str::<serde_json::Value>(&s).unwrap());
+    world.cascade_broadcast = Some(event);
+}
+
+#[then(expr = "the forwarded event should not list {string}")]
+fn then_forwarded_omits(world: &mut QuectoWorld, id: String) {
+    let ev = world
+        .cascade_broadcast
+        .as_ref()
+        .expect("no forwarded event recorded")
+        .as_ref()
+        .expect("expected a forwarded event");
+    let listed = ev["subagents"]
+        .as_array()
+        .expect("subagents array")
+        .iter()
+        .any(|s| s["agentId"].as_str() == Some(id.as_str()));
+    assert!(!listed, "forwarded event must not list pruned {id}");
+}
+
+#[then(expr = "the registry should no longer contain {string}")]
+fn then_registry_lacks_one(world: &mut QuectoWorld, id: String) {
+    let r = world
+        .cascade_registry
+        .as_ref()
+        .expect("no cascade registry");
+    assert!(
+        !r.lock().unwrap().contains_key(&id),
+        "registry must not contain {id}"
     );
 }
 

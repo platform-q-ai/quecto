@@ -257,32 +257,26 @@ impl AgentCmdTool {
     /// Kill a specific subagent by ID: SIGTERM + cascade-remove its sub-tree from
     /// the registry, then broadcast the survivor set (#559, #831).
     fn kill_agent(&self, agent_id: &str) -> ToolResult {
-        // Snapshot the fields we need (signal/monitor/pid) WITHOUT removing yet,
-        // so the cascade-remove below can prune this agent AND its descendants in
-        // one shot and produce a survivor-only broadcast (#831).
-        let (exit_signal_tx, monitor_handle, pid) = {
-            let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            match entries.get(agent_id) {
-                Some(e) => (e.exit_signal_tx.clone(), e.monitor_handle.clone(), e.pid),
-                None => {
-                    return ToolResult {
-                        content: format!(
-                            "agent_cmd error: subagent '{}' not found in registry",
-                            agent_id
-                        ),
-                        is_error: true,
-                        image_blocks: vec![],
-                    };
-                }
-            }
-        };
+        // Cascade-remove the agent AND every descendant in one shot, getting back
+        // the removed entries (for process cleanup) and a survivor-only
+        // `subagent_state_changed` event (#831).
+        let super::subagent_cascade::CascadeOutcome { removed, event } =
+            super::subagent_cascade::cascade_remove_and_state_changed(&self.registry, agent_id);
 
-        // Cascade-remove the agent and every descendant, then broadcast the
-        // survivor set so the TUI panel drops the whole dead sub-tree promptly
-        // (#831). Best-effort send: no subscribers is fine.
-        if let Some(event) =
-            super::subagent_monitor::cascade_remove_and_state_changed(&self.registry, agent_id)
-        {
+        if removed.is_empty() {
+            return ToolResult {
+                content: format!(
+                    "agent_cmd error: subagent '{}' not found in registry",
+                    agent_id
+                ),
+                is_error: true,
+                image_blocks: vec![],
+            };
+        }
+
+        // Broadcast the survivor set so the TUI panel drops the whole dead
+        // sub-tree promptly (#831). Best-effort send: no subscribers is fine.
+        if let Some(event) = event {
             if let Some(tx) = &self.broadcast_tx {
                 if let Err(e) = tx.send(event) {
                     tracing::debug!(
@@ -294,33 +288,30 @@ impl AgentCmdTool {
             }
         }
 
-        // Signal any waiting `await` call so it returns "exited" instead of
-        // spinning until timeout (#612).
-        if let Some(ref tx) = exit_signal_tx {
-            let _ = tx.send(Some(super::subagent_registry::ExitSignal {
-                exit_code: None,
-                signal: Some(15), // SIGTERM
-            }));
-        }
-
-        // Abort monitor task if running.
-        if let Some(ref handle) = monitor_handle {
-            handle.abort();
-        }
-
-        // Send SIGTERM to the child process (lock already released).
-        // The reaper task spawned by SpawnTool will wait() the child.
-        if pid != 0 {
-            let _ = std::process::Command::new("kill")
-                .arg("-TERM")
-                .arg(pid.to_string())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+        // Terminate EVERY removed agent's process + monitor, not just the named
+        // one (#831 security review): otherwise killing a parent would drop its
+        // descendants from the registry while leaving their OS processes running
+        // as untracked orphans that `shutdown_all` can no longer reach.
+        let mut killed_pid = 0;
+        for (id, entry) in &removed {
+            if id == agent_id {
+                killed_pid = entry.pid;
+            }
+            // Signal any waiting `await` call so it returns "exited" instead of
+            // spinning until timeout (#612).
+            if let Some(ref tx) = entry.exit_signal_tx {
+                let _ = tx.send(Some(super::subagent_registry::ExitSignal {
+                    exit_code: None,
+                    signal: Some(15), // SIGTERM
+                }));
+            }
+            // Abort the monitor task and SIGTERM the child process. The reaper
+            // task spawned by SpawnTool will wait() each child.
+            super::subagent_cascade::terminate_removed_entry(entry);
         }
 
         ToolResult {
-            content: format!("Subagent '{}' killed (pid={}).", agent_id, pid),
+            content: format!("Subagent '{}' killed (pid={}).", agent_id, killed_pid),
             is_error: false,
             image_blocks: vec![],
         }

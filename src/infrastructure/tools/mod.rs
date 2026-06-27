@@ -10,6 +10,7 @@ pub mod path_utils;
 pub mod recall;
 pub mod registry;
 pub mod spawn;
+pub mod subagent_cascade;
 pub mod subagent_monitor;
 pub mod subagent_registry;
 pub mod truncate;

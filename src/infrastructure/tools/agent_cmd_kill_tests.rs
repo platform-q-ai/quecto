@@ -101,6 +101,65 @@ async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
     let _ = child.wait();
 }
 
+#[tokio::test]
+async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
+    // #831 security review: killing a parent must SIGTERM its DESCENDANTS' OS
+    // processes too, not merely drop them from the registry — otherwise they
+    // linger as untracked orphans that shutdown_all can no longer reach.
+    let spawn_sleep = || {
+        std::process::Command::new("sleep")
+            .arg("30")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sleep")
+    };
+    let mut parent_proc = spawn_sleep();
+    let mut gchild_proc = spawn_sleep();
+    let parent_pid = parent_proc.id();
+    let gchild_pid = gchild_proc.id();
+
+    let registry = new_registry();
+    {
+        let mut g = registry.lock().unwrap();
+        g.insert(
+            "parent".to_string(),
+            SubagentEntry::new(PathBuf::from("/tmp/x.sock"), parent_pid),
+        );
+        let mut gc = child_entry("parent");
+        gc.pid = gchild_pid;
+        g.insert("gchild".to_string(), gc);
+    }
+    let (tx, _rx) = tokio::sync::broadcast::channel::<String>(8);
+    let tool = AgentCmdTool::new(registry.clone()).with_broadcast(Some(tx));
+
+    let result = tool.kill_agent("parent");
+    assert!(!result.is_error);
+    assert!(registry.lock().unwrap().is_empty());
+
+    // Both the parent AND the descendant process received SIGTERM and exit.
+    // (Reap to confirm; without the descendant SIGTERM, gchild would still be
+    // sleeping and this wait would block past the loop.)
+    let parent_status = parent_proc.wait().expect("reap parent");
+    let mut gchild_exited = false;
+    for _ in 0..200 {
+        match gchild_proc.try_wait() {
+            Ok(Some(_)) => {
+                gchild_exited = true;
+                break;
+            }
+            _ => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
+        }
+    }
+    let _ = parent_status;
+    assert!(
+        gchild_exited,
+        "descendant process must be SIGTERMed when its parent is killed"
+    );
+    let _ = gchild_proc.kill();
+    let _ = gchild_proc.wait();
+}
+
 #[test]
 fn kill_unknown_agent_returns_error_and_no_broadcast() {
     let registry = new_registry();
