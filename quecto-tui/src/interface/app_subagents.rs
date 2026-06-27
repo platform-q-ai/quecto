@@ -106,10 +106,15 @@ impl App {
     /// needed (i.e. at least one agent is active). Driven by the spinner tick so
     /// running agents animate and their elapsed-time clocks stay current.
     pub(super) fn tick_subagent_animation(&mut self) -> bool {
-        let any_active = self
-            .subagent_local
-            .values()
-            .any(|t| subagent_status_is_active(&t.info.status));
+        // Advance while ANY tracked child is active OR the selected sub-agent is
+        // mid-turn on its own connect-on-select stream (#820): the selected
+        // session's `running` flag is the source for its working spinner, and the
+        // master's `subagent_local` status may still read idle for it.
+        let any_active = self.active_subagent_running()
+            || self
+                .subagent_local
+                .values()
+                .any(|t| subagent_status_is_active(&t.info.status));
         if !any_active {
             return false;
         }

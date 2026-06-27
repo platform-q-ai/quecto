@@ -520,19 +520,19 @@ impl App {
                 return;
             }
             Key::ScrollUp => {
-                self.chat.scroll_up(MOUSE_SCROLL_LINES);
+                self.active_chat_mut().scroll_up(MOUSE_SCROLL_LINES);
                 return;
             }
             Key::ScrollDown => {
-                self.chat.scroll_down(MOUSE_SCROLL_LINES);
+                self.active_chat_mut().scroll_down(MOUSE_SCROLL_LINES);
                 return;
             }
             Key::PageUp => {
-                self.chat.scroll_up(10);
+                self.active_chat_mut().scroll_up(10);
                 return;
             }
             Key::PageDown => {
-                self.chat.scroll_down(10);
+                self.active_chat_mut().scroll_down(10);
                 return;
             }
             _ => {}
