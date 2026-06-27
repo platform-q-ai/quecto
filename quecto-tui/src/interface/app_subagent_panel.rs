@@ -41,12 +41,26 @@ impl App {
             .and_then(|t| t.info.socket_path.clone())
     }
 
-    /// The chat buffer for the active session: the master's own `self.chat`
-    /// when no sub-agent is selected, otherwise the selected agent's session
-    /// (created lazily so a selection always has a body to render).
-    pub(super) fn active_chat_mut(&mut self) -> &mut Chat {
+    /// The active session — the master (`active_agent_id == None`) or the
+    /// selected sub-agent — modeled identically as a [`SessionView`] (#828).
+    /// This is the SINGLE place that maps the active id to its session; every
+    /// render/input accessor below delegates here so there is no master-vs-
+    /// sub-agent branching scattered across the render path.
+    pub(super) fn active_session(&self) -> &SessionView {
+        match self.active_agent_id.as_deref() {
+            None => &self.master_session,
+            // Fall back to the master session if a selected session is somehow
+            // missing, mirroring `active_session_mut`'s lazy-create contract.
+            Some(id) => self.sessions.get(id).unwrap_or(&self.master_session),
+        }
+    }
+
+    /// Mutable counterpart to [`active_session`]. Lazily creates the selected
+    /// sub-agent's session so a selection always has a body to render; the
+    /// master session always exists.
+    pub(super) fn active_session_mut(&mut self) -> &mut SessionView {
         let Some(id) = self.active_agent_id.clone() else {
-            return &mut self.chat;
+            return &mut self.master_session;
         };
         if !self.sessions.contains_key(&id) {
             // Cold path only: clone git_branch and build the session here, so the
@@ -56,7 +70,12 @@ impl App {
             self.sessions
                 .insert(id.clone(), SessionView::new(git_branch));
         }
-        &mut self.sessions.get_mut(&id).unwrap().chat
+        self.sessions.get_mut(&id).unwrap()
+    }
+
+    /// The chat buffer for the active session (master or selected sub-agent).
+    pub(super) fn active_chat_mut(&mut self) -> &mut Chat {
+        &mut self.active_session_mut().chat
     }
 
     /// Test-only: number of chat entries in a sub-agent session (for asserting
@@ -66,42 +85,23 @@ impl App {
         self.sessions.get(agent_id).map(|s| s.chat.entry_count())
     }
 
-    /// The active session's workflow bar: the master's own when no sub-agent is
-    /// selected, otherwise the selected agent's (#802). Falls back to the master
-    /// bar if the session is somehow missing.
+    /// The active session's workflow/phase bar (master or selected sub-agent).
     pub(super) fn active_workflow_bar(&self) -> &workflow_bar::WorkflowBarState {
-        match &self.active_agent_id {
-            None => &self.workflow_bar,
-            Some(id) => self
-                .sessions
-                .get(id)
-                .map(|s| &s.workflow_bar)
-                .unwrap_or(&self.workflow_bar),
-        }
+        &self.active_session().workflow_bar
     }
 
-    /// Render the active session's footer: the master's own `self.footer` when
-    /// no sub-agent is selected, otherwise the selected agent's per-session
-    /// footer (#805). Falls back to the master footer if the session is missing.
+    /// Render the active session's status footer (master or selected sub-agent).
     pub(super) fn active_footer_render(&mut self, width: usize) -> Vec<String> {
-        // Borrow-split the disjoint fields (`active_agent_id`, `sessions`,
-        // `footer`) so we read the id by reference — no per-frame allocation on
-        // the render hot path while a sub-agent is selected.
-        match self.active_agent_id.as_deref() {
-            Some(id) if self.sessions.contains_key(id) => {
-                self.sessions.get_mut(id).unwrap().footer.render(width)
-            }
-            _ => self.footer.render(width),
-        }
+        self.active_session_mut().footer.render(width)
     }
 
-    /// Whether the active sub-agent is mid-turn (drives the per-session working
-    /// indicator). Always `false` for the master, whose spinner is separate.
+    /// Whether the active session is mid-turn. For a selected sub-agent this is
+    /// its forwarded `running` flag; for the master it mirrors `agent_state`
+    /// (kept in sync on start/end), so the working indicator is driven by ONE
+    /// per-session flag for both. The master additionally owns the richer tool
+    /// `spinner` telemetry, layered on top by the render path.
     pub(super) fn active_subagent_running(&self) -> bool {
-        match &self.active_agent_id {
-            None => false,
-            Some(id) => self.sessions.get(id).is_some_and(|s| s.running),
-        }
+        self.active_session().running
     }
 
     /// The focus region currently holding keyboard input (#802, tests).

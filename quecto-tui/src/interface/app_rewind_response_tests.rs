@@ -9,7 +9,7 @@ async fn harness() -> TuiHarness {
 }
 
 fn chat_text(app: &mut App) -> String {
-    let lines = app.chat.render(120);
+    let lines = app.master_session.chat.render(120);
     lines
         .iter()
         .map(|l| super::app_methods::strip_ansi(l))
@@ -349,12 +349,12 @@ async fn response_rewind_to_unmatched_is_noop() {
 async fn response_clear_history_and_unknown_are_noop() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.chat.entry_count();
+    let before = a.master_session.chat.entry_count();
     respond(a, None, "clear_history", true, None, None);
     respond(a, None, "totally_unknown_command", true, None, None);
     // Neither response is surfaced: no chat entries added, no notifications.
     assert_eq!(
-        a.chat.entry_count(),
+        a.master_session.chat.entry_count(),
         before,
         "noop responses must not add chat entries"
     );

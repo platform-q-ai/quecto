@@ -61,7 +61,7 @@ impl App {
     // ── Slash command handlers ─────────────────────────────────────────
 
     pub(super) fn reject_unknown_slash_command(&mut self, command: &str) {
-        self.chat.add_entry(ChatEntry::Status {
+        self.master_session.chat.add_entry(ChatEntry::Status {
             text: format!(
                 "Unknown slash command: {command}\nType /help to see available commands."
             ),
@@ -97,11 +97,13 @@ impl App {
                 command.name, command.description
             ));
         }
-        self.chat.add_entry(ChatEntry::Status { text });
+        self.master_session
+            .chat
+            .add_entry(ChatEntry::Status { text });
     }
 
     pub(super) fn show_workflow_status(&mut self) {
-        let wf = &self.workflow_bar;
+        let wf = &self.master_session.workflow_bar;
         let text = if workflow_bar::render_widget(wf, self.terminal.width).is_empty() {
             "Workflow is not active. Start quecto-tui with --workflow to enable it.".to_string()
         } else {
@@ -120,7 +122,9 @@ impl App {
                 wf.total.max(1)
             )
         };
-        self.chat.add_entry(ChatEntry::Status { text });
+        self.master_session
+            .chat
+            .add_entry(ChatEntry::Status { text });
     }
 
     pub(super) fn toggle_workflow_auto_continue(&mut self) {
@@ -163,7 +167,7 @@ impl App {
             self.context_stats_requested = true;
         }
         // Shared session-stats→footer mapping (context + cost gate); see #805.
-        self.footer.apply_session_stats(&stats);
+        self.master_session.footer.apply_session_stats(&stats);
     }
 
     pub(super) fn send_list_sessions(&mut self) {
@@ -187,7 +191,7 @@ impl App {
         // Footer context/cost update has a single owner; this adds the chat line.
         self.update_footer_stats(data);
         let stats = session_payloads::parse_session_stats(data);
-        self.chat.add_entry(ChatEntry::Status {
+        self.master_session.chat.add_entry(ChatEntry::Status {
             text: format!(
                 "Session: {} | Messages: {} | Tokens: ↑{} ↓{} | Cost: ${:.4}",
                 stats.session_key,
@@ -206,7 +210,7 @@ impl App {
             provider: None,
             model_id: None,
         });
-        self.footer.set_model(model);
+        self.master_session.footer.set_model(model);
         self.current_model = Some(model.to_string());
         self.context_stats_requested = false;
     }
@@ -221,7 +225,7 @@ impl App {
             } else {
                 "No persisted sessions found."
             };
-            self.chat.add_entry(ChatEntry::Status {
+            self.master_session.chat.add_entry(ChatEntry::Status {
                 text: text.to_string(),
             });
             return;
@@ -264,24 +268,29 @@ impl App {
             Ok(messages) => messages,
             Err(error) => {
                 let text = format!("Invalid resume payload: {}", error.description());
-                self.chat
+                self.master_session
+                    .chat
                     .add_entry(ChatEntry::Status { text: text.clone() });
                 self.notify(&text, NotifyLevel::Error);
                 return;
             }
         };
 
-        self.chat.clear();
+        self.master_session.chat.clear();
         for message in messages {
             match message {
-                ResumedChatMessage::User(text) => self.chat.add_entry(ChatEntry::User { text }),
-                ResumedChatMessage::Assistant(text) => self.chat.add_entry(ChatEntry::Assistant {
-                    text,
-                    streaming: false,
-                }),
+                ResumedChatMessage::User(text) => {
+                    self.master_session.chat.add_entry(ChatEntry::User { text })
+                }
+                ResumedChatMessage::Assistant(text) => {
+                    self.master_session.chat.add_entry(ChatEntry::Assistant {
+                        text,
+                        streaming: false,
+                    })
+                }
             }
         }
-        self.chat.add_entry(ChatEntry::Status {
+        self.master_session.chat.add_entry(ChatEntry::Status {
             text: "Session resumed".to_string(),
         });
     }
@@ -336,12 +345,18 @@ impl App {
         // do many short runs, each creating/dropping the spinner — a toggling
         // 0↔1 line would reflow the chat on every run (the panel-size 6↔7 /
         // 11↔12 judder). A reserved slot keeps the below-chat height stable.
-        if self.active_subagent_running() {
-            // The selected sub-agent is mid-turn (e.g. processing a steer it
-            // queued); show its own working indicator so it never looks dead.
+        if self.active_agent_id.is_none() && self.spinner.is_some() {
+            // Master is active and mid-turn: show its richer tool spinner (tool
+            // name + elapsed), the only master-local render telemetry layered on
+            // top of the shared per-session `running` flag (#828).
+            if let Some(spinner) = &mut self.spinner {
+                bottom.extend(spinner.render(width));
+            }
+        } else if self.active_subagent_running() {
+            // The active session is mid-turn (a sub-agent processing a queued
+            // steer, or the master before its spinner exists); show the working
+            // indicator so it never looks dead.
             bottom.push(subagent_activity_line(1, self.subagent_frame));
-        } else if let Some(spinner) = &mut self.spinner {
-            bottom.extend(spinner.render(width));
         } else if !self.subagent_local.is_empty() {
             // Parent is idle but sub-agents are tracked. Keep the reserved slot
             // meaningful: if any child is still working, show an animated
@@ -613,8 +628,8 @@ impl App {
     /// Reset the conversation — clears agent history, chat UI, and context display.
     pub(super) fn reset_session(&mut self, message: &str) {
         self.send_new_session();
-        self.chat.clear();
-        self.footer.set_context(None, 0);
+        self.master_session.chat.clear();
+        self.master_session.footer.set_context(None, 0);
         self.context_stats_requested = false;
         self.notify(message, NotifyLevel::Success);
     }

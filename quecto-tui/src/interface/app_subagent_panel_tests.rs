@@ -18,6 +18,7 @@
 use super::tui_harness::*;
 use crate::infrastructure::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::interface::ansi::strip_ansi;
+use crate::interface::components::chat::ChatEntry;
 use crate::interface::keys::Key;
 
 /// A `SubagentInfoEvent` with an explicit parent (for tree tests) and socket.
@@ -637,5 +638,50 @@ async fn backfill_into_idle_session_renders_full_history_in_order() {
     assert!(
         q < a,
         "idle backfill must render history in order (question above answer):\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn master_is_modeled_as_active_session_like_subagents() {
+    // #828 Part 2: the master is just another `SessionView`. With no sub-agent
+    // selected, the active-session accessors must resolve to the MASTER session
+    // (its own chat / workflow bar / footer) — the same `active_session` path a
+    // selected sub-agent takes — with `active_subagent_running` mirroring the
+    // master's run state rather than being hard-coded `false`.
+    let mut h = with_two_subagents().await;
+
+    // Master active (None): the active chat is the master's, and a started turn
+    // drives the unified running flag exactly as a sub-agent's would.
+    assert_eq!(h.app_mut().active_agent_id(), None);
+    h.app_mut().active_chat_mut().add_entry(ChatEntry::User {
+        text: "master-msg".to_string(),
+    });
+    assert!(
+        h.app_mut().active_subagent_running(),
+        "AgentStart must set the master session's unified running flag"
+    );
+
+    // The master's chat is reached through the SAME active-session accessor.
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("master-msg"),
+        "master content renders through the unified active-session path:\n{frame}"
+    );
+
+    // Selecting a sub-agent flips the SAME accessors to that session, and the
+    // master's run flag is independent of the viewed session.
+    h.app_mut().select_agent(Some("worker"));
+    assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
+    assert!(
+        !h.app_mut().active_subagent_running(),
+        "the freshly-selected idle sub-agent session is not running"
+    );
+
+    // Esc returns to the master session and its running flag is intact.
+    h.press(Key::Escape);
+    assert_eq!(h.app_mut().active_agent_id(), None);
+    assert!(
+        h.app_mut().active_subagent_running(),
+        "returning to master restores its still-running unified flag"
     );
 }

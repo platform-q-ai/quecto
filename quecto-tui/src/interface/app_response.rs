@@ -78,7 +78,7 @@ impl App {
     fn handle_get_state(&mut self, data: Option<serde_json::Value>) {
         let Some(data) = data else { return };
         // Shared get_state→footer mapping (model + context-window); see #805.
-        if let Some(model) = self.footer.apply_get_state(&data) {
+        if let Some(model) = self.master_session.footer.apply_get_state(&data) {
             self.current_model = Some(model);
         }
         if data
@@ -97,7 +97,7 @@ impl App {
             };
         }
         if let Some(wf) = data.get("workflow") {
-            self.workflow_bar = workflow_bar::parse_workflow_event(wf);
+            self.master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
     }
@@ -159,11 +159,12 @@ impl App {
 
     fn handle_agent_error(&mut self, error: Option<String>) {
         let msg = error.unwrap_or_else(|| "unknown error".into());
-        self.chat.add_entry(ChatEntry::Status {
+        self.master_session.chat.add_entry(ChatEntry::Status {
             text: format!("Error: {}", msg),
         });
         self.agent_state.reset();
-        self.footer.set_streaming(false);
+        self.master_session.running = false;
+        self.master_session.footer.set_streaming(false);
         self.spinner = None;
     }
 

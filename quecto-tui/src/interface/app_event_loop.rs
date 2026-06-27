@@ -101,8 +101,9 @@ impl App {
                             // Agent disconnected — stop polling.
                             self.agent_connected = false;
                             self.agent_state.reset();
+                            self.master_session.running = false;
                             self.spinner = None;
-                            self.chat.finalize_assistant();
+                            self.master_session.chat.finalize_assistant();
                             self.notify("Agent disconnected", NotifyLevel::Error);
                             self.render();
                         }
@@ -450,8 +451,8 @@ impl App {
             }
             Key::Ctrl('o') => {
                 // Toggle tool output expansion.
-                self.chat.toggle_tool_expand();
-                let state = if self.chat.tool_expanded {
+                self.master_session.chat.toggle_tool_expand();
+                let state = if self.master_session.chat.tool_expanded {
                     "expanded"
                 } else {
                     "collapsed"
@@ -670,10 +671,9 @@ impl App {
             }
         }
 
-        // Route to the ACTIVE session (#802). When a sub-agent is selected the
-        // prompt steers THAT agent over its own connection — its single dispatch
-        // loop queues the prompt until its turn ends — and lands in its session
-        // transcript, never the master's.
+        // Route to the ACTIVE session (#802). A selected sub-agent's prompt
+        // steers THAT agent over its own connection (its dispatch loop queues
+        // the prompt until its turn ends) and lands in its session, not master's.
         if self.active_agent_id.is_some() {
             let steer = self.active_subagent_running();
             let cmd = Command::Prompt {
@@ -681,11 +681,10 @@ impl App {
                 message: text.to_string(),
                 streaming_behavior: steer.then(|| "steer".to_string()),
             };
-            // Append the prompt to the sub-agent transcript ONLY when the route
-            // actually enqueued it (#804 review). On a failed route (no live
-            // sender / full channel) the prompt was never delivered, so showing
-            // it in the body would leave a User entry that the agent never
-            // answers — UI/state divergence.
+            // Append to the sub-agent transcript ONLY when the route actually
+            // enqueued it (#804 review): a failed route (no live sender / full
+            // channel) never delivered the prompt, so a User entry would diverge
+            // UI from state.
             if self.send_to_active_subagent(cmd) {
                 self.active_chat_mut().add_entry(ChatEntry::User {
                     text: text.to_string(),
@@ -695,7 +694,7 @@ impl App {
         }
 
         // Master session: add user message to chat and send to the primary agent.
-        self.chat.add_entry(ChatEntry::User {
+        self.master_session.chat.add_entry(ChatEntry::User {
             text: text.to_string(),
         });
         let cmd = Command::Prompt {
@@ -734,16 +733,17 @@ impl App {
         // The AgentEnd event will arrive and be matched against the current
         // generation, preventing stale events from corrupting state (#502).
         self.agent_state.abort();
-        self.footer.set_streaming(false);
+        self.master_session.footer.set_streaming(false);
 
-        // Stop spinner (visual feedback that abort was acknowledged).
+        // Stop spinner / working indicator; `agent_state` stays aborting (#828).
+        self.master_session.running = false;
         self.spinner = None;
 
         // Finalize any streaming assistant message.
-        self.chat.finalize_assistant();
+        self.master_session.chat.finalize_assistant();
 
         // Show abort status.
-        self.chat.add_entry(ChatEntry::Status {
+        self.master_session.chat.add_entry(ChatEntry::Status {
             text: "Operation aborted".to_string(),
         });
     }
