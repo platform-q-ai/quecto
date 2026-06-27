@@ -3,7 +3,18 @@ use crate::interface::cli::uds_ext_protocol;
 
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     // Agent-targeted message tail forwards to the named sub-agent's own UDS
-    // before the local-history fast path can answer it (#795).
+    // before the local-history fast path can answer it (#795/#837).
+    if let AgentCommand::GetMessages {
+        count: Some(count),
+        agent_id: Some(agent_id),
+        id,
+    } = &cmd
+    {
+        let tn = cmd.type_name();
+        let ev = forward_subagent_messages_tail(ctx, id.as_deref(), tn, agent_id, *count).await;
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     if let AgentCommand::GetMessagesTail {
         count,
         agent_id: Some(agent_id),
@@ -114,12 +125,12 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     }
 }
 
-/// Forward a `get_messages_tail` request to a spawned sub-agent and wrap its
-/// response as this command's reply (#795).
+/// Forward a `get_messages` tail request to a spawned sub-agent and wrap its
+/// response as this command's reply (#795/#837).
 ///
-/// Reuses the shared sub-agent socket lookup and UDS round-trip helpers (the
-/// same path `agent_cmd get_messages_tail` uses) rather than re-deriving the
-/// tail locally — the sub-agent answers from its own conversation history.
+/// Reuses the shared sub-agent socket lookup and UDS round-trip helpers rather
+/// than re-deriving the tail locally — the sub-agent answers from its own
+/// conversation history.
 async fn forward_subagent_messages_tail(
     ctx: &DispatchCtx<'_>,
     id: Option<&str>,
@@ -137,7 +148,7 @@ async fn forward_subagent_messages_tail(
         Ok(path) => path,
         Err(e) => return AgentEvent::err(id, tn, e),
     };
-    let cmd = serde_json::json!({ "type": "get_messages_tail", "count": count }).to_string();
+    let cmd = serde_json::json!({ "type": "get_messages", "count": count }).to_string();
     // This forward is awaited inline in the single shared dispatch loop, so it
     // uses the short interactive timeout — a slow/hung sub-agent must not stall
     // steer/abort/new-message for any client for the full agent_cmd 300s (#795).

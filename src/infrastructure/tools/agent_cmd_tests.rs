@@ -100,23 +100,24 @@ fn test_parse_steer_requires_message() {
 }
 
 #[test]
-fn test_parse_get_messages_tail_default_count() {
+fn test_parse_get_messages_count_builds_tail_json() {
     let tool = empty_tool();
     let (_, cmd) = tool
-        .parse_and_build(r#"{"agent_id":"w1","command":"get_messages_tail"}"#)
+        .parse_and_build(r#"{"agent_id":"w1","command":"get_messages","count":5}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
-    assert_eq!(parsed["type"], "get_messages_tail");
-    assert_eq!(parsed["count"], 1);
+    assert_eq!(parsed["type"], "get_messages");
+    assert_eq!(parsed["count"], 5);
 }
 
 #[test]
-fn test_parse_get_messages_tail_custom_count() {
+fn test_parse_get_messages_tail_aliases_to_get_messages_count() {
     let tool = empty_tool();
     let (_, cmd) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"get_messages_tail","count":5}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+    assert_eq!(parsed["type"], "get_messages");
     assert_eq!(parsed["count"], 5);
 }
 
@@ -217,16 +218,6 @@ fn test_parse_follow_up_with_message() {
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
     assert_eq!(parsed["type"], "follow_up");
     assert_eq!(parsed["message"], "After done");
-}
-
-#[test]
-fn test_parse_get_messages() {
-    let tool = empty_tool();
-    let (_, cmd) = tool
-        .parse_and_build(r#"{"agent_id":"w1","command":"get_messages"}"#)
-        .unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
-    assert_eq!(parsed["type"], "get_messages");
 }
 
 #[test]

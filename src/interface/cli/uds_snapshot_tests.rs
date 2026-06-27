@@ -7,8 +7,9 @@
 //! `messages` mutably for the whole turn (`agent.process(messages)`).
 
 use crate::domain::message::Message;
+use crate::interface::cli::protocol::SessionState;
 use crate::interface::cli::uds_multi::{
-    BusyFlag, BusyGuard, ConversationSnapshot, build_get_messages_line,
+    BusyFlag, BusyGuard, ConversationSnapshot, build_get_messages_line, build_get_state_line,
 };
 
 /// The connect-time line is a `get_messages`-shaped success Response carrying the
@@ -92,4 +93,31 @@ fn busy_guard_sets_flag_for_its_scope_and_clears_on_drop() {
         assert!(flag.load(Ordering::SeqCst), "busy for the turn's scope");
     }
     assert!(!flag.load(Ordering::SeqCst), "cleared on drop (turn over)");
+}
+
+#[test]
+fn build_get_state_line_serializes_status_snapshot() {
+    let state = SessionState {
+        model: "mock-model".into(),
+        is_streaming: true,
+        session_key: "cli:test".into(),
+        message_count: 2,
+        pending_message_count: 1,
+        max_context_tokens: 1234,
+        workflow: None,
+    };
+
+    let line = build_get_state_line(&state);
+    assert!(
+        line.ends_with('\n'),
+        "line must be newline-terminated: {line}"
+    );
+
+    let v: serde_json::Value = serde_json::from_str(line.trim()).expect("valid JSON line");
+    assert_eq!(v["type"], "response");
+    assert_eq!(v["command"], "get_state");
+    assert_eq!(v["success"], true);
+    assert_eq!(v["data"]["isStreaming"], true);
+    assert_eq!(v["data"]["messageCount"], 2);
+    assert_eq!(v["data"]["pendingMessageCount"], 1);
 }

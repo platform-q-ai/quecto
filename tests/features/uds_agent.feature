@@ -317,10 +317,10 @@ Feature: UDS mode for headless agent operation
     Then the agent output should contain a parse error response
     And the agent output should contain a response command "parse_error" with success false
 
-  # ─── get_messages_tail command ───────────────────────────────────────────────
+  # ─── get_messages count parameter ────────────────────────────────────────────
 
   @done
-  Scenario: get_messages_tail returns last N messages
+  Scenario: get_messages with count returns last N messages
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "reply one"
@@ -328,45 +328,47 @@ Feature: UDS mode for headless agent operation
     When I start the UDS agent with no [session]
     And I send prompt "first"
     And I send prompt "second"
-    And I send get_messages_tail with count 2 and id "gmt-1"
+    And I send get_messages with count 2 and id "gmt-1"
     And I close the UDS connection
-    Then the agent output should contain a response command "get_messages_tail" with success true
-    And the get_messages_tail response should include a "messages" array
-    And the get_messages_tail messages count should be at most 2
+    Then the agent output should contain a response command "get_messages" with success true
+    And the get_messages response data should include a "messages" array
+    And the get_messages messages count should be exactly 2
+    And the get_messages messages should contain content "second" before "reply two"
 
   @done
-  Scenario: get_messages_tail with count larger than history returns all messages
+  Scenario: get_messages with count larger than history returns all messages
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "only reply"
     When I start the UDS agent with no [session]
     And I send prompt "only prompt"
-    And I send get_messages_tail with count 100 and id "gmt-2"
+    And I send get_messages with count 100 and id "gmt-2"
     And I close the UDS connection
-    Then the agent output should contain a response command "get_messages_tail" with success true
-    And the get_messages_tail response should include a "messages" array
+    Then the agent output should contain a response command "get_messages" with success true
+    And the get_messages response data should include a "messages" array
+    And the get_messages messages count should be exactly 2
 
   @done
-  Scenario: get_messages_tail with count 0 returns empty messages array
+  Scenario: get_messages with count 0 returns empty messages array
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "any reply"
     When I start the UDS agent with no [session]
     And I send prompt "any prompt"
-    And I send get_messages_tail with count 0 and id "gmt-3"
+    And I send get_messages with count 0 and id "gmt-3"
     And I close the UDS connection
-    Then the agent output should contain a response command "get_messages_tail" with success true
-    And the get_messages_tail messages count should be exactly 0
+    Then the agent output should contain a response command "get_messages" with success true
+    And the get_messages messages count should be exactly 0
 
   @done
-  Scenario: get_messages_tail on empty history returns empty array
+  Scenario: get_messages with count on empty history returns empty array
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     When I start the UDS agent with no [session]
-    And I send get_messages_tail with count 5 and id "gmt-4"
+    And I send get_messages with count 5 and id "gmt-4"
     And I close the UDS connection
-    Then the agent output should contain a response command "get_messages_tail" with success true
-    And the get_messages_tail messages count should be exactly 0
+    Then the agent output should contain a response command "get_messages" with success true
+    And the get_messages messages count should be exactly 0
 
   # ─── compute_session_stats correctness ───────────────────────────────────────
 

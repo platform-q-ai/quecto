@@ -343,10 +343,19 @@ fn test_set_model_is_reflected_in_state_snapshot() {
     assert_eq!(snap.model, "claude-opus-4-5");
 }
 
-// ─── get_messages_tail ───────────────────────────────────────────────────────
+// ─── get_messages count ──────────────────────────────────────────────────────
 
 #[test]
-fn test_parse_get_messages_tail_line() {
+fn test_parse_get_messages_with_count_line() {
+    let line = r#"{"type":"get_messages","count":3}"#;
+    let cmd = parse_command_line(line).unwrap();
+    assert_eq!(cmd.type_name(), "get_messages");
+    let wire = serde_json::to_value(&cmd).unwrap();
+    assert_eq!(wire["count"], 3);
+}
+
+#[test]
+fn test_deprecated_get_messages_tail_still_parses() {
     let line = r#"{"type":"get_messages_tail","count":3}"#;
     let cmd = parse_command_line(line).unwrap();
     match cmd {
@@ -356,17 +365,7 @@ fn test_parse_get_messages_tail_line() {
 }
 
 #[test]
-fn test_get_messages_tail_type_name() {
-    let cmd = AgentCommand::GetMessagesTail {
-        id: None,
-        count: 5,
-        agent_id: None,
-    };
-    assert_eq!(cmd.type_name(), "get_messages_tail");
-}
-
-#[test]
-fn test_get_messages_tail_returns_last_n_in_order() {
+fn test_get_messages_with_count_returns_last_n_in_order() {
     // Build 5 user messages and request tail of 3 — should get last 3 in original order.
     let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("msg{i}"))).collect();
     let data = messages_tail_json(&messages, 3);

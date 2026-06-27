@@ -33,7 +33,6 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "await",
     "get_state",
     "get_messages",
-    "get_messages_tail",
     "get_session_stats",
     "get_subagents",
     "get_extensions",
@@ -133,7 +132,7 @@ impl AgentCmdTool {
             .ok_or("missing required field: command")?
             .to_string();
 
-        if !SUPPORTED_COMMANDS.contains(&command.as_str()) {
+        if !SUPPORTED_COMMANDS.contains(&command.as_str()) && command != "get_messages_tail" {
             return Err(format!(
                 "unsupported command '{}'; supported: {}",
                 command,
@@ -165,13 +164,19 @@ impl AgentCmdTool {
                 serde_json::json!({"type": "follow_up", "message": message})
             }
             "get_state" => serde_json::json!({"type": "get_state"}),
-            "get_messages" => serde_json::json!({"type": "get_messages"}),
-            "abort" => serde_json::json!({"type": "abort"}),
-            "get_session_stats" => serde_json::json!({"type": "get_session_stats"}),
+            "get_messages" => {
+                let mut cmd = serde_json::json!({"type": "get_messages"});
+                if let Some(count) = args.get("count").and_then(|v| v.as_u64()) {
+                    cmd["count"] = serde_json::json!(count);
+                }
+                cmd
+            }
             "get_messages_tail" => {
                 let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1);
-                serde_json::json!({"type": "get_messages_tail", "count": count})
+                serde_json::json!({"type": "get_messages", "count": count})
             }
+            "abort" => serde_json::json!({"type": "abort"}),
+            "get_session_stats" => serde_json::json!({"type": "get_session_stats"}),
             "set_model" => {
                 let model = args
                     .get("model")
@@ -344,7 +349,7 @@ impl Tool for AgentCmdTool {
             name: "agent_cmd".into(),
             description: "Send a command to a spawned subagent. \
                 Supported commands: prompt, steer, follow_up, abort, kill, await, \
-                get_state, get_messages, get_messages_tail, get_session_stats, \
+                get_state, get_messages, get_session_stats, \
                 get_subagents, get_extensions, set_model, clear_history, \
                 reload_extensions. \
                 Spawned subagents are auto-noted PASSIVELY: a one-line completion \
@@ -353,10 +358,12 @@ impl Tool for AgentCmdTool {
                 synchronously until the sub-agent reaches idle, exited, timeout, or \
                 error before continuing within the SAME turn; awaiting a completion \
                 suppresses its duplicate auto-note. Either way, read the child's full \
-                output explicitly with get_messages_tail or get_messages — the \
-                note/await summary is one line, not the result."
+                output explicitly with get_messages (optionally with count for the \
+                last N messages) — the note/await summary is one line, not the result. \
+                get_state reports live status/model/message counts; get_session_stats \
+                reports token/cost accounting."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_messages_tail","get_session_stats","get_subagents","get_extensions","set_model","clear_history","reload_extensions"],"description":"Command to send. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages_tail or get_messages."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages_tail (default: 1)"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds the agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_session_stats","get_subagents","get_extensions","set_model","clear_history","reload_extensions"],"description":"Command to send. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages (use count for the last N messages)."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for all; N for last N)"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds the agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#.into(),
         }
     }
 
@@ -417,6 +424,9 @@ impl Tool for AgentCmdTool {
     }
 }
 
+#[cfg(test)]
+#[path = "agent_cmd_definition_tests.rs"]
+mod definition_tests;
 #[cfg(test)]
 #[path = "agent_cmd_tests.rs"]
 mod tests;

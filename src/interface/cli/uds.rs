@@ -3,14 +3,12 @@ use super::uds_cancel::{
     CancelHandle, CancelSlot, PromptArgs, PromptMessageArgs, PromptOutcome, arm_cancel,
     disarm_cancel, fire_cancel, run_agent_message, run_agent_prompt,
 };
-use super::uds_extensions::build_extension_list;
-use super::uds_models::list_models_response;
 use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_broadcast};
+use super::uds_query::query_response_data;
+use super::uds_session::{AgentSession, clear_conversation, rewind_to_message_index};
 #[cfg(test)]
-use super::uds_session::compute_session_stats;
 use super::uds_session::{
-    AgentSession, clear_conversation, compute_session_stats_with_usage, message_to_json,
-    messages_tail_json, rewind_to_message_index,
+    compute_session_stats, compute_session_stats_with_usage, messages_tail_json,
 };
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::{Message, Role};
@@ -202,6 +200,7 @@ async fn single_client_loop(
     inject_system_prompt(&mut messages, &system_prompt);
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
+    let max_context_tokens = agent.max_context_tokens();
 
     run_command_loop(
         reader,
@@ -210,6 +209,9 @@ async fn single_client_loop(
             agent: &mut { agent },
             messages: &mut messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+                agent_session.state_snapshot(0, None, max_context_tokens),
+            )),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut agent_session,
             stdout: &mut *writer,
@@ -363,6 +365,7 @@ pub(crate) struct DispatchCtx<'a> {
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
     pub conversation_snapshot: super::uds_multi::ConversationSnapshot, // #828
+    pub state_snapshot: super::uds_multi::StateSnapshot,               // #837
     pub busy: super::uds_multi::BusyFlag,                              // #828
     pub session: &'a mut AgentSession,
     pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
@@ -472,61 +475,6 @@ fn display_title(raw: &str) -> String {
     let mut out: String = raw.chars().take(MAX_CHARS).collect();
     out.push('…');
     out
-}
-
-fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serde_json::Value> {
-    match cmd {
-        AgentCommand::GetState { .. } => {
-            let workflow = ctx.workflow_state.as_ref().and_then(|ws| {
-                ws.lock().ok().map(|engine| {
-                    let mut value = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
-                    if let Some(config) = &ctx.workflow_config {
-                        value["automation"] = serde_json::json!({
-                            "autoContinue": config.auto_continue,
-                            "completionNudge": config.completion_nudge,
-                        });
-                    }
-                    value
-                })
-            });
-            let state = ctx.session.state_snapshot(
-                ctx.messages.len(),
-                workflow,
-                ctx.agent.max_context_tokens(),
-            );
-            Some(serde_json::to_value(&state).unwrap_or_default())
-        }
-        AgentCommand::GetMessages { .. } => {
-            let msgs: Vec<serde_json::Value> = ctx.messages.iter().map(message_to_json).collect();
-            Some(serde_json::json!({ "messages": msgs }))
-        }
-        AgentCommand::GetMessagesTail { count, .. } => {
-            Some(messages_tail_json(ctx.messages, *count))
-        }
-        AgentCommand::GetSessionStats { .. } => {
-            let stats = compute_session_stats_with_usage(
-                ctx.session_key,
-                ctx.messages,
-                ctx.session.usage_snapshot(),
-                ctx.session.context_tokens(),
-                ctx.agent.max_context_tokens(),
-            );
-            Some(serde_json::to_value(&stats).unwrap_or_default())
-        }
-        AgentCommand::GetExtensions { .. } => {
-            Some(serde_json::json!({ "extensions": build_extension_list(ctx) }))
-        }
-        AgentCommand::ListModels { .. } => Some(list_models_response(ctx)),
-        AgentCommand::GetSubagents { .. } => {
-            let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
-            Some(serde_json::json!({ "subagents": list }))
-        }
-        AgentCommand::ReloadExtensions { .. } => {
-            // Handled in dispatch_command (needs async I/O + broadcast).
-            None
-        }
-        _ => None,
-    }
 }
 
 /// Returns `Some(bool)` if handled, `None` to fall through to the main match.

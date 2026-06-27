@@ -762,6 +762,12 @@ fn when_send_get_messages_tail(world: &mut QuectoWorld, count: usize, id: String
     world.uds_commands.push(cmd.to_string());
 }
 
+#[when(expr = "I send get_messages with count {int} and id {string}")]
+fn when_send_get_messages_with_count(world: &mut QuectoWorld, count: usize, id: String) {
+    let cmd = serde_json::json!({"type": "get_messages", "id": id, "count": count});
+    world.uds_commands.push(cmd.to_string());
+}
+
 #[when(expr = "I send raw line {string}")]
 fn when_send_raw_line(world: &mut QuectoWorld, line: String) {
     world.uds_commands.push(line);
@@ -1039,6 +1045,53 @@ fn then_get_messages_array_len(world: &mut QuectoWorld, field: String, expected:
         .map(|a| a.len())
         .unwrap_or(0);
     assert_eq!(len, expected, "unexpected get_messages.data.{field} length");
+}
+
+#[then(expr = "the get_messages messages count should be at most {int}")]
+fn then_get_messages_count_at_most(world: &mut QuectoWorld, max: usize) {
+    let resp = find_agent_response(world, "get_messages").expect("no get_messages response");
+    let messages = resp["data"]["messages"]
+        .as_array()
+        .expect("get_messages.data.messages array");
+    let count = messages.len();
+    assert!(count <= max, "expected at most {max} messages, got {count}");
+}
+
+#[then(expr = "the get_messages messages count should be exactly {int}")]
+fn then_get_messages_count_exactly(world: &mut QuectoWorld, expected: usize) {
+    let resp = find_agent_response(world, "get_messages").expect("no get_messages response");
+    let count = resp["data"]["messages"]
+        .as_array()
+        .expect("get_messages.data.messages array")
+        .len();
+    assert_eq!(
+        count, expected,
+        "expected exactly {expected} messages, got {count}"
+    );
+}
+
+#[then(expr = "the get_messages messages should contain content {string} before {string}")]
+fn then_get_messages_content_order(world: &mut QuectoWorld, first: String, second: String) {
+    let resp = find_agent_response(world, "get_messages").expect("no get_messages response");
+    let messages = resp["data"]["messages"]
+        .as_array()
+        .expect("get_messages.data.messages array");
+    let contents: Vec<String> = messages
+        .iter()
+        .filter_map(|m| m["content"].as_str().map(str::to_owned))
+        .collect();
+    let first_idx = contents
+        .iter()
+        .position(|c| c.contains(&first))
+        .unwrap_or_else(|| panic!("missing content {first:?} in {contents:?}"));
+    let second_idx = contents
+        .iter()
+        .position(|c| c.contains(&second))
+        .unwrap_or_else(|| panic!("missing content {second:?} in {contents:?}"));
+    assert!(
+        first_idx < second_idx,
+        "expected {first:?} before {second:?}: {contents:?}"
+    );
 }
 
 // ─── get_messages_tail assertions ─────────────────────────────────────────────

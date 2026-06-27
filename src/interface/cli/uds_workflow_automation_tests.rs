@@ -65,6 +65,9 @@ async fn new_session_resets_workflow_run_state() {
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+            session.state_snapshot(0, None, 0),
+        )),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
@@ -115,6 +118,9 @@ async fn resume_session_restores_target_workflow_run_state() {
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+            session.state_snapshot(0, None, 0),
+        )),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
@@ -178,6 +184,9 @@ async fn resume_session_clears_workflow_when_target_has_none() {
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+            session.state_snapshot(0, None, 0),
+        )),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
@@ -231,6 +240,9 @@ async fn set_workflow_automation_updates_config_and_engine() {
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+            session.state_snapshot(0, None, 0),
+        )),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
@@ -290,6 +302,9 @@ fn workflow_nudge_message_waits_for_selected_template() {
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+            session.state_snapshot(0, None, 0),
+        )),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
@@ -350,6 +365,9 @@ fn workflow_progress_fingerprint_changes_with_step_progress() {
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+            session.state_snapshot(0, None, 0),
+        )),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
