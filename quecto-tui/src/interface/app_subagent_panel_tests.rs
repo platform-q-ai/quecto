@@ -136,6 +136,31 @@ async fn esc_cancels_running_subagent_instead_of_returning_to_master() {
 }
 
 #[tokio::test]
+async fn observed_idle_overrides_stale_tracked_running_status() {
+    // Once the worker's OWN stream reports it finished, that is authoritative —
+    // even though the master's tracked status still lags at "running". Otherwise
+    // the spinner would linger and Esc would abort instead of returning to master.
+    let mut h = with_two_subagents().await; // worker tracked "running"
+    h.app_mut().select_agent(Some("worker"));
+    assert!(
+        h.app_mut().active_subagent_running(),
+        "mid-turn connect: running inferred from tracked status before any stream event"
+    );
+    h.app_mut()
+        .route_subagent_event("worker", Event::AgentEnd { messages: vec![] });
+    assert!(
+        !h.app_mut().active_subagent_running(),
+        "observed agent_end wins over the stale tracked 'running' status"
+    );
+    h.app_mut().handle_key(Key::Escape);
+    assert_eq!(
+        h.app_mut().active_agent_id(),
+        None,
+        "Esc on a (now observed-idle) sub-agent returns to master"
+    );
+}
+
+#[tokio::test]
 async fn grandchild_renders_indented_under_its_parent() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);

@@ -712,26 +712,26 @@ impl App {
     // ── Abort handling (bug fix) ──────────────────────────────────────
 
     pub(super) fn handle_abort(&mut self) {
-        // Abort targets the ACTIVE session (#802): a selected sub-agent's abort
-        // is routed over its own connection and finalizes its transcript, never
-        // touching the master's run state.
+        // Abort targets the ACTIVE session (#802): a selected sub-agent's abort is
+        // routed over its own connection and finalizes its transcript.
         if self.active_agent_id.is_some() {
             self.send_to_active_subagent(Command::Abort { id: None });
             self.active_chat_mut().finalize_assistant();
             if let Some(id) = self.active_agent_id.clone() {
                 if let Some(session) = self.sessions.get_mut(&id) {
                     session.running = false;
+                    // Just cancelled: mark run-state observed so the lagging tracked
+                    // status can't keep it "running" and re-abort on a 2nd Esc (#834).
+                    session.observed_run_state = true;
                 }
             }
             return;
         }
 
-        // Send abort to agent.
         self.send_command(Command::Abort { id: None });
 
-        // Call abort on the state machine — does NOT set running to false.
-        // The AgentEnd event will arrive and be matched against the current
-        // generation, preventing stale events from corrupting state (#502).
+        // Abort the state machine — does NOT set running false; the matched
+        // AgentEnd arrives and guards against stale events corrupting state (#502).
         self.agent_state.abort();
         self.master_session.footer.set_streaming(false);
 

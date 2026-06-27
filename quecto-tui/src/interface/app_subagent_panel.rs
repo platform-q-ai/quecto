@@ -101,14 +101,21 @@ impl App {
     /// per-session flag for both. The master additionally owns the richer tool
     /// `spinner` telemetry, layered on top by the render path.
     pub(super) fn active_subagent_running(&self) -> bool {
-        if self.active_session().running {
+        let session = self.active_session();
+        if session.running {
             return true;
         }
-        // Connect-on-select attaches to a sub-agent's live stream and may join
-        // MID-TURN, missing its `agent_start` — so `session.running` can read
-        // false for an agent that IS working. Fall back to the master's tracked
-        // status (the authoritative `subagent_local` view) so Esc correctly
-        // cancels a busy sub-agent instead of just navigating back to master.
+        // Once this session's OWN stream has reported a run-state event,
+        // `running` is authoritative — don't let the (lagging) master-tracked
+        // status override an accurate idle (which would leave the spinner up or
+        // make Esc abort instead of navigate, #834 review).
+        if session.observed_run_state {
+            return false;
+        }
+        // No stream state observed yet: connect-on-select may have joined
+        // MID-TURN and missed `agent_start`, so `session.running` reads a false
+        // negative. Fall back to the master's tracked status (`subagent_local`)
+        // so Esc still cancels a busy sub-agent instead of navigating to master.
         match &self.active_agent_id {
             Some(id) => self
                 .subagent_local

@@ -52,10 +52,12 @@ impl App {
         match &ev {
             Event::AgentStart | Event::TurnStart => {
                 session.running = true;
+                session.observed_run_state = true;
                 session.footer.set_streaming(true);
             }
             Event::AgentEnd { .. } | Event::TurnEnd { .. } => {
                 session.running = false;
+                session.observed_run_state = true;
                 session.footer.set_streaming(false);
             }
             _ => {}
