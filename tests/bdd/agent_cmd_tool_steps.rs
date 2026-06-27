@@ -47,21 +47,26 @@ fn given_agent_cmd_with_mock_entry(world: &mut QuectoWorld, agent_id: String) {
                                 Ok(l) => l,
                                 Err(_) => break,
                             };
-                            // Echo the sent command type in the response's
-                            // `command` field, mirroring the real child dispatch
+                            // Echo the request `id` (and command type) in the
+                            // response, mirroring the real child dispatch
                             // (`AgentEvent::ok(id, type_name, data)`), so the
-                            // command reader can match the reply to its request
-                            // and skip unsolicited responses (#831).
-                            let sent_type = serde_json::from_str::<serde_json::Value>(&line)
-                                .ok()
-                                .and_then(|v| {
-                                    v.get("type").and_then(|t| t.as_str()).map(str::to_owned)
-                                })
-                                .unwrap_or_else(|| "mock".to_string());
+                            // command reader can correlate the reply to its
+                            // request and skip unsolicited responses (#831).
+                            let parsed = serde_json::from_str::<serde_json::Value>(&line).ok();
+                            let sent_type = parsed
+                                .as_ref()
+                                .and_then(|v| v.get("type").and_then(|t| t.as_str()))
+                                .unwrap_or("mock")
+                                .to_owned();
+                            let sent_id = parsed
+                                .as_ref()
+                                .and_then(|v| v.get("id").and_then(|t| t.as_str()))
+                                .unwrap_or("")
+                                .to_owned();
                             *last_cmd_inner.lock().unwrap() = line;
                             let response = format!(
-                                r#"{{"type":"response","command":"{}","success":true}}"#,
-                                sent_type
+                                r#"{{"type":"response","id":"{}","command":"{}","success":true}}"#,
+                                sent_id, sent_type
                             );
                             let _ = writeln!(stream, "{}", response);
                         }
@@ -110,14 +115,23 @@ fn given_agent_cmd_with_busy_mock_entry(world: &mut QuectoWorld, agent_id: Strin
                 let reader = BufReader::new(stream.try_clone().unwrap());
                 for line in reader.lines() {
                     let Ok(line) = line else { break };
-                    let sent_type = serde_json::from_str::<serde_json::Value>(&line)
-                        .ok()
-                        .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_owned))
-                        .unwrap_or_else(|| "mock".to_string());
+                    let parsed = serde_json::from_str::<serde_json::Value>(&line).ok();
+                    let sent_type = parsed
+                        .as_ref()
+                        .and_then(|v| v.get("type").and_then(|t| t.as_str()))
+                        .unwrap_or("mock")
+                        .to_owned();
+                    // Echo the stamped request id so the reader correlates the
+                    // reply; the snapshot above carries no id and is skipped.
+                    let sent_id = parsed
+                        .as_ref()
+                        .and_then(|v| v.get("id").and_then(|t| t.as_str()))
+                        .unwrap_or("")
+                        .to_owned();
                     *last_cmd_inner.lock().unwrap() = line;
                     let response = format!(
-                        r#"{{"type":"response","command":"{}","data":[{{"role":"assistant","content":"LATEST TURNS"}}]}}"#,
-                        sent_type
+                        r#"{{"type":"response","id":"{}","command":"{}","data":[{{"role":"assistant","content":"LATEST TURNS"}}]}}"#,
+                        sent_id, sent_type
                     );
                     let _ = writeln!(stream, "{}", response);
                 }
@@ -224,6 +238,20 @@ fn then_agent_cmd_contains(world: &mut QuectoWorld, expected: String) {
         result.content.contains(&expected),
         "expected content to contain '{}', got: {}",
         expected,
+        result.content
+    );
+}
+
+#[then(expr = "the agent_cmd result should not contain {string}")]
+fn then_agent_cmd_not_contains(world: &mut QuectoWorld, unexpected: String) {
+    let result = world
+        .agent_cmd_result
+        .as_ref()
+        .expect("no agent_cmd result");
+    assert!(
+        !result.content.contains(&unexpected),
+        "expected content to NOT contain '{}', got: {}",
+        unexpected,
         result.content
     );
 }
