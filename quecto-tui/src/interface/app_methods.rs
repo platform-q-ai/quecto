@@ -598,8 +598,14 @@ impl App {
         }
 
         // Apply mouse selection highlight (#546) to the display copy only, so
-        // the extraction buffer (`last_rendered_lines`) stays clean.
-        apply_selection_highlight(&self.selection, &mut lines);
+        // the extraction buffer (`last_rendered_lines`) stays clean. The body
+        // begins after the optional sidepanel + divider, so clamp highlights to
+        // that visible offset (#833).
+        let (panel_width, divider_width, _body_width) = self.frame_split();
+        let body_start_col = panel_width
+            .saturating_add(divider_width)
+            .min(u16::MAX as usize) as u16;
+        apply_selection_highlight(&self.selection, &mut lines, body_start_col);
 
         // Write only changed terminal lines; the renderer tracks the previous
         // frame and performs a full draw on first use or after invalidation.

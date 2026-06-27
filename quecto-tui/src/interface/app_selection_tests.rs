@@ -156,7 +156,7 @@ fn apply_line_highlight_end_beyond_line_closes_highlight() {
 #[test]
 fn apply_selection_highlight_none_selection_no_change() {
     let mut lines = vec!["line0".to_string(), "line1".to_string()];
-    apply_selection_highlight(&None, &mut lines);
+    apply_selection_highlight(&None, &mut lines, 0);
     assert_eq!(lines[0], "line0");
     assert_eq!(lines[1], "line1");
 }
@@ -168,7 +168,7 @@ fn apply_selection_highlight_single_row() {
         start: SelectionAnchor { col: 0, row: 0 },
         end: SelectionAnchor { col: 5, row: 0 },
     });
-    apply_selection_highlight(&sel, &mut lines);
+    apply_selection_highlight(&sel, &mut lines, 0);
     assert!(
         lines[0].contains("\x1b[7m"),
         "should have reverse video: {}",
@@ -187,7 +187,7 @@ fn apply_selection_highlight_multi_row() {
         start: SelectionAnchor { col: 2, row: 0 },
         end: SelectionAnchor { col: 3, row: 2 },
     });
-    apply_selection_highlight(&sel, &mut lines);
+    apply_selection_highlight(&sel, &mut lines, 0);
     // All three rows should be highlighted.
     for (i, line) in lines.iter().enumerate() {
         assert!(
@@ -205,7 +205,7 @@ fn apply_selection_highlight_out_of_bounds_rows_ignored() {
         end: SelectionAnchor { col: 5, row: 5 },
     });
     // Should not panic.
-    apply_selection_highlight(&sel, &mut lines);
+    apply_selection_highlight(&sel, &mut lines, 0);
     assert!(lines[0].contains("\x1b[7m"));
 }
 
@@ -217,7 +217,7 @@ fn apply_selection_highlight_empty_lines() {
         end: SelectionAnchor { col: 5, row: 0 },
     });
     // Should not panic.
-    apply_selection_highlight(&sel, &mut lines);
+    apply_selection_highlight(&sel, &mut lines, 0);
     assert!(lines.is_empty());
 }
 
@@ -229,7 +229,7 @@ fn apply_selection_highlight_backward_selection() {
         start: SelectionAnchor { col: 10, row: 0 },
         end: SelectionAnchor { col: 0, row: 0 },
     });
-    apply_selection_highlight(&sel, &mut lines);
+    apply_selection_highlight(&sel, &mut lines, 0);
     assert!(lines[0].contains("\x1b[7m"));
 }
 
@@ -241,9 +241,41 @@ fn apply_selection_highlight_first_row_partial() {
         start: SelectionAnchor { col: 5, row: 0 },
         end: SelectionAnchor { col: 5, row: 1 },
     });
-    apply_selection_highlight(&sel, &mut lines);
+    apply_selection_highlight(&sel, &mut lines, 0);
     // Row 0: highlight from col 5 to end.
     assert!(lines[0].contains("\x1b[7m"), "row 0 should be highlighted");
     // Row 1: highlight from col 0 to col 5.
     assert!(lines[1].contains("\x1b[7m"), "row 1 should be highlighted");
+}
+
+#[test]
+fn multi_row_selection_highlight_stays_out_of_sidepanel() {
+    let panel_prefix = "P".repeat(28);
+    let mut lines = vec![
+        format!("{panel_prefix}first body row"),
+        format!("{panel_prefix}middle body row"),
+        format!("{panel_prefix}final body row"),
+    ];
+    let sel = Some(TextSelection {
+        start: SelectionAnchor { col: 30, row: 0 },
+        end: SelectionAnchor { col: 35, row: 2 },
+    });
+
+    apply_selection_highlight(&sel, &mut lines, 28);
+
+    for (row_idx, line) in lines.iter().enumerate() {
+        assert_first_reverse_video_starts_at_or_after(line, 28, row_idx);
+    }
+}
+
+fn assert_first_reverse_video_starts_at_or_after(line: &str, min_col: u16, row_idx: usize) {
+    let Some(byte_idx) = line.find("\x1b[7m") else {
+        panic!("row {row_idx} should be highlighted: {line:?}");
+    };
+    let visible_before_highlight = super::app_methods::strip_ansi(&line[..byte_idx]);
+    let start_col = visible_before_highlight.chars().count() as u16;
+    assert!(
+        start_col >= min_col,
+        "row {row_idx} highlight starts at visible col {start_col}, before body col {min_col}: {line:?}"
+    );
 }
