@@ -80,7 +80,9 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
             .with_event_forwarding(broadcast_tx.clone(), flags.session_name.clone()),
     ));
     let subagent_registry_for_protocol = subagent_registry.clone();
-    registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
+    registry.register(Arc::new(
+        AgentCmdTool::new(subagent_registry).with_broadcast(broadcast_tx.clone()),
+    ));
     // Build a workflow event emitter from the broadcast channel (#598).
     // Stamp emitted workflow_state events with this agent's identity (its
     // session name) and its parent (PRD Stage B), so consumers can rebuild the

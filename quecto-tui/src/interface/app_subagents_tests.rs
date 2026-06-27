@@ -297,3 +297,97 @@ async fn subagent_bar_cleared_from_compose_when_empty() {
         "subagent bar should be cleared from compose_bottom: {joined}"
     );
 }
+
+// ── #831: a state-changed dropping a subtree clears the panel + footer ──
+
+fn info_with_parent(
+    id: &str,
+    status: &str,
+    parent: &str,
+) -> crate::infrastructure::client::SubagentInfoEvent {
+    let mut i = info(id, status);
+    i.parent_id = Some(parent.to_string());
+    i
+}
+
+#[tokio::test]
+async fn killed_subtree_state_changed_clears_panel_and_footer() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    // Parent → child → grandchild, plus one unrelated live sibling.
+    a.update_subagent_bar(vec![
+        info("parent", "running"),
+        info_with_parent("child", "running", "parent"),
+        info_with_parent("gchild", "running", "child"),
+        info("sibling", "running"),
+    ]);
+    assert_eq!(a.subagent_local.len(), 4);
+
+    // Server cascade-removed parent's subtree and broadcasts the survivor set.
+    a.update_subagent_bar(vec![info("sibling", "running")]);
+
+    // The whole dead subtree is gone from the panel; the live sibling stays.
+    assert_eq!(a.subagent_local.len(), 1, "dead subtree must be dropped");
+    assert!(a.subagent_local.contains_key("sibling"));
+    assert!(!a.subagent_local.contains_key("parent"));
+    assert!(!a.subagent_local.contains_key("child"));
+    assert!(!a.subagent_local.contains_key("gchild"));
+
+    // Footer "N working" reflects the live set (1), not the stale 4.
+    let footer = super::app_methods::strip_ansi(&a.compose_bottom(120).join("\n"));
+    assert!(
+        footer.contains("1 subagent working"),
+        "footer must reflect the live set, got: {footer}"
+    );
+}
+
+#[tokio::test]
+async fn surviving_descendant_carries_its_intermediate_ancestors() {
+    // #831 nesting guard: the kernel cascade broadcasts the FULL survivor set,
+    // so an omitted ancestor only happens for a forwarded child's-eye-view push
+    // that lists a sub-tree. When a deeper node survives but its parent chain is
+    // omitted from THIS push, the ancestor-preservation loop must carry the
+    // intermediate parents over from the previous roster (so nesting depth is
+    // preserved and a grandchild is never re-rooted above its parent). This is
+    // exactly the path #831's lingering interacted with; assert it explicitly.
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.update_subagent_bar(vec![
+        info("parent", "running"),
+        info_with_parent("child", "running", "parent"),
+        info_with_parent("gchild", "running", "child"),
+    ]);
+    assert_eq!(a.subagent_local.len(), 3);
+
+    // A forwarded sub-tree push that lists ONLY the surviving grandchild.
+    a.update_subagent_bar(vec![info_with_parent("gchild", "running", "child")]);
+
+    // The grandchild survives AND its intermediate ancestors are carried over,
+    // not dropped — nesting is preserved rather than re-rooted.
+    assert!(a.subagent_local.contains_key("gchild"));
+    assert!(
+        a.subagent_local.contains_key("child"),
+        "intermediate parent must be carried for the surviving descendant"
+    );
+    assert!(
+        a.subagent_local.contains_key("parent"),
+        "grandparent must be carried transitively"
+    );
+}
+
+#[tokio::test]
+async fn state_changed_dropping_all_clears_footer_count() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.update_subagent_bar(vec![
+        info("parent", "running"),
+        info_with_parent("child", "running", "parent"),
+    ]);
+    a.update_subagent_bar(vec![]);
+    assert!(a.subagent_local.is_empty(), "all agents cleared");
+    let footer = super::app_methods::strip_ansi(&a.compose_bottom(120).join("\n"));
+    assert!(
+        !footer.contains("working"),
+        "no 'N working' footer once every agent is gone, got: {footer}"
+    );
+}

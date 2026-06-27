@@ -158,3 +158,50 @@ fn handle_monitor_line_forwards_descendant_state_changed() {
             .any(|s| s["agentId"] == "child")
     );
 }
+
+// --- #831: cascade-remove on exit/kill broadcasts the survivor set ---
+
+use super::super::subagent_registry::new_registry;
+
+fn seed_tree() -> super::super::subagent_registry::SubagentRegistry {
+    let r = new_registry();
+    let mut g = r.lock().unwrap();
+    g.insert("p".into(), SubagentEntry::new(PathBuf::from("/s"), 1));
+    let mut c = SubagentEntry::new(PathBuf::from("/s"), 2);
+    c.parent_id = Some("p".into());
+    g.insert("c".into(), c);
+    let mut gc = SubagentEntry::new(PathBuf::from("/s"), 3);
+    gc.parent_id = Some("c".into());
+    g.insert("gc".into(), gc);
+    g.insert("live".into(), SubagentEntry::new(PathBuf::from("/s"), 4));
+    drop(g);
+    r
+}
+
+#[test]
+fn cascade_remove_and_state_changed_emits_survivors_only() {
+    let r = seed_tree();
+    let event = cascade_remove_and_state_changed(&r, "p")
+        .expect("removing a live subtree must yield a broadcast event");
+    let v: serde_json::Value = serde_json::from_str(&event).unwrap();
+    assert_eq!(v["type"], "subagent_state_changed");
+    let ids: Vec<&str> = v["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["agentId"].as_str())
+        .collect();
+    // The whole dead subtree is gone; the unrelated live agent remains.
+    assert_eq!(ids, vec!["live"], "broadcast must list only survivors");
+    let g = r.lock().unwrap();
+    assert!(!g.contains_key("p") && !g.contains_key("c") && !g.contains_key("gc"));
+    assert!(g.contains_key("live"));
+}
+
+#[test]
+fn cascade_remove_and_state_changed_noop_returns_none() {
+    let r = seed_tree();
+    // Nothing to remove -> no broadcast (avoid redundant churn).
+    assert!(cascade_remove_and_state_changed(&r, "ghost").is_none());
+    assert_eq!(r.lock().unwrap().len(), 4);
+}

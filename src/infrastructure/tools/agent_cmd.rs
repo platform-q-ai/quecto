@@ -68,6 +68,10 @@ pub struct AgentCmdTool {
     registry: SubagentRegistry,
     /// Tracks active `await` calls to prevent duplicates (#612).
     active_awaits: ActiveAwaits,
+    /// Broadcast channel used to announce a `subagent_state_changed` survivor set
+    /// when `kill` cascade-removes an agent's sub-tree, so connected clients (the
+    /// TUI panel) drop the dead agents promptly (#831).
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 }
 
 impl AgentCmdTool {
@@ -76,6 +80,7 @@ impl AgentCmdTool {
         Self {
             registry,
             active_awaits: new_active_awaits(),
+            broadcast_tx: None,
         }
     }
 
@@ -84,7 +89,18 @@ impl AgentCmdTool {
         Self {
             registry,
             active_awaits,
+            broadcast_tx: None,
         }
+    }
+
+    /// Attach the broadcast channel so `kill` can announce the survivor set after
+    /// a cascade-remove (#831). Best-effort: a send with no subscribers is fine.
+    pub fn with_broadcast(
+        mut self,
+        broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    ) -> Self {
+        self.broadcast_tx = broadcast_tx;
+        self
     }
 
     /// Create a new empty registry (convenience for tests and wiring).
@@ -238,30 +254,49 @@ impl AgentCmdTool {
             .unwrap_or(false)
     }
 
-    /// Kill a specific subagent by ID: SIGTERM + remove from registry (#559).
+    /// Kill a specific subagent by ID: SIGTERM + cascade-remove its sub-tree from
+    /// the registry, then broadcast the survivor set (#559, #831).
     fn kill_agent(&self, agent_id: &str) -> ToolResult {
-        // Extract entry then drop the lock before sending SIGTERM (#559 review).
-        let entry = {
-            let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            entries.remove(agent_id)
-        };
-        let entry = match entry {
-            Some(e) => e,
-            None => {
-                return ToolResult {
-                    content: format!(
-                        "agent_cmd error: subagent '{}' not found in registry",
-                        agent_id
-                    ),
-                    is_error: true,
-                    image_blocks: vec![],
-                };
+        // Snapshot the fields we need (signal/monitor/pid) WITHOUT removing yet,
+        // so the cascade-remove below can prune this agent AND its descendants in
+        // one shot and produce a survivor-only broadcast (#831).
+        let (exit_signal_tx, monitor_handle, pid) = {
+            let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            match entries.get(agent_id) {
+                Some(e) => (e.exit_signal_tx.clone(), e.monitor_handle.clone(), e.pid),
+                None => {
+                    return ToolResult {
+                        content: format!(
+                            "agent_cmd error: subagent '{}' not found in registry",
+                            agent_id
+                        ),
+                        is_error: true,
+                        image_blocks: vec![],
+                    };
+                }
             }
         };
 
-        // Signal any waiting `await` call before dropping the entry (#612).
-        // This ensures await returns "exited" instead of spinning until timeout.
-        if let Some(ref tx) = entry.exit_signal_tx {
+        // Cascade-remove the agent and every descendant, then broadcast the
+        // survivor set so the TUI panel drops the whole dead sub-tree promptly
+        // (#831). Best-effort send: no subscribers is fine.
+        if let Some(event) =
+            super::subagent_monitor::cascade_remove_and_state_changed(&self.registry, agent_id)
+        {
+            if let Some(tx) = &self.broadcast_tx {
+                if let Err(e) = tx.send(event) {
+                    tracing::debug!(
+                        agent = %agent_id,
+                        error = %e,
+                        "kill: no subscribers for cascade state_changed broadcast"
+                    );
+                }
+            }
+        }
+
+        // Signal any waiting `await` call so it returns "exited" instead of
+        // spinning until timeout (#612).
+        if let Some(ref tx) = exit_signal_tx {
             let _ = tx.send(Some(super::subagent_registry::ExitSignal {
                 exit_code: None,
                 signal: Some(15), // SIGTERM
@@ -269,23 +304,23 @@ impl AgentCmdTool {
         }
 
         // Abort monitor task if running.
-        if let Some(ref handle) = entry.monitor_handle {
+        if let Some(ref handle) = monitor_handle {
             handle.abort();
         }
 
         // Send SIGTERM to the child process (lock already released).
         // The reaper task spawned by SpawnTool will wait() the child.
-        if entry.pid != 0 {
+        if pid != 0 {
             let _ = std::process::Command::new("kill")
                 .arg("-TERM")
-                .arg(entry.pid.to_string())
+                .arg(pid.to_string())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
         }
 
         ToolResult {
-            content: format!("Subagent '{}' killed (pid={}).", agent_id, entry.pid),
+            content: format!("Subagent '{}' killed (pid={}).", agent_id, pid),
             is_error: false,
             image_blocks: vec![],
         }

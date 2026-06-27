@@ -426,3 +426,49 @@ async fn test_notification_drain() {
     }
     assert_eq!(count, 3);
 }
+
+// --- #831: cascade-remove a dead agent and its whole subtree ---
+
+fn child_entry(parent: &str) -> SubagentEntry {
+    let mut e = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
+    e.parent_id = Some(parent.to_string());
+    e
+}
+
+#[test]
+fn cascade_remove_drops_agent_and_transitive_descendants() {
+    let r = new_registry();
+    {
+        let mut g = r.lock().unwrap();
+        g.insert("p".into(), SubagentEntry::new(PathBuf::from("/s"), 1));
+        g.insert("c".into(), child_entry("p"));
+        g.insert("gc".into(), child_entry("c"));
+        // An unrelated sibling tree that must survive.
+        g.insert("other".into(), SubagentEntry::new(PathBuf::from("/s"), 2));
+        g.insert("other-c".into(), child_entry("other"));
+    }
+    let mut removed = cascade_remove(&r, "p");
+    removed.sort();
+    assert_eq!(
+        removed,
+        vec!["c".to_string(), "gc".to_string(), "p".to_string()]
+    );
+    let g = r.lock().unwrap();
+    assert!(!g.contains_key("p"));
+    assert!(!g.contains_key("c"));
+    assert!(!g.contains_key("gc"));
+    // Unrelated subtree is NEVER removed.
+    assert!(g.contains_key("other"));
+    assert!(g.contains_key("other-c"));
+}
+
+#[test]
+fn cascade_remove_missing_agent_returns_empty() {
+    let r = new_registry();
+    r.lock()
+        .unwrap()
+        .insert("live".into(), SubagentEntry::new(PathBuf::from("/s"), 1));
+    let removed = cascade_remove(&r, "ghost");
+    assert!(removed.is_empty());
+    assert!(r.lock().unwrap().contains_key("live"));
+}

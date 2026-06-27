@@ -738,3 +738,6 @@ fn test_definition_schema_includes_timeout_and_idle_timeout() {
 
 #[path = "agent_cmd_await_extra_tests.rs"]
 mod await_extra_tests;
+
+#[path = "agent_cmd_kill_tests.rs"]
+mod kill_tests;

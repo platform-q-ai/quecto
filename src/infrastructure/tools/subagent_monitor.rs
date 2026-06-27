@@ -552,6 +552,25 @@ fn build_state_changed_event(registry: &SubagentRegistry) -> String {
     .to_string()
 }
 
+/// Cascade-remove `agent_id`'s dead sub-tree from the registry and, if anything
+/// was actually removed, return a canonical `subagent_state_changed` event
+/// carrying the SURVIVORS only — ready to broadcast so every connected client
+/// (the TUI panel) drops the dead agents promptly (#831).
+///
+/// Returns `None` when nothing was removed (unknown agent), avoiding redundant
+/// broadcast churn. A still-live agent is never touched.
+pub fn cascade_remove_and_state_changed(
+    registry: &SubagentRegistry,
+    agent_id: &str,
+) -> Option<String> {
+    let removed =
+        crate::infrastructure::tools::subagent_registry::cascade_remove(registry, agent_id);
+    if removed.is_empty() {
+        return None;
+    }
+    Some(build_state_changed_event(registry))
+}
+
 /// Line-based wrapper around [`merge_and_forward_state_changed`]: cheap
 /// substring pre-filter, then parse once. Returns `None` for non-state lines.
 pub fn forward_child_state_changed(line: &str, registry: &SubagentRegistry) -> Option<String> {

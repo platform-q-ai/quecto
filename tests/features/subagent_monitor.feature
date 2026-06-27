@@ -125,3 +125,18 @@ Feature: Persistent subagent monitor — live event stream from child agents
     Given a monitor abort handle
     When the abort handle is triggered
     Then the monitor task should be cancelled
+
+  # --- Cascade-remove + broadcast on exit/kill (#831) ---
+
+  Scenario: killing a parent cascade-removes its whole subtree and broadcasts survivors
+    Given a root registry with parent "p", child "c" under "p", and grandchild "gc" under "c", plus a live agent "live"
+    When the parent "p" is killed
+    Then the broadcast subagent_state_changed should list only "live"
+    And the registry should no longer contain "p", "c", or "gc"
+    And the registry should still contain "live"
+
+  Scenario: a removal request for an unknown agent emits no broadcast
+    Given a root registry with parent "p", child "c" under "p", and grandchild "gc" under "c", plus a live agent "live"
+    When an unknown agent "ghost" is reported gone
+    Then no subagent_state_changed broadcast is emitted
+    And the registry should still contain "live"

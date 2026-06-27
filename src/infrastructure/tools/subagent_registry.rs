@@ -173,6 +173,35 @@ pub fn new_registry() -> SubagentRegistry {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
+/// Remove `agent_id` AND every transitive descendant (by `parent_id`) from the
+/// registry, returning the ids actually removed (#831).
+///
+/// When an agent exits or is killed its whole sub-tree is dead: a grandchild
+/// whose parent is gone can never make progress and must not linger in the root
+/// registry (the lingering-panel bug). Unrelated sibling trees are untouched. A
+/// missing `agent_id` is a no-op and returns an empty Vec.
+pub fn cascade_remove(registry: &SubagentRegistry, agent_id: &str) -> Vec<String> {
+    let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+    if !guard.contains_key(agent_id) {
+        return Vec::new();
+    }
+    let mut removed = Vec::new();
+    let mut frontier = vec![agent_id.to_string()];
+    while let Some(id) = frontier.pop() {
+        if guard.remove(&id).is_none() {
+            continue;
+        }
+        // Any entry whose parent is the just-removed id is now orphaned.
+        for (child_id, entry) in guard.iter() {
+            if entry.parent_id.as_deref() == Some(id.as_str()) {
+                frontier.push(child_id.clone());
+            }
+        }
+        removed.push(id);
+    }
+    removed
+}
+
 /// Maximum wall-clock time to wait for a forwarded sub-agent UDS response on the
 /// `agent_cmd` path (a tool call that may legitimately wait on a long operation).
 const SUBAGENT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
