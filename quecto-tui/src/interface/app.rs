@@ -200,21 +200,19 @@ pub struct App {
 /// and own footer. The editor and overlays stay single-instance on `App`.
 pub(crate) struct SessionView {
     chat: Chat,
-    /// The child's own workflow/phase bar, fed by its forwarded `workflow_state`
-    /// events so a selected sub-agent renders the same bar the master would.
+    /// The child's own workflow/phase bar, fed by its forwarded `workflow_state`.
     workflow_bar: workflow_bar::WorkflowBarState,
-    /// Whether the child is mid-turn — drives a per-session working indicator so
-    /// a steered sub-agent never looks dead while it processes a queued prompt.
+    /// Whether the child is mid-turn — drives a per-session working indicator.
     running: bool,
-    /// This session's OWN status footer — context-window / cost / model gauges
-    /// fed by its `get_state` / `turn_end` / session-stats events (#805).
+    /// This session's OWN status footer (context-window / cost / model gauges, #805).
     footer: Footer,
-    /// Completion notes from THIS child's own sub-agents (grandchildren) received
-    /// while this child is mid-turn; flushed when it goes idle so a note never
-    /// splits the child's streaming response (#816).
+    /// Grandchild completion notes buffered while mid-turn; flushed at idle (#816).
     deferred_subagent_notes: std::collections::VecDeque<String>,
     /// Whether the history backfill was applied (#828) — guards re-delivery.
     history_backfilled: bool,
+    /// Whether this session's own stream has reported run-state yet; until it has
+    /// `active_subagent_running` trusts the tracked status not `running` (#834).
+    observed_run_state: bool,
 }
 
 impl SessionView {
@@ -234,6 +232,7 @@ impl SessionView {
             footer,
             deferred_subagent_notes: std::collections::VecDeque::new(),
             history_backfilled: false,
+            observed_run_state: false,
         }
     }
 }
