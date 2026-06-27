@@ -340,6 +340,9 @@ pub struct QuectoWorld {
     pub tui_parity_rt: Option<tokio::runtime::Runtime>,
     /// TUI sub-agent session-parity BDD (#805): the headless render harness.
     pub tui_parity: Option<TuiParityHarness>,
+    /// The sub-agent id currently being viewed (#828): captured on select so
+    /// backfill/assertion steps route to the right session, not a literal id.
+    pub tui_viewed_agent: Option<String>,
     /// TUI scrollback BDD: viewport captured before streaming growth.
     pub tui_viewport_before_stream: Vec<String>,
     /// TUI scrollback BDD: viewport captured after streaming growth.

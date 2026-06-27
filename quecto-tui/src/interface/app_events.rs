@@ -68,11 +68,7 @@ impl App {
         self.chat.finalize_assistant();
         // Parent is now idle — flush any sub-agent completion notes that arrived
         // mid-turn, so they appear after the finished response instead of in it.
-        for note in std::mem::take(&mut self.deferred_subagent_notes) {
-            self.chat.add_entry(ChatEntry::Status {
-                text: format!("◆ {note}"),
-            });
-        }
+        Self::flush_deferred_notes(&mut self.chat, &mut self.deferred_subagent_notes);
     }
 
     fn handle_turn_end(&mut self, message: serde_json::Value) {
@@ -167,13 +163,14 @@ impl App {
         let message = crate::interface::ansi::sanitize_control(&message);
         // Never split an in-flight streaming response: if the parent is mid-turn,
         // defer the note and flush it when the parent goes idle (handle_agent_end).
-        if self.agent_state.is_running() {
-            self.deferred_subagent_notes.push(message);
-            return;
-        }
-        self.chat.add_entry(ChatEntry::Status {
-            text: format!("◆ {message}"),
-        });
+        // Shared defer/flush policy with the per-session path (#828).
+        let running = self.agent_state.is_running();
+        Self::push_or_defer_note(
+            &mut self.chat,
+            &mut self.deferred_subagent_notes,
+            running,
+            message,
+        );
     }
 
     fn track_starting_subagent(&mut self, args: &serde_json::Value) {

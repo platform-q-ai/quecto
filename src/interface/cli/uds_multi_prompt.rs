@@ -231,11 +231,10 @@ pub(in crate::interface::cli) fn forward_notification_broadcast(
     subagent_registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 ) -> bool {
     let (agent_id, sequence) = notif.dedupe_key();
-    let suppress = subagent_registry.as_ref().is_some_and(|reg| {
-        crate::infrastructure::tools::subagent_registry::take_completion_consumed_by_await(
-            reg, &agent_id,
-        )
-    });
+    let suppress = crate::infrastructure::tools::subagent_registry::consume_await_dedupe(
+        subagent_registry,
+        &agent_id,
+    );
     if !suppress {
         tracing::info!(
             %agent_id,

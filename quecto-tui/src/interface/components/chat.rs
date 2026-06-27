@@ -204,6 +204,23 @@ impl Chat {
         self.scroll_offset = 0;
     }
 
+    /// Prepend history entries ABOVE the existing (live) content (#828). The
+    /// connect-on-select backfill for a busy sub-agent arrives AFTER live tokens
+    /// have already streamed in; reconciling it as a prefix preserves the live
+    /// content instead of a wholesale `clear()`+replace that would drop it.
+    pub fn prepend_history(&mut self, entries: Vec<ChatEntry>) {
+        if entries.is_empty() {
+            return;
+        }
+        let n = entries.len();
+        self.entries.splice(0..0, entries);
+        self.render_cache
+            .splice(0..0, std::iter::repeat_with(|| None).take(n));
+        // Indices shifted, so the incremental offset table must rebuild fully.
+        self.combined_width = None;
+        self.scroll_offset = 0;
+    }
+
     pub fn set_viewport_height(&mut self, height: usize) {
         self.viewport_height = Some(height);
     }

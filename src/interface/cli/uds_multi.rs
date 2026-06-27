@@ -331,11 +331,11 @@ async fn run_dispatch_loop(
                 // race-free because the dispatch loop is single-threaded: the
                 // await tool call set the flag before this queued notification is
                 // processed.
-                let suppress = ctx.subagent_registry.as_ref().is_some_and(|reg| {
-                    crate::infrastructure::tools::subagent_registry::take_completion_consumed_by_await(
-                        reg, &agent_id,
-                    )
-                });
+                let suppress =
+                    crate::infrastructure::tools::subagent_registry::consume_await_dedupe(
+                        &ctx.subagent_registry,
+                        &agent_id,
+                    );
                 let mut should_deliver = false;
                 if !suppress {
                     // Auto-await (#816): enqueue the one-line note for delivery at

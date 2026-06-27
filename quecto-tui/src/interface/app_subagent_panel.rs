@@ -59,6 +59,13 @@ impl App {
         &mut self.sessions.get_mut(&id).unwrap().chat
     }
 
+    /// Test-only: number of chat entries in a sub-agent session (for asserting
+    /// the deferred-note buffer cap independently of the rendered viewport).
+    #[cfg(test)]
+    pub(crate) fn session_chat_entry_count(&self, agent_id: &str) -> Option<usize> {
+        self.sessions.get(agent_id).map(|s| s.chat.entry_count())
+    }
+
     /// The active session's workflow bar: the master's own when no sub-agent is
     /// selected, otherwise the selected agent's (#802). Falls back to the master
     /// bar if the session is somehow missing.
@@ -176,7 +183,7 @@ impl App {
 
     /// Create the session for `id` if missing, recording retention order and
     /// evicting the oldest non-active session beyond the cap.
-    fn ensure_session(&mut self, id: &str) {
+    pub(super) fn ensure_session(&mut self, id: &str) {
         if !self.sessions.contains_key(id) {
             self.sessions
                 .insert(id.to_string(), SessionView::new(self.git_branch.clone()));
@@ -327,141 +334,6 @@ impl App {
             handle.abort();
         }
         self.active_subagent_cmd_tx = None;
-    }
-
-    // ── Routing the sub-agent stream into its session ──────────────────
-
-    /// Route one event from a sub-agent's direct connection into that agent's
-    /// `SessionView`, mirroring the master render path so the body is visibly
-    /// equivalent to how the master renders (#800).
-    pub(super) fn route_subagent_event(&mut self, agent_id: &str, ev: Event) {
-        // Tearing down a connection mid-stream can leave already-queued
-        // `(old_id, ev)` items in `subagent_event_rx`. Drop events for agents
-        // that are neither still tracked nor have a retained session, so a
-        // stale frame cannot resurrect a session `evict_retained_sessions`
-        // just dropped (#800 review).
-        if !self.sessions.contains_key(agent_id) && !self.subagent_local.contains_key(agent_id) {
-            return;
-        }
-        self.ensure_session(agent_id);
-        let Some(session) = self.sessions.get_mut(agent_id) else {
-            return;
-        };
-        // Per-session workflow bar so a selected sub-agent renders its OWN
-        // workflow/phase bar, footer-equivalent chrome and running state (#802).
-        if let Event::WorkflowState {
-            agent_id: _,
-            steps,
-            progress,
-            active_issue,
-            mode,
-            active_template,
-            available_templates,
-        } = &ev
-        {
-            session.workflow_bar = super::app_events::build_workflow_state(
-                steps,
-                progress,
-                active_issue,
-                mode,
-                active_template,
-                available_templates,
-            );
-            return;
-        }
-        match &ev {
-            Event::AgentStart | Event::TurnStart => {
-                session.running = true;
-                session.footer.set_streaming(true);
-            }
-            Event::AgentEnd { .. } | Event::TurnEnd { .. } => {
-                session.running = false;
-                session.footer.set_streaming(false);
-            }
-            _ => {}
-        }
-        // Per-session FOOTER: feed the child's OWN context-window / cost / model
-        // gauges from its forwarded events so a selected sub-agent shows ITS
-        // usage, not the master's (#805).
-        Self::update_session_footer(session, &ev);
-        // A completion note for THIS child's own sub-agent (a grandchild): render
-        // it as a passive one-line status in this session's chat, deferred while
-        // the child streams so it never splits the child's response (#816).
-        if let Event::SubagentNotification { message, .. } = &ev {
-            let message = crate::interface::ansi::sanitize_control(message);
-            if session.running {
-                session.deferred_subagent_notes.push(message);
-            } else {
-                session.chat.add_entry(ChatEntry::Status {
-                    text: format!("◆ {message}"),
-                });
-            }
-            return;
-        }
-        // Flush deferred grandchild notes once this child goes idle (after the
-        // streamed response is finalized below).
-        let flush_notes = matches!(ev, Event::AgentEnd { .. } | Event::TurnEnd { .. });
-        let chat = &mut session.chat;
-        match ev {
-            Event::Token { token } => chat.append_token(&token),
-            Event::AgentEnd { .. } | Event::TurnEnd { .. } => chat.finalize_assistant(),
-            Event::ToolExecutionStart {
-                tool_call_id,
-                tool_name,
-                args,
-            } => {
-                let args_str = if args.is_object() || args.is_array() {
-                    serde_json::to_string(&args).unwrap_or_default()
-                } else {
-                    args.to_string()
-                };
-                if !super::app_events::suppress_tool_box(&tool_name, &args) {
-                    chat.start_tool(tool_call_id, tool_name, args_str);
-                }
-            }
-            Event::ToolExecutionEnd {
-                tool_call_id,
-                result,
-                is_error,
-                ..
-            } => {
-                let text = crate::infrastructure::client::extract_result_text(&result);
-                chat.complete_tool(&tool_call_id, &text, is_error, None);
-            }
-            Event::Response {
-                command,
-                data: Some(data),
-                ..
-            } if command == "get_messages" => {
-                Self::replace_session_chat(chat, &data);
-            }
-            _ => {}
-        }
-        if flush_notes {
-            for note in std::mem::take(&mut session.deferred_subagent_notes) {
-                session.chat.add_entry(ChatEntry::Status {
-                    text: format!("◆ {note}"),
-                });
-            }
-        }
-    }
-
-    /// Replace a session's chat from a `get_messages` payload (history backfill).
-    fn replace_session_chat(chat: &mut Chat, data: &serde_json::Value) {
-        use crate::application::session_payloads::{self, ResumedChatMessage};
-        let Ok(messages) = session_payloads::parse_resumed_messages(data) else {
-            return;
-        };
-        chat.clear();
-        for message in messages {
-            match message {
-                ResumedChatMessage::User(text) => chat.add_entry(ChatEntry::User { text }),
-                ResumedChatMessage::Assistant(text) => chat.add_entry(ChatEntry::Assistant {
-                    text,
-                    streaming: false,
-                }),
-            }
-        }
     }
 
     // ── Panel rendering ────────────────────────────────────────────────

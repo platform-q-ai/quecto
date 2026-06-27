@@ -153,6 +153,18 @@ pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_id: 
     false
 }
 
+/// Check-and-consume the await-dedupe flag for `agent_id` against an OPTIONAL
+/// registry, the form both UDS dispatch paths hold (#828). Returns `true` when
+/// the passive completion note should be suppressed (a manual `await` already
+/// reported it); `false` when there is no registry or no pending flag. Wraps
+/// [`take_completion_consumed_by_await`] so the suppress predicate lives in ONE
+/// place instead of being mirrored across `uds_multi`/`uds_multi_prompt`.
+pub fn consume_await_dedupe(registry: &Option<SubagentRegistry>, agent_id: &str) -> bool {
+    registry
+        .as_ref()
+        .is_some_and(|reg| take_completion_consumed_by_await(reg, agent_id))
+}
+
 /// Shared registry of spawned subagents (agent_id → entry).
 pub type SubagentRegistry = Arc<Mutex<HashMap<String, SubagentEntry>>>;
 

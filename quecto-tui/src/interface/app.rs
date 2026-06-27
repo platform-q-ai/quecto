@@ -110,8 +110,7 @@ pub struct App {
     kitty: KittyProtocol,
     agent_state: AgentRunState,
     /// Passive sub-agent completion notes (#816) received while the parent is
-    /// mid-turn; flushed to the chat when the parent next goes idle so a note
-    /// never splits an in-flight streaming response.
+    /// mid-turn; flushed when it next goes idle so a note never splits a response.
     deferred_subagent_notes: Vec<String>,
     should_exit: bool,
     stdin_buffer: crate::interface::stdin_buffer::StdinBuffer,
@@ -169,10 +168,9 @@ pub struct App {
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
     /// Per-sub-agent session views, keyed by agent id (#800). The master is not
-    /// in this map — it is the top-level `self.chat`/`self.workflow_bar`/etc.
-    /// and is represented by `active_agent_id == None`. Sessions are retained
-    /// after a sub-agent exits so the user can keep viewing its last session,
-    /// bounded by `MAX_RETAINED_SESSIONS`.
+    /// in this map — it is the top-level `self.chat`/`self.workflow_bar`/etc. and
+    /// is `active_agent_id == None`. Sessions are retained after a sub-agent exits
+    /// so its last session stays viewable, bounded by `MAX_RETAINED_SESSIONS`.
     sessions: std::collections::BTreeMap<String, SessionView>,
     /// Insertion order of session ids, for bounded retention eviction (#800).
     session_order: Vec<String>,
@@ -218,6 +216,8 @@ pub(crate) struct SessionView {
     /// while this child is mid-turn; flushed when it goes idle so a note never
     /// splits the child's streaming response (#816).
     deferred_subagent_notes: Vec<String>,
+    /// Whether the history backfill was applied (#828) — guards re-delivery.
+    history_backfilled: bool,
 }
 
 impl SessionView {
@@ -230,6 +230,7 @@ impl SessionView {
             running: false,
             footer,
             deferred_subagent_notes: Vec::new(),
+            history_backfilled: false,
         }
     }
 }
@@ -378,6 +379,8 @@ mod app_rewind;
 mod app_selection;
 #[path = "app_subagent_panel.rs"]
 mod app_subagent_panel;
+#[path = "app_subagent_stream.rs"]
+mod app_subagent_stream;
 #[path = "app_subagents.rs"]
 mod app_subagents;
 

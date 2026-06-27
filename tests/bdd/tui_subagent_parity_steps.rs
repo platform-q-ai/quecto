@@ -163,6 +163,7 @@ fn given_viewing(world: &mut QuectoWorld, id: String) {
     drive(world, |h| {
         h.select(Some(&id));
     });
+    world.tui_viewed_agent = Some(id);
 }
 
 #[given(expr = "a TUI viewing sub-agent {string} with focus on the panel")]
@@ -408,6 +409,77 @@ fn then_divider_styling(world: &mut QuectoWorld) {
     assert_ne!(
         panel_focus.0, panel_focus.1,
         "the divider styling must differ between panel-focused and input-focused"
+    );
+}
+
+// ── #828 Part 1: full conversation backfill on select ───────────────────────
+
+#[given(expr = "sub-agent {string} has streamed the live token {string} since selection")]
+fn given_streamed_live(world: &mut QuectoWorld, id: String, token: String) {
+    drive(world, |h| {
+        h.route(&id, Event::Token { token });
+    });
+}
+
+#[when(expr = "the backfill history {string} then {string} arrives")]
+fn when_backfill_arrives(world: &mut QuectoWorld, user: String, assistant: String) {
+    // Route to the agent captured by the "viewing sub-agent" given, not a
+    // literal id, so this step is reusable for any agent (#828 review).
+    let id = world
+        .tui_viewed_agent
+        .clone()
+        .expect("a 'viewing sub-agent' given must run first to capture the id");
+    // Mirror the kernel's get_messages payload the connect-on-select backfill
+    // requests: a user/assistant transcript that pre-dates the live stream.
+    let data = serde_json::json!({
+        "messages": [
+            { "role": "user", "content": user },
+            { "role": "assistant", "content": assistant },
+        ]
+    });
+    drive(world, |h| {
+        h.route(
+            &id,
+            Event::Response {
+                id: Some("subagent-history".into()),
+                command: "get_messages".into(),
+                success: true,
+                data: Some(data),
+                error: None,
+            },
+        );
+    });
+}
+
+#[then(expr = "the sub-agent's session shows {string}")]
+fn then_session_shows(world: &mut QuectoWorld, text: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&text),
+        "the selected sub-agent's session must show {text:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "the sub-agent's session still shows {string}")]
+fn then_session_still_shows(world: &mut QuectoWorld, text: String) {
+    // Same check as `then_session_shows`; the distinct prose ("still") documents
+    // that the backfill PRESERVED earlier live content (#828 review). Inlined so
+    // the assertion is visible in this step body.
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&text),
+        "the backfill must preserve live content {text:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "{string} appears above {string} in the session")]
+fn then_appears_above(world: &mut QuectoWorld, upper: String, lower: String) {
+    let frame = drive(world, |h| h.full_frame());
+    let up = frame.find(&upper);
+    let lo = frame.find(&lower);
+    assert!(
+        matches!((up, lo), (Some(u), Some(l)) if u < l),
+        "history {upper:?} must render ABOVE live content {lower:?}, got:\n{frame}"
     );
 }
 

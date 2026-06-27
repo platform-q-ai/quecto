@@ -1,0 +1,184 @@
+//! Routing a sub-agent's live UDS stream into its `SessionView` (#800/
+//! #828). Split out of `app_subagent_panel.rs` to keep that file within the
+//! source line cap; the master and per-session note defer/flush policy and the
+//! connect-on-select history backfill reconcile live here in ONE place.
+
+use super::*;
+
+/// Defensive cap on a deferred sub-agent-note buffer (master or per-session,
+/// #828): the OLDEST note is evicted past the cap so a chatty grandchild during
+/// a long parent turn cannot grow it without bound; newest notes always survive.
+pub(super) const DEFERRED_NOTE_CAP: usize = 256;
+
+impl App {
+    /// Route one event from a sub-agent's direct connection into that agent's
+    /// `SessionView`, mirroring the master render path so the body is visibly
+    /// equivalent to how the master renders (#800).
+    pub(super) fn route_subagent_event(&mut self, agent_id: &str, ev: Event) {
+        // Tearing down a connection mid-stream can leave already-queued
+        // `(old_id, ev)` items in `subagent_event_rx`. Drop events for agents
+        // that are neither still tracked nor have a retained session, so a
+        // stale frame cannot resurrect a session `evict_retained_sessions`
+        // just dropped (#800 review).
+        if !self.sessions.contains_key(agent_id) && !self.subagent_local.contains_key(agent_id) {
+            return;
+        }
+        self.ensure_session(agent_id);
+        let Some(session) = self.sessions.get_mut(agent_id) else {
+            return;
+        };
+        // Per-session workflow bar so a selected sub-agent renders its OWN
+        // workflow/phase bar, footer-equivalent chrome and running state (#802).
+        if let Event::WorkflowState {
+            agent_id: _,
+            steps,
+            progress,
+            active_issue,
+            mode,
+            active_template,
+            available_templates,
+        } = &ev
+        {
+            session.workflow_bar = super::app_events::build_workflow_state(
+                steps,
+                progress,
+                active_issue,
+                mode,
+                active_template,
+                available_templates,
+            );
+            return;
+        }
+        match &ev {
+            Event::AgentStart | Event::TurnStart => {
+                session.running = true;
+                session.footer.set_streaming(true);
+            }
+            Event::AgentEnd { .. } | Event::TurnEnd { .. } => {
+                session.running = false;
+                session.footer.set_streaming(false);
+            }
+            _ => {}
+        }
+        // Per-session FOOTER: feed the child's OWN context-window / cost / model
+        // gauges from its forwarded events so a selected sub-agent shows ITS
+        // usage, not the master's (#805).
+        Self::update_session_footer(session, &ev);
+        // A completion note for THIS child's own sub-agent (a grandchild): render
+        // it as a passive one-line status in this session's chat, deferred while
+        // the child streams so it never splits the child's response (#816).
+        if let Event::SubagentNotification { message, .. } = &ev {
+            let message = crate::interface::ansi::sanitize_control(message);
+            Self::push_or_defer_note(
+                &mut session.chat,
+                &mut session.deferred_subagent_notes,
+                session.running,
+                message,
+            );
+            return;
+        }
+        // Flush deferred grandchild notes once this child goes idle (after the
+        // streamed response is finalized below).
+        let flush_notes = matches!(ev, Event::AgentEnd { .. } | Event::TurnEnd { .. });
+        let chat = &mut session.chat;
+        match ev {
+            Event::Token { token } => chat.append_token(&token),
+            Event::AgentEnd { .. } | Event::TurnEnd { .. } => chat.finalize_assistant(),
+            Event::ToolExecutionStart {
+                tool_call_id,
+                tool_name,
+                args,
+            } => {
+                let args_str = if args.is_object() || args.is_array() {
+                    serde_json::to_string(&args).unwrap_or_default()
+                } else {
+                    args.to_string()
+                };
+                if !super::app_events::suppress_tool_box(&tool_name, &args) {
+                    chat.start_tool(tool_call_id, tool_name, args_str);
+                }
+            }
+            Event::ToolExecutionEnd {
+                tool_call_id,
+                result,
+                is_error,
+                ..
+            } => {
+                let text = crate::infrastructure::client::extract_result_text(&result);
+                chat.complete_tool(&tool_call_id, &text, is_error, None);
+            }
+            Event::Response {
+                command,
+                data: Some(data),
+                ..
+            } if command == "get_messages" => {
+                Self::reconcile_backfill_history(session, &data);
+                return;
+            }
+            _ => {}
+        }
+        if flush_notes {
+            Self::flush_deferred_notes(&mut session.chat, &mut session.deferred_subagent_notes);
+        }
+    }
+
+    /// Reconcile a connect-on-select `get_messages` backfill into a session
+    /// (#828). The prior conversation is PREPENDED above whatever live content
+    /// already streamed (never a wholesale replace that drops live tokens), and
+    /// is applied at most once so a re-delivered backfill cannot duplicate it.
+    fn reconcile_backfill_history(session: &mut SessionView, data: &serde_json::Value) {
+        use crate::application::session_payloads::{self, ResumedChatMessage};
+        if session.history_backfilled {
+            return;
+        }
+        let Ok(messages) = session_payloads::parse_resumed_messages(data) else {
+            return;
+        };
+        let history: Vec<ChatEntry> = messages
+            .into_iter()
+            .map(|message| match message {
+                ResumedChatMessage::User(text) => ChatEntry::User { text },
+                ResumedChatMessage::Assistant(text) => ChatEntry::Assistant {
+                    text,
+                    streaming: false,
+                },
+            })
+            .collect();
+        session.chat.prepend_history(history);
+        session.history_backfilled = true;
+    }
+
+    /// Render a passive sub-agent completion note, or DEFER it while the owning
+    /// agent is mid-turn so it never splits an in-flight streaming response
+    /// (#816). Shared by the master and per-session paths (#828) — one place for
+    /// the defer/flush policy. The deferred buffer is capped (`DEFERRED_NOTE_CAP`)
+    /// by evicting the oldest note, so a chatty grandchild cannot grow it without
+    /// bound.
+    pub(super) fn push_or_defer_note(
+        chat: &mut Chat,
+        deferred: &mut Vec<String>,
+        running: bool,
+        message: String,
+    ) {
+        if running {
+            if deferred.len() >= DEFERRED_NOTE_CAP {
+                deferred.remove(0);
+            }
+            deferred.push(message);
+        } else {
+            chat.add_entry(ChatEntry::Status {
+                text: format!("◆ {message}"),
+            });
+        }
+    }
+
+    /// Flush all deferred notes into the chat as passive status lines, in order
+    /// (#816/#828). Counterpart to `push_or_defer_note`.
+    pub(super) fn flush_deferred_notes(chat: &mut Chat, deferred: &mut Vec<String>) {
+        for note in std::mem::take(deferred) {
+            chat.add_entry(ChatEntry::Status {
+                text: format!("◆ {note}"),
+            });
+        }
+    }
+}
