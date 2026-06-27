@@ -376,6 +376,36 @@ async fn surviving_descendant_carries_its_intermediate_ancestors() {
 }
 
 #[tokio::test]
+async fn idle_nested_grandchild_does_not_count_as_working() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+
+    a.update_subagent_bar(vec![info_with_parent("grandchild", "idle", "child")]);
+
+    assert_eq!(a.subagent_local["grandchild"].info.status, "idle");
+    let frame = a.compose_frame().join("\n");
+    let plain_frame = super::app_methods::strip_ansi(&frame);
+    assert!(
+        plain_frame.contains("grandchild"),
+        "idle grandchild must remain visible in the panel: {plain_frame}"
+    );
+    assert!(
+        frame.contains(&crate::interface::theme::yellow("grandchild")),
+        "idle grandchild name must render with idle colour, got: {frame:?}"
+    );
+    assert!(
+        !frame.contains(&crate::interface::theme::green("grandchild")),
+        "idle grandchild must not render with running colour, got: {frame:?}"
+    );
+
+    let footer = super::app_methods::strip_ansi(&a.compose_bottom(120).join("\n"));
+    assert!(
+        !footer.contains("working"),
+        "idle nested grandchild must not count as working, got: {footer}"
+    );
+}
+
+#[tokio::test]
 async fn state_changed_dropping_all_clears_footer_count() {
     let mut h = harness().await;
     let a = h.app_mut();

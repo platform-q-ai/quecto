@@ -142,6 +142,25 @@ Feature: Persistent subagent monitor — live event stream from child agents
     And the registry should no longer contain "gc"
     And the registry should still contain "child"
 
+  # --- Prompt idle propagation for nested agents (#839) ---
+
+  Scenario: a nested idle agent stays idle when a descendant update lacks status
+    Given a root monitor knows grandchild "gc" under "child" is idle
+    When the child reports grandchild "gc" without a status update
+    Then the monitor should keep "gc" idle
+    And observers should see "gc" as idle
+
+  Scenario: child completion immediately updates observers to idle
+    Given a root monitor with running child "child"
+    When the child "child" finishes its turn
+    Then observers should receive subagent state listing "child" as idle
+
+  Scenario: idle nested grandchild is not reported as working in the subagent panel
+    Given a forwarded subagent state listing idle grandchild "gc" under "child"
+    When the TUI renders the forwarded subagent state
+    Then the subagent panel should show "gc" as idle
+    And the subagent panel should not count "gc" as working
+
   Scenario: a removal request for an unknown agent emits no broadcast
     Given a root registry with parent "p", child "c" under "p", and grandchild "gc" under "c", plus a live agent "live"
     When an unknown agent "ghost" is reported gone
