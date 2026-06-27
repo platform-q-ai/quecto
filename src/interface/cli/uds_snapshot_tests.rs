@@ -7,7 +7,9 @@
 //! `messages` mutably for the whole turn (`agent.process(messages)`).
 
 use crate::domain::message::Message;
-use crate::interface::cli::uds_multi::{ConversationSnapshot, build_get_messages_line};
+use crate::interface::cli::uds_multi::{
+    BusyFlag, BusyGuard, ConversationSnapshot, build_get_messages_line,
+};
 
 /// The connect-time line is a `get_messages`-shaped success Response carrying the
 /// prior conversation, byte-for-byte consumable by the TUI's existing
@@ -74,4 +76,20 @@ async fn snapshot_readable_while_turn_holds_messages_mut() {
 
     release_tx.send(()).unwrap();
     turn.await.unwrap();
+}
+
+/// `BusyGuard` marks the agent mid-turn for the accept loop's connect-time
+/// gating: it sets the shared busy flag on construction and clears it on drop
+/// (covering normal completion, early return, and panic via RAII) so the
+/// unsolicited connect-time snapshot is pushed only while a turn is in flight.
+#[test]
+fn busy_guard_sets_flag_for_its_scope_and_clears_on_drop() {
+    use std::sync::atomic::Ordering;
+    let flag: BusyFlag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    assert!(!flag.load(Ordering::SeqCst), "starts idle");
+    {
+        let _guard = BusyGuard::new(&flag);
+        assert!(flag.load(Ordering::SeqCst), "busy for the turn's scope");
+    }
+    assert!(!flag.load(Ordering::SeqCst), "cleared on drop (turn over)");
 }
