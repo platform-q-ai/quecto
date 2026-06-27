@@ -10,12 +10,12 @@ Feature: Auto-notify parent LLM when subagents complete or error
     Given a Completed notification for agent "researcher" with summary "All tests pass"
     Then the notification [message] should contain "researcher"
     And the notification [message] should contain "completed"
-    And the notification [message] should contain "All tests pass"
+    And the notification [message] should contain "ready for inspection"
 
   Scenario: Errored notification includes agent_id and error
     Given an Errored notification for agent "linter" with error "rate limit exceeded"
     Then the notification [message] should contain "linter"
-    And the notification [message] should contain "errored"
+    And the notification [message] should contain "failed"
     And the notification [message] should contain "rate limit exceeded"
 
   Scenario: Exited notification includes agent_id
@@ -25,17 +25,17 @@ Feature: Auto-notify parent LLM when subagents complete or error
 
   # --- Notification formatting ---
 
-  Scenario: Completed notification format is bracketed subagent event
+  Scenario: Completed notification format names the agent
     Given a Completed notification for agent "worker-1" with summary "Done building"
-    Then the notification message should start with "[subagent]"
+    Then the notification message should start with "Agent 'worker-1'"
 
-  Scenario: Errored notification format is bracketed subagent event
+  Scenario: Errored notification format names the agent
     Given an Errored notification for agent "worker-1" with error "timeout"
-    Then the notification message should start with "[subagent]"
+    Then the notification message should start with "Agent 'worker-1'"
 
-  Scenario: Exited notification format is bracketed subagent event
+  Scenario: Exited notification format names the agent
     Given an Exited notification for agent "worker-1"
-    Then the notification message should start with "[subagent]"
+    Then the notification message should start with "Agent 'worker-1'"
 
   # --- Summary extraction ---
 

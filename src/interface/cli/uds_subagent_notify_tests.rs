@@ -245,3 +245,61 @@ fn test_subagent_notification_summary_is_single_line() {
         );
     }
 }
+
+/// `forward_notification_broadcast` (the mid-turn path) emits the passive
+/// completion note as a broadcast event when the completion was NOT already
+/// awaited, and returns `true` so the caller also queues it for the parent.
+#[test]
+fn test_forward_notification_broadcast_emits_when_not_awaited() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SequencedSubagentNotification, SubagentEntry, SubagentNotification, new_registry,
+    };
+    use crate::interface::cli::uds_multi::forward_notification_broadcast;
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("worker".to_string(), SubagentEntry::new("/tmp/x".into(), 0));
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(16);
+    let notif = SequencedSubagentNotification::new(
+        1,
+        SubagentNotification::Completed {
+            agent_id: "worker".to_string(),
+            summary: "done".to_string(),
+        },
+    );
+    assert!(forward_notification_broadcast(notif, &tx, &Some(registry)));
+    let first = rx.try_recv().expect("a note event should be broadcast");
+    assert!(first.contains("subagent_notification"), "got: {first}");
+    assert!(first.contains("worker"), "got: {first}");
+}
+
+/// When a manual `await` already consumed the completion, the mid-turn path
+/// SUPPRESSES the duplicate note (returns `false`, no note event) but still
+/// emits the `subagent_state_changed` panel update.
+#[test]
+fn test_forward_notification_broadcast_suppresses_when_awaited() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SequencedSubagentNotification, SubagentEntry, SubagentNotification,
+        mark_completion_consumed_by_await, new_registry,
+    };
+    use crate::interface::cli::uds_multi::forward_notification_broadcast;
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("worker".to_string(), SubagentEntry::new("/tmp/x".into(), 0));
+    mark_completion_consumed_by_await(&registry, "worker");
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(16);
+    let notif = SequencedSubagentNotification::new(
+        1,
+        SubagentNotification::Completed {
+            agent_id: "worker".to_string(),
+            summary: "done".to_string(),
+        },
+    );
+    assert!(!forward_notification_broadcast(notif, &tx, &Some(registry)));
+    let first = rx.try_recv().expect("the panel update is still broadcast");
+    assert!(!first.contains("subagent_notification"), "got: {first}");
+    assert!(first.contains("subagent_state_changed"), "got: {first}");
+}

@@ -225,7 +225,7 @@ async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> To
 /// emitted regardless. Race-free because the dispatch/drain loop is
 /// single-threaded: the await tool set the flag before this notification is
 /// processed.
-fn forward_notification_broadcast(
+pub(crate) fn forward_notification_broadcast(
     notif: crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification,
     broadcast_tx: &tokio::sync::broadcast::Sender<String>,
     subagent_registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
