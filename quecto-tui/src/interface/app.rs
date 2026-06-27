@@ -101,18 +101,17 @@ pub struct App {
     renderer: DiffRenderer<std::io::Stdout>,
     client: Client,
     editor: Editor,
-    chat: Chat,
+    /// The master agent's own session, modeled as just another [`SessionView`]
+    /// (#828) so render/input share ONE active-session path with sub-agents
+    /// (`active_agent_id == None` selects this). Only `spinner`/`agent_state`
+    /// stay master-local; sub-agents derive `running` from forwarded events.
+    master_session: SessionView,
     spinner: Option<Spinner>,
-    footer: Footer,
     autocomplete: Autocomplete,
     files_autocomplete: FilesAutocomplete,
     notifications: NotificationStack,
     kitty: KittyProtocol,
     agent_state: AgentRunState,
-    /// Passive sub-agent completion notes (#816) received while the parent is
-    /// mid-turn; flushed to the chat when the parent next goes idle so a note
-    /// never splits an in-flight streaming response.
-    deferred_subagent_notes: Vec<String>,
     should_exit: bool,
     stdin_buffer: crate::interface::stdin_buffer::StdinBuffer,
     agent_connected: bool,
@@ -150,8 +149,6 @@ pub struct App {
     render_log_path: Option<String>,
     /// Active mouse text selection (#528).
     selection: Option<TextSelection>,
-    /// Workflow header bar state (#563).
-    workflow_bar: workflow_bar::WorkflowBarState,
     /// Mirror of core workflow auto-continue state, toggled through UDS.
     workflow_auto_continue: bool,
     /// Mirror of core workflow completion-nudge state, toggled through UDS.
@@ -169,10 +166,9 @@ pub struct App {
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
     /// Per-sub-agent session views, keyed by agent id (#800). The master is not
-    /// in this map — it is the top-level `self.chat`/`self.workflow_bar`/etc.
-    /// and is represented by `active_agent_id == None`. Sessions are retained
-    /// after a sub-agent exits so the user can keep viewing its last session,
-    /// bounded by `MAX_RETAINED_SESSIONS`.
+    /// in this map — it is the top-level `self.master_session.chat`/`self.master_session.workflow_bar`/etc. and
+    /// is `active_agent_id == None`. Sessions are retained after a sub-agent exits
+    /// so its last session stays viewable, bounded by `MAX_RETAINED_SESSIONS`.
     sessions: std::collections::BTreeMap<String, SessionView>,
     /// Insertion order of session ids, for bounded retention eviction (#800).
     session_order: Vec<String>,
@@ -198,10 +194,10 @@ pub struct App {
     started_at: tokio::time::Instant,
 }
 
-/// Per-sub-agent session state for the multi-session UI (#800/#802). Holds the
-/// child's own chat transcript and its OWN workflow/phase bar, accumulated from
-/// its direct live stream, plus a running flag driving the per-session working
-/// indicator. The editor and overlays stay single-instance on `App`.
+/// Per-session state for the multi-session UI (#800/#802). The master (#828)
+/// and every sub-agent are modeled identically: own chat transcript, own
+/// workflow/phase bar, a running flag driving the per-session working indicator,
+/// and own footer. The editor and overlays stay single-instance on `App`.
 pub(crate) struct SessionView {
     chat: Chat,
     /// The child's own workflow/phase bar, fed by its forwarded `workflow_state`
@@ -210,26 +206,34 @@ pub(crate) struct SessionView {
     /// Whether the child is mid-turn — drives a per-session working indicator so
     /// a steered sub-agent never looks dead while it processes a queued prompt.
     running: bool,
-    /// The child's OWN status footer — context-window / cost / model gauges, fed
-    /// by its forwarded `get_state` / `turn_end` / session-stats events so a
-    /// selected sub-agent shows ITS usage, not the master's (#805).
+    /// This session's OWN status footer — context-window / cost / model gauges
+    /// fed by its `get_state` / `turn_end` / session-stats events (#805).
     footer: Footer,
     /// Completion notes from THIS child's own sub-agents (grandchildren) received
     /// while this child is mid-turn; flushed when it goes idle so a note never
     /// splits the child's streaming response (#816).
-    deferred_subagent_notes: Vec<String>,
+    deferred_subagent_notes: std::collections::VecDeque<String>,
+    /// Whether the history backfill was applied (#828) — guards re-delivery.
+    history_backfilled: bool,
 }
 
 impl SessionView {
     fn new(git_branch: Option<String>) -> Self {
         let mut footer = Footer::new();
         footer.set_git_branch(git_branch);
+        Self::with_footer(footer)
+    }
+
+    /// Build a session around a pre-configured footer — used for both sub-agent
+    /// and master (#828) sessions, so all are constructed identically.
+    fn with_footer(footer: Footer) -> Self {
         Self {
             chat: Chat::new(),
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             running: false,
             footer,
-            deferred_subagent_notes: Vec::new(),
+            deferred_subagent_notes: std::collections::VecDeque::new(),
+            history_backfilled: false,
         }
     }
 }
@@ -267,15 +271,13 @@ impl App {
             renderer: DiffRenderer::new(std::io::stdout()),
             client,
             editor: Editor::new(),
-            chat: Chat::new(),
+            master_session: SessionView::with_footer(footer),
             spinner: None,
-            footer,
             autocomplete: Autocomplete::new(builtin_commands(), 8),
             files_autocomplete: FilesAutocomplete::new(8),
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
             agent_state: AgentRunState::new(),
-            deferred_subagent_notes: Vec::new(),
             should_exit: false,
             stdin_buffer: crate::interface::stdin_buffer::StdinBuffer::new(),
             agent_connected: true,
@@ -294,7 +296,6 @@ impl App {
             awaited_agent_id: None,
             render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
             selection: None,
-            workflow_bar: workflow_bar::WorkflowBarState::default(),
             workflow_auto_continue: false,
             workflow_completion_nudge: false,
             git_branch,
@@ -321,7 +322,7 @@ impl App {
             return false;
         }
         self.git_branch = branch.clone();
-        self.footer.set_git_branch(branch);
+        self.master_session.footer.set_git_branch(branch);
         true
     }
 
@@ -378,6 +379,8 @@ mod app_rewind;
 mod app_selection;
 #[path = "app_subagent_panel.rs"]
 mod app_subagent_panel;
+#[path = "app_subagent_stream.rs"]
+mod app_subagent_stream;
 #[path = "app_subagents.rs"]
 mod app_subagents;
 

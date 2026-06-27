@@ -30,6 +30,63 @@ pub(super) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
 /// Atomic counter for assigning unique client IDs (#352).
 static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+// ─── Connect-time conversation snapshot (#828) ──────────────────────────────────
+
+/// Shared pre-turn conversation snapshot. Holds a clone of the dispatch loop's
+/// `messages` as of the last turn boundary. A newly-connected client is served
+/// this immediately by the accept loop — independent of the (possibly busy)
+/// single dispatch loop — so selecting a BUSY sub-agent shows its prior
+/// conversation at once, with live tokens streaming over the broadcast on top.
+pub(crate) type ConversationSnapshot = std::sync::Arc<tokio::sync::RwLock<Vec<Message>>>;
+
+/// Shared "agent is mid-turn" flag (#828). Set by the dispatch loop for the
+/// duration of `agent.process()` (via [`BusyGuard`]), read by the accept loop.
+/// The connect-time conversation snapshot is pushed to a newly-connected client
+/// ONLY when this is `true` — i.e. the agent is busy and cannot answer a
+/// `get_messages` promptly via the (blocked) single dispatch loop. When idle the
+/// dispatch loop answers `get_messages` itself in FIFO order, so no unsolicited
+/// bytes are written and clients that don't ask see no protocol change.
+pub(crate) type BusyFlag = std::sync::Arc<std::sync::atomic::AtomicBool>;
+
+/// RAII guard: marks the agent busy for the duration of a turn and clears the
+/// flag on drop (normal completion, early return, or panic) (#828).
+pub(crate) struct BusyGuard(BusyFlag);
+
+impl BusyGuard {
+    pub(crate) fn new(flag: &BusyFlag) -> Self {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        Self(flag.clone())
+    }
+}
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Refresh the shared pre-turn conversation snapshot from the current messages.
+/// Called at each turn boundary — a cheap clone, never per token (#828).
+pub(super) async fn refresh_conversation_snapshot(ctx: &super::uds::DispatchCtx<'_>) {
+    let mut snap = ctx.conversation_snapshot.write().await;
+    *snap = ctx.messages.clone();
+}
+
+/// Build the `get_messages`-shaped response line from a slice of messages.
+/// Reuses the same serialization as `AgentCommand::GetMessages` so the TUI's
+/// existing `route_subagent_event` get_messages handler consumes it unchanged.
+pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
+    let msgs: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
+    let ev = AgentEvent::ok(
+        None,
+        "get_messages",
+        Some(serde_json::json!({ "messages": msgs })),
+    );
+    let mut line = ev.to_json_line();
+    line.push('\n');
+    line
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 pub(super) struct MultiClientArgs<'a> {
@@ -136,6 +193,18 @@ pub(super) async fn multi_client_loop(
 
     inject_system_prompt(&mut messages, &system_prompt);
 
+    // Shared pre-turn conversation snapshot (#828): initialized with the starting
+    // messages (same shape as a normal get_messages response, i.e. including the
+    // injected system prompt), refreshed by the dispatch loop at each turn
+    // boundary, and read by the accept loop to serve newly-connected clients
+    // immediately — even while the dispatch loop is busy mid-turn.
+    let conversation_snapshot: ConversationSnapshot =
+        std::sync::Arc::new(tokio::sync::RwLock::new(messages.clone()));
+
+    // Shared mid-turn flag (#828): gates the connect-time snapshot push so it
+    // only fires while the agent is busy (see `BusyFlag`).
+    let busy: BusyFlag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     let mut agent_session = AgentSession::new(model, session_key.clone());
 
     // Use the pre-created broadcast channel when available (workflow emitter
@@ -155,6 +224,8 @@ pub(super) async fn multi_client_loop(
         cancel_handle: cancel_handle.clone(),
         live_clients: live_clients.clone(),
         client_tool_registry: client_tool_registry.clone(),
+        conversation_snapshot: conversation_snapshot.clone(),
+        busy: busy.clone(),
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)
@@ -168,6 +239,8 @@ pub(super) async fn multi_client_loop(
         base_dir,
         agent: &mut agent,
         messages: &mut messages,
+        conversation_snapshot: conversation_snapshot.clone(),
+        busy: busy.clone(),
         session: &mut agent_session,
         stdout: &mut *null_writer,
         session_key: &mut session_key,
@@ -223,6 +296,15 @@ struct AcceptLoopArgs {
     /// without routing them through the single-threaded dispatch loop
     /// (which is blocked on the agent's in-flight prompt).
     client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
+    /// Shared pre-turn conversation snapshot (#828). The accept loop writes a
+    /// `get_messages`-shaped response built from this directly to each newly
+    /// connected client BEFORE/independent of the dispatch loop, so a busy
+    /// child's client gets its prior history instantly.
+    conversation_snapshot: ConversationSnapshot,
+    /// Mid-turn flag (#828): the connect-time snapshot is pushed ONLY when the
+    /// agent is busy. When idle, the dispatch loop answers `get_messages` in
+    /// FIFO order and no unsolicited bytes are written.
+    busy: BusyFlag,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -234,11 +316,13 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
         cancel_handle,
         live_clients,
         client_tool_registry,
+        conversation_snapshot,
+        busy,
     } = args;
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
-                Ok((stream, _addr)) => {
+                Ok((mut stream, _addr)) => {
                     let current = live_clients.load(std::sync::atomic::Ordering::SeqCst);
                     if current >= MAX_CLIENTS {
                         tracing::warn!(
@@ -272,9 +356,40 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                         targeted_tx,
                     );
 
+                    // Subscribe to the broadcast BEFORE the (possible) snapshot
+                    // write below (#828): the snapshot read/write are await
+                    // points, and any event broadcast during them — e.g. an
+                    // `agent_start` from a concurrent turn — would be missed if we
+                    // subscribed afterwards. Subscribing first buffers those events
+                    // in `broadcast_rx`; `handle_client` delivers them after the
+                    // directly-written snapshot bytes.
+                    let broadcast_rx = broadcast_tx.subscribe();
+
+                    // Connect-time snapshot (#828), GATED to mid-turn only: when
+                    // the agent is BUSY the single dispatch loop is blocked inside
+                    // `agent.process()` and cannot answer a `get_messages` promptly,
+                    // so we serve the pre-turn conversation directly here — a newly
+                    // connected client (e.g. the TUI selecting a busy sub-agent)
+                    // sees prior history at once, with live tokens streaming over
+                    // the broadcast on top; the TUI reconciles via
+                    // `Chat::prepend_history`. When the agent is IDLE we push
+                    // nothing: the dispatch loop answers the client's own
+                    // `get_messages` in FIFO order, so clients that don't ask see
+                    // no protocol change and ordering-sensitive flows are unaffected.
+                    if busy.load(std::sync::atomic::Ordering::SeqCst) {
+                        use tokio::io::AsyncWriteExt;
+                        let line = {
+                            let snap = conversation_snapshot.read().await;
+                            build_get_messages_line(&snap)
+                        };
+                        if let Err(e) = stream.write_all(line.as_bytes()).await {
+                            tracing::debug!("connect-time snapshot not delivered: {e}");
+                        }
+                    }
+
                     let args = ClientHandlerArgs {
                         stream,
-                        broadcast_rx: broadcast_tx.subscribe(),
+                        broadcast_rx,
                         targeted_rx,
                         cmd_tx: cmd_tx.clone(),
                         cancel_handle: cancel_handle.clone(),
@@ -331,11 +446,11 @@ async fn run_dispatch_loop(
                 // race-free because the dispatch loop is single-threaded: the
                 // await tool call set the flag before this queued notification is
                 // processed.
-                let suppress = ctx.subagent_registry.as_ref().is_some_and(|reg| {
-                    crate::infrastructure::tools::subagent_registry::take_completion_consumed_by_await(
-                        reg, &agent_id,
-                    )
-                });
+                let suppress =
+                    crate::infrastructure::tools::subagent_registry::consume_await_dedupe(
+                        &ctx.subagent_registry,
+                        &agent_id,
+                    );
                 let mut should_deliver = false;
                 if !suppress {
                     // Auto-await (#816): enqueue the one-line note for delivery at
@@ -375,6 +490,9 @@ async fn run_dispatch_loop(
                 }
             }
         }
+        // Turn boundary: refresh the shared snapshot so a newly-connected client
+        // is served the up-to-date prior conversation on connect (#828).
+        refresh_conversation_snapshot(ctx).await;
     }
 }
 
@@ -587,3 +705,6 @@ pub(in crate::interface::cli) use uds_multi_prompt::forward_notification_broadca
 #[cfg(test)]
 #[path = "uds_multi_interception_tests.rs"]
 mod interception_tests;
+#[cfg(test)]
+#[path = "uds_snapshot_tests.rs"]
+mod snapshot_tests;

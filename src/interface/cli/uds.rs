@@ -209,6 +209,8 @@ async fn single_client_loop(
             base_dir,
             agent: &mut { agent },
             messages: &mut messages,
+            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut agent_session,
             stdout: &mut *writer,
             session_key: &mut session_key,
@@ -360,6 +362,8 @@ pub(crate) struct DispatchCtx<'a> {
     pub base_dir: &'a std::path::Path,
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
+    pub conversation_snapshot: super::uds_multi::ConversationSnapshot, // #828
+    pub busy: super::uds_multi::BusyFlag,                              // #828
     pub session: &'a mut AgentSession,
     pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
     pub session_key: &'a mut String,
@@ -456,9 +460,7 @@ fn session_summary_to_json(summary: &crate::domain::session::SessionSummary) -> 
     })
 }
 
-/// Apply display policy to a raw session title (the interface owns presentation,
-/// not persistence): blank → "(untitled)", otherwise truncate to 50 chars with
-/// an ellipsis.
+/// Apply display policy to a raw title: blank → "(untitled)", else truncate to 50 chars.
 fn display_title(raw: &str) -> String {
     const MAX_CHARS: usize = 50;
     if raw.is_empty() {
@@ -610,9 +612,7 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
     drain_pending_and_nudge(ctx).await;
-    // Persist after every completed turn so the conversation is durable even if
-    // the agent is terminated ungracefully (e.g. by the TUI on quit) and shows
-    // up in /resume without requiring /new or a clean shutdown.
+    // Persist after every turn so the conversation survives an ungraceful exit.
     if let Err(err) = uds_dispatch::persist_current_session(ctx).await {
         tracing::warn!("failed to persist session after turn: {err}");
     }
@@ -623,9 +623,7 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
 pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     drain_and_run_pending(ctx).await;
 
-    // One guard per configured workflow step, plus a small allowance for the
-    // completion nudge/reset path. Prevents a misbehaving model from being
-    // nudged forever if it ignores the workflow instruction.
+    // Bounded so a misbehaving model that ignores the workflow isn't nudged forever.
     const MAX_WORKFLOW_NUDGES: usize = 128;
     for _ in 0..MAX_WORKFLOW_NUDGES {
         let before = workflow_progress_fingerprint(ctx);
@@ -671,6 +669,7 @@ async fn run_prompt_dispatch(
     message: String,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> PromptOutcome {
+    let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828: gates connect-time snapshot
     if let Some(ref tx) = ctx.broadcast_tx {
         run_agent_prompt_broadcast(PromptArgsBroadcast {
             agent: ctx.agent,
@@ -700,6 +699,7 @@ async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
     emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentEnd { messages: vec![] }).await;
 }
 async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
+    let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828
     loop {
         let pending = ctx.session.drain_pending();
         if pending.is_empty() {

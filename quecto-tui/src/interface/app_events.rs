@@ -4,7 +4,7 @@ impl App {
     pub(super) fn handle_event(&mut self, event: Event) {
         match event {
             Event::AgentStart => self.handle_agent_start(),
-            Event::Token { token } => self.chat.append_token(&token),
+            Event::Token { token } => self.master_session.chat.append_token(&token),
             Event::TurnStart => {}
             Event::TurnEnd { message, .. } => self.handle_turn_end(message),
             Event::ToolExecutionStart {
@@ -58,25 +58,29 @@ impl App {
 
     fn handle_agent_start(&mut self) {
         self.agent_state.start();
-        self.footer.set_streaming(true);
+        // Mirror the abort-aware run state onto the master session's `running`
+        // flag so the unified working indicator is driven by one per-session
+        // flag for master and sub-agents alike (#828).
+        self.master_session.running = true;
+        self.master_session.footer.set_streaming(true);
         self.spinner = Some(Spinner::new("Working... (Esc to interrupt)"));
     }
 
     fn handle_agent_end(&mut self) {
-        self.footer.set_streaming(false);
+        self.master_session.running = false;
+        self.master_session.footer.set_streaming(false);
         self.spinner = None;
-        self.chat.finalize_assistant();
+        self.master_session.chat.finalize_assistant();
         // Parent is now idle — flush any sub-agent completion notes that arrived
         // mid-turn, so they appear after the finished response instead of in it.
-        for note in std::mem::take(&mut self.deferred_subagent_notes) {
-            self.chat.add_entry(ChatEntry::Status {
-                text: format!("◆ {note}"),
-            });
-        }
+        Self::flush_deferred_notes(
+            &mut self.master_session.chat,
+            &mut self.master_session.deferred_subagent_notes,
+        );
     }
 
     fn handle_turn_end(&mut self, message: serde_json::Value) {
-        self.chat.finalize_assistant();
+        self.master_session.chat.finalize_assistant();
         // `usage` is absent on streaming OpenAI-compatible providers (e.g.
         // Fireworks) because their SSE stream does not carry token counts.
         // Don't gate context-gauge updates on it — `contextTokens` is emitted
@@ -94,7 +98,9 @@ impl App {
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize),
         ) {
-            self.footer.update_context_usage(used, window);
+            self.master_session
+                .footer
+                .update_context_usage(used, window);
             self.context_stats_requested = true;
             // Context came inline, but cost does not ride the turn_end event —
             // refresh session stats (quietly) so the footer cost stays current.
@@ -128,7 +134,9 @@ impl App {
         }
         let is_spawn = tool_name == "spawn";
         if !suppress_tool_box(&tool_name, &args) {
-            self.chat.start_tool(tool_call_id, tool_name, args_str);
+            self.master_session
+                .chat
+                .start_tool(tool_call_id, tool_name, args_str);
         }
         if is_spawn {
             self.track_starting_subagent(&args);
@@ -167,13 +175,14 @@ impl App {
         let message = crate::interface::ansi::sanitize_control(&message);
         // Never split an in-flight streaming response: if the parent is mid-turn,
         // defer the note and flush it when the parent goes idle (handle_agent_end).
-        if self.agent_state.is_running() {
-            self.deferred_subagent_notes.push(message);
-            return;
-        }
-        self.chat.add_entry(ChatEntry::Status {
-            text: format!("◆ {message}"),
-        });
+        // Shared defer/flush policy with the per-session path (#828).
+        let running = self.agent_state.is_running();
+        Self::push_or_defer_note(
+            &mut self.master_session.chat,
+            &mut self.master_session.deferred_subagent_notes,
+            running,
+            message,
+        );
     }
 
     fn track_starting_subagent(&mut self, args: &serde_json::Value) {
@@ -204,7 +213,8 @@ impl App {
         is_error: bool,
     ) {
         let result_text = crate::infrastructure::client::extract_result_text(&result);
-        self.chat
+        self.master_session
+            .chat
             .complete_tool(&tool_call_id, &result_text, is_error, None);
         if tool_name == "spawn" && !is_error {
             self.mark_spawned_subagent_running(&result_text);
@@ -252,7 +262,7 @@ impl App {
                 return;
             }
         }
-        self.workflow_bar = build_workflow_state(
+        self.master_session.workflow_bar = build_workflow_state(
             &steps,
             &progress,
             &active_issue,

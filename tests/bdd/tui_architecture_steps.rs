@@ -666,7 +666,7 @@ fn then_tui_validates_resumed_messages_before_replacing_chat(_world: &mut Quecto
         .find("session_payloads::parse_resumed_messages")
         .expect("replace_chat_with_messages should call the application-layer parser");
     let clear_pos = body
-        .find("self.chat.clear()")
+        .find("self.master_session.chat.clear()")
         .expect("replace_chat_with_messages should still clear chat after valid resume data");
     assert!(
         parse_pos < clear_pos

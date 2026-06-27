@@ -18,6 +18,7 @@
 use super::tui_harness::*;
 use crate::infrastructure::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::interface::ansi::strip_ansi;
+use crate::interface::components::chat::ChatEntry;
 use crate::interface::keys::Key;
 
 /// A `SubagentInfoEvent` with an explicit parent (for tree tests) and socket.
@@ -411,5 +412,276 @@ async fn tui_consumes_socket_path_from_the_wire() {
         h.app_mut().subagent_socket_path("worker").as_deref(),
         Some("/run/quecto/worker.sock"),
         "the TUI must store the wire socketPath for connect-on-select"
+    );
+}
+
+// ── #828 Part 1: full conversation backfill reconcile ────────────────────────
+
+/// Build the `get_messages` backfill Response the connect-on-select path
+/// requests, carrying a user/assistant transcript that pre-dates the live
+/// stream.
+fn backfill_history(pairs: &[(&str, &str)]) -> Event {
+    let messages: Vec<serde_json::Value> = pairs
+        .iter()
+        .flat_map(|(u, a)| {
+            [
+                serde_json::json!({ "role": "user", "content": u }),
+                serde_json::json!({ "role": "assistant", "content": a }),
+            ]
+        })
+        .collect();
+    Event::Response {
+        id: Some("subagent-history".into()),
+        command: "get_messages".into(),
+        success: true,
+        data: Some(serde_json::json!({ "messages": messages })),
+        error: None,
+    }
+}
+
+#[tokio::test]
+async fn backfill_prepends_history_and_preserves_live_tokens() {
+    // #828 Part 1: a busy child streams live tokens BEFORE its dispatch loop can
+    // answer the connect-on-select get_messages backfill. When the backfill
+    // finally arrives it must reconcile as history PREPENDED above the live
+    // content — never a wholesale replace that drops the live tokens.
+    let mut h = with_two_subagents().await;
+    h.app_mut().select_agent(Some("worker"));
+    // Live stream arrives first (child is mid-turn).
+    h.app_mut().route_subagent_event(
+        "worker",
+        Event::Token {
+            token: "LIVE_AFTER_SELECT".into(),
+        },
+    );
+    // ...then the backfill history is finally answered.
+    h.app_mut().route_subagent_event(
+        "worker",
+        backfill_history(&[("earlier question", "earlier answer")]),
+    );
+
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("earlier question") && frame.contains("earlier answer"),
+        "backfilled history must render in the session:\n{frame}"
+    );
+    assert!(
+        frame.contains("LIVE_AFTER_SELECT"),
+        "the late backfill must NOT drop the live token streamed before it:\n{frame}"
+    );
+    let hist = frame.find("earlier answer").expect("history present");
+    let live = frame.find("LIVE_AFTER_SELECT").expect("live present");
+    assert!(
+        hist < live,
+        "history must be PREPENDED above the live content:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn backfill_is_idempotent_and_does_not_duplicate_history() {
+    // A re-delivered backfill (e.g. a reconnect) must not duplicate prior
+    // history nor lose live content.
+    let mut h = with_two_subagents().await;
+    h.app_mut().select_agent(Some("worker"));
+    h.app_mut().route_subagent_event(
+        "worker",
+        Event::Token {
+            token: "LIVEONE".into(),
+        },
+    );
+    let backfill = backfill_history(&[("the question", "the answer")]);
+    h.app_mut().route_subagent_event("worker", backfill.clone());
+    h.app_mut().route_subagent_event("worker", backfill);
+
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert_eq!(
+        frame.matches("the answer").count(),
+        1,
+        "re-delivered backfill must not duplicate history:\n{frame}"
+    );
+    assert!(
+        frame.contains("LIVEONE"),
+        "re-delivered backfill must not drop live content:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn empty_backfill_does_not_latch_guard_against_later_history() {
+    // #828 review: an empty/filtered get_messages payload must NOT mark the
+    // backfill applied — otherwise a later populated backfill (reconnect, or a
+    // response racing ahead of persistence) is permanently suppressed and the
+    // session stays stuck showing no history.
+    let mut h = with_two_subagents().await;
+    h.app_mut().select_agent(Some("worker"));
+    // First backfill is empty.
+    h.app_mut()
+        .route_subagent_event("worker", backfill_history(&[]));
+    // Later, the populated backfill finally arrives.
+    h.app_mut().route_subagent_event(
+        "worker",
+        backfill_history(&[("real question", "real answer")]),
+    );
+
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("real question") && frame.contains("real answer"),
+        "an empty backfill must not suppress a later populated backfill:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn deferred_subagent_note_buffer_is_capped() {
+    // #828 Part 2 NIT: the per-session deferred-note buffer must be defensively
+    // capped so a chatty grandchild during a long parent turn cannot grow it
+    // without bound. Push far more notes than any sane cap while the child is
+    // mid-turn, then let it go idle and count what flushes.
+    let mut h = with_two_subagents().await;
+    h.app_mut().select_agent(Some("worker"));
+    // Keep the child mid-turn so notes are DEFERRED, not rendered immediately.
+    h.app_mut()
+        .route_subagent_event("worker", Event::AgentStart);
+    const PUSHED: usize = 1000;
+    for i in 0..PUSHED {
+        h.app_mut().route_subagent_event(
+            "worker",
+            Event::SubagentNotification {
+                agent_id: "grandchild".into(),
+                sequence: i as u64,
+                message: format!("note number {i}"),
+            },
+        );
+    }
+    // Child goes idle: deferred notes flush into the chat. Count the resulting
+    // chat entries directly (not the clipped viewport) so this asserts the
+    // BUFFER cap, not the screen height.
+    h.app_mut().route_subagent_event(
+        "worker",
+        Event::AgentEnd {
+            messages: Vec::new(),
+        },
+    );
+    let entries = h
+        .app_mut()
+        .session_chat_entry_count("worker")
+        .expect("worker session exists");
+    // Pin the ACTUAL cap, not merely `< PUSHED` (a cap of 999 would be
+    // effectively unbounded): no more than `DEFERRED_NOTE_CAP` notes survive
+    // (the session had no prior chat entries, so the cap is the whole count).
+    assert!(
+        entries <= super::app_subagent_stream::DEFERRED_NOTE_CAP,
+        "the deferred-note buffer must be capped at {}, but {entries} chat \
+         entries flushed from {PUSHED} pushed notes (unbounded growth)",
+        super::app_subagent_stream::DEFERRED_NOTE_CAP
+    );
+    // Eviction policy is locked too: the NEWEST notes survive, the oldest are
+    // dropped — a flushed-but-wrong-order buffer is a silent UX regression.
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains(&format!("note number {}", PUSHED - 1)),
+        "the newest note must survive the cap:\n{frame}"
+    );
+    assert!(
+        !frame.contains("note number 0 "),
+        "the oldest note must be evicted under the cap:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn master_defers_and_flushes_notes_like_a_session() {
+    // #828 Part 2: the master shares the ONE defer/flush policy with sub-agent
+    // sessions. A note arriving mid-turn is deferred (never split into the
+    // in-flight response) and flushed AFTER the finished response once idle.
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(Event::Token {
+        token: "master-response".into(),
+    });
+    h.event(Event::SubagentNotification {
+        agent_id: "child".into(),
+        sequence: 0,
+        message: "child one done".into(),
+    });
+    let mid = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        !mid.contains("child one done"),
+        "a note must be DEFERRED while the master is mid-turn:\n{mid}"
+    );
+    h.event(Event::AgentEnd {
+        messages: Vec::new(),
+    });
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    let resp = frame.find("master-response").expect("response present");
+    let note = frame.find("child one done").expect("note flushed on idle");
+    assert!(
+        resp < note,
+        "the flushed note must follow the finished response:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn backfill_into_idle_session_renders_full_history_in_order() {
+    // #828 Part 1 (idle path): selecting an IDLE sub-agent with no live stream
+    // in flight must still backfill its FULL prior conversation, in order —
+    // never an empty session or mis-ordered history.
+    let mut h = with_two_subagents().await;
+    h.app_mut().select_agent(Some("worker"));
+    h.app_mut().route_subagent_event(
+        "worker",
+        backfill_history(&[("first question", "first answer")]),
+    );
+
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    let q = frame
+        .find("first question")
+        .expect("history question present");
+    let a = frame.find("first answer").expect("history answer present");
+    assert!(
+        q < a,
+        "idle backfill must render history in order (question above answer):\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn master_is_modeled_as_active_session_like_subagents() {
+    // #828 Part 2: the master is just another `SessionView`. With no sub-agent
+    // selected, the active-session accessors must resolve to the MASTER session
+    // (its own chat / workflow bar / footer) — the same `active_session` path a
+    // selected sub-agent takes — with `active_subagent_running` mirroring the
+    // master's run state rather than being hard-coded `false`.
+    let mut h = with_two_subagents().await;
+
+    // Master active (None): the active chat is the master's, and a started turn
+    // drives the unified running flag exactly as a sub-agent's would.
+    assert_eq!(h.app_mut().active_agent_id(), None);
+    h.app_mut().active_chat_mut().add_entry(ChatEntry::User {
+        text: "master-msg".to_string(),
+    });
+    assert!(
+        h.app_mut().active_subagent_running(),
+        "AgentStart must set the master session's unified running flag"
+    );
+
+    // The master's chat is reached through the SAME active-session accessor.
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("master-msg"),
+        "master content renders through the unified active-session path:\n{frame}"
+    );
+
+    // Selecting a sub-agent flips the SAME accessors to that session, and the
+    // master's run flag is independent of the viewed session.
+    h.app_mut().select_agent(Some("worker"));
+    assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
+    assert!(
+        !h.app_mut().active_subagent_running(),
+        "the freshly-selected idle sub-agent session is not running"
+    );
+
+    // Esc returns to the master session and its running flag is intact.
+    h.press(Key::Escape);
+    assert_eq!(h.app_mut().active_agent_id(), None);
+    assert!(
+        h.app_mut().active_subagent_running(),
+        "returning to master restores its still-running unified flag"
     );
 }
