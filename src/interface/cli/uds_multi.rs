@@ -319,6 +319,15 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                         targeted_tx,
                     );
 
+                    // Subscribe to the broadcast BEFORE the snapshot write below
+                    // (#828 regression fix): the snapshot read/write are await
+                    // points, and any event broadcast during them — e.g. an
+                    // `agent_start` from a concurrent turn — would be missed if we
+                    // subscribed afterwards. Subscribing first buffers those events
+                    // in `broadcast_rx`; `handle_client` delivers them after the
+                    // directly-written snapshot bytes.
+                    let broadcast_rx = broadcast_tx.subscribe();
+
                     // Connect-time snapshot (#828): serve the pre-turn
                     // conversation immediately — BEFORE/independent of the
                     // (possibly busy mid-turn) single dispatch loop — so a
@@ -340,7 +349,7 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
 
                     let args = ClientHandlerArgs {
                         stream,
-                        broadcast_rx: broadcast_tx.subscribe(),
+                        broadcast_rx,
                         targeted_rx,
                         cmd_tx: cmd_tx.clone(),
                         cancel_handle: cancel_handle.clone(),
