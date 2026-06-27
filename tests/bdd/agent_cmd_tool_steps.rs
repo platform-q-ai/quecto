@@ -47,8 +47,22 @@ fn given_agent_cmd_with_mock_entry(world: &mut QuectoWorld, agent_id: String) {
                                 Ok(l) => l,
                                 Err(_) => break,
                             };
+                            // Echo the sent command type in the response's
+                            // `command` field, mirroring the real child dispatch
+                            // (`AgentEvent::ok(id, type_name, data)`), so the
+                            // command reader can match the reply to its request
+                            // and skip unsolicited responses (#831).
+                            let sent_type = serde_json::from_str::<serde_json::Value>(&line)
+                                .ok()
+                                .and_then(|v| {
+                                    v.get("type").and_then(|t| t.as_str()).map(str::to_owned)
+                                })
+                                .unwrap_or_else(|| "mock".to_string());
                             *last_cmd_inner.lock().unwrap() = line;
-                            let response = r#"{"type":"response","command":"mock","success":true}"#;
+                            let response = format!(
+                                r#"{{"type":"response","command":"{}","success":true}}"#,
+                                sent_type
+                            );
                             let _ = writeln!(stream, "{}", response);
                         }
                     });
@@ -66,6 +80,58 @@ fn given_agent_cmd_with_mock_entry(world: &mut QuectoWorld, agent_id: String) {
     world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
     world.agent_cmd_registry = Some(registry);
     // Keep tmp dir alive so socket file persists.
+    world._agent_cmd_mock_tmp = Some(tmp);
+    world.agent_cmd_last_command = Some(last_cmd);
+}
+
+#[given(expr = "an AgentCmdTool with a busy mock registry entry {string}")]
+fn given_agent_cmd_with_busy_mock_entry(world: &mut QuectoWorld, agent_id: String) {
+    // A BUSY child pushes an unsolicited connect-time `get_messages` SNAPSHOT as
+    // the FIRST line on every new connection (#828). This mock reproduces that:
+    // it writes the snapshot first, THEN echoes the real command (#831).
+    let registry = AgentCmdTool::new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock_path = tmp.path().join("busy-agent.sock");
+    let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+
+    let std_listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    std_listener.set_nonblocking(false).unwrap();
+    let last_cmd_clone = last_cmd.clone();
+
+    let _handle = std::thread::spawn(move || {
+        for stream in std_listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let last_cmd_inner = last_cmd_clone.clone();
+            std::thread::spawn(move || {
+                use std::io::{BufRead, BufReader, Write};
+                // Connect-time snapshot pushed BEFORE the client's command reply.
+                let snapshot = r#"{"type":"response","command":"get_messages","data":[{"role":"assistant","content":"FIRST MESSAGE ONLY"}]}"#;
+                let _ = writeln!(stream, "{}", snapshot);
+                let reader = BufReader::new(stream.try_clone().unwrap());
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    let sent_type = serde_json::from_str::<serde_json::Value>(&line)
+                        .ok()
+                        .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_owned))
+                        .unwrap_or_else(|| "mock".to_string());
+                    *last_cmd_inner.lock().unwrap() = line;
+                    let response = format!(
+                        r#"{{"type":"response","command":"{}","data":[{{"role":"assistant","content":"LATEST TURNS"}}]}}"#,
+                        sent_type
+                    );
+                    let _ = writeln!(stream, "{}", response);
+                }
+            });
+        }
+    });
+
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(sock_path, 0));
+
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
     world._agent_cmd_mock_tmp = Some(tmp);
     world.agent_cmd_last_command = Some(last_cmd);
 }

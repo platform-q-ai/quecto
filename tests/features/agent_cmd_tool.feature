@@ -176,6 +176,31 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
   # --- UDS transport (#557) ---
   # Verified via unit tests in agent_cmd.rs (mock UDS server).
 
+  # --- Busy-child snapshot skip (#831) ---
+
+  # Generic across commands: any command whose echoed type differs from the
+  # snapshot's `get_messages` skips the snapshot and returns its own reply.
+  Scenario Outline: <command> against a busy child skips the connect-time snapshot
+    Given an AgentCmdTool with a busy mock registry entry "busy-skip"
+    When I execute agent_cmd with '{"agent_id":"busy-skip","command":"<command>"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "LATEST TURNS"
+
+    Examples:
+      | command           |
+      | get_messages_tail |
+      | get_state         |
+
+  # When the request IS get_messages, the connect-time snapshot is itself a
+  # valid get_messages response and legitimately matches command=="get_messages",
+  # so the reader returns it (the first matching response). Pin that payload so
+  # the scenario guarantees a real get_messages response is returned.
+  Scenario: get_messages against a busy child returns a non-error get_messages response
+    Given an AgentCmdTool with a busy mock registry entry "busy-3"
+    When I execute agent_cmd with '{"agent_id":"busy-3","command":"get_messages"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "FIRST MESSAGE ONLY"
+
   @pending
   Scenario: UDS connection keeps write half open until response received
     Given a live UDS subagent

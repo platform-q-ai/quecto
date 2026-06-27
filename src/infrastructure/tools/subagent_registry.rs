@@ -203,12 +203,14 @@ pub fn lookup_subagent_socket(
         .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
 }
 
-/// Send a JSON-lines command to a sub-agent's UDS socket and read the first
-/// `response` line back.
+/// Send a JSON-lines command to a sub-agent's UDS socket and read back the
+/// `response` line that matches the command we sent.
 ///
 /// Each call opens a new connection, writes `command` + newline, and reads
-/// lines until a `{"type":"response",...}` event arrives (skipping tokens,
-/// agent_start, etc. that the broadcast delivers to all clients). Shared by
+/// lines until a `{"type":"response","command":<sent type>,...}` event arrives
+/// (skipping tokens, agent_start, and unsolicited responses such as the
+/// connect-time `get_messages` snapshot the broadcast delivers to all clients).
+/// Shared by
 /// `agent_cmd` and the TUI agent-targeted tail forwarder so the framing rule
 /// lives in one place (#795).
 ///
@@ -257,6 +259,15 @@ pub async fn send_subagent_uds_command_with_timeout(
     // response would never arrive. Keep the write half alive until we're done.
     let _keep_alive = writer;
 
+    // Match the reply to the command we SENT. Responses echo the request type in
+    // their `command` field (e.g. `AgentEvent::ok(id, type_name, data)`), so we
+    // can skip unsolicited responses that the connection delivers before ours —
+    // notably the connect-time `get_messages` SNAPSHOT a BUSY child pushes on
+    // every new connection (#828). Without this, a parent tailing a busy child
+    // would consume that snapshot (its FIRST message) instead of the actual
+    // reply to its `get_messages_tail`/`get_state`/etc. command (#831 regression).
+    let expected_command = expected_response_command(command);
+
     let mut reader = BufReader::new(reader);
     let deadline = tokio::time::Instant::now() + response_timeout;
     let timeout_msg = || {
@@ -280,7 +291,20 @@ pub async fn send_subagent_uds_command_with_timeout(
             Some(l) => {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&l) {
                     if json.get("type").and_then(|v| v.as_str()) == Some("response") {
-                        return Ok(l);
+                        match &expected_command {
+                            // We know which command we sent: only accept the
+                            // response that echoes it, skipping unsolicited
+                            // responses (the connect-time snapshot, etc.).
+                            Some(expected) => {
+                                if json.get("command").and_then(|v| v.as_str()) == Some(expected) {
+                                    return Ok(l);
+                                }
+                                // Unsolicited / mismatched response — skip.
+                            }
+                            // Sent command had no parseable type: fall back to the
+                            // historical behaviour (return the first response).
+                            None => return Ok(l),
+                        }
                     }
                 }
                 // Not a response event — skip.
@@ -292,6 +316,18 @@ pub async fn send_subagent_uds_command_with_timeout(
             }
         }
     }
+}
+
+/// Parse the `"type"` field out of an outbound UDS command so the read loop can
+/// match the reply by its echoed `command` field. Returns `None` when the
+/// command is not JSON or lacks a string `type`, signalling the caller to fall
+/// back to first-response behaviour (#831).
+fn expected_response_command(command: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(command)
+        .ok()?
+        .get("type")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// Read a single `\n`-terminated line, rejecting (rather than buffering) any line

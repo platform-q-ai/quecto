@@ -389,6 +389,66 @@ async fn read_line_capped_rejects_oversized_line() {
     );
 }
 
+// --- command/response matching (#831) ---
+
+#[test]
+fn expected_response_command_parses_type() {
+    assert_eq!(
+        expected_response_command(r#"{"type":"get_messages_tail","count":5}"#),
+        Some("get_messages_tail".to_string())
+    );
+}
+
+#[test]
+fn expected_response_command_none_for_non_json_or_missing_type() {
+    assert_eq!(expected_response_command("not json"), None);
+    assert_eq!(expected_response_command(r#"{"count":5}"#), None);
+}
+
+#[tokio::test]
+async fn command_reader_skips_connect_time_snapshot_and_returns_matching_reply() {
+    // Reproduce #831: a BUSY child pushes an unsolicited connect-time
+    // `get_messages` SNAPSHOT as the FIRST line, then the real
+    // `get_messages_tail` reply. The reader must return the tail reply (latest),
+    // not the snapshot (the child's first message only).
+    use tokio::io::AsyncWriteExt;
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("busy.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        // Unsolicited connect-time snapshot (the child's FIRST message).
+        stream
+            .write_all(b"{\"type\":\"response\",\"command\":\"get_messages\",\"data\":[{\"content\":\"FIRST MESSAGE ONLY\"}]}\n")
+            .await
+            .unwrap();
+        // The real reply to the command the parent sent.
+        stream
+            .write_all(b"{\"type\":\"response\",\"command\":\"get_messages_tail\",\"data\":[{\"content\":\"LATEST TURNS\"}]}\n")
+            .await
+            .unwrap();
+        // Keep the connection alive briefly so the reader can consume both lines.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    });
+
+    let cmd = r#"{"type":"get_messages_tail","count":5}"#;
+    let reply =
+        send_subagent_uds_command_with_timeout(&sock, cmd, std::time::Duration::from_secs(3))
+            .await
+            .expect("reader should return a response");
+
+    assert!(
+        reply.contains("get_messages_tail") && reply.contains("LATEST TURNS"),
+        "expected the get_messages_tail reply, got: {reply}"
+    );
+    assert!(
+        !reply.contains("FIRST MESSAGE ONLY"),
+        "must not return the connect-time snapshot, got: {reply}"
+    );
+    server.await.unwrap();
+}
+
 // --- notification channel ---
 
 #[tokio::test]
