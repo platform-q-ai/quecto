@@ -32,17 +32,27 @@ pub(super) fn selection_range(sel: &TextSelection) -> (u16, u16, u16, u16) {
 }
 
 /// Apply mouse selection highlight to rendered lines (#546).
-pub(super) fn apply_selection_highlight(selection: &Option<TextSelection>, lines: &mut [String]) {
+///
+/// `body_start_col` is the visible column where selectable body text begins in
+/// the final composed frame. Multi-row selections normally continue at column 0,
+/// but split-pane frames reserve those leading columns for the sidepanel; clamp
+/// every highlighted range to the body so selection never paints over chrome.
+pub(super) fn apply_selection_highlight(
+    selection: &Option<TextSelection>,
+    lines: &mut [String],
+    body_start_col: u16,
+) {
     let Some(sel) = selection else { return };
     let (sr, sc, er, ec) = selection_range(sel);
     for row_idx in sr..=er {
         if (row_idx as usize) < lines.len() {
-            let line_start = if row_idx == sr { sc } else { 0 };
+            let line_start = if row_idx == sr { sc } else { 0 }.max(body_start_col);
             let line_end = if row_idx == er {
                 ec
             } else {
                 crate::interface::utils::visible_width(&lines[row_idx as usize]) as u16
-            };
+            }
+            .max(body_start_col);
             lines[row_idx as usize] =
                 apply_line_highlight(&lines[row_idx as usize], line_start, line_end);
         }
