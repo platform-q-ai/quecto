@@ -426,3 +426,6 @@ async fn test_notification_drain() {
     }
     assert_eq!(count, 3);
 }
+
+// Cascade-remove tests moved to `subagent_cascade_tests.rs` alongside the
+// extracted `subagent_cascade` module (#831).

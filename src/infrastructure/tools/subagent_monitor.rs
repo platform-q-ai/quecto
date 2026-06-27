@@ -302,7 +302,7 @@ fn handle_monitor_line(
             // root's own children (#815, architecture review). This is not a
             // status change for the immediate child, so it returns early and
             // bypasses the registry-update/notification path below.
-            if let Some(mut fwd) = forward_child_state_changed(line, registry) {
+            if let Some(mut fwd) = forward_child_state_changed(line, registry, agent_id) {
                 fwd.push('\n');
                 let _ = tx.send(fwd);
                 return;
@@ -441,20 +441,35 @@ const MAX_FORWARDED_SUBAGENTS: usize = 256;
 pub fn merge_and_forward_state_changed(
     value: &serde_json::Value,
     registry: &SubagentRegistry,
+    forwarding_child_id: &str,
 ) -> Option<String> {
     if value.get("type").and_then(|t| t.as_str()) != Some("subagent_state_changed") {
         return None;
     }
     if let Some(descendants) = value.get("subagents").and_then(|v| v.as_array()) {
-        merge_descendants(registry, descendants);
+        merge_descendants(registry, forwarding_child_id, descendants);
     }
-    Some(build_state_changed_event(registry))
+    Some(super::subagent_cascade::build_state_changed_event(registry))
 }
 
 /// Merge descendant `SubagentInfo` entries (camelCase wire fields) into the
-/// registry. Bounded by [`MAX_FORWARDED_SUBAGENTS`]; entries are upserted so a
-/// re-report updates an existing merged descendant rather than duplicating it.
-fn merge_descendants(registry: &SubagentRegistry, descendants: &[serde_json::Value]) {
+/// registry as a SCOPED REPLACE of `forwarding_child_id`'s sub-tree.
+///
+/// A child's `subagent_state_changed` push is the AUTHORITATIVE, full snapshot of
+/// everything below that child. So beyond upserting the pushed entries (bounded
+/// by [`MAX_FORWARDED_SUBAGENTS`]), we prune any registry entry that is a
+/// transitive descendant of `forwarding_child_id` but ABSENT from this push —
+/// i.e. a grandchild that exited or was killed under the child. Without this, the
+/// pure-upsert merge could never remove a dead grandchild from the root registry
+/// (it stops being forwarded once gone), so it lingered in the TUI panel forever
+/// (#831). Entries outside the forwarding child's sub-tree (the root's own
+/// children, sibling trees) are never touched, preserving the full-replace
+/// stability that #815 relies on.
+fn merge_descendants(
+    registry: &SubagentRegistry,
+    forwarding_child_id: &str,
+    descendants: &[serde_json::Value],
+) {
     if descendants.len() > MAX_FORWARDED_SUBAGENTS {
         tracing::warn!(
             count = descendants.len(),
@@ -463,10 +478,12 @@ fn merge_descendants(registry: &SubagentRegistry, descendants: &[serde_json::Val
         );
     }
     let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let mut pushed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for d in descendants.iter().take(MAX_FORWARDED_SUBAGENTS) {
         let Some(agent_id) = d.get("agentId").and_then(|v| v.as_str()) else {
             continue;
         };
+        pushed_ids.insert(agent_id.to_string());
         let socket_path = d
             .get("socketPath")
             .and_then(|v| v.as_str())
@@ -502,64 +519,56 @@ fn merge_descendants(registry: &SubagentRegistry, descendants: &[serde_json::Val
             .and_then(|w| serde_json::from_value(w.clone()).ok());
         entry.updated_at = Instant::now();
     }
+
+    // Scoped prune: drop transitive descendants of the forwarding child that the
+    // authoritative push omitted (they died under the child). Computed AFTER the
+    // upsert so re-parented entries chain correctly. Only the forwarding child's
+    // sub-tree is in scope; the child itself and all other trees are untouched.
+    let stale: Vec<String> = transitive_descendants(&guard, forwarding_child_id)
+        .into_iter()
+        .filter(|id| !pushed_ids.contains(id))
+        .collect();
+    for id in stale {
+        guard.remove(&id);
+    }
 }
 
-/// Build a canonical `subagent_state_changed` event (camelCase per
-/// `SubagentInfo`) from the registry's current entries, sorted by id for stable
-/// ordering. Projects to KNOWN fields only — no arbitrary child-supplied keys
-/// cross onto the parent stream (trust-boundary pattern, review).
-fn build_state_changed_event(registry: &SubagentRegistry) -> String {
-    let subagents: Vec<serde_json::Value> = {
-        let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
-        let mut entries: Vec<(&String, &SubagentEntry)> = guard.iter().collect();
-        entries.sort_by(|a, b| a.0.cmp(b.0));
-        entries
-            .into_iter()
-            .map(|(id, entry)| {
-                let mut obj = serde_json::Map::new();
-                obj.insert("agentId".into(), serde_json::json!(id));
-                obj.insert(
-                    "status".into(),
-                    serde_json::json!(entry.status.to_wire_str()),
-                );
-                if let Some(tool) = &entry.last_tool {
-                    obj.insert("lastTool".into(), serde_json::json!(tool));
-                }
-                if let Some(err) = &entry.last_error {
-                    obj.insert("lastError".into(), serde_json::json!(err));
-                }
-                obj.insert("pid".into(), serde_json::json!(entry.pid));
-                obj.insert(
-                    "socketPath".into(),
-                    serde_json::json!(entry.socket_path.to_string_lossy()),
-                );
-                if let Some(parent) = &entry.parent_id {
-                    obj.insert("parentId".into(), serde_json::json!(parent));
-                }
-                if let Some(workflow) = &entry.workflow {
-                    if let Ok(w) = serde_json::to_value(workflow) {
-                        obj.insert("workflow".into(), w);
-                    }
-                }
-                serde_json::Value::Object(obj)
-            })
-            .collect()
-    };
-    serde_json::json!({
-        "type": "subagent_state_changed",
-        "subagents": subagents,
-    })
-    .to_string()
+/// Collect the ids of every transitive descendant of `root` (by `parent_id`) in
+/// the registry, NOT including `root` itself. Used to scope the forwarded
+/// full-replace prune to one child's sub-tree (#831).
+fn transitive_descendants(
+    guard: &std::collections::HashMap<String, SubagentEntry>,
+    root: &str,
+) -> Vec<String> {
+    let mut children: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    for (id, entry) in guard.iter() {
+        if let Some(parent) = &entry.parent_id {
+            children.entry(parent.as_str()).or_default().push(id);
+        }
+    }
+    let mut out = Vec::new();
+    let mut frontier: Vec<&str> = children.get(root).cloned().unwrap_or_default();
+    while let Some(id) = frontier.pop() {
+        out.push(id.to_string());
+        if let Some(kids) = children.get(id) {
+            frontier.extend(kids.iter().copied());
+        }
+    }
+    out
 }
 
 /// Line-based wrapper around [`merge_and_forward_state_changed`]: cheap
 /// substring pre-filter, then parse once. Returns `None` for non-state lines.
-pub fn forward_child_state_changed(line: &str, registry: &SubagentRegistry) -> Option<String> {
+pub fn forward_child_state_changed(
+    line: &str,
+    registry: &SubagentRegistry,
+    forwarding_child_id: &str,
+) -> Option<String> {
     if !line.contains("\"type\":\"subagent_state_changed\"") {
         return None;
     }
     let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
-    merge_and_forward_state_changed(&value, registry)
+    merge_and_forward_state_changed(&value, registry, forwarding_child_id)
 }
 
 /// Check if a JSON-lines event should trigger a notification and send it.

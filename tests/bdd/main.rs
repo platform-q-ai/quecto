@@ -603,6 +603,11 @@ pub struct QuectoWorld {
     /// All SubagentStatus variants for display assertion
     pub monitor_status_variants:
         Option<Vec<quecto::infrastructure::tools::subagent_registry::SubagentStatus>>,
+    /// Root registry for cascade-remove BDD scenarios (#831)
+    pub cascade_registry:
+        Option<quecto::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    /// Result of a cascade-remove broadcast: Some(event) or None (#831)
+    pub cascade_broadcast: Option<Option<serde_json::Value>>,
     /// Monitor abort handle for cancellation test
     pub monitor_abort_handle: Option<tokio::task::JoinHandle<()>>,
     /// Tokio runtime for abort handle test (keeps spawned task alive)

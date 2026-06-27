@@ -428,6 +428,7 @@ impl SpawnTool {
         let reaper_registry = self.registry.clone();
         let reaper_name = session_name.to_string();
         let reaper_exit_tx = exit_tx;
+        let reaper_broadcast = self.broadcast_tx.clone();
         tokio::spawn(async move {
             let status = child.wait().await;
 
@@ -466,14 +467,51 @@ impl SpawnTool {
             // Signal any waiting `await` call before removing from registry.
             let _ = reaper_exit_tx.send(Some(exit_signal));
 
-            // Abort the monitor task and remove from registry when the child exits.
-            let mut entries = reaper_registry.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(entry) = entries.get(&reaper_name) {
-                if let Some(ref handle) = entry.monitor_handle {
-                    handle.abort();
+            // Cascade-remove the dead agent AND its descendants, then broadcast
+            // the survivor set so every connected client (the TUI panel) drops
+            // them promptly instead of leaving them lingering (#831). The reaper
+            // is a detached task, so the send is best-effort (errors at debug).
+            let crate::infrastructure::tools::subagent_cascade::CascadeOutcome { removed, event } =
+                crate::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed(
+                    &reaper_registry,
+                    &reaper_name,
+                );
+            if let Some(event) = event {
+                if let Some(tx) = &reaper_broadcast {
+                    if let Err(e) = tx.send(event) {
+                        tracing::debug!(
+                            agent = %reaper_name,
+                            error = %e,
+                            "reaper: no subscribers for cascade state_changed broadcast"
+                        );
+                    }
                 }
             }
-            entries.remove(&reaper_name);
+
+            // Clean up the removed sub-tree. The dead agent itself was already
+            // wait()ed, so we only abort its monitor (the aborted monitor will
+            // NOT emit its EOF->Exited notification — that is why we announced the
+            // exit above rather than relying on it, #831). For DESCENDANTS we also
+            // SIGTERM their processes: when a parent exits its children are
+            // orphaned and would otherwise leak as untracked processes that
+            // `shutdown_all` can no longer reach (#831 security review). We do NOT
+            // re-signal the dead agent's own pid (already reaped; avoids a
+            // pid-reuse TOCTOU race).
+            for (id, entry) in &removed {
+                if id == &reaper_name {
+                    if let Some(ref handle) = entry.monitor_handle {
+                        handle.abort();
+                    }
+                    continue;
+                }
+                if let Some(ref tx) = entry.exit_signal_tx {
+                    let _ = tx.send(Some(ExitSignal {
+                        exit_code: None,
+                        signal: Some(15), // SIGTERM
+                    }));
+                }
+                crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
+            }
         });
 
         // If the caller provided an initial task, send it as the first prompt.
