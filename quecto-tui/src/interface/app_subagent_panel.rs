@@ -101,7 +101,21 @@ impl App {
     /// per-session flag for both. The master additionally owns the richer tool
     /// `spinner` telemetry, layered on top by the render path.
     pub(super) fn active_subagent_running(&self) -> bool {
-        self.active_session().running
+        if self.active_session().running {
+            return true;
+        }
+        // Connect-on-select attaches to a sub-agent's live stream and may join
+        // MID-TURN, missing its `agent_start` — so `session.running` can read
+        // false for an agent that IS working. Fall back to the master's tracked
+        // status (the authoritative `subagent_local` view) so Esc correctly
+        // cancels a busy sub-agent instead of just navigating back to master.
+        match &self.active_agent_id {
+            Some(id) => self
+                .subagent_local
+                .get(id)
+                .is_some_and(|t| subagent_status_is_active(&t.info.status)),
+            None => false,
+        }
     }
 
     /// The focus region currently holding keyboard input (#802, tests).

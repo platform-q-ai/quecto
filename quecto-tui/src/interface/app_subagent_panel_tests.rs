@@ -98,15 +98,40 @@ async fn selecting_a_subagent_switches_active_session() {
 }
 
 #[tokio::test]
-async fn esc_returns_to_master() {
+async fn esc_returns_to_master_when_subagent_idle() {
     let mut h = with_two_subagents().await;
+    // Idle agents: Esc navigates back to master rather than cancelling.
+    h.event(subagents_changed(vec![
+        subagent("worker", "idle", Some(("active", 1, 3))),
+        subagent("other", "idle", Some(("active", 2, 3))),
+    ]));
     h.app_mut().select_agent(Some("worker"));
     assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
     h.app_mut().handle_key(Key::Escape);
     assert_eq!(
         h.app_mut().active_agent_id(),
         None,
-        "Esc returns the main view to the master session"
+        "Esc on an IDLE sub-agent returns the main view to the master session"
+    );
+}
+
+#[tokio::test]
+async fn esc_cancels_running_subagent_instead_of_returning_to_master() {
+    let mut h = with_two_subagents().await; // worker tracked as "running"
+    h.app_mut().select_agent(Some("worker"));
+    assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
+    // connect-on-select joined mid-turn, so session.running is false — but the
+    // master tracks worker as running, so Esc must CANCEL the sub-agent's work
+    // (staying on it), not navigate back to master.
+    assert!(
+        h.app_mut().active_subagent_running(),
+        "a busy sub-agent is detected via the master's tracked status"
+    );
+    h.app_mut().handle_key(Key::Escape);
+    assert_eq!(
+        h.app_mut().active_agent_id(),
+        Some("worker"),
+        "Esc cancels the running sub-agent (stays on it); does not return to master"
     );
 }
 
@@ -323,8 +348,9 @@ async fn switching_updates_body_and_preserves_each_session() {
         !on_worker.contains("MASTERWORK"),
         "switching to worker must replace the master body:\n{on_worker}"
     );
-    // Esc back to master: body shows master content again.
-    h.app_mut().handle_key(Key::Escape);
+    // Back to master: body shows master content again. Navigate directly —
+    // Esc on a RUNNING sub-agent now cancels it rather than navigating.
+    h.app_mut().select_agent(None);
     let on_master = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
         on_master.contains("MASTERWORK"),
@@ -670,6 +696,12 @@ async fn master_is_modeled_as_active_session_like_subagents() {
 
     // Selecting a sub-agent flips the SAME accessors to that session, and the
     // master's run flag is independent of the viewed session.
+    // Idle the worker so the viewed-session run flag reads false (the harness
+    // tracks it running, and active_subagent_running now trusts that status).
+    h.event(subagents_changed(vec![
+        subagent("worker", "idle", Some(("active", 1, 3))),
+        subagent("other", "running", Some(("active", 2, 3))),
+    ]));
     h.app_mut().select_agent(Some("worker"));
     assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
     assert!(
