@@ -111,7 +111,7 @@ pub struct App {
     agent_state: AgentRunState,
     /// Passive sub-agent completion notes (#816) received while the parent is
     /// mid-turn; flushed when it next goes idle so a note never splits a response.
-    deferred_subagent_notes: Vec<String>,
+    deferred_subagent_notes: std::collections::VecDeque<String>,
     should_exit: bool,
     stdin_buffer: crate::interface::stdin_buffer::StdinBuffer,
     agent_connected: bool,
@@ -215,7 +215,7 @@ pub(crate) struct SessionView {
     /// Completion notes from THIS child's own sub-agents (grandchildren) received
     /// while this child is mid-turn; flushed when it goes idle so a note never
     /// splits the child's streaming response (#816).
-    deferred_subagent_notes: Vec<String>,
+    deferred_subagent_notes: std::collections::VecDeque<String>,
     /// Whether the history backfill was applied (#828) — guards re-delivery.
     history_backfilled: bool,
 }
@@ -229,7 +229,7 @@ impl SessionView {
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             running: false,
             footer,
-            deferred_subagent_notes: Vec::new(),
+            deferred_subagent_notes: std::collections::VecDeque::new(),
             history_backfilled: false,
         }
     }
@@ -276,7 +276,7 @@ impl App {
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
             agent_state: AgentRunState::new(),
-            deferred_subagent_notes: Vec::new(),
+            deferred_subagent_notes: std::collections::VecDeque::new(),
             should_exit: false,
             stdin_buffer: crate::interface::stdin_buffer::StdinBuffer::new(),
             agent_connected: true,

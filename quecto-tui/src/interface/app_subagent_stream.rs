@@ -137,13 +137,25 @@ impl App {
         let history: Vec<ChatEntry> = messages
             .into_iter()
             .map(|message| match message {
-                ResumedChatMessage::User(text) => ChatEntry::User { text },
+                // Sub-agent transcript text is untrusted; strip terminal control
+                // sequences before rendering so a child cannot inject ANSI/OSC/
+                // bidi escapes into the operator's terminal (#828 security).
+                ResumedChatMessage::User(text) => ChatEntry::User {
+                    text: crate::interface::ansi::sanitize_control_keep_newlines(&text),
+                },
                 ResumedChatMessage::Assistant(text) => ChatEntry::Assistant {
-                    text,
+                    text: crate::interface::ansi::sanitize_control_keep_newlines(&text),
                     streaming: false,
                 },
             })
             .collect();
+        // Only mark the backfill applied once it actually carried content: an
+        // empty/filtered payload must not latch the guard and permanently
+        // suppress a later populated backfill (reconnect / response racing ahead
+        // of persistence) (#828 review).
+        if history.is_empty() {
+            return;
+        }
         session.chat.prepend_history(history);
         session.history_backfilled = true;
     }
@@ -156,15 +168,15 @@ impl App {
     /// bound.
     pub(super) fn push_or_defer_note(
         chat: &mut Chat,
-        deferred: &mut Vec<String>,
+        deferred: &mut std::collections::VecDeque<String>,
         running: bool,
         message: String,
     ) {
         if running {
             if deferred.len() >= DEFERRED_NOTE_CAP {
-                deferred.remove(0);
+                deferred.pop_front();
             }
-            deferred.push(message);
+            deferred.push_back(message);
         } else {
             chat.add_entry(ChatEntry::Status {
                 text: format!("◆ {message}"),
@@ -174,8 +186,11 @@ impl App {
 
     /// Flush all deferred notes into the chat as passive status lines, in order
     /// (#816/#828). Counterpart to `push_or_defer_note`.
-    pub(super) fn flush_deferred_notes(chat: &mut Chat, deferred: &mut Vec<String>) {
-        for note in std::mem::take(deferred) {
+    pub(super) fn flush_deferred_notes(
+        chat: &mut Chat,
+        deferred: &mut std::collections::VecDeque<String>,
+    ) {
+        for note in deferred.drain(..) {
             chat.add_entry(ChatEntry::Status {
                 text: format!("◆ {note}"),
             });

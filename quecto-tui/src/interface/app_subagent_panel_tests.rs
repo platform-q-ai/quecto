@@ -505,6 +505,30 @@ async fn backfill_is_idempotent_and_does_not_duplicate_history() {
 }
 
 #[tokio::test]
+async fn empty_backfill_does_not_latch_guard_against_later_history() {
+    // #828 review: an empty/filtered get_messages payload must NOT mark the
+    // backfill applied — otherwise a later populated backfill (reconnect, or a
+    // response racing ahead of persistence) is permanently suppressed and the
+    // session stays stuck showing no history.
+    let mut h = with_two_subagents().await;
+    h.app_mut().select_agent(Some("worker"));
+    // First backfill is empty.
+    h.app_mut()
+        .route_subagent_event("worker", backfill_history(&[]));
+    // Later, the populated backfill finally arrives.
+    h.app_mut().route_subagent_event(
+        "worker",
+        backfill_history(&[("real question", "real answer")]),
+    );
+
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("real question") && frame.contains("real answer"),
+        "an empty backfill must not suppress a later populated backfill:\n{frame}"
+    );
+}
+
+#[tokio::test]
 async fn deferred_subagent_note_buffer_is_capped() {
     // #828 Part 2 NIT: the per-session deferred-note buffer must be defensively
     // capped so a chatty grandchild during a long parent turn cannot grow it

@@ -218,7 +218,11 @@ impl Chat {
             .splice(0..0, std::iter::repeat_with(|| None).take(n));
         // Indices shifted, so the incremental offset table must rebuild fully.
         self.combined_width = None;
-        self.scroll_offset = 0;
+        // `scroll_offset` is measured from the BOTTOM, and the backfill is
+        // prepended ABOVE existing content, so the bottom-relative position is
+        // unchanged — leave the offset untouched. Resetting to 0 here would yank
+        // a reader who scrolled up in a busy session back to the live tail when
+        // the async backfill lands (#828 review).
     }
 
     pub fn set_viewport_height(&mut self, height: usize) {
