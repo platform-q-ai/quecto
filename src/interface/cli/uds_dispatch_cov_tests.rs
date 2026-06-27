@@ -191,6 +191,7 @@ impl Fixture {
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
+            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             session: &mut self.session,
             stdout: &mut self.writer,
             session_key: &mut self.session_key,

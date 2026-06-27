@@ -209,6 +209,7 @@ async fn single_client_loop(
             base_dir,
             agent: &mut { agent },
             messages: &mut messages,
+            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             session: &mut agent_session,
             stdout: &mut *writer,
             session_key: &mut session_key,
@@ -360,6 +361,7 @@ pub(crate) struct DispatchCtx<'a> {
     pub base_dir: &'a std::path::Path,
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
+    pub conversation_snapshot: super::uds_multi::ConversationSnapshot, // #828
     pub session: &'a mut AgentSession,
     pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
     pub session_key: &'a mut String,
@@ -610,9 +612,8 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
     drain_pending_and_nudge(ctx).await;
-    // Persist after every completed turn so the conversation is durable even if
-    // the agent is terminated ungracefully (e.g. by the TUI on quit) and shows
-    // up in /resume without requiring /new or a clean shutdown.
+    // Persist after every completed turn so the conversation survives an
+    // ungraceful exit (e.g. TUI quit) and appears in /resume without /new.
     if let Err(err) = uds_dispatch::persist_current_session(ctx).await {
         tracing::warn!("failed to persist session after turn: {err}");
     }

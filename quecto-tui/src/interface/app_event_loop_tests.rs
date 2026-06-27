@@ -202,6 +202,19 @@ async fn handle_key_ctrl_o_toggles_tool_expand() {
     );
 }
 
+#[tokio::test]
+async fn handle_key_ctrl_o_toggles_active_subagent_tool_expand() {
+    // #828: Ctrl+O routes through the ACTIVE session, not always the master.
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.select_agent(Some("worker")); // lazily creates the child session view
+    let m0 = a.master_session.chat.tool_expanded;
+    let c0 = a.active_chat_mut().tool_expanded;
+    a.handle_key(Key::Ctrl('o'));
+    assert_eq!(a.active_chat_mut().tool_expanded, !c0, "toggles child");
+    assert_eq!(a.master_session.chat.tool_expanded, m0, "master kept");
+}
+
 // The four scroll keys all move `chat.scroll_offset`: PageUp/ScrollUp increase
 // it (scroll back into history), PageDown/ScrollDown decrease it (toward the
 // latest output, saturating at 0). Table-driven so the four cases share setup.

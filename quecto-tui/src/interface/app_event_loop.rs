@@ -450,9 +450,9 @@ impl App {
                 return;
             }
             Key::Ctrl('o') => {
-                // Toggle tool output expansion.
-                self.master_session.chat.toggle_tool_expand();
-                let state = if self.master_session.chat.tool_expanded {
+                // Toggle tool output expansion for the ACTIVE session (#828).
+                self.active_chat_mut().toggle_tool_expand();
+                let state = if self.active_chat_mut().tool_expanded {
                     "expanded"
                 } else {
                     "collapsed"

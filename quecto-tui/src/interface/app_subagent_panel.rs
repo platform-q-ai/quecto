@@ -296,8 +296,12 @@ impl App {
             let Ok(mut client) = Client::connect(&path).await else {
                 return;
             };
-            // Backfill history; the live stream flows immediately while a busy
-            // child's dispatch loop answers this (issue: ≤5s backfill).
+            // The kernel sends a connect-time get_messages snapshot of the
+            // pre-turn conversation immediately on connect (#828) — served by
+            // the accept loop, independent of the child's (possibly busy)
+            // dispatch loop — so prior history shows at once for a BUSY child,
+            // not just an idle one. This explicit get_messages is a follow-up
+            // refresh; the TUI reconciles both via `Chat::prepend_history`.
             let _ = client
                 .send(&Command::GetMessages {
                     id: Some("subagent-history".into()),

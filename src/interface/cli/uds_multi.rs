@@ -30,6 +30,37 @@ pub(super) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
 /// Atomic counter for assigning unique client IDs (#352).
 static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+// ─── Connect-time conversation snapshot (#828) ──────────────────────────────────
+
+/// Shared pre-turn conversation snapshot. Holds a clone of the dispatch loop's
+/// `messages` as of the last turn boundary. A newly-connected client is served
+/// this immediately by the accept loop — independent of the (possibly busy)
+/// single dispatch loop — so selecting a BUSY sub-agent shows its prior
+/// conversation at once, with live tokens streaming over the broadcast on top.
+pub(crate) type ConversationSnapshot = std::sync::Arc<tokio::sync::RwLock<Vec<Message>>>;
+
+/// Refresh the shared pre-turn conversation snapshot from the current messages.
+/// Called at each turn boundary — a cheap clone, never per token (#828).
+pub(super) async fn refresh_conversation_snapshot(ctx: &super::uds::DispatchCtx<'_>) {
+    let mut snap = ctx.conversation_snapshot.write().await;
+    *snap = ctx.messages.clone();
+}
+
+/// Build the `get_messages`-shaped response line from a slice of messages.
+/// Reuses the same serialization as `AgentCommand::GetMessages` so the TUI's
+/// existing `route_subagent_event` get_messages handler consumes it unchanged.
+pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
+    let msgs: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
+    let ev = AgentEvent::ok(
+        None,
+        "get_messages",
+        Some(serde_json::json!({ "messages": msgs })),
+    );
+    let mut line = ev.to_json_line();
+    line.push('\n');
+    line
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 pub(super) struct MultiClientArgs<'a> {
@@ -136,6 +167,14 @@ pub(super) async fn multi_client_loop(
 
     inject_system_prompt(&mut messages, &system_prompt);
 
+    // Shared pre-turn conversation snapshot (#828): initialized with the starting
+    // messages (same shape as a normal get_messages response, i.e. including the
+    // injected system prompt), refreshed by the dispatch loop at each turn
+    // boundary, and read by the accept loop to serve newly-connected clients
+    // immediately — even while the dispatch loop is busy mid-turn.
+    let conversation_snapshot: ConversationSnapshot =
+        std::sync::Arc::new(tokio::sync::RwLock::new(messages.clone()));
+
     let mut agent_session = AgentSession::new(model, session_key.clone());
 
     // Use the pre-created broadcast channel when available (workflow emitter
@@ -155,6 +194,7 @@ pub(super) async fn multi_client_loop(
         cancel_handle: cancel_handle.clone(),
         live_clients: live_clients.clone(),
         client_tool_registry: client_tool_registry.clone(),
+        conversation_snapshot: conversation_snapshot.clone(),
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)
@@ -168,6 +208,7 @@ pub(super) async fn multi_client_loop(
         base_dir,
         agent: &mut agent,
         messages: &mut messages,
+        conversation_snapshot: conversation_snapshot.clone(),
         session: &mut agent_session,
         stdout: &mut *null_writer,
         session_key: &mut session_key,
@@ -223,6 +264,11 @@ struct AcceptLoopArgs {
     /// without routing them through the single-threaded dispatch loop
     /// (which is blocked on the agent's in-flight prompt).
     client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
+    /// Shared pre-turn conversation snapshot (#828). The accept loop writes a
+    /// `get_messages`-shaped response built from this directly to each newly
+    /// connected client BEFORE/independent of the dispatch loop, so a busy
+    /// child's client gets its prior history instantly.
+    conversation_snapshot: ConversationSnapshot,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -234,11 +280,12 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
         cancel_handle,
         live_clients,
         client_tool_registry,
+        conversation_snapshot,
     } = args;
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
-                Ok((stream, _addr)) => {
+                Ok((mut stream, _addr)) => {
                     let current = live_clients.load(std::sync::atomic::Ordering::SeqCst);
                     if current >= MAX_CLIENTS {
                         tracing::warn!(
@@ -271,6 +318,25 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                         client_id,
                         targeted_tx,
                     );
+
+                    // Connect-time snapshot (#828): serve the pre-turn
+                    // conversation immediately — BEFORE/independent of the
+                    // (possibly busy mid-turn) single dispatch loop — so a
+                    // newly-connected client sees prior history at once. Live
+                    // tokens continue streaming via the broadcast on top; the
+                    // TUI reconciles via `Chat::prepend_history`. We write
+                    // directly to the raw stream so these are the first bytes
+                    // the client reads, ahead of any broadcast events.
+                    {
+                        use tokio::io::AsyncWriteExt;
+                        let line = {
+                            let snap = conversation_snapshot.read().await;
+                            build_get_messages_line(&snap)
+                        };
+                        if let Err(e) = stream.write_all(line.as_bytes()).await {
+                            tracing::debug!("connect-time snapshot not delivered: {e}");
+                        }
+                    }
 
                     let args = ClientHandlerArgs {
                         stream,
@@ -375,6 +441,9 @@ async fn run_dispatch_loop(
                 }
             }
         }
+        // Turn boundary: refresh the shared snapshot so a newly-connected client
+        // is served the up-to-date prior conversation on connect (#828).
+        refresh_conversation_snapshot(ctx).await;
     }
 }
 
@@ -587,3 +656,6 @@ pub(in crate::interface::cli) use uds_multi_prompt::forward_notification_broadca
 #[cfg(test)]
 #[path = "uds_multi_interception_tests.rs"]
 mod interception_tests;
+#[cfg(test)]
+#[path = "uds_snapshot_tests.rs"]
+mod snapshot_tests;
