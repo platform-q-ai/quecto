@@ -100,14 +100,20 @@ async fn mock_uds_server(listener: tokio::net::UnixListener) {
     // Reader loop: read commands until EOF, then abort writer.
     // This matches uds_multi.rs handle_client_task behaviour.
     let cmd_line = lines.next_line().await.unwrap();
-    if cmd_line.is_some() {
+    if let Some(cmd) = cmd_line {
+        // Echo the stamped request id so the command reader correlates the
+        // reply to its request (#831).
+        let id = serde_json::from_str::<serde_json::Value>(&cmd)
+            .ok()
+            .and_then(|v| v.get("id").and_then(|t| t.as_str()).map(str::to_owned))
+            .unwrap_or_default();
         // Dispatch: send noise + response via channel.
         let _ = tx
             .send("{\"type\":\"token\",\"token\":\"hello\"}\n".into())
             .await;
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         let _ = tx
-                .send("{\"type\":\"response\",\"command\":\"get_state\",\"success\":true,\"data\":{\"isStreaming\":false}}\n".into())
+                .send(format!("{{\"type\":\"response\",\"id\":\"{id}\",\"command\":\"get_state\",\"success\":true,\"data\":{{\"isStreaming\":false}}}}\n"))
                 .await;
     }
 
@@ -200,10 +206,14 @@ async fn serve_get_state_once(listener: tokio::net::UnixListener) {
     if let Ok((stream, _)) = listener.accept().await {
         let (reader, mut writer) = tokio::io::split(stream);
         let mut lines = BufReader::new(reader).lines();
-        let _ = lines.next_line().await;
+        let cmd = lines.next_line().await.ok().flatten().unwrap_or_default();
+        let id = serde_json::from_str::<serde_json::Value>(&cmd)
+            .ok()
+            .and_then(|v| v.get("id").and_then(|t| t.as_str()).map(str::to_owned))
+            .unwrap_or_default();
         let _ = writer
             .write_all(
-                b"{\"type\":\"response\",\"command\":\"get_state\",\"success\":true,\"data\":{}}\n",
+                format!("{{\"type\":\"response\",\"id\":\"{id}\",\"command\":\"get_state\",\"success\":true,\"data\":{{}}}}\n").as_bytes(),
             )
             .await;
     }

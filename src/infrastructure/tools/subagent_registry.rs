@@ -203,12 +203,15 @@ pub fn lookup_subagent_socket(
         .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
 }
 
-/// Send a JSON-lines command to a sub-agent's UDS socket and read the first
-/// `response` line back.
+/// Send a JSON-lines command to a sub-agent's UDS socket and read back the
+/// `response` line that matches the command we sent.
 ///
-/// Each call opens a new connection, writes `command` + newline, and reads
-/// lines until a `{"type":"response",...}` event arrives (skipping tokens,
-/// agent_start, etc. that the broadcast delivers to all clients). Shared by
+/// Each call opens a new connection, stamps a unique `id` on the command, writes
+/// it + newline, and reads lines until the `{"type":"response","id":<that id>,...}`
+/// event arrives (skipping tokens, agent_start, and unsolicited responses such as
+/// the connect-time `get_messages` snapshot — built with no id — that the
+/// broadcast delivers to all clients).
+/// Shared by
 /// `agent_cmd` and the TUI agent-targeted tail forwarder so the framing rule
 /// lives in one place (#795).
 ///
@@ -244,8 +247,22 @@ pub async fn send_subagent_uds_command_with_timeout(
 
     let (reader, mut writer) = tokio::io::split(stream);
 
+    // Correlate the reply with the command we SENT via a unique request `id`
+    // (the protocol's correlation field). We stamp a fresh id onto the outbound
+    // command and only accept the `response` whose `id` echoes it
+    // (`AgentEvent::ok(id, ..)` in protocol.rs). Unsolicited responses — notably
+    // the connect-time `get_messages` SNAPSHOT a BUSY child pushes on every new
+    // connection (#828, built with `id: None`) — carry no id and are skipped, so
+    // a parent tailing a busy child no longer consumes that snapshot (its FIRST
+    // message) instead of the real reply to its command (#831 regression).
+    // id-matching is strictly stronger than echoing the command *type*: it also
+    // disambiguates two responses sharing a command (e.g. a `get_messages`
+    // request vs. the `get_messages`-typed snapshot). If the command is not a
+    // JSON object we cannot stamp an id and fall back to first-response.
+    let (outbound, expected_id) = stamp_request_id(command);
+
     writer
-        .write_all(command.as_bytes())
+        .write_all(outbound.as_bytes())
         .await
         .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
     writer
@@ -280,7 +297,21 @@ pub async fn send_subagent_uds_command_with_timeout(
             Some(l) => {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&l) {
                     if json.get("type").and_then(|v| v.as_str()) == Some("response") {
-                        return Ok(l);
+                        match &expected_id {
+                            // We stamped an id on the request: only accept the
+                            // response that echoes it, skipping unsolicited
+                            // responses (the connect-time snapshot, which carries
+                            // no id, and any other interleaved reply).
+                            Some(expected) => {
+                                if json.get("id").and_then(|v| v.as_str()) == Some(expected) {
+                                    return Ok(l);
+                                }
+                                // Unsolicited / mismatched response — skip.
+                            }
+                            // Command wasn't a JSON object we could stamp: fall
+                            // back to historical behaviour (first response).
+                            None => return Ok(l),
+                        }
                     }
                 }
                 // Not a response event — skip.
@@ -291,6 +322,26 @@ pub async fn send_subagent_uds_command_with_timeout(
                 ));
             }
         }
+    }
+}
+
+/// Stamp a unique correlation `id` onto an outbound UDS command so the read loop
+/// can match the reply by its echoed `id` field, skipping unsolicited responses
+/// such as the connect-time `get_messages` snapshot (which carries no id) (#831).
+///
+/// Returns the (possibly rewritten) command line to send and the id to match on.
+/// When the command is not a JSON object we cannot stamp an id, so the original
+/// command is returned with `None`, signalling the caller to fall back to
+/// first-response behaviour. Any pre-existing `id` is overwritten so two callers
+/// reusing the same literal command can never collide.
+fn stamp_request_id(command: &str) -> (String, Option<String>) {
+    match serde_json::from_str::<serde_json::Value>(command) {
+        Ok(serde_json::Value::Object(mut map)) => {
+            let id = uuid::Uuid::new_v4().to_string();
+            map.insert("id".to_owned(), serde_json::Value::String(id.clone()));
+            (serde_json::Value::Object(map).to_string(), Some(id))
+        }
+        _ => (command.to_owned(), None),
     }
 }
 

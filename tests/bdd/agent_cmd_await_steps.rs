@@ -225,15 +225,23 @@ fn given_mock_subagent_workflow(
                         use std::io::{BufRead, BufReader, Write};
                         let reader = BufReader::new(stream.try_clone().unwrap());
                         for line in reader.lines() {
-                            let _line = match line {
+                            let line = match line {
                                 Ok(l) => l,
                                 Err(_) => break,
                             };
+                            // Echo the stamped request id so the command reader
+                            // correlates the reply to its request (#831).
+                            let sent_id = serde_json::from_str::<serde_json::Value>(&line)
+                                .ok()
+                                .and_then(|v| {
+                                    v.get("id").and_then(|t| t.as_str()).map(str::to_owned)
+                                })
+                                .unwrap_or_default();
                             let mode = if c >= t { "complete" } else { "active" };
                             // Match the real get_state shape: a nested progress object.
                             let response = format!(
-                                r#"{{"type":"response","command":"get_state","success":true,"data":{{"isStreaming":false,"workflow":{{"mode":"{}","progress":{{"done":{},"total":{}}}}}}}}}"#,
-                                mode, c, t
+                                r#"{{"type":"response","id":"{}","command":"get_state","success":true,"data":{{"isStreaming":false,"workflow":{{"mode":"{}","progress":{{"done":{},"total":{}}}}}}}}}"#,
+                                sent_id, mode, c, t
                             );
                             let _ = writeln!(stream, "{}", response);
                         }

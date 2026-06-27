@@ -389,6 +389,92 @@ async fn read_line_capped_rejects_oversized_line() {
     );
 }
 
+// --- command/response matching (#831) ---
+
+#[test]
+fn stamp_request_id_injects_unique_id_into_object() {
+    let (out, id) = stamp_request_id(r#"{"type":"get_messages_tail","count":5}"#);
+    let id = id.expect("a JSON object command must get an id");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v.get("id").and_then(|x| x.as_str()), Some(id.as_str()));
+    // The original fields are preserved.
+    assert_eq!(
+        v.get("type").and_then(|x| x.as_str()),
+        Some("get_messages_tail")
+    );
+    assert_eq!(v.get("count").and_then(|x| x.as_u64()), Some(5));
+    // Successive calls produce distinct ids.
+    let (_, id2) = stamp_request_id(r#"{"type":"get_state"}"#);
+    assert_ne!(Some(id), id2);
+}
+
+#[test]
+fn stamp_request_id_overwrites_existing_id() {
+    let (out, id) = stamp_request_id(r#"{"type":"get_state","id":"stale"}"#);
+    let id = id.unwrap();
+    assert_ne!(id, "stale");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v.get("id").and_then(|x| x.as_str()), Some(id.as_str()));
+}
+
+#[test]
+fn stamp_request_id_none_for_non_object() {
+    assert_eq!(stamp_request_id("not json"), ("not json".to_string(), None));
+    assert_eq!(stamp_request_id("[1,2,3]"), ("[1,2,3]".to_string(), None));
+}
+
+#[tokio::test]
+async fn command_reader_skips_connect_time_snapshot_and_returns_matching_reply() {
+    // Reproduce #831: a BUSY child pushes an unsolicited connect-time
+    // `get_messages` SNAPSHOT as the FIRST line, then the real reply. The
+    // snapshot carries no `id`, while the real reply echoes the request id the
+    // helper stamped — so the reader must return the latter (latest turns), not
+    // the snapshot (the child's first message only). This also proves the fix
+    // generalises to a `get_messages` request: the snapshot shares its command
+    // string, yet id-correlation still skips it.
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("busy.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        // Unsolicited connect-time snapshot (the child's FIRST message), no id.
+        write_half
+            .write_all(b"{\"type\":\"response\",\"command\":\"get_messages\",\"data\":[{\"content\":\"FIRST MESSAGE ONLY\"}]}\n")
+            .await
+            .unwrap();
+        // Echo the request id the parent stamped, as the dispatch loop would.
+        let mut lines = BufReader::new(read_half).lines();
+        let line = lines.next_line().await.unwrap().unwrap();
+        let req: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let id = req.get("id").and_then(|v| v.as_str()).unwrap();
+        let reply = format!(
+            "{{\"type\":\"response\",\"id\":\"{id}\",\"command\":\"get_messages_tail\",\"data\":[{{\"content\":\"LATEST TURNS\"}}]}}\n"
+        );
+        write_half.write_all(reply.as_bytes()).await.unwrap();
+        // Keep the connection alive briefly so the reader can consume both lines.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    });
+
+    let cmd = r#"{"type":"get_messages_tail","count":5}"#;
+    let reply =
+        send_subagent_uds_command_with_timeout(&sock, cmd, std::time::Duration::from_secs(3))
+            .await
+            .expect("reader should return a response");
+
+    assert!(
+        reply.contains("get_messages_tail") && reply.contains("LATEST TURNS"),
+        "expected the get_messages_tail reply, got: {reply}"
+    );
+    assert!(
+        !reply.contains("FIRST MESSAGE ONLY"),
+        "must not return the connect-time snapshot, got: {reply}"
+    );
+    server.await.unwrap();
+}
+
 // --- notification channel ---
 
 #[tokio::test]
