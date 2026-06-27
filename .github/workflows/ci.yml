@@ -47,6 +47,23 @@ jobs:
       - name: Mock LLM BDD/e2e tests
         run: bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 5m --tag mock-llm
 
+  non-real-bdd:
+    name: Non-Real BDD Tests
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Non-real BDD tests
+        run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 5m
+
   provider-smoke:
     name: Provider Smoke Tests
     runs-on: blacksmith-32vcpu-ubuntu-2404
