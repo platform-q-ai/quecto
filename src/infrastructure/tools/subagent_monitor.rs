@@ -321,13 +321,28 @@ fn handle_monitor_line(
     let sequence =
         update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, &value));
     notify_from_parsed(notify_tx, agent_id, sequence, &value);
-    // Forward workflow_state events onto the parent's stream as a canonical,
-    // re-tagged event (R-B2).
     if let Some(tx) = broadcast_tx {
+        if should_broadcast_state_changed_after_event(&value) {
+            let mut event = super::subagent_cascade::build_state_changed_event(registry);
+            event.push('\n');
+            let _ = tx.send(event);
+        }
         if let Some(mut fwd) = canonical_workflow_forward(&value, agent_id, parent_id) {
             fwd.push('\n');
             let _ = tx.send(fwd);
         }
+    }
+}
+
+/// Whether a child event changed the registry fields mirrored by
+/// `subagent_state_changed` and should therefore be pushed immediately to TUI
+/// clients instead of waiting for a later polling rebuild (#839).
+fn should_broadcast_state_changed_after_event(value: &serde_json::Value) -> bool {
+    match value.get("type").and_then(|v| v.as_str()) {
+        Some("agent_end") => true,
+        Some("tool_execution_end") => value.get("isError").and_then(|v| v.as_bool()) == Some(true),
+        Some("response") => value.get("command").and_then(|v| v.as_str()) == Some("agent_error"),
+        _ => false,
     }
 }
 
@@ -493,11 +508,13 @@ fn merge_descendants(
         let entry = guard
             .entry(agent_id.to_string())
             .or_insert_with(|| SubagentEntry::new(socket_path.clone(), pid));
-        entry.status = d
+        if let Some(status) = d
             .get("status")
             .and_then(|v| v.as_str())
             .map(SubagentStatus::from_wire_str)
-            .unwrap_or(SubagentStatus::Starting);
+        {
+            entry.status = status;
+        }
         entry.last_tool = d
             .get("lastTool")
             .and_then(|v| v.as_str())

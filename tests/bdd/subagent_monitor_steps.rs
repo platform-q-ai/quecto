@@ -468,3 +468,180 @@ fn then_no_broadcast(world: &mut QuectoWorld) {
         .expect("no cascade broadcast recorded");
     assert!(recorded.is_none(), "expected no broadcast event");
 }
+
+// --- Prompt idle propagation for nested agents (#839) ---
+
+#[given(expr = "a root monitor knows grandchild {string} under {string} is idle")]
+fn given_root_monitor_knows_idle_grandchild(
+    world: &mut QuectoWorld,
+    grandchild: String,
+    child: String,
+) {
+    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    let r = new_registry();
+    {
+        let mut g = r.lock().unwrap();
+        g.insert(
+            child.clone(),
+            SubagentEntry::new(std::path::PathBuf::from("/s"), 1),
+        );
+        let mut gc = SubagentEntry::new(std::path::PathBuf::from("/s"), 2);
+        gc.parent_id = Some(child);
+        gc.status = SubagentStatus::Idle;
+        g.insert(grandchild, gc);
+    }
+    world.cascade_registry = Some(r);
+}
+
+#[when(expr = "the child reports grandchild {string} without a status update")]
+fn when_child_reports_grandchild_without_status(world: &mut QuectoWorld, grandchild: String) {
+    use quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed;
+    let r = world
+        .cascade_registry
+        .as_ref()
+        .expect("no cascade registry");
+    let parent = r
+        .lock()
+        .unwrap()
+        .get(&grandchild)
+        .and_then(|e| e.parent_id.clone())
+        .expect("grandchild must have parent");
+    let line = serde_json::json!({
+        "type": "subagent_state_changed",
+        "subagents": [{ "agentId": grandchild, "parentId": parent }],
+    })
+    .to_string();
+    let event = forward_child_state_changed(&line, r, &parent)
+        .map(|s| serde_json::from_str::<serde_json::Value>(&s).unwrap());
+    world.cascade_broadcast = Some(event);
+}
+
+#[then(expr = "the monitor should keep {string} idle")]
+fn then_monitor_keeps_idle(world: &mut QuectoWorld, agent_id: String) {
+    let r = world
+        .cascade_registry
+        .as_ref()
+        .expect("no cascade registry");
+    assert_eq!(
+        r.lock().unwrap()[&agent_id].status,
+        SubagentStatus::Idle,
+        "monitor must preserve the known idle status"
+    );
+}
+
+#[then(expr = "observers should see {string} as idle")]
+fn then_observers_see_idle(world: &mut QuectoWorld, agent_id: String) {
+    let ev = world
+        .cascade_broadcast
+        .as_ref()
+        .expect("no state event recorded")
+        .as_ref()
+        .expect("expected a state event");
+    let entry = ev["subagents"]
+        .as_array()
+        .expect("subagents array")
+        .iter()
+        .find(|s| s["agentId"].as_str() == Some(agent_id.as_str()))
+        .expect("agent should be listed for observers");
+    assert_eq!(entry["status"].as_str(), Some("idle"));
+}
+
+#[given(expr = "a root monitor with running child {string}")]
+fn given_root_monitor_with_running_child(world: &mut QuectoWorld, child: String) {
+    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    let r = new_registry();
+    let mut entry = SubagentEntry::new(std::path::PathBuf::from("/s"), 1);
+    entry.status = SubagentStatus::Running;
+    r.lock().unwrap().insert(child, entry);
+    world.cascade_registry = Some(r);
+}
+
+#[when(expr = "the child {string} finishes its turn")]
+fn when_child_finishes_turn(world: &mut QuectoWorld, child: String) {
+    use quecto::infrastructure::tools::subagent_cascade::build_state_changed_event;
+    let r = world
+        .cascade_registry
+        .as_ref()
+        .expect("no cascade registry");
+    {
+        let mut g = r.lock().unwrap();
+        let entry = g
+            .get_mut(&child)
+            .unwrap_or_else(|| panic!("child {child} not found"));
+        quecto::infrastructure::tools::subagent_monitor::apply_event(
+            entry,
+            r#"{"type":"agent_end","messages":[]}"#,
+        );
+    }
+    let event = serde_json::from_str::<serde_json::Value>(&build_state_changed_event(r)).unwrap();
+    world.cascade_broadcast = Some(Some(event));
+}
+
+#[then(expr = "observers should receive subagent state listing {string} as idle")]
+fn then_observers_receive_child_idle(world: &mut QuectoWorld, child: String) {
+    let ev = world
+        .cascade_broadcast
+        .as_ref()
+        .expect("no state event recorded")
+        .as_ref()
+        .expect("expected a state event");
+    let entry = ev["subagents"]
+        .as_array()
+        .expect("subagents array")
+        .iter()
+        .find(|s| s["agentId"].as_str() == Some(child.as_str()))
+        .expect("child should be listed for observers");
+    assert_eq!(entry["status"].as_str(), Some("idle"));
+}
+
+#[given(expr = "a forwarded subagent state listing idle grandchild {string} under {string}")]
+fn given_forwarded_state_with_idle_grandchild(
+    world: &mut QuectoWorld,
+    grandchild: String,
+    child: String,
+) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mut h = rt.block_on(quecto_tui::interface::app::tui_harness::TuiHarness::new());
+    let mut info = quecto_tui::interface::app::tui_harness::subagent(&grandchild, "idle", None);
+    info.parent_id = Some(child);
+    h.event(quecto_tui::interface::app::tui_harness::subagents_changed(
+        vec![info],
+    ));
+    world.tui_parity_rt = Some(rt);
+    world.tui_parity = Some(TuiParityHarness(h));
+}
+
+#[when("the TUI renders the forwarded subagent state")]
+fn when_tui_renders_forwarded_state(world: &mut QuectoWorld) {
+    let h = &mut world.tui_parity.as_mut().expect("no TUI harness").0;
+    let frame = h.full_frame();
+    assert!(
+        frame.contains("Agents"),
+        "rendered frame should include the subagent panel:\n{frame}"
+    );
+    world.stdout = frame;
+}
+
+#[then(expr = "the subagent panel should show {string} as idle")]
+fn then_panel_shows_idle(world: &mut QuectoWorld, agent_id: String) {
+    let h = &mut world.tui_parity.as_mut().expect("no TUI harness").0;
+    let frame = h.full_frame();
+    assert!(
+        frame.contains(&agent_id),
+        "subagent panel should show {agent_id}:\n{frame}"
+    );
+    assert!(
+        frame.contains("idle"),
+        "subagent panel should show idle status/timer:\n{frame}"
+    );
+}
+
+#[then(expr = "the subagent panel should not count {string} as working")]
+fn then_panel_does_not_count_working(world: &mut QuectoWorld, agent_id: String) {
+    let h = &mut world.tui_parity.as_mut().expect("no TUI harness").0;
+    let bottom = h.bottom_stack();
+    assert!(
+        !bottom.contains("working"),
+        "idle {agent_id} must not count as working:\n{bottom}"
+    );
+}

@@ -160,6 +160,116 @@ fn handle_monitor_line_forwards_descendant_state_changed() {
 }
 
 #[test]
+fn forward_child_state_changed_preserves_existing_status_when_status_omitted() {
+    let registry = super::super::subagent_registry::new_registry();
+    {
+        let mut guard = registry.lock().unwrap();
+        guard.insert("child".to_string(), test_entry());
+        let mut grandchild = test_entry();
+        grandchild.status = SubagentStatus::Idle;
+        grandchild.parent_id = Some("child".to_string());
+        guard.insert("grandchild".to_string(), grandchild);
+    }
+
+    let line = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"grandchild","parentId":"child"}]}"#;
+    let out = forward_child_state_changed(line, &registry, "child").expect("forwarded");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+
+    assert_eq!(
+        registry.lock().unwrap()["grandchild"].status,
+        SubagentStatus::Idle
+    );
+    assert_eq!(find_subagent(&v, "grandchild")["status"], "idle");
+}
+
+#[test]
+fn handle_monitor_line_skips_full_state_broadcast_for_tool_boundaries() {
+    let registry = super::super::subagent_registry::new_registry();
+    let mut child = test_entry();
+    child.status = SubagentStatus::Idle;
+    registry.lock().unwrap().insert("child".to_string(), child);
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+
+    super::handle_monitor_line(
+        r#"{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{}}"#,
+        "child",
+        &registry,
+        None,
+        Some(&tx),
+        None,
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "tool start should not broadcast a full state snapshot; polling/notifications cover it"
+    );
+
+    super::handle_monitor_line(
+        r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":false}"#,
+        "child",
+        &registry,
+        None,
+        Some(&tx),
+        None,
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "successful tool end should not broadcast a redundant full state snapshot"
+    );
+}
+
+#[test]
+fn handle_monitor_line_tool_error_broadcasts_subagent_state_changed_promptly() {
+    let registry = super::super::subagent_registry::new_registry();
+    let mut child = test_entry();
+    child.status = SubagentStatus::Running;
+    registry.lock().unwrap().insert("child".to_string(), child);
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+
+    super::handle_monitor_line(
+        r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":true}"#,
+        "child",
+        &registry,
+        None,
+        Some(&tx),
+        None,
+    );
+
+    let event: serde_json::Value = serde_json::from_str(
+        &rx.try_recv()
+            .expect("tool error should promptly broadcast subagent_state_changed"),
+    )
+    .unwrap();
+    assert_eq!(event["type"], "subagent_state_changed");
+    assert_eq!(find_subagent(&event, "child")["status"], "error");
+}
+
+#[test]
+fn handle_monitor_line_agent_end_broadcasts_subagent_state_changed_promptly() {
+    let registry = super::super::subagent_registry::new_registry();
+    let mut child = test_entry();
+    child.status = SubagentStatus::Running;
+    registry.lock().unwrap().insert("child".to_string(), child);
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+
+    super::handle_monitor_line(
+        r#"{"type":"agent_end","messages":[]}"#,
+        "child",
+        &registry,
+        None,
+        Some(&tx),
+        None,
+    );
+
+    let event: serde_json::Value = serde_json::from_str(
+        &rx.try_recv()
+            .expect("agent_end should promptly broadcast subagent_state_changed"),
+    )
+    .unwrap();
+    assert_eq!(event["type"], "subagent_state_changed");
+    assert_eq!(find_subagent(&event, "child")["status"], "idle");
+}
+
+#[test]
 fn forward_child_state_changed_prunes_grandchild_absent_from_push() {
     // #831 nested case: a grandchild that was previously merged into the root
     // registry must be REMOVED when the forwarding child's next authoritative
