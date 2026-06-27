@@ -45,21 +45,18 @@ impl App {
     /// when no sub-agent is selected, otherwise the selected agent's session
     /// (created lazily so a selection always has a body to render).
     pub(super) fn active_chat_mut(&mut self) -> &mut Chat {
-        match &self.active_agent_id {
-            None => &mut self.chat,
-            Some(id) => {
-                let id = id.clone();
-                let git_branch = self.git_branch.clone();
-                &mut self
-                    .sessions
-                    .entry(id.clone())
-                    .or_insert_with(|| {
-                        Self::remember_session(&mut self.session_order, &id);
-                        SessionView::new(git_branch)
-                    })
-                    .chat
-            }
+        let Some(id) = self.active_agent_id.clone() else {
+            return &mut self.chat;
+        };
+        if !self.sessions.contains_key(&id) {
+            // Cold path only: clone git_branch and build the session here, so the
+            // common already-exists render path allocates nothing extra (#827 perf).
+            let git_branch = self.git_branch.clone();
+            Self::remember_session(&mut self.session_order, &id);
+            self.sessions
+                .insert(id.clone(), SessionView::new(git_branch));
         }
+        &mut self.sessions.get_mut(&id).unwrap().chat
     }
 
     /// The active session's workflow bar: the master's own when no sub-agent is
@@ -387,6 +384,23 @@ impl App {
         // gauges from its forwarded events so a selected sub-agent shows ITS
         // usage, not the master's (#805).
         Self::update_session_footer(session, &ev);
+        // A completion note for THIS child's own sub-agent (a grandchild): render
+        // it as a passive one-line status in this session's chat, deferred while
+        // the child streams so it never splits the child's response (#816).
+        if let Event::SubagentNotification { message, .. } = &ev {
+            let message = crate::interface::ansi::sanitize_control(message);
+            if session.running {
+                session.deferred_subagent_notes.push(message);
+            } else {
+                session.chat.add_entry(ChatEntry::Status {
+                    text: format!("◆ {message}"),
+                });
+            }
+            return;
+        }
+        // Flush deferred grandchild notes once this child goes idle (after the
+        // streamed response is finalized below).
+        let flush_notes = matches!(ev, Event::AgentEnd { .. } | Event::TurnEnd { .. });
         let chat = &mut session.chat;
         match ev {
             Event::Token { token } => chat.append_token(&token),
@@ -423,43 +437,12 @@ impl App {
             }
             _ => {}
         }
-    }
-
-    /// Update a session's OWN footer (context-window / cost / model) from a
-    /// forwarded sub-agent event, mirroring the master footer path (#805):
-    /// `get_state` carries the model and window, `turn_end` the live context
-    /// usage, and `get_session_stats` the cumulative cost (plus usage fallback).
-    fn update_session_footer(session: &mut SessionView, ev: &Event) {
-        use crate::application::session_payloads;
-        match ev {
-            Event::Response {
-                command,
-                data: Some(data),
-                success: true,
-                ..
-            } if command == "get_state" => {
-                session.footer.apply_get_state(data);
+        if flush_notes {
+            for note in std::mem::take(&mut session.deferred_subagent_notes) {
+                session.chat.add_entry(ChatEntry::Status {
+                    text: format!("◆ {note}"),
+                });
             }
-            Event::Response {
-                command,
-                data: Some(data),
-                success: true,
-                ..
-            } if command == "get_session_stats" => {
-                let stats = session_payloads::parse_session_stats(data);
-                session.footer.apply_session_stats(&stats);
-            }
-            Event::TurnEnd { message, .. } => {
-                let used = message.get("contextTokens").and_then(|v| v.as_u64());
-                let window = message
-                    .get("maxContextTokens")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize);
-                if let (Some(used), Some(window)) = (used, window) {
-                    session.footer.update_context_usage(used, window);
-                }
-            }
-            _ => {}
         }
     }
 
@@ -497,50 +480,61 @@ impl App {
     fn panel_rows(&self) -> Vec<PanelRow> {
         let mut rows = vec![PanelRow {
             id: None,
-            depth: 0,
+            prefix: String::new(),
             label: "Master Agent".to_string(),
             status: self.master_status().to_string(),
         }];
-        for (id, depth) in self.subagent_tree_order() {
+        for (id, prefix) in self.subagent_tree_order() {
             let info = self.subagent_local.get(&id).map(|t| &t.info);
             rows.push(PanelRow {
                 label: id.clone(),
                 status: info.map(|i| i.status.clone()).unwrap_or_default(),
                 id: Some(id),
-                depth,
+                prefix,
             });
         }
         rows
     }
 
-    /// Depth-first `(agent_id, depth)` listing of the sub-agent tree. Root
-    /// sub-agents (no in-map parent) sit at depth 1 under the master; their
-    /// children at depth 2, etc. Sibling order follows the sorted map keys.
-    fn subagent_tree_order(&self) -> Vec<(String, usize)> {
+    /// Depth-first `(agent_id, tree_prefix)` listing of the sub-agent tree. Root
+    /// sub-agents (no in-map parent) sit under the master; `tree_prefix` is the
+    /// connector stalk (`├ `/`└ ` with `│ `/`  ` ancestor continuation) so the
+    /// panel draws tree lines back up to each parent. Order follows sorted ids.
+    fn subagent_tree_order(&self) -> Vec<(String, String)> {
         use std::collections::BTreeMap;
         let mut children: BTreeMap<Option<String>, Vec<String>> = BTreeMap::new();
         for (id, tracked) in &self.subagent_local {
-            let parent = tracked.info.parent_id.clone().filter(|p| {
-                // Treat an unknown parent as a root so its subtree is not lost.
-                self.subagent_local.contains_key(p)
-            });
+            // Treat an unknown parent as a root so its subtree is not lost.
+            let parent = tracked
+                .info
+                .parent_id
+                .clone()
+                .filter(|p| self.subagent_local.contains_key(p));
             children.entry(parent).or_default().push(id.clone());
         }
-        let mut out = Vec::new();
-        // Explicit stack DFS; push siblings reversed so popping preserves order.
-        let mut stack: Vec<(String, usize)> = children
-            .get(&None)
-            .into_iter()
-            .flatten()
-            .rev()
-            .map(|id| (id.clone(), 1))
-            .collect();
-        while let Some((id, depth)) = stack.pop() {
-            out.push((id.clone(), depth));
-            if let Some(kids) = children.get(&Some(id.clone())) {
-                for kid in kids.iter().rev() {
-                    stack.push((kid.clone(), depth + 1));
+        // Push siblings reversed (with their connector) so popping preserves order.
+        // Stack item: (id, own_prefix, descendant_continuation_prefix).
+        let push_children =
+            |stack: &mut Vec<(String, String, String)>, kids: &[String], cont: &str| {
+                let n = kids.len();
+                for (i, kid) in kids.iter().enumerate().rev() {
+                    let last = i == n - 1;
+                    stack.push((
+                        kid.clone(),
+                        format!("{cont}{}", if last { "└ " } else { "├ " }),
+                        format!("{cont}{}", if last { "  " } else { "│ " }),
+                    ));
                 }
+            };
+        let mut out = Vec::new();
+        let mut stack: Vec<(String, String, String)> = Vec::new();
+        if let Some(roots) = children.get(&None) {
+            push_children(&mut stack, roots, "");
+        }
+        while let Some((id, own_prefix, cont)) = stack.pop() {
+            out.push((id.clone(), own_prefix));
+            if let Some(kids) = children.get(&Some(id.clone())) {
+                push_children(&mut stack, kids, &cont);
             }
         }
         out
@@ -579,10 +573,10 @@ impl App {
             } else {
                 "  ".to_string()
             };
-            let indent = " ".repeat(row.depth * 2);
+            let stalk = theme::dim(&row.prefix); // tree connector to parent (#820)
             let label = status_colored_name(&row.status, &sanitize_panel_label(&row.label));
             let elapsed = theme::dim(&self.panel_row_elapsed(row.id.as_deref(), now));
-            let text = format!("{caret}{indent}{label} {elapsed}");
+            let text = format!("{caret}{stalk}{label} {elapsed}");
             let cell = if i == selected {
                 pad_cell(&theme::reverse(&text), width)
             } else {
@@ -590,11 +584,13 @@ impl App {
             };
             lines.push(cell);
         }
-        // A separator column on the right edge keeps the panel visually distinct
-        // from the body; pad/truncate every row to exactly `width` already does
-        // the alignment, so just fill the remaining height with blanks.
-        while lines.len() < height {
+        // Footer hint pinned to the bottom row (#820): pane navigation + actions.
+        let hint = pad_cell(&theme::dim("Tab ⇄ · ↑↓ · ⏎ open"), width);
+        while lines.len() + 1 < height {
             lines.push(" ".repeat(width));
+        }
+        if lines.len() < height {
+            lines.push(hint);
         }
         lines.truncate(height);
         lines
@@ -716,7 +712,8 @@ fn boxed_inner(content: &str, inner: usize) -> String {
 /// sub-agent, with its tree depth and last-known status.
 struct PanelRow {
     id: Option<String>,
-    depth: usize,
+    /// Tree connector stalk drawn before the name (`├ `/`└ ` + ancestor `│ `).
+    prefix: String,
     label: String,
     status: String,
 }

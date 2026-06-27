@@ -192,25 +192,47 @@ its result rather than picking a new workflow.
 
 ## Notification model
 
-Spawned agents are **auto-awaited**. When a child reaches a terminal state
-(completed / errored / exited) the parent automatically receives a single
-**one-line completion note** — no `await` call required. The note is delivered
-as a `role:"system"` (operator-channel) message and surfaces **only at the
-parent's next idle/turn boundary**: a completion that arrives while the parent
-is mid-turn is buffered and delivered after that turn finishes, never injected
-into an in-flight turn.
+There are two ways to learn that a child finished: a **non-blocking passive
+auto-note** (the default) and a **blocking manual `await`**.
 
-- The note carries the child's id and a concise outcome, e.g.
-  `[subagent] Agent 'worker' completed. Last output: …`,
-  `[subagent] Agent 'linter' errored: …`, or
-  `[subagent] Agent 'worker' exited unexpectedly …`.
-- Multiple completions from the same child are **coalesced** (latest wins) and
-  duplicates are **deduplicated**, so a noisy child costs at most one extra turn.
-- The note is a *summary only*. To read the child's full output, call
-  `get_messages_tail` / `get_messages`.
-- `await` is still available when you want to **block** until the child finishes
-  before continuing (see below) — but it is no longer required to learn the
-  outcome.
+### Non-blocking: passive auto-notes (default)
+
+Spawned agents are **auto-noted passively**. When a child reaches a terminal
+state (completed / errored / exited) the parent automatically receives a single
+**one-line completion note** — no `await` call required. The note is:
+
+- **Non-blocking** — it never interrupts a running turn and never makes an idle
+  parent act. It is delivered as a `role:"system"` (operator-channel) message
+  and surfaces **only at the parent's next idle/turn boundary**: a completion
+  that arrives while the parent is mid-turn is buffered and delivered after that
+  turn finishes, never injected into an in-flight turn.
+- A **one-line note**, naming the child and its outcome — it does **not** repeat
+  the child's output, e.g.
+  `Agent 'worker' completed and is ready for inspection`,
+  `Agent 'linter' failed: …`, or
+  `Agent 'worker' exited unexpectedly`.
+- **Coalesced + deduplicated** — multiple completions from the same child
+  collapse to one note (latest wins), so a noisy child costs at most one extra
+  turn.
+
+### Blocking: manual `await`
+
+`await` is **optional**. Use it when you must **block synchronously** until the
+child finishes *within the same turn* before continuing (see below). When you
+`await` a completion, that completion's **duplicate auto-note is suppressed** —
+you get the awaited result, not a redundant note for the same event. A later
+re-run of the same child will auto-note again.
+
+### When to use which
+
+- **Default to the passive auto-note** — spawn, keep working, and react when the
+  one-line note arrives at your next turn. This is best for fire-and-forget or
+  parallel children whose results you don't need *right now*.
+- **Use `await` only when a result gates your next step in the same turn** — for
+  example a reviewer whose verdict you must read before continuing.
+
+In both cases the note/await result is a **summary only**; to read the child's
+full output call `get_messages_tail` / `get_messages`.
 
 ### What you can see without `await`
 
@@ -233,7 +255,7 @@ result, read it explicitly:
 {"name": "spawn", "arguments": {"agent_id": "worker", "task": "do the thing"}}
 
 // 2. (do other work) — at your next idle turn you receive, automatically:
-//    [subagent] Agent 'worker' completed. Last output: …
+//    Agent 'worker' completed and is ready for inspection
 
 // 3. Inspect the full output when the note tells you the child is done.
 {"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages_tail", "count": 5}}

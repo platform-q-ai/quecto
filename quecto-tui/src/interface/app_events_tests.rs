@@ -35,6 +35,70 @@ fn unique_suffix() -> u128 {
 }
 
 #[tokio::test]
+async fn subagent_notification_appends_one_status_line() {
+    let mut app = test_app().await;
+    let before = app.chat.entry_count();
+    app.handle_event(Event::SubagentNotification {
+        agent_id: "researcher".into(),
+        sequence: 1,
+        message: "Agent 'researcher' completed and is ready for inspection".into(),
+    });
+    // Exactly one status entry is appended — passive, non-interactive.
+    assert_eq!(app.chat.entry_count(), before + 1);
+    let text = app
+        .chat
+        .last_status_text()
+        .expect("expected a Status entry");
+    assert!(text.contains("Agent 'researcher' completed"));
+    assert!(text.contains("ready for inspection"));
+    // The TUI must NOT re-prefix the agent id — the message already names it.
+    assert!(!text.contains("sub-agent researcher"));
+}
+
+#[tokio::test]
+async fn subagent_notification_sanitizes_control_sequences() {
+    let mut app = test_app().await;
+    app.handle_event(Event::SubagentNotification {
+        agent_id: "evil".into(),
+        sequence: 1,
+        message: "done\u{1b}[31m hijack".into(),
+    });
+    let text = app
+        .chat
+        .last_status_text()
+        .expect("expected a Status entry");
+    assert!(
+        !text.contains('\u{1b}'),
+        "control sequences must be stripped"
+    );
+}
+
+#[tokio::test]
+async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idle() {
+    let mut app = test_app().await;
+    app.handle_event(Event::AgentStart);
+    let before = app.chat.entry_count();
+    app.handle_event(Event::SubagentNotification {
+        agent_id: "worker".into(),
+        sequence: 1,
+        message: "Agent 'worker' completed and is ready for inspection".into(),
+    });
+    // Mid-turn: the note must NOT be inserted into the streaming response.
+    assert_eq!(
+        app.chat.entry_count(),
+        before,
+        "note must be deferred while the parent is streaming"
+    );
+    // Parent goes idle → the note is flushed after the finished response.
+    app.handle_event(Event::AgentEnd { messages: vec![] });
+    let text = app
+        .chat
+        .last_status_text()
+        .expect("expected the deferred note to flush on idle");
+    assert!(text.contains("Agent 'worker' completed"));
+}
+
+#[tokio::test]
 async fn handles_agent_lifecycle_and_token_events() {
     let mut app = test_app().await;
     app.handle_event(Event::AgentStart);

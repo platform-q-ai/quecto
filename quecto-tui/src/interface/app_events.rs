@@ -28,6 +28,9 @@ impl App {
                 error,
             } => self.handle_response(id, command, success, data, error),
             Event::SubagentStateChanged { subagents } => self.update_subagent_bar(subagents),
+            Event::SubagentNotification {
+                agent_id, message, ..
+            } => self.handle_subagent_notification(agent_id, message),
             // Parent-forwarded per-turn appends (#797) are superseded by the
             // direct connect-on-select stream (#800); the active sub-agent's own
             // connection now carries its live content. Ignored here.
@@ -63,6 +66,13 @@ impl App {
         self.footer.set_streaming(false);
         self.spinner = None;
         self.chat.finalize_assistant();
+        // Parent is now idle — flush any sub-agent completion notes that arrived
+        // mid-turn, so they appear after the finished response instead of in it.
+        for note in std::mem::take(&mut self.deferred_subagent_notes) {
+            self.chat.add_entry(ChatEntry::Status {
+                text: format!("◆ {note}"),
+            });
+        }
     }
 
     fn handle_turn_end(&mut self, message: serde_json::Value) {
@@ -144,6 +154,26 @@ impl App {
             _ => format!("{} {}...", tool_name, truncate_args(args_str)),
         };
         spinner.set_message(&msg);
+    }
+
+    /// Render a passive one-line sub-agent completion note (#816) as a single
+    /// chat status line. It must NOT steal focus, open the inspector panel, or
+    /// require interaction — it is purely informational. Both the agent id and
+    /// the message are sanitized for terminal-control sequences before display.
+    fn handle_subagent_notification(&mut self, _agent_id: String, message: String) {
+        // The message is already a concise, self-naming one-liner from the kernel
+        // (e.g. "Agent 'poet-2' completed and is ready for inspection"), so we do
+        // NOT re-prefix the agent id here — that just duplicated the name.
+        let message = crate::interface::ansi::sanitize_control(&message);
+        // Never split an in-flight streaming response: if the parent is mid-turn,
+        // defer the note and flush it when the parent goes idle (handle_agent_end).
+        if self.agent_state.is_running() {
+            self.deferred_subagent_notes.push(message);
+            return;
+        }
+        self.chat.add_entry(ChatEntry::Status {
+            text: format!("◆ {message}"),
+        });
     }
 
     fn track_starting_subagent(&mut self, args: &serde_json::Value) {

@@ -139,6 +139,83 @@ fn test_enqueue_subagent_notification_is_buffered_until_idle_drain() {
     );
 }
 
+// ─── Auto-await dedupe: suppress the passive note when `await` consumed it ─────
+
+/// When a manual `await` already reported a terminal completion (flag set on the
+/// registry entry), `take_completion_consumed_by_await` returns true and CONSUMES
+/// the flag — the dispatch loop uses this to SKIP the duplicate passive note.
+#[test]
+fn test_completion_consumed_by_await_suppresses_note() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, mark_completion_consumed_by_await, new_registry,
+        take_completion_consumed_by_await,
+    };
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("worker".to_string(), SubagentEntry::new("/tmp/x".into(), 0));
+
+    // A manual await returned a terminal result for this run.
+    mark_completion_consumed_by_await(&registry, "worker");
+
+    // The queued completion note is suppressed (and the flag is consumed).
+    assert!(
+        take_completion_consumed_by_await(&registry, "worker"),
+        "flag set → note suppressed"
+    );
+    // Consumed once: a second check no longer suppresses.
+    assert!(
+        !take_completion_consumed_by_await(&registry, "worker"),
+        "flag is consumed after one check"
+    );
+}
+
+/// Without a prior `await`, the flag is clear so the completion note is delivered
+/// (enqueued) as before — the default passive path.
+#[test]
+fn test_completion_without_await_enqueues() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, new_registry, take_completion_consumed_by_await,
+    };
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("worker".to_string(), SubagentEntry::new("/tmp/x".into(), 0));
+    assert!(
+        !take_completion_consumed_by_await(&registry, "worker"),
+        "no await → note delivered (not suppressed)"
+    );
+    // Missing entries are treated as not-suppressed too.
+    assert!(!take_completion_consumed_by_await(&registry, "ghost"));
+}
+
+/// A new run (agent_start) re-arms the dedupe: a child re-prompted after an
+/// awaited completion that completes again still notifies.
+#[test]
+fn test_completion_flag_rearms_on_new_run() {
+    use crate::infrastructure::tools::subagent_monitor::apply_event_parsed;
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, mark_completion_consumed_by_await, take_completion_consumed_by_await,
+    };
+    let mut entry = SubagentEntry::new("/tmp/x".into(), 0);
+    entry.completion_consumed_by_await = true;
+    // A new run begins → flag cleared.
+    apply_event_parsed(&mut entry, &serde_json::json!({"type": "agent_start"}));
+    assert!(
+        !entry.completion_consumed_by_await,
+        "agent_start must re-arm (clear) the dedupe flag"
+    );
+
+    // And the registry helpers round-trip on the re-armed entry.
+    let registry = crate::infrastructure::tools::subagent_registry::new_registry();
+    registry.lock().unwrap().insert("worker".to_string(), entry);
+    assert!(!take_completion_consumed_by_await(&registry, "worker"));
+    mark_completion_consumed_by_await(&registry, "worker");
+    assert!(take_completion_consumed_by_await(&registry, "worker"));
+}
+
 /// The completion summary surfaced to the parent is a single line (≤1 line) so it
 /// costs at most one operator turn and reads cleanly — asserted on the source
 /// `SubagentNotification::to_message` strings that feed the enqueue path.
@@ -167,4 +244,62 @@ fn test_subagent_notification_summary_is_single_line() {
             "completion note must be a single line, got: {note:?}"
         );
     }
+}
+
+/// `forward_notification_broadcast` (the mid-turn path) emits the passive
+/// completion note as a broadcast event when the completion was NOT already
+/// awaited, and returns `true` so the caller also queues it for the parent.
+#[test]
+fn test_forward_notification_broadcast_emits_when_not_awaited() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SequencedSubagentNotification, SubagentEntry, SubagentNotification, new_registry,
+    };
+    use crate::interface::cli::uds_multi::forward_notification_broadcast;
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("worker".to_string(), SubagentEntry::new("/tmp/x".into(), 0));
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(16);
+    let notif = SequencedSubagentNotification::new(
+        1,
+        SubagentNotification::Completed {
+            agent_id: "worker".to_string(),
+            summary: "done".to_string(),
+        },
+    );
+    assert!(forward_notification_broadcast(notif, &tx, &Some(registry)));
+    let first = rx.try_recv().expect("a note event should be broadcast");
+    assert!(first.contains("subagent_notification"), "got: {first}");
+    assert!(first.contains("worker"), "got: {first}");
+}
+
+/// When a manual `await` already consumed the completion, the mid-turn path
+/// SUPPRESSES the duplicate note (returns `false`, no note event) but still
+/// emits the `subagent_state_changed` panel update.
+#[test]
+fn test_forward_notification_broadcast_suppresses_when_awaited() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SequencedSubagentNotification, SubagentEntry, SubagentNotification,
+        mark_completion_consumed_by_await, new_registry,
+    };
+    use crate::interface::cli::uds_multi::forward_notification_broadcast;
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("worker".to_string(), SubagentEntry::new("/tmp/x".into(), 0));
+    mark_completion_consumed_by_await(&registry, "worker");
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(16);
+    let notif = SequencedSubagentNotification::new(
+        1,
+        SubagentNotification::Completed {
+            agent_id: "worker".to_string(),
+            summary: "done".to_string(),
+        },
+    );
+    assert!(!forward_notification_broadcast(notif, &tx, &Some(registry)));
+    let first = rx.try_recv().expect("the panel update is still broadcast");
+    assert!(!first.contains("subagent_notification"), "got: {first}");
+    assert!(first.contains("subagent_state_changed"), "got: {first}");
 }

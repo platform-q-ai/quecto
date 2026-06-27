@@ -227,6 +227,15 @@ impl Chat {
     pub fn entry_count(&self) -> usize {
         self.entries.len()
     }
+
+    /// Text of the last `Status` entry, if the last entry is one (tests only).
+    #[cfg(test)]
+    pub fn last_status_text(&self) -> Option<&str> {
+        match self.entries.last() {
+            Some(ChatEntry::Status { text }) => Some(text.as_str()),
+            _ => None,
+        }
+    }
 }
 
 impl Chat {

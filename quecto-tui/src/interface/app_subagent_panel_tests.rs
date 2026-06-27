@@ -133,6 +133,88 @@ async fn grandchild_renders_indented_under_its_parent() {
 }
 
 #[tokio::test]
+async fn three_level_tree_nests_grandchild_under_child_in_order() {
+    // master → childA → grandchildB must render childA at depth 1 and
+    // grandchildB at depth 2 (deeper indent), with grandchildB BELOW childA.
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![
+        child("childA", "running", None),
+        child("grandchildB", "running", Some("childA")),
+    ]));
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    let row_index = |needle: &str| {
+        frame
+            .lines()
+            .position(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("row for {needle} not found in:\n{frame}"))
+    };
+    let indent = |needle: &str| {
+        frame
+            .lines()
+            .find(|l| l.contains(needle))
+            .map(|l| l.len() - l.trim_start().len())
+            .unwrap_or_else(|| panic!("row for {needle} not found in:\n{frame}"))
+    };
+    assert!(
+        indent("grandchildB") > indent("childA"),
+        "grandchildB must be indented deeper than childA:\n{frame}"
+    );
+    assert!(
+        row_index("grandchildB") > row_index("childA"),
+        "grandchildB must render BELOW its parent childA, never above:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn partial_child_view_push_does_not_evict_intermediate_parent() {
+    // Regression (grandchild-at-depth-1 bug): the master push carries the full
+    // tree (childA + grandchildB), then a forwarded child's-eye-view push lists
+    // ONLY grandchildB (childA's own child) and omits childA itself. A naive
+    // full-replace would evict childA, re-rooting grandchildB to depth 1 above
+    // its parent. The roster must instead preserve childA so nesting holds.
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![
+        child("childA", "running", None),
+        child("grandchildB", "running", Some("childA")),
+    ]));
+    // The partial push: only grandchildB, parent still childA.
+    h.event(subagents_changed(vec![child(
+        "grandchildB",
+        "running",
+        Some("childA"),
+    )]));
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    let row_index = |needle: &str| {
+        frame
+            .lines()
+            .position(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("row for {needle} not found in:\n{frame}"))
+    };
+    let indent = |needle: &str| {
+        frame
+            .lines()
+            .find(|l| l.contains(needle))
+            .map(|l| l.len() - l.trim_start().len())
+            .unwrap_or_else(|| panic!("row for {needle} not found in:\n{frame}"))
+    };
+    // childA must NOT have been evicted by the partial push.
+    assert!(
+        frame.lines().any(|l| l.contains("childA")),
+        "the intermediate parent childA must survive a partial child-view push:\n{frame}"
+    );
+    assert!(
+        indent("grandchildB") > indent("childA"),
+        "grandchildB must stay nested under childA after a partial push:\n{frame}"
+    );
+    assert!(
+        row_index("grandchildB") > row_index("childA"),
+        "grandchildB must stay BELOW childA after a partial push:\n{frame}"
+    );
+}
+
+#[tokio::test]
 async fn compose_frame_with_panel_is_idempotent() {
     let mut h = with_two_subagents().await;
     h.app_mut().select_agent(Some("worker"));

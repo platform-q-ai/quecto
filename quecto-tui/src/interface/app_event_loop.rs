@@ -168,11 +168,9 @@ impl App {
                 }
                 // Git branch footer refresh tick.
                 _ = git_branch_interval.tick() => {
-                    // Git branch may change while the TUI is running (checkout/switch
-                    // from another shell or from commands the agent runs). Refresh it
-                    // periodically so the footer does not stay pinned to the startup
-                    // branch. The filesystem read runs off the UI loop so slow or
-                    // unusual repositories cannot block input, rendering, or agent events.
+                    // The git branch can change while running (checkout from another
+                    // shell or the agent); refresh periodically off the UI loop so a
+                    // slow repo can't block input/render and the footer stays current.
                     self.start_git_branch_refresh(&git_branch_tx, &mut git_branch_refresh_in_flight);
                 }
             }
@@ -204,10 +202,9 @@ impl App {
             }
         }
 
-        // Feed bytes into the proper StdinBuffer. Kitty release events are
-        // filtered per decoded sequence in `process_key_sequence`; filtering
-        // the raw read can drop a legitimate press when a press+release arrive
-        // in the same read.
+        // Feed bytes into the StdinBuffer. Kitty release events are filtered per
+        // decoded sequence in `process_key_sequence` (filtering the raw read could
+        // drop a press when a press+release arrive together).
         self.stdin_buffer.feed(&bytes);
         self.drain_complete_key_sequences();
         self.drain_pending_stdin_bytes(stdin_rx, escape_timeout)
@@ -412,11 +409,14 @@ impl App {
                 return;
             }
             Key::Escape => {
-                // When viewing a sub-agent's session, Esc returns to the master
-                // session before any abort/rewind handling (#800).
+                // Parity: Esc stops the viewed agent if running, else back to master.
                 if self.active_agent_id.is_some() {
                     self.last_idle_escape = None;
-                    self.select_agent(None);
+                    if self.active_subagent_running() {
+                        self.handle_abort();
+                    } else {
+                        self.select_agent(None);
+                    }
                     return;
                 }
                 if self.agent_state.is_running() {
@@ -520,19 +520,19 @@ impl App {
                 return;
             }
             Key::ScrollUp => {
-                self.chat.scroll_up(MOUSE_SCROLL_LINES);
+                self.active_chat_mut().scroll_up(MOUSE_SCROLL_LINES);
                 return;
             }
             Key::ScrollDown => {
-                self.chat.scroll_down(MOUSE_SCROLL_LINES);
+                self.active_chat_mut().scroll_down(MOUSE_SCROLL_LINES);
                 return;
             }
             Key::PageUp => {
-                self.chat.scroll_up(10);
+                self.active_chat_mut().scroll_up(10);
                 return;
             }
             Key::PageDown => {
-                self.chat.scroll_down(10);
+                self.active_chat_mut().scroll_down(10);
                 return;
             }
             _ => {}

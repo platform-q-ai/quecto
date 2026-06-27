@@ -128,6 +128,24 @@ fn event_deserializes_subagent_state_changed() {
 }
 
 #[test]
+fn event_deserializes_subagent_notification() {
+    let json = r#"{"type":"subagent_notification","agentId":"researcher","sequence":3,"message":"[subagent] Agent 'researcher' completed. Last output: all tests pass"}"#;
+    let event: Event = serde_json::from_str(json).unwrap();
+    match event {
+        Event::SubagentNotification {
+            agent_id,
+            sequence,
+            message,
+        } => {
+            assert_eq!(agent_id, "researcher");
+            assert_eq!(sequence, 3);
+            assert!(message.contains("all tests pass"));
+        }
+        _ => panic!("expected SubagentNotification"),
+    }
+}
+
+#[test]
 fn event_subagent_state_changed_empty() {
     let json = r#"{"type":"subagent_state_changed","subagents":[]}"#;
     let event: Event = serde_json::from_str(json).unwrap();

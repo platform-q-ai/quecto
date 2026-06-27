@@ -323,28 +323,56 @@ async fn run_dispatch_loop(
             DispatchMsg::Notification(notif) => {
                 let (agent_id, sequence) = notif.dedupe_key();
                 tracing::info!(%agent_id, sequence, "recording subagent completion note");
-                // Auto-await (#816): enqueue the one-line note for delivery at the
-                // parent's NEXT idle boundary. `enqueue_subagent_notification`
-                // records the dedupe sequence internally and returns whether this
-                // completion is new — so we don't also call
-                // `record_subagent_notification` (that would double-dedupe).
-                let is_new = ctx.session.enqueue_subagent_notification(
-                    agent_id.clone(),
-                    sequence,
-                    notif.to_message(),
-                );
-                if is_new {
-                    let ev = AgentEvent::SubagentNotification {
-                        agent_id,
+                // Auto-await dedupe: if a manual `await` already reported this
+                // terminal completion (flag set on the registry entry), CONSUME
+                // the flag and SKIP both the passive note enqueue and the
+                // SubagentNotification emit — the parent already has the result.
+                // The SubagentStateChanged panel update below still fires. This is
+                // race-free because the dispatch loop is single-threaded: the
+                // await tool call set the flag before this queued notification is
+                // processed.
+                let suppress = ctx.subagent_registry.as_ref().is_some_and(|reg| {
+                    crate::infrastructure::tools::subagent_registry::take_completion_consumed_by_await(
+                        reg, &agent_id,
+                    )
+                });
+                let mut should_deliver = false;
+                if !suppress {
+                    // Auto-await (#816): enqueue the one-line note for delivery at
+                    // the parent's NEXT idle boundary.
+                    // `enqueue_subagent_notification` records the dedupe sequence
+                    // internally and returns whether this completion is new — so we
+                    // don't also call `record_subagent_notification` (that would
+                    // double-dedupe).
+                    let is_new = ctx.session.enqueue_subagent_notification(
+                        agent_id.clone(),
                         sequence,
-                        message: notif.to_message(),
-                    };
-                    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                        notif.to_message(),
+                    );
+                    if is_new {
+                        should_deliver = true;
+                        let ev = AgentEvent::SubagentNotification {
+                            agent_id: agent_id.clone(),
+                            sequence,
+                            message: notif.to_message(),
+                        };
+                        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                    }
                 }
                 // Broadcast state_changed event to all UDS clients (#524).
                 let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
                 let ev = AgentEvent::SubagentStateChanged { subagents: list };
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                // Auto-await (#816): this branch runs only while the parent is IDLE
+                // (mid-turn completions are buffered and drained after that turn).
+                // Deliver the just-enqueued note NOW so the parent processes it and
+                // can CONTINUE its task — e.g. score a poem the child just wrote —
+                // instead of stalling until the next user message. The TUI defers
+                // DISPLAY of the note until the parent is idle, so acting here never
+                // splits an in-flight response.
+                if should_deliver {
+                    super::uds::drain_pending_and_nudge(ctx).await;
+                }
             }
         }
     }
@@ -553,6 +581,9 @@ async fn handle_client(args: ClientHandlerArgs) {
 mod uds_multi_prompt;
 use uds_multi_prompt::try_intercept_tool_result;
 pub(crate) use uds_multi_prompt::{PromptArgsBroadcast, run_agent_prompt_broadcast};
+// Re-exported for the auto-await dedupe unit tests (uds_subagent_notify_tests).
+#[cfg(test)]
+pub(in crate::interface::cli) use uds_multi_prompt::forward_notification_broadcast;
 #[cfg(test)]
 #[path = "uds_multi_interception_tests.rs"]
 mod interception_tests;

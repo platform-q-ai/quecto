@@ -255,6 +255,23 @@ async fn test_execute_stub_mode_registers_in_registry() {
 }
 
 #[tokio::test]
+async fn test_spawned_entry_carries_parent_id() {
+    // Regression (#820 panel tree): a spawned child's registry entry must record
+    // the spawning agent's own id as its parent_id, otherwise grandchildren can
+    // never nest under their real parent in the sub-agent panel.
+    let tool = SpawnTool::new(vec![], true).with_event_forwarding(None, Some("childA".to_string()));
+    let _ = tool
+        .execute(r#"{"task":"work","agent_id":"grandchildB"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry.lock().unwrap();
+    let entry = registry
+        .get("grandchildB")
+        .expect("spawned entry should exist");
+    assert_eq!(entry.parent_id.as_deref(), Some("childA"));
+}
+
+#[tokio::test]
 async fn test_execute_stub_mode_default_agent_id() {
     let tool = SpawnTool::new(vec![], true);
     let _result = tool.execute(r#"{"task":"work"}"#).await.unwrap();

@@ -233,10 +233,11 @@ fn test_completed_message_format() {
         summary: "All tests pass".into(),
     };
     let msg = n.to_message();
-    assert!(msg.starts_with("[subagent]"));
     assert!(msg.contains("researcher"));
     assert!(msg.contains("completed"));
-    assert!(msg.contains("All tests pass"));
+    assert!(msg.contains("ready for inspection"));
+    // The child's output is intentionally NOT repeated in the note.
+    assert!(!msg.contains("All tests pass"));
 }
 
 #[test]
@@ -246,9 +247,8 @@ fn test_errored_message_format() {
         error: "rate limit exceeded".into(),
     };
     let msg = n.to_message();
-    assert!(msg.starts_with("[subagent]"));
     assert!(msg.contains("linter"));
-    assert!(msg.contains("errored"));
+    assert!(msg.contains("failed"));
     assert!(msg.contains("rate limit exceeded"));
 }
 
@@ -258,7 +258,6 @@ fn test_exited_message_format() {
         agent_id: "formatter".into(),
     };
     let msg = n.to_message();
-    assert!(msg.starts_with("[subagent]"));
     assert!(msg.contains("formatter"));
     assert!(msg.contains("exited"));
 }

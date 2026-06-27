@@ -392,6 +392,10 @@ impl SpawnTool {
         {
             let mut entry = SubagentEntry::new(socket_path.clone(), pid);
             entry.exit_signal_tx = Some(exit_tx.clone());
+            // Stamp the child's parent as THIS agent's own id (#820 panel tree):
+            // without it every entry's parent_id stayed None, so grandchildren
+            // could never nest under their real parent in the sub-agent panel.
+            entry.parent_id = self.parent_id.clone();
             self.registry
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -544,13 +548,15 @@ impl Tool for SpawnTool {
         ToolDefinition {
             name: "spawn".into(),
             description: "Spawn a subagent as a background UDS-mode process. \
-                Returns immediately and the child is auto-awaited: when it completes, \
-                errors, or exits you automatically receive a one-line completion note \
-                at your next idle turn (no manual await needed). Multiple completions \
-                are deduped/coalesced into a single note. The note is a summary only — \
-                use agent_cmd get_messages_tail or get_messages to read the child's full \
-                output. Use agent_cmd command=await only if you need to BLOCK until the \
-                child reaches idle/exited/timeout/error before continuing."
+                Returns immediately and the child is auto-noted PASSIVELY: when it \
+                completes, errors, or exits you automatically receive a one-line \
+                completion note — non-blocking, entering your context at your NEXT turn \
+                (no manual await needed). Multiple completions are deduped/coalesced \
+                into a single note. The note is a summary only — use agent_cmd \
+                get_messages_tail or get_messages to read the child's full output. \
+                Blocking via agent_cmd command=await is OPTIONAL: use it only when you \
+                must wait synchronously (same turn) until the child reaches \
+                idle/exited/timeout/error before continuing."
                 .into(),
             parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}}}}"#.into(),
         }
@@ -570,18 +576,17 @@ impl Tool for SpawnTool {
                         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 
                         // Register in stub mode too so BDD tests can verify registry.
+                        let mut stub_entry = SubagentEntry::new(
+                            PathBuf::from(format!("/stub/quecto-agent-{session_name}.sock")),
+                            0,
+                        );
+                        // Mirror the real path: stamp the child's parent as this
+                        // agent's own id so the panel tree nests correctly.
+                        stub_entry.parent_id = self.parent_id.clone();
                         self.registry
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
-                            .insert(
-                                session_name.to_string(),
-                                SubagentEntry::new(
-                                    PathBuf::from(format!(
-                                        "/stub/quecto-agent-{session_name}.sock"
-                                    )),
-                                    0,
-                                ),
-                            );
+                            .insert(session_name.to_string(), stub_entry);
 
                         let msg = format!(
                             "Subagent '{}' is running. Use agent_cmd to interact.",

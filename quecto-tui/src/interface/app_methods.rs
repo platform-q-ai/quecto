@@ -386,8 +386,9 @@ impl App {
         } else {
             0
         };
-        // One column for the focus-highlighted vertical divider (#802).
-        let divider_width = if panel_visible { 1 } else { 0 };
+        // Two columns when visible: the focus-highlighted vertical divider (#802)
+        // plus a one-space gutter so the main pane isn't flush against the bar.
+        let divider_width = if panel_visible { 2 } else { 0 };
         (
             panel_width,
             divider_width,
@@ -524,7 +525,7 @@ impl App {
                     .get(i)
                     .cloned()
                     .unwrap_or_else(|| " ".repeat(panel_width));
-                *line = format!("{cell}{divider}{line}");
+                *line = format!("{cell}{divider} {line}");
             }
         }
 

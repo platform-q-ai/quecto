@@ -95,6 +95,13 @@ pub struct SubagentEntry {
     pub parent_id: Option<String>,
     /// Latest workflow snapshot reported by the child's monitor (PRD Stage B).
     pub workflow: Option<WorkflowSnapshot>,
+    /// Set true by `execute_await` when a manual `await` returns a TERMINAL
+    /// result for this entry's current run. The dispatch loop check-and-consumes
+    /// it before enqueuing the passive auto-note, suppressing the duplicate that
+    /// a manual await would otherwise produce. Re-armed (cleared) when the entry
+    /// transitions to a new run (agent_start), so a re-prompted child that
+    /// completes again still notifies. See `take_completion_consumed_by_await`.
+    pub completion_consumed_by_await: bool,
 }
 
 impl SubagentEntry {
@@ -113,8 +120,37 @@ impl SubagentEntry {
             exit_signal_tx: None,
             parent_id: None,
             workflow: None,
+            completion_consumed_by_await: false,
         }
     }
+}
+
+/// Mark `agent_id`'s entry as having had its current-run terminal completion
+/// consumed by a manual `await` (auto-await dedupe). Called by `execute_await`
+/// on each terminal return path. No-op if the entry no longer exists.
+pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_id: &str) {
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(entry) = entries.get_mut(agent_id) {
+        entry.completion_consumed_by_await = true;
+    }
+}
+
+/// Check-and-consume the await-dedupe flag for `agent_id`. Returns `true` when
+/// the passive completion note should be SUPPRESSED because a manual `await`
+/// already reported this terminal result; in that case the flag is cleared so a
+/// future re-run still notifies. Returns `false` (and leaves state untouched)
+/// otherwise. Race-free against `execute_await` because the UDS dispatch loop is
+/// single-threaded: the await tool call sets the flag before the loop processes
+/// the queued notification.
+pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_id: &str) -> bool {
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(entry) = entries.get_mut(agent_id) {
+        if entry.completion_consumed_by_await {
+            entry.completion_consumed_by_await = false;
+            return true;
+        }
+    }
+    false
 }
 
 /// Shared registry of spawned subagents (agent_id → entry).
@@ -557,21 +593,18 @@ impl SubagentNotification {
     /// Format this notification as a human-readable message suitable for
     /// injection into the parent LLM's conversation.
     pub fn to_message(&self) -> String {
+        // Keep this a single concise line — it surfaces as a passive one-line note
+        // in the TUI and as a system note in the parent's context. The child's full
+        // output is NOT repeated here; inspect it with `agent_cmd get_messages_tail`.
         match self {
-            Self::Completed { agent_id, summary } => {
-                format!(
-                    "[subagent] Agent '{}' completed. Last output: {}",
-                    agent_id, summary
-                )
+            Self::Completed { agent_id, .. } => {
+                format!("Agent '{agent_id}' completed and is ready for inspection")
             }
             Self::Errored { agent_id, error } => {
-                format!("[subagent] Agent '{}' errored: {}", agent_id, error)
+                format!("Agent '{agent_id}' failed: {error}")
             }
             Self::Exited { agent_id } => {
-                format!(
-                    "[subagent] Agent '{}' exited unexpectedly (process terminated)",
-                    agent_id
-                )
+                format!("Agent '{agent_id}' exited unexpectedly")
             }
         }
     }
