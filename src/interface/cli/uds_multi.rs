@@ -17,8 +17,11 @@ use super::uds::{
 };
 use super::uds_cancel::{CancelHandle, CancelSlot, PromptOutcome, fire_cancel};
 use super::uds_session::{AgentSession, message_to_json};
+#[cfg(test)]
+pub(crate) use super::uds_snapshots::build_get_state_line;
 pub(crate) use super::uds_snapshots::{
-    ConversationSnapshot, StateSnapshot, build_get_messages_line, build_get_state_line,
+    ConversationSnapshot, StateSnapshot, build_get_messages_line,
+    build_get_state_line_with_streaming,
 };
 use super::uds_snapshots::{refresh_conversation_snapshot, refresh_state_snapshot};
 
@@ -360,19 +363,19 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                     // no protocol change and ordering-sensitive flows are unaffected.
                     if busy.load(std::sync::atomic::Ordering::SeqCst) {
                         use tokio::io::AsyncWriteExt;
+                        let state_line = {
+                            let snap = state_snapshot.read().await;
+                            build_get_state_line_with_streaming(&snap, true)
+                        };
+                        if let Err(e) = stream.write_all(state_line.as_bytes()).await {
+                            tracing::debug!("connect-time state snapshot not delivered: {e}");
+                        }
                         let messages_line = {
                             let snap = conversation_snapshot.read().await;
                             build_get_messages_line(&snap)
                         };
                         if let Err(e) = stream.write_all(messages_line.as_bytes()).await {
                             tracing::debug!("connect-time message snapshot not delivered: {e}");
-                        }
-                        let state_line = {
-                            let snap = state_snapshot.read().await;
-                            build_get_state_line(&snap)
-                        };
-                        if let Err(e) = stream.write_all(state_line.as_bytes()).await {
-                            tracing::debug!("connect-time state snapshot not delivered: {e}");
                         }
                     }
 

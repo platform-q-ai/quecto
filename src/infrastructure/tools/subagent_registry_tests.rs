@@ -527,6 +527,16 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &messages_snapshot,
         r#"{"type":"get_messages"}"#
     ));
+    let correlated_messages = serde_json::json!({
+        "type": "response",
+        "id": "other-request",
+        "command": "get_messages",
+        "data": { "messages": [] }
+    });
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &correlated_messages,
+        r#"{"type":"get_messages"}"#
+    ));
     assert!(!subagent_snapshot::response_is_valid_answer(
         &messages_snapshot,
         r#"{"type":"get_messages","count":1}"#
@@ -539,6 +549,15 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
     });
     assert!(subagent_snapshot::response_is_valid_answer(
         &state_snapshot,
+        r#"{"type":"get_state"}"#
+    ));
+    let malformed_state_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_state",
+        "data": { "messageCount": 2 }
+    });
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &malformed_state_snapshot,
         r#"{"type":"get_state"}"#
     ));
     assert!(!subagent_snapshot::response_is_valid_answer(

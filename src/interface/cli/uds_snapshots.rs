@@ -44,7 +44,17 @@ pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
     line
 }
 
+#[cfg(test)]
 pub(crate) fn build_get_state_line(state: &SessionState) -> String {
+    build_get_state_line_with_streaming(state, state.is_streaming)
+}
+
+pub(crate) fn build_get_state_line_with_streaming(
+    state: &SessionState,
+    is_streaming: bool,
+) -> String {
+    let mut state = state.clone();
+    state.is_streaming = is_streaming;
     let ev = AgentEvent::ok(
         None,
         "get_state",
