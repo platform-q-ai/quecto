@@ -571,6 +571,64 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &state_snapshot,
         r#"{"type":"get_session_stats"}"#
     ));
+
+    // #874: a get_subagents snapshot is a valid answer for a get_subagents
+    // request (the registry is independent of the dispatch loop, so a busy child
+    // can serve it off the turn).
+    let subagents_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_subagents",
+        "data": { "subagents": [] }
+    });
+    assert!(subagent_snapshot::response_is_valid_answer(
+        &subagents_snapshot,
+        r#"{"type":"get_subagents"}"#
+    ));
+    let correlated_subagents = serde_json::json!({
+        "type": "response",
+        "id": "other-request",
+        "command": "get_subagents",
+        "data": { "subagents": [] }
+    });
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &correlated_subagents,
+        r#"{"type":"get_subagents"}"#
+    ));
+    // A get_subagents snapshot must NOT answer a different command (#835).
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &subagents_snapshot,
+        r#"{"type":"get_session_stats"}"#
+    ));
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &state_snapshot,
+        r#"{"type":"get_subagents"}"#
+    ));
+    // A malformed get_subagents snapshot (missing the subagents array) is rejected.
+    let malformed_subagents = serde_json::json!({
+        "type": "response",
+        "command": "get_subagents",
+        "data": { }
+    });
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &malformed_subagents,
+        r#"{"type":"get_subagents"}"#
+    ));
+}
+
+#[test]
+fn snapshot_get_subagents_rejects_agent_id_targeted_request() {
+    // A get_subagents request that targets a NESTED agent (via agent_id) must
+    // NOT be answered by THIS child's own registry snapshot — it must round-trip
+    // to the named descendant (#835 id-correlation, #874 extension).
+    let subagents_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_subagents",
+        "data": { "subagents": [] }
+    });
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &subagents_snapshot,
+        r#"{"type":"get_subagents","agent_id":"grandchild"}"#
+    ));
 }
 
 #[test]
