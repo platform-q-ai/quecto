@@ -615,24 +615,35 @@ fn given_forwarded_state_with_idle_grandchild(
 fn when_tui_renders_forwarded_state(world: &mut QuectoWorld) {
     let h = &mut world.tui_parity.as_mut().expect("no TUI harness").0;
     let frame = h.full_frame();
+    // The panel has no header now; prove it rendered its chrome via the footer
+    // hint (panel-specific, not emitted by the main pane).
     assert!(
-        frame.contains("Agents"),
-        "rendered frame should include the subagent panel:\n{frame}"
+        frame.contains("pane"),
+        "rendered frame should include the subagent panel footer:\n{frame}"
     );
     world.stdout = frame;
 }
 
 #[then(expr = "the subagent panel should show {string} as idle")]
 fn then_panel_shows_idle(world: &mut QuectoWorld, agent_id: String) {
+    // Idle status is carried by the name COLOUR (yellow), not a word. Verify the
+    // agent is present AND its row carries the yellow (idle) code and not green
+    // (running). The grandchild scenario is minimal, so the main-pane portion of
+    // the joined row doesn't introduce these colours.
     let h = &mut world.tui_parity.as_mut().expect("no TUI harness").0;
-    let frame = h.full_frame();
     assert!(
-        frame.contains(&agent_id),
-        "subagent panel should show {agent_id}:\n{frame}"
+        h.full_frame().contains(&agent_id),
+        "subagent panel should show {agent_id}"
     );
+    let raw = h.full_frame_raw();
+    let row = raw
+        .lines()
+        .find(|l| l.contains(&agent_id))
+        .unwrap_or_else(|| panic!("{agent_id} row not found"))
+        .to_string();
     assert!(
-        frame.contains("idle"),
-        "subagent panel should show idle status/timer:\n{frame}"
+        row.contains("\x1b[33m") && !row.contains("\x1b[32m"),
+        "idle {agent_id} must render yellow (idle), not green (running): {row:?}"
     );
 }
 

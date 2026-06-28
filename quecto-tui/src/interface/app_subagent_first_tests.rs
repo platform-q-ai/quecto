@@ -124,7 +124,12 @@ async fn running_name_is_green() {
         "running",
         Some(("active", 3, 5)),
     )]));
-    let raw = h.app_mut().compose_frame().join("\n");
+    // Inspect the PANEL render only (not the full frame), so colour codes from
+    // the main pane on the same terminal row can't contaminate the assertion.
+    let raw = h
+        .app_mut()
+        .render_subagent_panel(30, 24, tokio::time::Instant::now())
+        .join("\n");
     let row = raw
         .lines()
         .find(|l| l.contains("runr"))
@@ -141,7 +146,12 @@ async fn idle_name_is_orange() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![child("idlr", "idle", None)]));
-    let raw = h.app_mut().compose_frame().join("\n");
+    // Inspect the PANEL render only (not the full frame), so colour codes from
+    // the main pane on the same terminal row can't contaminate the assertion.
+    let raw = h
+        .app_mut()
+        .render_subagent_panel(30, 24, tokio::time::Instant::now())
+        .join("\n");
     let row = raw
         .lines()
         .find(|l| l.contains("idlr"))
@@ -162,7 +172,12 @@ async fn errored_name_is_red() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![child("errr", "error", None)]));
-    let raw = h.app_mut().compose_frame().join("\n");
+    // Inspect the PANEL render only (not the full frame), so colour codes from
+    // the main pane on the same terminal row can't contaminate the assertion.
+    let raw = h
+        .app_mut()
+        .render_subagent_panel(30, 24, tokio::time::Instant::now())
+        .join("\n");
     let row = raw
         .lines()
         .find(|l| l.contains("errr"))
@@ -215,20 +230,76 @@ fn surrounding_is_mss(row: &str, colon: usize) -> bool {
         && bytes[colon + 2].is_ascii_digit()
 }
 
+/// Strip ANSI from each panel-render line (panel only — no main-pane content).
+fn panel_lines(h: &mut TuiHarness) -> Vec<String> {
+    h.app_mut()
+        .render_subagent_panel(30, 24, tokio::time::Instant::now())
+        .iter()
+        .map(|l| strip_ansi(l))
+        .collect()
+}
+
 #[tokio::test]
-async fn idle_row_shows_idle_prefix() {
+async fn idle_row_shows_bare_timer_no_status_word() {
+    // Status is carried by the name COLOUR now (yellow = idle), so the panel row
+    // shows only a bare `m:ss` timer — no `idle`/`ran` word.
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![child("idlr", "idle", None)]));
-    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
-    let row = frame
-        .lines()
+    let lines = panel_lines(&mut h);
+    let row = lines
+        .iter()
         .find(|l| l.contains("idlr"))
-        .unwrap_or_else(|| panic!("idlr row not found in:\n{frame}"))
+        .unwrap_or_else(|| panic!("idlr row not found in:\n{}", lines.join("\n")))
         .to_string();
     assert!(
-        row.contains("idle "),
-        "an idle row's elapsed must carry the `idle ` prefix; row was: {row:?}"
+        !row.contains("idle") && !row.contains("ran"),
+        "panel rows must not carry a status word; row was: {row:?}"
+    );
+    assert!(
+        row.bytes()
+            .enumerate()
+            .any(|(i, b)| b == b':' && surrounding_is_mss(&row, i)),
+        "an idle row must still show a bare m:ss timer; row was: {row:?}"
+    );
+}
+
+#[tokio::test]
+async fn workflowed_agent_renders_step_bar_beneath_name() {
+    // `child()` carries a 3/5 workflow, so the agent renders a ▰/▱ per-step bar
+    // on the row DIRECTLY BENEATH its name row.
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![child("worker", "running", None)]));
+    let lines = panel_lines(&mut h);
+    let name_idx = lines
+        .iter()
+        .position(|l| l.contains("worker"))
+        .unwrap_or_else(|| panic!("worker row not found in:\n{}", lines.join("\n")));
+    let bar = &lines[name_idx + 1];
+    assert!(
+        bar.contains('▰') || bar.contains('▱'),
+        "the row beneath the name should be a ▰/▱ step bar; got: {bar:?}"
+    );
+}
+
+#[tokio::test]
+async fn selection_uses_left_accent_bar_one_line_tall() {
+    // Selection is a single ▌ bar in column 0 of the NAME row only — not a
+    // full-row reverse, and NOT on the workflow-bar row beneath it.
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![child("worker", "running", None)]));
+    h.app_mut().select_agent(Some("worker"));
+    let lines = panel_lines(&mut h);
+    let name_idx = lines
+        .iter()
+        .position(|l| l.starts_with('▌') && l.contains("worker"))
+        .unwrap_or_else(|| panic!("selected ▌ worker row not found in:\n{}", lines.join("\n")));
+    assert!(
+        !lines[name_idx + 1].starts_with('▌'),
+        "the bar row beneath a selected agent must NOT carry the ▌ (one line tall): {:?}",
+        lines[name_idx + 1]
     );
 }
 
