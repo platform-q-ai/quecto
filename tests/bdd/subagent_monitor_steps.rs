@@ -636,6 +636,80 @@ fn then_panel_shows_idle(world: &mut QuectoWorld, agent_id: String) {
     );
 }
 
+// --- Prompt running visibility on a long first turn (#866) ---
+
+#[when(expr = "the child {string} starts its turn")]
+fn when_child_starts_turn(world: &mut QuectoWorld, child: String) {
+    use quecto::infrastructure::tools::subagent_cascade::build_state_changed_event;
+    let r = world
+        .cascade_registry
+        .as_ref()
+        .expect("no cascade registry");
+    {
+        let mut g = r.lock().unwrap();
+        let entry = g
+            .get_mut(&child)
+            .unwrap_or_else(|| panic!("child {child} not found"));
+        quecto::infrastructure::tools::subagent_monitor::apply_event(
+            entry,
+            r#"{"type":"agent_start"}"#,
+        );
+    }
+    let event = serde_json::from_str::<serde_json::Value>(&build_state_changed_event(r)).unwrap();
+    world.cascade_broadcast = Some(Some(event));
+}
+
+#[then(expr = "observers should receive subagent state listing {string} as running")]
+fn then_observers_receive_child_running(world: &mut QuectoWorld, child: String) {
+    let ev = world
+        .cascade_broadcast
+        .as_ref()
+        .expect("no state event recorded")
+        .as_ref()
+        .expect("expected a state event");
+    let entry = ev["subagents"]
+        .as_array()
+        .expect("subagents array")
+        .iter()
+        .find(|s| s["agentId"].as_str() == Some(child.as_str()))
+        .expect("child should be listed for observers");
+    assert_eq!(entry["status"].as_str(), Some("running"));
+}
+
+#[given(expr = "the TUI is tracking a spawning agent {string}")]
+fn given_tui_tracking_spawning_agent(world: &mut QuectoWorld, agent_id: String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mut h = rt.block_on(quecto_tui::interface::app::tui_harness::TuiHarness::new());
+    // The spawn ToolStart registers the child locally as "starting" before the
+    // kernel has confirmed it (the #866 pre-registration window).
+    h.event(quecto_tui::interface::app::tui_harness::spawn_start(
+        &agent_id,
+    ));
+    world.tui_parity_rt = Some(rt);
+    world.tui_parity = Some(TuiParityHarness(h));
+}
+
+#[when(expr = "a subagent push arrives that omits {string}")]
+fn when_push_omits_agent(world: &mut QuectoWorld, agent_id: String) {
+    let h = &mut world.tui_parity.as_mut().expect("no TUI harness").0;
+    let other = format!("not-{agent_id}");
+    h.event(quecto_tui::interface::app::tui_harness::subagents_changed(
+        vec![quecto_tui::interface::app::tui_harness::subagent(
+            &other, "running", None,
+        )],
+    ));
+}
+
+#[then(expr = "the subagent panel should still show {string}")]
+fn then_panel_still_shows(world: &mut QuectoWorld, agent_id: String) {
+    let h = &mut world.tui_parity.as_mut().expect("no TUI harness").0;
+    let frame = h.full_frame();
+    assert!(
+        frame.contains(&agent_id),
+        "#866: an unconfirmed spawning agent must stay visible after an omitting push:\n{frame}"
+    );
+}
+
 #[then(expr = "the subagent panel should not count {string} as working")]
 fn then_panel_does_not_count_working(world: &mut QuectoWorld, agent_id: String) {
     let h = &mut world.tui_parity.as_mut().expect("no TUI harness").0;

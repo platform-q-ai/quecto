@@ -1,5 +1,11 @@
 use super::*;
 
+/// Grace window during which an unconfirmed optimistic subagent entry (created
+/// from the spawn ToolStart, before the kernel registers the child) survives a
+/// snapshot that omits it. Generous enough to bridge slow socket readiness, yet
+/// bounded so a never-confirmed spawn (failed launch) can't linger forever (#866).
+const OPTIMISTIC_SUBAGENT_GRACE: Duration = Duration::from_secs(30);
+
 impl App {
     /// Update a session's OWN footer (context-window / cost / model) from a
     /// forwarded sub-agent event, mirroring the master footer path (#805):
@@ -51,6 +57,10 @@ impl App {
         for s in subagents {
             let id = sanitize_agent_id(&s.agent_id);
             if let Some(mut existing) = self.subagent_local.remove(&id) {
+                // The kernel reported this agent — it is now confirmed, so it is
+                // no longer an unconfirmed local guess and reverts to normal
+                // full-replace reconciliation thereafter (#866).
+                existing.optimistic = false;
                 existing.update_info(s);
                 new_map.insert(id, existing);
             } else {
@@ -87,14 +97,23 @@ impl App {
             }
         }
 
-        // Preserve locally-tracked exited entries whose grace period
-        // hasn't elapsed yet (server may stop reporting them immediately).
+        // Preserve locally-tracked exited entries whose grace period hasn't
+        // elapsed yet (server may stop reporting them immediately), AND
+        // unconfirmed optimistic entries within their own grace window: a child
+        // can be omitted from a snapshot taken before the kernel registered it,
+        // and dropping it would make a long-first-turn agent invisible until it
+        // finishes (#866). The grace bounds a never-confirmed spawn (e.g. a
+        // failed launch) so it can't linger forever.
         let now = tokio::time::Instant::now();
         for (id, entry) in leftover {
             if let Some(exited_at) = entry.exited_at {
                 if now.saturating_duration_since(exited_at) < EXITED_SUBAGENT_GRACE {
                     new_map.entry(id).or_insert(entry);
                 }
+            } else if entry.optimistic
+                && now.saturating_duration_since(entry.started_at) < OPTIMISTIC_SUBAGENT_GRACE
+            {
+                new_map.entry(id).or_insert(entry);
             }
         }
         self.subagent_local = new_map;

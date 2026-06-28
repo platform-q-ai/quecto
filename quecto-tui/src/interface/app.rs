@@ -607,14 +607,16 @@ struct TrackedSubagent {
     /// When the subagent was first observed (for the elapsed-time display).
     started_at: tokio::time::Instant,
     /// When the subagent last stopped being active (idle/error/exited), used to
-    /// freeze the elapsed-time display. `None` while active. Without this, an
-    /// idle agent's timer keeps ticking until the *last* sibling goes idle
-    /// (the animation tick runs while any agent is active).
+    /// freeze the elapsed-time display. `None` while active.
     stopped_at: Option<tokio::time::Instant>,
-    /// When the subagent entered the "exited" state. `None` if not exited. Kept
-    /// distinct from `stopped_at` because GC grace counts from exit, while the
-    /// timer freezes from when the agent first went idle.
+    /// When the subagent entered the "exited" state. `None` if not exited. GC
+    /// grace counts from exit, while the timer freezes from first going idle.
     exited_at: Option<tokio::time::Instant>,
+    /// `true` while this is a local optimistic guess (from the spawn ToolStart)
+    /// the kernel has not yet confirmed. Such an entry is not dropped just
+    /// because a snapshot predating its registration omits it (#866); cleared
+    /// once any payload includes the agent.
+    optimistic: bool,
 }
 
 /// Whether a subagent status counts as "actively running" for the timer.
@@ -632,6 +634,7 @@ impl TrackedSubagent {
             started_at: now,
             stopped_at: if active { None } else { Some(now) },
             exited_at,
+            optimistic: false,
         }
     }
 
@@ -669,12 +672,10 @@ impl TrackedSubagent {
     }
 }
 
-/// Remove exited subagents whose grace period has elapsed (#540).
-/// Returns `true` if any entries were removed.
-/// While any sibling is still active, finished agents are kept on screen so the
-/// panel doesn't shrink mid-batch and jolt the chat above it — reclamation is
-/// deferred until the whole batch is quiescent (the panel then grows once and
-/// clears once instead of oscillating as agents come and go).
+/// Remove exited subagents whose grace period has elapsed (#540). Returns `true`
+/// if any entries were removed. While any sibling is still active, finished
+/// agents are kept on screen so the panel doesn't shrink mid-batch and jolt the
+/// chat above it — reclamation waits until the whole batch is quiescent.
 fn gc_exited_subagents(
     map: &mut std::collections::BTreeMap<String, TrackedSubagent>,
     now: tokio::time::Instant,

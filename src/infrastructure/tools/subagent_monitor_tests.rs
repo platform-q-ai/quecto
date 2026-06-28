@@ -637,6 +637,87 @@ fn agent_end_does_not_overwrite_run_error_with_idle() {
     assert_eq!(entry.run_error.as_deref(), Some("provider rejected model"));
 }
 
+// --- #866: first running transition (agent_start) is broadcast, but the
+// high-frequency tool boundaries the #839 fix removed stay suppressed. ---
+
+#[test]
+fn agent_start_triggers_state_changed_broadcast() {
+    let v: serde_json::Value = serde_json::from_str(r#"{"type":"agent_start"}"#).unwrap();
+    assert!(
+        super::should_broadcast_state_changed_after_event(&v),
+        "#866: a child's first running transition must broadcast so a long first turn is visible"
+    );
+}
+
+#[test]
+fn tool_execution_start_does_not_trigger_broadcast() {
+    let v: serde_json::Value =
+        serde_json::from_str(r#"{"type":"tool_execution_start","toolName":"bash"}"#).unwrap();
+    assert!(
+        !super::should_broadcast_state_changed_after_event(&v),
+        "#839: per-tool-start broadcasts must stay suppressed"
+    );
+}
+
+#[test]
+fn tool_execution_end_success_does_not_trigger_broadcast() {
+    let v: serde_json::Value =
+        serde_json::from_str(r#"{"type":"tool_execution_end","isError":false}"#).unwrap();
+    assert!(
+        !super::should_broadcast_state_changed_after_event(&v),
+        "#839: per-tool-success broadcasts must stay suppressed"
+    );
+}
+
+#[test]
+fn agent_end_triggers_state_changed_broadcast() {
+    let v: serde_json::Value = serde_json::from_str(r#"{"type":"agent_end"}"#).unwrap();
+    assert!(super::should_broadcast_state_changed_after_event(&v));
+}
+
+#[tokio::test]
+async fn monitor_loop_broadcasts_state_changed_on_agent_start() {
+    use tokio::io::AsyncWriteExt;
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("child.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+    let registry = super::super::subagent_registry::new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("child".to_string(), test_entry());
+    let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
+    let handle = spawn_monitor_task(
+        "child".to_string(),
+        sock.clone(),
+        registry.clone(),
+        None,
+        Some(btx),
+        Some("root".to_string()),
+    );
+    let (mut stream, _) = listener.accept().await.unwrap();
+    stream
+        .write_all(b"{\"type\":\"agent_start\"}\n")
+        .await
+        .unwrap();
+    // Read broadcasts until the running snapshot arrives (skip any forwards).
+    let deadline = std::time::Duration::from_secs(3);
+    let line = tokio::time::timeout(deadline, async {
+        loop {
+            let l = brx.recv().await.expect("broadcast line");
+            let v: serde_json::Value = serde_json::from_str(&l).unwrap();
+            if v["type"] == "subagent_state_changed" {
+                return l;
+            }
+        }
+    })
+    .await
+    .expect("#866: agent_start must broadcast a state_changed within 3s");
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["subagents"][0]["status"], "running");
+    handle.abort();
+}
+
 #[tokio::test]
 async fn response_agent_error_sends_errored_notification() {
     let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();

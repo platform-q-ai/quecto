@@ -512,3 +512,53 @@ async fn running_panel_timer_still_advances_with_now() {
         "a running sub-agent's timer must keep tracking now: {v1:?} vs {v2:?}"
     );
 }
+
+// ── #866: an unconfirmed (optimistic) local entry survives an omitting push ──
+
+#[tokio::test]
+async fn optimistic_starting_entry_survives_omitting_payload() {
+    // The spawn ToolStart creates a local "starting" entry before the kernel has
+    // registered the child. A snapshot taken in that window omits the new child;
+    // it must NOT be dropped or the agent stays invisible during a long first
+    // turn (#866).
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.track_starting_subagent(&serde_json::json!({ "agent_id": "w1" }));
+    a.update_subagent_bar(vec![info("other", "running")]);
+    assert!(
+        a.subagent_local.contains_key("w1"),
+        "#866: an unconfirmed local starting entry must not be dropped by a payload that predates its registration"
+    );
+}
+
+#[tokio::test]
+async fn confirmed_running_entry_still_dropped_when_omitted() {
+    // #831 non-regression: once the kernel has confirmed an entry (it appeared in
+    // a snapshot), a later survivor-set broadcast that omits it (cascade-removed
+    // / killed subtree) must still drop it.
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.track_starting_subagent(&serde_json::json!({ "agent_id": "w1" }));
+    a.update_subagent_bar(vec![info("w1", "running"), info("other", "running")]);
+    a.update_subagent_bar(vec![info("other", "running")]);
+    assert!(
+        !a.subagent_local.contains_key("w1"),
+        "#831: a kernel-confirmed entry omitted from a later snapshot must be removed"
+    );
+}
+
+#[tokio::test]
+async fn optimistic_entry_expires_if_never_confirmed() {
+    // A spawn that never registers (e.g. failed launch) must not linger forever:
+    // once the optimistic grace elapses, an omitting push removes it.
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.track_starting_subagent(&serde_json::json!({ "agent_id": "w1" }));
+    let old = tokio::time::Instant::now() - std::time::Duration::from_secs(3600);
+    a.subagent_local.get_mut("w1").unwrap().started_at = old;
+    a.update_subagent_bar(vec![info("other", "running")]);
+    assert!(
+        !a.subagent_local.contains_key("w1"),
+        "#866: an unconfirmed optimistic entry past the grace window must be removed"
+    );
+}

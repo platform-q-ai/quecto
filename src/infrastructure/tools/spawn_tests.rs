@@ -163,6 +163,33 @@ fn test_with_registry_shares_state() {
     assert!(tool.registry.lock().unwrap().contains_key("test"));
 }
 #[test]
+fn register_and_broadcast_emits_immediate_state_changed() {
+    // #866: spawn registration must broadcast the survivor set at once so a child
+    // that begins a long first turn is visible in the TUI immediately, without
+    // waiting for a GetSubagents poll or a terminal event.
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
+    super::register_and_broadcast(&registry, Some(&tx), "worker", entry);
+    assert!(registry.lock().unwrap().contains_key("worker"));
+    let line = rx
+        .try_recv()
+        .expect("#866: spawn registration must broadcast immediately");
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["type"], "subagent_state_changed");
+    assert_eq!(v["subagents"][0]["agentId"], "worker");
+    assert_eq!(v["subagents"][0]["status"], "starting");
+}
+
+#[test]
+fn register_and_broadcast_without_channel_still_registers() {
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
+    super::register_and_broadcast(&registry, None, "worker", entry);
+    assert!(registry.lock().unwrap().contains_key("worker"));
+}
+
+#[test]
 fn test_validate_agent_id_format_empty_string() {
     let result = super::super::subagent_registry::validate_agent_id_format("");
     assert!(result.is_err());
