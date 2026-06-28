@@ -219,12 +219,15 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
   # --- Counted / tail get_messages served from the snapshot (#842) ---
 
   # A counted get_messages against a busy child must return the last-N snapshot
-  # within the inspector timeout instead of blocking to the 300s deadline.
+  # without blocking to the 300s deadline (the mock holds the connection open and
+  # never sends an id-matched reply, so a snapshot-acceptance regression would
+  # hang to that deadline rather than fail fast — completion proves acceptance).
   Scenario: counted get_messages against a busy child accepts the snapshot tail
     Given an AgentCmdTool with a busy multi-message snapshot registry entry "busy-tail"
     When I execute agent_cmd with '{"agent_id":"busy-tail","command":"get_messages","count":1}'
     Then the agent_cmd result should not be an error
     And the agent_cmd response command "get_messages" should include a "messages" array
+    And the agent_cmd response command "get_messages" should include boolean field "snapshot"
     And the agent_cmd result should contain "NEWEST MESSAGE"
     And the agent_cmd result should not contain "OLDEST MESSAGE"
 
@@ -232,6 +235,8 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Given an AgentCmdTool with a busy multi-message snapshot registry entry "busy-tail2"
     When I execute agent_cmd with '{"agent_id":"busy-tail2","command":"get_messages_tail","count":1}'
     Then the agent_cmd result should not be an error
+    And the agent_cmd response command "get_messages" should include a "messages" array
+    And the agent_cmd response command "get_messages" should include boolean field "snapshot"
     And the agent_cmd result should contain "NEWEST MESSAGE"
     And the agent_cmd result should not contain "OLDEST MESSAGE"
 
