@@ -261,3 +261,69 @@ fn selector_mode_visible_even_without_issue() {
     state.template_count = 2;
     assert!(state.is_visible());
 }
+
+// ── Compact (boxed main-pane) line: current-step context (#882) ──────────────
+
+#[test]
+fn compact_line_shows_current_step_context() {
+    // done=3 of 14 → step 4 (GREEN), label "Step 4 label", issue #100.
+    let state = make_state(Some(100), 3, 14);
+    let line = render_compact_line(&state).expect("active workflow should render a compact line");
+    let clean = crate::interface::ansi::strip_ansi(&line);
+    assert!(
+        clean.contains("Step 4/14"),
+        "compact line must show current step number/total: {clean}"
+    );
+    assert!(
+        clean.contains("GREEN"),
+        "compact line must show current phase: {clean}"
+    );
+    assert!(
+        clean.contains("Step 4 label"),
+        "compact line must show the current step label: {clean}"
+    );
+    assert!(
+        clean.contains("#100"),
+        "compact line must show the active issue: {clean}"
+    );
+}
+
+#[test]
+fn compact_line_ellipsizes_long_step_label() {
+    let mut state = make_state(Some(1), 0, 2);
+    state.steps[0].label = "x".repeat(120);
+    let line = render_compact_line(&state).expect("active workflow should render a compact line");
+    let clean = crate::interface::ansi::strip_ansi(&line);
+    assert!(
+        clean.contains('…'),
+        "an over-long step label must be ellipsized: {clean}"
+    );
+    assert!(
+        !clean.contains(&"x".repeat(120)),
+        "the full over-long label must not be rendered verbatim: {clean}"
+    );
+}
+
+#[test]
+fn compact_line_complete_state_has_no_misleading_step() {
+    let state = make_state(Some(7), 14, 14);
+    let line = render_compact_line(&state).expect("a complete workflow is still visible");
+    let clean = crate::interface::ansi::strip_ansi(&line);
+    assert!(
+        !clean.contains("Step "),
+        "a complete workflow must not show a current step: {clean}"
+    );
+    assert!(
+        clean.to_lowercase().contains("complete"),
+        "a complete workflow should read as complete: {clean}"
+    );
+}
+
+#[test]
+fn compact_line_none_when_inactive() {
+    let state = make_state(None, 0, 0);
+    assert!(
+        render_compact_line(&state).is_none(),
+        "no compact line should render when no workflow is active"
+    );
+}
