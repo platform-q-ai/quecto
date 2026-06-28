@@ -184,39 +184,26 @@ fn agent_cmd_docs_match_tool_schema() {
         "docs/sessions.md must not present get_messages_tail (use get_messages with count)"
     );
 
-    // The AC requires the deprecated GetMessagesTail alias to be KEPT and
-    // LABELLED where the UDS protocol is described — so these checks are
-    // unconditional (a vacuous "if present" guard would let a future edit
-    // silently drop the documented alias).
+    // get_messages_tail is intentionally NOT mentioned in any docs — the
+    // deprecated-alias labelling was clutter. Neither the UDS protocol docs nor
+    // the README may reference it; clients use `get_messages` with `count`.
     let uds = read_repo_file("docs/uds-protocol.md");
     assert!(
-        uds.contains("get_messages_tail"),
-        "docs/uds-protocol.md must keep documenting the get_messages_tail alias"
+        !uds.contains("get_messages_tail"),
+        "docs/uds-protocol.md must not reference get_messages_tail (use get_messages with count)"
     );
     assert!(
-        uds.lines()
-            .any(|l| l.contains("get_messages_tail") && l.to_lowercase().contains("deprecated")),
-        "docs/uds-protocol.md must label the get_messages_tail alias deprecated"
-    );
-    // The README UDS protocol command table likewise keeps the alias labelled.
-    let readme_alias_line = readme
-        .lines()
-        .find(|line| line.contains("`get_messages_tail`"))
-        .expect("README must keep documenting the get_messages_tail UDS alias");
-    assert!(
-        readme_alias_line.to_lowercase().contains("deprecated"),
-        "README must label the get_messages_tail UDS alias deprecated"
+        !readme.contains("get_messages_tail"),
+        "README must not reference get_messages_tail (use get_messages with count)"
     );
 
-    // The docs above assert get_messages_tail survives as a working deprecated
-    // alias; pin the runtime behavior that backs that claim so a refactor can't
-    // drop the alias and leave the docs (and this guard) silently false. The
+    // The alias is still honored in code for backward compatibility even though
+    // it is undocumented; pin that so a refactor can't silently drop it. The
     // dispatch in agent_cmd.rs special-cases the alias name explicitly.
     let agent_cmd = read_repo_file("src/infrastructure/tools/agent_cmd.rs");
     assert!(
         agent_cmd.contains("get_messages_tail"),
-        "agent_cmd.rs must still honor the deprecated get_messages_tail alias \
-         documented in docs/uds-protocol.md and README"
+        "agent_cmd.rs must still honor the backward-compat get_messages_tail alias"
     );
 }
 

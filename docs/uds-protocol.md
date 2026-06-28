@@ -343,36 +343,6 @@ Each message contains:
 
 ---
 
-### `get_messages_tail` (DEPRECATED)
-
-> **DEPRECATED:** This is a backward-compatibility alias of
-> [`get_messages`](#get_messages) with a `count`. New clients should send
-> `get_messages` with `count` instead; the alias is retained only so existing
-> callers keep working.
-
-Return the last N messages from the conversation history. Useful for rendering recent context without fetching the entire history.
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `type` | `"get_messages_tail"` | yes | |
-| `id` | string | no | Correlation ID |
-| `count` | integer | yes | Maximum number of messages to return |
-
-**Behavior:**
-- Returns the last `count` messages in chronological order
-- If `count` exceeds the total history, returns all messages
-- If `count` is 0, returns an empty array
-
-**Response data:** Same format as `get_messages`.
-
-**Example:**
-
-```json
-{"type":"get_messages_tail","id":"gmt-1","count":4}
-```
-
----
-
 ### `get_session_stats`
 
 Return token usage and cost statistics for the current session.
