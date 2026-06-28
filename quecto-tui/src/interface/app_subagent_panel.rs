@@ -513,7 +513,10 @@ impl App {
         // above) intentionally stays a live session clock.
         let mss = fmt_mss(t.elapsed_secs(now));
         if t.info.status == "idle" {
-            format!("idle {mss}")
+            // `elapsed_secs` is the frozen *run* duration (start→stopped_at), not a
+            // time-since-idle clock, so label it as such (`ran`) to avoid reading
+            // `idle 5:00` as "idle for 5:00" when it means "ran 5:00" (#838 review).
+            format!("idle (ran {mss})")
         } else {
             mss
         }

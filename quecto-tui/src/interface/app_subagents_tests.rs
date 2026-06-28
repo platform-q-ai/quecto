@@ -446,9 +446,14 @@ async fn two_running() -> TuiHarness {
 /// An idle sub-agent's panel timer must NOT advance when an incidental (non-tick)
 /// render re-samples `now` (scroll/selection/resize). It reads a stable value
 /// frozen at the moment it stopped working.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn idle_panel_timer_is_frozen_across_advancing_now() {
     let mut h = two_running().await;
+    // Let the worker accumulate a KNOWN run duration before it goes idle, so the
+    // frozen value is non-zero. With a known value we can assert the exact `m:ss`,
+    // which distinguishes a genuine freeze from a collapsed-to-constant regression
+    // (e.g. always "idle (ran 0:00)") that a mere `v1 == v2` check would miss (#838 review).
+    tokio::time::advance(std::time::Duration::from_secs(45)).await;
     // worker goes idle while `other` keeps running (so ticks could still fire).
     h.event(super::tui_harness::subagents_changed(vec![
         super::tui_harness::subagent("worker", "idle", Some(("active", 1, 3))),
@@ -463,18 +468,18 @@ async fn idle_panel_timer_is_frozen_across_advancing_now() {
         "idle sub-agent timer must be frozen, not advance with a re-sampled now: \
          {v1:?} vs {v2:?}"
     );
-    // The frozen value must be a real idle run-duration label, not a constant a
-    // collapsed `elapsed_secs` (e.g. always "idle 0:00") would also satisfy `v1 == v2`.
-    assert!(
-        v1.starts_with("idle ") && v1.contains(':'),
-        "idle row must show a frozen `idle m:ss` run duration, got: {v1:?}"
+    // Exact frozen run duration (start→stopped_at = 45s), independent of `now`.
+    assert_eq!(
+        v1, "idle (ran 0:45)",
+        "idle row must freeze the exact run duration, got: {v1:?}"
     );
 }
 
 /// Exited/errored rows are likewise frozen.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn exited_panel_timer_is_frozen_across_advancing_now() {
     let mut h = two_running().await;
+    tokio::time::advance(std::time::Duration::from_secs(75)).await;
     h.event(super::tui_harness::subagents_changed(vec![
         super::tui_harness::subagent("worker", "exited", Some(("active", 1, 3))),
         super::tui_harness::subagent("other", "running", Some(("active", 2, 3))),
@@ -487,10 +492,10 @@ async fn exited_panel_timer_is_frozen_across_advancing_now() {
         v1, v2,
         "exited sub-agent timer must be frozen: {v1:?} vs {v2:?}"
     );
-    // And it must be a real `m:ss` run duration, not a collapsed constant.
-    assert!(
-        v1.contains(':'),
-        "exited row must show a frozen `m:ss` run duration, got: {v1:?}"
+    // Exact frozen run duration (75s), not a collapsed constant.
+    assert_eq!(
+        v1, "1:15",
+        "exited row must freeze the exact run duration, got: {v1:?}"
     );
 }
 
