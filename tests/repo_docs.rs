@@ -86,8 +86,17 @@ fn agent_cmd_docs_match_tool_schema() {
         .expect("agent_cmd.rs should declare SUPPORTED_COMMANDS");
     let commands: Vec<String> = block
         .split(',')
-        .map(|entry| entry.trim().trim_matches('"').to_string())
-        .filter(|entry| !entry.is_empty())
+        .map(str::trim)
+        // Only accept entries that round-trip as quoted string literals, so an
+        // inline comment or a future entry containing a comma cannot produce a
+        // bogus command name (this guard must outlive refactors).
+        .filter_map(|entry| {
+            entry
+                .strip_prefix('"')
+                .and_then(|rest| rest.strip_suffix('"'))
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        })
         .collect();
 
     assert!(
@@ -117,6 +126,26 @@ fn agent_cmd_docs_match_tool_schema() {
         "README agent_cmd row must not list the removed get_messages_tail command"
     );
 
+    // Converse: every backtick-wrapped token on the row must be a supported
+    // command (no stale/removed extras), so a future drift can't slip through.
+    // `count` is a documented parameter of `get_messages`, not a command.
+    const ROW_NON_COMMAND_TOKENS: &[&str] = &["count"];
+    let command_list = row
+        .split_once("subagents:")
+        .map(|(_, rest)| rest)
+        .expect("README agent_cmd row should introduce the command list with `subagents:`");
+    for token in command_list
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|t| !ROW_NON_COMMAND_TOKENS.contains(t))
+    {
+        assert!(
+            commands.iter().any(|c| c == token),
+            "README agent_cmd row lists `{token}` which is not a supported command"
+        );
+    }
+
     // docs/subagents.md documents the agent_cmd tool surface only — it must not
     // reference get_messages_tail at all; use get_messages with optional count.
     let subagents = read_repo_file("docs/subagents.md");
@@ -128,6 +157,17 @@ fn agent_cmd_docs_match_tool_schema() {
         subagents.contains("get_messages"),
         "docs/subagents.md should document get_messages"
     );
+    // The AC requires documenting the optional `count` semantics (omit = all,
+    // N = last N), not merely the command name.
+    let subagents_lower = subagents.to_lowercase();
+    assert!(
+        subagents.contains("count"),
+        "docs/subagents.md must document the optional `count` parameter of get_messages"
+    );
+    assert!(
+        subagents_lower.contains("all") && subagents_lower.contains("last"),
+        "docs/subagents.md must explain count semantics (omit = all, N = last N)"
+    );
 
     // docs/sessions.md UDS inspection examples must not present get_messages_tail.
     let sessions = read_repo_file("docs/sessions.md");
@@ -136,25 +176,29 @@ fn agent_cmd_docs_match_tool_schema() {
         "docs/sessions.md must not present get_messages_tail (use get_messages with count)"
     );
 
-    // Where the UDS protocol keeps the deprecated GetMessagesTail alias, it must
-    // be labelled deprecated.
+    // The AC requires the deprecated GetMessagesTail alias to be KEPT and
+    // LABELLED where the UDS protocol is described — so these checks are
+    // unconditional (a vacuous "if present" guard would let a future edit
+    // silently drop the documented alias).
     let uds = read_repo_file("docs/uds-protocol.md");
-    if uds.contains("get_messages_tail") {
-        assert!(
-            uds.to_lowercase().contains("deprecated"),
-            "docs/uds-protocol.md must label the get_messages_tail alias deprecated"
-        );
-    }
+    assert!(
+        uds.contains("get_messages_tail"),
+        "docs/uds-protocol.md must keep documenting the get_messages_tail alias"
+    );
+    assert!(
+        uds.lines()
+            .any(|l| l.contains("get_messages_tail") && l.to_lowercase().contains("deprecated")),
+        "docs/uds-protocol.md must label the get_messages_tail alias deprecated"
+    );
     // The README UDS protocol command table likewise keeps the alias labelled.
-    if let Some(line) = readme
+    let readme_alias_line = readme
         .lines()
         .find(|line| line.contains("`get_messages_tail`"))
-    {
-        assert!(
-            line.to_lowercase().contains("deprecated"),
-            "README must label the get_messages_tail UDS alias deprecated"
-        );
-    }
+        .expect("README must keep documenting the get_messages_tail UDS alias");
+    assert!(
+        readme_alias_line.to_lowercase().contains("deprecated"),
+        "README must label the get_messages_tail UDS alias deprecated"
+    );
 }
 
 #[test]
