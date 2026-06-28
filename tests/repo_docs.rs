@@ -164,9 +164,17 @@ fn agent_cmd_docs_match_tool_schema() {
         subagents.contains("count"),
         "docs/subagents.md must document the optional `count` parameter of get_messages"
     );
+    // Anchor on the documented phrasing rather than bare "all"/"last" substrings
+    // (which occur inside common words like "actually"/"call"), so removing the
+    // semantics sentence actually fails this guard. The doc reads:
+    // "omit `count` for all; pass `count` for the last N messages".
     assert!(
-        subagents_lower.contains("all") && subagents_lower.contains("last"),
-        "docs/subagents.md must explain count semantics (omit = all, N = last N)"
+        subagents_lower.contains("omit") && subagents_lower.contains("for all"),
+        "docs/subagents.md must explain that omitting count returns all messages"
+    );
+    assert!(
+        subagents_lower.contains("last n"),
+        "docs/subagents.md must explain that count returns the last N messages"
     );
 
     // docs/sessions.md UDS inspection examples must not present get_messages_tail.
@@ -198,6 +206,17 @@ fn agent_cmd_docs_match_tool_schema() {
     assert!(
         readme_alias_line.to_lowercase().contains("deprecated"),
         "README must label the get_messages_tail UDS alias deprecated"
+    );
+
+    // The docs above assert get_messages_tail survives as a working deprecated
+    // alias; pin the runtime behavior that backs that claim so a refactor can't
+    // drop the alias and leave the docs (and this guard) silently false. The
+    // dispatch in agent_cmd.rs special-cases the alias name explicitly.
+    let agent_cmd = read_repo_file("src/infrastructure/tools/agent_cmd.rs");
+    assert!(
+        agent_cmd.contains("get_messages_tail"),
+        "agent_cmd.rs must still honor the deprecated get_messages_tail alias \
+         documented in docs/uds-protocol.md and README"
     );
 }
 
