@@ -33,21 +33,12 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"command\":\"agent_error\"",
 ];
 
-/// Apply a single JSON-line event to a SubagentEntry.
-///
-/// This is a pure function: it parses the event, updates the entry's status
-/// fields, and returns. No I/O, no async.
-///
-/// State transitions follow the table from issue #522:
-///
-/// | Child Event                       | Status Transition                          |
-/// |-----------------------------------|--------------------------------------------|
-/// | `agent_start`                     | → `Running`, clear `last_error`            |
-/// | `agent_end`                       | → `Idle`                                   |
-/// | `tool_execution_start`            | → `Running`, update `last_tool`            |
-/// | `tool_execution_end` (is_error)   | → `Error`, set `last_error`                |
-/// | `tool_execution_end` (!is_error)  | (no status change), clear `last_error`     |
-/// | Connection closed / process exit  | → `Exited`  (via `mark_exited`)            |
+/// Apply a single JSON-line event to a SubagentEntry. Pure (no I/O / async):
+/// parses the event and updates the entry's status fields. State transitions
+/// (#522): `agent_start`→Running/clear error; `agent_end`→Idle;
+/// `tool_execution_start`→Running/update last_tool; `tool_execution_end`
+/// is_error→Error/set error else clear error; connection close/exit→Exited
+/// (via `mark_exited`).
 pub fn apply_event(entry: &mut SubagentEntry, line: &str) {
     if !STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
         return;
@@ -158,11 +149,8 @@ pub fn mark_exited(entry: &mut SubagentEntry) {
 
 /// Spawn a background monitor task that connects to a child agent's UDS socket
 /// and reads the JSON-lines event stream, updating the registry in real-time.
-///
-/// If `notify_tx` is `Some`, the monitor sends [`SubagentNotification`]s when
-/// the child completes, errors, or exits (#523).
-///
-/// Returns a `JoinHandle` that can be aborted to stop the monitor.
+/// When `notify_tx` is `Some`, sends [`SubagentNotification`]s on the child's
+/// completion/error/exit (#523). Returns an abortable `JoinHandle`.
 pub fn spawn_monitor_task(
     agent_id: String,
     socket_path: std::path::PathBuf,
@@ -286,22 +274,19 @@ fn handle_monitor_line(
     if let Some(tx) = broadcast_tx {
         if line.contains("\"subagent_") {
             // Per-turn message stream: forward re-stamped onto the parent's
-            // stream so the TUI inspector updates turn-by-turn (#797). This
-            // event does not change the child's tracked status, so it bypasses
-            // the state-changing path below.
+            // stream so the TUI inspector updates turn-by-turn (#797). Not a
+            // status change, so it bypasses the state-changing path below.
             if let Some(mut fwd) = forward_child_messages_appended(line, agent_id, parent_id) {
                 fwd.push('\n');
                 let _ = tx.send(fwd);
                 return;
             }
-            // Descendant sub-agent state (a grandchild, or deeper, spawned by
-            // this child) must reach the root — and the TUI. We MERGE the
-            // descendants into the registry preserving each entry's real
-            // identity, then re-broadcast the WHOLE tree from the registry so
-            // the event keeps full-replace semantics and never evicts the
-            // root's own children (#815, architecture review). This is not a
-            // status change for the immediate child, so it returns early and
-            // bypasses the registry-update/notification path below.
+            // Descendant sub-agent state (a grandchild, or deeper) must reach the
+            // root — and the TUI. MERGE descendants into the registry preserving
+            // each entry's real identity, then re-broadcast the WHOLE tree so the
+            // event keeps full-replace semantics and never evicts the root's own
+            // children (#815). Not a status change for the immediate child, so it
+            // returns early and bypasses the registry/notification path below.
             if let Some(mut fwd) = forward_child_state_changed(line, registry, agent_id) {
                 fwd.push('\n');
                 let _ = tx.send(fwd);
@@ -317,12 +302,23 @@ fn handle_monitor_line(
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return;
     };
+    // A forwarded descendant `workflow_state` carries a foreign inner `agent_id`
+    // (a grandchild's). It must update only that descendant's snapshot, never the
+    // immediate child's registry entry, so a grandchild's progress never
+    // overwrites the parent's panel row (#869c). The forward below still runs.
+    let foreign_workflow = value.get("type").and_then(|t| t.as_str()) == Some("workflow_state")
+        && value
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|a| !a.is_empty() && a != agent_id);
     // Parse once; reuse for the registry update, notification, and forwarding.
-    let sequence =
-        update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, &value));
-    notify_from_parsed(notify_tx, agent_id, sequence, &value);
+    if !foreign_workflow {
+        let sequence =
+            update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, &value));
+        notify_from_parsed(notify_tx, agent_id, sequence, &value);
+    }
     if let Some(tx) = broadcast_tx {
-        if should_broadcast_state_changed_after_event(&value) {
+        if !foreign_workflow && should_broadcast_state_changed_after_event(&value) {
             let mut event = super::subagent_cascade::build_state_changed_event(registry);
             event.push('\n');
             let _ = tx.send(event);
@@ -335,20 +331,12 @@ fn handle_monitor_line(
 }
 
 /// Whether a child event changed the registry fields mirrored by
-/// `subagent_state_changed` and should therefore be pushed immediately to TUI
-/// clients instead of waiting for a later polling rebuild (#839).
-///
-/// `agent_start` is broadcast so a newly-running child (e.g. one that begins a
-/// long first turn) appears and stays visible in the side panel at once, instead
-/// of being invisible until a terminal event finally broadcasts (#866). This is
-/// a ONE-TIME, per-turn running transition — NOT the high-frequency per-tool
-/// `tool_execution_start` / non-error `tool_execution_end` boundaries that #839
-/// deliberately removed; those MUST stay suppressed (a running→idle transition
-/// is carried by the broadcast `agent_end`, so no stale "running" persists).
-/// Decide whether a `SubagentStateChanged` broadcast should fire after applying
-/// `value`. Gated to terminal transitions plus the first running transition
-/// (`agent_start`) — see #839 (no high-frequency per-tool broadcasts) and #866
-/// (a spawned agent must appear/stay visible during a long first turn).
+/// `subagent_state_changed` and should be pushed to TUI clients immediately
+/// instead of waiting for a later polling rebuild (#839). Gated to terminal
+/// transitions plus the FIRST running transition (`agent_start`, #866 — so a
+/// newly-running child stays visible during a long first turn) — NOT the
+/// high-frequency per-tool boundaries #839 removed (a running→idle transition is
+/// carried by the broadcast `agent_end`, so no stale "running" persists).
 pub fn should_broadcast_state_changed_after_event(value: &serde_json::Value) -> bool {
     match value.get("type").and_then(|v| v.as_str()) {
         Some("agent_start") => true,
@@ -372,13 +360,25 @@ pub fn canonical_workflow_forward(
     if value.get("type").and_then(|t| t.as_str()) != Some("workflow_state") {
         return None;
     }
-    // Re-build a canonical event from KNOWN fields with identity force-stamped.
-    // We deliberately do NOT pass through arbitrary child-supplied keys onto the
-    // parent's client stream.
+    // Re-build a canonical event from KNOWN fields (we do NOT pass through
+    // arbitrary child-supplied keys). PRESERVE an existing descendant identity
+    // when the event is already a forwarded grandchild workflow (#869c) — only
+    // stamp the immediate child's id/parent when the event carries none — so a
+    // grandchild's identity is not collapsed into the ancestor moving up the tree.
+    let agent = value
+        .get("agent_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(child_id);
+    let parent = value
+        .get("parent_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| parent_id.map(str::to_string));
     let canonical = serde_json::json!({
         "type": "workflow_state",
-        "agent_id": child_id,
-        "parent_id": parent_id,
+        "agent_id": agent,
+        "parent_id": parent,
         "mode": value.get("mode").cloned().unwrap_or(serde_json::Value::Null),
         "progress": value.get("progress").cloned().unwrap_or(serde_json::Value::Null),
     });
