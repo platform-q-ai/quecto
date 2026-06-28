@@ -739,5 +739,8 @@ mod tests;
 #[path = "tui_harness.rs"]
 pub mod tui_harness;
 #[cfg(test)]
+#[path = "tui_harness_render_tests.rs"]
+mod tui_harness_render_tests;
+#[cfg(test)]
 #[path = "tui_harness_tests.rs"]
 mod tui_harness_tests;
