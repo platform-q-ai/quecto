@@ -54,9 +54,10 @@ pub enum AgentCommand {
     },
     /// Return conversation history. Optional `count` returns the last N messages.
     ///
-    /// When `agent_id` is set with `count`, the request is forwarded to that
-    /// spawned sub-agent and its message tail is returned instead of the
-    /// connected agent's own history.
+    /// When `agent_id` is set, the request is forwarded to that spawned
+    /// sub-agent and its history is returned instead of the connected agent's
+    /// own — with `count` the tail, without `count` the full history (#843). It
+    /// is never silently answered from the connected/parent agent's history.
     GetMessages {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,

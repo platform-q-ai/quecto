@@ -4,8 +4,12 @@ use crate::interface::cli::uds_ext_protocol;
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     // Agent-targeted message tail forwards to the named sub-agent's own UDS
     // before the local-history fast path can answer it (#795/#837).
+    // Forward whenever an agent_id is set — with OR without a count. An uncounted
+    // agent-targeted request asks for the child's FULL history; it must never fall
+    // through to the local fast path, which ignores agent_id and would silently
+    // return the connected/parent agent's own conversation (#843).
     if let AgentCommand::GetMessages {
-        count: Some(count),
+        count,
         agent_id: Some(agent_id),
         id,
     } = &cmd
@@ -22,7 +26,8 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     } = &cmd
     {
         let tn = cmd.type_name();
-        let ev = forward_subagent_messages_tail(ctx, id.as_deref(), tn, agent_id, *count).await;
+        let ev =
+            forward_subagent_messages_tail(ctx, id.as_deref(), tn, agent_id, Some(*count)).await;
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
@@ -136,7 +141,7 @@ async fn forward_subagent_messages_tail(
     id: Option<&str>,
     tn: &str,
     agent_id: &str,
-    count: usize,
+    count: Option<usize>,
 ) -> AgentEvent {
     use crate::infrastructure::tools::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, lookup_subagent_socket, send_subagent_uds_command_with_timeout,
@@ -148,7 +153,13 @@ async fn forward_subagent_messages_tail(
         Ok(path) => path,
         Err(e) => return AgentEvent::err(id, tn, e),
     };
-    let cmd = serde_json::json!({ "type": "get_messages", "count": count }).to_string();
+    // Omit `count` entirely when None so the child returns its FULL history; a
+    // present count requests just the tail (#843).
+    let cmd = match count {
+        Some(count) => serde_json::json!({ "type": "get_messages", "count": count }),
+        None => serde_json::json!({ "type": "get_messages" }),
+    }
+    .to_string();
     // This forward is awaited inline in the single shared dispatch loop, so it
     // uses the short interactive timeout — a slow/hung sub-agent must not stall
     // steer/abort/new-message for any client for the full agent_cmd 300s (#795).
@@ -501,3 +512,7 @@ pub(super) async fn dispatch_ext_command(
 #[cfg(test)]
 #[path = "uds_dispatch_cov_tests.rs"]
 mod cov_tests;
+
+#[cfg(test)]
+#[path = "uds_dispatch_843_tests.rs"]
+mod tests_843;

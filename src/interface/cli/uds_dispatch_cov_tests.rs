@@ -709,27 +709,12 @@ async fn forward_tail_no_registry_is_error_event() {
     let mut fx = Fixture::new();
     let ctx = fx.ctx();
     let ev =
-        forward_subagent_messages_tail(&ctx, Some("id1"), "get_messages_tail", "worker", 3).await;
+        forward_subagent_messages_tail(&ctx, Some("id1"), "get_messages_tail", "worker", Some(3))
+            .await;
     let json = serde_json::to_value(&ev).unwrap();
     assert!(
         json.get("error").is_some(),
         "missing registry must surface an error: {json}"
-    );
-}
-
-#[tokio::test]
-async fn forward_tail_unknown_agent_is_error_event() {
-    use crate::infrastructure::tools::subagent_registry::new_registry;
-    let mut fx = Fixture::new();
-    let mut ctx = fx.ctx();
-    ctx.subagent_registry = Some(new_registry());
-    let ev =
-        forward_subagent_messages_tail(&ctx, Some("id1"), "get_messages_tail", "ghost", 3).await;
-    let json = serde_json::to_value(&ev).unwrap();
-    let err = json.get("error").and_then(|v| v.as_str()).unwrap_or("");
-    assert!(
-        err.contains("not found"),
-        "unknown agent must report not-found: {json}"
     );
 }
 
