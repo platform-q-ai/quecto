@@ -116,6 +116,10 @@ fn bound_engine_completion_nudge_does_not_instruct_reselect() {
         !nudge.contains("select_template") && !nudge.contains("reset"),
         "bound completion nudge must not tell the model to reset/reselect: {nudge}"
     );
+    assert!(
+        nudge.contains("report your result and stop"),
+        "bound completion nudge must still instruct report-and-stop: {nudge}"
+    );
 }
 
 #[test]

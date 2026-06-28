@@ -217,7 +217,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
               "git merge",
               "gh pr merge"
             ],
-            "before_step_key": "pre_merge",
+            "before_step_key": "cleanup",
             "message": "This workflow does NOT merge — report the PR for review and stop (no auto-merge). Before reporting, complete code review, pass the conformance gate, and verify the pre-push gate passed. Never run gh pr merge / git merge."
           }
         ]
@@ -383,7 +383,7 @@ When workflow is enabled, the system prompt is rebuilt from live engine state
 - **Selector mode**: available templates, selector guidance, active issue
 - **Active mode**: template name, progress, current step with guidance, guard
   reminders
-- **Complete mode**: completion indicator and cycle-reset guidance
+- **Complete mode**: completion indicator and report-and-stop guidance
 
 The workflow section is transient — it is not persisted in session history.
 
