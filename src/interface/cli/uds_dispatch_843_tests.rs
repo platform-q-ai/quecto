@@ -119,7 +119,7 @@ async fn spawn_recording_child(
             "{{\"type\":\"response\",\"id\":\"{id}\",\"command\":\"get_messages\",\"data\":{{\"messages\":[{{\"content\":\"{marker}\"}}]}}}}\n"
         );
         write_half.write_all(reply.as_bytes()).await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        write_half.flush().await.unwrap();
     });
     (sock, received, dir, handle)
 }
@@ -170,6 +170,49 @@ async fn dispatch_uncounted_agent_targeted_get_messages_forwards_to_child() {
     assert!(
         fwd_json.get("count").is_none(),
         "uncounted request must forward without a count, got: {fwd}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_counted_agent_targeted_get_messages_forwards_count_to_child() {
+    // Regression twin of the uncounted case: a `count: Some(n)` agent-targeted
+    // request must forward `{"type":"get_messages","count":n}` to the child and
+    // return the child's history — guarding the `Some(count)` serialization arm.
+    let (sock, received, _dir, handle) = spawn_recording_child("CHILD_HISTORY").await;
+    let registry = new_registry();
+    register_child(&registry, "worker", sock);
+
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let mut fx = Fx::new();
+    fx.messages.push(Message::user("PARENT_ONLY"));
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry = Some(registry);
+        ctx.broadcast_tx = Some(tx);
+        let cmd = AgentCommand::GetMessages {
+            id: Some("q1".into()),
+            count: Some(7),
+            agent_id: Some("worker".into()),
+        };
+        assert!(!dispatch_command(cmd, &mut ctx).await);
+    }
+    handle.await.unwrap();
+
+    let emitted = rx.try_recv().expect("a response event should be emitted");
+    assert!(
+        emitted.contains("CHILD_HISTORY"),
+        "must return the child's history, got: {emitted}"
+    );
+    assert!(
+        !emitted.contains("PARENT_ONLY"),
+        "must NOT leak the parent's conversation, got: {emitted}"
+    );
+    let fwd = received.lock().await.clone();
+    let fwd_json: serde_json::Value = serde_json::from_str(&fwd).unwrap();
+    assert_eq!(fwd_json["type"], "get_messages");
+    assert_eq!(
+        fwd_json["count"], 7,
+        "counted request must forward its count to the child, got: {fwd}"
     );
 }
 
