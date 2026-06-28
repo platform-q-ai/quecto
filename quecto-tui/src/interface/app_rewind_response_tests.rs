@@ -19,6 +19,39 @@ fn chat_text(app: &mut App) -> String {
 
 // ── app_rewind ───────────────────────────────────────────────────────
 
+/// No-regression guard (#865): the TUI's OWN internal `get_state`/stats polling
+/// flows through `handle_response` (Response events with ids like `init`/
+/// `stats-footer`), NOT the tool path, so it must never add a chat entry / box.
+#[tokio::test]
+async fn internal_state_polling_response_renders_no_box() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    let before = a.master_session.chat.entry_count();
+    a.handle_event(Event::Response {
+        id: Some("init".into()),
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({
+            "model": "m",
+            "sessionKey": "cli:default",
+            "workflow": {"mode":"complete","progress":{"done":5,"total":5,"percent":100}}
+        })),
+        error: None,
+    });
+    a.handle_event(Event::Response {
+        id: Some("stats-footer".into()),
+        command: "get_session_stats".into(),
+        success: true,
+        data: Some(serde_json::json!({"cost": 0.0})),
+        error: None,
+    });
+    assert_eq!(
+        a.master_session.chat.entry_count(),
+        before,
+        "internal get_state/stats polling must not render a chat box (#865)"
+    );
+}
+
 #[tokio::test]
 async fn rewind_preview_truncates_and_sanitizes() {
     let preview = super::app_rewind::rewind_preview("safe \u{1b}[31mvalue");

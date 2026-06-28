@@ -530,7 +530,16 @@ pub(super) fn push_preview(
     let total = content_lines.len();
     let shown = max.min(total);
     for line in &content_lines[..shown] {
-        lines.push(truncate_to_width(&color_fn(line), width, None));
+        // Strip sub-agent/extension-influenced terminal control sequences from
+        // the result body before colouring (#865 security review): otherwise a
+        // malicious sub-agent could inject ANSI/OSC escapes (cursor control,
+        // title/clipboard spoofing) into the parent operator's terminal, since
+        // truncate_to_width preserves escape sequences verbatim.
+        lines.push(truncate_to_width(
+            &color_fn(&strip_terminal_control(line)),
+            width,
+            None,
+        ));
     }
     if total > shown {
         lines.push(theme::dim(&format!(
