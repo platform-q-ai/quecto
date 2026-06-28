@@ -83,6 +83,13 @@ impl<W: Write> DiffRenderer<W> {
             buf.push_str("\x1b[2J\x1b[H\x1b[3J");
         }
 
+        // Disable auto-wrap for the duration of the paint so a full-width line
+        // written on the bottom row can't auto-scroll the viewport (which would
+        // desync `previous_lines` from the real rows until the next
+        // invalidate/resize — the same defect-#1 class fixed in `diff_render`).
+        // #884
+        buf.push_str(AUTOWRAP_OFF);
+
         for (i, line) in lines.iter().enumerate() {
             if i > 0 {
                 buf.push_str("\r\n");
@@ -90,6 +97,7 @@ impl<W: Write> DiffRenderer<W> {
             buf.push_str(line);
         }
 
+        buf.push_str(AUTOWRAP_ON);
         buf.push_str(SYNC_END);
         self.writer.write_all(buf.as_bytes())?;
         self.writer.flush()?;
@@ -477,9 +485,24 @@ mod tests {
             output.contains(";1H"),
             "diff output must use absolute cursor addressing: {output:?}"
         );
+        // Reject ANY relative vertical move (`\x1b[<n>A`/`\x1b[<n>B`), not just
+        // the 1-count form — the old code emitted multi-line steps too.
+        let has_relative_vmove = output.as_bytes().windows(2).enumerate().any(|(i, w)| {
+            if w != b"\x1b[" {
+                return false;
+            }
+            let mut j = i + 2;
+            let bytes = output.as_bytes();
+            let mut saw_digit = false;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                saw_digit = true;
+                j += 1;
+            }
+            saw_digit && j < bytes.len() && (bytes[j] == b'A' || bytes[j] == b'B')
+        });
         assert!(
-            !output.contains("\x1b[1B") && !output.contains("\x1b[1A"),
-            "diff output must not use relative vertical moves: {output:?}"
+            !has_relative_vmove,
+            "diff output must not use relative vertical moves (\\x1b[<n>A/B): {output:?}"
         );
     }
 

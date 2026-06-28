@@ -345,13 +345,22 @@ async fn event_line_invalid_json_panics_with_context() {
 /// Minimal VT emulator: replays the renderer's byte stream onto a fixed grid so
 /// tests see what the terminal would actually show. Models the bottom-row
 /// scroll on `\n` that the differential renderer's relative stepping could
-/// trigger (the root cause of the ghost/jitter).
+/// trigger (the root cause of the ghost/jitter), plus DEC auto-wrap (DECAWM):
+/// a full-width glyph on the bottom row scrolls the viewport iff auto-wrap was
+/// left enabled — so the renderer's `?7l` guard is actually exercised.
 struct Vt {
     w: usize,
     h: usize,
     grid: Vec<Vec<char>>,
     row: usize,
     col: usize,
+    /// DEC auto-wrap mode (DECAWM). Default on; toggled by `?7h`/`?7l`.
+    wrap: bool,
+    /// Deferred-wrap flag: a glyph written in the last column arms a wrap that
+    /// only fires (when `wrap` is on) on the NEXT printable glyph — modelling
+    /// real terminals, so a full-width bottom line scrolls the viewport iff
+    /// auto-wrap was left enabled.
+    pending_wrap: bool,
 }
 
 impl Vt {
@@ -362,12 +371,22 @@ impl Vt {
             grid: vec![vec![' '; w]; h],
             row: 0,
             col: 0,
+            wrap: true,
+            pending_wrap: false,
         }
     }
 
     fn scroll_up(&mut self) {
         self.grid.remove(0);
         self.grid.push(vec![' '; self.w]);
+    }
+
+    fn linefeed(&mut self) {
+        if self.row + 1 >= self.h {
+            self.scroll_up();
+        } else {
+            self.row += 1;
+        }
     }
 
     fn apply(&mut self, s: &str) {
@@ -395,10 +414,18 @@ impl Vt {
                     let final_byte = chars.get(i).copied().unwrap_or(' ');
                     i += 1;
                     if private {
-                        continue; // ?2026h/l, ?7l/h — irrelevant to the grid
+                        // ?2026h/l (sync) — irrelevant to the grid; ?7l/h toggle
+                        // auto-wrap, which DOES change scroll behaviour.
+                        if params == "7" {
+                            self.wrap = final_byte == 'h';
+                            self.pending_wrap = false;
+                        }
+                        continue;
                     }
                     let nums: Vec<usize> =
                         params.split(';').filter_map(|p| p.parse().ok()).collect();
+                    // Any explicit cursor positioning cancels a deferred wrap.
+                    self.pending_wrap = false;
                     match final_byte {
                         'H' => {
                             let r = nums.first().copied().unwrap_or(1).max(1) - 1;
@@ -432,21 +459,31 @@ impl Vt {
                 }
                 '\r' => {
                     self.col = 0;
+                    self.pending_wrap = false;
                     i += 1;
                 }
                 '\n' => {
-                    if self.row + 1 >= self.h {
-                        self.scroll_up();
-                    } else {
-                        self.row += 1;
-                    }
+                    self.linefeed();
+                    self.pending_wrap = false;
                     i += 1;
                 }
                 _ => {
+                    // A deferred wrap (armed by a glyph in the last column) fires
+                    // here iff auto-wrap is on — scrolling at the bottom row.
+                    if self.wrap && self.pending_wrap {
+                        self.linefeed();
+                        self.col = 0;
+                    }
+                    self.pending_wrap = false;
                     if self.col < self.w {
                         self.grid[self.row][self.col] = c;
                     }
-                    self.col += 1;
+                    if self.col + 1 >= self.w {
+                        // Last column: arm a deferred wrap rather than advancing.
+                        self.pending_wrap = true;
+                    } else {
+                        self.col += 1;
+                    }
                     i += 1;
                 }
             }
@@ -576,7 +613,23 @@ async fn full_height_multi_agent_renderer_no_desync_or_bleed() {
         "diff renders must use absolute cursor addressing"
     );
 
-    // (b) No erase ever inherits a tool-box background → no green panel bleed.
+    // (b0b) Each diff paint must bracket itself with auto-wrap OFF→ON so a
+    // full-width line on the bottom row can never auto-scroll the viewport (the
+    // belt to absolute-addressing's braces). The VT above models DECAWM, so the
+    // (c) drift check stays honest if this guard is ever dropped.
+    let off = diff_only.find("\x1b[?7l");
+    let on = diff_only.find("\x1b[?7h");
+    assert!(
+        off.is_some() && on.is_some() && off < on,
+        "diff paint must disable auto-wrap (\\x1b[?7l) before re-enabling it"
+    );
+
+    // (b) Sanity guard: no erase inherits a tool-box background anywhere in the
+    // stream. NOTE: defect #2 (the green panel bleed) is genuinely reproduced by
+    // the `diff_render_resets_sgr_before_erasing` UNIT test (which is RED against
+    // the old renderer). Here the composed green box self-resets and the diffs
+    // only touch bottom rows, so this assertion is a non-regression guard, not a
+    // standalone reproduction of the defect.
     assert!(
         !erases_under_active_bg(&stream),
         "an ERASE_LINE fired while BG_SUCCESS was active (green panel bleed)"
