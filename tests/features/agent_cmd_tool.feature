@@ -240,6 +240,42 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd result should contain "NEWEST MESSAGE"
     And the agent_cmd result should not contain "OLDEST MESSAGE"
 
+  # --- Non-blocking control forwards (#876) ---
+
+  # Acceptance criteria for #876:
+  # - prompt/steer/follow_up/abort against a BUSY child return on the child's
+  #   ACCEPTANCE ack within the inspector timeout (never the 300s turn deadline),
+  #   so the parent's turn is not frozen for the child's turn duration.
+  # - id-correlation (#835) is preserved: the acceptance ack echoes the request id.
+  # - Completion still surfaces later via the auto-await note / await (unchanged).
+  # The mock child acks acceptance but NEVER sends a turn-completion response and
+  # holds the connection open, so a blocking-on-completion regression would hang
+  # to the 300s deadline rather than fail fast — completion proves acceptance.
+
+  Scenario: prompt against a busy child returns on acceptance
+    Given an AgentCmdTool with a fast-ack busy registry entry "busy-prompt876"
+    When I execute agent_cmd with '{"agent_id":"busy-prompt876","command":"prompt","message":"do work"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "success"
+
+  Scenario: follow_up against a busy child returns on acceptance
+    Given an AgentCmdTool with a fast-ack busy registry entry "busy-fu876"
+    When I execute agent_cmd with '{"agent_id":"busy-fu876","command":"follow_up","message":"after"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "success"
+
+  Scenario: steer against a busy child returns on acceptance
+    Given an AgentCmdTool with a fast-ack busy registry entry "busy-steer876"
+    When I execute agent_cmd with '{"agent_id":"busy-steer876","command":"steer","message":"turn"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "success"
+
+  Scenario: abort against a busy child returns on acceptance
+    Given an AgentCmdTool with a fast-ack busy registry entry "busy-abort876"
+    When I execute agent_cmd with '{"agent_id":"busy-abort876","command":"abort"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "success"
+
   @pending
   Scenario: UDS connection keeps write half open until response received
     Given a live UDS subagent

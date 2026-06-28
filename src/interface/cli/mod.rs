@@ -7,6 +7,7 @@ pub mod provider_reload;
 mod provider_reload_tests;
 pub mod uds;
 pub mod uds_cancel;
+mod uds_control_forward;
 mod uds_ext_protocol;
 mod uds_extensions;
 mod uds_models;

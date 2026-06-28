@@ -113,7 +113,7 @@ impl AgentCmdTool {
     }
 
     /// Parse arguments and build the JSON command to send.
-    fn parse_and_build(&self, arguments: &str) -> Result<(String, String), String> {
+    fn parse_and_build(&self, arguments: &str) -> Result<(String, String, String), String> {
         let args: serde_json::Value =
             serde_json::from_str(arguments).map_err(|e| format!("invalid JSON: {e}"))?;
 
@@ -140,28 +140,32 @@ impl AgentCmdTool {
             ));
         }
 
-        // Build the JSON-lines command.
+        // Build the JSON-lines command. Control commands (prompt/steer/
+        // follow_up/abort) carry `"ack":"accept"` so a BUSY child's reader acks
+        // ACCEPTANCE immediately instead of leaving the parent frozen until the
+        // child's turn completes (#876); completion still arrives via the
+        // auto-await note / `await`.
         let json_cmd = match command.as_str() {
             "prompt" => {
                 let message = args
                     .get("message")
                     .and_then(|v| v.as_str())
                     .ok_or("prompt command requires a message field")?;
-                serde_json::json!({"type": "prompt", "message": message})
+                serde_json::json!({"type": "prompt", "message": message, "ack": "accept"})
             }
             "steer" => {
                 let message = args
                     .get("message")
                     .and_then(|v| v.as_str())
                     .ok_or("steer command requires a message field")?;
-                serde_json::json!({"type": "steer", "message": message})
+                serde_json::json!({"type": "steer", "message": message, "ack": "accept"})
             }
             "follow_up" => {
                 let message = args
                     .get("message")
                     .and_then(|v| v.as_str())
                     .ok_or("follow_up command requires a message field")?;
-                serde_json::json!({"type": "follow_up", "message": message})
+                serde_json::json!({"type": "follow_up", "message": message, "ack": "accept"})
             }
             "get_state" => serde_json::json!({"type": "get_state"}),
             "get_messages" => {
@@ -175,7 +179,7 @@ impl AgentCmdTool {
                 let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1);
                 serde_json::json!({"type": "get_messages", "count": count})
             }
-            "abort" => serde_json::json!({"type": "abort"}),
+            "abort" => serde_json::json!({"type": "abort", "ack": "accept"}),
             "get_session_stats" => serde_json::json!({"type": "get_session_stats"}),
             "set_model" => {
                 let model = args
@@ -213,7 +217,7 @@ impl AgentCmdTool {
             _ => unreachable!(), // Covered by SUPPORTED_COMMANDS check above.
         };
 
-        Ok((agent_id, json_cmd.to_string()))
+        Ok((agent_id, json_cmd.to_string(), command))
     }
 
     /// Handle commands that are executed locally (not via UDS) (#559, #612).
@@ -245,6 +249,14 @@ impl AgentCmdTool {
             });
         }
         Some(self.kill_agent(agent_id))
+    }
+
+    /// Control commands forwarded with `"ack":"accept"` — the child acks
+    /// ACCEPTANCE promptly (its reader, not the blocked dispatch loop), so the
+    /// parent waits only the short interactive timeout, never the 300s
+    /// turn-completion deadline (#876).
+    fn is_control_command(command: &str) -> bool {
+        matches!(command, "prompt" | "steer" | "follow_up" | "abort")
     }
 
     /// Check if the arguments specify an `await` command.
@@ -342,6 +354,7 @@ impl Drop for AwaitGuard {
 }
 
 use super::subagent_registry::send_subagent_uds_command as send_uds_command;
+use super::subagent_registry::send_subagent_uds_command_with_timeout as send_uds_command_with_timeout;
 
 impl Tool for AgentCmdTool {
     fn definition(&self) -> ToolDefinition {
@@ -387,7 +400,7 @@ impl Tool for AgentCmdTool {
             }
 
             // Parse and validate arguments.
-            let (agent_id, json_cmd) = match self.parse_and_build(&args) {
+            let (agent_id, json_cmd, command) = match self.parse_and_build(&args) {
                 Ok(pair) => pair,
                 Err(e) => {
                     return Ok(ToolResult {
@@ -410,8 +423,24 @@ impl Tool for AgentCmdTool {
                 }
             };
 
+            // Control commands return on the child's prompt acceptance ack, so
+            // cap them at the short interactive timeout instead of the 300s
+            // turn-completion deadline — the parent must never freeze its turn
+            // for the child's full processing (#876).
+            // `command` is threaded from parse_and_build — no second args parse.
+            let send = if Self::is_control_command(&command) {
+                send_uds_command_with_timeout(
+                    &socket_path,
+                    &json_cmd,
+                    super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
+                )
+                .await
+            } else {
+                send_uds_command(&socket_path, &json_cmd).await
+            };
+
             // Send the command via UDS.
-            match send_uds_command(&socket_path, &json_cmd).await {
+            match send {
                 Ok(response) => Ok(ToolResult {
                     content: response,
                     is_error: false,
@@ -433,3 +462,6 @@ mod definition_tests;
 #[cfg(test)]
 #[path = "agent_cmd_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "agent_cmd_876_tests.rs"]
+mod tests_876;
