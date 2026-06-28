@@ -276,6 +276,20 @@ pub fn handle_tool_result(args: ToolResultArgs<'_>) {
     }
 }
 
+/// Clone the per-client *targeted* writer sender, if registered (#876).
+///
+/// Lets the per-connection reader task push a line (e.g. an early acceptance
+/// ack for a forwarded control command) directly to THIS client's socket via
+/// its `writer_tx`/`targeted_rx` pair, bypassing the single shared dispatch
+/// loop — which may be blocked mid-turn. The lock is held only for the clone.
+pub fn client_writer_tx(
+    registry: &ClientToolRegistry,
+    client_id: u64,
+) -> Option<tokio::sync::mpsc::Sender<String>> {
+    let reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+    reg.get(&client_id).and_then(|s| s.writer_tx.clone())
+}
+
 /// Handle client disconnect: unregister all tools, cancel pending executions.
 ///
 /// Returns the names of tools that were removed (for caller to unregister

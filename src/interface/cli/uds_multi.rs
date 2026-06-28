@@ -681,6 +681,29 @@ async fn handle_client(args: ClientHandlerArgs) {
             });
             continue;
         }
+        // Non-blocking control forward (#876): an `agent_cmd` prompt/steer/
+        // follow_up/abort marked `"ack":"accept"`. Ack acceptance IMMEDIATELY on
+        // this connection (so the parent's turn isn't frozen for the child's
+        // turn), then hand the transformed work to the dispatch loop — which
+        // runs it now if idle or queues it for the next turn if busy. The cancel
+        // for steer/abort already fired above.
+        if let Some(ctrl) = super::uds_control_forward::intercept_control_forward(&line) {
+            if let Some(tx) =
+                super::uds_ext_protocol::client_writer_tx(&client_tool_registry, client_id)
+            {
+                let _ = tx.send(ctrl.ack_line).await;
+            }
+            if let Some(forward_line) = ctrl.forward_line {
+                let msg = ClientMessage::Command(ClientCommand {
+                    line: forward_line,
+                    client_id,
+                });
+                if cmd_tx.send(msg).await.is_err() {
+                    break;
+                }
+            }
+            continue;
+        }
         let msg = ClientMessage::Command(ClientCommand { line, client_id });
         if cmd_tx.send(msg).await.is_err() {
             break;
