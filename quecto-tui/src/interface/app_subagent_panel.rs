@@ -511,10 +511,11 @@ impl App {
         // (Previously idle showed a live `now - stopped_at` "time-since-idle"
         // clock that climbed on every frame.) The Master row's uptime (handled
         // above) intentionally stays a live session clock.
+        let mss = fmt_mss(t.elapsed_secs(now));
         if t.info.status == "idle" {
-            format!("idle {}", fmt_mss(t.elapsed_secs(now)))
+            format!("idle {mss}")
         } else {
-            fmt_mss(t.elapsed_secs(now))
+            mss
         }
     }
 
