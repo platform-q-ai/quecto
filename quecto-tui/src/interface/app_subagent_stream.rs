@@ -54,17 +54,54 @@ impl App {
                 return;
             }
             self.ensure_session(target);
+            let bar = super::app_events::build_workflow_state(
+                steps,
+                progress,
+                active_issue,
+                mode,
+                active_template,
+                available_templates,
+            );
+            // Mirror onto the panel entry too so the LEFT side panel renders the
+            // child's own live progress immediately (#869b).
+            self.record_subagent_workflow(target, &bar);
             if let Some(session) = self.sessions.get_mut(target) {
-                session.workflow_bar = super::app_events::build_workflow_state(
-                    steps,
-                    progress,
-                    active_issue,
-                    mode,
-                    active_template,
-                    available_templates,
-                );
+                session.workflow_bar = bar;
             }
             return;
+        }
+        // A connect-time / polled `get_state` snapshot for THIS connection carries
+        // the child's workflow data (#842). Mirror the master path
+        // (`app_response.rs`) so a child viewed MID-workflow renders its bar at
+        // once, instead of waiting for the next live `workflow_state` transition
+        // (#869a). A `get_state` response is NOT forwarded across streams, so it
+        // is keyed by the connection id; the guard still confines the write to an
+        // already-tracked/retained session.
+        if let Event::Response {
+            command,
+            data: Some(data),
+            ..
+        } = &ev
+        {
+            if command == "get_state" {
+                if !self.is_tracked_agent(agent_id) {
+                    return;
+                }
+                self.ensure_session(agent_id);
+                if let Some(wf) = data.get("workflow") {
+                    let bar = workflow_bar::parse_workflow_event(wf);
+                    self.record_subagent_workflow(agent_id, &bar);
+                    if let Some(session) = self.sessions.get_mut(agent_id) {
+                        session.workflow_bar = bar;
+                    }
+                }
+                // Preserve the existing per-session footer mapping (model +
+                // context window) that the generic path applied for get_state.
+                if let Some(session) = self.sessions.get_mut(agent_id) {
+                    Self::update_session_footer(session, &ev);
+                }
+                return;
+            }
         }
         // Tearing down a connection mid-stream can leave already-queued
         // `(old_id, ev)` items in `subagent_event_rx`. Drop events for agents
@@ -150,6 +187,29 @@ impl App {
         }
         if flush_notes {
             Self::flush_deferred_notes(&mut session.chat, &mut session.deferred_subagent_notes);
+        }
+    }
+
+    /// Mirror a routed workflow snapshot onto the agent's panel (`subagent_local`)
+    /// entry so the LEFT side panel renders the FULL per-step bar — filled markers
+    /// up to `done` and empty markers up to `total` (e.g. 3/20 = 3 filled + 17
+    /// empty) — from the child's OWN live `workflow_state` / `get_state`, not only
+    /// the periodic `subagent_state_changed` push (#869b). Preserves BOTH the
+    /// completed and total counts so the indicator never collapses to filled-only.
+    /// Per-agent keyed, so a descendant's update never overwrites an ancestor row.
+    fn record_subagent_workflow(&mut self, agent_id: &str, bar: &workflow_bar::WorkflowBarState) {
+        if let Some(tracked) = self.subagent_local.get_mut(agent_id) {
+            let mode = tracked
+                .info
+                .workflow
+                .as_ref()
+                .map(|w| w.mode.clone())
+                .unwrap_or_else(|| "active".to_string());
+            tracked.info.workflow = Some(crate::infrastructure::client::SubagentWorkflow {
+                mode,
+                steps_completed: bar.done,
+                steps_total: bar.total,
+            });
         }
     }
 
