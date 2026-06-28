@@ -229,6 +229,18 @@ async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
 async fn handles_agent_cmd_spinner_and_subagent_refresh() {
     let mut app = test_app().await;
     app.spinner = Some(Spinner::new("Working"));
+    // A read-only query (#865) renders a tool box on the master path.
+    let before = app.master_session.chat.entry_count();
+    app.handle_event(Event::ToolExecutionStart {
+        tool_call_id: "gs-1".into(),
+        tool_name: "agent_cmd".into(),
+        args: serde_json::json!({"agent_id":"worker-1", "command":"get_state"}),
+    });
+    assert_eq!(
+        app.master_session.chat.entry_count(),
+        before + 1,
+        "get_state renders a box"
+    );
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "cmd-1".into(),
         tool_name: "agent_cmd".into(),
@@ -236,10 +248,11 @@ async fn handles_agent_cmd_spinner_and_subagent_refresh() {
     });
     // An `await` agent_cmd marks the awaited agent and rewrites the spinner to
     // the generic interruptible message (the awaited agent shows on its own row).
+    let awaiting = "Working... (Esc to interrupt)";
     assert_eq!(
         app.spinner.as_ref().unwrap().message(),
-        "Working... (Esc to interrupt)",
-        "await should set the generic spinner message"
+        awaiting,
+        "await sets generic msg"
     );
     app.handle_event(Event::ToolExecutionEnd {
         tool_call_id: "cmd-1".into(),
@@ -250,8 +263,8 @@ async fn handles_agent_cmd_spinner_and_subagent_refresh() {
     // Tool end keeps the spinner alive and resets it to the working message.
     assert_eq!(
         app.spinner.as_ref().unwrap().message(),
-        "Working... (Esc to interrupt)",
-        "tool end should keep the spinner on the working message"
+        awaiting,
+        "tool end keeps working msg"
     );
 }
 
