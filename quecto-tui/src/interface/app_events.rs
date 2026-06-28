@@ -333,30 +333,23 @@ fn sanitized_arg(args: &serde_json::Value, key: &str, fallback: &str) -> String 
     )
 }
 
-/// Whether a tool's chat box should be hidden. `spawn` and the fire-and-forget
-/// `agent_cmd` control commands (`prompt`/`steer`/`abort`) are suppressed —
-/// their effect is shown elsewhere (the sub-agent panel / streamed response).
-/// This is a small DENYLIST, not a read-only allowlist: every OTHER `agent_cmd`
-/// command renders a box. That covers the read-only queries this exists for
-/// (#865) — `get_state`, `get_subagents`, `get_session_stats`, `get_extensions`,
-/// alongside `get_messages`/`await` — and it also (intentionally) renders the
-/// remaining action commands `follow_up`/`kill`/`set_model`/`clear_history`/
-/// `reload_extensions`, so destructive sub-agent actions stay visible in the
-/// stream. The TUI's OWN internal `get_state`/stats polling flows through
-/// `app_response.rs` (Response events), not this path, so it stays box-free
-/// regardless of this list.
-pub(super) fn suppress_tool_box(tool_name: &str, args: &serde_json::Value) -> bool {
-    match tool_name {
-        "spawn" => true,
-        "agent_cmd" => {
-            let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            // Denylist: only the fire-and-forget controls are hidden; everything
-            // else (read-only queries + remaining actions) renders.
-            const HIDDEN: &[&str] = &["prompt", "steer", "abort"];
-            HIDDEN.contains(&cmd)
-        }
-        _ => false,
-    }
+/// Whether a tool's chat box should be hidden. Only `spawn` is suppressed —
+/// its effect is shown in the sub-agent panel / status bar instead. Every
+/// model-issued `agent_cmd` command renders a normal tool box (#871), including
+/// the read-only queries (#865) and the control/destructive commands
+/// (`prompt`/`steer`/`abort`/`kill`/…), so the transcript stays complete and it
+/// is clear why a sub-agent stopped. The TUI's OWN internal `get_state`/stats
+/// polling flows through `app_response.rs` (Response events), not this path, so
+/// it stays box-free regardless.
+pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> bool {
+    // #871: every model-issued `agent_cmd` invocation renders as a normal tool
+    // call, including the control/destructive commands (`prompt`/`steer`/
+    // `abort`/`kill`) that used to be hidden. Hiding them left the transcript
+    // incomplete and made it hard to see why a sub-agent stopped. Only `spawn`
+    // stays suppressed — the sub-agent status bar/panel shows it instead. The
+    // TUI's OWN internal `get_state`/stats polling flows through Response events
+    // (`app_response.rs`), not this tool path, so it remains box-free regardless.
+    tool_name == "spawn"
 }
 
 #[cfg(test)]
