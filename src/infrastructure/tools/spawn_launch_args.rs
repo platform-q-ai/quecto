@@ -55,8 +55,9 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
     }
 
     // Explicit model override (#881). The child's CLI already consumes `--model`;
-    // precedence (explicit model > --config > default) is realised by the child
-    // resolving --model ahead of --config.
+    // precedence (explicit model > --config > default) is realised by the child's
+    // `resolve_agent_model` preferring `--model` over the config default, not by
+    // the order in which these flags are emitted here.
     if let Some(ref model) = config.model {
         args.push("--model".into());
         args.push(model.into());
