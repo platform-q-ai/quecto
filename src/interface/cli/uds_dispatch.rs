@@ -15,7 +15,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     } = &cmd
     {
         let tn = cmd.type_name();
-        let ev = forward_subagent_messages_tail(ctx, id.as_deref(), tn, agent_id, *count).await;
+        let ev = forward_subagent_get_messages(ctx, id.as_deref(), tn, agent_id, *count).await;
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
@@ -27,7 +27,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     {
         let tn = cmd.type_name();
         let ev =
-            forward_subagent_messages_tail(ctx, id.as_deref(), tn, agent_id, Some(*count)).await;
+            forward_subagent_get_messages(ctx, id.as_deref(), tn, agent_id, Some(*count)).await;
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
@@ -136,8 +136,10 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
 ///
 /// Reuses the shared sub-agent socket lookup and UDS round-trip helpers rather
 /// than re-deriving anything locally — the sub-agent answers from its own
-/// conversation history.
-async fn forward_subagent_messages_tail(
+/// conversation history. The child mapping always sends `get_messages` (the
+/// optional `count` selects tail-vs-full); "tail" is an implementation detail of
+/// that mapping, not this function's contract — hence the name covers both.
+async fn forward_subagent_get_messages(
     ctx: &DispatchCtx<'_>,
     id: Option<&str>,
     tn: &str,
