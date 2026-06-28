@@ -736,6 +736,9 @@ pub(crate) use uds_multi_prompt::{PromptArgsBroadcast, run_agent_prompt_broadcas
 #[cfg(test)]
 pub(in crate::interface::cli) use uds_multi_prompt::forward_notification_broadcast;
 #[cfg(test)]
+#[path = "uds_multi_accept_loop_tests.rs"]
+mod accept_loop_tests;
+#[cfg(test)]
 #[path = "uds_multi_interception_tests.rs"]
 mod interception_tests;
 #[cfg(test)]
