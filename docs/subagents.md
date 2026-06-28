@@ -88,6 +88,13 @@ config. The assigned child starts in **Active** mode bound to exactly that
 template: it cannot select a different template, and on completion it reports
 its result rather than picking a new workflow.
 
+**When to bind a workflow.** Reach for `workflow_spec` when the child must follow
+an exact, multi-step process you control — e.g. a PR review that must analyze →
+test → report, or a fix that must go RED → GREEN → review → merge. Use a plain
+`task` for open-ended work, and `workflow: true` when you want the *child* to
+pick its own template from its config. Binding makes the child's steps
+observable and gates its completion on actually finishing them.
+
 ```json
 {
   "name": "spawn",
@@ -110,12 +117,28 @@ its result rather than picking a new workflow.
 ```
 
 - The `template` is the full definition (same shape as a `workflow-config.json`
-  template); see the `workflow` doc (`docs {"name":"workflow"}`) for the field reference.
+  template) — steps can carry `guidance`, `phase`, and `done_when`, not just
+  `key`/`label`; see the `workflow` doc (`docs {"name":"workflow"}`) for the full
+  field reference.
 - The spec is size-bounded (256 KiB) and written to a private, single-use file
   the child deletes once read.
 - If a spec is assigned but cannot be loaded, the child **fails closed** (it
   refuses to start a workflow rather than falling back to free selection).
 - `workflow_spec` cannot be combined with the child's `--no-workflow`.
+
+**Monitoring a child's workflow.** A workflowed child (bound or self-selected)
+reports progress without polling:
+
+- its `workflow_state` events are forwarded onto your event stream as steps
+  advance (tagged with the child's `agent_id`, so a grandchild's progress is
+  attributed to the grandchild, not the child);
+- `agent_cmd get_state` returns the child's current workflow snapshot (mode,
+  current step, done/total) on demand — including while the child is mid-turn;
+- in the TUI, the selected child renders its own workflow status bar.
+
+Read the child's final result the usual way — its one-line auto-note at your next
+idle turn, or a blocking `await`, then `agent_cmd get_messages` for the full
+output (see [Notification model](#notification-model)).
 
 ### `agent_cmd` — interact with a subagent
 
@@ -563,6 +586,24 @@ reviewer finishes, which is what you want when their verdicts gate the next step
 If you don't need to block, you can skip `await` entirely — each reviewer's
 one-line completion note arrives automatically at your next idle turn, and you
 read full results with `get_messages` once notified.
+
+### Delegating a bound workflow (and nesting)
+
+Hand a child a specific process to follow with `workflow_spec`, and let it
+delegate further:
+
+```
+"Spawn agent_id='pr-reviewer' with task='Review PR #682' and a workflow_spec bound
+to a review-pr template (analyze the diff → run the tests → report). The child runs
+exactly those steps in Active mode. Watch its workflow_state on your stream; when it
+finishes, read the verdict with agent_cmd get_messages."
+```
+
+A workflowed child can itself spawn sub-agents bound to *their* own
+`workflow_spec` — e.g. the review step spawns independent per-dimension reviewers,
+each bound to a single-dimension review workflow. The whole tree stays
+observable: every descendant's `workflow_state` is forwarded up your event stream
+tagged with that agent's id, and the TUI shows each agent's own workflow bar.
 
 ### Fire-and-forget with auto-await
 
