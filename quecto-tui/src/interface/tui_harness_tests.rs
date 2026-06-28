@@ -121,12 +121,13 @@ async fn awaiting_indicator_gone_agents_live_in_panel() {
     );
 }
 
-/// A state-query result (`get_state`) carries raw workflow JSON
-/// (`progress:{done,total,percent}`). It must NOT render in the chat — that raw
-/// JSON was the "percent 100 / total 5" flash; the sub-agent panel already shows
-/// the progress.
+/// A genuine `agent_cmd get_state` tool call must render a tool box in the chat,
+/// consistent with `get_messages`/`await` (#865). The box header carries the
+/// `command → agent_id` detail. (The TUI's OWN internal get_state polling flows
+/// through Response events / `app_response.rs`, not this tool path, so it is
+/// unaffected and stays box-free.)
 #[tokio::test]
-async fn state_query_result_json_never_renders_in_chat() {
+async fn agent_cmd_get_state_renders_a_tool_box() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![subagent(
@@ -148,8 +149,8 @@ async fn state_query_result_json_never_renders_in_chat() {
     h.tick();
     let dump = h.dump_full();
     assert!(
-        !dump.contains("percent") && !dump.contains("isStreaming"),
-        "get_state result JSON leaked into the chat (the percent/total flash):\n{dump}"
+        dump.contains("get_state → child"),
+        "agent_cmd get_state should render a tool box in the chat (#865):\n{dump}"
     );
 }
 

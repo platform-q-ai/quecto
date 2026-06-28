@@ -682,25 +682,29 @@ fn agent_cmd_content_reads_shown() {
 }
 
 #[test]
-fn agent_cmd_state_and_control_output_suppressed() {
-    // Fire-and-forget control commands AND state queries (raw status/workflow
-    // JSON already shown in the sub-agent panel) are suppressed — rendering that
-    // JSON in the chat is noise and flashes as the model polls.
+fn agent_cmd_read_only_queries_render_controls_suppressed() {
+    // Read-only query commands render a tool box for consistency with
+    // get_messages/await (#865); only the fire-and-forget control commands
+    // (prompt/steer/abort) stay suppressed.
+    let mk = |cmd: &str| serde_json::json!({"agent_id": "w1", "command": cmd});
     for cmd in &[
-        "prompt",
-        "steer",
-        "abort",
         "get_state",
         "get_subagents",
         "get_session_stats",
         "get_extensions",
     ] {
-        let args = serde_json::json!({"agent_id": "w1", "command": cmd});
         assert!(
-            super::app_events::suppress_tool_box("agent_cmd", &args),
-            "agent_cmd {cmd} output should be suppressed"
+            !super::app_events::suppress_tool_box("agent_cmd", &mk(cmd)),
+            "agent_cmd {cmd} should render a tool box"
         );
     }
+    for cmd in &["prompt", "steer", "abort"] {
+        assert!(
+            super::app_events::suppress_tool_box("agent_cmd", &mk(cmd)),
+            "agent_cmd {cmd} should be suppressed"
+        );
+    }
+    assert!(super::app_events::suppress_tool_box("spawn", &mk("x")));
 }
 
 #[test]

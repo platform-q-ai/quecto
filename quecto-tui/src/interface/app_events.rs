@@ -319,25 +319,20 @@ fn sanitized_arg(args: &serde_json::Value, key: &str, fallback: &str) -> String 
     )
 }
 
-/// Whether a tool's chat box should be hidden (its output is shown elsewhere or
-/// is noise). `spawn` and `agent_cmd` control/state-query commands are
-/// suppressed — the latter dump raw status/workflow JSON already shown in the
-/// sub-agent panel, which flashes as the model polls. Content reads
-/// (`get_messages*`) and one-shot `await` results still render.
+/// Whether a tool's chat box should be hidden. `spawn` and the `agent_cmd`
+/// control commands (`prompt`/`steer`/`abort`) are suppressed because they are
+/// actions, not reads, and their effect is shown elsewhere (the sub-agent panel
+/// / streamed response). All read-only `agent_cmd` query commands render a box
+/// for consistency with `get_messages`/`await` (#865) — e.g. `get_state`,
+/// `get_subagents`, `get_session_stats`, `get_extensions`. The TUI's OWN
+/// internal `get_state`/stats polling flows through `app_response.rs` (Response
+/// events), not this path, so it stays box-free regardless of this list.
 pub(super) fn suppress_tool_box(tool_name: &str, args: &serde_json::Value) -> bool {
     match tool_name {
         "spawn" => true,
         "agent_cmd" => {
             let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            const HIDDEN: &[&str] = &[
-                "prompt",
-                "steer",
-                "abort",
-                "get_state",
-                "get_subagents",
-                "get_session_stats",
-                "get_extensions",
-            ];
+            const HIDDEN: &[&str] = &["prompt", "steer", "abort"];
             HIDDEN.contains(&cmd)
         }
         _ => false,
