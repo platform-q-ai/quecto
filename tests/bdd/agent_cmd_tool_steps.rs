@@ -455,6 +455,24 @@ fn then_agent_cmd_response_bool(world: &mut QuectoWorld, command: String, field:
     );
 }
 
+#[then(
+    expr = "the agent_cmd response command {string} should include boolean field {string} set to {string}"
+)]
+fn then_agent_cmd_response_bool_value(
+    world: &mut QuectoWorld,
+    command: String,
+    field: String,
+    expected: String,
+) {
+    let json = parse_agent_cmd_response(world, &command);
+    let want = expected == "true";
+    assert_eq!(
+        json["data"][&field].as_bool(),
+        Some(want),
+        "expected data.{field} == {want} in response: {json}"
+    );
+}
+
 #[then(expr = "the agent_cmd response command {string} should include integer field {string}")]
 fn then_agent_cmd_response_integer(world: &mut QuectoWorld, command: String, field: String) {
     let json = parse_agent_cmd_response(world, &command);

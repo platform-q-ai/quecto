@@ -227,7 +227,7 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"busy-tail","command":"get_messages","count":1}'
     Then the agent_cmd result should not be an error
     And the agent_cmd response command "get_messages" should include a "messages" array
-    And the agent_cmd response command "get_messages" should include boolean field "snapshot"
+    And the agent_cmd response command "get_messages" should include boolean field "snapshot" set to "true"
     And the agent_cmd result should contain "NEWEST MESSAGE"
     And the agent_cmd result should not contain "OLDEST MESSAGE"
 
@@ -236,7 +236,7 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"busy-tail2","command":"get_messages_tail","count":1}'
     Then the agent_cmd result should not be an error
     And the agent_cmd response command "get_messages" should include a "messages" array
-    And the agent_cmd response command "get_messages" should include boolean field "snapshot"
+    And the agent_cmd response command "get_messages" should include boolean field "snapshot" set to "true"
     And the agent_cmd result should contain "NEWEST MESSAGE"
     And the agent_cmd result should not contain "OLDEST MESSAGE"
 
