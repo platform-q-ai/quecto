@@ -5,7 +5,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
         id: "feature".into(),
         label: "Feature".into(),
         description:
-            "New capability with local hook verification, BDD/TDD, code review, and merge.".into(),
+            "New capability with local hook verification, BDD/TDD, code review, then report the PR for review (no auto-merge).".into(),
         when_to_use: Some("Use for all Quecto development work in this repository.".into()),
         steps: vec![
             WorkflowTemplateStep {
@@ -100,21 +100,9 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
             },
             WorkflowTemplateStep {
                 key: "pre_merge".into(),
-                label: "Confirm the pre-push gate passed (real-LLM, machete, deny run on push)".into(),
+                label: "Confirm the pre-push gate passed and report the PR (do NOT merge)".into(),
                 phase: "ci_cd".into(),
-                guidance: Some("Confirm the latest push's pre-push gate passed in full (coverage threshold, real-LLM, machete, deny) and the CI Smoke Test is green before merging.".into()),
-            },
-            WorkflowTemplateStep {
-                key: "merge".into(),
-                label: "Merge".into(),
-                phase: "ci_cd".into(),
-                guidance: Some("Merge with gh pr merge <PR> --merge --auto --delete-branch (auto-merge waits for the required Smoke Test). The default branch is protected with enforce_admins; do not force or bypass.".into()),
-            },
-            WorkflowTemplateStep {
-                key: "pull".into(),
-                label: "Move to local master and pull".into(),
-                phase: "ci_cd".into(),
-                guidance: Some("Run git checkout master and git pull --ff-only to sync the merge locally.".into()),
+                guidance: Some("Confirm the latest push's pre-push gate passed in full (coverage threshold, real-LLM, machete, deny) and the CI Smoke Test is green. Do NOT run gh pr merge or git merge, and do NOT set auto-merge: this workflow never merges. Report the PR number and a short summary, then STOP — the master agent and a human own merging.".into()),
             },
             WorkflowTemplateStep {
                 key: "cleanup".into(),
@@ -131,8 +119,8 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
             },
             WorkflowGuardRule {
                 commands: vec!["git merge".into(), "gh pr merge".into()],
-                before_step_key: "merge".into(),
-                message: "Complete code review and verify the pre-push gate passed before merging.".into(),
+                before_step_key: "cleanup".into(),
+                message: "This workflow does NOT merge — report the PR for review and stop. Complete code review and verify the pre-push gate passed; never run gh pr merge / git merge or set auto-merge.".into(),
             },
         ],
     }]

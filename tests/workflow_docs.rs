@@ -30,7 +30,7 @@ fn workflow_guards(config: &Value) -> &[Value] {
 }
 
 fn assert_reference_steps(steps: &[Value]) {
-    assert_eq!(steps.len(), 19);
+    assert_eq!(steps.len(), 17);
     assert_eq!(steps.first().unwrap()["key"], "hooks");
     assert_eq!(
         steps.first().unwrap()["label"],
@@ -39,8 +39,15 @@ fn assert_reference_steps(steps: &[Value]) {
     assert_eq!(steps[1]["key"], "scenarios");
     assert_eq!(steps[3]["key"], "red");
     assert_eq!(steps[4]["key"], "bdd_review");
-    assert_eq!(steps[17]["key"], "pull");
-    assert_eq!(steps[17]["label"], "Sync after the human merges");
+    // #886: the `merge` and `pull` hand-off steps are removed; the workflow now
+    // ends at `pre_merge` (report the PR, do NOT merge) then `cleanup`.
+    assert!(steps.iter().all(|s| s["key"] != "merge"));
+    assert!(steps.iter().all(|s| s["key"] != "pull"));
+    assert_eq!(steps[15]["key"], "pre_merge");
+    assert_eq!(
+        steps[15]["label"],
+        "Confirm the pre-push gate passed and report the PR (do NOT merge)"
+    );
     assert_eq!(steps.last().unwrap()["key"], "cleanup");
     assert_eq!(steps.last().unwrap()["label"], "Clean up sub agents");
 }
@@ -52,7 +59,8 @@ fn assert_reference_guards(guards: &[Value]) {
     assert_eq!(guards[0]["before_step_key"], "commit");
     assert_eq!(guards[1]["commands"][0], "git merge");
     assert_eq!(guards[1]["commands"][1], "gh pr merge");
-    assert_eq!(guards[1]["before_step_key"], "merge");
+    // #886: the `merge` step is gone; the no-merge guard re-points at `cleanup`.
+    assert_eq!(guards[1]["before_step_key"], "cleanup");
 }
 
 #[test]
@@ -65,7 +73,7 @@ fn readme_workflow_config_uses_guards_not_deprecated_fields() {
 }
 
 #[test]
-fn readme_lists_full_19_step_reference_workflow() {
+fn readme_lists_full_17_step_reference_workflow() {
     let readme = read_repo_file("README.md");
 
     for expected in [
@@ -84,10 +92,8 @@ fn readme_lists_full_19_step_reference_workflow() {
         "13 - Fix all valid review concerns",
         "14 - Push changes to remote",
         "15 - Reply to the reviewers comments on the PR and mark resolved (use graphql)",
-        "16 - Confirm the pre-push gate passed (real-LLM, machete, deny run on push)",
-        "17 - Hand off for review — do NOT merge",
-        "18 - Sync after the human merges",
-        "19 - Clean up sub agents",
+        "16 - Confirm the pre-push gate passed and report the PR (do NOT merge)",
+        "17 - Clean up sub agents",
     ] {
         assert!(
             readme.contains(expected),

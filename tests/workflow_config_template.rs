@@ -93,20 +93,17 @@ fn conformance_step_present_before_merge() {
         step_index(&config, "conformance") < step_index(&config, "pre_merge"),
         "conformance should come before pre_merge"
     );
-    assert!(
-        step_index(&config, "conformance") < step_index(&config, "merge"),
-        "conformance should come before merge"
-    );
 }
 
 #[test]
 fn merge_guard_requires_conformance() {
     let config = read_native_config();
 
+    // #886: the `merge` step is removed; the no-merge guard now gates `cleanup`.
     let merge_guard = guards(&config)
         .iter()
-        .find(|g| g["before_step_key"] == "merge")
-        .expect("there should be a merge guard");
+        .find(|g| g["before_step_key"] == "cleanup")
+        .expect("there should be a no-merge guard before cleanup");
     let message = merge_guard["message"]
         .as_str()
         .expect("merge guard should have a message");
@@ -118,13 +115,14 @@ fn merge_guard_requires_conformance() {
 
 #[test]
 fn merge_blocks_on_errored_phase_or_bypassed_gate() {
-    // Hardening after the #818 incident: the merge step must refuse to merge when
-    // an upstream review/fix/conformance phase errored, and must reject a push
-    // that bypassed the local gate with --no-verify.
+    // Hardening after the #818 incident: the terminal report step must refuse to
+    // hand off a clean PR when an upstream review/fix/conformance phase errored,
+    // and must reject a push that bypassed the local gate with --no-verify.
+    // #886: this guidance now lives on `pre_merge` (the `merge` step was removed).
     let config = read_native_config();
-    let merge_guidance = step(&config, "merge")["guidance"]
+    let merge_guidance = step(&config, "pre_merge")["guidance"]
         .as_str()
-        .expect("merge step should have guidance")
+        .expect("pre_merge step should have guidance")
         .to_lowercase();
     assert!(
         merge_guidance.contains("errored") || merge_guidance.contains("did not actually run"),
@@ -175,7 +173,7 @@ fn gate_facts_describe_mock_llm_default_and_opt_in() {
 fn required_checks_reference_unit_and_mock_e2e() {
     let config = read_native_config();
 
-    for key in ["pr", "pre_merge", "merge"] {
+    for key in ["pr", "pre_merge"] {
         let g = guidance(&config, key);
         assert!(
             g.contains("Unit Tests"),
@@ -213,7 +211,6 @@ fn action_steps_carry_done_when_criteria() {
         "fix_reviews",
         "resolve_threads",
         "pre_merge",
-        "merge",
     ] {
         let g = guidance(&config, key);
         assert!(
