@@ -261,6 +261,38 @@ fn render_tool_success() {
     );
 }
 
+/// Security (#865): a sub-agent-influenced `agent_cmd` result body must have
+/// its terminal control sequences stripped before rendering, so a malicious
+/// sub-agent cannot inject ANSI/OSC escapes into the operator's terminal.
+#[test]
+fn render_tool_result_body_strips_terminal_control() {
+    let lines = render_tool_execution(ToolRenderArgs {
+        tool_name: "agent_cmd",
+        args_json: &Some(serde_json::json!({"agent_id": "worker", "command": "get_state"})),
+        // Injected: OSC 52 clipboard write + cursor move + title spoof.
+        result: Some("status \u{1b}]52;c;ZXZpbA==\u{7}ok\u{1b}[2J\u{1b}]0;pwned\u{7}done"),
+        is_error: false,
+        duration_ms: Some(1),
+        expanded: true,
+        width: 200,
+    });
+    let joined = lines.join("\n");
+    // Visible text survives; the raw injected escape introducers do not.
+    assert!(joined.contains("status"), "visible text kept: {joined:?}");
+    assert!(
+        !joined.contains("\u{1b}]52"),
+        "OSC clipboard escape must be stripped: {joined:?}"
+    );
+    assert!(
+        !joined.contains("\u{1b}]0;"),
+        "OSC title escape must be stripped: {joined:?}"
+    );
+    assert!(
+        !joined.contains("\u{1b}[2J"),
+        "CSI erase-screen escape must be stripped: {joined:?}"
+    );
+}
+
 #[test]
 fn render_tool_error() {
     let lines = render_tool_execution(ToolRenderArgs {
