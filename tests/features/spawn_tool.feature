@@ -289,3 +289,33 @@ Feature: SpawnTool — child agent process spawning
   Scenario: Tool definition schema includes workflow_guards field
     Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
     Then the spawn tool schema should include property "workflow_guards"
+
+  # --- model passthrough (#881) ---
+
+  Scenario: Parse a request with an explicit model string
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","model":"openai/gpt-5.5"}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have model "openai/gpt-5.5"
+
+  Scenario: Parse a request with provider and model_id pair
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","provider":"openai","model_id":"gpt-5.5"}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have model "openai/gpt-5.5"
+
+  Scenario: Parse a request without a model has no model override
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work"}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have no model
+
+  Scenario: An invalid model (provider without model_id) is rejected
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I execute the SpawnTool with '{"task":"work","provider":"openai"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "invalid model"
+
+  Scenario: Tool definition schema includes model field
+    Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
+    Then the spawn tool schema should include property "model"

@@ -14,6 +14,14 @@ const SYNC_START: &str = "\x1b[?2026h";
 const SYNC_END: &str = "\x1b[?2026l";
 /// ANSI escape: erase entire line.
 const ERASE_LINE: &str = "\x1b[2K";
+/// ANSI escape: reset all SGR attributes (so erases/scrolled-in cells use the
+/// default background and never inherit a stale tool-box color — #884).
+const SGR_RESET: &str = "\x1b[0m";
+/// ANSI escape: disable terminal auto-wrap (so a full-width line written on the
+/// bottom row can't auto-scroll the viewport mid-paint — #884).
+const AUTOWRAP_OFF: &str = "\x1b[?7l";
+/// ANSI escape: re-enable terminal auto-wrap.
+const AUTOWRAP_ON: &str = "\x1b[?7h";
 
 /// A differential renderer that tracks previously rendered lines and only
 /// writes changes to the output.
@@ -23,8 +31,6 @@ pub struct DiffRenderer<W: Write> {
     previous_lines: Vec<String>,
     /// Terminal width from the previous render cycle.
     previous_width: usize,
-    /// Current cursor row (0-indexed from top of our rendered region).
-    cursor_row: usize,
 }
 
 impl<W: Write> DiffRenderer<W> {
@@ -33,7 +39,6 @@ impl<W: Write> DiffRenderer<W> {
             writer,
             previous_lines: Vec::new(),
             previous_width: 0,
-            cursor_row: 0,
         }
     }
 
@@ -62,7 +67,6 @@ impl<W: Write> DiffRenderer<W> {
     pub fn invalidate(&mut self) {
         self.previous_lines.clear();
         self.previous_width = 0;
-        self.cursor_row = 0;
     }
 
     /// Full render — write all lines.
@@ -79,6 +83,13 @@ impl<W: Write> DiffRenderer<W> {
             buf.push_str("\x1b[2J\x1b[H\x1b[3J");
         }
 
+        // Disable auto-wrap for the duration of the paint so a full-width line
+        // written on the bottom row can't auto-scroll the viewport (which would
+        // desync `previous_lines` from the real rows until the next
+        // invalidate/resize — the same defect-#1 class fixed in `diff_render`).
+        // #884
+        buf.push_str(AUTOWRAP_OFF);
+
         for (i, line) in lines.iter().enumerate() {
             if i > 0 {
                 buf.push_str("\r\n");
@@ -86,10 +97,10 @@ impl<W: Write> DiffRenderer<W> {
             buf.push_str(line);
         }
 
+        buf.push_str(AUTOWRAP_ON);
         buf.push_str(SYNC_END);
         self.writer.write_all(buf.as_bytes())?;
         self.writer.flush()?;
-        self.cursor_row = lines.len().saturating_sub(1);
         Ok(())
     }
 
@@ -119,45 +130,41 @@ impl<W: Write> DiffRenderer<W> {
 
         let mut buf = String::new();
         buf.push_str(SYNC_START);
+        // Reset SGR up front so every ERASE_LINE below — and any line that
+        // scrolls into view — paints on the default background, never a stale
+        // tool-box color (kills the green bleed across panels). #884
+        buf.push_str(SGR_RESET);
+        // Disable auto-wrap for the duration of the paint so writing a
+        // full-width line on the bottom row cannot scroll the viewport and
+        // desync our row model. #884
+        buf.push_str(AUTOWRAP_OFF);
 
-        // Move cursor from current position to first changed line
-        let delta = first as isize - self.cursor_row as isize;
-        if delta > 0 {
-            let _ = write!(buf, "\x1b[{delta}B");
-        } else if delta < 0 {
-            let _ = write!(buf, "\x1b[{}A", -delta);
-        }
-        buf.push('\r');
-
-        // Write changed lines
+        // Repaint each changed line using ABSOLUTE cursor addressing
+        // (`\x1b[{row};1H`). The rendered region's origin is row 1 (established
+        // by `full_render`'s `\x1b[H`), so line `i` lives on terminal row
+        // `i + 1`. Absolute moves can't scroll the viewport the way `\r\n`
+        // stepping on the bottom row does — removing the ghost/jitter. #884
         let render_end = last_changed.min(new_lines.len().saturating_sub(1));
         for i in first..=render_end {
-            if i > first {
-                buf.push_str("\r\n");
-            }
+            let _ = write!(buf, "\x1b[{};1H", i + 1);
             buf.push_str(ERASE_LINE);
             if let Some(line) = new_lines.get(i) {
                 buf.push_str(line);
             }
         }
 
-        // Clear extra lines if content shrank
+        // Clear extra lines if content shrank — also absolutely addressed.
         if self.previous_lines.len() > new_lines.len() {
-            for _ in new_lines.len()..self.previous_lines.len() {
-                buf.push_str("\r\n");
+            for i in new_lines.len()..self.previous_lines.len() {
+                let _ = write!(buf, "\x1b[{};1H", i + 1);
                 buf.push_str(ERASE_LINE);
-            }
-            // Move back up
-            let extra = self.previous_lines.len() - new_lines.len();
-            if extra > 0 {
-                let _ = write!(buf, "\x1b[{extra}A");
             }
         }
 
+        buf.push_str(AUTOWRAP_ON);
         buf.push_str(SYNC_END);
         self.writer.write_all(buf.as_bytes())?;
         self.writer.flush()?;
-        self.cursor_row = render_end;
 
         Ok(true)
     }
@@ -440,6 +447,78 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    // ── #884: SGR reset + absolute addressing in diff_render ───────────
+
+    /// Defect #2: every `ERASE_LINE` must be preceded by an SGR reset so the
+    /// erase cannot inherit a stale (tool-box) background and smear it across
+    /// the panel columns.
+    #[test]
+    fn diff_render_resets_sgr_before_erasing() {
+        let output = captured_render(&["a", "b", "c"], &["x", "y", "z"]);
+        let reset = output.find("\x1b[0m");
+        let erase = output.find(ERASE_LINE);
+        assert!(
+            reset.is_some(),
+            "diff output must emit an SGR reset: {output:?}"
+        );
+        assert!(erase.is_some(), "diff output must erase: {output:?}");
+        assert!(
+            reset.unwrap() < erase.unwrap(),
+            "SGR reset must precede the first ERASE_LINE: {output:?}"
+        );
+    }
+
+    /// Defect #1: vertical movement must use absolute cursor addressing
+    /// (`\x1b[{row};1H`) so a step on the bottom row can never scroll the
+    /// viewport or desync the renderer's row model. No bare `\r\n` vertical
+    /// steps may appear in diff output.
+    #[test]
+    fn diff_render_uses_absolute_addressing_not_newline_steps() {
+        let output = captured_render(&["a", "b", "c"], &["x", "y", "z"]);
+        assert!(
+            !output.contains("\r\n"),
+            "diff output must not vertically step with \\r\\n (can scroll): {output:?}"
+        );
+        assert!(
+            output.contains(";1H"),
+            "diff output must use absolute cursor addressing: {output:?}"
+        );
+        // Reject ANY relative vertical move (`\x1b[<n>A`/`\x1b[<n>B`), not just
+        // the 1-count form — the old code emitted multi-line steps too.
+        let has_relative_vmove = output.as_bytes().windows(2).enumerate().any(|(i, w)| {
+            if w != b"\x1b[" {
+                return false;
+            }
+            let mut j = i + 2;
+            let bytes = output.as_bytes();
+            let mut saw_digit = false;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                saw_digit = true;
+                j += 1;
+            }
+            saw_digit && j < bytes.len() && (bytes[j] == b'A' || bytes[j] == b'B')
+        });
+        assert!(
+            !has_relative_vmove,
+            "diff output must not use relative vertical moves (\\x1b[<n>A/B): {output:?}"
+        );
+    }
+
+    /// Defect #1, shrink path: clearing trailing lines must also use absolute
+    /// addressing (no `\r\n` stepping onto the bottom row).
+    #[test]
+    fn diff_render_shrink_uses_absolute_addressing() {
+        let output = captured_render(&["a", "b", "c", "d"], &["a", "b"]);
+        assert!(
+            !output.contains("\r\n"),
+            "shrink diff must not step with \\r\\n: {output:?}"
+        );
+        assert!(
+            output.contains(ERASE_LINE),
+            "shrink diff must erase: {output:?}"
+        );
     }
 
     #[test]

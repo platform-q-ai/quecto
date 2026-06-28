@@ -630,3 +630,62 @@ async fn execute_with_invalid_args_is_error() {
     assert!(result.is_error);
     assert!(result.content.contains("invalid workflow_spec"));
 }
+
+// --- model passthrough (#881) ---
+
+#[test]
+fn test_parse_model_full_string() {
+    let tool = SpawnTool::new(vec![], true);
+    let cfg = tool
+        .parse_args(r#"{"task":"work","model":"openai/gpt-5.5"}"#)
+        .unwrap();
+    assert_eq!(cfg.model.as_deref(), Some("openai/gpt-5.5"));
+}
+
+#[test]
+fn test_parse_model_provider_and_model_id() {
+    let tool = SpawnTool::new(vec![], true);
+    let cfg = tool
+        .parse_args(r#"{"task":"work","provider":"openai","model_id":"gpt-5.5"}"#)
+        .unwrap();
+    assert_eq!(cfg.model.as_deref(), Some("openai/gpt-5.5"));
+}
+
+#[test]
+fn test_parse_model_absent_is_none() {
+    let tool = SpawnTool::new(vec![], true);
+    let cfg = tool.parse_args(r#"{"task":"work"}"#).unwrap();
+    assert!(cfg.model.is_none());
+}
+
+#[test]
+fn test_parse_model_provider_without_model_id_is_error() {
+    let tool = SpawnTool::new(vec![], true);
+    let err = tool
+        .parse_args(r#"{"task":"work","provider":"openai"}"#)
+        .unwrap_err();
+    assert!(err.contains("invalid model"), "got: {err}");
+    assert!(err.contains("model_id"), "got: {err}");
+}
+
+#[tokio::test]
+async fn execute_with_invalid_model_is_error() {
+    let tool = SpawnTool::new(vec![], true);
+    let result = tool
+        .execute(r#"{"task":"work","provider":"openai"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("invalid model"));
+}
+
+#[test]
+fn test_schema_includes_model_property() {
+    let tool = SpawnTool::new(vec![], true);
+    let schema: serde_json::Value =
+        serde_json::from_str(&tool.definition().parameters_schema).unwrap();
+    let props = schema["properties"].as_object().unwrap();
+    assert!(props.contains_key("model"));
+    assert!(props.contains_key("provider"));
+    assert!(props.contains_key("model_id"));
+}

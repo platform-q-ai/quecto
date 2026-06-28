@@ -44,6 +44,18 @@ connects to the child's UDS socket directly from Rust.
       "type": "string",
       "description": "Path to a config file to pass to the child via --config (optional)"
     },
+    "model": {
+      "type": "string",
+      "description": "Model for the child in provider/model form (e.g. 'openai/gpt-5.5'), same format as agent_cmd set_model. Forwarded as --model at launch so the child's first turn runs on it"
+    },
+    "provider": {
+      "type": "string",
+      "description": "Provider name for the child model (alternative to model; must be paired with model_id)"
+    },
+    "model_id": {
+      "type": "string",
+      "description": "Model id for the child model (used with provider)"
+    },
     "workflow": {
       "type": "boolean",
       "description": "Start the child with --workflow (model selects a template itself)"
@@ -60,6 +72,7 @@ connects to the child's UDS socket directly from Rust.
 - **`agent_id`** must be unique. Spawning with an already-running ID returns an error.
 - Returns immediately (< 1 second) after the child's socket is ready.
 - **`workflow_spec` vs `workflow`.** `workflow: true` makes the workflow tool available so the *child* picks a template; `workflow_spec` hands the child a specific template **by value** and binds it. They are independent of `config`, which supplies the child's runtime (providers/model/default template library).
+- **`model` (optional).** Sets the child's model at launch — accepts either a full `provider/model` string (e.g. `openai/gpt-5.5`) or a `provider` + `model_id` pair, the same format(s) as `agent_cmd set_model` (and validated by the same logic). It is forwarded to the child as `--model`, so the child's **first turn** (if `task` is given) already runs on the chosen model — no follow-up `set_model` round-trip needed. **Precedence:** an explicit `model` arg wins over any model from a forwarded `--config`, which wins over the built-in default. An invalid combination (e.g. `provider` without `model_id`) is a clear spawn error rather than a silent fall-back to the default.
 
 **Example:**
 

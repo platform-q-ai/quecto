@@ -8,10 +8,6 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use app_selection::TextSelection;
-
-use tokio::sync::mpsc;
-
 use crate::infrastructure::client::{Client, Command, Event};
 use crate::infrastructure::render::DiffRenderer;
 use crate::infrastructure::terminal::Terminal;
@@ -32,6 +28,8 @@ use crate::interface::components::spinner::Spinner;
 use crate::interface::components::workflow_bar;
 use crate::interface::keys::{self, Key};
 use crate::interface::kitty::KittyProtocol;
+use app_selection::TextSelection;
+use tokio::sync::mpsc;
 
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 const MOUSE_SCROLL_LINES: usize = 3;
@@ -722,6 +720,9 @@ mod app_subagent_panel_tests;
 #[path = "app_subagents_tests.rs"]
 mod app_subagents_tests;
 #[cfg(test)]
+#[path = "app_workflow_box_width_tests.rs"]
+mod app_workflow_box_width_tests;
+#[cfg(test)]
 #[path = "app_chat_session_tests.rs"]
 mod chat_session_tests;
 #[cfg(test)]
@@ -733,8 +734,7 @@ mod subagent_selection_tests;
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
-// The headless render harness is also exposed (read-only driving surface) to the
-// workspace `bdd` integration target via the `test-harness` feature (#805).
+// Headless render harness, also exposed (read-only) to the workspace `bdd` integration target via `test-harness` (#805).
 #[cfg(any(test, feature = "test-harness"))]
 #[path = "tui_harness.rs"]
 pub mod tui_harness;

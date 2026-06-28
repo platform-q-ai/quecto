@@ -30,6 +30,18 @@ pub(super) struct ToolRegistryArgs<'a> {
     pub(super) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 }
 
+/// Resolve the model a CLI agent (or spawned child) runs on, honouring the
+/// documented precedence: an explicit `--model` (which a spawned child receives
+/// via spawn's forwarded `--model`, #881) wins over the `--config`-supplied
+/// default. Centralised here so the precedence is unit-testable rather than
+/// asserted only by a comment.
+pub(crate) fn resolve_agent_model(model_override: Option<&str>, config_default: &str) -> String {
+    match model_override {
+        Some(m) => m.to_string(),
+        None => config_default.to_string(),
+    }
+}
+
 pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
     let ToolRegistryArgs {
         base_dir,
@@ -43,10 +55,10 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
         &config.workspace_path(),
         flags.no_sandbox,
     );
-    let model = flags
-        .model_override
-        .clone()
-        .unwrap_or(config.agents.defaults.model.clone());
+    let model = resolve_agent_model(
+        flags.model_override.as_deref(),
+        &config.agents.defaults.model,
+    );
     let restrict_to_workspace = !flags.no_sandbox && config.agents.defaults.restrict_to_workspace;
     if flags.no_sandbox {
         stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");

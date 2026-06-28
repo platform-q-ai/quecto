@@ -241,6 +241,20 @@ impl SpawnTool {
             _ => None,
         };
 
+        // Model override (#881). Accepts the same form(s) as `agent_cmd
+        // set_model`: a full `provider/model` string, or a separate `provider` +
+        // `model_id` pair — validated by the shared `parse_model_arg` so the two
+        // surfaces cannot diverge. An invalid combination is a clear spawn error
+        // here rather than a silent fall-back to the default. Precedence:
+        // explicit `model` arg > forwarded `--config` > built-in default.
+        let model_arg = crate::domain::subagent::parse_model_arg(
+            args.get("model").and_then(|v| v.as_str()),
+            args.get("provider").and_then(|v| v.as_str()),
+            args.get("model_id").and_then(|v| v.as_str()),
+        )
+        .map_err(|e| format!("invalid model: {e}"))?;
+        let model = model_arg.map(|m| m.to_model_string());
+
         if let Some(ref id) = agent_id {
             super::subagent_registry::validate_agent_id_format(id)?;
             if !self.allowed_agents.is_empty() {
@@ -257,6 +271,7 @@ impl SpawnTool {
             workflow,
             workflow_guards,
             workflow_spec,
+            model,
         })
     }
 
@@ -287,49 +302,11 @@ impl SpawnTool {
             .socket_dir
             .join(format!("quecto-agent-{session_name}.sock"));
 
-        let mut cmd = tokio::process::Command::new(&binary);
-        cmd.arg("agent")
-            .arg("--mode")
-            .arg("uds")
-            .arg("-s")
-            .arg(session_name)
-            .arg("--socket")
-            .arg(&socket_path)
-            .arg("--persist");
-
-        if let Some(ref system) = config.system {
-            cmd.arg("--system").arg(system);
-        }
-
-        // Forward --config if the caller specified a custom config path. In
-        // managed runtime pods, inherit the active runtime config for spawned
-        // subagents so they use the same tool isolation defaults as the parent.
-        if let Some(cfg_path) =
-            effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path())
-        {
-            cmd.arg("--config").arg(cfg_path);
-        }
-
-        // Tell the child who its parent is, so the child's OWN emitted events
-        // carry the correct parent_id (PRD Stage B) — not just the copy the
-        // parent's monitor re-stamps when forwarding.
-        if let Some(parent_id) = &self.parent_id {
-            cmd.arg("--parent-id").arg(parent_id);
-        }
-
-        // Forward --workflow / --workflow-guards when requested.
-        if config.workflow {
-            cmd.arg("--workflow");
-        }
-        if config.workflow_guards {
-            cmd.arg("--workflow-guards");
-        }
-
         // A by-value workflow assignment is written to a file next to the
         // socket and forwarded as `--workflow-spec <path>`; the inline template
         // is too large for a bare CLI arg. The child runs it in Active mode
         // (binding) and deletes the file once read — see agent_tool_registry.
-        if let Some(ref spec) = config.workflow_spec {
+        let workflow_spec_path = if let Some(ref spec) = config.workflow_spec {
             let spec_json = serde_json::to_string(spec).map_err(|e| {
                 DomainError::Tool(format!("failed to serialize workflow spec: {e}"))
             })?;
@@ -349,14 +326,29 @@ impl SpawnTool {
             ));
             write_private_new(&spec_path, spec_json.as_bytes())
                 .map_err(|e| DomainError::Tool(format!("failed to write workflow spec: {e}")))?;
-            cmd.arg("--workflow-spec").arg(&spec_path);
-        }
+            Some(spec_path)
+        } else {
+            None
+        };
 
-        // Propagate --no-sandbox so child agents inherit the same workspace
-        // restriction posture as the parent.
-        if !self.restrict_to_workspace {
-            cmd.arg("--no-sandbox");
-        }
+        // Build the full child argument list (incl. `--model`, #881) via the
+        // pure builder so the exact flag set is unit-testable.
+        let effective_config =
+            effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path());
+        let cli_args = super::spawn_launch_args::build_child_cli_args(
+            &super::spawn_launch_args::ChildLaunchSpec {
+                session_name,
+                socket_path: &socket_path,
+                config,
+                effective_config: effective_config.as_deref(),
+                parent_id: self.parent_id.as_deref(),
+                restrict_to_workspace: self.restrict_to_workspace,
+                workflow_spec_path: workflow_spec_path.as_deref(),
+            },
+        );
+
+        let mut cmd = tokio::process::Command::new(&binary);
+        cmd.args(&cli_args);
 
         if !self.base_dir.as_os_str().is_empty() {
             cmd.env("QUECTO_BASE_DIR", &self.base_dir);
@@ -602,7 +594,7 @@ impl Tool for SpawnTool {
                 must wait synchronously (same turn) until the child reaches \
                 idle/exited/timeout/error before continuing."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}}}}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"model":{"type":"string","description":"Model for the child in provider/model form (e.g. 'openai/gpt-5.5'), same format as agent_cmd set_model. Forwarded to the child as --model at launch so its FIRST turn runs on this model. Precedence: explicit model > --config > built-in default. Invalid combinations are rejected with a clear error."},"provider":{"type":"string","description":"Provider name for the child model (alternative to model; must be paired with model_id)"},"model_id":{"type":"string","description":"Model id for the child model (used with provider)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}}}}"#.into(),
         }
     }
 
