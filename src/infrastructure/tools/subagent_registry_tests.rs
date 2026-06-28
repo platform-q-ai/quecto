@@ -594,9 +594,56 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &correlated_subagents,
         r#"{"type":"get_subagents"}"#
     ));
+    // #880: get_session_stats and get_extensions snapshots are valid answers
+    // for their own request commands (pure reads, independent of the blocked
+    // dispatch loop), but still never answer a different command.
+    let stats_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_session_stats",
+        "data": { "sessionKey": "cli:test", "userMessages": 1, "snapshot": true }
+    });
+    assert!(subagent_snapshot::response_is_valid_answer(
+        &stats_snapshot,
+        r#"{"type":"get_session_stats"}"#
+    ));
+    let malformed_stats_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_session_stats",
+        "data": { "sessionKey": "cli:test", "userMessages": 1 }
+    });
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &malformed_stats_snapshot,
+        r#"{"type":"get_session_stats"}"#
+    ));
+    let extensions_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_extensions",
+        "data": { "extensions": [], "snapshot": true }
+    });
+    assert!(subagent_snapshot::response_is_valid_answer(
+        &extensions_snapshot,
+        r#"{"type":"get_extensions"}"#
+    ));
+    let malformed_extensions_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_extensions",
+        "data": { "extensions": [] }
+    });
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &malformed_extensions_snapshot,
+        r#"{"type":"get_extensions"}"#
+    ));
     // A get_subagents snapshot must NOT answer a different command (#835).
     assert!(!subagent_snapshot::response_is_valid_answer(
         &subagents_snapshot,
+        r#"{"type":"get_session_stats"}"#
+    ));
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &stats_snapshot,
+        r#"{"type":"get_subagents"}"#
+    ));
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &extensions_snapshot,
         r#"{"type":"get_session_stats"}"#
     ));
     assert!(!subagent_snapshot::response_is_valid_answer(

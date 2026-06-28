@@ -5,7 +5,8 @@
 //! for the child's full turn (the 300s turn-completion deadline). These tests
 //! cover the parent half: the `"ack":"accept"` marker is stamped on control
 //! commands (only), and a child that acks acceptance promptly (but never sends a
-//! turn-completion response) unblocks the parent fast.
+//! turn-completion response) unblocks the parent fast. #880 extends the
+//! same queue-and-accept semantic to set_model/clear_history/reload_extensions.
 
 use super::*;
 use std::io::{BufRead, BufReader, Write};
@@ -32,6 +33,18 @@ fn control_commands_carry_accept_marker() {
             "follow_up",
         ),
         (r#"{"agent_id":"w1","command":"abort"}"#, "abort"),
+        (
+            r#"{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-4-6"}"#,
+            "set_model",
+        ),
+        (
+            r#"{"agent_id":"w1","command":"clear_history"}"#,
+            "clear_history",
+        ),
+        (
+            r#"{"agent_id":"w1","command":"reload_extensions"}"#,
+            "reload_extensions",
+        ),
     ] {
         let v = parsed(&tool, args);
         assert_eq!(v["type"], ty);
@@ -49,7 +62,7 @@ fn non_control_commands_do_not_carry_accept_marker() {
         r#"{"agent_id":"w1","command":"get_state"}"#,
         r#"{"agent_id":"w1","command":"get_messages"}"#,
         r#"{"agent_id":"w1","command":"get_session_stats"}"#,
-        r#"{"agent_id":"w1","command":"clear_history"}"#,
+        r#"{"agent_id":"w1","command":"get_extensions"}"#,
     ] {
         let v = parsed(&tool, args);
         assert!(
@@ -60,18 +73,33 @@ fn non_control_commands_do_not_carry_accept_marker() {
 }
 
 #[test]
-fn is_control_command_matches_only_the_four() {
-    for c in ["prompt", "steer", "follow_up", "abort"] {
+fn is_control_command_matches_queueable_agent_cmd_forwards() {
+    for c in [
+        "prompt",
+        "steer",
+        "follow_up",
+        "abort",
+        "set_model",
+        "clear_history",
+        "reload_extensions",
+    ] {
         assert!(AgentCmdTool::is_control_command(c), "{c} is control");
     }
-    for c in ["get_state", "get_messages", "await", "kill", "set_model"] {
+    for c in [
+        "get_state",
+        "get_messages",
+        "get_session_stats",
+        "get_extensions",
+        "await",
+        "kill",
+    ] {
         assert!(!AgentCmdTool::is_control_command(c), "{c} is not control");
     }
 }
 
 /// Mock child whose reader acks ACCEPTANCE for any `"ack":"accept"` command
 /// immediately (id-correlated) and NEVER sends a turn-completion response — the
-/// production behaviour of a busy child's reader (#876). The connection is held
+/// production behaviour of a busy child's reader (#876/#880). The connection is held
 /// open, so a regression that waited for completion would ride the 300s deadline
 /// rather than return.
 fn busy_fast_ack_child(agent_id: &str) -> (AgentCmdTool, SubagentRegistry, tempfile::TempDir) {
@@ -122,13 +150,19 @@ fn busy_fast_ack_child(agent_id: &str) -> (AgentCmdTool, SubagentRegistry, tempf
 }
 
 async fn run_with_overall_cap(tool: &AgentCmdTool, args: &str) -> ToolResult {
-    // 30s overall cap: far above the 5s interactive timeout but far below the
-    // 300s turn-completion deadline, so a blocking-on-completion regression
-    // fails here instead of hanging the suite.
-    tokio::time::timeout(std::time::Duration::from_secs(30), tool.execute(args))
+    // 5s overall cap: long enough for a local UDS round trip, but short enough
+    // to prove busy-child forwards return on acceptance rather than on the
+    // child's full turn-completion deadline.
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), tool.execute(args))
         .await
-        .expect("agent_cmd must return well within 30s, never the 300s deadline")
-        .expect("execute returns Ok")
+        .expect("agent_cmd must return promptly on the acceptance ack")
+        .expect("execute returns Ok");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "agent_cmd did not return promptly"
+    );
+    result
 }
 
 #[tokio::test]
@@ -153,6 +187,26 @@ async fn busy_child_steer_abort_follow_up_return_promptly() {
         ("steer", r#","message":"turn""#),
         ("follow_up", r#","message":"next""#),
         ("abort", ""),
+    ] {
+        let id = format!("busy-{cmd}");
+        let (tool, _reg, _tmp) = busy_fast_ack_child(&id);
+        let args = format!(r#"{{"agent_id":"{id}","command":"{cmd}"{body}}}"#);
+        let result = run_with_overall_cap(&tool, &args).await;
+        assert!(!result.is_error, "{cmd} got error: {}", result.content);
+        assert!(
+            result.content.contains("\"success\":true"),
+            "{cmd} acceptance ack expected, got: {}",
+            result.content
+        );
+    }
+}
+
+#[tokio::test]
+async fn busy_child_set_model_clear_history_reload_extensions_return_promptly() {
+    for (cmd, body) in [
+        ("set_model", r#","model":"anthropic/claude-sonnet-4-6""#),
+        ("clear_history", ""),
+        ("reload_extensions", ""),
     ] {
         let id = format!("busy-{cmd}");
         let (tool, _reg, _tmp) = busy_fast_ack_child(&id);

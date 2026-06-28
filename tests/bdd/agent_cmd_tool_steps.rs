@@ -228,9 +228,9 @@ fn given_agent_cmd_with_busy_multi_snapshot_entry(world: &mut QuectoWorld, agent
 
 #[given(expr = "an AgentCmdTool with a fast-ack busy registry entry {string}")]
 fn given_agent_cmd_with_fast_ack_busy_entry(world: &mut QuectoWorld, agent_id: String) {
-    // Simulates a BUSY child running the #876 reader: it pushes the connect-time
-    // get_messages snapshot (no id), then acks ACCEPTANCE of any
-    // `"ack":"accept"` control command immediately (id-correlated) but NEVER
+    // Simulates a BUSY child running the #876/#880 reader: it pushes the
+    // connect-time get_messages snapshot (no id), then acks ACCEPTANCE of any
+    // `"ack":"accept"` agent_cmd forward immediately (id-correlated) but NEVER
     // sends a turn-completion response and holds the connection open. A parent
     // that (wrongly) waited for completion would ride the 300s deadline; the
     // scenario completing proves it returned on acceptance.
@@ -419,6 +419,140 @@ fn given_agent_cmd_with_busy_subagents_snapshot_and_echo_entry(
     world.agent_cmd_last_command = Some(last_cmd);
 }
 
+#[given(expr = "an AgentCmdTool with a busy session stats snapshot registry entry {string}")]
+fn given_agent_cmd_with_busy_session_stats_snapshot_entry(
+    world: &mut QuectoWorld,
+    agent_id: String,
+) {
+    let registry = AgentCmdTool::new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock_path = tmp.path().join("busy-stats-agent.sock");
+    let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let std_listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    let last_cmd_clone = last_cmd.clone();
+
+    let _handle = std::thread::spawn(move || {
+        for stream in std_listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let last_cmd_inner = last_cmd_clone.clone();
+            std::thread::spawn(move || {
+                use std::io::{BufRead, BufReader, Write};
+                let snapshot = r#"{"type":"response","command":"get_session_stats","data":{"sessionKey":"cli:busy-stats","userMessages":1,"assistantMessages":1,"totalMessages":2,"toolCalls":0,"toolResults":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"contextTokens":0,"maxContextTokens":0,"costUsd":0.0,"snapshot":true}}"#;
+                let _ = writeln!(stream, "{}", snapshot);
+                let reader = BufReader::new(stream.try_clone().unwrap());
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    *last_cmd_inner.lock().unwrap() = line;
+                }
+            });
+        }
+    });
+
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(sock_path, 0));
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+    world._agent_cmd_mock_tmp = Some(tmp);
+    world.agent_cmd_last_command = Some(last_cmd);
+}
+
+#[given(expr = "an AgentCmdTool with a busy extensions snapshot registry entry {string}")]
+fn given_agent_cmd_with_busy_extensions_snapshot_entry(world: &mut QuectoWorld, agent_id: String) {
+    let registry = AgentCmdTool::new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock_path = tmp.path().join("busy-extensions-agent.sock");
+    let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let std_listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    let last_cmd_clone = last_cmd.clone();
+
+    let _handle = std::thread::spawn(move || {
+        for stream in std_listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let last_cmd_inner = last_cmd_clone.clone();
+            std::thread::spawn(move || {
+                use std::io::{BufRead, BufReader, Write};
+                let snapshot = r#"{"type":"response","command":"get_extensions","data":{"extensions":[{"name":"mock_ext_tool","description":"mock extension"}],"snapshot":true}}"#;
+                let _ = writeln!(stream, "{}", snapshot);
+                let reader = BufReader::new(stream.try_clone().unwrap());
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    *last_cmd_inner.lock().unwrap() = line;
+                }
+            });
+        }
+    });
+
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(sock_path, 0));
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+    world._agent_cmd_mock_tmp = Some(tmp);
+    world.agent_cmd_last_command = Some(last_cmd);
+}
+
+#[given(
+    expr = "an AgentCmdTool with busy stats and extensions snapshots plus echo registry entry {string}"
+)]
+fn given_agent_cmd_with_busy_remaining_snapshots_and_echo_entry(
+    world: &mut QuectoWorld,
+    agent_id: String,
+) {
+    let registry = AgentCmdTool::new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock_path = tmp.path().join("busy-remaining-skip-agent.sock");
+    let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let std_listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    let last_cmd_clone = last_cmd.clone();
+
+    let _handle = std::thread::spawn(move || {
+        for stream in std_listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let last_cmd_inner = last_cmd_clone.clone();
+            std::thread::spawn(move || {
+                use std::io::{BufRead, BufReader, Write};
+                let stats = r#"{"type":"response","command":"get_session_stats","data":{"sessionKey":"cli:busy-stats","userMessages":1,"assistantMessages":1,"totalMessages":2,"snapshot":true}}"#;
+                let exts = r#"{"type":"response","command":"get_extensions","data":{"extensions":[{"name":"mock_ext_tool"}],"snapshot":true}}"#;
+                let _ = writeln!(stream, "{}", stats);
+                let _ = writeln!(stream, "{}", exts);
+                let reader = BufReader::new(stream.try_clone().unwrap());
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    let parsed = serde_json::from_str::<serde_json::Value>(&line).ok();
+                    let sent_type = parsed
+                        .as_ref()
+                        .and_then(|v| v.get("type").and_then(|t| t.as_str()))
+                        .unwrap_or("mock")
+                        .to_owned();
+                    let sent_id = parsed
+                        .as_ref()
+                        .and_then(|v| v.get("id").and_then(|t| t.as_str()))
+                        .unwrap_or("")
+                        .to_owned();
+                    *last_cmd_inner.lock().unwrap() = line;
+                    let response = format!(
+                        r#"{{"type":"response","id":"{}","command":"{}","data":{{"subagents":[{{"agentId":"grandchild-worker","status":"running","pid":4321}}]}}}}"#,
+                        sent_id, sent_type
+                    );
+                    let _ = writeln!(stream, "{}", response);
+                }
+            });
+        }
+    });
+
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(sock_path, 0));
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+    world._agent_cmd_mock_tmp = Some(tmp);
+    world.agent_cmd_last_command = Some(last_cmd);
+}
+
 // --- When ---
 
 #[when(expr = "I execute agent_cmd with {string}")]
@@ -428,7 +562,12 @@ fn when_execute_agent_cmd(world: &mut QuectoWorld, arguments: String) {
         .as_ref()
         .expect("agent_cmd_tool not set");
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let result = rt.block_on(tool.execute(&arguments)).unwrap();
+    let result = rt
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), tool.execute(&arguments)).await
+        })
+        .expect("agent_cmd should return promptly")
+        .unwrap();
     world.agent_cmd_result = Some(result);
 }
 
@@ -539,9 +678,7 @@ fn then_agent_cmd_not_contains(world: &mut QuectoWorld, unexpected: String) {
     );
 }
 
-#[then(expr = "the agent_cmd should have sent command type {string}")]
-fn then_agent_cmd_sent_type(world: &mut QuectoWorld, expected_type: String) {
-    // Give the mock server a moment to process.
+fn last_agent_cmd_sent_json(world: &QuectoWorld) -> serde_json::Value {
     std::thread::sleep(std::time::Duration::from_millis(100));
     let last_cmd = world
         .agent_cmd_last_command
@@ -552,13 +689,30 @@ fn then_agent_cmd_sent_type(world: &mut QuectoWorld, expected_type: String) {
         !cmd_str.is_empty(),
         "no command was sent to mock UDS server"
     );
-    let cmd: serde_json::Value = serde_json::from_str(&cmd_str)
-        .unwrap_or_else(|e| panic!("invalid JSON sent to mock: {} — raw: {}", e, cmd_str));
+    serde_json::from_str(&cmd_str)
+        .unwrap_or_else(|e| panic!("invalid JSON sent to mock: {} — raw: {}", e, cmd_str))
+}
+
+#[then(expr = "the agent_cmd should have sent command type {string}")]
+fn then_agent_cmd_sent_type(world: &mut QuectoWorld, expected_type: String) {
+    let cmd = last_agent_cmd_sent_json(world);
     assert_eq!(
         cmd["type"].as_str(),
         Some(expected_type.as_str()),
         "expected command type '{}', got: {}",
         expected_type,
+        cmd
+    );
+}
+
+#[then(expr = "the agent_cmd should have sent ack {string}")]
+fn then_agent_cmd_sent_ack(world: &mut QuectoWorld, expected_ack: String) {
+    let cmd = last_agent_cmd_sent_json(world);
+    assert_eq!(
+        cmd["ack"].as_str(),
+        Some(expected_ack.as_str()),
+        "expected ack '{}', got: {}",
+        expected_ack,
         cmd
     );
 }

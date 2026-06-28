@@ -5,6 +5,8 @@
 use super::protocol::AgentEvent;
 use super::uds::{DispatchCtx, emit_event_to_broadcast_or_writer};
 
+pub(super) type ExtensionSnapshot = std::sync::Arc<tokio::sync::RwLock<Vec<serde_json::Value>>>;
+
 /// Build the list of registered extension tools for `get_extensions` responses.
 ///
 /// Includes tools from both the `ExtensionRegistry` (native) and

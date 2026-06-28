@@ -60,6 +60,8 @@ async fn new_session_resets_workflow_run_state() {
         .unwrap();
     workflow.lock().unwrap().check(1).unwrap();
     assert!(workflow.lock().unwrap().persisted_run().is_some());
+    let initial_stats =
+        crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let mut ctx = DispatchCtx {
         base_dir: tmp.path(),
         agent: &mut agent,
@@ -68,6 +70,8 @@ async fn new_session_resets_workflow_run_state() {
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot(0, None, 0),
         )),
+        session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+        extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
@@ -113,6 +117,8 @@ async fn resume_session_restores_target_workflow_run_state() {
         .unwrap();
     let mut writer = tokio::io::sink();
     let workflow = make_workflow();
+    let initial_stats =
+        crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let mut ctx = DispatchCtx {
         base_dir: tmp.path(),
         agent: &mut agent,
@@ -121,6 +127,8 @@ async fn resume_session_restores_target_workflow_run_state() {
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot(0, None, 0),
         )),
+        session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+        extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
@@ -179,6 +187,8 @@ async fn resume_session_clears_workflow_when_target_has_none() {
         .select_template("feature", None)
         .unwrap();
     workflow.lock().unwrap().check(1).unwrap();
+    let initial_stats =
+        crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let mut ctx = DispatchCtx {
         base_dir: tmp.path(),
         agent: &mut agent,
@@ -187,6 +197,8 @@ async fn resume_session_clears_workflow_when_target_has_none() {
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot(0, None, 0),
         )),
+        session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+        extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
@@ -235,6 +247,8 @@ async fn set_workflow_automation_updates_config_and_engine() {
         )
         .unwrap(),
     ));
+    let initial_stats =
+        crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let mut ctx = DispatchCtx {
         base_dir: tmp.path(),
         agent: &mut agent,
@@ -243,6 +257,8 @@ async fn set_workflow_automation_updates_config_and_engine() {
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot(0, None, 0),
         )),
+        session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+        extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
@@ -297,6 +313,8 @@ fn workflow_nudge_message_waits_for_selected_template() {
         )
         .unwrap(),
     ));
+    let initial_stats =
+        crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let ctx = DispatchCtx {
         base_dir: tmp.path(),
         agent: &mut agent,
@@ -305,6 +323,8 @@ fn workflow_nudge_message_waits_for_selected_template() {
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot(0, None, 0),
         )),
+        session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+        extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
@@ -360,6 +380,8 @@ fn workflow_progress_fingerprint_changes_with_step_progress() {
         .unwrap()
         .select_template("feature", None)
         .unwrap();
+    let initial_stats =
+        crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let ctx = DispatchCtx {
         base_dir: tmp.path(),
         agent: &mut agent,
@@ -368,6 +390,8 @@ fn workflow_progress_fingerprint_changes_with_step_progress() {
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot(0, None, 0),
         )),
+        session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+        extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: &mut writer,
