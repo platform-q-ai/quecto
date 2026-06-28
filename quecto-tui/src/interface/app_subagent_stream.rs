@@ -15,6 +15,44 @@ impl App {
     /// `SessionView`, mirroring the master render path so the body is visibly
     /// equivalent to how the master renders (#800).
     pub(super) fn route_subagent_event(&mut self, agent_id: &str, ev: Event) {
+        // Per-session workflow bar so a selected sub-agent renders its OWN
+        // workflow/phase bar (#802). The kernel re-broadcasts a descendant's
+        // `workflow_state` onto an ancestor's stream, re-stamped with the
+        // descendant's own inner `agent_id` (#840 / `canonical_workflow_forward`).
+        // Such a forwarded event is tagged here with the CONNECTION's id, so
+        // route by the event's INNER `agent_id` when present: a grandchild G's
+        // workflow must land on G's session, never overwrite the connected
+        // child's bar. The connected agent's own events carry no inner id, so
+        // they fall back to the connection id.
+        if let Event::WorkflowState {
+            agent_id: inner_id,
+            steps,
+            progress,
+            active_issue,
+            mode,
+            active_template,
+            available_templates,
+        } = &ev
+        {
+            let target = inner_id.as_deref().unwrap_or(agent_id);
+            // Same drop-stale guard as below: only land on a tracked/retained
+            // agent so a stale or unknown id cannot resurrect/create a session.
+            if !self.sessions.contains_key(target) && !self.subagent_local.contains_key(target) {
+                return;
+            }
+            self.ensure_session(target);
+            if let Some(session) = self.sessions.get_mut(target) {
+                session.workflow_bar = super::app_events::build_workflow_state(
+                    steps,
+                    progress,
+                    active_issue,
+                    mode,
+                    active_template,
+                    available_templates,
+                );
+            }
+            return;
+        }
         // Tearing down a connection mid-stream can leave already-queued
         // `(old_id, ev)` items in `subagent_event_rx`. Drop events for agents
         // that are neither still tracked nor have a retained session, so a
@@ -27,28 +65,6 @@ impl App {
         let Some(session) = self.sessions.get_mut(agent_id) else {
             return;
         };
-        // Per-session workflow bar so a selected sub-agent renders its OWN
-        // workflow/phase bar, footer-equivalent chrome and running state (#802).
-        if let Event::WorkflowState {
-            agent_id: _,
-            steps,
-            progress,
-            active_issue,
-            mode,
-            active_template,
-            available_templates,
-        } = &ev
-        {
-            session.workflow_bar = super::app_events::build_workflow_state(
-                steps,
-                progress,
-                active_issue,
-                mode,
-                active_template,
-                available_templates,
-            );
-            return;
-        }
         match &ev {
             Event::AgentStart | Event::TurnStart => {
                 session.running = true;

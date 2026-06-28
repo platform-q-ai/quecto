@@ -411,3 +411,61 @@ async fn main_pane_title_sanitizes_status_text() {
         "the clear-screen CSI from the status field must be stripped before render"
     );
 }
+
+#[tokio::test]
+async fn forwarded_grandchild_workflow_routes_by_event_agent_id_not_connection() {
+    // #840: while viewing child C, C's connection carries BOTH C's own
+    // workflow_state AND the kernel-forwarded grandchild G workflow (re-stamped
+    // with G's own inner agent_id). The grandchild's event must update G's
+    // session bar and never overwrite C's bar.
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    // Full-tree broadcast (#815) tracks both the child and the grandchild.
+    h.event(subagents_changed(vec![
+        subagent("C", "running", Some(("active", 1, 3))),
+        subagent("G", "running", Some(("active", 1, 3))),
+    ]));
+    h.app_mut().select_agent(Some("C"));
+    // C's OWN workflow (no inner id mismatch): issue 820.
+    h.app_mut().route_subagent_event(
+        "C",
+        Event::WorkflowState {
+            agent_id: Some("C".into()),
+            steps: vec![],
+            progress: serde_json::json!({"done": 3, "total": 5}),
+            active_issue: Some(serde_json::json!({"number": 820, "title": "child"})),
+            mode: Some("active".into()),
+            active_template: None,
+            available_templates: None,
+        },
+    );
+    // The forwarded grandchild workflow arrives tagged for C's connection but
+    // carries G's own inner agent_id: issue 7.
+    h.app_mut().route_subagent_event(
+        "C",
+        Event::WorkflowState {
+            agent_id: Some("G".into()),
+            steps: vec![],
+            progress: serde_json::json!({"done": 2, "total": 4}),
+            active_issue: Some(serde_json::json!({"number": 7, "title": "grandchild"})),
+            mode: Some("active".into()),
+            active_template: None,
+            available_templates: None,
+        },
+    );
+    let app = h.app_mut();
+    assert_eq!(
+        app.sessions.get("C").unwrap().workflow_bar.issue_number,
+        Some(820),
+        "child C's bar must keep C's own workflow, not the grandchild's"
+    );
+    assert_eq!(
+        app.sessions
+            .get("G")
+            .expect("grandchild G must get its own session")
+            .workflow_bar
+            .issue_number,
+        Some(7),
+        "grandchild G's forwarded workflow must land on G's own session bar"
+    );
+}
