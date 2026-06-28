@@ -161,6 +161,18 @@ Feature: Persistent subagent monitor — live event stream from child agents
     Then the subagent panel should show "gc" as idle
     And the subagent panel should not count "gc" as working
 
+  # --- Prompt running visibility on a long first turn (#866) ---
+
+  Scenario: a child's first running transition is broadcast to observers
+    Given a root monitor with running child "child"
+    When the child "child" starts its turn
+    Then observers should receive subagent state listing "child" as running
+
+  Scenario: an unconfirmed spawning agent stays visible when a push omits it
+    Given the TUI is tracking a spawning agent "newbie"
+    When a subagent push arrives that omits "newbie"
+    Then the subagent panel should still show "newbie"
+
   Scenario: a removal request for an unknown agent emits no broadcast
     Given a root registry with parent "p", child "c" under "p", and grandchild "gc" under "c", plus a live agent "live"
     When an unknown agent "ghost" is reported gone

@@ -388,7 +388,11 @@ impl SpawnTool {
         let (exit_tx, _exit_rx) = new_exit_signal_channel();
 
         // Register in shared registry BEFORE starting the monitor task,
-        // so the monitor's update_entry calls find the entry (#522).
+        // so the monitor's update_entry calls find the entry (#522). The insert
+        // also broadcasts the survivor set immediately so the TUI learns of the
+        // new child at once instead of waiting for the next GetSubagents poll or
+        // a terminal event — without this a child that begins a long first turn
+        // stays invisible in the side panel until it finishes (#866).
         {
             let mut entry = SubagentEntry::new(socket_path.clone(), pid);
             entry.exit_signal_tx = Some(exit_tx.clone());
@@ -396,10 +400,12 @@ impl SpawnTool {
             // without it every entry's parent_id stayed None, so grandchildren
             // could never nest under their real parent in the sub-agent panel.
             entry.parent_id = self.parent_id.clone();
-            self.registry
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(session_name.to_string(), entry);
+            register_and_broadcast(
+                &self.registry,
+                self.broadcast_tx.as_ref(),
+                session_name,
+                entry,
+            );
         }
 
         // Start a persistent monitor task to track child events in real-time (#522).
@@ -619,12 +625,15 @@ impl Tool for SpawnTool {
                             0,
                         );
                         // Mirror the real path: stamp the child's parent as this
-                        // agent's own id so the panel tree nests correctly.
+                        // agent's own id so the panel tree nests correctly, and
+                        // broadcast the immediate registration (#866).
                         stub_entry.parent_id = self.parent_id.clone();
-                        self.registry
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .insert(session_name.to_string(), stub_entry);
+                        register_and_broadcast(
+                            &self.registry,
+                            self.broadcast_tx.as_ref(),
+                            session_name,
+                            stub_entry,
+                        );
 
                         let msg = format!(
                             "Subagent '{}' is running. Use agent_cmd to interact.",
@@ -646,6 +655,30 @@ impl Tool for SpawnTool {
                 }),
             }
         })
+    }
+}
+
+/// Insert a freshly-spawned child entry into the registry and immediately
+/// broadcast the full survivor set, so connected TUIs learn of the new agent at
+/// once instead of waiting for the next GetSubagents poll or a terminal event
+/// (#866). The broadcast is best-effort: a missing/closed channel just means no
+/// client is listening, which is fine.
+fn register_and_broadcast(
+    registry: &SubagentRegistry,
+    broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
+    session_name: &str,
+    entry: SubagentEntry,
+) {
+    {
+        registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(session_name.to_string(), entry);
+    }
+    if let Some(tx) = broadcast_tx {
+        let event =
+            crate::infrastructure::tools::subagent_cascade::build_state_changed_event(registry);
+        let _ = tx.send(event);
     }
 }
 

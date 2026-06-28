@@ -185,24 +185,26 @@ impl App {
         );
     }
 
-    fn track_starting_subagent(&mut self, args: &serde_json::Value) {
+    pub(super) fn track_starting_subagent(&mut self, args: &serde_json::Value) {
         let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) else {
             return;
         };
         let sanitized = crate::interface::ansi::sanitize_control(agent_id);
-        self.subagent_local.insert(
-            sanitized.clone(),
-            TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
-                agent_id: sanitized,
-                status: "starting".to_string(),
-                last_tool: None,
-                last_error: None,
-                pid: 0,
-                socket_path: None,
-                parent_id: None,
-                workflow: None,
-            }),
-        );
+        let mut tracked = TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
+            agent_id: sanitized.clone(),
+            status: "starting".to_string(),
+            last_tool: None,
+            last_error: None,
+            pid: 0,
+            socket_path: None,
+            parent_id: None,
+            workflow: None,
+        });
+        // Mark this as an unconfirmed local guess: the kernel has not registered
+        // the child yet, so a snapshot taken in that window must not evict it
+        // (#866). Cleared once a payload confirms the agent.
+        tracked.optimistic = true;
+        self.subagent_local.insert(sanitized, tracked);
     }
 
     fn handle_tool_end(

@@ -337,8 +337,17 @@ fn handle_monitor_line(
 /// Whether a child event changed the registry fields mirrored by
 /// `subagent_state_changed` and should therefore be pushed immediately to TUI
 /// clients instead of waiting for a later polling rebuild (#839).
+///
+/// `agent_start` is broadcast so a newly-running child (e.g. one that begins a
+/// long first turn) appears and stays visible in the side panel at once, instead
+/// of being invisible until a terminal event finally broadcasts (#866). This is
+/// a ONE-TIME, per-turn running transition — NOT the high-frequency per-tool
+/// `tool_execution_start` / non-error `tool_execution_end` boundaries that #839
+/// deliberately removed; those MUST stay suppressed (a running→idle transition
+/// is carried by the broadcast `agent_end`, so no stale "running" persists).
 fn should_broadcast_state_changed_after_event(value: &serde_json::Value) -> bool {
     match value.get("type").and_then(|v| v.as_str()) {
+        Some("agent_start") => true,
         Some("agent_end") => true,
         Some("tool_execution_end") => value.get("isError").and_then(|v| v.as_bool()) == Some(true),
         Some("response") => value.get("command").and_then(|v| v.as_str()) == Some("agent_error"),
