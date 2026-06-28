@@ -27,3 +27,8 @@ pulldown-cmark = { version = "0.13", default-features = false }
 
 # Low-level terminal control (termios, ioctl) — no higher-level crate needed
 libc = "0.2"
+
+[dev-dependencies]
+# `test-util` enables tokio's paused-clock test helpers (`time::pause`/`advance`)
+# so timer tests can drive a deterministic clock instead of wall time (#838).
+tokio = { version = "1", features = ["test-util"] }
