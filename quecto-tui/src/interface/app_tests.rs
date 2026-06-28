@@ -682,26 +682,29 @@ fn agent_cmd_content_reads_shown() {
 }
 
 #[test]
-fn agent_cmd_read_only_queries_render_controls_suppressed() {
-    // Read-only query commands render a tool box for consistency with
-    // get_messages/await (#865); only the fire-and-forget control commands
-    // (prompt/steer/abort) stay suppressed.
+fn every_agent_cmd_command_renders_a_box() {
+    // #871: every model-issued agent_cmd invocation renders a tool box, the
+    // same way a normal tool call does — including the control/destructive
+    // commands (prompt/steer/abort/kill). Hiding them made the transcript
+    // incomplete. Only `spawn` stays suppressed (the status bar shows it).
     let mk = |cmd: &str| serde_json::json!({"agent_id": "w1", "command": cmd});
     for cmd in &[
         "get_state",
         "get_subagents",
         "get_session_stats",
         "get_extensions",
+        "get_messages",
+        "await",
+        "prompt",
+        "steer",
+        "abort",
+        "kill",
+        "follow_up",
+        "set_model",
     ] {
         assert!(
             !super::app_events::suppress_tool_box("agent_cmd", &mk(cmd)),
-            "agent_cmd {cmd} should render a tool box"
-        );
-    }
-    for cmd in &["prompt", "steer", "abort"] {
-        assert!(
-            super::app_events::suppress_tool_box("agent_cmd", &mk(cmd)),
-            "agent_cmd {cmd} should be suppressed"
+            "agent_cmd {cmd} should render a tool box (#871)"
         );
     }
     assert!(super::app_events::suppress_tool_box("spawn", &mk("x")));

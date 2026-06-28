@@ -571,13 +571,6 @@ fn is_subagent_tool(tool_name: &str) -> bool {
     tool_name == "spawn" || tool_name == "agent_cmd"
 }
 
-/// Whether to suppress tool output boxes in the chat area (#538).
-///
-/// `spawn` output is always suppressed (status bar provides visibility).
-/// `agent_cmd` mutations (prompt, steer, abort) are suppressed — the
-/// status bar shows subagent activity. Query commands (get_state,
-/// get_messages_tail, get_session_stats, etc.) are shown so the user
-/// can inspect results.
 /// Status string for exited subagents — used in multiple comparisons (#540).
 const STATUS_EXITED: &str = "exited";
 
@@ -745,6 +738,9 @@ mod tests;
 #[cfg(any(test, feature = "test-harness"))]
 #[path = "tui_harness.rs"]
 pub mod tui_harness;
+#[cfg(test)]
+#[path = "tui_harness_render_tests.rs"]
+mod tui_harness_render_tests;
 #[cfg(test)]
 #[path = "tui_harness_tests.rs"]
 mod tui_harness_tests;
