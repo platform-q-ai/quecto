@@ -116,6 +116,10 @@ fn bound_engine_completion_nudge_does_not_instruct_reselect() {
         !nudge.contains("select_template") && !nudge.contains("reset"),
         "bound completion nudge must not tell the model to reset/reselect: {nudge}"
     );
+    assert!(
+        nudge.contains("report your result and stop"),
+        "bound completion nudge must still instruct report-and-stop: {nudge}"
+    );
 }
 
 #[test]
@@ -145,7 +149,7 @@ fn select_template_starts_run() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
-    assert_eq!(engine.progress().total, 19);
+    assert_eq!(engine.progress().total, 17);
     assert_eq!(engine.current_step().unwrap().index, 1);
 }
 
@@ -294,7 +298,7 @@ fn guards_block_until_before_step_key_threshold() {
     engine.select_template("feature", None).unwrap();
     let err = engine.check_guards().unwrap_err();
     assert!(err.to_string().contains("Complete step 1"));
-    for step in 1..=19 {
+    for step in 1..=17 {
         engine.check(step).unwrap();
     }
     assert!(engine.check_guards().is_ok());
@@ -309,13 +313,19 @@ fn completion_nudge_only_when_complete() {
     let mut engine = WorkflowEngine::new(config, false).unwrap();
     engine.select_template("feature", None).unwrap();
     assert!(engine.completion_nudge().is_none());
-    for step in 1..=19 {
+    let step_count = engine.progress().total;
+    for step in 1..=step_count {
         engine.check(step).unwrap();
     }
     let nudge = engine.completion_nudge().unwrap();
     assert!(nudge.contains("All workflow steps complete"));
-    assert!(nudge.contains("issues authored by the authenticated user only"));
-    assert!(nudge.contains("gh issue list --author @me"));
+    assert!(nudge.contains("report your result and stop"));
+    // #885: an unbound completion must NOT tell the agent to self-select the
+    // next issue or restart the workflow — the master agent owns issue choice.
+    assert!(!nudge.contains("issues authored by the authenticated user only"));
+    assert!(!nudge.contains("gh issue list --author @me"));
+    assert!(!nudge.contains("select_template"));
+    assert!(!nudge.contains("reset"));
 }
 
 #[test]
@@ -405,12 +415,10 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
             "push_fixes",
             "resolve_threads",
             "pre_merge",
-            "merge",
-            "pull",
             "cleanup",
         ]
     );
-    assert_eq!(snap.progress.total, 19);
+    assert_eq!(snap.progress.total, 17);
     assert_eq!(snap.steps[0].label, "Install/check local quality hooks");
     assert_eq!(snap.steps[1].label, "Update Scenarios / Add new features");
     assert_eq!(
@@ -431,9 +439,11 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
         snap.steps[11].label,
         "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)"
     );
-    assert_eq!(snap.steps[16].label, "Merge");
-    assert_eq!(snap.steps[17].label, "Move to local master and pull");
-    assert_eq!(snap.steps[18].label, "Clean up sub agents");
+    assert_eq!(
+        snap.steps[15].label,
+        "Confirm the pre-push gate passed and report the PR (do NOT merge)"
+    );
+    assert_eq!(snap.steps[16].label, "Clean up sub agents");
 }
 
 #[test]
@@ -459,7 +469,7 @@ fn feature_template_guards_commit_push_and_merge_like_config_file() {
         feature.guards[1].commands,
         vec!["git merge".to_string(), "gh pr merge".to_string()]
     );
-    assert_eq!(feature.guards[1].before_step_key, "merge");
+    assert_eq!(feature.guards[1].before_step_key, "cleanup");
     assert!(feature.guards[1].message.contains("Complete code review"));
 }
 

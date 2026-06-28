@@ -253,8 +253,9 @@ impl WorkflowEngine {
             return None;
         }
         let template = self.active_template()?;
-        // A bound agent runs exactly one assigned workflow; on completion it
-        // reports its result rather than picking a new workflow.
+        // The master agent now drives issue selection; on completion an agent
+        // reports its result and stops rather than self-selecting a new issue.
+        // A bound agent runs exactly one assigned workflow.
         if self.bound {
             return Some(format!(
                 "All workflow steps complete for assigned template '{}' ({} steps). The assigned task is done — report your result and stop.",
@@ -263,7 +264,7 @@ impl WorkflowEngine {
             ));
         }
         Some(format!(
-            "All workflow steps complete for template '{}' ({} steps). Close out the current issue if applicable. Before choosing the next issue, query the issue tracker for issues authored by the authenticated user only (for GitHub: gh issue list --author @me). Then call workflow(action=\"reset\") and workflow(action=\"select_template\", template=\"<id>\").",
+            "All workflow steps complete for template '{}' ({} steps). The task is done — report your result and stop.",
             template.label,
             template.steps.len()
         ))

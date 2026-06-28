@@ -13,7 +13,7 @@
   "workflow": {
     "auto_continue": false,
     "completion_nudge": false,
-    "selector_prompt": "Select the single Quecto repository workflow template, 'feature', before checking steps. If this is the post-completion handoff, first query the issue tracker for issues authored by the authenticated user only (for GitHub: gh issue list --author @me) and choose only from that filtered set.",
+    "selector_prompt": "Select the single Quecto repository workflow template, 'feature', before checking steps.",
     "templates": [
       {
         "id": "feature",
@@ -113,21 +113,9 @@
           },
           {
             "key": "pre_merge",
-            "label": "Confirm the pre-push gate passed (real-LLM, machete, deny run on push)",
+            "label": "Confirm the pre-push gate passed and report the PR (do NOT merge)",
             "phase": "ci_cd",
-            "guidance": "Confirm the latest push's pre-push gate passed in full (coverage threshold, the mocked @mock-llm e2e lane that runs by default, machete, deny) and the required CI checks \"Unit Tests\" and \"Mock LLM E2E Tests\" are green before merging."
-          },
-          {
-            "key": "merge",
-            "label": "Hand off for review — do NOT merge",
-            "phase": "ci_cd",
-            "guidance": "Do NOT run gh pr merge or git merge, and do NOT set auto-merge. This workflow STOPS here and hands off to a human: report the PR number and a short summary, then stop. The human reviews the local file changes and merges manually. For the PR to be mergeable the required \"Unit Tests\" and \"Mock LLM E2E Tests\" checks must be green and the verdict must be CONFORMANCE: PASS."
-          },
-          {
-            "key": "pull",
-            "label": "Sync after the human merges",
-            "phase": "ci_cd",
-            "guidance": "Only AFTER a human has merged the PR: run git checkout master and git pull --ff-only to sync. During the autonomous run there is nothing to pull — the merge is performed by a human."
+            "guidance": "Confirm the latest push's pre-push gate passed in full (coverage threshold, the mocked @mock-llm e2e lane that runs by default, machete, deny) and the required CI checks \"Unit Tests\" and \"Mock LLM E2E Tests\" are green. Do NOT run gh pr merge or git merge, and do NOT set auto-merge: this workflow never merges. Report the PR number and a short summary, then STOP — the master agent and a human own merging. For the PR to be mergeable the required checks must be green and the verdict must be CONFORMANCE: PASS."
           },
           {
             "key": "cleanup",
@@ -150,8 +138,8 @@
               "git merge",
               "gh pr merge"
             ],
-            "before_step_key": "merge",
-            "message": "This workflow does NOT merge — hand off the PR for human review (no auto-merge). Before handing off, complete code review, pass the conformance gate, and verify the pre-push gate passed. Never run gh pr merge / git merge."
+            "before_step_key": "cleanup",
+            "message": "This workflow does NOT merge — report the PR for review and stop (no auto-merge). Before reporting, complete code review, pass the conformance gate, and verify the pre-push gate passed. Never run gh pr merge / git merge."
           }
         ]
       }

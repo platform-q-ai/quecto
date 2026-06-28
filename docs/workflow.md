@@ -98,7 +98,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
   "workflow": {
     "auto_continue": true,
     "completion_nudge": true,
-    "selector_prompt": "Select the single Quecto repository workflow template, 'feature', before checking steps. If this is the post-completion handoff, first query the issue tracker for issues authored by the authenticated user only (for GitHub: gh issue list --author @me) and choose only from that filtered set.",
+    "selector_prompt": "Select the single Quecto repository workflow template, 'feature', before checking steps.",
     "templates": [
       {
         "id": "feature",
@@ -198,21 +198,9 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
           },
           {
             "key": "pre_merge",
-            "label": "Confirm the pre-push gate passed (real-LLM, machete, deny run on push)",
+            "label": "Confirm the pre-push gate passed and report the PR (do NOT merge)",
             "phase": "ci_cd",
-            "guidance": "Confirm the latest push's pre-push gate passed in full (coverage threshold, real-LLM, machete, deny) and the CI Smoke Test is green before merging."
-          },
-          {
-            "key": "merge",
-            "label": "Hand off for review — do NOT merge",
-            "phase": "ci_cd",
-            "guidance": "Do NOT run gh pr merge or git merge, and do NOT set auto-merge. This workflow STOPS here and hands off to a human: report the PR number and a short summary, then stop. The human reviews the local file changes and merges manually. For the PR to be mergeable the required \"Unit Tests\" and \"Mock LLM E2E Tests\" checks must be green and the verdict must be CONFORMANCE: PASS."
-          },
-          {
-            "key": "pull",
-            "label": "Sync after the human merges",
-            "phase": "ci_cd",
-            "guidance": "Only AFTER a human has merged the PR: run git checkout master and git pull --ff-only to sync. During the autonomous run there is nothing to pull — the merge is performed by a human."
+            "guidance": "Confirm the latest push's pre-push gate passed in full (coverage threshold, real-LLM, machete, deny) and the CI Smoke Test is green. Do NOT run gh pr merge or git merge, and do NOT set auto-merge: this workflow never merges. Report the PR number and a short summary, then STOP — the master agent and a human own merging."
           }
         ],
         "guards": [
@@ -229,8 +217,8 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
               "git merge",
               "gh pr merge"
             ],
-            "before_step_key": "merge",
-            "message": "This workflow does NOT merge — hand off the PR for human review (no auto-merge). Before handing off, complete code review, pass the conformance gate, and verify the pre-push gate passed. Never run gh pr merge / git merge."
+            "before_step_key": "cleanup",
+            "message": "This workflow does NOT merge — report the PR for review and stop (no auto-merge). Before reporting, complete code review, pass the conformance gate, and verify the pre-push gate passed. Never run gh pr merge / git merge."
           }
         ]
       }
@@ -310,7 +298,7 @@ When `templates` is empty (or omitted), one default is loaded:
 
 | ID | Label | Steps | Guards |
 |----|-------|-------|--------|
-| `feature` | Feature | 19-step Quecto workflow (hooks → scenarios → tests → RED → BDD review → GREEN → refactor → verify → commit → push → PR → review → merge/pull → cleanup) | `git commit`/`git push` before commit step; merge before merge step |
+| `feature` | Feature | 17-step Quecto workflow (hooks → scenarios → tests → RED → BDD review → GREEN → refactor → verify → commit → push → PR → review → conformance → report PR → cleanup) | `git commit`/`git push` before commit step; `git merge`/`gh pr merge` before cleanup step |
 
 To override built-ins, define at least one template in `templates`. When any
 custom templates are present, **only** the custom templates are available —
@@ -395,7 +383,7 @@ When workflow is enabled, the system prompt is rebuilt from live engine state
 - **Selector mode**: available templates, selector guidance, active issue
 - **Active mode**: template name, progress, current step with guidance, guard
   reminders
-- **Complete mode**: completion indicator and cycle-reset guidance
+- **Complete mode**: completion indicator and report-and-stop guidance
 
 The workflow section is transient — it is not persisted in session history.
 
