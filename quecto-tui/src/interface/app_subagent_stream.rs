@@ -11,6 +11,14 @@ use super::*;
 pub(super) const DEFERRED_NOTE_CAP: usize = 256;
 
 impl App {
+    /// Is `id` an agent we still render — either live-tracked or with a retained
+    /// (post-exit) session? The drop-stale invariant (#800): a stale frame or a
+    /// forwarded id we don't track must never resurrect/create a session. Hoisted
+    /// so the predicate lives in ONE place instead of being copied per guard site.
+    fn is_tracked_agent(&self, id: &str) -> bool {
+        self.sessions.contains_key(id) || self.subagent_local.contains_key(id)
+    }
+
     /// Route one event from a sub-agent's direct connection into that agent's
     /// `SessionView`, mirroring the master render path so the body is visibly
     /// equivalent to how the master renders (#800).
@@ -35,9 +43,14 @@ impl App {
         } = &ev
         {
             let target = inner_id.as_deref().unwrap_or(agent_id);
-            // Same drop-stale guard as below: only land on a tracked/retained
-            // agent so a stale or unknown id cannot resurrect/create a session.
-            if !self.sessions.contains_key(target) && !self.subagent_local.contains_key(target) {
+            // Trust assumption (security #856 review): `inner_id` is set by the
+            // kernel's `canonical_workflow_forward`, which only re-stamps a true
+            // descendant's id onto an ancestor's stream; we do NOT re-verify the
+            // ancestry here. The drop-stale guard below still confines the write
+            // to an already-tracked/retained session, so a misbehaving id can at
+            // worst overwrite another visible agent's workflow bar (display-only,
+            // no privilege/data crossover) and can never create a session.
+            if !self.is_tracked_agent(target) {
                 return;
             }
             self.ensure_session(target);
@@ -58,7 +71,7 @@ impl App {
         // that are neither still tracked nor have a retained session, so a
         // stale frame cannot resurrect a session `evict_retained_sessions`
         // just dropped (#800 review).
-        if !self.sessions.contains_key(agent_id) && !self.subagent_local.contains_key(agent_id) {
+        if !self.is_tracked_agent(agent_id) {
             return;
         }
         self.ensure_session(agent_id);
