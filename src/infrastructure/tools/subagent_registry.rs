@@ -307,7 +307,7 @@ pub async fn send_subagent_uds_command_with_timeout(
                                     // Accept the id-less snapshot, applying the
                                     // request's `count` locally (last-N tail, #842).
                                     return Ok(subagent_snapshot::finalize_snapshot_answer(
-                                        json, command,
+                                        l, json, command,
                                     ));
                                 }
                                 // Unsolicited / mismatched response — skip.

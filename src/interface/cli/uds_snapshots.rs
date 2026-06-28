@@ -46,7 +46,9 @@ const SNAPSHOT_MESSAGES_BUDGET_BYTES: usize = 1024 * 1024 - 4096;
 /// history would exceed [`SNAPSHOT_MESSAGES_BUDGET_BYTES`], the OLDEST messages
 /// are dropped so the most recent (the inspection target) still arrive, with
 /// `data.trimmed` set — counted/tail readers slice this further on the parent
-/// side, so a tail is exactly what they want.
+/// side, so a tail is exactly what they want. A single message that alone exceeds
+/// the budget cannot be returned under the parent's read cap, so it is dropped
+/// too (yielding an empty `trimmed` snapshot rather than erroring the call).
 pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
     let values: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
 

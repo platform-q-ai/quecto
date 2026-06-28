@@ -52,23 +52,32 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
 }
 
 /// Apply the request's `count` (if any) to an accepted `get_messages` snapshot by
-/// keeping the last-N messages, then return the serialized single-line response
-/// (#842). The snapshot/trimmed markers in `data` are preserved untouched so the
-/// caller can still tell the data may lag the in-flight turn. Used only after
-/// [`response_is_valid_answer`] has approved the snapshot.
-pub(super) fn finalize_snapshot_answer(mut json: serde_json::Value, command: &str) -> String {
-    if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(command) {
-        if let Some(count) = cmd.get("count").and_then(|v| v.as_u64()) {
-            if let Some(msgs) = json
-                .pointer_mut("/data/messages")
-                .and_then(|v| v.as_array_mut())
-            {
-                let count = count as usize;
-                if msgs.len() > count {
-                    let skip = msgs.len() - count;
-                    msgs.drain(0..skip);
-                }
-            }
+/// keeping the last-N messages, then return the single-line response (#842). When
+/// the request carries no `count` (every `get_state` and uncounted `get_messages`
+/// snapshot) the already-read `line` is returned VERBATIM — avoiding a needless
+/// re-encode and preserving the child's exact bytes. The snapshot/trimmed markers
+/// in `data` are preserved untouched so the caller can still tell the data may lag
+/// the in-flight turn. Used only after [`response_is_valid_answer`] approved the
+/// snapshot, so `json` is the already-parsed form of `line`.
+pub(super) fn finalize_snapshot_answer(
+    line: String,
+    mut json: serde_json::Value,
+    command: &str,
+) -> String {
+    let Some(count) = serde_json::from_str::<serde_json::Value>(command)
+        .ok()
+        .and_then(|cmd| cmd.get("count").and_then(|v| v.as_u64()))
+    else {
+        return line;
+    };
+    if let Some(msgs) = json
+        .pointer_mut("/data/messages")
+        .and_then(|v| v.as_array_mut())
+    {
+        let count = count as usize;
+        if msgs.len() > count {
+            let skip = msgs.len() - count;
+            msgs.drain(0..skip);
         }
     }
     json.to_string()

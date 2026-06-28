@@ -584,8 +584,10 @@ fn finalize_snapshot_answer_tails_to_count() {
             {"role": "user", "content": "m3"},
         ], "snapshot": true }
     });
+    let raw = snapshot.to_string();
     // count=2 keeps the last two messages, preserving the snapshot marker.
     let line = subagent_snapshot::finalize_snapshot_answer(
+        raw.clone(),
         snapshot.clone(),
         r#"{"type":"get_messages","count":2}"#,
     );
@@ -596,21 +598,17 @@ fn finalize_snapshot_answer_tails_to_count() {
     assert_eq!(msgs[1]["content"], "m3");
     assert_eq!(v.pointer("/data/snapshot"), Some(&serde_json::json!(true)));
 
-    // No count => unchanged (all three messages).
-    let line =
-        subagent_snapshot::finalize_snapshot_answer(snapshot.clone(), r#"{"type":"get_messages"}"#);
-    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
-    assert_eq!(
-        v.pointer("/data/messages")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .len(),
-        3
+    // No count => the original line is returned VERBATIM (no re-encode).
+    let line = subagent_snapshot::finalize_snapshot_answer(
+        raw.clone(),
+        snapshot.clone(),
+        r#"{"type":"get_messages"}"#,
     );
+    assert_eq!(line, raw, "uncounted request returns the line unchanged");
 
     // count larger than history => all messages, no panic.
     let line = subagent_snapshot::finalize_snapshot_answer(
+        raw,
         snapshot,
         r#"{"type":"get_messages","count":99}"#,
     );
