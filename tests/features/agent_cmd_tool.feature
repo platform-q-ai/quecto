@@ -207,12 +207,33 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd response command "get_state" should include boolean field "isStreaming"
     And the agent_cmd response command "get_state" should include integer field "messageCount"
 
-  Scenario: non-snapshot command against a busy child preserves id-correlation
+  # A genuinely DIFFERENT command (get_session_stats) must never be answered by
+  # the connect-time get_messages snapshot — the #835 id-correlation guarantee.
+  Scenario: mismatched command against a busy child preserves id-correlation
     Given an AgentCmdTool with a busy mock registry entry "busy-skip"
-    When I execute agent_cmd with '{"agent_id":"busy-skip","command":"get_messages","count":1}'
+    When I execute agent_cmd with '{"agent_id":"busy-skip","command":"get_session_stats"}'
     Then the agent_cmd result should not be an error
     And the agent_cmd result should contain "LATEST TURNS"
     And the agent_cmd result should not contain "FIRST MESSAGE ONLY"
+
+  # --- Counted / tail get_messages served from the snapshot (#842) ---
+
+  # A counted get_messages against a busy child must return the last-N snapshot
+  # within the inspector timeout instead of blocking to the 300s deadline.
+  Scenario: counted get_messages against a busy child accepts the snapshot tail
+    Given an AgentCmdTool with a busy multi-message snapshot registry entry "busy-tail"
+    When I execute agent_cmd with '{"agent_id":"busy-tail","command":"get_messages","count":1}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd response command "get_messages" should include a "messages" array
+    And the agent_cmd result should contain "NEWEST MESSAGE"
+    And the agent_cmd result should not contain "OLDEST MESSAGE"
+
+  Scenario: get_messages_tail alias against a busy child accepts the snapshot tail
+    Given an AgentCmdTool with a busy multi-message snapshot registry entry "busy-tail2"
+    When I execute agent_cmd with '{"agent_id":"busy-tail2","command":"get_messages_tail","count":1}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "NEWEST MESSAGE"
+    And the agent_cmd result should not contain "OLDEST MESSAGE"
 
   @pending
   Scenario: UDS connection keeps write half open until response received

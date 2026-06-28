@@ -40,6 +40,45 @@ fn build_get_messages_line_serializes_prior_history() {
     assert!(line.contains("prior answer"), "got: {line}");
 }
 
+/// The connect-time snapshot is tagged `snapshot: true` so a caller can tell the
+/// data may lag the in-flight turn — unlike a live dispatch-loop reply (#842).
+#[test]
+fn build_get_messages_line_marks_snapshot() {
+    let line = build_get_messages_line(&[Message::user("q")]);
+    let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(
+        v["data"]["snapshot"], true,
+        "snapshot marker present: {line}"
+    );
+}
+
+/// A history whose serialized form would exceed the parent's per-line read cap is
+/// tailed so the call yields a useful (trimmed) answer instead of erroring (#842).
+#[test]
+fn build_get_messages_line_trims_oversized_history() {
+    // Each message ~10 KiB; 200 of them (~2 MiB) exceeds the 1 MiB line cap.
+    let big = "x".repeat(10 * 1024);
+    let messages: Vec<Message> = (0..200)
+        .map(|i| Message::assistant(format!("{i}-{big}"), vec![]))
+        .collect();
+    let line = build_get_messages_line(&messages);
+    assert!(
+        line.len() <= 1024 * 1024,
+        "line must fit under the 1 MiB cap, got {} bytes",
+        line.len()
+    );
+    let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(v["data"]["trimmed"], true, "trimmed marker present");
+    let msgs = v["data"]["messages"].as_array().unwrap();
+    assert!(!msgs.is_empty(), "keeps the most recent messages");
+    // The newest message (index 199) must be retained (tail, not head).
+    let kept_last = msgs.last().unwrap()["content"].as_str().unwrap();
+    assert!(
+        kept_last.starts_with("199-"),
+        "newest message kept: {kept_last}"
+    );
+}
+
 /// The snapshot is independent of the dispatch loop's exclusive `&mut messages`
 /// borrow: while a simulated turn holds `messages` mutably for its whole
 /// duration, a concurrent reader (the accept loop) can still read the snapshot

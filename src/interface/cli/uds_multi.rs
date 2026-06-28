@@ -361,6 +361,13 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                     // nothing: the dispatch loop answers the client's own
                     // `get_messages` in FIFO order, so clients that don't ask see
                     // no protocol change and ordering-sensitive flows are unaffected.
+                    // Note (#842, item 4): the state and conversation snapshots
+                    // are read under two SEPARATE RwLock acquisitions, so a turn
+                    // boundary landing between them can make `state.messageCount`
+                    // reflect turn N while the messages reflect N+1 — a cosmetic
+                    // one-turn skew. Accepted: both snapshots already carry a
+                    // staleness marker (`isStreaming:true` / `snapshot:true`), and
+                    // a single lock epoch would couple two independent snapshots.
                     if busy.load(std::sync::atomic::Ordering::SeqCst) {
                         use tokio::io::AsyncWriteExt;
                         let state_line = {
