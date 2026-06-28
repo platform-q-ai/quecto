@@ -169,13 +169,33 @@ pub fn render_compact_line(state: &WorkflowBarState) -> Option<String> {
     }
     let total = state.total.max(state.steps.len() as u32).max(1);
     let bar = progress_bar(state.done, total, 10);
-    let phase = phase_display(state.current_phase().unwrap_or("done"));
-    Some(format!(
-        "{}  {} {}",
-        bar,
-        theme::accent(&theme::bold(&phase)),
-        theme::muted(&format!("{}/{}", state.done, total)),
-    ))
+
+    // Concise current-step context (#882): `Step n/total PHASE · label · #issue`,
+    // or a completion marker once every step is done. Long labels/issue titles
+    // are ellipsized so the single boxed line never wraps.
+    let context = match state.current_step_id() {
+        Some(id) => {
+            let phase = phase_display(state.current_phase().unwrap_or("done"));
+            let label = state.current_step_label().unwrap_or("");
+            let mut parts = format!(
+                "{} {}",
+                theme::accent(&theme::bold(&format!("Step {id}/{total}"))),
+                theme::muted(&phase),
+            );
+            if !label.is_empty() {
+                parts.push_str(&theme::dim(&format!(" · {}", ellipsize_clean(label, 32))));
+            }
+            parts
+        }
+        None => theme::success("✓ Workflow complete!"),
+    };
+
+    let mut line = format!("{bar}  {context}");
+    if let Some(number) = state.issue_number {
+        line.push_str(&theme::dim(" · "));
+        line.push_str(&theme::accent(&theme::bold(&format!("#{number}"))));
+    }
+    Some(line)
 }
 
 /// Normalise phase keys so synonyms collapse to one pill (`ci` → `ci_cd`).

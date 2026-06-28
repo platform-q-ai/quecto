@@ -323,8 +323,8 @@ async fn main_pane_shows_boxed_workflow_for_selected_agent() {
         "the relocated workflow bar must be BOXED in the main pane:\n{top}"
     );
     assert!(
-        top.contains("3/5"),
-        "the boxed workflow bar must show progress n/total in the main pane:\n{top}"
+        top.contains("Step 4/5"),
+        "the boxed workflow bar must show the current step n/total in the main pane:\n{top}"
     );
     assert!(
         top.contains("#820"),
