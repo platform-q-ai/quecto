@@ -365,6 +365,34 @@ fn then_parsed_spawn_config_has_workflow_guards(world: &mut QuectoWorld, expecte
     );
 }
 
+#[then(expr = "the parsed spawn config should have model {string}")]
+fn then_parsed_spawn_config_has_model(world: &mut QuectoWorld, expected: String) {
+    let cfg = world
+        .subagent_config
+        .as_ref()
+        .expect("subagent_config not set — was parse_args called?");
+    assert_eq!(
+        cfg.model.as_deref(),
+        Some(expected.as_str()),
+        "expected model {:?}, got {:?}",
+        expected,
+        cfg.model
+    );
+}
+
+#[then("the parsed spawn config should have no model")]
+fn then_parsed_spawn_config_has_no_model(world: &mut QuectoWorld) {
+    let cfg = world
+        .subagent_config
+        .as_ref()
+        .expect("subagent_config not set — was parse_args called?");
+    assert!(
+        cfg.model.is_none(),
+        "expected no model, got {:?}",
+        cfg.model
+    );
+}
+
 #[then(expr = "the spawn tool schema should include property {string}")]
 fn then_spawn_tool_schema_includes_property(world: &mut QuectoWorld, property: String) {
     let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");

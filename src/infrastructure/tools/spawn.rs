@@ -241,6 +241,9 @@ impl SpawnTool {
             _ => None,
         };
 
+        // TODO(#881): model not yet wired.
+        let model = None;
+
         if let Some(ref id) = agent_id {
             super::subagent_registry::validate_agent_id_format(id)?;
             if !self.allowed_agents.is_empty() {
@@ -257,6 +260,7 @@ impl SpawnTool {
             workflow,
             workflow_guards,
             workflow_spec,
+            model,
         })
     }
 
@@ -287,49 +291,11 @@ impl SpawnTool {
             .socket_dir
             .join(format!("quecto-agent-{session_name}.sock"));
 
-        let mut cmd = tokio::process::Command::new(&binary);
-        cmd.arg("agent")
-            .arg("--mode")
-            .arg("uds")
-            .arg("-s")
-            .arg(session_name)
-            .arg("--socket")
-            .arg(&socket_path)
-            .arg("--persist");
-
-        if let Some(ref system) = config.system {
-            cmd.arg("--system").arg(system);
-        }
-
-        // Forward --config if the caller specified a custom config path. In
-        // managed runtime pods, inherit the active runtime config for spawned
-        // subagents so they use the same tool isolation defaults as the parent.
-        if let Some(cfg_path) =
-            effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path())
-        {
-            cmd.arg("--config").arg(cfg_path);
-        }
-
-        // Tell the child who its parent is, so the child's OWN emitted events
-        // carry the correct parent_id (PRD Stage B) — not just the copy the
-        // parent's monitor re-stamps when forwarding.
-        if let Some(parent_id) = &self.parent_id {
-            cmd.arg("--parent-id").arg(parent_id);
-        }
-
-        // Forward --workflow / --workflow-guards when requested.
-        if config.workflow {
-            cmd.arg("--workflow");
-        }
-        if config.workflow_guards {
-            cmd.arg("--workflow-guards");
-        }
-
         // A by-value workflow assignment is written to a file next to the
         // socket and forwarded as `--workflow-spec <path>`; the inline template
         // is too large for a bare CLI arg. The child runs it in Active mode
         // (binding) and deletes the file once read — see agent_tool_registry.
-        if let Some(ref spec) = config.workflow_spec {
+        let workflow_spec_path = if let Some(ref spec) = config.workflow_spec {
             let spec_json = serde_json::to_string(spec).map_err(|e| {
                 DomainError::Tool(format!("failed to serialize workflow spec: {e}"))
             })?;
@@ -349,14 +315,27 @@ impl SpawnTool {
             ));
             write_private_new(&spec_path, spec_json.as_bytes())
                 .map_err(|e| DomainError::Tool(format!("failed to write workflow spec: {e}")))?;
-            cmd.arg("--workflow-spec").arg(&spec_path);
-        }
+            Some(spec_path)
+        } else {
+            None
+        };
 
-        // Propagate --no-sandbox so child agents inherit the same workspace
-        // restriction posture as the parent.
-        if !self.restrict_to_workspace {
-            cmd.arg("--no-sandbox");
-        }
+        // Build the full child argument list (incl. `--model`, #881) via the
+        // pure builder so the exact flag set is unit-testable.
+        let effective_config =
+            effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path());
+        let cli_args = super::spawn_launch_args::build_child_cli_args(
+            session_name,
+            &socket_path,
+            config,
+            effective_config.as_deref(),
+            self.parent_id.as_deref(),
+            self.restrict_to_workspace,
+            workflow_spec_path.as_deref(),
+        );
+
+        let mut cmd = tokio::process::Command::new(&binary);
+        cmd.args(&cli_args);
 
         if !self.base_dir.as_os_str().is_empty() {
             cmd.env("QUECTO_BASE_DIR", &self.base_dir);
