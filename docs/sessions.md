@@ -126,10 +126,10 @@ Returns the session key, message count, and streaming status.
 Returns the full conversation history.
 
 ```json
-{"type": "get_messages_tail", "count": 5}
+{"type": "get_messages", "count": 5}
 ```
 
-Returns the last 5 messages.
+Returns the last 5 messages (omit `count` to return the full history).
 
 ```json
 {"type": "get_session_stats"}

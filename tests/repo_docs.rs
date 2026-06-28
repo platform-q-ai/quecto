@@ -73,6 +73,91 @@ fn readme_uds_protocol_lists_current_commands_and_events() {
 }
 
 #[test]
+fn agent_cmd_docs_match_tool_schema() {
+    // #844: the docs' agent_cmd command surface must match the shipped tool
+    // schema. After the #841 consolidation `get_messages_tail` is no longer a
+    // first-class agent_cmd command — it survives only as a deprecated UDS
+    // protocol alias of `get_messages` with an optional `count`.
+    let src = read_repo_file("src/infrastructure/tools/agent_cmd.rs");
+    let block = src
+        .split("const SUPPORTED_COMMANDS: &[&str] = &[")
+        .nth(1)
+        .and_then(|rest| rest.split("];").next())
+        .expect("agent_cmd.rs should declare SUPPORTED_COMMANDS");
+    let commands: Vec<String> = block
+        .split(',')
+        .map(|entry| entry.trim().trim_matches('"').to_string())
+        .filter(|entry| !entry.is_empty())
+        .collect();
+
+    assert!(
+        commands.iter().any(|c| c == "get_messages"),
+        "agent_cmd should support get_messages"
+    );
+    assert!(
+        !commands.iter().any(|c| c == "get_messages_tail"),
+        "get_messages_tail must not be a first-class agent_cmd command"
+    );
+
+    // README agent_cmd tool row must list exactly the supported commands and
+    // must not advertise the removed get_messages_tail command.
+    let readme = read_repo_file("README.md");
+    let row = readme
+        .lines()
+        .find(|line| line.contains("Send commands to spawned UDS subagents"))
+        .expect("README should document the agent_cmd tool");
+    for cmd in &commands {
+        assert!(
+            row.contains(&format!("`{cmd}`")),
+            "README agent_cmd row missing supported command `{cmd}`"
+        );
+    }
+    assert!(
+        !row.contains("get_messages_tail"),
+        "README agent_cmd row must not list the removed get_messages_tail command"
+    );
+
+    // docs/subagents.md documents the agent_cmd tool surface only — it must not
+    // reference get_messages_tail at all; use get_messages with optional count.
+    let subagents = read_repo_file("docs/subagents.md");
+    assert!(
+        !subagents.contains("get_messages_tail"),
+        "docs/subagents.md must not reference get_messages_tail (use get_messages with count)"
+    );
+    assert!(
+        subagents.contains("get_messages"),
+        "docs/subagents.md should document get_messages"
+    );
+
+    // docs/sessions.md UDS inspection examples must not present get_messages_tail.
+    let sessions = read_repo_file("docs/sessions.md");
+    assert!(
+        !sessions.contains("get_messages_tail"),
+        "docs/sessions.md must not present get_messages_tail (use get_messages with count)"
+    );
+
+    // Where the UDS protocol keeps the deprecated GetMessagesTail alias, it must
+    // be labelled deprecated.
+    let uds = read_repo_file("docs/uds-protocol.md");
+    if uds.contains("get_messages_tail") {
+        assert!(
+            uds.to_lowercase().contains("deprecated"),
+            "docs/uds-protocol.md must label the get_messages_tail alias deprecated"
+        );
+    }
+    // The README UDS protocol command table likewise keeps the alias labelled.
+    if let Some(line) = readme
+        .lines()
+        .find(|line| line.contains("`get_messages_tail`"))
+    {
+        assert!(
+            line.to_lowercase().contains("deprecated"),
+            "README must label the get_messages_tail UDS alias deprecated"
+        );
+    }
+}
+
+#[test]
 fn run_tui_prewarms_cold_binary_before_exec() {
     // #808: run-tui.sh must pay the cold-binary cost before launching the TUI,
     // POSIX-safely (no failure if `quecto` is not yet on PATH).

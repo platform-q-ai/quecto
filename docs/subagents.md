@@ -130,7 +130,7 @@ its result rather than picking a new workflow.
     "command": {
       "type": "string",
       "enum": ["prompt", "steer", "follow_up", "abort", "kill", "await",
-               "get_state", "get_messages", "get_messages_tail",
+               "get_state", "get_messages",
                "get_session_stats", "get_subagents", "get_extensions",
                "set_model", "clear_history", "reload_extensions"],
       "description": "Command to send"
@@ -141,7 +141,7 @@ its result rather than picking a new workflow.
     },
     "count": {
       "type": "integer",
-      "description": "Number of messages for get_messages_tail (default: 1)"
+      "description": "Number of messages for get_messages (omit for all; N for the last N)"
     },
     "timeout": {
       "type": "integer",
@@ -167,8 +167,7 @@ its result rather than picking a new workflow.
 | `kill` | Terminate the subagent process (SIGTERM) | No |
 | `await` | Block until the subagent reaches a terminal state | No |
 | `get_state` | Check if the agent is idle or streaming | No |
-| `get_messages` | Read the full message history | No |
-| `get_messages_tail` | Read the last N messages (use `count`) | No |
+| `get_messages` | Read the message history (omit `count` for all; pass `count` for the last N messages) | No |
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List subagents spawned by this agent | No |
 | `get_extensions` | List loaded extensions | No |
@@ -183,7 +182,7 @@ its result rather than picking a new workflow.
 ```
 
 ```json
-{"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "get_messages_tail", "count": 3}}
+{"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "get_messages", "count": 3}}
 ```
 
 ```json
@@ -232,15 +231,15 @@ re-run of the same child will auto-note again.
   example a reviewer whose verdict you must read before continuing.
 
 In both cases the note/await result is a **summary only**; to read the child's
-full output call `get_messages_tail` / `get_messages`.
+full output call `get_messages` (optionally with `count` for the last N messages).
 
 ### What you can see without `await`
 
 - **Workflow state changes** are forwarded onto the parent's event stream
   (identity-tagged with `agent_id` + `parent_id`). See "Observing the unit
   tree" below.
-- **Point-in-time snapshots** via `get_state`, `get_messages`, and
-  `get_messages_tail` reflect the child's state at the moment of the call —
+- **Point-in-time snapshots** via `get_state` and `get_messages`
+  reflect the child's state at the moment of the call —
   but they don't register as notifications. A single call that catches the
   agent mid-run tells you nothing about what happens next.
 
@@ -258,7 +257,7 @@ result, read it explicitly:
 //    Agent 'worker' completed and is ready for inspection
 
 // 3. Inspect the full output when the note tells you the child is done.
-{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages_tail", "count": 5}}
+{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages", "count": 5}}
 ```
 
 **Common mistake:** treating the one-line note as the child's result. Always
@@ -267,7 +266,7 @@ tail the output to see what the agent actually produced.
 ### Canonical pattern (blocking): await + tail
 
 When you must not continue until the child has finished — for example a reviewer
-whose verdict gates the next step — `await` it, then `get_messages_tail`:
+whose verdict gates the next step — `await` it, then read the tail with `get_messages`:
 
 ```json
 // 1. Spawn
@@ -277,11 +276,11 @@ whose verdict gates the next step — `await` it, then `get_messages_tail`:
 {"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "await", "timeout": 60}}
 
 // 3. Inspect output (check the actual result or error)
-{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages_tail", "count": 5}}
+{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages", "count": 5}}
 ```
 
 `await` reports *that* something happened (idle/exited/error/timeout) but not
-*what*; `get_messages_tail` shows the final assistant message or error details.
+*what*; `get_messages` (with `count`) shows the final assistant message or error details.
 
 ### `await` — block until a subagent finishes
 
@@ -555,7 +554,7 @@ Then await each:
   agent_cmd(agent_id='security-review', command='await', timeout=600)
   agent_cmd(agent_id='perf-review', command='await', timeout=600)
 
-Read results with agent_cmd get_messages_tail and compile a summary."
+Read results with agent_cmd get_messages and compile a summary."
 ```
 
 All three run concurrently — total time is the max of the three, not the sum.
@@ -563,14 +562,14 @@ Using `await` here is the *blocking* choice: it pauses the parent until each
 reviewer finishes, which is what you want when their verdicts gate the next step.
 If you don't need to block, you can skip `await` entirely — each reviewer's
 one-line completion note arrives automatically at your next idle turn, and you
-read full results with `get_messages_tail` once notified.
+read full results with `get_messages` once notified.
 
 ### Fire-and-forget with auto-await
 
 ```
 "Spawn agent_id='researcher' with task='Analyze the codebase and write findings to /tmp/report.md'.
 Continue working on other tasks. You'll automatically get a one-line note when the
-researcher finishes; then read the report with agent_cmd get_messages_tail."
+researcher finishes; then read the report with agent_cmd get_messages."
 ```
 
 ### Idle agents with on-demand prompts
@@ -579,7 +578,7 @@ researcher finishes; then read the report with agent_cmd get_messages_tail."
 "Spawn agent_id='helper' with no task (starts idle).
 Later, when I need help:
   agent_cmd(agent_id='helper', command='prompt', message='Explain this function...')
-  agent_cmd(agent_id='helper', command='get_messages_tail', count=1)"
+  agent_cmd(agent_id='helper', command='get_messages', count=1)"
 ```
 
 ### Steering a running agent

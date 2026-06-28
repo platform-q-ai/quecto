@@ -299,12 +299,14 @@ Return the current session state.
 
 ### `get_messages`
 
-Return the full conversation history.
+Return the conversation history. Omit `count` to return the full history, or
+pass `count: N` to return only the last N messages (the recent-context tail).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"get_messages"` | yes | |
 | `id` | string | no | Correlation ID |
+| `count` | integer | no | Maximum number of trailing messages to return (omit for all) |
 
 **Response data:**
 
@@ -341,7 +343,12 @@ Each message contains:
 
 ---
 
-### `get_messages_tail`
+### `get_messages_tail` (DEPRECATED)
+
+> **DEPRECATED:** This is a backward-compatibility alias of
+> [`get_messages`](#get_messages) with a `count`. New clients should send
+> `get_messages` with `count` instead; the alias is retained only so existing
+> callers keep working.
 
 Return the last N messages from the conversation history. Useful for rendering recent context without fetching the entire history.
 
