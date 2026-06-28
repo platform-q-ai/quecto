@@ -104,8 +104,8 @@ fn then_master_row(world: &mut QuectoWorld) {
 fn then_main_pane_boxed(world: &mut QuectoWorld) {
     let top = top(world);
     assert!(
-        (top.contains('┌') || top.contains('╭')) && top.contains("3/5"),
-        "the main pane must show a boxed one-line workflow bar (progress n/total), got:\n{top}"
+        (top.contains('┌') || top.contains('╭')) && top.contains("Step 4/5"),
+        "the main pane must show a boxed one-line workflow bar (current step n/total), got:\n{top}"
     );
 }
 
