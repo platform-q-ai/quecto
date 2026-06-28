@@ -103,7 +103,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
       {
         "id": "feature",
         "label": "Feature",
-        "description": "New capability with local hook verification, BDD/TDD, code review, and merge.",
+        "description": "New capability with local hook verification, BDD/TDD, code review, then hand off the PR for human review (no auto-merge).",
         "when_to_use": "Use for all Quecto development work in this repository.",
         "steps": [
           {
@@ -204,15 +204,15 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
           },
           {
             "key": "merge",
-            "label": "Merge",
+            "label": "Hand off for review — do NOT merge",
             "phase": "ci_cd",
-            "guidance": "Merge with gh pr merge <PR> --merge --auto --delete-branch (auto-merge waits for the required Smoke Test). The default branch is protected with enforce_admins; do not force or bypass."
+            "guidance": "Do NOT run gh pr merge or git merge, and do NOT set auto-merge. This workflow STOPS here and hands off to a human: report the PR number and a short summary, then stop. The human reviews the local file changes and merges manually. For the PR to be mergeable the required \"Unit Tests\" and \"Mock LLM E2E Tests\" checks must be green and the verdict must be CONFORMANCE: PASS."
           },
           {
             "key": "pull",
-            "label": "Move to local master and pull",
+            "label": "Sync after the human merges",
             "phase": "ci_cd",
-            "guidance": "Run git checkout master and git pull --ff-only to sync the merge locally."
+            "guidance": "Only AFTER a human has merged the PR: run git checkout master and git pull --ff-only to sync. During the autonomous run there is nothing to pull — the merge is performed by a human."
           }
         ],
         "guards": [
@@ -230,7 +230,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
               "gh pr merge"
             ],
             "before_step_key": "merge",
-            "message": "Complete code review and verify the pre-push gate passed before merging."
+            "message": "This workflow does NOT merge — hand off the PR for human review (no auto-merge). Before handing off, complete code review, pass the conformance gate, and verify the pre-push gate passed. Never run gh pr merge / git merge."
           }
         ]
       }

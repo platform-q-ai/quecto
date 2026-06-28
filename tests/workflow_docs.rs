@@ -40,7 +40,7 @@ fn assert_reference_steps(steps: &[Value]) {
     assert_eq!(steps[3]["key"], "red");
     assert_eq!(steps[4]["key"], "bdd_review");
     assert_eq!(steps[17]["key"], "pull");
-    assert_eq!(steps[17]["label"], "Move to local master and pull");
+    assert_eq!(steps[17]["label"], "Sync after the human merges");
     assert_eq!(steps.last().unwrap()["key"], "cleanup");
     assert_eq!(steps.last().unwrap()["label"], "Clean up sub agents");
 }
@@ -85,8 +85,8 @@ fn readme_lists_full_19_step_reference_workflow() {
         "14 - Push changes to remote",
         "15 - Reply to the reviewers comments on the PR and mark resolved (use graphql)",
         "16 - Confirm the pre-push gate passed (real-LLM, machete, deny run on push)",
-        "17 - Merge",
-        "18 - Move to local master and pull",
+        "17 - Hand off for review — do NOT merge",
+        "18 - Sync after the human merges",
         "19 - Clean up sub agents",
     ] {
         assert!(

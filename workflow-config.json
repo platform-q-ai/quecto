@@ -18,7 +18,7 @@
       {
         "id": "feature",
         "label": "Feature",
-        "description": "New capability with local hook verification, BDD/TDD, code review, and merge.",
+        "description": "New capability with local hook verification, BDD/TDD, code review, then hand off the PR for human review (no auto-merge).",
         "when_to_use": "Use for all Quecto development work in this repository.",
         "shared_guidance": "Shared sub-agent review mechanic (used by both the `bdd_review` and `reviewers` steps): launch each reviewer with `spawn`, binding it to its OWN dedicated review workflow via `workflow_spec`/`template` (never this feature workflow). Spawned reviewers are auto-awaited — you automatically receive a one-line completion note for each at your next idle turn, so an explicit `agent_cmd` `command: 'await'` is optional; use it only if you must block before doing anything else. When you need a reviewer's findings to proceed, read them with `get_messages` (after its completion note, or after an explicit await). Record each spawned sub-agent id for the cleanup step.",
         "steps": [
@@ -126,15 +126,15 @@
           },
           {
             "key": "merge",
-            "label": "Merge",
+            "label": "Hand off for review — do NOT merge",
             "phase": "ci_cd",
-            "guidance": "Merge with gh pr merge <PR> --merge --auto --delete-branch (auto-merge waits for the required \"Unit Tests\" and \"Mock LLM E2E Tests\" checks). The default branch is protected with enforce_admins; do not force or bypass. Do NOT merge (and do NOT set auto-merge) if any review, fix, or conformance step ERRORED or did not actually run, or if the push bypassed the local gate with --no-verify — a bypassed gate does not count as passing; re-push cleanly or stop and report instead. Done when the PR is merged and the branch is deleted."
+            "guidance": "Do NOT run gh pr merge or git merge, and do NOT set auto-merge. This workflow STOPS here and hands off to a human: report the PR number and a short summary, then stop. The human reviews the local file changes and merges manually. For the PR to be mergeable the required \"Unit Tests\" and \"Mock LLM E2E Tests\" checks must be green and the verdict must be CONFORMANCE: PASS; if any review, fix, or conformance step ERRORED or did not actually run, or the push bypassed the local gate with --no-verify, report that too. Done when the PR is reported as ready for human review (NOT merged)."
           },
           {
             "key": "pull",
-            "label": "Move to local master and pull",
+            "label": "Sync after the human merges",
             "phase": "ci_cd",
-            "guidance": "Run git checkout master and git pull --ff-only to sync the merge locally."
+            "guidance": "Only AFTER a human has merged the PR: run git checkout master and git pull --ff-only to sync. During the autonomous run there is nothing to pull — the merge is performed by a human, so skip this step and stop after the hand-off."
           },
           {
             "key": "cleanup",
@@ -158,7 +158,7 @@
               "gh pr merge"
             ],
             "before_step_key": "merge",
-            "message": "Complete code review, pass the conformance gate (CONFORMANCE: PASS), and verify the pre-push gate genuinely passed (not bypassed with --no-verify) before merging. If any review/fix/conformance step errored or did not run, do not merge — stop and report."
+            "message": "This workflow does NOT merge — hand off the PR for human review. Before handing off, complete code review, pass the conformance gate (CONFORMANCE: PASS), and verify the pre-push gate genuinely passed (not bypassed with --no-verify). Never run gh pr merge / git merge or set auto-merge; report the PR as ready for human review instead."
           }
         ]
       }

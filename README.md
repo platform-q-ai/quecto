@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.81.5**.
+Current version: **0.81.6**.
 
 ## Quick Start
 
@@ -673,8 +673,8 @@ Quecto development uses the repository-local Quecto workflow checklist:
 14 - Push changes to remote
 15 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
 16 - Confirm the pre-push gate passed (real-LLM, machete, deny run on push)
-17 - Merge
-18 - Move to local master and pull
+17 - Hand off for review — do NOT merge
+18 - Sync after the human merges
 19 - Clean up sub agents
 
 ## Quality gates
