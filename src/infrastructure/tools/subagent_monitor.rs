@@ -345,7 +345,11 @@ fn handle_monitor_line(
 /// `tool_execution_start` / non-error `tool_execution_end` boundaries that #839
 /// deliberately removed; those MUST stay suppressed (a running→idle transition
 /// is carried by the broadcast `agent_end`, so no stale "running" persists).
-fn should_broadcast_state_changed_after_event(value: &serde_json::Value) -> bool {
+/// Decide whether a `SubagentStateChanged` broadcast should fire after applying
+/// `value`. Gated to terminal transitions plus the first running transition
+/// (`agent_start`) — see #839 (no high-frequency per-tool broadcasts) and #866
+/// (a spawned agent must appear/stay visible during a long first turn).
+pub fn should_broadcast_state_changed_after_event(value: &serde_json::Value) -> bool {
     match value.get("type").and_then(|v| v.as_str()) {
         Some("agent_start") => true,
         Some("agent_end") => true,

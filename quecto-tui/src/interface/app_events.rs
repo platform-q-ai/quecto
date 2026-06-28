@@ -190,6 +190,18 @@ impl App {
             return;
         };
         let sanitized = crate::interface::ansi::sanitize_control(agent_id);
+        // If the kernel already confirmed this id (a non-optimistic entry), do
+        // not clobber it with a fresh unconfirmed "starting" guess. A re-played
+        // or duplicate spawn ToolStart (event replay on reconnect) would
+        // otherwise reset started_at/status and re-mark it optimistic, partly
+        // re-opening the #831 drop path for the grace window (review).
+        if self
+            .subagent_local
+            .get(&sanitized)
+            .is_some_and(|e| !e.optimistic)
+        {
+            return;
+        }
         let mut tracked = TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
             agent_id: sanitized.clone(),
             status: "starting".to_string(),

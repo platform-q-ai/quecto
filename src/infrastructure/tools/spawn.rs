@@ -669,15 +669,19 @@ fn register_and_broadcast(
     session_name: &str,
     entry: SubagentEntry,
 ) {
-    {
-        registry
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(session_name.to_string(), entry);
-    }
-    if let Some(tx) = broadcast_tx {
-        let event =
-            crate::infrastructure::tools::subagent_cascade::build_state_changed_event(registry);
+    // Insert and serialize the survivor set in ONE critical section. Locking
+    // twice (insert, then re-lock inside build_state_changed_event) leaves a gap
+    // in which a concurrent reaper/cascade-removal could mutate or drop the
+    // just-inserted child and broadcast a survivor set that omits it — defeating
+    // the immediate-visibility guarantee #866 adds (review).
+    let event = {
+        let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+        guard.insert(session_name.to_string(), entry);
+        broadcast_tx.map(|_| {
+            crate::infrastructure::tools::subagent_cascade::build_state_changed_event_locked(&guard)
+        })
+    };
+    if let (Some(tx), Some(event)) = (broadcast_tx, event) {
         let _ = tx.send(event);
     }
 }

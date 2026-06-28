@@ -641,22 +641,28 @@ fn then_panel_shows_idle(world: &mut QuectoWorld, agent_id: String) {
 #[when(expr = "the child {string} starts its turn")]
 fn when_child_starts_turn(world: &mut QuectoWorld, child: String) {
     use quecto::infrastructure::tools::subagent_cascade::build_state_changed_event;
+    use quecto::infrastructure::tools::subagent_monitor::should_broadcast_state_changed_after_event;
     let r = world
         .cascade_registry
         .as_ref()
         .expect("no cascade registry");
+    let value = serde_json::json!({"type": "agent_start"});
     {
         let mut g = r.lock().unwrap();
         let entry = g
             .get_mut(&child)
             .unwrap_or_else(|| panic!("child {child} not found"));
-        quecto::infrastructure::tools::subagent_monitor::apply_event(
-            entry,
-            r#"{"type":"agent_start"}"#,
-        );
+        quecto::infrastructure::tools::subagent_monitor::apply_event_parsed(entry, &value);
     }
-    let event = serde_json::from_str::<serde_json::Value>(&build_state_changed_event(r)).unwrap();
-    world.cascade_broadcast = Some(Some(event));
+    // Drive the real broadcast-trigger gate (#839/#866): only record a broadcast
+    // if `agent_start` actually qualifies. Initialise to `Some(None)` so the Then
+    // assertion fails if the gate ever suppresses the running transition.
+    world.cascade_broadcast = Some(None);
+    if should_broadcast_state_changed_after_event(&value) {
+        let event =
+            serde_json::from_str::<serde_json::Value>(&build_state_changed_event(r)).unwrap();
+        world.cascade_broadcast = Some(Some(event));
+    }
 }
 
 #[then(expr = "observers should receive subagent state listing {string} as running")]
