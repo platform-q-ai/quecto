@@ -423,6 +423,15 @@ async fn state_changed_dropping_all_clears_footer_count() {
 }
 
 // ── #838: non-running panel timers must be FROZEN (independent of per-frame now) ──
+//
+// These tests call `panel_row_elapsed` directly with two explicit `now`s rather
+// than driving a full `compose_frame`. That is deliberate: `compose_frame` samples
+// `now = Instant::now()` internally (app_methods.rs) and takes no clock argument,
+// so a render-level test cannot inject the advanced clock that reproduces the bug
+// without a wall-clock dependency. The helper is the single site that maps a
+// per-frame `now` to the displayed timer, so exercising it with two `now`s pins
+// exactly the regression (a non-running row's value must not move when `now` does)
+// while also asserting the frozen value is a plausible run duration, not a constant.
 
 async fn two_running() -> TuiHarness {
     let mut h = TuiHarness::new().await;
@@ -454,6 +463,12 @@ async fn idle_panel_timer_is_frozen_across_advancing_now() {
         "idle sub-agent timer must be frozen, not advance with a re-sampled now: \
          {v1:?} vs {v2:?}"
     );
+    // The frozen value must be a real idle run-duration label, not a constant a
+    // collapsed `elapsed_secs` (e.g. always "idle 0:00") would also satisfy `v1 == v2`.
+    assert!(
+        v1.starts_with("idle ") && v1.contains(':'),
+        "idle row must show a frozen `idle m:ss` run duration, got: {v1:?}"
+    );
 }
 
 /// Exited/errored rows are likewise frozen.
@@ -471,6 +486,11 @@ async fn exited_panel_timer_is_frozen_across_advancing_now() {
     assert_eq!(
         v1, v2,
         "exited sub-agent timer must be frozen: {v1:?} vs {v2:?}"
+    );
+    // And it must be a real `m:ss` run duration, not a collapsed constant.
+    assert!(
+        v1.contains(':'),
+        "exited row must show a frozen `m:ss` run duration, got: {v1:?}"
     );
 }
 
