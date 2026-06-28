@@ -201,6 +201,7 @@ async fn single_client_loop(
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
     let max_context_tokens = agent.max_context_tokens();
+    let initial_stats = super::uds_session::compute_session_stats(&session_key, &messages);
 
     run_command_loop(
         reader,
@@ -212,6 +213,8 @@ async fn single_client_loop(
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 agent_session.state_snapshot(0, None, max_context_tokens),
             )),
+            session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+            extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut agent_session,
             stdout: &mut *writer,
@@ -366,6 +369,8 @@ pub(crate) struct DispatchCtx<'a> {
     pub messages: &'a mut Vec<Message>,
     pub conversation_snapshot: super::uds_multi::ConversationSnapshot, // #828
     pub state_snapshot: super::uds_multi::StateSnapshot,               // #837
+    pub session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot, // #880
+    pub extension_snapshot: super::uds_extensions::ExtensionSnapshot,  // #880
     pub busy: super::uds_multi::BusyFlag,                              // #828
     pub session: &'a mut AgentSession,
     pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),

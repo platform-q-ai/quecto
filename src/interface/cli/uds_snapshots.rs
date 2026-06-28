@@ -2,10 +2,12 @@ use crate::domain::message::Message;
 
 use super::protocol::{AgentEvent, SessionState};
 use super::uds::DispatchCtx;
-use super::uds_session::message_to_json;
+use super::uds_session::{compute_session_stats_with_usage, message_to_json};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 pub(crate) type ConversationSnapshot = std::sync::Arc<tokio::sync::RwLock<Vec<Message>>>;
+pub(crate) type SessionStatsSnapshot =
+    std::sync::Arc<tokio::sync::RwLock<crate::interface::cli::protocol::SessionStats>>;
 
 pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
     let mut snap = ctx.conversation_snapshot.write().await;
@@ -30,6 +32,23 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
             .state_snapshot(ctx.messages.len(), workflow, ctx.agent.max_context_tokens());
     let mut snap = ctx.state_snapshot.write().await;
     *snap = state;
+}
+
+pub(super) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
+    let stats = compute_session_stats_with_usage(
+        ctx.session_key,
+        ctx.messages,
+        ctx.session.usage_snapshot(),
+        ctx.session.context_tokens(),
+        ctx.agent.max_context_tokens(),
+    );
+    let mut snap = ctx.session_stats_snapshot.write().await;
+    *snap = stats;
+}
+
+pub(super) async fn refresh_extension_snapshot(ctx: &DispatchCtx<'_>) {
+    let mut snap = ctx.extension_snapshot.write().await;
+    *snap = crate::interface::cli::uds_extensions::build_extension_list(ctx);
 }
 
 /// Byte budget for a connect-time `get_messages` snapshot line. Kept just under
@@ -97,6 +116,62 @@ pub(crate) fn build_get_subagents_line(
     let mut line = ev.to_json_line();
     line.push('\n');
     line
+}
+
+pub(crate) fn build_get_session_stats_line(
+    stats: &crate::interface::cli::protocol::SessionStats,
+) -> String {
+    let mut data = serde_json::to_value(stats).unwrap_or_default();
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert("snapshot".to_string(), serde_json::json!(true));
+    }
+    let ev = AgentEvent::ok(None, "get_session_stats", Some(data));
+    let mut line = ev.to_json_line();
+    line.push('\n');
+    line
+}
+
+pub(crate) fn build_get_extensions_line(extensions: &[serde_json::Value]) -> String {
+    let data = serde_json::json!({
+        "extensions": extensions,
+        "snapshot": true,
+    });
+    let ev = AgentEvent::ok(None, "get_extensions", Some(data));
+    let mut line = ev.to_json_line();
+    line.push('\n');
+    line
+}
+
+pub(crate) async fn busy_connect_snapshot_lines(
+    state_snapshot: &StateSnapshot,
+    conversation_snapshot: &ConversationSnapshot,
+    session_stats_snapshot: &SessionStatsSnapshot,
+    extension_snapshot: &crate::interface::cli::uds_extensions::ExtensionSnapshot,
+    subagent_registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+) -> [String; 5] {
+    let state_line = {
+        let snap = state_snapshot.read().await;
+        build_get_state_line_with_streaming(&snap, true)
+    };
+    let messages_line = {
+        let messages = conversation_snapshot.read().await;
+        build_get_messages_line(&messages)
+    };
+    let stats_line = {
+        let stats = session_stats_snapshot.read().await;
+        build_get_session_stats_line(&stats)
+    };
+    let extensions_line = {
+        let extensions = extension_snapshot.read().await;
+        build_get_extensions_line(&extensions)
+    };
+    [
+        state_line,
+        messages_line,
+        build_get_subagents_line(subagent_registry),
+        stats_line,
+        extensions_line,
+    ]
 }
 
 #[cfg(test)]

@@ -195,9 +195,11 @@ impl AgentCmdTool {
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty());
                 match (model, provider, model_id) {
-                    (Some(m), _, _) => serde_json::json!({"type": "set_model", "model": m}),
+                    (Some(m), _, _) => {
+                        serde_json::json!({"type": "set_model", "model": m, "ack": "accept"})
+                    }
                     (None, Some(p), Some(mid)) => {
-                        serde_json::json!({"type": "set_model", "provider": p, "modelId": mid})
+                        serde_json::json!({"type": "set_model", "provider": p, "modelId": mid, "ack": "accept"})
                     }
                     (None, Some(_), None) => {
                         return Err("set_model: provider requires model_id".to_string());
@@ -208,10 +210,12 @@ impl AgentCmdTool {
                     _ => return Err("set_model requires model, or provider + model_id".to_string()),
                 }
             }
-            "clear_history" => serde_json::json!({"type": "clear_history"}),
+            "clear_history" => serde_json::json!({"type": "clear_history", "ack": "accept"}),
             "get_subagents" => serde_json::json!({"type": "get_subagents"}),
             "get_extensions" => serde_json::json!({"type": "get_extensions"}),
-            "reload_extensions" => serde_json::json!({"type": "reload_extensions"}),
+            "reload_extensions" => {
+                serde_json::json!({"type": "reload_extensions", "ack": "accept"})
+            }
             "kill" => return Err("kill command is handled locally, not via UDS".to_string()),
             "await" => return Err("await command is handled locally, not via UDS".to_string()),
             _ => unreachable!(), // Covered by SUPPORTED_COMMANDS check above.
@@ -251,12 +255,21 @@ impl AgentCmdTool {
         Some(self.kill_agent(agent_id))
     }
 
-    /// Control commands forwarded with `"ack":"accept"` — the child acks
+    /// Queueable forwarded commands carry `"ack":"accept"` — the child acks
     /// ACCEPTANCE promptly (its reader, not the blocked dispatch loop), so the
     /// parent waits only the short interactive timeout, never the 300s
-    /// turn-completion deadline (#876).
+    /// turn-completion deadline (#876/#880).
     fn is_control_command(command: &str) -> bool {
-        matches!(command, "prompt" | "steer" | "follow_up" | "abort")
+        matches!(
+            command,
+            "prompt"
+                | "steer"
+                | "follow_up"
+                | "abort"
+                | "set_model"
+                | "clear_history"
+                | "reload_extensions"
+        )
     }
 
     /// Check if the arguments specify an `await` command.
@@ -423,10 +436,10 @@ impl Tool for AgentCmdTool {
                 }
             };
 
-            // Control commands return on the child's prompt acceptance ack, so
-            // cap them at the short interactive timeout instead of the 300s
+            // Queueable forwards return on the child's acceptance ack, so cap
+            // them at the short interactive timeout instead of the 300s
             // turn-completion deadline — the parent must never freeze its turn
-            // for the child's full processing (#876).
+            // for the child's full processing (#876/#880).
             // `command` is threaded from parse_and_build — no second args parse.
             let send = if Self::is_control_command(&command) {
                 send_uds_command_with_timeout(

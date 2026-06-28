@@ -61,6 +61,10 @@ impl Fx {
     }
 
     fn ctx(&mut self) -> DispatchCtx<'_> {
+        let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
+            &self.session_key,
+            &self.messages,
+        );
         DispatchCtx {
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
@@ -69,6 +73,8 @@ impl Fx {
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0),
             )),
+            session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+            extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: &mut self.writer,

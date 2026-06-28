@@ -1,7 +1,7 @@
 //! Non-blocking forward of parent→child control commands (#876).
 //!
-//! When a parent agent's `agent_cmd` forwards a `prompt`/`steer`/`follow_up`/
-//! `abort` to a BUSY child, the child's single dispatch loop is held by the
+//! When a parent agent's `agent_cmd` forwards a queueable command to a BUSY
+//! child, the child's single dispatch loop is held by the
 //! in-flight turn, so the command's `response` (the turn-completion ack) only
 //! arrives once the turn ends — freezing the parent's own turn for the whole
 //! child turn (even an idle child that accepted instantly, because `prompt`'s
@@ -72,7 +72,13 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
         // fired; steer also re-queues its message ahead of the line.
         "steer" => Some(serde_json::json!({ "type": "steer", "message": message? }).to_string()),
         "abort" => None,
-        // Not a control command we fast-ack — let it dispatch normally.
+        "set_model" | "clear_history" | "reload_extensions" => {
+            let mut forwarded = obj.clone();
+            forwarded.remove("ack");
+            forwarded.remove("id");
+            Some(serde_json::Value::Object(forwarded).to_string())
+        }
+        // Not a command we fast-ack — let it dispatch normally.
         _ => return None,
     };
 

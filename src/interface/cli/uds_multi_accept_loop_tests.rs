@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::domain::message::Message;
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentStatus};
 use crate::interface::cli::protocol::SessionState;
 use crate::interface::cli::uds_cancel::CancelSlot;
@@ -40,7 +41,7 @@ fn make_args(
         cancel_handle: Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
         live_clients: Arc::new(AtomicU32::new(0)),
         client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(),
-        conversation_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        conversation_snapshot: Arc::new(tokio::sync::RwLock::new(vec![Message::user("hello")])),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(SessionState {
             model: "mock-model".into(),
             is_streaming: true,
@@ -50,6 +51,16 @@ fn make_args(
             max_context_tokens: 0,
             workflow: None,
         })),
+        session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(
+            crate::interface::cli::uds_session::compute_session_stats(
+                "cli:test",
+                &[Message::user("hello")],
+            ),
+        )),
+        extension_snapshot: Arc::new(tokio::sync::RwLock::new(vec![serde_json::json!({
+            "name": "weather",
+            "description": "Weather lookup",
+        })])),
         busy: busy_flag,
         subagent_registry,
     };
@@ -126,6 +137,51 @@ async fn busy_accept_loop_pushes_get_subagents_snapshot() {
         received.contains("\"command\":\"get_messages\""),
         "messages snapshot also pushed: {received}"
     );
+}
+
+/// BUSY accept loop: remaining pure reads are also pushed as connect-time
+/// snapshots, independent of the blocked dispatch loop (#880).
+#[tokio::test]
+async fn busy_accept_loop_pushes_session_stats_and_extensions_snapshots() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket_path = dir.path().join("busy-remaining.sock");
+
+    let (args, _bcast, _cmd_tx, _cmd_rx) = make_args(&socket_path, /* busy */ true, None);
+    let handle = spawn_accept_loop(args);
+
+    let mut client = tokio::net::UnixStream::connect(&socket_path)
+        .await
+        .expect("connect to busy accept loop");
+    let received = read_available(&mut client, std::time::Duration::from_millis(500)).await;
+
+    handle.abort();
+
+    let stats_line = received
+        .lines()
+        .find(|l| l.contains("\"command\":\"get_session_stats\""))
+        .unwrap_or_else(|| panic!("busy client must receive stats snapshot; got: {received}"));
+    let stats: serde_json::Value = serde_json::from_str(stats_line).expect("valid stats JSON");
+    assert_eq!(stats["type"], "response");
+    assert_eq!(stats["command"], "get_session_stats");
+    assert_eq!(stats["success"], true);
+    assert_eq!(stats["data"]["snapshot"], true);
+    assert_eq!(stats["data"]["userMessages"], 1);
+
+    let extensions_line = received
+        .lines()
+        .find(|l| l.contains("\"command\":\"get_extensions\""))
+        .unwrap_or_else(|| panic!("busy client must receive extensions snapshot; got: {received}"));
+    let extensions: serde_json::Value =
+        serde_json::from_str(extensions_line).expect("valid extensions JSON");
+    assert_eq!(extensions["type"], "response");
+    assert_eq!(extensions["command"], "get_extensions");
+    assert_eq!(extensions["success"], true);
+    assert_eq!(extensions["data"]["snapshot"], true);
+    let list = extensions["data"]["extensions"]
+        .as_array()
+        .expect("extensions array");
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["name"], "weather");
 }
 
 /// IDLE accept loop: a newly connected client receives NO unsolicited bytes

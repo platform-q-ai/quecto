@@ -16,26 +16,30 @@ use super::uds::{
     inject_system_prompt, is_cancel_command, parse_line, remove_injected_system_prompt,
 };
 use super::uds_cancel::{CancelHandle, CancelSlot, PromptOutcome, fire_cancel};
+pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
 use super::uds_session::{AgentSession, message_to_json};
+pub(crate) use super::uds_snapshots::{ConversationSnapshot, StateSnapshot};
 #[cfg(test)]
-pub(crate) use super::uds_snapshots::build_get_state_line;
 pub(crate) use super::uds_snapshots::{
-    ConversationSnapshot, StateSnapshot, build_get_messages_line,
-    build_get_state_line_with_streaming, build_get_subagents_line,
+    build_get_messages_line, build_get_state_line, build_get_subagents_line,
 };
-use super::uds_snapshots::{refresh_conversation_snapshot, refresh_state_snapshot};
+use super::uds_snapshots::{
+    refresh_conversation_snapshot, refresh_extension_snapshot, refresh_session_stats_snapshot,
+    refresh_state_snapshot,
+};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /// Maximum number of concurrent client connections.
-const MAX_CLIENTS: u32 = 64;
+pub(super) const MAX_CLIENTS: u32 = 64;
 
 /// Broadcast channel capacity for UDS event delivery.
 /// Shared between the early-creation path (workflow) and the default path.
 pub(super) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
 
 /// Atomic counter for assigning unique client IDs (#352).
-static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+pub(super) static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
 
 /// Shared "agent is mid-turn" flag (#828). Set by the dispatch loop for the
 /// duration of `agent.process()` (via [`BusyGuard`]), read by the accept loop.
@@ -97,30 +101,30 @@ pub(super) struct MultiClientArgs<'a> {
 }
 
 /// A command line from a client.
-struct ClientCommand {
-    line: String,
+pub(super) struct ClientCommand {
+    pub(super) line: String,
     /// Unique client identifier for per-client tool routing (#352).
-    client_id: u64,
+    pub(super) client_id: u64,
 }
 
 /// Sentinel: a client disconnected.
-struct ClientDisconnected {
+pub(super) struct ClientDisconnected {
     /// Which client disconnected (#352).
-    client_id: u64,
+    pub(super) client_id: u64,
 }
 
 /// Messages from client reader tasks to the dispatch loop.
-enum ClientMessage {
+pub(super) enum ClientMessage {
     Command(ClientCommand),
     Disconnected(ClientDisconnected),
 }
 
 /// RAII guard that decrements `live_clients` on drop (normal exit or panic).
-struct ClientGuard {
-    live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
-    cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
+pub(super) struct ClientGuard {
+    pub(super) live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    pub(super) cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
     /// Unique client identifier for per-client tool tracking (#352).
-    client_id: u64,
+    pub(super) client_id: u64,
 }
 
 impl Drop for ClientGuard {
@@ -182,6 +186,32 @@ pub(super) async fn multi_client_loop(
         agent_session.state_snapshot(messages.len(), None, agent.max_context_tokens());
     let state_snapshot: StateSnapshot =
         std::sync::Arc::new(tokio::sync::RwLock::new(initial_state));
+    let session_stats_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
+        super::uds_session::compute_session_stats_with_usage(
+            &session_key,
+            &messages,
+            agent_session.usage_snapshot(),
+            agent_session.context_tokens(),
+            agent.max_context_tokens(),
+        ),
+    ));
+    let extension_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
+        agent
+            .tool_definitions()
+            .iter()
+            .filter(|def| {
+                agent
+                    .tool_registry_extension_names()
+                    .contains(&def.name.to_string())
+            })
+            .map(|def| {
+                serde_json::json!({
+                    "name": def.name.as_ref(),
+                    "description": def.description.as_ref(),
+                })
+            })
+            .collect(),
+    ));
 
     // Shared mid-turn flag (#828): gates the connect-time snapshot push so it
     // only fires while the agent is busy (see `BusyFlag`).
@@ -206,6 +236,8 @@ pub(super) async fn multi_client_loop(
         client_tool_registry: client_tool_registry.clone(),
         conversation_snapshot: conversation_snapshot.clone(),
         state_snapshot: state_snapshot.clone(),
+        session_stats_snapshot: session_stats_snapshot.clone(),
+        extension_snapshot: extension_snapshot.clone(),
         busy: busy.clone(),
         subagent_registry: subagent_registry.clone(),
     });
@@ -223,6 +255,8 @@ pub(super) async fn multi_client_loop(
         messages: &mut messages,
         conversation_snapshot: conversation_snapshot.clone(),
         state_snapshot: state_snapshot.clone(),
+        session_stats_snapshot: session_stats_snapshot.clone(),
+        extension_snapshot: extension_snapshot.clone(),
         busy: busy.clone(),
         session: &mut agent_session,
         stdout: &mut *null_writer,
@@ -265,155 +299,6 @@ pub(super) async fn multi_client_loop(
     }
 
     0
-}
-
-/// Arguments for [`spawn_accept_loop`].
-struct AcceptLoopArgs {
-    listener: tokio::net::UnixListener,
-    broadcast_tx: tokio::sync::broadcast::Sender<String>,
-    cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
-    cancel_handle: CancelHandle,
-    live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
-    /// Shared per-client tool state. Cloned into each ClientHandlerArgs
-    /// so the reader task can resolve `tool_result` commands inline
-    /// without routing them through the single-threaded dispatch loop
-    /// (which is blocked on the agent's in-flight prompt).
-    client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
-    /// Shared pre-turn conversation snapshot (#828). The accept loop writes a
-    /// `get_messages`-shaped response built from this directly to each newly
-    /// connected client BEFORE/independent of the dispatch loop, so a busy
-    /// child's client gets its prior history instantly.
-    conversation_snapshot: ConversationSnapshot,
-    /// Shared pre-turn state snapshot (#837), served to busy `get_state` callers.
-    state_snapshot: StateSnapshot,
-    /// Mid-turn flag (#828): the connect-time snapshot is pushed ONLY when the
-    /// agent is busy. When idle, the dispatch loop answers `get_messages` in
-    /// FIFO order and no unsolicited bytes are written.
-    busy: BusyFlag,
-    /// Shared subagent registry (#874): the connect-time `get_subagents` snapshot
-    /// a busy child pushes is built from this, off the dispatch loop.
-    subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-}
-
-/// Spawn the accept loop that listens for new client connections.
-fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
-    let AcceptLoopArgs {
-        listener,
-        broadcast_tx,
-        cmd_tx,
-        cancel_handle,
-        live_clients,
-        client_tool_registry,
-        conversation_snapshot,
-        state_snapshot,
-        busy,
-        subagent_registry,
-    } = args;
-    tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((mut stream, _addr)) => {
-                    let current = live_clients.load(std::sync::atomic::Ordering::SeqCst);
-                    if current >= MAX_CLIENTS {
-                        tracing::warn!(
-                            current,
-                            max = MAX_CLIENTS,
-                            "rejecting connection: max clients reached"
-                        );
-                        drop(stream);
-                        continue;
-                    }
-                    live_clients.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let client_id =
-                        NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let guard = ClientGuard {
-                        live_clients: live_clients.clone(),
-                        cmd_tx: cmd_tx.clone(),
-                        client_id,
-                    };
-                    // Per-client targeted event channel (V4): the
-                    // forwarder task for tools this client registers
-                    // will route `execute_tool` events here — NOT on
-                    // the broadcast — so they don't leak across
-                    // clients. 64-slot buffer: any single LLM turn
-                    // issues only a handful of tool calls, so the
-                    // common-case depth is 1–2; the channel fills up
-                    // only if the client stops reading.
-                    let (targeted_tx, targeted_rx) = tokio::sync::mpsc::channel::<String>(64);
-                    super::uds_ext_protocol::register_client_writer(
-                        &client_tool_registry,
-                        client_id,
-                        targeted_tx,
-                    );
-
-                    // Subscribe to the broadcast BEFORE the (possible) snapshot
-                    // write below (#828): the snapshot read/write are await
-                    // points, and any event broadcast during them — e.g. an
-                    // `agent_start` from a concurrent turn — would be missed if we
-                    // subscribed afterwards. Subscribing first buffers those events
-                    // in `broadcast_rx`; `handle_client` delivers them after the
-                    // directly-written snapshot bytes.
-                    let broadcast_rx = broadcast_tx.subscribe();
-
-                    // Connect-time snapshot (#828), GATED to mid-turn only: when
-                    // the agent is BUSY the single dispatch loop is blocked inside
-                    // `agent.process()` and cannot answer a `get_messages` promptly,
-                    // so we serve the pre-turn conversation directly here — a newly
-                    // connected client (e.g. the TUI selecting a busy sub-agent)
-                    // sees prior history at once, with live tokens streaming over
-                    // the broadcast on top; the TUI reconciles via
-                    // `Chat::prepend_history`. When the agent is IDLE we push
-                    // nothing: the dispatch loop answers the client's own
-                    // `get_messages` in FIFO order, so clients that don't ask see
-                    // no protocol change and ordering-sensitive flows are unaffected.
-                    // Note (#842, item 4): the state and conversation snapshots
-                    // are read under two SEPARATE RwLock acquisitions, so a turn
-                    // boundary landing between them can make `state.messageCount`
-                    // reflect turn N while the messages reflect N+1 — a cosmetic
-                    // one-turn skew. Accepted: both snapshots already carry a
-                    // staleness marker (`isStreaming:true` / `snapshot:true`), and
-                    // a single lock epoch would couple two independent snapshots.
-                    if busy.load(std::sync::atomic::Ordering::SeqCst) {
-                        use tokio::io::AsyncWriteExt;
-                        let state_line = {
-                            let snap = state_snapshot.read().await;
-                            build_get_state_line_with_streaming(&snap, true)
-                        };
-                        if let Err(e) = stream.write_all(state_line.as_bytes()).await {
-                            tracing::debug!("connect-time state snapshot not delivered: {e}");
-                        }
-                        let messages_line = {
-                            let snap = conversation_snapshot.read().await;
-                            build_get_messages_line(&snap)
-                        };
-                        if let Err(e) = stream.write_all(messages_line.as_bytes()).await {
-                            tracing::debug!("connect-time message snapshot not delivered: {e}");
-                        }
-                        let subagents_line = build_get_subagents_line(&subagent_registry);
-                        if let Err(e) = stream.write_all(subagents_line.as_bytes()).await {
-                            tracing::debug!("connect-time subagents snapshot not delivered: {e}");
-                        }
-                    }
-
-                    let args = ClientHandlerArgs {
-                        stream,
-                        broadcast_rx,
-                        targeted_rx,
-                        cmd_tx: cmd_tx.clone(),
-                        cancel_handle: cancel_handle.clone(),
-                        client_id,
-                        client_tool_registry: client_tool_registry.clone(),
-                        _guard: guard,
-                    };
-                    tokio::spawn(async move { handle_client(args).await });
-                }
-                Err(e) => {
-                    tracing::warn!("accept error: {e}");
-                    break;
-                }
-            }
-        }
-    })
 }
 
 /// Arguments for [`run_dispatch_loop`].
@@ -502,6 +387,8 @@ async fn run_dispatch_loop(
         // is served the up-to-date prior conversation on connect (#828).
         refresh_conversation_snapshot(ctx).await;
         refresh_state_snapshot(ctx).await;
+        refresh_session_stats_snapshot(ctx).await;
+        refresh_extension_snapshot(ctx).await;
     }
 }
 
@@ -584,26 +471,26 @@ async fn handle_disconnect(ctx: &mut DispatchCtx<'_>, client_id: u64) {
 // ─── Per-client handler ───────────────────────────────────────────────────────
 
 /// Arguments for [`handle_client`].
-struct ClientHandlerArgs {
-    stream: tokio::net::UnixStream,
-    broadcast_rx: tokio::sync::broadcast::Receiver<String>,
+pub(super) struct ClientHandlerArgs {
+    pub(super) stream: tokio::net::UnixStream,
+    pub(super) broadcast_rx: tokio::sync::broadcast::Receiver<String>,
     /// Per-client targeted event stream — receives events addressed
     /// to this client only (currently just `execute_tool` from
     /// forwarder tasks). Writer_task selects over this AND
     /// broadcast_rx so targeted events aren't visible to other
     /// clients.
-    targeted_rx: tokio::sync::mpsc::Receiver<String>,
-    cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
-    cancel_handle: CancelHandle,
+    pub(super) targeted_rx: tokio::sync::mpsc::Receiver<String>,
+    pub(super) cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
+    pub(super) cancel_handle: CancelHandle,
     /// Unique client identifier (#352).
-    client_id: u64,
+    pub(super) client_id: u64,
     /// For in-reader handling of `tool_result` — see handle_client.
-    client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
+    pub(super) client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
-    _guard: ClientGuard,
+    pub(super) _guard: ClientGuard,
 }
 
-async fn handle_client(args: ClientHandlerArgs) {
+pub(super) async fn handle_client(args: ClientHandlerArgs) {
     let ClientHandlerArgs {
         stream,
         mut broadcast_rx,

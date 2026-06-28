@@ -114,6 +114,13 @@ mod tests {
         }
 
         fn ctx(&mut self) -> crate::interface::cli::uds::DispatchCtx<'_> {
+            let initial_stats = compute_session_stats_with_usage(
+                &self.session_key,
+                &self.messages,
+                self.session.usage_snapshot(),
+                self.session.context_tokens(),
+                self.agent.max_context_tokens(),
+            );
             crate::interface::cli::uds::DispatchCtx {
                 base_dir: self._tmp.path(),
                 agent: &mut self.agent,
@@ -122,6 +129,10 @@ mod tests {
                 state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                     self.session.state_snapshot(0, None, 0),
                 )),
+                session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+                    initial_stats,
+                )),
+                extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
                 busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 session: &mut self.session,
                 stdout: &mut self.writer,

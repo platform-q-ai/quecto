@@ -54,6 +54,22 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
                     .and_then(|v| v.as_array())
                     .is_some()
         }
+        Some("get_session_stats") => {
+            json.get("command").and_then(|v| v.as_str()) == Some("get_session_stats")
+                && json.pointer("/data/snapshot").and_then(|v| v.as_bool()) == Some(true)
+                && json
+                    .pointer("/data/userMessages")
+                    .and_then(|v| v.as_u64())
+                    .is_some()
+        }
+        Some("get_extensions") => {
+            json.get("command").and_then(|v| v.as_str()) == Some("get_extensions")
+                && json.pointer("/data/snapshot").and_then(|v| v.as_bool()) == Some(true)
+                && json
+                    .pointer("/data/extensions")
+                    .and_then(|v| v.as_array())
+                    .is_some()
+        }
         _ => false,
     }
 }

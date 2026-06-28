@@ -94,6 +94,31 @@ fn flagged_prompt_without_message_is_not_intercepted() {
 }
 
 #[test]
+fn flagged_remaining_queueable_commands_ack_and_forward_without_marker() {
+    for (line, command) in [
+        (
+            r#"{"type":"set_model","model":"anthropic/claude-sonnet-4-6","ack":"accept","id":"m1"}"#,
+            "set_model",
+        ),
+        (
+            r#"{"type":"clear_history","ack":"accept","id":"c1"}"#,
+            "clear_history",
+        ),
+        (
+            r#"{"type":"reload_extensions","ack":"accept","id":"e1"}"#,
+            "reload_extensions",
+        ),
+    ] {
+        let got = intercept_control_forward(line).expect("queueable command is intercepted");
+        assert_eq!(ack_json(&got.ack_line)["command"], command);
+        let fwd: serde_json::Value = serde_json::from_str(&got.forward_line.unwrap()).unwrap();
+        assert_eq!(fwd["type"], command);
+        assert!(fwd.get("ack").is_none(), "marker is stripped");
+        assert!(fwd.get("id").is_none(), "id is stripped before dispatch");
+    }
+}
+
+#[test]
 fn flagged_non_control_command_is_not_intercepted() {
     let line = r#"{"type":"get_state","ack":"accept","id":"r6"}"#;
     assert!(intercept_control_forward(line).is_none());
