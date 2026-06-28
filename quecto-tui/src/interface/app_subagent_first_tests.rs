@@ -426,11 +426,13 @@ async fn forwarded_grandchild_workflow_routes_by_event_agent_id_not_connection()
         subagent("G", "running", Some(("active", 1, 3))),
     ]));
     h.app_mut().select_agent(Some("C"));
-    // C's OWN workflow (no inner id mismatch): issue 820.
+    // C's OWN workflow: the connected agent's own event carries `agent_id: None`
+    // (per the type contract in `client.rs`), so routing must fall back to the
+    // connection id. Issue 820.
     h.app_mut().route_subagent_event(
         "C",
         Event::WorkflowState {
-            agent_id: Some("C".into()),
+            agent_id: None,
             steps: vec![],
             progress: serde_json::json!({"done": 3, "total": 5}),
             active_issue: Some(serde_json::json!({"number": 820, "title": "child"})),
@@ -440,19 +442,10 @@ async fn forwarded_grandchild_workflow_routes_by_event_agent_id_not_connection()
         },
     );
     // The forwarded grandchild workflow arrives tagged for C's connection but
-    // carries G's own inner agent_id: issue 7.
-    h.app_mut().route_subagent_event(
-        "C",
-        Event::WorkflowState {
-            agent_id: Some("G".into()),
-            steps: vec![],
-            progress: serde_json::json!({"done": 2, "total": 4}),
-            active_issue: Some(serde_json::json!({"number": 7, "title": "grandchild"})),
-            mode: Some("active".into()),
-            active_template: None,
-            available_templates: None,
-        },
-    );
+    // carries G's own inner agent_id: the shared `forwarded_workflow` helper
+    // hardcodes issue 7.
+    h.app_mut()
+        .route_subagent_event("C", forwarded_workflow("G", 2, 4));
     let app = h.app_mut();
     assert_eq!(
         app.sessions.get("C").unwrap().workflow_bar.issue_number,
@@ -467,5 +460,84 @@ async fn forwarded_grandchild_workflow_routes_by_event_agent_id_not_connection()
             .issue_number,
         Some(7),
         "grandchild G's forwarded workflow must land on G's own session bar"
+    );
+}
+
+#[tokio::test]
+async fn connected_agent_own_workflow_with_matching_inner_id_routes_to_self() {
+    // #840 (Finding 1): the connected agent's own workflow_state may also arrive
+    // with its inner agent_id equal to the connection id. That `Some(C)==conn`
+    // shape must still land on C's own bar (it equals the fallback target).
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent(
+        "C",
+        "running",
+        Some(("active", 1, 3)),
+    )]));
+    h.app_mut().select_agent(Some("C"));
+    h.app_mut().route_subagent_event(
+        "C",
+        Event::WorkflowState {
+            agent_id: Some("C".into()),
+            steps: vec![],
+            progress: serde_json::json!({"done": 3, "total": 5}),
+            active_issue: Some(serde_json::json!({"number": 820, "title": "child"})),
+            mode: Some("active".into()),
+            active_template: None,
+            available_templates: None,
+        },
+    );
+    assert_eq!(
+        h.app_mut()
+            .sessions
+            .get("C")
+            .unwrap()
+            .workflow_bar
+            .issue_number,
+        Some(820),
+        "C's own workflow_state (inner id == connection id) must land on C's bar"
+    );
+}
+
+#[tokio::test]
+async fn forwarded_workflow_for_untracked_agent_is_dropped() {
+    // #840 (Finding 2): a forwarded workflow_state whose inner agent_id is NOT a
+    // tracked/retained agent must be dropped — it must neither create a phantom
+    // session for the unknown id nor touch the connected child's bar.
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    // Only C is tracked; X is unknown.
+    h.event(subagents_changed(vec![subagent(
+        "C",
+        "running",
+        Some(("active", 1, 3)),
+    )]));
+    h.app_mut().select_agent(Some("C"));
+    // Establish C's own bar first.
+    h.app_mut().route_subagent_event(
+        "C",
+        Event::WorkflowState {
+            agent_id: None,
+            steps: vec![],
+            progress: serde_json::json!({"done": 3, "total": 5}),
+            active_issue: Some(serde_json::json!({"number": 820, "title": "child"})),
+            mode: Some("active".into()),
+            active_template: None,
+            available_templates: None,
+        },
+    );
+    // A forwarded workflow for an untracked grandchild X arrives on C's stream.
+    h.app_mut()
+        .route_subagent_event("C", forwarded_workflow("X", 2, 4));
+    let app = h.app_mut();
+    assert!(
+        !app.sessions.contains_key("X"),
+        "an untracked forwarded id must not create a phantom session"
+    );
+    assert_eq!(
+        app.sessions.get("C").unwrap().workflow_bar.issue_number,
+        Some(820),
+        "an untracked forwarded workflow must not touch the connected child's bar"
     );
 }
