@@ -319,19 +319,25 @@ fn sanitized_arg(args: &serde_json::Value, key: &str, fallback: &str) -> String 
     )
 }
 
-/// Whether a tool's chat box should be hidden. `spawn` and the `agent_cmd`
-/// control commands (`prompt`/`steer`/`abort`) are suppressed because they are
-/// actions, not reads, and their effect is shown elsewhere (the sub-agent panel
-/// / streamed response). All read-only `agent_cmd` query commands render a box
-/// for consistency with `get_messages`/`await` (#865) — e.g. `get_state`,
-/// `get_subagents`, `get_session_stats`, `get_extensions`. The TUI's OWN
-/// internal `get_state`/stats polling flows through `app_response.rs` (Response
-/// events), not this path, so it stays box-free regardless of this list.
+/// Whether a tool's chat box should be hidden. `spawn` and the fire-and-forget
+/// `agent_cmd` control commands (`prompt`/`steer`/`abort`) are suppressed —
+/// their effect is shown elsewhere (the sub-agent panel / streamed response).
+/// This is a small DENYLIST, not a read-only allowlist: every OTHER `agent_cmd`
+/// command renders a box. That covers the read-only queries this exists for
+/// (#865) — `get_state`, `get_subagents`, `get_session_stats`, `get_extensions`,
+/// alongside `get_messages`/`await` — and it also (intentionally) renders the
+/// remaining action commands `follow_up`/`kill`/`set_model`/`clear_history`/
+/// `reload_extensions`, so destructive sub-agent actions stay visible in the
+/// stream. The TUI's OWN internal `get_state`/stats polling flows through
+/// `app_response.rs` (Response events), not this path, so it stays box-free
+/// regardless of this list.
 pub(super) fn suppress_tool_box(tool_name: &str, args: &serde_json::Value) -> bool {
     match tool_name {
         "spawn" => true,
         "agent_cmd" => {
             let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            // Denylist: only the fire-and-forget controls are hidden; everything
+            // else (read-only queries + remaining actions) renders.
             const HIDDEN: &[&str] = &["prompt", "steer", "abort"];
             HIDDEN.contains(&cmd)
         }
