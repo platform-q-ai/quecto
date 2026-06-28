@@ -161,6 +161,105 @@ async fn agent_cmd_get_state_renders_a_tool_box() {
     );
 }
 
+/// #871: control/destructive `agent_cmd` commands (abort/kill) append a chat
+/// entry on the master path, just like read-only queries do — so the transcript
+/// stays complete and it's clear why a sub-agent stopped.
+#[tokio::test]
+async fn agent_cmd_abort_and_kill_append_chat_entry_on_master_path() {
+    for cmd in ["abort", "kill"] {
+        let mut h = TuiHarness::new().await;
+        let before = h.app_mut().master_session.chat.entry_count();
+        h.event(Event::ToolExecutionStart {
+            tool_call_id: "t1".into(),
+            tool_name: "agent_cmd".into(),
+            args: serde_json::json!({"command":cmd,"agent_id":"worker-1"}),
+        });
+        let after = h.app_mut().master_session.chat.entry_count();
+        assert_eq!(
+            after,
+            before + 1,
+            "agent_cmd {cmd} should append a chat entry"
+        );
+    }
+}
+
+/// #871: control/destructive `agent_cmd` commands (abort/kill) must render a
+/// tool box in the chat, the same way `get_state`/`await` do. A frame-level
+/// assertion guards against a predicate-only false positive.
+#[tokio::test]
+async fn agent_cmd_abort_and_kill_render_tool_boxes() {
+    for cmd in ["abort", "kill"] {
+        let mut h = TuiHarness::new().await;
+        h.event(Event::AgentStart);
+        h.event(subagents_changed(vec![subagent(
+            "child",
+            "running",
+            Some(("active", 5, 5)),
+        )]));
+        h.event(Event::ToolExecutionStart {
+            tool_call_id: "t1".into(),
+            tool_name: "agent_cmd".into(),
+            args: serde_json::json!({"command":cmd,"agent_id":"child"}),
+        });
+        h.event(Event::ToolExecutionEnd {
+            tool_call_id: "t1".into(),
+            tool_name: "agent_cmd".into(),
+            result: serde_json::json!({"content":[{"type":"text","text":"ok"}]}),
+            is_error: false,
+        });
+        h.tick();
+        let dump = h.dump_full();
+        assert!(
+            dump.contains(&format!("{cmd} → child")),
+            "agent_cmd {cmd} should render a tool box in the chat (#871):\n{dump}"
+        );
+        assert!(
+            dump.contains('✓'),
+            "completed {cmd} box must render its success body (#871):\n{dump}"
+        );
+    }
+}
+
+/// #871: control/destructive `agent_cmd` commands routed into a SELECTED
+/// sub-agent's direct stream must render the same tool box in that sub-agent's
+/// chat, mirroring the master path.
+#[tokio::test]
+async fn agent_cmd_abort_and_kill_render_tool_boxes_in_subagent_view() {
+    for cmd in ["abort", "kill"] {
+        let mut h = TuiHarness::new().await;
+        h.event(Event::AgentStart);
+        h.event(subagents_changed(vec![subagent(
+            "child",
+            "running",
+            Some(("active", 5, 5)),
+        )]));
+        h.select(Some("child"));
+        h.route(
+            "child",
+            Event::ToolExecutionStart {
+                tool_call_id: "s1".into(),
+                tool_name: "agent_cmd".into(),
+                args: serde_json::json!({"command":cmd,"agent_id":"grandchild"}),
+            },
+        );
+        h.route(
+            "child",
+            Event::ToolExecutionEnd {
+                tool_call_id: "s1".into(),
+                tool_name: "agent_cmd".into(),
+                result: serde_json::json!({"content":[{"type":"text","text":"ok"}]}),
+                is_error: false,
+            },
+        );
+        h.tick();
+        let dump = h.dump_full();
+        assert!(
+            dump.contains(&format!("{cmd} → grandchild")),
+            "agent_cmd {cmd} must render a tool box in the sub-agent view too (#871):\n{dump}"
+        );
+    }
+}
+
 /// The sub-agent view path (#865 acceptance: BOTH views). A genuine
 /// `agent_cmd get_state` routed into a SELECTED sub-agent's direct stream must
 /// render the same tool box in that sub-agent's chat, mirroring the master path.
