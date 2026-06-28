@@ -5,7 +5,7 @@
 //!
 //! Self-contained (own minimal `DispatchCtx`) so it stays independent of the
 //! larger `cov_tests` fixture and keeps each file within the size budget.
-use super::{dispatch_command, forward_subagent_messages_tail};
+use super::{dispatch_command, forward_subagent_get_messages};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
@@ -220,8 +220,7 @@ async fn dispatch_counted_agent_targeted_get_messages_forwards_count_to_child() 
 async fn forward_uncounted_no_registry_is_error_event() {
     let mut fx = Fx::new();
     let ctx = fx.ctx(); // subagent_registry: None
-    let ev =
-        forward_subagent_messages_tail(&ctx, Some("id1"), "get_messages", "worker", None).await;
+    let ev = forward_subagent_get_messages(&ctx, Some("id1"), "get_messages", "worker", None).await;
     let json = serde_json::to_value(&ev).unwrap();
     assert!(
         json.get("error").is_some(),
@@ -235,7 +234,7 @@ async fn forward_tail_unknown_agent_is_error_event() {
     let mut ctx = fx.ctx();
     ctx.subagent_registry = Some(new_registry());
     let ev =
-        forward_subagent_messages_tail(&ctx, Some("id1"), "get_messages_tail", "ghost", Some(3))
+        forward_subagent_get_messages(&ctx, Some("id1"), "get_messages_tail", "ghost", Some(3))
             .await;
     let json = serde_json::to_value(&ev).unwrap();
     let err = json.get("error").and_then(|v| v.as_str()).unwrap_or("");

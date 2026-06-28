@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use super::{
-    dispatch_command, dispatch_ext_command, forward_subagent_messages_tail, handle_abort,
+    dispatch_command, dispatch_ext_command, forward_subagent_get_messages, handle_abort,
     handle_clear_history, handle_new_session, handle_resume_session, handle_rewind_to,
     handle_steer, persist_current_session,
 };
@@ -709,7 +709,7 @@ async fn forward_tail_no_registry_is_error_event() {
     let mut fx = Fixture::new();
     let ctx = fx.ctx();
     let ev =
-        forward_subagent_messages_tail(&ctx, Some("id1"), "get_messages_tail", "worker", Some(3))
+        forward_subagent_get_messages(&ctx, Some("id1"), "get_messages_tail", "worker", Some(3))
             .await;
     let json = serde_json::to_value(&ev).unwrap();
     assert!(
