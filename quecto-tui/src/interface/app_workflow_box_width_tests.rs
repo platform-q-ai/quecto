@@ -27,9 +27,13 @@ fn workflow_event() -> Event {
     }
 }
 
-/// Width of the workflow box's top border row (the line containing `┌`) and of a
-/// representative tool-output box row, both ANSI-stripped, in the rendered frame.
-fn box_and_tool_widths(h: &mut TuiHarness) -> (usize, usize) {
+/// Visible widths of the workflow box's top border row (the line containing
+/// `┌`), a representative tool-output box row, and the body-width contract
+/// (`body_width()`) all three are pinned against. Returning `body_width()` (the
+/// shared source of truth both renderers derive from) lets callers assert each
+/// rendered width equals the contract, rather than comparing two co-derived
+/// values to each other (a tautology). (#882 review)
+fn box_tool_and_body_widths(h: &mut TuiHarness) -> (usize, usize, usize) {
     h.app_mut().active_chat_mut().start_tool(
         "c1".into(),
         "bash".into(),
@@ -38,6 +42,7 @@ fn box_and_tool_widths(h: &mut TuiHarness) -> (usize, usize) {
     h.app_mut()
         .active_chat_mut()
         .complete_tool("c1", "hi", false, Some(5));
+    let body_w = h.app_mut().body_width();
     let frame: Vec<String> = h.full_frame().lines().map(|s| s.to_string()).collect();
     let box_w = frame
         .iter()
@@ -49,35 +54,45 @@ fn box_and_tool_widths(h: &mut TuiHarness) -> (usize, usize) {
         .find(|l| l.contains("$ echo hi"))
         .map(|l| visible_width(l))
         .expect("a tool-output box row should render");
-    (box_w, tool_w)
+    (box_w, tool_w, body_w)
+}
+
+/// Pin both rendered widths against the body-width contract: the panel split
+/// reserves the left panel + divider, and the main pane (header prefix + the
+/// `panel + divider + body` columns) totals the full terminal width. The box
+/// border and tool block must each fill exactly the body column.
+fn assert_widths_match_body(h: &mut TuiHarness, ctx: &str) {
+    let (box_w, tool_w, body_w) = box_tool_and_body_widths(h);
+    let (panel_w, divider_w, _) = h.app_mut().frame_split();
+    let expected = panel_w + divider_w + body_w;
+    assert_eq!(
+        box_w, expected,
+        "[{ctx}] workflow box must span the full main-pane width (= panel+divider+body)"
+    );
+    assert_eq!(
+        tool_w, expected,
+        "[{ctx}] tool-output block must span the full main-pane width (= panel+divider+body)"
+    );
 }
 
 #[tokio::test]
 async fn boxed_workflow_matches_tool_box_width() {
     let mut h = TuiHarness::sized(100, 30).await;
     h.event(workflow_event());
-    let (box_w, tool_w) = box_and_tool_widths(&mut h);
-    assert_eq!(
-        box_w, tool_w,
-        "the workflow box must span the same width as the tool-output blocks"
-    );
+    assert_widths_match_body(&mut h, "width=100");
 }
 
 #[tokio::test]
 async fn boxed_workflow_width_survives_resize() {
     let mut h = TuiHarness::sized(120, 30).await;
     h.event(workflow_event());
-    let (box_w, tool_w) = box_and_tool_widths(&mut h);
-    assert_eq!(box_w, tool_w, "alignment must hold at the initial width");
+    assert_widths_match_body(&mut h, "width=120");
 
-    // Resize narrower (as a SIGWINCH would) and re-check.
+    // Resize narrower (as a SIGWINCH would) and re-check that both the box and
+    // the tool block re-derive to the new body-width contract.
     h.app_mut().terminal.width = 72;
     h.app_mut().terminal.height = 30;
-    let (box_w, tool_w) = box_and_tool_widths(&mut h);
-    assert_eq!(
-        box_w, tool_w,
-        "alignment must hold after a terminal resize event"
-    );
+    assert_widths_match_body(&mut h, "width=72 (after resize)");
 }
 
 #[tokio::test]
