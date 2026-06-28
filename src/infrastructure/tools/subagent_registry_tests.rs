@@ -537,9 +537,16 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &correlated_messages,
         r#"{"type":"get_messages"}"#
     ));
-    assert!(!subagent_snapshot::response_is_valid_answer(
+    // #842: a counted get_messages is now served from the snapshot too (the
+    // parent applies `count` locally), so the id-less snapshot is a valid answer.
+    assert!(subagent_snapshot::response_is_valid_answer(
         &messages_snapshot,
         r#"{"type":"get_messages","count":1}"#
+    ));
+    // ...but an agent_id (a DIFFERENT target) must still reject the snapshot.
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &messages_snapshot,
+        r#"{"type":"get_messages","count":1,"agent_id":"grandchild"}"#
     ));
 
     let state_snapshot = serde_json::json!({
@@ -564,6 +571,58 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &state_snapshot,
         r#"{"type":"get_session_stats"}"#
     ));
+}
+
+#[test]
+fn finalize_snapshot_answer_tails_to_count() {
+    let snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_messages",
+        "data": { "messages": [
+            {"role": "user", "content": "m1"},
+            {"role": "assistant", "content": "m2"},
+            {"role": "user", "content": "m3"},
+        ], "snapshot": true }
+    });
+    // count=2 keeps the last two messages, preserving the snapshot marker.
+    let line = subagent_snapshot::finalize_snapshot_answer(
+        snapshot.clone(),
+        r#"{"type":"get_messages","count":2}"#,
+    );
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    let msgs = v.pointer("/data/messages").unwrap().as_array().unwrap();
+    assert_eq!(msgs.len(), 2);
+    assert_eq!(msgs[0]["content"], "m2");
+    assert_eq!(msgs[1]["content"], "m3");
+    assert_eq!(v.pointer("/data/snapshot"), Some(&serde_json::json!(true)));
+
+    // No count => unchanged (all three messages).
+    let line =
+        subagent_snapshot::finalize_snapshot_answer(snapshot.clone(), r#"{"type":"get_messages"}"#);
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(
+        v.pointer("/data/messages")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+
+    // count larger than history => all messages, no panic.
+    let line = subagent_snapshot::finalize_snapshot_answer(
+        snapshot,
+        r#"{"type":"get_messages","count":99}"#,
+    );
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(
+        v.pointer("/data/messages")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
 }
 
 #[test]

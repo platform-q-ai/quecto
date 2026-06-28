@@ -32,13 +32,44 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
     *snap = state;
 }
 
+/// Byte budget for a connect-time `get_messages` snapshot line. Kept just under
+/// the parent's per-line read cap (`SUBAGENT_RESPONSE_MAX_LINE_BYTES` = 1 MiB in
+/// `subagent_registry`) with headroom for the response envelope, so an oversized
+/// history is tailed to fit rather than making the parent's whole call error
+/// ("line exceeded size limit") on a busy child (#842).
+const SNAPSHOT_MESSAGES_BUDGET_BYTES: usize = 1024 * 1024 - 4096;
+
+/// Build the connect-time `get_messages` snapshot line a BUSY child pushes.
+///
+/// The `data.snapshot` marker tells callers the data may lag the in-flight turn
+/// (a live dispatch-loop reply has no such marker) (#842). When the serialized
+/// history would exceed [`SNAPSHOT_MESSAGES_BUDGET_BYTES`], the OLDEST messages
+/// are dropped so the most recent (the inspection target) still arrive, with
+/// `data.trimmed` set — counted/tail readers slice this further on the parent
+/// side, so a tail is exactly what they want.
 pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
-    let msgs: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
-    let ev = AgentEvent::ok(
-        None,
-        "get_messages",
-        Some(serde_json::json!({ "messages": msgs })),
-    );
+    let values: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
+
+    // Accumulate from the newest message backwards until the next (older) one
+    // would breach the budget; `start` is the index of the oldest kept message.
+    let mut total = 0usize;
+    let mut start = values.len();
+    for (i, v) in values.iter().enumerate().rev() {
+        let sz = v.to_string().len() + 1; // +1 for the array separator
+        if total + sz > SNAPSHOT_MESSAGES_BUDGET_BYTES {
+            break;
+        }
+        total += sz;
+        start = i;
+    }
+    let trimmed = start > 0;
+    let msgs: Vec<serde_json::Value> = values[start..].to_vec();
+
+    let mut data = serde_json::json!({ "messages": msgs, "snapshot": true });
+    if trimmed {
+        data["trimmed"] = serde_json::json!(true);
+    }
+    let ev = AgentEvent::ok(None, "get_messages", Some(data));
     let mut line = ev.to_json_line();
     line.push('\n');
     line

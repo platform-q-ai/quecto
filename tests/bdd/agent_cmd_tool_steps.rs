@@ -186,6 +186,46 @@ fn given_agent_cmd_with_busy_snapshot_entry(world: &mut QuectoWorld, agent_id: S
     world.agent_cmd_last_command = Some(last_cmd);
 }
 
+#[given(expr = "an AgentCmdTool with a busy multi-message snapshot registry entry {string}")]
+fn given_agent_cmd_with_busy_multi_snapshot_entry(world: &mut QuectoWorld, agent_id: String) {
+    // Like the busy snapshot entry, but the connect-time snapshot carries MORE
+    // than one message and the child NEVER sends an id-matched reply (it is
+    // mid-turn). A counted/tail get_messages must therefore be served from the
+    // snapshot, with the parent applying `count` locally (#842).
+    let registry = AgentCmdTool::new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock_path = tmp.path().join("busy-multi-agent.sock");
+    let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let std_listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    let last_cmd_clone = last_cmd.clone();
+
+    let _handle = std::thread::spawn(move || {
+        for stream in std_listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let last_cmd_inner = last_cmd_clone.clone();
+            std::thread::spawn(move || {
+                use std::io::{BufRead, BufReader, Write};
+                let snapshot = r#"{"type":"response","command":"get_messages","data":{"messages":[{"role":"user","content":"OLDEST MESSAGE"},{"role":"assistant","content":"NEWEST MESSAGE"}],"snapshot":true}}"#;
+                let _ = writeln!(stream, "{}", snapshot);
+                let reader = BufReader::new(stream.try_clone().unwrap());
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    *last_cmd_inner.lock().unwrap() = line;
+                }
+            });
+        }
+    });
+
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(sock_path, 0));
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+    world._agent_cmd_mock_tmp = Some(tmp);
+    world.agent_cmd_last_command = Some(last_cmd);
+}
+
 #[given(expr = "an AgentCmdTool with a busy state snapshot registry entry {string}")]
 fn given_agent_cmd_with_busy_state_snapshot_entry(world: &mut QuectoWorld, agent_id: String) {
     let registry = AgentCmdTool::new_registry();

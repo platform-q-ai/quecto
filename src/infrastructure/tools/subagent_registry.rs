@@ -248,17 +248,14 @@ pub async fn send_subagent_uds_command_with_timeout(
     let (reader, mut writer) = tokio::io::split(stream);
 
     // Correlate the reply with the command we SENT via a unique request `id`
-    // (the protocol's correlation field). We stamp a fresh id onto the outbound
-    // command and only accept the `response` whose `id` echoes it
-    // (`AgentEvent::ok(id, ..)` in protocol.rs). Unsolicited responses — notably
-    // the connect-time `get_messages` SNAPSHOT a BUSY child pushes on every new
-    // connection (#828, built with `id: None`) — carry no id and are skipped, so
-    // a parent tailing a busy child no longer consumes that snapshot (its FIRST
-    // message) instead of the real reply to its command (#831 regression).
-    // id-matching is strictly stronger than echoing the command *type*: it also
-    // disambiguates two responses sharing a command (e.g. a `get_messages`
-    // request vs. the `get_messages`-typed snapshot). If the command is not a
-    // JSON object we cannot stamp an id and fall back to first-response.
+    // (the protocol's correlation field): we stamp a fresh id and accept the
+    // `response` whose `id` echoes it (`AgentEvent::ok(id, ..)`). Unsolicited
+    // responses — notably the connect-time `get_messages` SNAPSHOT a BUSY child
+    // pushes on every new connection (#828, `id: None`) — carry no id and are
+    // skipped here, so a parent no longer consumes that snapshot's FIRST message
+    // instead of the real reply (#831). id-matching also disambiguates two
+    // responses sharing a command (a `get_messages` request vs. the snapshot).
+    // A non-object command can't be stamped, so we fall back to first-response.
     let (outbound, expected_id) = stamp_request_id(command);
 
     writer
@@ -307,7 +304,11 @@ pub async fn send_subagent_uds_command_with_timeout(
                                     return Ok(l);
                                 }
                                 if subagent_snapshot::response_is_valid_answer(&json, command) {
-                                    return Ok(l);
+                                    // Accept the id-less snapshot, applying the
+                                    // request's `count` locally (last-N tail, #842).
+                                    return Ok(subagent_snapshot::finalize_snapshot_answer(
+                                        json, command,
+                                    ));
                                 }
                                 // Unsolicited / mismatched response — skip.
                             }
