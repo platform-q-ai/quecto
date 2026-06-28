@@ -130,11 +130,12 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     }
 }
 
-/// Forward a `get_messages` tail request to a spawned sub-agent and wrap its
-/// response as this command's reply (#795/#837).
+/// Forward a `get_messages` request to a spawned sub-agent and wrap its
+/// response as this command's reply (#795/#837/#843). With `count: Some(n)` the
+/// child returns its last-N tail; with `None` it returns its full history.
 ///
 /// Reuses the shared sub-agent socket lookup and UDS round-trip helpers rather
-/// than re-deriving the tail locally — the sub-agent answers from its own
+/// than re-deriving anything locally — the sub-agent answers from its own
 /// conversation history.
 async fn forward_subagent_messages_tail(
     ctx: &DispatchCtx<'_>,
