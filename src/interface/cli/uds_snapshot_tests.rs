@@ -206,11 +206,9 @@ fn build_get_subagents_line_serializes_registry_view() {
     entry.status = SubagentStatus::Running;
     entry.last_tool = Some("bash".into());
     entry.parent_id = Some("child".into());
-    let registry: SubagentRegistry =
-        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::from([(
-            "grandchild-worker".to_string(),
-            entry,
-        )])));
+    let registry: SubagentRegistry = std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::HashMap::from([("grandchild-worker".to_string(), entry)]),
+    ));
 
     let line = build_get_subagents_line(&Some(registry));
     assert!(

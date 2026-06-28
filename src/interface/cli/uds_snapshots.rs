@@ -77,6 +77,28 @@ pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
     line
 }
 
+/// Build the connect-time `get_subagents` snapshot line a BUSY child pushes.
+///
+/// The `SubagentRegistry` is an `Arc<Mutex<…>>` independent of the dispatch
+/// loop's exclusive `&mut messages` borrow, so a busy child can serve its
+/// current registry view off the turn (#874). A `None` registry yields an empty
+/// subagents list (matching [`build_subagent_info_list`]'s contract), not an
+/// error. The `data.snapshot` marker tells callers the data may lag the
+/// in-flight turn, consistent with the #842 snapshot markers.
+pub(crate) fn build_get_subagents_line(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+) -> String {
+    let data = serde_json::json!({
+        "subagents": serde_json::to_value(super::protocol::build_subagent_info_list(registry))
+            .unwrap_or_default(),
+        "snapshot": true,
+    });
+    let ev = AgentEvent::ok(None, "get_subagents", Some(data));
+    let mut line = ev.to_json_line();
+    line.push('\n');
+    line
+}
+
 #[cfg(test)]
 pub(crate) fn build_get_state_line(state: &SessionState) -> String {
     build_get_state_line_with_streaming(state, state.is_streaming)
