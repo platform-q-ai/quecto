@@ -64,7 +64,7 @@ fn test_parse_invalid_agent_id_format() {
 #[test]
 fn test_parse_get_state_builds_json() {
     let tool = empty_tool();
-    let (agent_id, cmd) = tool
+    let (agent_id, cmd, _) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"get_state"}"#)
         .unwrap();
     assert_eq!(agent_id, "w1");
@@ -83,7 +83,7 @@ fn test_parse_prompt_requires_message() {
 #[test]
 fn test_parse_prompt_with_message() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"prompt","message":"hello"}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
@@ -102,7 +102,7 @@ fn test_parse_steer_requires_message() {
 #[test]
 fn test_parse_get_messages_count_builds_tail_json() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"get_messages","count":5}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
@@ -113,7 +113,7 @@ fn test_parse_get_messages_count_builds_tail_json() {
 #[test]
 fn test_parse_get_messages_tail_aliases_to_get_messages_count() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"get_messages_tail","count":5}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
@@ -124,7 +124,7 @@ fn test_parse_get_messages_tail_aliases_to_get_messages_count() {
 #[test]
 fn test_parse_abort() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"abort"}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
@@ -134,7 +134,7 @@ fn test_parse_abort() {
 #[test]
 fn test_parse_get_session_stats() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"get_session_stats"}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
@@ -212,7 +212,7 @@ fn test_parse_follow_up_requires_message() {
 #[test]
 fn test_parse_follow_up_with_message() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"follow_up","message":"After done"}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
@@ -231,7 +231,7 @@ fn test_parse_set_model_requires_model() {
 #[test]
 fn test_parse_set_model_with_model() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
         .parse_and_build(
             r#"{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-4-6"}"#,
         )
@@ -244,7 +244,7 @@ fn test_parse_set_model_with_model() {
 #[test]
 fn test_parse_set_model_with_provider_and_model_id() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
             .parse_and_build(r#"{"agent_id":"w1","command":"set_model","provider":"anthropic","model_id":"claude-sonnet-4-6"}"#)
             .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
@@ -256,7 +256,7 @@ fn test_parse_set_model_with_provider_and_model_id() {
 #[test]
 fn test_parse_clear_history() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"clear_history"}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
@@ -266,7 +266,7 @@ fn test_parse_clear_history() {
 #[test]
 fn test_parse_get_subagents() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"get_subagents"}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
@@ -276,7 +276,7 @@ fn test_parse_get_subagents() {
 #[test]
 fn test_parse_get_extensions() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"get_extensions"}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
@@ -286,7 +286,7 @@ fn test_parse_get_extensions() {
 #[test]
 fn test_parse_reload_extensions() {
     let tool = empty_tool();
-    let (_, cmd) = tool
+    let (_, cmd, _) = tool
         .parse_and_build(r#"{"agent_id":"w1","command":"reload_extensions"}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();

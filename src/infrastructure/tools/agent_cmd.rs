@@ -113,7 +113,7 @@ impl AgentCmdTool {
     }
 
     /// Parse arguments and build the JSON command to send.
-    fn parse_and_build(&self, arguments: &str) -> Result<(String, String), String> {
+    fn parse_and_build(&self, arguments: &str) -> Result<(String, String, String), String> {
         let args: serde_json::Value =
             serde_json::from_str(arguments).map_err(|e| format!("invalid JSON: {e}"))?;
 
@@ -217,7 +217,7 @@ impl AgentCmdTool {
             _ => unreachable!(), // Covered by SUPPORTED_COMMANDS check above.
         };
 
-        Ok((agent_id, json_cmd.to_string()))
+        Ok((agent_id, json_cmd.to_string(), command))
     }
 
     /// Handle commands that are executed locally (not via UDS) (#559, #612).
@@ -400,7 +400,7 @@ impl Tool for AgentCmdTool {
             }
 
             // Parse and validate arguments.
-            let (agent_id, json_cmd) = match self.parse_and_build(&args) {
+            let (agent_id, json_cmd, command) = match self.parse_and_build(&args) {
                 Ok(pair) => pair,
                 Err(e) => {
                     return Ok(ToolResult {
@@ -427,10 +427,7 @@ impl Tool for AgentCmdTool {
             // cap them at the short interactive timeout instead of the 300s
             // turn-completion deadline — the parent must never freeze its turn
             // for the child's full processing (#876).
-            let command = serde_json::from_str::<serde_json::Value>(&args)
-                .ok()
-                .and_then(|v| v.get("command").and_then(|c| c.as_str()).map(str::to_owned))
-                .unwrap_or_default();
+            // `command` is threaded from parse_and_build — no second args parse.
             let send = if Self::is_control_command(&command) {
                 send_uds_command_with_timeout(
                     &socket_path,

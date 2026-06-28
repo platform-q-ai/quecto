@@ -688,12 +688,13 @@ async fn handle_client(args: ClientHandlerArgs) {
         // runs it now if idle or queues it for the next turn if busy. The cancel
         // for steer/abort already fired above.
         if let Some(ctrl) = super::uds_control_forward::intercept_control_forward(&line) {
-            if let Some(tx) =
-                super::uds_ext_protocol::client_writer_tx(&client_tool_registry, client_id)
+            if let Some(forward_line) = super::uds_ext_protocol::ack_accepted_control(
+                &client_tool_registry,
+                client_id,
+                ctrl,
+            )
+            .await
             {
-                let _ = tx.send(ctrl.ack_line).await;
-            }
-            if let Some(forward_line) = ctrl.forward_line {
                 let msg = ClientMessage::Command(ClientCommand {
                     line: forward_line,
                     client_id,

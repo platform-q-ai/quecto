@@ -492,3 +492,53 @@ async fn forwarder_leaves_pending_when_writer_delivered() {
     drop(req_tx);
     let _ = forwarder.await;
 }
+
+// --- #876: reader→ack wiring (ack_accepted_control) ----------------------------
+
+#[tokio::test]
+async fn ack_accepted_control_acks_via_writer_and_returns_follow_up_forward() {
+    // The acceptance ack for a flagged prompt is delivered to THIS client's
+    // serialized writer channel (bypassing the dispatch loop, so it works even
+    // while a turn is in flight), id-correlated; the work becomes a queued
+    // follow_up for the caller to enqueue.
+    let reg = new_client_tool_registry();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
+    register_client_writer(&reg, 7, tx);
+
+    let ctrl = crate::interface::cli::uds_control_forward::intercept_control_forward(
+        r#"{"type":"prompt","message":"do it","ack":"accept","id":"req-1"}"#,
+    )
+    .expect("flagged prompt should intercept");
+    let forward = ack_accepted_control(&reg, 7, ctrl).await;
+
+    let ack = rx
+        .try_recv()
+        .expect("ack written to the client's writer channel");
+    let ackv: serde_json::Value = serde_json::from_str(ack.trim()).unwrap();
+    assert_eq!(ackv["type"], "response");
+    assert_eq!(ackv["id"], "req-1", "ack must echo the request id (#835)");
+
+    let fwd: serde_json::Value =
+        serde_json::from_str(&forward.expect("prompt forwards work")).unwrap();
+    assert_eq!(fwd["type"], "follow_up");
+    assert_eq!(fwd["message"], "do it");
+}
+
+#[tokio::test]
+async fn ack_accepted_control_abort_acks_with_no_forward() {
+    let reg = new_client_tool_registry();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
+    register_client_writer(&reg, 1, tx);
+
+    let ctrl = crate::interface::cli::uds_control_forward::intercept_control_forward(
+        r#"{"type":"abort","ack":"accept","id":"a1"}"#,
+    )
+    .expect("flagged abort should intercept");
+    let forward = ack_accepted_control(&reg, 1, ctrl).await;
+
+    assert!(rx.try_recv().is_ok(), "abort still acks acceptance");
+    assert!(
+        forward.is_none(),
+        "abort enqueues nothing (cancel already fired)"
+    );
+}

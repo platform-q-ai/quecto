@@ -290,6 +290,22 @@ pub fn client_writer_tx(
     reg.get(&client_id).and_then(|s| s.writer_tx.clone())
 }
 
+/// Deliver an intercepted control forward's acceptance ack (#876) to THIS
+/// client's serialized writer channel — bypassing the possibly-blocked dispatch
+/// loop — and return the transformed work line for the caller to enqueue, if
+/// any. Extracted from the reader loop so the ack→writer-channel wiring is
+/// unit-testable without standing up a full server.
+pub(super) async fn ack_accepted_control(
+    registry: &ClientToolRegistry,
+    client_id: u64,
+    ctrl: super::uds_control_forward::AcceptedControl,
+) -> Option<String> {
+    if let Some(tx) = client_writer_tx(registry, client_id) {
+        let _ = tx.send(ctrl.ack_line).await;
+    }
+    ctrl.forward_line
+}
+
 /// Handle client disconnect: unregister all tools, cancel pending executions.
 ///
 /// Returns the names of tools that were removed (for caller to unregister

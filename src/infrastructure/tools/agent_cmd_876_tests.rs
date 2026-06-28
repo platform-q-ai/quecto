@@ -11,7 +11,7 @@ use super::*;
 use std::io::{BufRead, BufReader, Write};
 
 fn parsed(tool: &AgentCmdTool, args: &str) -> serde_json::Value {
-    let (_, cmd) = tool.parse_and_build(args).unwrap();
+    let (_, cmd, _) = tool.parse_and_build(args).unwrap();
     serde_json::from_str(&cmd).unwrap()
 }
 
