@@ -295,14 +295,14 @@ fn reviewer_mechanic_deduplicated() {
         if feature
             .get(field)
             .and_then(Value::as_str)
-            .is_some_and(|s| s.contains("await") && s.contains("get_messages_tail"))
+            .is_some_and(|s| s.contains("await") && s.contains("get_messages"))
         {
             shared_locations += 1;
         }
     }
     if config["workflow"]["selector_prompt"]
         .as_str()
-        .is_some_and(|s| s.contains("await") && s.contains("get_messages_tail"))
+        .is_some_and(|s| s.contains("await") && s.contains("get_messages"))
     {
         shared_locations += 1;
     }
