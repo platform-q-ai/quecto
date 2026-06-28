@@ -225,22 +225,24 @@ async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
     });
 }
 
+/// A read-only `agent_cmd` query (#865) renders a tool box on the master path.
 #[tokio::test]
-async fn handles_agent_cmd_spinner_and_subagent_refresh() {
+async fn agent_cmd_get_state_renders_box_on_master_path() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
-    // A read-only query (#865) renders a tool box on the master path.
     let before = app.master_session.chat.entry_count();
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "gs-1".into(),
         tool_name: "agent_cmd".into(),
         args: serde_json::json!({"agent_id":"worker-1", "command":"get_state"}),
     });
-    assert_eq!(
-        app.master_session.chat.entry_count(),
-        before + 1,
-        "get_state renders a box"
-    );
+    let after = app.master_session.chat.entry_count();
+    assert_eq!(after, before + 1, "get_state renders a box");
+}
+
+#[tokio::test]
+async fn handles_agent_cmd_spinner_and_subagent_refresh() {
+    let mut app = test_app().await;
+    app.spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "cmd-1".into(),
         tool_name: "agent_cmd".into(),

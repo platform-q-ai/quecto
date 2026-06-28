@@ -152,6 +152,55 @@ async fn agent_cmd_get_state_renders_a_tool_box() {
         dump.contains("get_state → child"),
         "agent_cmd get_state should render a tool box in the chat (#865):\n{dump}"
     );
+    // Pin the box BODY, not just the header: the completed box shows a green
+    // success tick, proving the result actually rendered into the box (the same
+    // result-preview path as `get_messages`/`await`), not an empty/pending shell.
+    assert!(
+        dump.contains('✓'),
+        "completed get_state box must render its success result body (#865):\n{dump}"
+    );
+}
+
+/// The sub-agent view path (#865 acceptance: BOTH views). A genuine
+/// `agent_cmd get_state` routed into a SELECTED sub-agent's direct stream must
+/// render the same tool box in that sub-agent's chat, mirroring the master path.
+#[tokio::test]
+async fn agent_cmd_get_state_renders_a_tool_box_in_subagent_view() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent(
+        "child",
+        "running",
+        Some(("active", 5, 5)),
+    )]));
+    h.select(Some("child"));
+    h.route(
+        "child",
+        Event::ToolExecutionStart {
+            tool_call_id: "s1".into(),
+            tool_name: "agent_cmd".into(),
+            args: serde_json::json!({"command":"get_state","agent_id":"grandchild"}),
+        },
+    );
+    h.route(
+        "child",
+        Event::ToolExecutionEnd {
+            tool_call_id: "s1".into(),
+            tool_name: "agent_cmd".into(),
+            result: serde_json::json!({"content":[{"type":"text","text":"ok"}]}),
+            is_error: false,
+        },
+    );
+    h.tick();
+    let dump = h.dump_full();
+    assert!(
+        dump.contains("get_state → grandchild"),
+        "agent_cmd get_state must render a tool box in the sub-agent view too (#865):\n{dump}"
+    );
+    assert!(
+        dump.contains('✓'),
+        "completed get_state box must render its success body in the sub-agent view (#865):\n{dump}"
+    );
 }
 
 /// The real-log judder: workflow sub-agents fire notifications, so the parent
