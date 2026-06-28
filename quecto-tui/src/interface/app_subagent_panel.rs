@@ -495,7 +495,7 @@ impl App {
 
     /// The per-row elapsed label for the panel (#820): the Master row shows the
     /// session uptime; a sub-agent row shows its running/idle/frozen timer.
-    fn panel_row_elapsed(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
+    pub(super) fn panel_row_elapsed(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         let Some(id) = id else {
             // Master row → session uptime.
             return fmt_mss(now.saturating_duration_since(self.started_at).as_secs());
@@ -503,14 +503,16 @@ impl App {
         let Some(t) = self.subagent_local.get(id) else {
             return String::new();
         };
-        // Per-row timer: idle → `idle m:ss` (time since it went idle); running →
-        // live `m:ss`; errored/exited → frozen running `m:ss` (#820).
+        // Per-row timer (#838): a non-running agent shows a FROZEN value so that
+        // incidental renders (scroll/selection/resize) — which re-sample the
+        // per-frame `now` — cannot move it. `elapsed_secs` is `now`-independent
+        // once `stopped_at` is set, so idle/errored/exited all read the frozen
+        // run duration. Only an actively-running agent's timer tracks `now`.
+        // (Previously idle showed a live `now - stopped_at` "time-since-idle"
+        // clock that climbed on every frame.) The Master row's uptime (handled
+        // above) intentionally stays a live session clock.
         if t.info.status == "idle" {
-            let since = t
-                .stopped_at
-                .map(|s| now.saturating_duration_since(s).as_secs())
-                .unwrap_or(0);
-            format!("idle {}", fmt_mss(since))
+            format!("idle {}", fmt_mss(t.elapsed_secs(now)))
         } else {
             fmt_mss(t.elapsed_secs(now))
         }

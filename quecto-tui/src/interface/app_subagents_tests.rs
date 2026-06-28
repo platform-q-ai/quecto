@@ -421,3 +421,69 @@ async fn state_changed_dropping_all_clears_footer_count() {
         "no 'N working' footer once every agent is gone, got: {footer}"
     );
 }
+
+// ── #838: non-running panel timers must be FROZEN (independent of per-frame now) ──
+
+async fn two_running() -> TuiHarness {
+    let mut h = TuiHarness::new().await;
+    h.event(crate::infrastructure::client::Event::AgentStart);
+    h.event(super::tui_harness::subagents_changed(vec![
+        super::tui_harness::subagent("worker", "running", Some(("active", 1, 3))),
+        super::tui_harness::subagent("other", "running", Some(("active", 2, 3))),
+    ]));
+    h
+}
+
+/// An idle sub-agent's panel timer must NOT advance when an incidental (non-tick)
+/// render re-samples `now` (scroll/selection/resize). It reads a stable value
+/// frozen at the moment it stopped working.
+#[tokio::test]
+async fn idle_panel_timer_is_frozen_across_advancing_now() {
+    let mut h = two_running().await;
+    // worker goes idle while `other` keeps running (so ticks could still fire).
+    h.event(super::tui_harness::subagents_changed(vec![
+        super::tui_harness::subagent("worker", "idle", Some(("active", 1, 3))),
+        super::tui_harness::subagent("other", "running", Some(("active", 2, 3))),
+    ]));
+    let now1 = tokio::time::Instant::now();
+    let now2 = now1 + std::time::Duration::from_secs(60);
+    let v1 = h.app_mut().panel_row_elapsed(Some("worker"), now1);
+    let v2 = h.app_mut().panel_row_elapsed(Some("worker"), now2);
+    assert_eq!(
+        v1, v2,
+        "idle sub-agent timer must be frozen, not advance with a re-sampled now: \
+         {v1:?} vs {v2:?}"
+    );
+}
+
+/// Exited/errored rows are likewise frozen.
+#[tokio::test]
+async fn exited_panel_timer_is_frozen_across_advancing_now() {
+    let mut h = two_running().await;
+    h.event(super::tui_harness::subagents_changed(vec![
+        super::tui_harness::subagent("worker", "exited", Some(("active", 1, 3))),
+        super::tui_harness::subagent("other", "running", Some(("active", 2, 3))),
+    ]));
+    let now1 = tokio::time::Instant::now();
+    let now2 = now1 + std::time::Duration::from_secs(90);
+    let v1 = h.app_mut().panel_row_elapsed(Some("worker"), now1);
+    let v2 = h.app_mut().panel_row_elapsed(Some("worker"), now2);
+    assert_eq!(
+        v1, v2,
+        "exited sub-agent timer must be frozen: {v1:?} vs {v2:?}"
+    );
+}
+
+/// An actively-running sub-agent's timer MUST still advance with `now`.
+#[tokio::test]
+async fn running_panel_timer_still_advances_with_now() {
+    let mut h = two_running().await; // both running
+    let now1 = tokio::time::Instant::now();
+    let now2 = now1 + std::time::Duration::from_secs(60);
+    let v1 = h.app_mut().panel_row_elapsed(Some("other"), now1);
+    let v2 = h.app_mut().panel_row_elapsed(Some("other"), now2);
+    assert_ne!(
+        v1, v2,
+        "a running sub-agent's timer must keep tracking now: {v1:?} vs {v2:?}"
+    );
+}
