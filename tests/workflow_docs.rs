@@ -123,3 +123,80 @@ fn examples_config_contains_full_reference_workflow() {
     assert_reference_steps(workflow_steps(&config));
     assert_reference_guards(workflow_guards(&config));
 }
+
+fn reviewers_guidance(config: &Value) -> String {
+    workflow_steps(config)
+        .iter()
+        .find(|s| s["key"] == "reviewers")
+        .expect("feature template should have a `reviewers` step")["guidance"]
+        .as_str()
+        .expect("reviewers step should have string guidance")
+        .to_string()
+}
+
+#[test]
+fn examples_config_reviewers_default_dimensions_include_full_set() {
+    // Issue #845: the mirror config must list the same full default dimension set.
+    let config = read_workflow_config();
+    let g = reviewers_guidance(&config);
+    for dim in [
+        "Architecture",
+        "Security",
+        "Performance",
+        "Correctness",
+        "Conformance-to-AC",
+        "Test-quality",
+    ] {
+        assert!(
+            g.contains(dim),
+            "examples/config.json reviewers guidance should list `{dim}`"
+        );
+    }
+    assert!(
+        !g.contains("for larger changes"),
+        "examples/config.json reviewers guidance should not gate dimensions on 'for larger changes'"
+    );
+}
+
+/// Extract the `reviewers` step's `guidance` value out of the embedded config in
+/// `docs/workflow.md`, so dimension assertions are scoped to the reviewers
+/// guidance block rather than matching a word anywhere in the document (which
+/// would be a false-pass guard — the file embeds the whole config plus prose).
+fn doc_reviewers_guidance(guide: &str) -> &str {
+    let after_key = guide
+        .split_once("\"key\": \"reviewers\"")
+        .expect("docs/workflow.md should embed the reviewers step")
+        .1;
+    let after_guidance = after_key
+        .split_once("\"guidance\": \"")
+        .expect("reviewers step in docs should have a guidance field")
+        .1;
+    after_guidance
+        .split_once('"')
+        .expect("reviewers guidance should be a closed JSON string")
+        .0
+}
+
+#[test]
+fn workflow_guide_reviewers_default_dimensions_include_full_set() {
+    // docs/workflow.md mirrors the native config and must stay in sync (#845).
+    let guide = read_repo_file("docs/workflow.md");
+    let g = doc_reviewers_guidance(&guide);
+    for dim in [
+        "Architecture",
+        "Security",
+        "Performance",
+        "Correctness",
+        "Conformance-to-AC",
+        "Test-quality",
+    ] {
+        assert!(
+            g.contains(dim),
+            "docs/workflow.md reviewers guidance should list `{dim}`, got: {g}"
+        );
+    }
+    assert!(
+        !g.contains("for larger changes"),
+        "docs/workflow.md reviewers guidance should not gate dimensions on 'larger changes'"
+    );
+}

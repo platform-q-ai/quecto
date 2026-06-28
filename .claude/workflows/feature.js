@@ -89,17 +89,28 @@ const pr = await agent(
 
 // ── PR Review: parallel reviewers posting inline comments ──────────────────
 phase('PR Review')
-const DIMENSIONS = ['Architecture', 'Security', 'Performance']
+// Always dispatch the full default dimension set in one parallel batch (#845):
+// Architecture/Security/Performance plus Correctness, Conformance-to-AC and
+// Test-quality — the trio alone has predictable blind spots (silent-wrong
+// answers, unmet ACs incl. docs, hollow tests).
+const DIMENSIONS = ['Architecture', 'Security', 'Performance', 'Correctness', 'Conformance-to-AC', 'Test-quality']
+const DIMENSION_FOCUS = {
+  Correctness: ' Focus on logic, edge cases and silent-wrong-answer footguns.',
+  'Conformance-to-AC': ` Re-read the issue's acceptance criteria for this task and check EACH is actually met by the diff — including documentation and protocol updates — independent of the separate conformance step. Flag any unmet criterion.`,
+  'Test-quality': ' Focus on whether the tests are genuine — would they fail before the fix, not hollow.',
+}
 const reviews = await parallel(DIMENSIONS.map(dim => () => agent(
   `You are an independent ${dim} reviewer for this Quecto PR. PR/context: ${pr}\n\n` +
-  `Run your OWN independent review on the single dimension '${dim}'. Read the diff with ` +
+  `Run your OWN independent review on the single dimension '${dim}'.${DIMENSION_FOCUS[dim] || ''} Read the diff with ` +
   `gh pr diff <PR>. Be skeptical — report ONLY real issues. Do NOT modify code. ` +
   `Post findings as INLINE review comments on the PR via the GitHub GraphQL API (gh api graphql): ` +
   `fetch the PR node id and head SHA with gh pr view <PR> --json id,headRefOid, then submit one review ` +
   `carrying inline comments via the addPullRequestReview mutation (event COMMENT, comments array of ` +
   `path/line/body anchored to the head commit), or addPullRequestReviewThread per finding. If a line ` +
   `anchor is rejected (line outside diff, or PR already merged), fall back to a review comment that still ` +
-  `cites file:line. Each finding: file:line, severity, the problem, a concrete fix. Return a summary of ` +
+  `cites file:line. Each finding: file:line, severity, the problem, a concrete fix. CRITICAL: SUBMIT the ` +
+  `review (event COMMENT / submitPullRequestReview) — never leave it PENDING (a draft is invisible to ` +
+  `others); verify the review state is not PENDING (submittedAt != null) before returning. Return a summary of ` +
   `posted findings.`,
   { label: `review:${dim}`, phase: 'PR Review' }
 )))

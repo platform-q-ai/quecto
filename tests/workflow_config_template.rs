@@ -275,6 +275,81 @@ fn pre_merge_confirms_inline_findings_and_resolved_threads() {
 }
 
 #[test]
+fn reviewers_step_default_dimensions_include_full_set() {
+    // Issue #845: the standard review fan-out must ALWAYS include, at minimum,
+    // Architecture, Security, Performance, Correctness, Conformance-to-AC and
+    // Test-quality — not gate Correctness/Test-quality on "larger changes".
+    let config = read_native_config();
+    let g = guidance(&config, "reviewers");
+
+    for dim in [
+        "Architecture",
+        "Security",
+        "Performance",
+        "Correctness",
+        "Conformance-to-AC",
+        "Test-quality",
+    ] {
+        assert!(
+            g.contains(dim),
+            "reviewers guidance should list `{dim}` in the default dimension set, got: {g}"
+        );
+    }
+
+    // The old gating phrasing ("for larger changes") must be gone — these are
+    // defaults now, not conditional extras.
+    assert!(
+        !g.contains("for larger changes"),
+        "reviewers guidance should not gate dimensions on 'for larger changes'"
+    );
+}
+
+#[test]
+fn reviewers_step_conformance_reviewer_checks_acceptance_criteria_and_docs() {
+    // The Conformance-to-AC reviewer must re-read the issue's acceptance criteria
+    // and check each is actually met, including docs/protocol updates.
+    let config = read_native_config();
+    let g = guidance(&config, "reviewers").to_lowercase();
+    assert!(
+        g.contains("acceptance criteria"),
+        "reviewers guidance should require re-reading the acceptance criteria"
+    );
+    // Tighter than a bare "docs" substring (which matches "docs/protocol", URLs,
+    // etc.): require the Conformance-to-AC clause to explicitly say each AC must be
+    // met INCLUDING documentation.
+    assert!(
+        g.contains("documentation"),
+        "Conformance-to-AC reviewer should explicitly check documentation updates"
+    );
+    assert!(
+        g.contains("conformance-to-ac"),
+        "reviewers guidance should name the Conformance-to-AC dimension"
+    );
+}
+
+#[test]
+fn reviewers_step_preserves_single_batch_and_submits_non_pending() {
+    // #845: expanding the dimension set must NOT change wall-clock — reviewers
+    // still go out as ONE parallel batch — and reviews must be SUBMITTED, never
+    // left as a PENDING draft (verified via submittedAt, not the author-side view).
+    let config = read_native_config();
+    let g = guidance(&config, "reviewers");
+    assert!(
+        g.contains("SINGLE parallel batch") || g.contains("single parallel batch"),
+        "reviewers guidance should keep the single parallel batch invariant"
+    );
+    let lower = g.to_lowercase();
+    assert!(
+        lower.contains("submit") && lower.contains("pending"),
+        "reviewers guidance should require submitting the review (never leaving it PENDING)"
+    );
+    assert!(
+        lower.contains("submittedat"),
+        "reviewers guidance should verify submittedAt (not just the author-side view)"
+    );
+}
+
+#[test]
 fn reviewer_mechanic_deduplicated() {
     let config = read_native_config();
 
