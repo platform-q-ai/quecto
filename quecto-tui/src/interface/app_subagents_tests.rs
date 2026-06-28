@@ -548,6 +548,34 @@ async fn confirmed_running_entry_still_dropped_when_omitted() {
 }
 
 #[tokio::test]
+async fn track_starting_does_not_clobber_confirmed_entry() {
+    // A re-played / duplicate spawn ToolStart for an already kernel-confirmed
+    // (non-optimistic) id must NOT reset it to an unconfirmed "starting" guess,
+    // which would reset its timer and re-open the #831 drop path for the grace
+    // window (review).
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.track_starting_subagent(&serde_json::json!({ "agent_id": "w1" }));
+    a.update_subagent_bar(vec![info("w1", "running")]);
+    let confirmed_started_at = a.subagent_local.get("w1").unwrap().started_at;
+    assert!(!a.subagent_local.get("w1").unwrap().optimistic);
+    // A stray duplicate spawn ToolStart for the same id.
+    a.track_starting_subagent(&serde_json::json!({ "agent_id": "w1" }));
+    let entry = a.subagent_local.get("w1").unwrap();
+    assert!(
+        !entry.optimistic,
+        "a confirmed entry must not revert to optimistic on a duplicate spawn ToolStart"
+    );
+    assert_eq!(
+        entry.started_at, confirmed_started_at,
+        "a confirmed entry's started_at must not be reset by a duplicate spawn ToolStart"
+    );
+    // It must then still drop on an omitting snapshot (#831 preserved).
+    a.update_subagent_bar(vec![info("other", "running")]);
+    assert!(!a.subagent_local.contains_key("w1"));
+}
+
+#[tokio::test]
 async fn optimistic_entry_expires_if_never_confirmed() {
     // A spawn that never registers (e.g. failed launch) must not linger forever:
     // once the optimistic grace elapses, an omitting push removes it.
