@@ -350,6 +350,53 @@ fn reviewers_step_preserves_single_batch_and_submits_non_pending() {
 }
 
 #[test]
+fn feature_js_dimensions_array_matches_full_default_set() {
+    // #862 review (Medium): `.claude/workflows/feature.js`'s `DIMENSIONS` array is
+    // the only copy that actually DRIVES execution, yet the config/doc guards do not
+    // cover it — so it could silently revert to the trio with every test green,
+    // defeating #845. Guard the executable source of truth directly.
+    let js = read_repo_file(".claude/workflows/feature.js");
+
+    // Extract the `const DIMENSIONS = [ ... ]` literal so we assert on the array
+    // that runs, not any prose/prompt text elsewhere in the file.
+    let after = js
+        .split_once("const DIMENSIONS = [")
+        .expect("feature.js should declare `const DIMENSIONS = [...]`")
+        .1;
+    let array = after
+        .split_once(']')
+        .expect("feature.js DIMENSIONS array should be closed with ]")
+        .0;
+
+    for dim in [
+        "Architecture",
+        "Security",
+        "Performance",
+        "Correctness",
+        "Conformance-to-AC",
+        "Test-quality",
+    ] {
+        assert!(
+            array.contains(dim),
+            "feature.js DIMENSIONS array should include `{dim}`, got: {array}"
+        );
+    }
+
+    // The Conformance-to-AC reviewer must re-read the acceptance criteria and check
+    // documentation, and reviews must be submitted (never left PENDING) — assert the
+    // executable prompt carries this, mirroring the config guards.
+    let lower = js.to_lowercase();
+    assert!(
+        lower.contains("acceptance criteria") && lower.contains("documentation"),
+        "feature.js Conformance-to-AC prompt should re-read acceptance criteria incl. documentation"
+    );
+    assert!(
+        lower.contains("submittedat") && lower.contains("pending"),
+        "feature.js reviewer prompt should require a submitted (non-PENDING) review"
+    );
+}
+
+#[test]
 fn reviewer_mechanic_deduplicated() {
     let config = read_native_config();
 

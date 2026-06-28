@@ -156,6 +156,12 @@ fn examples_config_reviewers_default_dimensions_include_full_set() {
         !g.contains("for larger changes"),
         "examples/config.json reviewers guidance should not gate dimensions on 'for larger changes'"
     );
+    // #862 review (Low): the single parallel batch (wall-clock) invariant phrasing
+    // must match the native config so this mirror cannot silently drop it.
+    assert!(
+        g.contains("SINGLE parallel batch"),
+        "examples/config.json reviewers guidance should keep the SINGLE parallel batch invariant"
+    );
 }
 
 /// Extract the `reviewers` step's `guidance` value out of the embedded config in
@@ -198,5 +204,10 @@ fn workflow_guide_reviewers_default_dimensions_include_full_set() {
     assert!(
         !g.contains("for larger changes"),
         "docs/workflow.md reviewers guidance should not gate dimensions on 'larger changes'"
+    );
+    // #862 review (Low): keep the single parallel batch invariant phrasing aligned.
+    assert!(
+        g.contains("SINGLE parallel batch"),
+        "docs/workflow.md reviewers guidance should keep the SINGLE parallel batch invariant"
     );
 }
