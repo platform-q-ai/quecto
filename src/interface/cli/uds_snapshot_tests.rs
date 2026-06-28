@@ -79,6 +79,28 @@ fn build_get_messages_line_trims_oversized_history() {
     );
 }
 
+/// A single message that alone exceeds the budget cannot be returned under the
+/// parent's read cap, so it is dropped — the call yields an empty `trimmed`
+/// snapshot rather than erroring or panicking (#842).
+#[test]
+fn build_get_messages_line_drops_single_oversized_message() {
+    // One ~2 MiB message exceeds the 1 MiB line cap on its own.
+    let huge = "x".repeat(2 * 1024 * 1024);
+    let line = build_get_messages_line(&[Message::assistant(huge, vec![])]);
+    assert!(
+        line.len() <= 1024 * 1024,
+        "line must fit under the 1 MiB cap, got {} bytes",
+        line.len()
+    );
+    let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(v["data"]["trimmed"], true, "trimmed marker present");
+    let msgs = v["data"]["messages"].as_array().unwrap();
+    assert!(
+        msgs.is_empty(),
+        "an oversized lone message is dropped: {msgs:?}"
+    );
+}
+
 /// The snapshot is independent of the dispatch loop's exclusive `&mut messages`
 /// borrow: while a simulated turn holds `messages` mutably for its whole
 /// duration, a concurrent reader (the accept loop) can still read the snapshot
