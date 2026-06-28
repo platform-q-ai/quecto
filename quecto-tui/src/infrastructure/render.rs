@@ -442,6 +442,63 @@ mod tests {
         }
     }
 
+    // ── #884: SGR reset + absolute addressing in diff_render ───────────
+
+    /// Defect #2: every `ERASE_LINE` must be preceded by an SGR reset so the
+    /// erase cannot inherit a stale (tool-box) background and smear it across
+    /// the panel columns.
+    #[test]
+    fn diff_render_resets_sgr_before_erasing() {
+        let output = captured_render(&["a", "b", "c"], &["x", "y", "z"]);
+        let reset = output.find("\x1b[0m");
+        let erase = output.find(ERASE_LINE);
+        assert!(
+            reset.is_some(),
+            "diff output must emit an SGR reset: {output:?}"
+        );
+        assert!(erase.is_some(), "diff output must erase: {output:?}");
+        assert!(
+            reset.unwrap() < erase.unwrap(),
+            "SGR reset must precede the first ERASE_LINE: {output:?}"
+        );
+    }
+
+    /// Defect #1: vertical movement must use absolute cursor addressing
+    /// (`\x1b[{row};1H`) so a step on the bottom row can never scroll the
+    /// viewport or desync the renderer's row model. No bare `\r\n` vertical
+    /// steps may appear in diff output.
+    #[test]
+    fn diff_render_uses_absolute_addressing_not_newline_steps() {
+        let output = captured_render(&["a", "b", "c"], &["x", "y", "z"]);
+        assert!(
+            !output.contains("\r\n"),
+            "diff output must not vertically step with \\r\\n (can scroll): {output:?}"
+        );
+        assert!(
+            output.contains(";1H"),
+            "diff output must use absolute cursor addressing: {output:?}"
+        );
+        assert!(
+            !output.contains("\x1b[1B") && !output.contains("\x1b[1A"),
+            "diff output must not use relative vertical moves: {output:?}"
+        );
+    }
+
+    /// Defect #1, shrink path: clearing trailing lines must also use absolute
+    /// addressing (no `\r\n` stepping onto the bottom row).
+    #[test]
+    fn diff_render_shrink_uses_absolute_addressing() {
+        let output = captured_render(&["a", "b", "c", "d"], &["a", "b"]);
+        assert!(
+            !output.contains("\r\n"),
+            "shrink diff must not step with \\r\\n: {output:?}"
+        );
+        assert!(
+            output.contains(ERASE_LINE),
+            "shrink diff must erase: {output:?}"
+        );
+    }
+
     #[test]
     fn render_returns_write_errors() {
         let mut renderer = DiffRenderer::new(FailingWriter {
