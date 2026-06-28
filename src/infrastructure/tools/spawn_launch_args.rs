@@ -8,23 +8,36 @@ use std::path::Path;
 
 use crate::domain::subagent::SubagentConfig;
 
+/// Resolved launch context for a child agent: the deterministic inputs that are
+/// not carried on [`SubagentConfig`]. Grouped into a struct so the builder has a
+/// single descriptive parameter rather than a long positional list.
+pub(super) struct ChildLaunchSpec<'a> {
+    pub session_name: &'a str,
+    pub socket_path: &'a Path,
+    pub config: &'a SubagentConfig,
+    /// Resolved `--config` path (explicit arg or inherited runtime config).
+    pub effective_config: Option<&'a Path>,
+    pub parent_id: Option<&'a str>,
+    pub restrict_to_workspace: bool,
+    /// Already-written workflow spec file path, if any.
+    pub workflow_spec_path: Option<&'a Path>,
+}
+
 /// Build the ordered CLI argument list for launching a child `quecto agent` in
 /// UDS mode. The caller appends these to a `Command` whose program is the quecto
 /// binary, and is responsible for the side-effecting bits (writing the workflow
 /// spec file, setting env, stdio) — this function is pure.
-///
-/// `effective_config` is the resolved `--config` path (explicit arg or inherited
-/// runtime config); `workflow_spec_path` is the already-written spec file path,
-/// if any.
-pub(super) fn build_child_cli_args(
-    session_name: &str,
-    socket_path: &Path,
-    config: &SubagentConfig,
-    effective_config: Option<&Path>,
-    parent_id: Option<&str>,
-    restrict_to_workspace: bool,
-    workflow_spec_path: Option<&Path>,
-) -> Vec<OsString> {
+pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> {
+    let ChildLaunchSpec {
+        session_name,
+        socket_path,
+        config,
+        effective_config,
+        parent_id,
+        restrict_to_workspace,
+        workflow_spec_path,
+    } = *spec;
+
     let mut args: Vec<OsString> = vec![
         "agent".into(),
         "--mode".into(),

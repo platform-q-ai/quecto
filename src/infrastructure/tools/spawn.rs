@@ -241,8 +241,19 @@ impl SpawnTool {
             _ => None,
         };
 
-        // TODO(#881): model not yet wired.
-        let model = None;
+        // Model override (#881). Accepts the same form(s) as `agent_cmd
+        // set_model`: a full `provider/model` string, or a separate `provider` +
+        // `model_id` pair — validated by the shared `parse_model_arg` so the two
+        // surfaces cannot diverge. An invalid combination is a clear spawn error
+        // here rather than a silent fall-back to the default. Precedence:
+        // explicit `model` arg > forwarded `--config` > built-in default.
+        let model_arg = crate::domain::subagent::parse_model_arg(
+            args.get("model").and_then(|v| v.as_str()),
+            args.get("provider").and_then(|v| v.as_str()),
+            args.get("model_id").and_then(|v| v.as_str()),
+        )
+        .map_err(|e| format!("invalid model: {e}"))?;
+        let model = model_arg.map(|m| m.to_model_string());
 
         if let Some(ref id) = agent_id {
             super::subagent_registry::validate_agent_id_format(id)?;
@@ -325,13 +336,15 @@ impl SpawnTool {
         let effective_config =
             effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path());
         let cli_args = super::spawn_launch_args::build_child_cli_args(
-            session_name,
-            &socket_path,
-            config,
-            effective_config.as_deref(),
-            self.parent_id.as_deref(),
-            self.restrict_to_workspace,
-            workflow_spec_path.as_deref(),
+            &super::spawn_launch_args::ChildLaunchSpec {
+                session_name,
+                socket_path: &socket_path,
+                config,
+                effective_config: effective_config.as_deref(),
+                parent_id: self.parent_id.as_deref(),
+                restrict_to_workspace: self.restrict_to_workspace,
+                workflow_spec_path: workflow_spec_path.as_deref(),
+            },
         );
 
         let mut cmd = tokio::process::Command::new(&binary);
@@ -581,7 +594,7 @@ impl Tool for SpawnTool {
                 must wait synchronously (same turn) until the child reaches \
                 idle/exited/timeout/error before continuing."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}}}}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"model":{"type":"string","description":"Model for the child in provider/model form (e.g. 'openai/gpt-5.5'), same format as agent_cmd set_model. Forwarded to the child as --model at launch so its FIRST turn runs on this model. Precedence: explicit model > --config > built-in default. Invalid combinations are rejected with a clear error."},"provider":{"type":"string","description":"Provider name for the child model (alternative to model; must be paired with model_id)"},"model_id":{"type":"string","description":"Model id for the child model (used with provider)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}}}}"#.into(),
         }
     }
 
