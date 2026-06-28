@@ -612,3 +612,127 @@ async fn forwarded_workflow_for_untracked_agent_is_dropped() {
         "an untracked forwarded workflow must not touch the connected child's bar"
     );
 }
+
+/// A `get_state` Response carrying a child's mid-workflow snapshot (#842 / #869),
+/// shaped like the kernel's connect-time get_state (`progress` + `activeIssue`).
+fn get_state_with_workflow(done: u32, total: u32, issue: u32) -> Event {
+    Event::Response {
+        id: Some("subagent-state".into()),
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({
+            "workflow": {
+                "progress": { "done": done, "total": total },
+                "activeIssue": { "number": issue, "title": "child" },
+                "mode": "active",
+            }
+        })),
+        error: None,
+    }
+}
+
+#[tokio::test]
+async fn subagent_get_state_response_populates_workflow_bar() {
+    // #869 (a): viewing a child mid-workflow, the connect-time get_state snapshot
+    // carries the child's workflow — `route_subagent_event` must populate the
+    // session bar from it, not wait for the next live workflow_state transition.
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent(
+        "C",
+        "running",
+        Some(("active", 1, 3)),
+    )]));
+    h.app_mut().select_agent(Some("C"));
+    h.app_mut()
+        .route_subagent_event("C", get_state_with_workflow(3, 20, 869));
+    let bar = &h.app_mut().sessions.get("C").unwrap().workflow_bar;
+    assert_eq!(bar.done, 3, "get_state workflow `done` must reach the bar");
+    assert_eq!(
+        bar.total, 20,
+        "get_state workflow `total` must reach the bar"
+    );
+    assert_eq!(
+        bar.issue_number,
+        Some(869),
+        "get_state workflow issue must reach the bar"
+    );
+}
+
+#[tokio::test]
+async fn subagent_get_state_routes_by_inner_agent_id_not_connection() {
+    // #869 (a) / #840: a get_state must land on the connected child only — it is
+    // not a forwarded descendant event, so it uses the connection id and must not
+    // create a phantom session nor be mis-routed.
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent(
+        "C",
+        "running",
+        Some(("active", 1, 3)),
+    )]));
+    h.app_mut().select_agent(Some("C"));
+    h.app_mut()
+        .route_subagent_event("C", get_state_with_workflow(2, 9, 100));
+    assert_eq!(
+        h.app_mut().sessions.get("C").unwrap().workflow_bar.total,
+        9,
+        "the connected child's get_state must populate ITS bar"
+    );
+}
+
+/// Count the panel's per-step markers (`▰` filled / `▱` empty) in a frame.
+fn panel_markers(frame: &str) -> (usize, usize) {
+    (frame.matches('▰').count(), frame.matches('▱').count())
+}
+
+#[tokio::test]
+async fn live_workflow_state_renders_full_empty_markers_in_left_panel() {
+    // #869 (b): a 3/20 workflow delivered as a live workflow_state for the viewed
+    // child must update its LEFT-PANEL row to show 3 filled + 17 empty markers —
+    // the panel must not collapse to only the filled markers, and must reflect the
+    // child's own live progress (not just the last subagent_state_changed push).
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    // Child tracked WITHOUT a workflow snapshot yet (no panel bar initially).
+    h.event(subagents_changed(vec![subagent("C", "running", None)]));
+    h.app_mut().select_agent(Some("C"));
+    h.app_mut().route_subagent_event(
+        "C",
+        Event::WorkflowState {
+            agent_id: None,
+            steps: vec![],
+            progress: serde_json::json!({ "done": 3, "total": 20 }),
+            active_issue: Some(serde_json::json!({ "number": 1, "title": "w" })),
+            mode: Some("active".into()),
+            active_template: None,
+            available_templates: None,
+        },
+    );
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    let (filled, empty) = panel_markers(&frame);
+    assert_eq!(
+        filled, 3,
+        "3 completed steps render as 3 filled markers:\n{frame}"
+    );
+    assert_eq!(
+        empty, 17,
+        "17 incomplete steps must render as empty markers, not collapse:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn get_state_snapshot_renders_full_empty_markers_in_left_panel() {
+    // #869 (b): the same full filled+empty marker rendering must work from the
+    // connect-time get_state snapshot, not only from live workflow_state.
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent("C", "running", None)]));
+    h.app_mut().select_agent(Some("C"));
+    h.app_mut()
+        .route_subagent_event("C", get_state_with_workflow(3, 20, 5));
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    let (filled, empty) = panel_markers(&frame);
+    assert_eq!(filled, 3, "get_state 3/20 → 3 filled markers:\n{frame}");
+    assert_eq!(empty, 17, "get_state 3/20 → 17 empty markers:\n{frame}");
+}

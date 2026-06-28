@@ -312,5 +312,42 @@ fn forward_child_state_changed_prunes_grandchild_absent_from_push() {
     assert!(g.contains_key("sibling"));
 }
 
+#[test]
+fn forwarded_grandchild_workflow_does_not_overwrite_child_entry() {
+    // #869 (c): a grandchild's workflow_state, forwarded onto the immediate
+    // child's monitored stream with the grandchild's OWN inner agent_id, must NOT
+    // overwrite the immediate child's registry workflow snapshot. Parent/child/
+    // grandchild must each keep independent (steps_completed, steps_total).
+    let registry = super::super::subagent_registry::new_registry();
+    let mut child = test_entry();
+    child.workflow = Some(super::super::subagent_registry::WorkflowSnapshot {
+        mode: "active".into(),
+        steps_completed: 6,
+        steps_total: 19,
+    });
+    registry.lock().unwrap().insert("child".to_string(), child);
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    // A forwarded grandchild workflow (2/4) arrives on the child's stream.
+    let line = r#"{"type":"workflow_state","agent_id":"grandchild","parent_id":"child","mode":"active","progress":{"done":2,"total":4}}"#;
+    super::handle_monitor_line(line, "child", &registry, None, Some(&tx), Some("root"));
+    let wf = registry
+        .lock()
+        .unwrap()
+        .get("child")
+        .unwrap()
+        .workflow
+        .clone()
+        .expect("child keeps its own workflow");
+    assert_eq!(
+        (wf.steps_completed, wf.steps_total),
+        (6, 19),
+        "child's own 6/19 must survive a grandchild's forwarded 2/4"
+    );
+    // The forwarded event preserves the grandchild identity going up the tree.
+    let fwd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+    assert_eq!(fwd["agent_id"], "grandchild");
+    assert_eq!(fwd["parent_id"], "child");
+}
+
 // cascade_remove_and_state_changed tests moved to `subagent_cascade_tests.rs`
 // alongside the extracted `subagent_cascade` module (#831).
