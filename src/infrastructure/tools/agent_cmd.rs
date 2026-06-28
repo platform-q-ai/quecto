@@ -182,32 +182,25 @@ impl AgentCmdTool {
             "abort" => serde_json::json!({"type": "abort", "ack": "accept"}),
             "get_session_stats" => serde_json::json!({"type": "get_session_stats"}),
             "set_model" => {
-                let model = args
-                    .get("model")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty());
-                let provider = args
-                    .get("provider")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty());
-                let model_id = args
-                    .get("model_id")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty());
-                match (model, provider, model_id) {
-                    (Some(m), _, _) => {
+                // Reuse the shared model-arg validation (#881) so `set_model`
+                // and `spawn`'s `model` cannot diverge.
+                use crate::domain::subagent::{ModelArg, parse_model_arg};
+                let parsed = parse_model_arg(
+                    args.get("model").and_then(|v| v.as_str()),
+                    args.get("provider").and_then(|v| v.as_str()),
+                    args.get("model_id").and_then(|v| v.as_str()),
+                )
+                .map_err(|e| format!("set_model: {e}"))?;
+                match parsed {
+                    Some(ModelArg::Full(m)) => {
                         serde_json::json!({"type": "set_model", "model": m, "ack": "accept"})
                     }
-                    (None, Some(p), Some(mid)) => {
-                        serde_json::json!({"type": "set_model", "provider": p, "modelId": mid, "ack": "accept"})
+                    Some(ModelArg::Pair { provider, model_id }) => {
+                        serde_json::json!({"type": "set_model", "provider": provider, "modelId": model_id, "ack": "accept"})
                     }
-                    (None, Some(_), None) => {
-                        return Err("set_model: provider requires model_id".to_string());
+                    None => {
+                        return Err("set_model requires model, or provider + model_id".to_string());
                     }
-                    (None, None, Some(_)) => {
-                        return Err("set_model: model_id requires provider".to_string());
-                    }
-                    _ => return Err("set_model requires model, or provider + model_id".to_string()),
                 }
             }
             "clear_history" => serde_json::json!({"type": "clear_history", "ack": "accept"}),

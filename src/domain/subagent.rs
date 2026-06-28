@@ -25,6 +25,62 @@ pub struct SubagentConfig {
     /// with `--workflow-spec <path>` and runs exactly that template in Active
     /// mode (binding).
     pub workflow_spec: Option<crate::domain::workflow::WorkflowSpec>,
+    /// Optional model override, forwarded to the child as `--model <value>`.
+    /// Resolved to the canonical `provider/model` form. When `None`, the child
+    /// resolves its model from the inherited `--config` or the built-in default.
+    pub model: Option<String>,
+}
+
+/// A validated model argument, in either of the two forms accepted by
+/// `set_model` and `spawn`: a single `provider/model` string, or a separate
+/// `provider` + `model_id` pair.
+///
+/// This is the single source of truth for model-argument validation so the
+/// `spawn` tool and `agent_cmd set_model` cannot diverge (#881).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelArg {
+    /// A full `provider/model` string (e.g. `openai/gpt-5.5`).
+    Full(String),
+    /// A separate provider + model id pair (e.g. `openai` + `gpt-5.5`).
+    Pair { provider: String, model_id: String },
+}
+
+impl ModelArg {
+    /// Collapse to the canonical single-string `provider/model` form used by
+    /// the `--model` CLI flag and the config default.
+    pub fn to_model_string(&self) -> String {
+        match self {
+            ModelArg::Full(m) => m.clone(),
+            ModelArg::Pair { provider, model_id } => format!("{provider}/{model_id}"),
+        }
+    }
+}
+
+/// Validate the `model` / `provider` / `model_id` argument trio shared by
+/// `set_model` and `spawn`. Empty strings are treated as absent. Exactly one of
+/// (`model`) or (`provider` + `model_id`) must be supplied.
+///
+/// Returns `Ok(None)` when none are supplied (caller falls back to its default
+/// behaviour) and `Err` with a clear message when the combination is invalid.
+pub fn parse_model_arg(
+    model: Option<&str>,
+    provider: Option<&str>,
+    model_id: Option<&str>,
+) -> Result<Option<ModelArg>, String> {
+    let model = model.map(str::trim).filter(|s| !s.is_empty());
+    let provider = provider.map(str::trim).filter(|s| !s.is_empty());
+    let model_id = model_id.map(str::trim).filter(|s| !s.is_empty());
+
+    match (model, provider, model_id) {
+        (Some(m), _, _) => Ok(Some(ModelArg::Full(m.to_string()))),
+        (None, Some(p), Some(mid)) => Ok(Some(ModelArg::Pair {
+            provider: p.to_string(),
+            model_id: mid.to_string(),
+        })),
+        (None, Some(_), None) => Err("provider requires model_id".to_string()),
+        (None, None, Some(_)) => Err("model_id requires provider".to_string()),
+        (None, None, None) => Ok(None),
+    }
 }
 
 /// Validate an agent_id against an allowlist.
@@ -69,6 +125,7 @@ mod tests {
             workflow: false,
             workflow_guards: false,
             workflow_spec: None,
+            model: None,
         };
         assert!(cfg.config_path.is_none());
         assert!(!cfg.workflow);
@@ -86,6 +143,7 @@ mod tests {
             workflow: false,
             workflow_guards: false,
             workflow_spec: None,
+            model: None,
         };
         assert_eq!(cfg.config_path, Some(PathBuf::from("/custom/config.json")));
     }
@@ -101,8 +159,55 @@ mod tests {
             workflow: true,
             workflow_guards: true,
             workflow_spec: None,
+            model: None,
         };
         assert!(cfg.workflow);
         assert!(cfg.workflow_guards);
+    }
+
+    // --- parse_model_arg (#881) ---
+
+    #[test]
+    fn test_parse_model_arg_full_string() {
+        let arg = parse_model_arg(Some("openai/gpt-5.5"), None, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(arg, ModelArg::Full("openai/gpt-5.5".to_string()));
+        assert_eq!(arg.to_model_string(), "openai/gpt-5.5");
+    }
+
+    #[test]
+    fn test_parse_model_arg_provider_model_id_pair() {
+        let arg = parse_model_arg(None, Some("openai"), Some("gpt-5.5"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(arg.to_model_string(), "openai/gpt-5.5");
+    }
+
+    #[test]
+    fn test_parse_model_arg_none_is_ok_none() {
+        assert_eq!(parse_model_arg(None, None, None).unwrap(), None);
+        // Empty strings are treated as absent.
+        assert_eq!(parse_model_arg(Some(""), Some(""), Some("")).unwrap(), None);
+    }
+
+    #[test]
+    fn test_parse_model_arg_provider_without_model_id_errors() {
+        let err = parse_model_arg(None, Some("openai"), None).unwrap_err();
+        assert!(err.contains("model_id"), "got: {err}");
+    }
+
+    #[test]
+    fn test_parse_model_arg_model_id_without_provider_errors() {
+        let err = parse_model_arg(None, None, Some("gpt-5.5")).unwrap_err();
+        assert!(err.contains("provider"), "got: {err}");
+    }
+
+    #[test]
+    fn test_parse_model_arg_full_takes_precedence_over_pair() {
+        let arg = parse_model_arg(Some("a/b"), Some("openai"), Some("gpt-5.5"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(arg, ModelArg::Full("a/b".to_string()));
     }
 }

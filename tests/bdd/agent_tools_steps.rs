@@ -244,6 +244,7 @@ fn given_subagent_inheriting_sandbox(world: &mut QuectoWorld) {
         workflow: false,
         workflow_guards: false,
         workflow_spec: None,
+        model: None,
     });
     let ctx = SubagentContext::from_config(world.subagent_config.as_ref().unwrap());
     world.subagent_context = Some(ctx);
