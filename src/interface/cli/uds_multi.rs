@@ -21,7 +21,7 @@ use super::uds_session::{AgentSession, message_to_json};
 pub(crate) use super::uds_snapshots::build_get_state_line;
 pub(crate) use super::uds_snapshots::{
     ConversationSnapshot, StateSnapshot, build_get_messages_line,
-    build_get_state_line_with_streaming,
+    build_get_state_line_with_streaming, build_get_subagents_line,
 };
 use super::uds_snapshots::{refresh_conversation_snapshot, refresh_state_snapshot};
 
@@ -207,6 +207,7 @@ pub(super) async fn multi_client_loop(
         conversation_snapshot: conversation_snapshot.clone(),
         state_snapshot: state_snapshot.clone(),
         busy: busy.clone(),
+        subagent_registry: subagent_registry.clone(),
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)
@@ -289,6 +290,9 @@ struct AcceptLoopArgs {
     /// agent is busy. When idle, the dispatch loop answers `get_messages` in
     /// FIFO order and no unsolicited bytes are written.
     busy: BusyFlag,
+    /// Shared subagent registry (#874): the connect-time `get_subagents` snapshot
+    /// a busy child pushes is built from this, off the dispatch loop.
+    subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -303,6 +307,7 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
         conversation_snapshot,
         state_snapshot,
         busy,
+        subagent_registry,
     } = args;
     tokio::spawn(async move {
         loop {
@@ -383,6 +388,10 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                         };
                         if let Err(e) = stream.write_all(messages_line.as_bytes()).await {
                             tracing::debug!("connect-time message snapshot not delivered: {e}");
+                        }
+                        let subagents_line = build_get_subagents_line(&subagent_registry);
+                        if let Err(e) = stream.write_all(subagents_line.as_bytes()).await {
+                            tracing::debug!("connect-time subagents snapshot not delivered: {e}");
                         }
                     }
 
@@ -726,6 +735,9 @@ pub(crate) use uds_multi_prompt::{PromptArgsBroadcast, run_agent_prompt_broadcas
 // Re-exported for the auto-await dedupe unit tests (uds_subagent_notify_tests).
 #[cfg(test)]
 pub(in crate::interface::cli) use uds_multi_prompt::forward_notification_broadcast;
+#[cfg(test)]
+#[path = "uds_multi_accept_loop_tests.rs"]
+mod accept_loop_tests;
 #[cfg(test)]
 #[path = "uds_multi_interception_tests.rs"]
 mod interception_tests;

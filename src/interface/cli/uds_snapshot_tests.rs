@@ -182,3 +182,84 @@ fn build_get_state_line_serializes_status_snapshot() {
     assert_eq!(v["data"]["messageCount"], 2);
     assert_eq!(v["data"]["pendingMessageCount"], 1);
 }
+
+// ─── get_subagents connect-time snapshot (#874) ───────────────────────────────
+//
+// A busy child must serve its current registry view immediately on connect,
+// mirroring the #842 busy-serve path established for get_messages/get_state.
+// The `SubagentRegistry` is an `Arc<Mutex<…>>` independent of the dispatch
+// loop's exclusive `&mut messages` borrow, so `get_subagents` can be served
+// from the registry off the dispatch loop while a turn is in flight.
+
+/// The connect-time `get_subagents` line is a success Response carrying the
+/// child's current subagent list, byte-for-byte consumable by the parent's
+/// id-correlated reader (which accepts the id-less snapshot for a
+/// `get_subagents` request, #874).
+#[test]
+fn build_get_subagents_line_serializes_registry_view() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentRegistry, SubagentStatus,
+    };
+    use crate::interface::cli::uds_multi::build_get_subagents_line;
+
+    let mut entry = SubagentEntry::new("/tmp/gc.sock".into(), 4321);
+    entry.status = SubagentStatus::Running;
+    entry.last_tool = Some("bash".into());
+    entry.parent_id = Some("child".into());
+    let registry: SubagentRegistry = std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::HashMap::from([("grandchild-worker".to_string(), entry)]),
+    ));
+
+    let line = build_get_subagents_line(&Some(registry));
+    assert!(
+        line.ends_with('\n'),
+        "line must be newline-terminated: {line}"
+    );
+
+    let v: serde_json::Value = serde_json::from_str(line.trim()).expect("valid JSON line");
+    assert_eq!(v["type"], "response");
+    assert_eq!(v["command"], "get_subagents");
+    assert_eq!(v["success"], true);
+    let agents = v["data"]["subagents"]
+        .as_array()
+        .expect("data.subagents array");
+    assert_eq!(agents.len(), 1, "one registered subagent: {line}");
+    assert_eq!(agents[0]["agentId"], "grandchild-worker");
+    assert_eq!(agents[0]["status"], "running");
+    assert_eq!(agents[0]["pid"], 4321);
+}
+
+/// The connect-time `get_subagents` snapshot is tagged `snapshot: true` so a
+/// caller can tell the data may lag the in-flight turn — consistent with the
+/// #842 snapshot markers on get_messages/get_state.
+#[test]
+fn build_get_subagents_line_marks_snapshot() {
+    use crate::interface::cli::uds_multi::build_get_subagents_line;
+
+    let line = build_get_subagents_line(&None);
+    let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(
+        v["data"]["snapshot"], true,
+        "snapshot marker present: {line}"
+    );
+    let agents = v["data"]["subagents"].as_array().unwrap();
+    assert!(agents.is_empty(), "no registry => empty subagents list");
+}
+
+/// A `get_subagents` snapshot for a `None` registry yields an empty subagents
+/// list (matching `build_subagent_info_list`'s contract), not an error.
+#[test]
+fn build_get_subagents_line_empty_when_no_registry() {
+    use crate::interface::cli::uds_multi::build_get_subagents_line;
+
+    let line = build_get_subagents_line(&None);
+    let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(v["success"], true);
+    assert_eq!(
+        v["data"]["subagents"]
+            .as_array()
+            .map(std::vec::Vec::len)
+            .unwrap_or(999),
+        0
+    );
+}

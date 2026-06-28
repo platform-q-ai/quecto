@@ -240,6 +240,43 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd result should contain "NEWEST MESSAGE"
     And the agent_cmd result should not contain "OLDEST MESSAGE"
 
+  # --- get_subagents served on the busy path (#874) ---
+
+  # Acceptance criteria for #874:
+  # - get_subagents against a BUSY child returns the child's current registry
+  #   view within the inspector timeout instead of queuing behind the child's
+  #   turn (the master's own agent_cmd get_subagents call must not hang).
+  # - The snapshot is tagged snapshot:true so a caller can tell the data may lag
+  #   the in-flight turn (#842 consistency).
+  # - id-correlation (#835) is preserved: a DIFFERENT command against a busy
+  #   child that pushes a get_subagents snapshot must NOT be answered by that
+  #   snapshot (no regression to the "first message only" class).
+  # - Idle behaviour remains unchanged (the dispatch loop answers in FIFO order).
+
+  # The mock busy child pushes a get_subagents snapshot on connect and NEVER
+  # sends an id-matched reply, so a blocking-on-reply regression would ride the
+  # ~300s deadline instead of completing — completing proves the snapshot was
+  # accepted and served promptly.
+  Scenario: get_subagents against a busy child accepts the connect-time snapshot
+    Given an AgentCmdTool with a busy subagents snapshot registry entry "busy-subagents"
+    When I execute agent_cmd with '{"agent_id":"busy-subagents","command":"get_subagents"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd response command "get_subagents" should include a "subagents" array
+    And the agent_cmd response command "get_subagents" should include boolean field "snapshot" set to "true"
+    And the agent_cmd result should contain "grandchild-worker"
+
+  # A genuinely DIFFERENT command (get_session_stats) must never be answered by
+  # the connect-time get_subagents snapshot — the #835 id-correlation guarantee.
+  # This mock pushes a get_subagents snapshot AND echoes the real command with an
+  # id-matched reply: get_session_stats must SKIP the snapshot and accept only
+  # its own correlated reply.
+  Scenario: mismatched command against a busy subagents-snapshot child preserves id-correlation
+    Given an AgentCmdTool with a busy subagents snapshot and echo registry entry "busy-subagents-skip"
+    When I execute agent_cmd with '{"agent_id":"busy-subagents-skip","command":"get_session_stats"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "LATEST TURNS"
+    And the agent_cmd result should not contain "grandchild-worker"
+
   # --- Non-blocking control forwards (#876) ---
 
   # Acceptance criteria for #876:

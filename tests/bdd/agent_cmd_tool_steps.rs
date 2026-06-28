@@ -319,6 +319,106 @@ fn given_agent_cmd_with_busy_state_snapshot_entry(world: &mut QuectoWorld, agent
     world.agent_cmd_last_command = Some(last_cmd);
 }
 
+#[given(expr = "an AgentCmdTool with a busy subagents snapshot registry entry {string}")]
+fn given_agent_cmd_with_busy_subagents_snapshot_entry(world: &mut QuectoWorld, agent_id: String) {
+    // A BUSY child pushes a connect-time `get_subagents` SNAPSHOT as the FIRST
+    // line on every new connection (#874, mirroring #842's get_messages/get_state
+    // busy-serve). The mock NEVER sends an id-matched reply (it is mid-turn), so
+    // a blocking-on-reply regression would ride the ~300s deadline — completing
+    // proves the snapshot was accepted and served promptly.
+    let registry = AgentCmdTool::new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock_path = tmp.path().join("busy-subagents-agent.sock");
+    let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let std_listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    let last_cmd_clone = last_cmd.clone();
+
+    let _handle = std::thread::spawn(move || {
+        for stream in std_listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let last_cmd_inner = last_cmd_clone.clone();
+            std::thread::spawn(move || {
+                use std::io::{BufRead, BufReader, Write};
+                let snapshot = r#"{"type":"response","command":"get_subagents","data":{"subagents":[{"agentId":"grandchild-worker","status":"running","pid":4321}],"snapshot":true}}"#;
+                let _ = writeln!(stream, "{}", snapshot);
+                let reader = BufReader::new(stream.try_clone().unwrap());
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    *last_cmd_inner.lock().unwrap() = line;
+                }
+            });
+        }
+    });
+
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(sock_path, 0));
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+    world._agent_cmd_mock_tmp = Some(tmp);
+    world.agent_cmd_last_command = Some(last_cmd);
+}
+
+#[given(expr = "an AgentCmdTool with a busy subagents snapshot and echo registry entry {string}")]
+fn given_agent_cmd_with_busy_subagents_snapshot_and_echo_entry(
+    world: &mut QuectoWorld,
+    agent_id: String,
+) {
+    // A BUSY child pushes a connect-time `get_subagents` SNAPSHOT (#874) AND
+    // echoes the real command with an id-matched reply. A DIFFERENT command
+    // (get_session_stats) must SKIP the get_subagents snapshot and accept only
+    // its own correlated reply — preserving the #835 id-correlation guarantee.
+    let registry = AgentCmdTool::new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock_path = tmp.path().join("busy-subagents-skip-agent.sock");
+    let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let std_listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    let last_cmd_clone = last_cmd.clone();
+
+    let _handle = std::thread::spawn(move || {
+        for stream in std_listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let last_cmd_inner = last_cmd_clone.clone();
+            std::thread::spawn(move || {
+                use std::io::{BufRead, BufReader, Write};
+                let snapshot = r#"{"type":"response","command":"get_subagents","data":{"subagents":[{"agentId":"grandchild-worker","status":"running","pid":4321}],"snapshot":true}}"#;
+                let _ = writeln!(stream, "{}", snapshot);
+                let reader = BufReader::new(stream.try_clone().unwrap());
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    let parsed = serde_json::from_str::<serde_json::Value>(&line).ok();
+                    let sent_type = parsed
+                        .as_ref()
+                        .and_then(|v| v.get("type").and_then(|t| t.as_str()))
+                        .unwrap_or("mock")
+                        .to_owned();
+                    let sent_id = parsed
+                        .as_ref()
+                        .and_then(|v| v.get("id").and_then(|t| t.as_str()))
+                        .unwrap_or("")
+                        .to_owned();
+                    *last_cmd_inner.lock().unwrap() = line;
+                    let response = format!(
+                        r#"{{"type":"response","id":"{}","command":"{}","data":[{{"role":"assistant","content":"LATEST TURNS"}}]}}"#,
+                        sent_id, sent_type
+                    );
+                    let _ = writeln!(stream, "{}", response);
+                }
+            });
+        }
+    });
+
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(sock_path, 0));
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+    world._agent_cmd_mock_tmp = Some(tmp);
+    world.agent_cmd_last_command = Some(last_cmd);
+}
+
 // --- When ---
 
 #[when(expr = "I execute agent_cmd with {string}")]

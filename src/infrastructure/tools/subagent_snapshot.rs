@@ -47,6 +47,13 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
                     .and_then(|v| v.as_u64())
                     .is_some()
         }
+        Some("get_subagents") => {
+            json.get("command").and_then(|v| v.as_str()) == Some("get_subagents")
+                && json
+                    .pointer("/data/subagents")
+                    .and_then(|v| v.as_array())
+                    .is_some()
+        }
         _ => false,
     }
 }
