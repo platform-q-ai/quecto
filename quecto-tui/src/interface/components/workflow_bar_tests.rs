@@ -195,6 +195,107 @@ fn workflow_widget_complete_shows_done() {
     assert!(lines[0].contains("✓ Workflow complete!"));
 }
 
+// ── #903: empty-steps (total>0) must NOT read as complete or be visible ──────
+
+#[test]
+fn empty_steps_with_total_is_hidden_and_not_complete() {
+    // Master's connect-time snapshot: total>0 (from a persisted template) but
+    // done==0, no active issue, and an EMPTY steps array. Pre-#901 this was
+    // hidden; it must stay hidden and must NEVER render "✓ Workflow complete!".
+    let mut state = make_state(None, 0, 0);
+    state.total = 14; // stale total with no steps
+    assert!(
+        !state.is_visible(),
+        "empty-steps total>0 must not be visible"
+    );
+    let lines = render_widget(&state, 100);
+    assert!(
+        lines.is_empty(),
+        "empty-steps total>0 must render nothing: {lines:?}"
+    );
+    assert!(
+        !render_widget(&state, 100)
+            .join("\n")
+            .contains("Workflow complete"),
+        "empty-steps must never read as complete"
+    );
+}
+
+#[test]
+fn empty_steps_compact_line_not_complete() {
+    let mut state = make_state(None, 0, 0);
+    state.total = 14;
+    assert!(
+        render_compact_line(&state).is_none(),
+        "empty-steps total>0 must not produce a compact line"
+    );
+}
+
+#[test]
+fn just_selected_zero_of_n_shows_step_one_not_complete() {
+    // AC#3: a genuine 0/N workflow with real steps shows on selection and
+    // renders the current step (Step 1), NOT "complete". (#901 preserved.)
+    let state = make_state(None, 0, 14);
+    assert!(state.is_visible());
+    let lines = render_widget(&state, 100);
+    assert!(!lines.is_empty());
+    assert!(
+        lines[0].contains("→ Step 1"),
+        "should show first step: {lines:?}"
+    );
+    assert!(
+        !lines[0].contains("Workflow complete"),
+        "0/N with steps must not read as complete: {lines:?}"
+    );
+}
+
+#[test]
+fn selecting_template_empty_steps_renders_starting_not_complete() {
+    // #903: a VISIBLE-but-not-started state (selector mode, empty steps) must
+    // exercise the new `"starting…"` fallback in both renderers, never the
+    // spurious "✓ Workflow complete!" path.
+    let mut state = make_state(None, 0, 0);
+    state.mode = Some("selecting_template".into());
+    assert!(state.is_visible(), "selector mode is visible");
+    assert!(!state.is_complete(), "selector mode is not complete");
+
+    let lines = render_widget(&state, 100);
+    assert!(!lines.is_empty(), "selector-mode widget must render");
+    assert!(
+        lines[0].contains("starting"),
+        "empty visible widget must render starting marker: {lines:?}"
+    );
+    assert!(
+        !lines.join("\n").contains("Workflow complete"),
+        "must never read as complete: {lines:?}"
+    );
+
+    let compact = render_compact_line(&state).expect("selector-mode compact line renders");
+    assert!(
+        compact.contains("starting"),
+        "empty visible compact line must render starting marker: {compact}"
+    );
+    assert!(
+        !compact.contains("Workflow complete"),
+        "compact must never read as complete: {compact}"
+    );
+}
+
+#[test]
+fn is_complete_only_when_genuinely_done() {
+    assert!(make_state(Some(1), 14, 14).is_complete(), "done==total>0");
+    let mut mode_complete = make_state(None, 0, 0);
+    mode_complete.mode = Some("complete".into());
+    assert!(mode_complete.is_complete(), "mode==complete");
+    let mut empty = make_state(None, 0, 0);
+    empty.total = 14;
+    assert!(!empty.is_complete(), "empty-steps done<total not complete");
+    assert!(
+        !make_state(Some(1), 3, 14).is_complete(),
+        "mid-run not complete"
+    );
+}
+
 #[test]
 fn parse_workflow_event_basic() {
     let event = serde_json::json!({
