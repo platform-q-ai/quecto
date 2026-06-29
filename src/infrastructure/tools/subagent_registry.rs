@@ -654,25 +654,25 @@ impl SequencedSubagentNotification {
     pub fn to_message(&self) -> String {
         self.notification.to_message()
     }
+
+    /// `true` only for successful completions; failures must not coalesce (#894).
+    pub fn is_completion(&self) -> bool {
+        matches!(self.notification, SubagentNotification::Completed { .. })
+    }
 }
 
 impl SubagentNotification {
     /// Format this notification as a human-readable message suitable for
     /// injection into the parent LLM's conversation.
     pub fn to_message(&self) -> String {
-        // Keep this a single concise line — surfaces as a passive note in the TUI and a
-        // system note in the parent's context; child output is NOT repeated (inspect via
-        // `agent_cmd get_messages`). Informational, not imperative — no "inspect now" (#894).
+        // Single concise line; child output is NOT repeated (inspect via
+        // `agent_cmd get_messages`). Informational, not imperative (#894).
         match self {
-            Self::Completed { agent_id, .. } => {
-                format!("Sub-agent '{agent_id}' finished; inspect via agent_cmd get_messages")
-            }
-            Self::Errored { agent_id, error } => {
-                format!("Agent '{agent_id}' failed: {error}")
-            }
-            Self::Exited { agent_id } => {
-                format!("Agent '{agent_id}' exited unexpectedly")
-            }
+            Self::Completed { agent_id, .. } => format!(
+                "Sub-agent '{agent_id}' finished. Review with agent_cmd get_messages when you need its output."
+            ),
+            Self::Errored { agent_id, error } => format!("Agent '{agent_id}' failed: {error}"),
+            Self::Exited { agent_id } => format!("Agent '{agent_id}' exited unexpectedly"),
         }
     }
 }
