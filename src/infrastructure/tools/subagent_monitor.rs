@@ -14,6 +14,11 @@ use super::subagent_registry::{
     NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
     extract_summary,
 };
+// Re-export the split-out descendant merge/forward surface so existing call
+// sites and tests keep referring to it via this module (#904 file-cap split).
+pub use super::subagent_monitor_merge::{
+    forward_child_state_changed, merge_and_forward_state_changed,
+};
 
 /// Maximum length for a single JSON-lines event (1 MiB).
 /// Lines exceeding this are dropped to prevent OOM from misbehaving children.
@@ -117,6 +122,15 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
                 .and_then(|p| p.get("total"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32;
+            // Re-arm the terminal-completion latch whenever the workflow is NOT
+            // in `complete` (i.e. still `active`): a workflow that transitions
+            // back out of `complete` is a genuinely new run whose eventual
+            // re-completion must notify again (#904). Staying in `complete`
+            // across the `completion_nudge` follow-up turn leaves the latch
+            // consumed, so that turn's `agent_end` stays silent.
+            if mode != crate::domain::workflow::WorkflowMode::Complete.wire_str() {
+                entry.completion_armed = true;
+            }
             entry.workflow = Some(super::subagent_registry::WorkflowSnapshot {
                 mode,
                 steps_completed: done,
@@ -313,9 +327,7 @@ fn handle_monitor_line(
             .is_some_and(|a| !a.is_empty() && a != agent_id);
     // Parse once; reuse for the registry update, notification, and forwarding.
     if !foreign_workflow {
-        let sequence =
-            update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, &value));
-        notify_from_parsed(notify_tx, agent_id, sequence, &value);
+        apply_and_notify(registry, notify_tx, agent_id, &value);
     }
     if let Some(tx) = broadcast_tx {
         if !foreign_workflow && should_broadcast_state_changed_after_event(&value) {
@@ -440,167 +452,6 @@ pub fn forward_child_workflow_event(
     canonical_workflow_forward(&value, child_id, parent_id)
 }
 
-/// Maximum number of descendant entries accepted from a single child's
-/// `subagent_state_changed` event (#815 security review). A child sits inside
-/// the same-user trust boundary, but this is a new re-broadcast path: capping
-/// the merged count stops a misbehaving/compromised child from injecting an
-/// unbounded number of fabricated descendants into the root registry (which is
-/// then re-serialized at every ancestor hop).
-const MAX_FORWARDED_SUBAGENTS: usize = 256;
-
-/// Merge the descendants from a child's `subagent_state_changed` `value` into
-/// the registry (preserving each entry's REAL `agentId`/`parentId`), then build
-/// a single canonical `subagent_state_changed` event carrying the WHOLE current
-/// registry — the union of the root's own children and all merged descendants
-/// (#815, architecture review).
-///
-/// Why merge instead of forwarding the grandchildren-only list verbatim: the
-/// consumer (`update_subagent_bar`) and `build_subagent_info_list` polling both
-/// treat each `subagent_state_changed` as a FULL replace. A partial push that
-/// listed only grandchildren would evict the root's direct children (and vice
-/// versa, the root's own push would evict the grandchildren), so the bar would
-/// oscillate and grandchildren would never appear stably. Carrying the union on
-/// every push fixes that and keeps `get_subagents` polling in agreement.
-///
-/// Each descendant keeps its authoritative identity — never re-stamped to the
-/// immediate child's id, which would mis-attribute grandchildren — so an
-/// already-forwarded great-grandchild entry chains up to arbitrary depth.
-/// Returns `None` for any value that is not a `subagent_state_changed` event.
-pub fn merge_and_forward_state_changed(
-    value: &serde_json::Value,
-    registry: &SubagentRegistry,
-    forwarding_child_id: &str,
-) -> Option<String> {
-    if value.get("type").and_then(|t| t.as_str()) != Some("subagent_state_changed") {
-        return None;
-    }
-    if let Some(descendants) = value.get("subagents").and_then(|v| v.as_array()) {
-        merge_descendants(registry, forwarding_child_id, descendants);
-    }
-    Some(super::subagent_cascade::build_state_changed_event(registry))
-}
-
-/// Merge descendant `SubagentInfo` entries (camelCase wire fields) into the
-/// registry as a SCOPED REPLACE of `forwarding_child_id`'s sub-tree.
-///
-/// A child's `subagent_state_changed` push is the AUTHORITATIVE, full snapshot of
-/// everything below that child. So beyond upserting the pushed entries (bounded
-/// by [`MAX_FORWARDED_SUBAGENTS`]), we prune any registry entry that is a
-/// transitive descendant of `forwarding_child_id` but ABSENT from this push —
-/// i.e. a grandchild that exited or was killed under the child. Without this, the
-/// pure-upsert merge could never remove a dead grandchild from the root registry
-/// (it stops being forwarded once gone), so it lingered in the TUI panel forever
-/// (#831). Entries outside the forwarding child's sub-tree (the root's own
-/// children, sibling trees) are never touched, preserving the full-replace
-/// stability that #815 relies on.
-fn merge_descendants(
-    registry: &SubagentRegistry,
-    forwarding_child_id: &str,
-    descendants: &[serde_json::Value],
-) {
-    if descendants.len() > MAX_FORWARDED_SUBAGENTS {
-        tracing::warn!(
-            count = descendants.len(),
-            cap = MAX_FORWARDED_SUBAGENTS,
-            "monitor: truncating forwarded descendant list over cap"
-        );
-    }
-    let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let mut pushed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for d in descendants.iter().take(MAX_FORWARDED_SUBAGENTS) {
-        let Some(agent_id) = d.get("agentId").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        pushed_ids.insert(agent_id.to_string());
-        let socket_path = d
-            .get("socketPath")
-            .and_then(|v| v.as_str())
-            .map(std::path::PathBuf::from)
-            .unwrap_or_default();
-        let pid = d.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let entry = guard
-            .entry(agent_id.to_string())
-            .or_insert_with(|| SubagentEntry::new(socket_path.clone(), pid));
-        if let Some(status) = d
-            .get("status")
-            .and_then(|v| v.as_str())
-            .map(SubagentStatus::from_wire_str)
-        {
-            entry.status = status;
-        }
-        entry.last_tool = d
-            .get("lastTool")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        entry.last_error = d
-            .get("lastError")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        entry.pid = pid;
-        if !socket_path.as_os_str().is_empty() {
-            entry.socket_path = socket_path;
-        }
-        entry.parent_id = d
-            .get("parentId")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        entry.workflow = d
-            .get("workflow")
-            .and_then(|w| serde_json::from_value(w.clone()).ok());
-        entry.updated_at = Instant::now();
-    }
-
-    // Scoped prune: drop transitive descendants of the forwarding child that the
-    // authoritative push omitted (they died under the child). Computed AFTER the
-    // upsert so re-parented entries chain correctly. Only the forwarding child's
-    // sub-tree is in scope; the child itself and all other trees are untouched.
-    let stale: Vec<String> = transitive_descendants(&guard, forwarding_child_id)
-        .into_iter()
-        .filter(|id| !pushed_ids.contains(id))
-        .collect();
-    for id in stale {
-        guard.remove(&id);
-    }
-}
-
-/// Collect the ids of every transitive descendant of `root` (by `parent_id`) in
-/// the registry, NOT including `root` itself. Used to scope the forwarded
-/// full-replace prune to one child's sub-tree (#831).
-fn transitive_descendants(
-    guard: &std::collections::HashMap<String, SubagentEntry>,
-    root: &str,
-) -> Vec<String> {
-    let mut children: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
-    for (id, entry) in guard.iter() {
-        if let Some(parent) = &entry.parent_id {
-            children.entry(parent.as_str()).or_default().push(id);
-        }
-    }
-    let mut out = Vec::new();
-    let mut frontier: Vec<&str> = children.get(root).cloned().unwrap_or_default();
-    while let Some(id) = frontier.pop() {
-        out.push(id.to_string());
-        if let Some(kids) = children.get(id) {
-            frontier.extend(kids.iter().copied());
-        }
-    }
-    out
-}
-
-/// Line-based wrapper around [`merge_and_forward_state_changed`]: cheap
-/// substring pre-filter, then parse once. Returns `None` for non-state lines.
-pub fn forward_child_state_changed(
-    line: &str,
-    registry: &SubagentRegistry,
-    forwarding_child_id: &str,
-) -> Option<String> {
-    if !line.contains("\"type\":\"subagent_state_changed\"") {
-        return None;
-    }
-    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
-    merge_and_forward_state_changed(&value, registry, forwarding_child_id)
-}
-
 /// Check if a JSON-lines event should trigger a notification and send it.
 /// Parses the line from string — use `notify_from_parsed` when you already have a Value.
 #[cfg(test)]
@@ -609,15 +460,88 @@ pub fn maybe_notify(notify_tx: Option<&NotificationTx>, agent_id: &str, line: &s
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return;
     };
-    notify_from_parsed(Some(tx), agent_id, 0, &value);
+    notify_from_parsed(Some(tx), agent_id, 0, &value, None);
+}
+
+/// Apply a parsed event to the registry entry and fire any notification it
+/// warrants, reading the entry's latest workflow mode AFTER the apply so the
+/// terminal-completion decision (#904) sees up-to-date state.
+fn apply_and_notify(
+    registry: &SubagentRegistry,
+    notify_tx: Option<&NotificationTx>,
+    agent_id: &str,
+    value: &serde_json::Value,
+) {
+    let sequence = update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, value));
+    let workflow_mode = entry_workflow_mode(registry, agent_id);
+    // Latch a workflow-bound TERMINAL completion so the `completion_nudge`
+    // "report and stop" follow-up turn — which also ends in `complete` mode —
+    // does NOT fire a second completion note (#904). Only the FIRST terminal
+    // `agent_end` per completion consumes the latch; a workflow re-entering
+    // `active` re-arms it (see `apply_event_parsed`). Non-workflow agents
+    // (`workflow_mode == None`) keep their unconditional turn-end note (#523).
+    if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
+        && workflow_mode.is_some()
+        && agent_end_is_terminal(workflow_mode.as_deref())
+        && !take_completion_armed(registry, agent_id)
+    {
+        return;
+    }
+    notify_from_parsed(
+        notify_tx,
+        agent_id,
+        sequence,
+        value,
+        workflow_mode.as_deref(),
+    );
+}
+
+/// Check-and-consume the terminal-completion latch for `agent_id` (#904).
+/// Returns `true` (and clears the latch) when a completion note is still armed;
+/// `false` when already consumed or the entry is gone. Re-armed by
+/// `apply_event_parsed` when the workflow leaves `complete`.
+fn take_completion_armed(registry: &SubagentRegistry, agent_id: &str) -> bool {
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    match entries.get_mut(agent_id) {
+        Some(entry) if entry.completion_armed => {
+            entry.completion_armed = false;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Read the latest workflow mode recorded on `agent_id`'s registry entry, if it
+/// is workflow-bound. `None` means the agent has no workflow.
+fn entry_workflow_mode(registry: &SubagentRegistry, agent_id: &str) -> Option<String> {
+    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    entries
+        .get(agent_id)
+        .and_then(|e| e.workflow.as_ref().map(|w| w.mode.clone()))
+}
+
+/// Whether an `agent_end` represents a TRUE terminal completion (#904), given
+/// the agent's latest workflow mode. A workflow-bound agent runs one turn per
+/// step and ends each with its own `agent_end`; only the turn that leaves the
+/// workflow in `complete` is terminal. A non-workflow agent (`None`) has no
+/// auto-continue, so its turn-end is a logical completion.
+pub fn agent_end_is_terminal(workflow_mode: Option<&str>) -> bool {
+    match workflow_mode {
+        Some(mode) => mode == crate::domain::workflow::WorkflowMode::Complete.wire_str(),
+        None => true,
+    }
 }
 
 /// Send a notification from a pre-parsed JSON value (avoids double parse).
+/// `workflow_mode` is the agent's latest workflow mode (`None` if not
+/// workflow-bound), used to gate the `agent_end` → `Completed` note to terminal
+/// completion only (#904).
 fn notify_from_parsed(
     notify_tx: Option<&NotificationTx>,
     agent_id: &str,
     sequence: u64,
     value: &serde_json::Value,
+    workflow_mode: Option<&str>,
 ) {
     let Some(tx) = notify_tx else { return };
     let event_type = match value.get("type").and_then(|v| v.as_str()) {
@@ -625,7 +549,10 @@ fn notify_from_parsed(
         None => return,
     };
     let notification = match event_type {
-        "agent_end" => {
+        // Only a TERMINAL agent_end fires a completion note: workflow `complete`,
+        // or a non-workflow turn-end. A mid-workflow step-end auto-continues and
+        // must stay silent so the parent isn't driven to re-narrate per step (#904).
+        "agent_end" if agent_end_is_terminal(workflow_mode) => {
             // Use a reference to avoid cloning the entire messages array.
             let empty = serde_json::Value::Array(vec![]);
             let messages = value.get("messages").unwrap_or(&empty);
@@ -748,3 +675,7 @@ mod tests;
 #[cfg(test)]
 #[path = "subagent_monitor_forward_tests.rs"]
 mod forward_tests;
+
+#[cfg(test)]
+#[path = "subagent_monitor_completion_tests.rs"]
+mod completion_tests;

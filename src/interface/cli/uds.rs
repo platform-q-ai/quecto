@@ -730,6 +730,12 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 run_agent_message(args).await;
             }
             disarm_cancel(&ctx.cancel_handle);
+            // #899: refresh busy-child snapshots after EACH inner turn so a busy
+            // get_state/get_messages/get_session_stats/get_extensions mid-workflow
+            // tracks progress + message count step-by-step across the auto-continue
+            // nudge chain, instead of staying frozen at the pre-turn snapshot until
+            // the whole dispatched command returns. (No mid-turn note delivery — #816.)
+            super::uds_snapshots::refresh_busy_snapshots(ctx).await;
         }
     }
 }

@@ -604,3 +604,60 @@ fn strip_ansi_handles_csi_osc_and_plain() {
     assert_eq!(strip_ansi("\x1b]0;title\x07body"), "body");
     assert_eq!(strip_ansi("\x1b]8;;url\x1b\\link"), "link");
 }
+
+#[tokio::test]
+async fn main_pane_compact_line_reflects_live_auto_continue_state(// #897 AC2
+) {
+    // Drive the REAL event→render path: a workflow_state event seeds the bar
+    // (which hard-codes auto_continue=false), then the live App toggle must be
+    // reflected by the always-visible compact line — not the dead field.
+    let mut h = harness().await;
+    let wf = serde_json::json!({
+        "steps": [{"index": 0, "label": "Build it", "phase": "build", "done": false}],
+        "progress": {"done": 0, "total": 1},
+        "activeIssue": {"number": 7, "title": "thing"}
+    });
+    h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
+
+    let now = tokio::time::Instant::now();
+    let render = |a: &App| -> String {
+        a.render_main_pane_workflow(120, now)
+            .iter()
+            .map(|l| super::app_methods::strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    // Default: auto-continue off.
+    assert!(
+        render(h.app_mut()).contains("auto:off"),
+        "{}",
+        render(h.app_mut())
+    );
+
+    // Drive the REAL response path that updates live auto-continue state; the
+    // rendered compact line must follow.
+    h.app_mut().handle_response(
+        Some("workflow-auto".into()),
+        "set_workflow_automation".into(),
+        true,
+        Some(serde_json::json!({"automation": {"autoContinue": true}})),
+        None,
+    );
+    assert!(
+        render(h.app_mut()).contains("auto:on"),
+        "{}",
+        render(h.app_mut())
+    );
+
+    // A subsequent workflow_state rebuild must PRESERVE the live state — the bug
+    // was that every event reset the bar field to the hard-coded false. This
+    // mirrors handle_workflow_state's (rebuild → mirror_automation_to_bar) flow.
+    h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
+    h.app_mut().mirror_automation_to_bar();
+    assert!(
+        render(h.app_mut()).contains("auto:on"),
+        "workflow_state rebuild must preserve live auto-continue: {}",
+        render(h.app_mut())
+    );
+}

@@ -95,13 +95,12 @@ pub struct SubagentEntry {
     pub parent_id: Option<String>,
     /// Latest workflow snapshot reported by the child's monitor (PRD Stage B).
     pub workflow: Option<WorkflowSnapshot>,
-    /// Set true by `execute_await` when a manual `await` returns a TERMINAL
-    /// result for this entry's current run. The dispatch loop check-and-consumes
-    /// it before enqueuing the passive auto-note, suppressing the duplicate that
-    /// a manual await would otherwise produce. Re-armed (cleared) when the entry
-    /// transitions to a new run (agent_start), so a re-prompted child that
-    /// completes again still notifies. See `take_completion_consumed_by_await`.
+    /// Set by `execute_await`'s TERMINAL result, consumed by the dispatch loop to
+    /// suppress the duplicate passive note, re-armed on a new run (#await-dedupe).
     pub completion_consumed_by_await: bool,
+    /// Terminal-completion latch (#904): consumed by the first `complete`-mode
+    /// `agent_end`, re-armed when the workflow leaves `complete`.
+    pub completion_armed: bool,
 }
 
 impl SubagentEntry {
@@ -121,6 +120,7 @@ impl SubagentEntry {
             parent_id: None,
             workflow: None,
             completion_consumed_by_await: false,
+            completion_armed: true,
         }
     }
 }
