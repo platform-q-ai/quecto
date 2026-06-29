@@ -42,10 +42,17 @@ impl WorkflowBarState {
         if self.mode.as_deref() == Some("selecting_template") {
             return true;
         }
-        // Show on selection (#901): a just-selected workflow with a known total
+        // Show on selection (#901): a just-selected workflow with real steps
         // (e.g. `0/18`) renders immediately, not only once a step completes or
         // an issue is set.
-        self.total > 0 || self.issue_number.is_some()
+        //
+        // #903: a bare `total > 0` is NOT enough. The master's connect-time
+        // snapshot can carry a stale `progress.total` from a persisted template
+        // with an EMPTY `steps` array, no active issue and no active template —
+        // an inactive state that previously read as a spurious "complete" bar.
+        // Require a genuine active workflow: real steps, an active template, or
+        // an active issue.
+        !self.steps.is_empty() || self.template_name.is_some() || self.issue_number.is_some()
     }
 
     /// Whether the bar carries NO meaningful workflow content. Used by the
@@ -153,17 +160,22 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
         _ => " ".to_string(),
     };
 
-    let current_info = state
-        .current_step_id()
-        .map(|id| {
+    // #903: "✓ Workflow complete!" is reserved for a GENUINELY complete
+    // workflow. When `current_step_id()` is `None` because steps are empty /
+    // not-started (rather than all-done), render a neutral "starting…" marker
+    // instead of falsely claiming completion.
+    let current_info = match state.current_step_id() {
+        Some(id) => {
             let label = state.current_step_label().unwrap_or("");
             format!(
                 "→ Step {id}: {} [{}]",
                 ellipsize_clean(label, 56),
                 phase_display(state.current_phase().unwrap_or("done"))
             )
-        })
-        .unwrap_or_else(|| "✓ Workflow complete!".to_string());
+        }
+        None if state.is_complete() => "✓ Workflow complete!".to_string(),
+        None => "starting…".to_string(),
+    };
 
     // `▸ Workflow` panel header mirrors the subagent bar's `▸ Subagents` so the
     // two widgets read as sibling panels with a shared left gutter.
@@ -232,7 +244,9 @@ pub fn render_compact_line(state: &WorkflowBarState) -> Option<String> {
             }
             parts
         }
-        None => theme::success("✓ Workflow complete!"),
+        // #903: only label complete when genuinely done, never for empty steps.
+        None if state.is_complete() => theme::success("✓ Workflow complete!"),
+        None => theme::dim("starting…"),
     };
 
     let mut line = format!("{bar}  {context}");
