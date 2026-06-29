@@ -277,11 +277,11 @@ fn to_snake_case(name: &str) -> String {
     out
 }
 
-const TUI_SRC: &str = "quecto-tui/src";
-const TUI_DOMAIN: &str = "quecto-tui/src/domain";
-const TUI_APPLICATION: &str = "quecto-tui/src/application";
-const TUI_INFRASTRUCTURE: &str = "quecto-tui/src/infrastructure";
-const TUI_INTERFACE: &str = "quecto-tui/src/interface";
+const TUI_SRC: &str = "../quecto-tui/src";
+const TUI_DOMAIN: &str = "../quecto-tui/src/domain";
+const TUI_APPLICATION: &str = "../quecto-tui/src/application";
+const TUI_INFRASTRUCTURE: &str = "../quecto-tui/src/infrastructure";
+const TUI_INTERFACE: &str = "../quecto-tui/src/interface";
 const TUI_ALLOWED_ROOT_RS: &[&str] = &["lib.rs", "main.rs"];
 
 #[test]
@@ -459,7 +459,7 @@ fn tui_public_ports_have_contract_tests() {
 
 #[test]
 fn tui_lib_rs_exposes_only_architecture_layers() {
-    let content = fs::read_to_string("quecto-tui/src/lib.rs").expect("read quecto-tui lib.rs");
+    let content = fs::read_to_string("../quecto-tui/src/lib.rs").expect("read quecto-tui lib.rs");
     let public_modules: Vec<_> = content
         .lines()
         .map(str::trim)
@@ -479,7 +479,7 @@ fn tui_lib_rs_exposes_only_architecture_layers() {
 
 #[test]
 fn tui_main_rs_is_thin_interface_entrypoint() {
-    let content = fs::read_to_string("quecto-tui/src/main.rs").expect("read quecto-tui main.rs");
+    let content = fs::read_to_string("../quecto-tui/src/main.rs").expect("read quecto-tui main.rs");
     assert!(
         content.contains("quecto_tui::interface::cli") && content.lines().count() <= 10,
         "quecto-tui/src/main.rs must stay thin and delegate to quecto_tui::interface::cli"
@@ -488,7 +488,7 @@ fn tui_main_rs_is_thin_interface_entrypoint() {
 
 #[test]
 fn tui_lib_rs_has_deny_attributes() {
-    let content = fs::read_to_string("quecto-tui/src/lib.rs").expect("read quecto-tui lib.rs");
+    let content = fs::read_to_string("../quecto-tui/src/lib.rs").expect("read quecto-tui lib.rs");
     assert!(
         content.contains("#![deny(dead_code)]"),
         "quecto-tui/src/lib.rs must contain #![deny(dead_code)]"
@@ -510,7 +510,7 @@ fn pre_push_enforces_formatting_and_complexity_lints() {
 }
 
 fn assert_local_hook_enforces_formatting_and_complexity(hook: &str) {
-    let path = format!("scripts/{hook}.sh");
+    let path = format!("../scripts/{hook}.sh");
     let content = fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {path}: {err}"));
     assert!(
         content.contains("cargo fmt --all -- --check"),
@@ -518,7 +518,7 @@ fn assert_local_hook_enforces_formatting_and_complexity(hook: &str) {
     );
     assert!(
         content.contains(
-            "cargo clippy --workspace --all-targets --features test-support -- -D warnings"
+            "cargo clippy --workspace --all-targets --features quecto/test-support -- -D warnings"
         ),
         "{hook} hook must run strict workspace clippy locally"
     );
@@ -536,7 +536,7 @@ fn assert_local_hook_enforces_formatting_and_complexity(hook: &str) {
 
 #[test]
 fn hook_installation_checker_verifies_all_local_hooks() {
-    let content = fs::read_to_string("scripts/check-hooks-installed.sh")
+    let content = fs::read_to_string("../scripts/check-hooks-installed.sh")
         .expect("read hook installation checker");
     for hook in ["pre-commit", "pre-push"] {
         assert!(
@@ -552,7 +552,7 @@ fn hook_installation_checker_verifies_all_local_hooks() {
 
 #[test]
 fn pre_push_runs_contract_tests() {
-    let content = fs::read_to_string("scripts/pre-push.sh").expect("read pre-push hook");
+    let content = fs::read_to_string("../scripts/pre-push.sh").expect("read pre-push hook");
     assert!(
         content.contains("--test contracts"),
         "pre-push hook must run cargo test --test contracts so port contracts are enforced"
@@ -561,7 +561,7 @@ fn pre_push_runs_contract_tests() {
 
 #[test]
 fn ci_runs_architecture_and_contract_tests() {
-    let content = fs::read_to_string(".github/workflows/ci.yml").expect("read CI workflow");
+    let content = fs::read_to_string("../.github/workflows/ci.yml").expect("read CI workflow");
     assert!(
         content.contains("--test architecture"),
         "CI must run architecture boundary tests"
@@ -589,7 +589,7 @@ fn lib_rs_has_deny_attributes() {
 fn runtime_manager_domain_is_pure() {
     // The quecto-runtime-manager crate has its own domain/application/infrastructure
     // split; its domain must stay free of outward (infra/app/framework) deps.
-    let src = fs::read_to_string("quecto-runtime-manager/src/domain.rs")
+    let src = fs::read_to_string("../quecto-runtime-manager/src/domain.rs")
         .expect("read quecto-runtime-manager/src/domain.rs");
     // Scan production code only — stop at the test module.
     let prod = src.split("#[cfg(test)]").next().unwrap_or(&src);

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-bdd-quality.sh — Static analysis for BDD step definitions.
 #
-# Detects anti-patterns in tests/bdd.rs:
+# Detects anti-patterns in harness BDD step definitions:
 #   1. Then steps with no assertions (always-pass tests)
 #   2. Empty/no-op When steps (stub implementations)
 #   3. Tautological assertions (assert!(true), assert_eq!(x, x))
@@ -25,17 +25,17 @@ GREEN='\033[0;32m'
 NC='\033[0m'
 
 # Allow override via env var for multi-file repos or testing.
-# Supports both single-file (tests/bdd.rs) and multi-file (tests/bdd/) layouts.
-BDD_DIR="${BDD_DIR:-tests/bdd}"
+# Supports both single-file and multi-file BDD layouts.
+BDD_DIR="${BDD_DIR:-quecto-agentic-harness/tests/bdd}"
 
 if [ -d "$BDD_DIR" ]; then
     BDD_FILE=$(mktemp)
     cat "$BDD_DIR"/*.rs > "$BDD_FILE"
     trap "rm -f '$BDD_FILE'" EXIT
-elif [ -f "${BDD_FILE:-tests/bdd.rs}" ]; then
-    BDD_FILE="${BDD_FILE:-tests/bdd.rs}"
+elif [ -f "${BDD_FILE:-quecto-agentic-harness/tests/bdd.rs}" ]; then
+    BDD_FILE="${BDD_FILE:-quecto-agentic-harness/tests/bdd.rs}"
 else
-    echo -e "${RED}FAIL${NC}: neither $BDD_DIR/ directory nor tests/bdd.rs found"
+    echo -e "${RED}FAIL${NC}: neither $BDD_DIR/ directory nor quecto-agentic-harness/tests/bdd.rs found"
     exit 1
 fi
 

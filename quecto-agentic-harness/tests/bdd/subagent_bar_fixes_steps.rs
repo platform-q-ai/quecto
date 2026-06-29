@@ -18,7 +18,7 @@ fn then_bottom_section_has_no_subagent_bar(_world: &mut QuectoWorld) {
     // Sub-agent-first layout (#820): the sub-agent bar (widgets_above) moved to
     // the always-on left panel, so compose_bottom must no longer render it; the
     // spinner remains the only reserved indicator there.
-    let source = std::fs::read_to_string("quecto-tui/src/interface/app_methods.rs")
+    let source = std::fs::read_to_string("../quecto-tui/src/interface/app_methods.rs")
         .expect("should be able to read interface/app_methods.rs");
     assert!(
         !source.contains("bottom.extend(self.widgets_above.render(width))"),

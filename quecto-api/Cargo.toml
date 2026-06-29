@@ -31,13 +31,6 @@ uuid = { version = "1", features = ["v4"] }
 cucumber = { version = "0.21", features = ["macros"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 
-[profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-strip = true
-panic = "abort"
-
 [[test]]
 name = "bdd"
 harness = false

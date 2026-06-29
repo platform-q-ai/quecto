@@ -27,7 +27,7 @@ step "3/5" "cargo fmt --check"
 cargo fmt --all -- --check
 
 step "4/5" "cargo clippy (strict, workspace complexity gates)"
-cargo clippy --workspace --all-targets --features test-support -- -D warnings \
+cargo clippy --workspace --all-targets --features quecto/test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
@@ -35,21 +35,22 @@ cargo clippy --workspace --all-targets --features test-support -- -D warnings \
 step "5/5" "Fast guard tests (docs, architecture, contracts, config)"
 # Run the deterministic top-level integration guards at commit time — they are
 # the doc/architecture/contract/config checks that catch drift like a config
-# step reorder breaking tests/workflow_docs.rs. They are fast and have no
+# step reorder breaking quecto-agentic-harness/tests/workflow_docs.rs. They are fast and have no
 # external deps. The heavy lib unit tests, BDD shards, coverage and real-LLM
 # suites stay in pre-push. Targets are enumerated dynamically so a new
-# tests/*.rs guard is picked up automatically and can never be silently
+# harness tests/*.rs guard is picked up automatically and can never be silently
 # dropped from the gate. `tests/bdd/` is a subdir (the sharded harness), so it
 # is excluded by -maxdepth 1.
-mapfile -t GUARD_TARGETS < <(find "$ROOT/tests" -maxdepth 1 -name '*.rs' -printf '%f\n' | sed 's/\.rs$//' | sort)
+HARNESS_ROOT="$ROOT/quecto-agentic-harness"
+mapfile -t GUARD_TARGETS < <(find "$HARNESS_ROOT/tests" -maxdepth 1 -name '*.rs' -printf '%f\n' | sed 's/\.rs$//' | sort)
 if [[ "${#GUARD_TARGETS[@]}" -eq 0 ]]; then
-    echo -e "\n${RED}ERROR: no top-level integration guard targets found under tests/ — gate enumeration is broken.${NC}"
+    echo -e "\n${RED}ERROR: no top-level integration guard targets found under quecto-agentic-harness/tests/ - gate enumeration is broken.${NC}"
     exit 1
 fi
 GUARD_TARGET_ARGS=()
 for t in "${GUARD_TARGETS[@]}"; do GUARD_TARGET_ARGS+=(--test "$t"); done
 echo "  Guard targets: ${GUARD_TARGETS[*]}"
-cargo test --no-fail-fast "${GUARD_TARGET_ARGS[@]}"
+cargo test -p quecto --no-fail-fast "${GUARD_TARGET_ARGS[@]}"
 
 # Block direct commits to master/main — force feature branches.
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"

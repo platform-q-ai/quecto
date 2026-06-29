@@ -15,7 +15,7 @@ use std::pin::Pin;
 /// points at; design PRDs are intentionally not embedded.
 ///
 /// `include_str!` paths are relative to this source file
-/// (`src/infrastructure/tools/`), so `../../../docs/` is the repo `docs/` dir.
+/// (`src/infrastructure/tools/`), so `../../../docs/` is the package `docs` dir.
 /// A renamed/removed doc fails the build — the embed cannot silently drift.
 const EMBEDDED_DOCS: &[(&str, &str)] = &[
     ("quecto", include_str!("../../../docs/quecto.md")),
