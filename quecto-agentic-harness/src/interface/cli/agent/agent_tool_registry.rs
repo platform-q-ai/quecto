@@ -190,7 +190,13 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
     crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);
 
-    let has_base_dir = !base_dir.as_os_str().is_empty();
+    // #926: the parent is always spawn-capable — `SpawnTool` (with `notify_tx`)
+    // and `AgentCmdTool` (with the protocol registry) are registered above
+    // UNCONDITIONALLY. So the notification receiver and the protocol registry
+    // must ALWAYS be live: a live `notify_tx` paired with a dropped `notify_rx`
+    // means a child's completion is emitted into a channel with no receiver and
+    // the idle parent is NEVER woken. Keep tx and rx wired together so a child
+    // completing reliably wakes the parent in every config.
     ToolRegistryBuild {
         registry,
         spill_store,
@@ -198,12 +204,8 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
         model,
         ext_registry,
         extension_prompt_snippets,
-        notification_rx: if has_base_dir { Some(notify_rx) } else { None },
-        subagent_registry: if has_base_dir {
-            Some(subagent_registry_for_protocol)
-        } else {
-            None
-        },
+        notification_rx: Some(notify_rx),
+        subagent_registry: Some(subagent_registry_for_protocol),
         workflow_state: wf_state,
     }
 }

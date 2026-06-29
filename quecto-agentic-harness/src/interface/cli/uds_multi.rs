@@ -646,5 +646,8 @@ mod accept_loop_tests;
 #[path = "uds_multi_interception_tests.rs"]
 mod interception_tests;
 #[cfg(test)]
+#[path = "uds_multi_926_wake_tests.rs"]
+mod issue_926_wake_tests;
+#[cfg(test)]
 #[path = "uds_snapshot_tests.rs"]
 mod snapshot_tests;
