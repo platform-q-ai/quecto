@@ -608,3 +608,32 @@ fn test_exec_options_default_and_clone() {
     // Debug derive exercised.
     assert!(format!("{:?}", cloned).contains("ExecOptions"));
 }
+
+/// Abort = full stop (#895 AC3): when the tool future is dropped mid-run
+/// (the agent loop cancels in-flight tool calls), the spawned child and its
+/// whole process group must be terminated — a `sleep && touch` chain must NOT
+/// reach the `touch`, proving the long bash did not survive the cancel.
+#[tokio::test]
+async fn test_exec_drop_kills_child_process_group() {
+    let (tool, tmp) = test_exec(false);
+    let marker = tmp.path().join("survived-abort.marker");
+    let cmd = format!(
+        r#"{{"command": "sleep 3 && touch '{}'"}}"#,
+        marker.display()
+    );
+
+    {
+        let fut = tool.execute(&cmd);
+        tokio::pin!(fut);
+        // Poll long enough to spawn the child, then drop the future (cancel).
+        let _ = tokio::time::timeout(Duration::from_millis(400), &mut fut).await;
+        // `fut` dropped here at end of scope → child must be killed.
+    }
+
+    // Wait past the child's sleep; if it survived, the marker would appear.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert!(
+        !marker.exists(),
+        "child process must be killed on cancel; the sleep&&touch reached touch"
+    );
+}

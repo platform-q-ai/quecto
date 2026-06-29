@@ -1,7 +1,7 @@
 use super::protocol::{AgentCommand, AgentEvent, StreamingBehavior};
 use super::uds_cancel::{
-    CancelHandle, CancelSlot, PromptArgs, PromptMessageArgs, PromptOutcome, arm_cancel,
-    disarm_cancel, fire_cancel, run_agent_message, run_agent_prompt,
+    CancelHandle, CancelSlot, PromptArgs, PromptMessageArgs, PromptOutcome, TurnControl,
+    TurnControlHandle, arm_cancel, disarm_cancel, fire_cancel, run_agent_message, run_agent_prompt,
 };
 use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_broadcast};
 use super::uds_query::query_response_data;
@@ -223,6 +223,7 @@ async fn single_client_loop(
             ephemeral,
             system_prompt: &system_prompt,
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+            turn_control: std::sync::Arc::<TurnControl>::default(),
             broadcast_tx: None,
             ext_registry,
             client_tool_registry: super::uds_ext_protocol::new_client_tool_registry(),
@@ -280,7 +281,17 @@ pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt:
 pub(super) const MAX_LINE_BYTES: usize = 1024 * 1024;
 
 pub(super) fn is_cancel_command(trimmed: &str) -> bool {
-    trimmed.contains("\"type\":\"abort\"") || trimmed.contains("\"type\":\"steer\"")
+    is_abort_command(trimmed) || is_steer_command(trimmed)
+}
+
+/// Reader-side classification so the eager cancel and the abort/steer control
+/// flag are set together, before the command is dispatched (#895/#896).
+pub(super) fn is_abort_command(trimmed: &str) -> bool {
+    trimmed.contains("\"type\":\"abort\"")
+}
+
+pub(super) fn is_steer_command(trimmed: &str) -> bool {
+    trimmed.contains("\"type\":\"steer\"")
 }
 
 pub(super) enum LineResult {
@@ -310,6 +321,7 @@ async fn run_command_loop(
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     let cancel_for_reader = std::sync::Arc::clone(&ctx.cancel_handle);
+    let control_for_reader = std::sync::Arc::clone(&ctx.turn_control);
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<String>>(64);
 
@@ -318,8 +330,16 @@ async fn run_command_loop(
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
-                    if line.len() <= MAX_LINE_BYTES && is_cancel_command(line.trim()) {
+                    let trimmed = line.trim();
+                    if line.len() <= MAX_LINE_BYTES && is_cancel_command(trimmed) {
                         fire_cancel(&cancel_for_reader);
+                        // Record operator intent BEFORE the command is dispatched
+                        // so the post-cancel idle drain honours it (#895/#896).
+                        if is_abort_command(trimmed) {
+                            control_for_reader.mark_abort();
+                        } else if is_steer_command(trimmed) {
+                            control_for_reader.mark_steer();
+                        }
                     }
                     if tx.send(Some(line)).await.is_err() {
                         break;
@@ -379,6 +399,9 @@ pub(crate) struct DispatchCtx<'a> {
     pub ephemeral: bool,
     pub system_prompt: &'a str,
     pub cancel_handle: CancelHandle,
+    /// Cross-task control flags for abort/steer vs workflow auto-continue
+    /// (#895/#896). Set by the reader task, read at the idle boundary.
+    pub turn_control: TurnControlHandle,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub ext_registry: Option<ExtRegistry>,
     pub client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
@@ -574,6 +597,12 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
 
 /// Drain pending messages, then inject core workflow nudges while progress is advancing (#562).
 pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
+    // #895: abort = full stop. A pending abort (set by the reader before this
+    // command's handler runs) suppresses workflow auto-continue and discards
+    // queued work, so the bound workflow does NOT resume at this idle boundary —
+    // it stays stopped until re-driven by a fresh prompt. Abort beats any steer.
+    // RED placeholder — behaviour added in the GREEN commit.
+
     drain_and_run_pending(ctx).await;
 
     // Bounded so a misbehaving model that ignores the workflow isn't nudged forever.
@@ -695,6 +724,9 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         }
     }
 }
+#[cfg(test)]
+#[path = "uds_abort_steer_tests.rs"]
+mod abort_steer_tests;
 #[cfg(test)]
 #[path = "uds_parse_tests.rs"]
 mod parse_tests;

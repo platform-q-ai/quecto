@@ -355,6 +355,7 @@ pub(super) async fn handle_steer(
     } else {
         ctx.session.enqueue_pending(message);
     }
+    // RED placeholder — behaviour added in the GREEN commit.
     let ev = AgentEvent::ok(id, type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
@@ -415,6 +416,7 @@ pub(super) async fn handle_abort(
     type_name: &str,
 ) -> bool {
     // Reader task already fires cancel eagerly — do NOT fire again here (#512).
+    // RED placeholder — behaviour added in the GREEN commit.
     let ev = AgentEvent::ok(id, type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false

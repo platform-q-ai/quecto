@@ -185,6 +185,7 @@ impl ExecTool {
             stderr_task,
         };
 
+        // RED placeholder — process-group reaper added in the GREEN commit.
         run_child_with_timeout(child, stream_tasks, timeout_dur).await
     }
 }
@@ -248,6 +249,8 @@ fn build_shell_command(
         .arg(command)
         .current_dir(workspace)
         .env_clear();
+
+    // RED placeholder — process-group kill on cancel added in the GREEN commit.
 
     for (k, v) in source_env {
         cmd.env(k, v);

@@ -1,0 +1,230 @@
+//! Tests for the "explicit control beats automated nudges" semantics
+//! (#895 abort = full stop, #896 steer outranks the auto-continue nudge).
+//!
+//! These exercise the dispatch-level seam: the reader task sets
+//! [`TurnControl`] flags before the matching command is dispatched, and the
+//! post-turn idle drain (`drain_pending_and_nudge`) must honour them.
+
+use super::*;
+use crate::domain::workflow::{WorkflowConfig, WorkflowEngine};
+use crate::interface::shared::WorkflowStateHandle;
+
+/// Owns every value a [`DispatchCtx`] borrows so a single helper can build the
+/// context inline (each field borrow is a disjoint field of this struct).
+struct Env {
+    tmp: tempfile::TempDir,
+    agent: crate::application::agent_loop::AgentLoopImpl,
+    messages: Vec<crate::domain::message::Message>,
+    session: AgentSession,
+    session_key: String,
+    store: crate::infrastructure::persistence::session_store::FileSessionStore,
+    writer: tokio::io::Sink,
+    workflow: WorkflowStateHandle,
+    turn_control: crate::interface::cli::uds_cancel::TurnControlHandle,
+}
+
+fn make_dispatch_test_agent() -> crate::application::agent_loop::AgentLoopImpl {
+    crate::application::agent_loop::AgentLoopImpl::new(
+        crate::application::agent_loop::AgentLoopConfig {
+            provider: crate::interface::test_support::make_stub_provider(),
+            tool_registry: Box::new(
+                crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
+            ),
+            model: "stub".into(),
+            max_tokens: 100,
+            temperature: 0.0,
+            spill_store: None,
+            session_key: "cli:test".into(),
+            context_collapse_after_turns: u32::MAX,
+            max_context_tokens: 190_000,
+            progress_callback: None,
+            streaming: false,
+            effort: None,
+            system_prompt_provider: None,
+            audit_log: None,
+        },
+    )
+}
+
+impl Env {
+    /// Build an `Env` with a `feature` workflow template selected (incomplete),
+    /// so the auto-continue nudge would normally fire at the idle boundary.
+    fn with_selected_feature() -> Self {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store =
+            crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+        let workflow: WorkflowStateHandle = std::sync::Arc::new(std::sync::Mutex::new(
+            WorkflowEngine::new(WorkflowConfig::default(), false).unwrap(),
+        ));
+        workflow
+            .lock()
+            .unwrap()
+            .select_template("feature", None)
+            .unwrap();
+        Self {
+            tmp,
+            agent: make_dispatch_test_agent(),
+            messages: Vec::new(),
+            session: AgentSession::new("stub".into(), "cli:test".into()),
+            session_key: "cli:test".to_string(),
+            store,
+            writer: tokio::io::sink(),
+            workflow,
+            turn_control: std::sync::Arc::default(),
+        }
+    }
+
+    fn ctx(&mut self) -> DispatchCtx<'_> {
+        let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
+            &self.session_key,
+            &self.messages,
+        );
+        let state = self.session.state_snapshot(0, None, 0);
+        DispatchCtx {
+            base_dir: self.tmp.path(),
+            agent: &mut self.agent,
+            messages: &mut self.messages,
+            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
+            session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+            extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            session: &mut self.session,
+            stdout: &mut self.writer,
+            session_key: &mut self.session_key,
+            session_store: &self.store,
+            ephemeral: false,
+            system_prompt: "",
+            cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+            turn_control: self.turn_control.clone(),
+            broadcast_tx: None,
+            ext_registry: None,
+            client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(
+            ),
+            current_client_id: 0,
+            subagent_registry: None,
+            notification_rx: None,
+            workflow_state: Some(self.workflow.clone()),
+            workflow_config: Some(WorkflowConfig::default()),
+            provider_reload: None,
+            provider_reload_inputs: None,
+        }
+    }
+}
+
+// ─── #895: abort = full stop ────────────────────────────────────────────────
+
+/// With no abort/steer pending, the idle drain runs the workflow auto-continue
+/// nudge — establishes that the suppression tests below actually suppress
+/// something (AC: no regression to workflow progress when nothing is pending).
+#[tokio::test]
+async fn baseline_idle_drain_runs_auto_continue_nudge() {
+    let mut env = Env::with_selected_feature();
+    let mut ctx = env.ctx();
+    super::drain_pending_and_nudge(&mut ctx).await;
+    assert!(
+        !ctx.messages.is_empty(),
+        "auto-continue nudge should have driven at least one turn"
+    );
+}
+
+/// A pending abort suppresses the workflow auto-continue nudge AND discards any
+/// queued work, so the bound workflow does not resume (#895 AC1/AC2).
+#[tokio::test]
+async fn abort_suppresses_nudge_and_discards_pending() {
+    let mut env = Env::with_selected_feature();
+    env.session.enqueue_pending("queued follow-up work".into());
+    env.turn_control.mark_abort();
+
+    let mut ctx = env.ctx();
+    super::drain_pending_and_nudge(&mut ctx).await;
+
+    assert!(
+        ctx.messages.is_empty(),
+        "abort must suppress the nudge and not run queued work"
+    );
+    assert!(
+        ctx.session.drain_pending().is_empty(),
+        "abort must discard queued pending work"
+    );
+    assert!(
+        !ctx.turn_control.is_abort_pending(),
+        "abort flag is consumed by the idle drain"
+    );
+}
+
+/// `handle_abort` clears queued work and both control flags so a later idle
+/// drain cannot re-drive the agent (#895 AC2).
+#[tokio::test]
+async fn handle_abort_clears_pending_and_flags() {
+    let mut env = Env::with_selected_feature();
+    env.session.enqueue_pending("queued".into());
+    env.turn_control.mark_abort();
+    env.turn_control.mark_steer();
+
+    let mut ctx = env.ctx();
+    super::uds_dispatch::handle_abort(&mut ctx, Some("a"), "abort").await;
+
+    assert!(ctx.session.drain_pending().is_empty());
+    assert!(!ctx.turn_control.is_abort_pending());
+    assert!(!ctx.turn_control.is_steer_pending());
+}
+
+// ─── #896: steer outranks the auto-continue nudge ───────────────────────────
+
+/// While a steer is pending, the idle drain yields — the auto-continue nudge
+/// must NOT run ahead of the steer (#896 AC1).
+#[tokio::test]
+async fn pending_steer_yields_the_auto_continue_nudge() {
+    let mut env = Env::with_selected_feature();
+    env.turn_control.mark_steer();
+
+    let mut ctx = env.ctx();
+    super::drain_pending_and_nudge(&mut ctx).await;
+
+    assert!(
+        ctx.messages.is_empty(),
+        "auto-continue nudge must yield to a pending steer"
+    );
+    assert!(
+        ctx.turn_control.is_steer_pending(),
+        "the steer gate stays set until its own handler runs"
+    );
+}
+
+/// Deterministic unique-marker test (#896 AC2): a steer issued while a turn was
+/// mid-flight (gate set, queue empty at the idle drain) is obeyed next — the
+/// marker instruction runs — instead of being overridden by the workflow nudge.
+#[tokio::test]
+async fn steer_marker_is_obeyed_after_mid_turn_cancel() {
+    const MARKER: &str = "STEER-MARKER-7f3a9c21-unique";
+    let mut env = Env::with_selected_feature();
+
+    // Reader saw the steer and set the gate; the in-flight turn's idle drain
+    // runs first and must NOT advance the workflow ahead of the steer.
+    env.turn_control.mark_steer();
+    {
+        let mut ctx = env.ctx();
+        super::drain_pending_and_nudge(&mut ctx).await;
+        assert!(
+            ctx.messages.is_empty(),
+            "workflow must not run ahead of the queued steer"
+        );
+    }
+
+    // Now the steer command is dispatched (agent idle after the cancel unwind).
+    {
+        let mut ctx = env.ctx();
+        super::uds_dispatch::handle_steer(&mut ctx, Some("s"), "steer", MARKER.to_string()).await;
+    }
+
+    let obeyed = env
+        .messages
+        .iter()
+        .any(|m| m.role == crate::domain::message::Role::User && m.content == MARKER);
+    assert!(obeyed, "the unique steer marker instruction must be obeyed");
+    assert!(
+        !env.turn_control.is_steer_pending(),
+        "handling the steer releases the gate"
+    );
+}
