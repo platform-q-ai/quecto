@@ -129,9 +129,21 @@ fn workflow_widget_toggle_hints_update_when_state_changes() {
 }
 
 #[test]
-fn workflow_widget_hidden_when_nothing_started() {
-    let state = make_state(None, 0, 14);
+fn workflow_widget_hidden_when_truly_empty() {
+    // Hidden only when there is genuinely no workflow: no total, no issue (#901).
+    let state = make_state(None, 0, 0);
     assert!(render_widget(&state, 100).is_empty());
+}
+
+#[test]
+fn workflow_widget_shown_on_selection_at_zero_of_n() {
+    // Show on selection (#901): a just-selected workflow with a known total
+    // renders at `0/N` before any step completes, even without an active issue.
+    let state = make_state(None, 0, 14);
+    let lines = render_widget(&state, 100);
+    assert!(!lines.is_empty(), "0/14 with a known total must render");
+    assert!(lines[0].contains("Workflow"));
+    assert!(lines[0].contains("0/14"));
 }
 
 #[test]

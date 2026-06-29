@@ -62,6 +62,19 @@ impl App {
                 active_template,
                 available_templates,
             );
+            // Stickiness (#901): a transient/empty live `workflow_state` event
+            // (e.g. `progress {done:0,total:0}` / no issue, emitted around a
+            // transition or nudge) must NOT blank an already-visible workflow.
+            // Keep the existing bar/panel unless the new one carries real
+            // content or explicitly signals a genuine workflow end/reset. Real
+            // progress events (and the show-on-select `0/N` snapshot) still
+            // update normally, preserving #869.
+            if bar.is_empty()
+                && !bar.signals_end_or_reset()
+                && self.subagent_workflow_visible(target)
+            {
+                return;
+            }
             // Mirror onto the panel entry too so the LEFT side panel renders the
             // child's own live progress immediately (#869b).
             self.record_subagent_workflow(target, &bar);
@@ -197,6 +210,23 @@ impl App {
     /// the periodic `subagent_state_changed` push (#869b). Preserves BOTH the
     /// completed and total counts so the indicator never collapses to filled-only.
     /// Per-agent keyed, so a descendant's update never overwrites an ancestor row.
+    /// Whether `agent_id` currently shows a workflow on EITHER surface — the
+    /// LEFT panel cells (`steps_total > 0`) or the main-pane bar
+    /// (`workflow_bar.is_visible()`). The stickiness guard (#901) uses this so a
+    /// transient/empty event never blanks an indicator that is already visible.
+    fn subagent_workflow_visible(&self, agent_id: &str) -> bool {
+        let panel_visible = self
+            .subagent_local
+            .get(agent_id)
+            .and_then(|t| t.info.workflow.as_ref())
+            .is_some_and(|w| w.steps_total > 0);
+        let bar_visible = self
+            .sessions
+            .get(agent_id)
+            .is_some_and(|s| s.workflow_bar.is_visible());
+        panel_visible || bar_visible
+    }
+
     fn record_subagent_workflow(&mut self, agent_id: &str, bar: &workflow_bar::WorkflowBarState) {
         if let Some(tracked) = self.subagent_local.get_mut(agent_id) {
             let mode = tracked

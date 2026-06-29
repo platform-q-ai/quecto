@@ -42,7 +42,34 @@ impl WorkflowBarState {
         if self.mode.as_deref() == Some("selecting_template") {
             return true;
         }
-        self.issue_number.is_some() && self.total > 0
+        // Show on selection (#901): a just-selected workflow with a known total
+        // (e.g. `0/18`) renders immediately, not only once a step completes or
+        // an issue is set.
+        self.total > 0 || self.issue_number.is_some()
+    }
+
+    /// Whether the bar carries NO meaningful workflow content. Used by the
+    /// per-agent routing stickiness guard (#901) to tell a transient/empty
+    /// `workflow_state` event apart from a real one.
+    pub fn is_empty(&self) -> bool {
+        self.steps.is_empty()
+            && self.done == 0
+            && self.total == 0
+            && self.issue_number.is_none()
+            && self.template_name.is_none()
+            && self.template_count == 0
+    }
+
+    /// Whether the event explicitly signals a workflow END or RESET, so an
+    /// otherwise-empty bar is allowed to CLEAR a currently-visible one (#901).
+    /// A transient/empty event (around a transition/nudge) carries `mode`
+    /// `"active"`/`"selecting_template"`/none and must NOT clear; only a
+    /// terminal mode does.
+    pub fn signals_end_or_reset(&self) -> bool {
+        matches!(
+            self.mode.as_deref(),
+            Some("complete") | Some("completed") | Some("idle") | Some("reset") | Some("ended")
+        )
     }
 
     /// Find the current phase (phase of the first unchecked step).
@@ -269,8 +296,10 @@ fn phase_pill_line(state: &WorkflowBarState) -> Option<String> {
 }
 
 fn is_widget_visible(state: &WorkflowBarState) -> bool {
-    // Match Quecto workflow: hide when nothing is started and no active issue.
-    state.done > 0 || state.issue_number.is_some()
+    // Show on selection (#901): visible once a workflow is started, has an
+    // active issue, OR is a just-selected workflow with a known total (`0/N`).
+    // Selector mode shows even before a total is known.
+    state.is_visible() || state.done > 0
 }
 
 fn truncate_line(text: &str, width: usize) -> String {
