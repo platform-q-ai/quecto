@@ -68,7 +68,12 @@ impl App {
                 self.notify_response_error("Rewind failed", error);
             }
             "rewind_to" => {}
-            "clear_history" if success => {}
+            "clear_history" if success => {
+                // #897: history and workflow are orthogonal — clearing the
+                // conversation deliberately retains the workflow engine state.
+                // Signal both so the distinction is never silently entangled.
+                self.notify("History cleared · workflow retained", NotifyLevel::Info);
+            }
             "get_subagents" if success => self.handle_get_subagents(data),
             "agent_error" => self.handle_agent_error(error),
             _ => {}

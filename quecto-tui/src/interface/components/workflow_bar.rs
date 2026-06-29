@@ -232,6 +232,15 @@ pub fn render_compact_line(state: &WorkflowBarState) -> Option<String> {
         line.push_str(&theme::dim(" · "));
         line.push_str(&theme::accent(&theme::bold(&format!("#{number}"))));
     }
+    // #897 AC2: surface auto_continue in the always-visible main pane so its
+    // overriding of "wait"-style instructions is never surprising.
+    let auto = if state.workflow_auto_continue {
+        "on"
+    } else {
+        "off"
+    };
+    line.push_str(&theme::dim(" · "));
+    line.push_str(&theme::dim(&format!("auto:{auto}")));
     Some(line)
 }
 
