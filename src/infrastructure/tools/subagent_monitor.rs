@@ -122,6 +122,15 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
                 .and_then(|p| p.get("total"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32;
+            // Re-arm the terminal-completion latch whenever the workflow is NOT
+            // in `complete` (i.e. still `active`): a workflow that transitions
+            // back out of `complete` is a genuinely new run whose eventual
+            // re-completion must notify again (#904). Staying in `complete`
+            // across the `completion_nudge` follow-up turn leaves the latch
+            // consumed, so that turn's `agent_end` stays silent.
+            if mode != crate::domain::workflow::WorkflowMode::Complete.wire_str() {
+                entry.completion_armed = true;
+            }
             entry.workflow = Some(super::subagent_registry::WorkflowSnapshot {
                 mode,
                 steps_completed: done,
@@ -465,6 +474,19 @@ fn apply_and_notify(
 ) {
     let sequence = update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, value));
     let workflow_mode = entry_workflow_mode(registry, agent_id);
+    // Latch a workflow-bound TERMINAL completion so the `completion_nudge`
+    // "report and stop" follow-up turn — which also ends in `complete` mode —
+    // does NOT fire a second completion note (#904). Only the FIRST terminal
+    // `agent_end` per completion consumes the latch; a workflow re-entering
+    // `active` re-arms it (see `apply_event_parsed`). Non-workflow agents
+    // (`workflow_mode == None`) keep their unconditional turn-end note (#523).
+    if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
+        && workflow_mode.is_some()
+        && agent_end_is_terminal(workflow_mode.as_deref())
+        && !take_completion_armed(registry, agent_id)
+    {
+        return;
+    }
     notify_from_parsed(
         notify_tx,
         agent_id,
@@ -472,6 +494,21 @@ fn apply_and_notify(
         value,
         workflow_mode.as_deref(),
     );
+}
+
+/// Check-and-consume the terminal-completion latch for `agent_id` (#904).
+/// Returns `true` (and clears the latch) when a completion note is still armed;
+/// `false` when already consumed or the entry is gone. Re-armed by
+/// `apply_event_parsed` when the workflow leaves `complete`.
+fn take_completion_armed(registry: &SubagentRegistry, agent_id: &str) -> bool {
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    match entries.get_mut(agent_id) {
+        Some(entry) if entry.completion_armed => {
+            entry.completion_armed = false;
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Read the latest workflow mode recorded on `agent_id`'s registry entry, if it

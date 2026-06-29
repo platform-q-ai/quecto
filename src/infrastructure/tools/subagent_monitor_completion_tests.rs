@@ -85,6 +85,92 @@ async fn workflow_emits_single_completion_across_steps() {
     );
 }
 
+// AC1 / finding #1: with the default `completion_nudge=true`, the kernel runs ONE
+// extra "report your result and stop" turn AFTER the workflow reaches `complete`.
+// That follow-up turn emits its own agent_start + (still-`complete`) workflow_state
+// + agent_end. The terminal-completion latch must suppress the nudge turn's
+// agent_end so the run still yields exactly ONE Completed note.
+#[tokio::test]
+async fn completion_nudge_followup_turn_does_not_double_notify() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+
+    let wf = |mode: &str, done: u64, total: u64| {
+        serde_json::json!({
+            "type": "workflow_state",
+            "mode": mode,
+            "progress": {"done": done, "total": total}
+        })
+    };
+    let agent_start = serde_json::json!({"type": "agent_start"});
+    let agent_end = serde_json::json!({
+        "type": "agent_end",
+        "messages": [{"role": "assistant", "content": "done"}]
+    });
+
+    // Completing turn: step finishes, workflow → complete, terminal agent_end.
+    apply_and_notify(&registry, Some(&tx), "worker", &agent_start);
+    apply_and_notify(&registry, Some(&tx), "worker", &wf("complete", 2, 2));
+    apply_and_notify(&registry, Some(&tx), "worker", &agent_end);
+
+    // completion_nudge follow-up turn: fresh agent_start, workflow STILL complete,
+    // another agent_end. This must NOT fire a second Completed note.
+    apply_and_notify(&registry, Some(&tx), "worker", &agent_start);
+    apply_and_notify(&registry, Some(&tx), "worker", &wf("complete", 2, 2));
+    apply_and_notify(&registry, Some(&tx), "worker", &agent_end);
+
+    let mut completions = 0;
+    while let Ok(n) = rx.try_recv() {
+        if matches!(n.notification, SubagentNotification::Completed { .. }) {
+            completions += 1;
+        }
+    }
+    assert_eq!(
+        completions, 1,
+        "completion_nudge follow-up turn must not produce a second Completed note"
+    );
+}
+
+// A workflow that genuinely re-runs (leaves `complete` back to `active`, then
+// re-completes) must re-arm the latch and notify again on the new completion.
+#[tokio::test]
+async fn rerun_after_complete_notifies_again() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+
+    let wf = |mode: &str| {
+        serde_json::json!({
+            "type": "workflow_state",
+            "mode": mode,
+            "progress": {"done": 2, "total": 2}
+        })
+    };
+    let agent_end = serde_json::json!({
+        "type": "agent_end",
+        "messages": [{"role": "assistant", "content": "done"}]
+    });
+
+    apply_and_notify(&registry, Some(&tx), "worker", &wf("complete"));
+    apply_and_notify(&registry, Some(&tx), "worker", &agent_end);
+    // Re-run: workflow goes back to active (re-arms), then completes again.
+    apply_and_notify(&registry, Some(&tx), "worker", &wf("active"));
+    apply_and_notify(&registry, Some(&tx), "worker", &wf("complete"));
+    apply_and_notify(&registry, Some(&tx), "worker", &agent_end);
+
+    let mut completions = 0;
+    while let Ok(n) = rx.try_recv() {
+        if matches!(n.notification, SubagentNotification::Completed { .. }) {
+            completions += 1;
+        }
+    }
+    assert_eq!(
+        completions, 2,
+        "a genuine re-run after complete must re-arm and notify again"
+    );
+}
+
 // AC2: a non-workflow agent emits a completion on its turn-end.
 #[tokio::test]
 async fn non_workflow_agent_emits_completion_on_turn_end() {
