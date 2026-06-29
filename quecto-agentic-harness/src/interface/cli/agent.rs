@@ -717,6 +717,9 @@ mod cov_tests;
 #[path = "agent_integration_tests.rs"]
 mod integration_tests;
 #[cfg(test)]
+#[path = "agent_926_tests.rs"]
+mod issue_926_tests;
+#[cfg(test)]
 #[path = "agent_no_sandbox_tests.rs"]
 mod no_sandbox_tests;
 #[cfg(test)]

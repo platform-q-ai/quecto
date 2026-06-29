@@ -665,8 +665,8 @@ impl SubagentNotification {
     /// Format this notification as a human-readable message suitable for
     /// injection into the parent LLM's conversation.
     pub fn to_message(&self) -> String {
-        // Single concise line; child output is NOT repeated (inspect via
-        // `agent_cmd get_messages`). Informational, not imperative (#894).
+        // One line; output inspected via `agent_cmd get_messages`. Soft, not
+        // imperative (#894); #926-AC2 note-actionability DEFERRED (open design Q).
         match self {
             Self::Completed { agent_id, .. } => format!(
                 "Sub-agent '{agent_id}' finished. Review with agent_cmd get_messages when you need its output."

@@ -726,6 +726,9 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
 #[path = "uds_abort_steer_tests.rs"]
 mod abort_steer_tests;
 #[cfg(test)]
+#[path = "uds_926_act_tests.rs"]
+mod issue_926_act_tests;
+#[cfg(test)]
 #[path = "uds_parse_tests.rs"]
 mod parse_tests;
 #[cfg(test)]
