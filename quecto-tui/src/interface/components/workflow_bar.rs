@@ -85,6 +85,14 @@ impl WorkflowBarState {
     /// `workflow_state` (#913). The snapshot carries only `mode` + `done/total`
     /// (no per-step detail), so synthesize placeholder steps from the counts; the
     /// renderer then shows `Step n/total` instead of a misleading `starting…`.
+    ///
+    /// LIMITATION (#913 AC#3): the registry `SubagentWorkflow` snapshot carries no
+    /// automation block (the kernel's sub-agent `WorkflowSnapshot` /
+    /// `snapshot_to_event` do not propagate `autoContinue`/`completionNudge`), so a
+    /// snapshot-seeded bar renders `auto:off` until the first routed `workflow_state`
+    /// /`get_state` event with an `automation` block arrives (handled by
+    /// `parse_workflow_event`). Threading the flag end-to-end through the kernel
+    /// snapshot is intentionally out of scope for this display-cluster branch.
     pub fn from_subagent_snapshot(mode: &str, done: u32, total: u32) -> Self {
         let steps: Vec<WorkflowStepInfo> = (0..total)
             .map(|i| WorkflowStepInfo {
