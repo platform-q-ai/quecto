@@ -717,6 +717,9 @@ mod app_subagent_first_tests;
 #[path = "app_subagent_panel_tests.rs"]
 mod app_subagent_panel_tests;
 #[cfg(test)]
+#[path = "app_subagent_workflow_sticky_tests.rs"]
+mod app_subagent_workflow_sticky_tests;
+#[cfg(test)]
 #[path = "app_subagents_tests.rs"]
 mod app_subagents_tests;
 #[cfg(test)]
