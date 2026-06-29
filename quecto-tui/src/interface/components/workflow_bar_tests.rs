@@ -250,6 +250,38 @@ fn just_selected_zero_of_n_shows_step_one_not_complete() {
 }
 
 #[test]
+fn selecting_template_empty_steps_renders_starting_not_complete() {
+    // #903: a VISIBLE-but-not-started state (selector mode, empty steps) must
+    // exercise the new `"starting…"` fallback in both renderers, never the
+    // spurious "✓ Workflow complete!" path.
+    let mut state = make_state(None, 0, 0);
+    state.mode = Some("selecting_template".into());
+    assert!(state.is_visible(), "selector mode is visible");
+    assert!(!state.is_complete(), "selector mode is not complete");
+
+    let lines = render_widget(&state, 100);
+    assert!(!lines.is_empty(), "selector-mode widget must render");
+    assert!(
+        lines[0].contains("starting"),
+        "empty visible widget must render starting marker: {lines:?}"
+    );
+    assert!(
+        !lines.join("\n").contains("Workflow complete"),
+        "must never read as complete: {lines:?}"
+    );
+
+    let compact = render_compact_line(&state).expect("selector-mode compact line renders");
+    assert!(
+        compact.contains("starting"),
+        "empty visible compact line must render starting marker: {compact}"
+    );
+    assert!(
+        !compact.contains("Workflow complete"),
+        "compact must never read as complete: {compact}"
+    );
+}
+
+#[test]
 fn is_complete_only_when_genuinely_done() {
     assert!(make_state(Some(1), 14, 14).is_complete(), "done==total>0");
     let mut mode_complete = make_state(None, 0, 0);
