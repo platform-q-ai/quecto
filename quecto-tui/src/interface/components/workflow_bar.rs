@@ -94,7 +94,15 @@ impl WorkflowBarState {
     /// `parse_workflow_event`). Threading the flag end-to-end through the kernel
     /// snapshot is intentionally out of scope for this display-cluster branch.
     pub fn from_subagent_snapshot(mode: &str, done: u32, total: u32) -> Self {
-        let steps: Vec<WorkflowStepInfo> = (0..total)
+        // `total` comes from an untrusted sub-agent snapshot and the bar only
+        // draws a fixed-width gauge from done/total — so cap the synthesized
+        // placeholder steps to avoid a multi-GB allocation (one struct per step)
+        // when a malicious/buggy child reports a huge `steps_total`, which would
+        // OOM the operator's TUI merely on selecting that child (#919 security
+        // review). The real `done`/`total` are kept below for the text readout.
+        const MAX_SNAPSHOT_STEPS: u32 = 512;
+        let synth = total.min(MAX_SNAPSHOT_STEPS);
+        let steps: Vec<WorkflowStepInfo> = (0..synth)
             .map(|i| WorkflowStepInfo {
                 id: i + 1,
                 label: String::new(),
