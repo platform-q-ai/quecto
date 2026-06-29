@@ -620,6 +620,17 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     // Bounded so a misbehaving model that ignores the workflow isn't nudged forever.
     const MAX_WORKFLOW_NUDGES: usize = 128;
     for _ in 0..MAX_WORKFLOW_NUDGES {
+        // #930: an abort that lands WHILE this auto-continue loop is mid-flight is
+        // a full stop, exactly like one at the idle-drain entry above — discard
+        // queued work and stop nudging. The entry guard only catches an abort that
+        // arrived before the drain; without re-checking here, a workflow that was
+        // already auto-continuing kept advancing past the abort (e.g. 5/17 → 9/17)
+        // because the loop only broke on a pending steer or a no-progress turn.
+        if ctx.turn_control.take_abort() {
+            ctx.turn_control.clear_steer();
+            ctx.session.drain_pending();
+            return;
+        }
         // #896: an explicit steer outranks the auto-continue nudge — yield so the
         // steered instruction is obeyed next instead of being overridden.
         if ctx.turn_control.is_steer_pending() {

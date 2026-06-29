@@ -311,3 +311,119 @@ async fn abort_beats_steer_at_drain_seam() {
     );
     assert!(!ctx.turn_control.is_abort_pending(), "abort flag consumed");
 }
+
+// ─── #930: abort stops an already-running auto-continue loop ──────────────────
+
+/// Provider that advances the bound workflow one step per turn (so the
+/// auto-continue nudge loop keeps iterating) and fires a full-stop abort on its
+/// SECOND turn — simulating an abort that lands WHILE the loop is mid-flight,
+/// which the idle-drain entry guard cannot catch.
+struct AdvanceThenAbortProvider {
+    workflow: WorkflowStateHandle,
+    turn_control: crate::interface::cli::uds_cancel::TurnControlHandle,
+    calls: std::sync::atomic::AtomicU32,
+}
+
+impl std::fmt::Debug for AdvanceThenAbortProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdvanceThenAbortProvider").finish()
+    }
+}
+
+impl crate::domain::provider::LlmProvider for AdvanceThenAbortProvider {
+    fn name(&self) -> &str {
+        "advance-then-abort"
+    }
+
+    fn chat(
+        &self,
+        _request: crate::domain::provider::ChatRequest<'_>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        crate::domain::message::LlmResponse,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        // 0-based turn index. Advance one workflow step so the loop's progress
+        // fingerprint changes and it would otherwise keep nudging.
+        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Ok(mut engine) = self.workflow.lock() {
+            let _ = engine.check(n + 1);
+        }
+        // On the second turn an abort lands mid-loop (full stop).
+        if n == 1 {
+            self.turn_control.mark_abort();
+        }
+        Box::pin(async {
+            Ok(crate::domain::message::LlmResponse {
+                content: Some("step".to_string()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            })
+        })
+    }
+}
+
+/// #930 regression: an abort fired WHILE the workflow is auto-continuing must
+/// stop it. Before the fix the abort flag was only checked at the idle-drain
+/// entry, not inside the nudge loop, so the workflow advanced past the abort
+/// (e.g. 5/17 → 9/17). Here the provider advances one step per turn and aborts on
+/// its second turn; without the in-loop check the loop would run to 17/17.
+#[tokio::test]
+async fn abort_stops_an_already_running_auto_continue_loop() {
+    let mut env = Env::with_selected_feature();
+    env.agent = crate::application::agent_loop::AgentLoopImpl::new(
+        crate::application::agent_loop::AgentLoopConfig {
+            provider: std::sync::Arc::new(AdvanceThenAbortProvider {
+                workflow: env.workflow.clone(),
+                turn_control: env.turn_control.clone(),
+                calls: std::sync::atomic::AtomicU32::new(0),
+            }),
+            tool_registry: Box::new(
+                crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
+            ),
+            model: "stub".into(),
+            max_tokens: 100,
+            temperature: 0.0,
+            spill_store: None,
+            session_key: "cli:test".into(),
+            context_collapse_after_turns: u32::MAX,
+            max_context_tokens: 190_000,
+            progress_callback: None,
+            streaming: false,
+            effort: None,
+            system_prompt_provider: None,
+            audit_log: None,
+        },
+    );
+
+    {
+        let mut ctx = env.ctx();
+        super::drain_pending_and_nudge(&mut ctx).await;
+    }
+
+    let progress = env.workflow.lock().unwrap().progress();
+    assert!(
+        progress.done < progress.total,
+        "abort must stop the auto-continue loop, but it ran to {}/{}",
+        progress.done,
+        progress.total
+    );
+    assert!(
+        progress.done <= 3,
+        "loop should stop right after the mid-flight abort, got {}/{}",
+        progress.done,
+        progress.total
+    );
+    assert!(
+        !env.turn_control.is_abort_pending(),
+        "the mid-loop abort flag is consumed by the full stop"
+    );
+}
