@@ -15,6 +15,11 @@
 //!
 //! They drive not-yet-existing `App` API on purpose (TDD RED).
 
+// Coalescing of `◆` completion DISPLAY notes (#900) lives in its own file to
+// respect the 750-line cap; wired here so it shares this module's test scope.
+#[path = "app_subagent_note_coalesce_tests.rs"]
+mod note_coalesce;
+
 use super::tui_harness::*;
 use crate::infrastructure::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::interface::ansi::strip_ansi;

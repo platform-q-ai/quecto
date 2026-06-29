@@ -207,6 +207,7 @@ impl Fixture {
             ephemeral: self.ephemeral,
             system_prompt: "",
             cancel_handle: self.cancel.clone(),
+            turn_control: std::sync::Arc::default(),
             broadcast_tx: None,
             ext_registry: None,
             client_tool_registry: self.registry.clone(),
@@ -232,13 +233,21 @@ fn tool_reg(name: &str) -> ToolRegistration {
 // ─── handle_steer ────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn steer_enqueues_when_idle() {
+async fn steer_runs_immediately_when_idle() {
+    // Idle steer is acted on now (drained), not left queued — this lets a
+    // post-cancel steer actually execute instead of being stranded (#896).
     let mut fx = Fixture::new();
     {
         let mut ctx = fx.ctx();
         assert!(!handle_steer(&mut ctx, None, "steer", "hello".into()).await);
     }
-    assert_eq!(fx.session.drain_pending().len(), 1);
+    assert!(fx.session.drain_pending().is_empty(), "idle steer ran");
+    assert!(
+        fx.messages
+            .iter()
+            .any(|m| m.role == crate::domain::message::Role::User && m.content == "hello"),
+        "the steered instruction should have been run"
+    );
 }
 
 #[tokio::test]

@@ -355,8 +355,18 @@ pub(super) async fn handle_steer(
     } else {
         ctx.session.enqueue_pending(message);
     }
+    // #896: this steer is now being handled, so release the pending-steer gate —
+    // the workflow auto-continue nudge may resume AFTER the steer runs, not
+    // before it. Clearing here (rather than in the reader) keeps the nudge
+    // suppressed across the post-cancel idle drain that ran just ahead of us.
+    ctx.turn_control.clear_steer();
     let ev = AgentEvent::ok(id, type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    // When idle (e.g. the steered turn was just cancelled and unwound), drive the
+    // steered instruction now so it isn't stranded waiting for the next prompt.
+    if !ctx.session.is_streaming() {
+        super::drain_pending_and_nudge(ctx).await;
+    }
     false
 }
 
@@ -366,6 +376,10 @@ pub(super) async fn handle_follow_up(
     type_name: &str,
     message: String,
 ) -> bool {
+    // A genuine `follow_up` clears any stale steer gate left by a loose
+    // `"type":"steer"` substring match in the reader, so the auto-continue nudge
+    // is not permanently suppressed (#896 AC3). See `handle_prompt`.
+    ctx.turn_control.clear_steer();
     ctx.session.enqueue_pending(message);
     let ev = AgentEvent::ok(id, type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
@@ -415,6 +429,13 @@ pub(super) async fn handle_abort(
     type_name: &str,
 ) -> bool {
     // Reader task already fires cancel eagerly — do NOT fire again here (#512).
+    // #895: abort = full stop. Discard any queued work and clear both control
+    // flags so the bound workflow does not resume and the next idle drain does
+    // not re-drive this agent. Suppression lasts until a fresh prompt re-arms the
+    // loop. The in-flight prompt's idle drain may already have consumed the abort
+    // flag; doing it again here is idempotent and covers the idle (no-run) case.
+    ctx.session.drain_pending();
+    ctx.turn_control.clear();
     let ev = AgentEvent::ok(id, type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false

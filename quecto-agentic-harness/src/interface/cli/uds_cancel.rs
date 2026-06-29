@@ -26,6 +26,72 @@ pub enum CancelSlot {
 /// Shared cancellation state protected by a mutex.
 pub type CancelHandle = std::sync::Arc<std::sync::Mutex<CancelSlot>>;
 
+/// Cross-task signalling for explicit control verbs that race the post-turn
+/// workflow auto-continue nudge (#895/#896).
+///
+/// The reader task classifies `abort`/`steer` lines and sets these flags BEFORE
+/// the corresponding command is dispatched, so the in-flight prompt's
+/// `drain_pending_and_nudge` (which runs at the idle boundary, before the
+/// queued command is handled) can honour the operator's intent:
+///
+/// - `abort_requested` = full stop (#895): suppress the workflow auto-continue
+///   nudge and discard any queued work so the bound workflow does NOT resume.
+/// - `steer_pending` = explicit redirect (#896): the auto-continue nudge yields
+///   so the steered instruction is obeyed next instead of being overridden.
+#[derive(Default)]
+pub struct TurnControl {
+    abort_requested: std::sync::atomic::AtomicBool,
+    steer_pending: std::sync::atomic::AtomicBool,
+}
+
+impl TurnControl {
+    /// Reader: record a full-stop abort ahead of dispatch (#895).
+    pub fn mark_abort(&self) {
+        self.abort_requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Reader: record an explicit steer ahead of dispatch (#896).
+    pub fn mark_steer(&self) {
+        self.steer_pending
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Idle drain: consume the abort flag (true once, then cleared).
+    pub fn take_abort(&self) -> bool {
+        self.abort_requested
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Whether a full-stop abort is queued but not yet consumed.
+    pub fn is_abort_pending(&self) -> bool {
+        self.abort_requested
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Whether a steer is queued but not yet handled.
+    pub fn is_steer_pending(&self) -> bool {
+        self.steer_pending.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Release the steer gate (its handler is now running).
+    pub fn clear_steer(&self) {
+        self.steer_pending
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Clear both flags (abort handler / full reset).
+    pub fn clear(&self) {
+        self.abort_requested
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.steer_pending
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Shared handle to [`TurnControl`], cloned into the reader task.
+pub type TurnControlHandle = std::sync::Arc<TurnControl>;
+
 /// Attempt to fire cancellation.
 ///
 /// - `Armed`: fires the sender (cancels the running prompt immediately).

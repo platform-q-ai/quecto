@@ -129,9 +129,21 @@ fn workflow_widget_toggle_hints_update_when_state_changes() {
 }
 
 #[test]
-fn workflow_widget_hidden_when_nothing_started() {
-    let state = make_state(None, 0, 14);
+fn workflow_widget_hidden_when_truly_empty() {
+    // Hidden only when there is genuinely no workflow: no total, no issue (#901).
+    let state = make_state(None, 0, 0);
     assert!(render_widget(&state, 100).is_empty());
+}
+
+#[test]
+fn workflow_widget_shown_on_selection_at_zero_of_n() {
+    // Show on selection (#901): a just-selected workflow with a known total
+    // renders at `0/N` before any step completes, even without an active issue.
+    let state = make_state(None, 0, 14);
+    let lines = render_widget(&state, 100);
+    assert!(!lines.is_empty(), "0/14 with a known total must render");
+    assert!(lines[0].contains("Workflow"));
+    assert!(lines[0].contains("0/14"));
 }
 
 #[test]
@@ -144,10 +156,144 @@ fn workflow_widget_shown_when_issue_active() {
 }
 
 #[test]
+fn is_empty_only_for_no_content_bar() {
+    // A `0/0`, no-steps, no-issue, no-template bar is empty regardless of mode.
+    let mut empty = make_state(None, 0, 0);
+    empty.mode = Some("active".into());
+    assert!(empty.is_empty());
+    empty.mode = Some("selecting_template".into());
+    assert!(empty.is_empty());
+    // Any real content makes it non-empty.
+    assert!(!make_state(None, 0, 14).is_empty()); // total > 0
+    assert!(!make_state(Some(5), 0, 0).is_empty()); // issue set
+}
+
+#[test]
+fn signals_end_or_reset_matches_only_real_terminal_mode() {
+    // The kernel emits exactly three modes (WorkflowMode::wire_str); only the
+    // terminal one clears an empty bar. (#901 / finding reconciliation)
+    let mut state = make_state(None, 0, 0);
+
+    state.mode = Some("complete".into());
+    assert!(state.signals_end_or_reset(), "complete is terminal");
+
+    for transient in ["active", "selecting_template"] {
+        state.mode = Some(transient.into());
+        assert!(
+            !state.signals_end_or_reset(),
+            "{transient} is transient, must not clear"
+        );
+    }
+    state.mode = None;
+    assert!(!state.signals_end_or_reset(), "absent mode must not clear");
+}
+
+#[test]
 fn workflow_widget_complete_shows_done() {
     let state = make_state(Some(100), 14, 14);
     let lines = render_widget(&state, 100);
     assert!(lines[0].contains("✓ Workflow complete!"));
+}
+
+// ── #903: empty-steps (total>0) must NOT read as complete or be visible ──────
+
+#[test]
+fn empty_steps_with_total_is_hidden_and_not_complete() {
+    // Master's connect-time snapshot: total>0 (from a persisted template) but
+    // done==0, no active issue, and an EMPTY steps array. Pre-#901 this was
+    // hidden; it must stay hidden and must NEVER render "✓ Workflow complete!".
+    let mut state = make_state(None, 0, 0);
+    state.total = 14; // stale total with no steps
+    assert!(
+        !state.is_visible(),
+        "empty-steps total>0 must not be visible"
+    );
+    let lines = render_widget(&state, 100);
+    assert!(
+        lines.is_empty(),
+        "empty-steps total>0 must render nothing: {lines:?}"
+    );
+    assert!(
+        !render_widget(&state, 100)
+            .join("\n")
+            .contains("Workflow complete"),
+        "empty-steps must never read as complete"
+    );
+}
+
+#[test]
+fn empty_steps_compact_line_not_complete() {
+    let mut state = make_state(None, 0, 0);
+    state.total = 14;
+    assert!(
+        render_compact_line(&state).is_none(),
+        "empty-steps total>0 must not produce a compact line"
+    );
+}
+
+#[test]
+fn just_selected_zero_of_n_shows_step_one_not_complete() {
+    // AC#3: a genuine 0/N workflow with real steps shows on selection and
+    // renders the current step (Step 1), NOT "complete". (#901 preserved.)
+    let state = make_state(None, 0, 14);
+    assert!(state.is_visible());
+    let lines = render_widget(&state, 100);
+    assert!(!lines.is_empty());
+    assert!(
+        lines[0].contains("→ Step 1"),
+        "should show first step: {lines:?}"
+    );
+    assert!(
+        !lines[0].contains("Workflow complete"),
+        "0/N with steps must not read as complete: {lines:?}"
+    );
+}
+
+#[test]
+fn selecting_template_empty_steps_renders_starting_not_complete() {
+    // #903: a VISIBLE-but-not-started state (selector mode, empty steps) must
+    // exercise the new `"starting…"` fallback in both renderers, never the
+    // spurious "✓ Workflow complete!" path.
+    let mut state = make_state(None, 0, 0);
+    state.mode = Some("selecting_template".into());
+    assert!(state.is_visible(), "selector mode is visible");
+    assert!(!state.is_complete(), "selector mode is not complete");
+
+    let lines = render_widget(&state, 100);
+    assert!(!lines.is_empty(), "selector-mode widget must render");
+    assert!(
+        lines[0].contains("starting"),
+        "empty visible widget must render starting marker: {lines:?}"
+    );
+    assert!(
+        !lines.join("\n").contains("Workflow complete"),
+        "must never read as complete: {lines:?}"
+    );
+
+    let compact = render_compact_line(&state).expect("selector-mode compact line renders");
+    assert!(
+        compact.contains("starting"),
+        "empty visible compact line must render starting marker: {compact}"
+    );
+    assert!(
+        !compact.contains("Workflow complete"),
+        "compact must never read as complete: {compact}"
+    );
+}
+
+#[test]
+fn is_complete_only_when_genuinely_done() {
+    assert!(make_state(Some(1), 14, 14).is_complete(), "done==total>0");
+    let mut mode_complete = make_state(None, 0, 0);
+    mode_complete.mode = Some("complete".into());
+    assert!(mode_complete.is_complete(), "mode==complete");
+    let mut empty = make_state(None, 0, 0);
+    empty.total = 14;
+    assert!(!empty.is_complete(), "empty-steps done<total not complete");
+    assert!(
+        !make_state(Some(1), 3, 14).is_complete(),
+        "mid-run not complete"
+    );
 }
 
 #[test]
@@ -316,6 +462,28 @@ fn compact_line_complete_state_has_no_misleading_step() {
     assert!(
         clean.to_lowercase().contains("complete"),
         "a complete workflow should read as complete: {clean}"
+    );
+}
+
+#[test]
+fn compact_line_exposes_auto_continue_state() {
+    // #897 AC2: the always-visible main-pane line must surface auto_continue so
+    // its overriding of "wait"-style instructions is never surprising.
+    let mut state = make_state(Some(100), 3, 14);
+    state.workflow_auto_continue = true;
+    let on = render_compact_line(&state).expect("active workflow renders a compact line");
+    let on_clean = crate::interface::ansi::strip_ansi(&on).to_lowercase();
+    assert!(
+        on_clean.contains("auto:on"),
+        "compact line must show auto-continue ON: {on_clean}"
+    );
+
+    state.workflow_auto_continue = false;
+    let off = render_compact_line(&state).expect("active workflow renders a compact line");
+    let off_clean = crate::interface::ansi::strip_ansi(&off).to_lowercase();
+    assert!(
+        off_clean.contains("auto:off"),
+        "compact line must show auto-continue OFF: {off_clean}"
     );
 }
 

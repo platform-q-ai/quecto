@@ -223,6 +223,7 @@ pub(super) async fn multi_client_loop(
         .unwrap_or_else(|| tokio::sync::broadcast::channel::<String>(BROADCAST_CHANNEL_CAPACITY).0);
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(256);
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
+    let turn_control: super::uds_cancel::TurnControlHandle = std::sync::Arc::default();
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
     let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
@@ -232,6 +233,7 @@ pub(super) async fn multi_client_loop(
         broadcast_tx: broadcast_tx.clone(),
         cmd_tx: cmd_tx.clone(),
         cancel_handle: cancel_handle.clone(),
+        turn_control: turn_control.clone(),
         live_clients: live_clients.clone(),
         client_tool_registry: client_tool_registry.clone(),
         conversation_snapshot: conversation_snapshot.clone(),
@@ -265,6 +267,7 @@ pub(super) async fn multi_client_loop(
         ephemeral,
         system_prompt: &system_prompt,
         cancel_handle,
+        turn_control,
         broadcast_tx: Some(broadcast_tx),
         ext_registry,
         client_tool_registry: client_tool_registry.clone(),
@@ -356,6 +359,7 @@ async fn run_dispatch_loop(
                         agent_id.clone(),
                         sequence,
                         notif.to_message(),
+                        notif.is_completion(),
                     );
                     if is_new {
                         should_deliver = true;
@@ -482,6 +486,8 @@ pub(super) struct ClientHandlerArgs {
     pub(super) targeted_rx: tokio::sync::mpsc::Receiver<String>,
     pub(super) cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
     pub(super) cancel_handle: CancelHandle,
+    /// Shared abort/steer control flags (#895/#896).
+    pub(super) turn_control: super::uds_cancel::TurnControlHandle,
     /// Unique client identifier (#352).
     pub(super) client_id: u64,
     /// For in-reader handling of `tool_result` — see handle_client.
@@ -497,6 +503,7 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
         mut targeted_rx,
         cmd_tx,
         cancel_handle,
+        turn_control,
         client_id,
         client_tool_registry,
         _guard,
@@ -557,7 +564,16 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
             tracing::warn!(len = line.len(), "dropping oversized line from client");
             continue;
         }
-        if is_cancel_command(line.trim()) {
+        let trimmed = line.trim();
+        if is_cancel_command(trimmed) {
+            // Record operator intent BEFORE firing the cancel so the post-cancel
+            // idle drain cannot observe the cancel and run a nudge before the
+            // abort/steer flag lands (#895/#896).
+            if super::uds::is_abort_command(trimmed) {
+                turn_control.mark_abort();
+            } else if super::uds::is_steer_command(trimmed) {
+                turn_control.mark_steer();
+            }
             fire_cancel(&cancel_handle);
         }
         // Intercept `tool_result` inline — the dispatch loop is

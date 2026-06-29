@@ -42,7 +42,59 @@ impl WorkflowBarState {
         if self.mode.as_deref() == Some("selecting_template") {
             return true;
         }
-        self.issue_number.is_some() && self.total > 0
+        // Show on selection (#901): a just-selected workflow with real steps
+        // (e.g. `0/18`) renders immediately, not only once a step completes or
+        // an issue is set.
+        //
+        // #903: a bare `total > 0` is NOT enough. The master's connect-time
+        // snapshot can carry a stale `progress.total` from a persisted template
+        // with an EMPTY `steps` array, no active issue and no active template —
+        // an inactive state that previously read as a spurious "complete" bar.
+        // Require a genuine active workflow: real steps, an active template, or
+        // an active issue.
+        !self.steps.is_empty() || self.template_name.is_some() || self.issue_number.is_some()
+    }
+
+    /// Whether the bar carries NO meaningful workflow content. Used by the
+    /// per-agent routing stickiness guard (#901) to tell a transient/empty
+    /// `workflow_state` event apart from a real one.
+    pub fn is_empty(&self) -> bool {
+        self.steps.is_empty()
+            && self.done == 0
+            && self.total == 0
+            && self.issue_number.is_none()
+            && self.template_name.is_none()
+            && self.template_count == 0
+    }
+
+    /// Whether the event explicitly signals a workflow END, so an
+    /// otherwise-empty bar is allowed to CLEAR a currently-visible one (#901).
+    ///
+    /// The kernel only ever emits three `workflow_state.mode` values
+    /// (`src/domain/workflow.rs`, `WorkflowMode::wire_str`):
+    /// `"selecting_template"`, `"active"`, `"complete"`. Of these only
+    /// `"complete"` is terminal; the other two are transient/intermediate and
+    /// must NOT clear a visible workflow. (The forwarded descendant path —
+    /// `canonical_workflow_forward` — drops steps/templates, so a forwarded
+    /// `complete` whose progress has reset to `0/0` would otherwise look empty
+    /// and stick; this lets it clear.)
+    ///
+    /// NOTE: a genuine reset of an UNBOUND engine re-enters the selector as
+    /// `selecting_template`/`0/0`, which on the forwarded path is byte-identical
+    /// to a `#899` transient and is therefore intentionally NOT treated as a
+    /// clear — bound sub-agents (the common case) never return to the selector,
+    /// so this preserves anti-flicker (AC#2/#4) at the cost of leaving an
+    /// unbound reset sticky until the agent exits.
+    pub fn signals_end_or_reset(&self) -> bool {
+        matches!(self.mode.as_deref(), Some("complete"))
+    }
+
+    /// Whether the workflow is GENUINELY complete (#903): every step done
+    /// (`done >= total > 0`) or the kernel signalled the terminal `complete`
+    /// mode. An empty-steps / not-started snapshot (`done < total`, or no steps)
+    /// is NOT complete and must never render "✓ Workflow complete!".
+    pub fn is_complete(&self) -> bool {
+        self.mode.as_deref() == Some("complete") || (self.total > 0 && self.done >= self.total)
     }
 
     /// Find the current phase (phase of the first unchecked step).
@@ -108,17 +160,22 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
         _ => " ".to_string(),
     };
 
-    let current_info = state
-        .current_step_id()
-        .map(|id| {
+    // #903: "✓ Workflow complete!" is reserved for a GENUINELY complete
+    // workflow. When `current_step_id()` is `None` because steps are empty /
+    // not-started (rather than all-done), render a neutral "starting…" marker
+    // instead of falsely claiming completion.
+    let current_info = match state.current_step_id() {
+        Some(id) => {
             let label = state.current_step_label().unwrap_or("");
             format!(
                 "→ Step {id}: {} [{}]",
                 ellipsize_clean(label, 56),
                 phase_display(state.current_phase().unwrap_or("done"))
             )
-        })
-        .unwrap_or_else(|| "✓ Workflow complete!".to_string());
+        }
+        None if state.is_complete() => "✓ Workflow complete!".to_string(),
+        None => "starting…".to_string(),
+    };
 
     // `▸ Workflow` panel header mirrors the subagent bar's `▸ Subagents` so the
     // two widgets read as sibling panels with a shared left gutter.
@@ -187,10 +244,23 @@ pub fn render_compact_line(state: &WorkflowBarState) -> Option<String> {
             }
             parts
         }
-        None => theme::success("✓ Workflow complete!"),
+        // #903: only label complete when genuinely done, never for empty steps.
+        None if state.is_complete() => theme::success("✓ Workflow complete!"),
+        None => theme::dim("starting…"),
     };
 
-    let mut line = format!("{bar}  {context}");
+    // #897 AC2: surface auto_continue in the always-visible main pane so its
+    // overriding of "wait"-style instructions is never surprising. Place it
+    // ahead of the ellipsizable context/issue-number so it survives clipping
+    // under narrow widths (the caller clamps to the box inner width).
+    let auto = if state.workflow_auto_continue {
+        "on"
+    } else {
+        "off"
+    };
+    let mut line = format!("{bar}  {}", theme::dim(&format!("auto:{auto}")));
+    line.push_str(&theme::dim(" · "));
+    line.push_str(&context);
     if let Some(number) = state.issue_number {
         line.push_str(&theme::dim(" · "));
         line.push_str(&theme::accent(&theme::bold(&format!("#{number}"))));
@@ -269,8 +339,10 @@ fn phase_pill_line(state: &WorkflowBarState) -> Option<String> {
 }
 
 fn is_widget_visible(state: &WorkflowBarState) -> bool {
-    // Match Quecto workflow: hide when nothing is started and no active issue.
-    state.done > 0 || state.issue_number.is_some()
+    // Show on selection (#901): visible once a workflow is started, has an
+    // active issue, OR is a just-selected workflow with a known total (`0/N`).
+    // Selector mode shows even before a total is known.
+    state.is_visible() || state.done > 0
 }
 
 fn truncate_line(text: &str, width: usize) -> String {

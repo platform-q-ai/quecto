@@ -450,7 +450,10 @@ Feature: UDS mode for headless agent operation
   # ─── steer while running ─────────────────────────────────────────────────────
 
   @done @steer-abort
-  Scenario: steer while running interrupts the in-flight agent run
+  Scenario: steer while running interrupts the in-flight run and is obeyed next
+    # #896: a steer cancels the in-flight turn AND is obeyed next — the steered
+    # instruction self-drives once the cancelled turn unwinds, so a follow-on
+    # turn completes (turn_end) rather than the steer being stranded.
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM will delay its response by 3 seconds
@@ -459,7 +462,7 @@ Feature: UDS mode for headless agent operation
     And I send steer "new direction" with id "st-running-1"
     And I close the UDS connection
     Then the agent output should contain a response command "steer" with success true
-    And the agent output should not contain an event of type "turn_end"
+    And the agent output should contain an event of type "turn_end"
 
   # ─── Token streaming ────────────────────────────────────────────────────────
 

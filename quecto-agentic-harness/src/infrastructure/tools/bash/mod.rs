@@ -185,7 +185,59 @@ impl ExecTool {
             stderr_task,
         };
 
-        run_child_with_timeout(child, stream_tasks, timeout_dur).await
+        // Arm a process-group reaper: if this future is dropped (an abort cancels
+        // the in-flight tool call, #895 AC3) the guard SIGKILLs the whole group
+        // so no grandchild outlives the cancel. Disarmed once the child is fully
+        // awaited (normal completion or timeout already reaped it).
+        let mut group_guard = ProcessGroupGuard::new(child.id());
+        let result = run_child_with_timeout(child, stream_tasks, timeout_dur).await;
+        group_guard.disarm();
+        result
+    }
+}
+
+/// Best-effort reaper that kills a child's process group on drop (#895 AC3).
+///
+/// Spawned children run in their own group (`process_group(0)`), so signalling
+/// the negative pgid terminates the shell AND any descendants it forked. Signals
+/// directly via `libc::kill` rather than `kill(1)`, whose negative-pgid handling
+/// is shell-dependent (dash's builtin silently no-ops on it).
+struct ProcessGroupGuard {
+    pid: Option<u32>,
+}
+
+impl ProcessGroupGuard {
+    fn new(pid: Option<u32>) -> Self {
+        Self { pid }
+    }
+
+    /// Cancel the on-drop kill — the child has already been awaited/reaped.
+    fn disarm(&mut self) {
+        self.pid = None;
+    }
+}
+
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.pid {
+            // SIGKILL the child's whole process group. A negative pid signals the
+            // entire group (pgid == child pid, set via `process_group(0)`), so the
+            // leader AND any descendants it forked are reaped. We signal directly
+            // via `libc::kill` rather than shelling out to `kill(1)`: the negative
+            // -pgid form is parsed inconsistently across shells/`kill`
+            // implementations (e.g. dash's builtin silently no-ops on it, so the
+            // group was never signalled on Debian/Ubuntu `/bin/sh` hosts). The
+            // syscall is unambiguous and near-instant.
+            //
+            // `kill(2)` is async-signal-safe and takes plain integers; we pass a
+            // pid we own and a constant signal, so it cannot violate Rust memory
+            // safety. A stale/dead pid simply yields ESRCH, which we ignore.
+            // SAFETY: FFI call to `libc::kill` with owned-pid + constant signal.
+            unsafe {
+                libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+            }
+        }
     }
 }
 
@@ -248,6 +300,15 @@ fn build_shell_command(
         .arg(command)
         .current_dir(workspace)
         .env_clear();
+
+    // Put the child in its own process group (pgid == child pid) so a cancel can
+    // kill the WHOLE tree — the shell plus any grandchildren — not just the shell
+    // leader (#895 AC3). `kill_on_drop` then guarantees the leader dies when the
+    // in-flight tool future is dropped on abort; the group kill in
+    // `ProcessGroupGuard` reaps the rest.
+    #[cfg(unix)]
+    cmd.process_group(0);
+    cmd.kill_on_drop(true);
 
     for (k, v) in source_env {
         cmd.env(k, v);

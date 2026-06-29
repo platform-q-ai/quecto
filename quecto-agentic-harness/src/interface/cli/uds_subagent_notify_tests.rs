@@ -16,6 +16,7 @@ fn test_enqueue_subagent_notification_buffers_system_note() {
         "researcher".to_string(),
         1,
         "[subagent] Agent 'researcher' completed. Last output: all tests pass".to_string(),
+        true,
     );
     assert!(enqueued, "first completion note should be enqueued");
     assert_eq!(
@@ -36,13 +37,13 @@ fn test_enqueue_subagent_notification_buffers_system_note() {
 #[test]
 fn test_enqueue_subagent_notification_dedupes_same_sequence() {
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
-    assert!(session.enqueue_subagent_notification("a".to_string(), 5, "done".to_string()));
+    assert!(session.enqueue_subagent_notification("a".to_string(), 5, "done".to_string(), true));
     assert!(
-        !session.enqueue_subagent_notification("a".to_string(), 5, "done".to_string()),
+        !session.enqueue_subagent_notification("a".to_string(), 5, "done".to_string(), true),
         "re-enqueuing the same sequence must be deduped"
     );
     assert!(
-        !session.enqueue_subagent_notification("a".to_string(), 3, "stale".to_string()),
+        !session.enqueue_subagent_notification("a".to_string(), 3, "stale".to_string(), true),
         "an older sequence must be deduped"
     );
     assert_eq!(
@@ -57,8 +58,8 @@ fn test_enqueue_subagent_notification_dedupes_same_sequence() {
 #[test]
 fn test_enqueue_subagent_notification_coalesces_same_agent() {
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
-    assert!(session.enqueue_subagent_notification("a".to_string(), 1, "first".to_string()));
-    assert!(session.enqueue_subagent_notification("a".to_string(), 2, "second".to_string()));
+    assert!(session.enqueue_subagent_notification("a".to_string(), 1, "first".to_string(), true));
+    assert!(session.enqueue_subagent_notification("a".to_string(), 2, "second".to_string(), true));
     let drained = session.drain_pending();
     assert_eq!(
         drained.len(),
@@ -76,8 +77,8 @@ fn test_enqueue_subagent_notification_coalesces_same_agent() {
 #[test]
 fn test_enqueue_subagent_notification_distinct_agents() {
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
-    assert!(session.enqueue_subagent_notification("a".to_string(), 1, "a done".to_string()));
-    assert!(session.enqueue_subagent_notification("b".to_string(), 1, "b done".to_string()));
+    assert!(session.enqueue_subagent_notification("a".to_string(), 1, "a done".to_string(), true));
+    assert!(session.enqueue_subagent_notification("b".to_string(), 1, "b done".to_string(), true));
     assert_eq!(session.drain_pending().len(), 2);
 }
 
@@ -90,6 +91,7 @@ fn test_enqueue_subagent_notification_carries_failure() {
         "linter".to_string(),
         1,
         "[subagent] Agent 'linter' errored: rate limit exceeded".to_string(),
+        false,
     ));
     let content = session
         .drain_pending()
@@ -118,6 +120,7 @@ fn test_enqueue_subagent_notification_is_buffered_until_idle_drain() {
         "researcher".to_string(),
         1,
         "researcher complete".to_string(),
+        true,
     ));
     assert_eq!(
         session.state_snapshot(0, None, 0).pending_message_count,

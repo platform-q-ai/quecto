@@ -83,6 +83,7 @@ impl Fx {
             ephemeral: false,
             system_prompt: "",
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+            turn_control: std::sync::Arc::default(),
             broadcast_tx: None,
             ext_registry: None,
             client_tool_registry: new_client_tool_registry(),

@@ -9,8 +9,8 @@ Feature: Auto-notify parent LLM when subagents complete or error
   Scenario: Completed notification includes agent_id and summary
     Given a Completed notification for agent "researcher" with summary "All tests pass"
     Then the notification [message] should contain "researcher"
-    And the notification [message] should contain "completed"
-    And the notification [message] should contain "ready for inspection"
+    And the notification [message] should contain "finished"
+    And the notification [message] should contain "get_messages"
 
   Scenario: Errored notification includes agent_id and error
     Given an Errored notification for agent "linter" with error "rate limit exceeded"
@@ -27,7 +27,7 @@ Feature: Auto-notify parent LLM when subagents complete or error
 
   Scenario: Completed notification format names the agent
     Given a Completed notification for agent "worker-1" with summary "Done building"
-    Then the notification message should start with "Agent 'worker-1'"
+    Then the notification message should start with "Sub-agent 'worker-1'"
 
   Scenario: Errored notification format names the agent
     Given an Errored notification for agent "worker-1" with error "timeout"
@@ -137,4 +137,4 @@ Feature: Auto-notify parent LLM when subagents complete or error
     And the parent drains its subagent notifications
     Then the parent should have 1 pending subagent note
     And the parent's next idle note should be delivered on the operator channel
-    And the parent's next idle note should contain "completed"
+    And the parent's next idle note should contain "finished"

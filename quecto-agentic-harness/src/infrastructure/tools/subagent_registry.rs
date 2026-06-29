@@ -95,13 +95,12 @@ pub struct SubagentEntry {
     pub parent_id: Option<String>,
     /// Latest workflow snapshot reported by the child's monitor (PRD Stage B).
     pub workflow: Option<WorkflowSnapshot>,
-    /// Set true by `execute_await` when a manual `await` returns a TERMINAL
-    /// result for this entry's current run. The dispatch loop check-and-consumes
-    /// it before enqueuing the passive auto-note, suppressing the duplicate that
-    /// a manual await would otherwise produce. Re-armed (cleared) when the entry
-    /// transitions to a new run (agent_start), so a re-prompted child that
-    /// completes again still notifies. See `take_completion_consumed_by_await`.
+    /// Set by `execute_await`'s TERMINAL result, consumed by the dispatch loop to
+    /// suppress the duplicate passive note, re-armed on a new run (#await-dedupe).
     pub completion_consumed_by_await: bool,
+    /// Terminal-completion latch (#904): consumed by the first `complete`-mode
+    /// `agent_end`, re-armed when the workflow leaves `complete`.
+    pub completion_armed: bool,
 }
 
 impl SubagentEntry {
@@ -121,6 +120,7 @@ impl SubagentEntry {
             parent_id: None,
             workflow: None,
             completion_consumed_by_await: false,
+            completion_armed: true,
         }
     }
 }
@@ -654,25 +654,25 @@ impl SequencedSubagentNotification {
     pub fn to_message(&self) -> String {
         self.notification.to_message()
     }
+
+    /// `true` only for successful completions; failures must not coalesce (#894).
+    pub fn is_completion(&self) -> bool {
+        matches!(self.notification, SubagentNotification::Completed { .. })
+    }
 }
 
 impl SubagentNotification {
     /// Format this notification as a human-readable message suitable for
     /// injection into the parent LLM's conversation.
     pub fn to_message(&self) -> String {
-        // Keep this a single concise line — it surfaces as a passive one-line note
-        // in the TUI and as a system note in the parent's context. The child's full
-        // output is NOT repeated here; inspect it with `agent_cmd get_messages_tail`.
+        // Single concise line; child output is NOT repeated (inspect via
+        // `agent_cmd get_messages`). Informational, not imperative (#894).
         match self {
-            Self::Completed { agent_id, .. } => {
-                format!("Agent '{agent_id}' completed and is ready for inspection")
-            }
-            Self::Errored { agent_id, error } => {
-                format!("Agent '{agent_id}' failed: {error}")
-            }
-            Self::Exited { agent_id } => {
-                format!("Agent '{agent_id}' exited unexpectedly")
-            }
+            Self::Completed { agent_id, .. } => format!(
+                "Sub-agent '{agent_id}' finished. Review with agent_cmd get_messages when you need its output."
+            ),
+            Self::Errored { agent_id, error } => format!("Agent '{agent_id}' failed: {error}"),
+            Self::Exited { agent_id } => format!("Agent '{agent_id}' exited unexpectedly"),
         }
     }
 }
