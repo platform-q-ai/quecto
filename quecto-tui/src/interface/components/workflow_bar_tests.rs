@@ -256,6 +256,9 @@ fn selecting_template_empty_steps_renders_starting_not_complete() {
     // spurious "✓ Workflow complete!" path.
     let mut state = make_state(None, 0, 0);
     state.mode = Some("selecting_template".into());
+    // A GENUINE selector affordance carries templates to choose (#912); a bare
+    // dormant `selecting_template`/`0/0` with none is hidden instead.
+    state.template_count = 2;
     assert!(state.is_visible(), "selector mode is visible");
     assert!(!state.is_complete(), "selector mode is not complete");
 

@@ -73,10 +73,11 @@ impl App {
         self.master_session.chat.finalize_assistant();
         // Parent is now idle — flush any sub-agent completion notes that arrived
         // mid-turn, so they appear after the finished response instead of in it.
-        Self::flush_deferred_notes(
-            &mut self.master_session.chat,
-            &mut self.master_session.deferred_subagent_notes,
-        );
+        // Flush onto the currently-viewed session (the same place
+        // `handle_subagent_notification` deferred them), so a coalesced summary is
+        // visible whether the master or a sub-agent is selected.
+        let session = self.active_session_mut();
+        Self::flush_deferred_notes(&mut session.chat, &mut session.deferred_subagent_notes);
     }
 
     fn handle_turn_end(&mut self, message: serde_json::Value) {
@@ -177,10 +178,16 @@ impl App {
         // Never split an in-flight streaming response: if the parent is mid-turn,
         // defer the note and flush it when the parent goes idle (handle_agent_end).
         // Shared defer/flush policy with the per-session path (#828).
+        // Surface the note on the CURRENTLY-VIEWED session so it is visible even
+        // when a sub-agent is selected (the master chat is not rendered then) —
+        // sub-agent completion notes are operator-facing status, not part of any
+        // one transcript. When the master is active this is `master_session`, so
+        // the existing master-path behaviour is unchanged.
         let running = self.agent_state.is_running();
+        let session = self.active_session_mut();
         Self::push_or_defer_note(
-            &mut self.master_session.chat,
-            &mut self.master_session.deferred_subagent_notes,
+            &mut session.chat,
+            &mut session.deferred_subagent_notes,
             running,
             message,
         );

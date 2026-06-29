@@ -38,9 +38,17 @@ pub struct WorkflowBarState {
 impl WorkflowBarState {
     /// Whether the bar should be visible.
     pub fn is_visible(&self) -> bool {
-        // V2: visible in selector mode even without an issue.
+        // V2: selector mode is visible only as a GENUINE selector affordance —
+        // i.e. there are templates to choose, a template already selected, real
+        // steps, or an active issue (#912). A DORMANT enabled-but-unselected
+        // workflow (the master's connect-time `selecting_template`/`0/0` with no
+        // steps, no templates and no active issue) must NOT render a spurious
+        // `auto:on · starting…` bar.
         if self.mode.as_deref() == Some("selecting_template") {
-            return true;
+            return self.template_count > 0
+                || !self.steps.is_empty()
+                || self.template_name.is_some()
+                || self.issue_number.is_some();
         }
         // Show on selection (#901): a just-selected workflow with real steps
         // (e.g. `0/18`) renders immediately, not only once a step completes or
@@ -59,12 +67,40 @@ impl WorkflowBarState {
     /// per-agent routing stickiness guard (#901) to tell a transient/empty
     /// `workflow_state` event apart from a real one.
     pub fn is_empty(&self) -> bool {
-        self.steps.is_empty()
-            && self.done == 0
-            && self.total == 0
-            && self.issue_number.is_none()
-            && self.template_name.is_none()
-            && self.template_count == 0
+        self.has_no_progress() && self.issue_number.is_none() && self.template_name.is_none()
+    }
+
+    /// Whether the event carries NO renderable PROGRESS: no steps, `0/0`, and no
+    /// templates to select. Unlike [`is_empty`] this ignores `active_issue` and
+    /// `mode`, so a transient `0/0`-with-issue `workflow_state` (#915) still
+    /// counts as carrying no progress and must not regress an advanced bar down
+    /// to `starting…`.
+    pub fn has_no_progress(&self) -> bool {
+        self.steps.is_empty() && self.done == 0 && self.total == 0 && self.template_count == 0
+    }
+
+    /// Seed a bar from a sub-agent registry snapshot (`SubagentWorkflow`) so
+    /// selecting a child shows its main-pane bar IMMEDIATELY, matching the
+    /// left-panel cells, without waiting for a routed `get_state`/live
+    /// `workflow_state` (#913). The snapshot carries only `mode` + `done/total`
+    /// (no per-step detail), so synthesize placeholder steps from the counts; the
+    /// renderer then shows `Step n/total` instead of a misleading `starting…`.
+    pub fn from_subagent_snapshot(mode: &str, done: u32, total: u32) -> Self {
+        let steps: Vec<WorkflowStepInfo> = (0..total)
+            .map(|i| WorkflowStepInfo {
+                id: i + 1,
+                label: String::new(),
+                phase: "build".to_string(),
+                done: i < done,
+            })
+            .collect();
+        WorkflowBarState {
+            steps,
+            done,
+            total,
+            mode: Some(mode.to_string()),
+            ..Default::default()
+        }
     }
 
     /// Whether the event explicitly signals a workflow END, so an
@@ -258,7 +294,15 @@ pub fn render_compact_line(state: &WorkflowBarState) -> Option<String> {
     } else {
         "off"
     };
-    let mut line = format!("{bar}  {}", theme::dim(&format!("auto:{auto}")));
+    // Surface the raw `done/total` progress count next to the bar so the
+    // main-pane line carries the watermark explicitly (not just the current-step
+    // ordinal) — this is the canonical progress readout used by the display
+    // regression guard (#915).
+    let mut line = format!(
+        "{bar}  {} {}",
+        theme::muted(&format!("{}/{}", state.done, total)),
+        theme::dim(&format!("auto:{auto}"))
+    );
     line.push_str(&theme::dim(" · "));
     line.push_str(&context);
     if let Some(number) = state.issue_number {
@@ -437,6 +481,24 @@ pub fn parse_workflow_event(data: &serde_json::Value) -> WorkflowBarState {
         .map(|a| a.len() as u32)
         .unwrap_or(0);
 
+    // #913: source the real automation flags from the snapshot's `automation`
+    // block when present (the `get_state` `workflow` payload and the kernel's
+    // workflow snapshot carry `automation.autoContinue`/`completionNudge`),
+    // instead of hardcoding `auto:off`. Live `workflow_state` events that omit
+    // the block still default to `false`, consistent with the prior behaviour.
+    let automation = data.get("automation");
+    let workflow_auto_continue = automation
+        .and_then(|a| a.get("autoContinue").or_else(|| a.get("auto_continue")))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let workflow_completion_nudge = automation
+        .and_then(|a| {
+            a.get("completionNudge")
+                .or_else(|| a.get("completion_nudge"))
+        })
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     WorkflowBarState {
         steps,
         done,
@@ -446,8 +508,8 @@ pub fn parse_workflow_event(data: &serde_json::Value) -> WorkflowBarState {
         mode,
         template_name,
         template_count,
-        workflow_auto_continue: false,
-        workflow_completion_nudge: false,
+        workflow_auto_continue,
+        workflow_completion_nudge,
     }
 }
 
