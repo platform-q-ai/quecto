@@ -170,8 +170,9 @@ impl App {
     /// the message are sanitized for terminal-control sequences before display.
     fn handle_subagent_notification(&mut self, _agent_id: String, message: String) {
         // The message is already a concise, self-naming one-liner from the kernel
-        // (e.g. "Agent 'poet-2' completed and is ready for inspection"), so we do
-        // NOT re-prefix the agent id here — that just duplicated the name.
+        // (e.g. "Sub-agent 'poet-2' finished. Review with agent_cmd get_messages
+        // when you need its output."), so we do NOT re-prefix the agent id here —
+        // that just duplicated the name.
         let message = crate::interface::ansi::sanitize_control(&message);
         // Never split an in-flight streaming response: if the parent is mid-turn,
         // defer the note and flush it when the parent goes idle (handle_agent_end).

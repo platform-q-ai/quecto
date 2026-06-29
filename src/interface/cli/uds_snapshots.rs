@@ -9,6 +9,20 @@ pub(crate) type ConversationSnapshot = std::sync::Arc<tokio::sync::RwLock<Vec<Me
 pub(crate) type SessionStatsSnapshot =
     std::sync::Arc<tokio::sync::RwLock<crate::interface::cli::protocol::SessionStats>>;
 
+/// Refresh every busy-child snapshot (state / conversation / session_stats /
+/// extensions) at once. Called per INNER turn inside the drain/nudge loop so a
+/// busy `get_state` mid-workflow tracks progress + message count step-by-step,
+/// instead of being frozen at the pre-turn (often initial) view until the whole
+/// dispatched command returns (#899). The `snapshot: true` staleness marker is
+/// retained — a busy snapshot may still lag the in-flight turn by design, but it
+/// must not lag by an entire workflow.
+pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
+    refresh_conversation_snapshot(ctx).await;
+    refresh_state_snapshot(ctx).await;
+    refresh_session_stats_snapshot(ctx).await;
+    refresh_extension_snapshot(ctx).await;
+}
+
 pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
     let mut snap = ctx.conversation_snapshot.write().await;
     *snap = ctx.messages.clone();
