@@ -69,7 +69,13 @@ impl App {
             // content or explicitly signals a genuine workflow end/reset. Real
             // progress events (and the show-on-select `0/N` snapshot) still
             // update normally, preserving #869.
-            if bar.is_empty()
+            //
+            // #915: the guard keys on `has_no_progress()` (no steps + `0/0` + no
+            // templates) rather than `is_empty()`, so a TRANSIENT `0/0`-with-issue
+            // event — which carries an `activeIssue` but no real progress — also
+            // cannot regress an advanced bar (e.g. `2/18`) back to `starting…`.
+            // Only genuine progress, or an explicit end/reset, updates the bar.
+            if bar.has_no_progress()
                 && !bar.signals_end_or_reset()
                 && self.subagent_workflow_visible(target)
             {
@@ -200,6 +206,36 @@ impl App {
         }
         if flush_notes {
             Self::flush_deferred_notes(&mut session.chat, &mut session.deferred_subagent_notes);
+        }
+    }
+
+    /// Seed a just-selected sub-agent's main-pane `workflow_bar` from the
+    /// registry snapshot (`subagent_local[id].info.workflow`) the left-panel
+    /// cells already render, so the bar appears on select without waiting for a
+    /// routed `get_state`/live `workflow_state` (#913). No-op when the snapshot
+    /// has no workflow, or when the session already carries a (routed/live) bar
+    /// — so a more-detailed live bar is never overwritten by the count-only
+    /// snapshot.
+    pub(super) fn seed_session_bar_from_snapshot(&mut self, id: &str) {
+        let Some(wf) = self
+            .subagent_local
+            .get(id)
+            .and_then(|t| t.info.workflow.as_ref())
+        else {
+            return;
+        };
+        if wf.steps_total == 0 && wf.steps_completed == 0 {
+            return;
+        }
+        let seeded = workflow_bar::WorkflowBarState::from_subagent_snapshot(
+            &wf.mode,
+            wf.steps_completed,
+            wf.steps_total,
+        );
+        if let Some(session) = self.sessions.get_mut(id) {
+            if !session.workflow_bar.is_visible() && session.workflow_bar.done == 0 {
+                session.workflow_bar = seeded;
+            }
         }
     }
 

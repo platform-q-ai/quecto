@@ -30,6 +30,9 @@ jobs:
       - name: Unit, architecture, contract, and repository-doc tests
         run: cargo test -p quecto --lib --test architecture --test contracts --test repo_docs
 
+      - name: TUI harness and unit tests
+        run: cargo test -p quecto-tui --lib
+
   mock-llm-e2e:
     name: Mock LLM E2E Tests
     runs-on: blacksmith-32vcpu-ubuntu-2404

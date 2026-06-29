@@ -182,9 +182,9 @@ impl App {
         };
         // Ensure a session exists (retained for later viewing).
         self.ensure_session(&id);
+        self.seed_session_bar_from_snapshot(&id); // main-pane bar from snapshot (#913)
         // Connect-on-commit: the selection only changes on an explicit commit
-        // (Enter/Tab/digit-jump) now that highlight movement is decoupled from
-        // selection (#802), so the old debounce is gone — open immediately.
+        // (Enter/Tab/digit-jump), so open the connection immediately (#802).
         self.open_subagent_connection(&id);
     }
 

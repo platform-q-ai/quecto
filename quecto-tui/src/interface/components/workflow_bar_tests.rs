@@ -256,6 +256,9 @@ fn selecting_template_empty_steps_renders_starting_not_complete() {
     // spurious "✓ Workflow complete!" path.
     let mut state = make_state(None, 0, 0);
     state.mode = Some("selecting_template".into());
+    // A GENUINE selector affordance carries templates to choose (#912); a bare
+    // dormant `selecting_template`/`0/0` with none is hidden instead.
+    state.template_count = 2;
     assert!(state.is_visible(), "selector mode is visible");
     assert!(!state.is_complete(), "selector mode is not complete");
 
@@ -494,4 +497,23 @@ fn compact_line_none_when_inactive() {
         render_compact_line(&state).is_none(),
         "no compact line should render when no workflow is active"
     );
+}
+
+// #919 security review: from_subagent_snapshot must not allocate one struct per
+// `steps_total` (an untrusted u32) — clamp synthesized steps, keep real readout.
+#[test]
+fn from_subagent_snapshot_clamps_untrusted_total() {
+    let s = WorkflowBarState::from_subagent_snapshot("active", 2, 4_000_000_000);
+    assert!(
+        s.steps.len() <= 512,
+        "synthesized steps must be clamped, got {}",
+        s.steps.len()
+    );
+    // Real done/total are preserved for the textual readout.
+    assert_eq!(s.done, 2);
+    assert_eq!(s.total, 4_000_000_000);
+    // A normal small workflow is unaffected (synthesizes all its steps).
+    let small = WorkflowBarState::from_subagent_snapshot("active", 1, 5);
+    assert_eq!(small.steps.len(), 5);
+    assert_eq!(small.total, 5);
 }
