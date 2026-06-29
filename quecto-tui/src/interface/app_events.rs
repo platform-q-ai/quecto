@@ -285,6 +285,9 @@ impl App {
             &active_template,
             &available_templates,
         );
+        // Preserve the live auto-continue/nudge state across the rebuild so the
+        // compact line doesn't reset to `auto:off` on every event (#897 AC2).
+        self.mirror_automation_to_bar();
     }
 }
 
