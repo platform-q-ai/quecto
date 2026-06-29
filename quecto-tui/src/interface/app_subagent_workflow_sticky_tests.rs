@@ -53,15 +53,19 @@ fn workflow_empty(agent: &str) -> Event {
     }
 }
 
-/// A genuine workflow end/reset event: empty data, but `mode` explicitly signals
-/// termination so the indicators SHOULD clear.
+/// A genuine workflow END event on the forwarded descendant path: steps and
+/// templates have been dropped (`canonical_workflow_forward`) and progress has
+/// reset to `0/0`, but `mode` is the real terminal value the kernel emits
+/// (`"complete"`, per `WorkflowMode::wire_str`), so the indicators SHOULD clear
+/// rather than stick. Distinct from a `#899` transient, which is `"active"`/
+/// `"selecting_template"`.
 fn workflow_reset(agent: &str) -> Event {
     Event::WorkflowState {
         agent_id: Some(agent.to_string()),
         steps: vec![],
         progress: serde_json::json!({"done": 0, "total": 0}),
         active_issue: None,
-        mode: Some("idle".to_string()),
+        mode: Some("complete".to_string()),
         active_template: None,
         available_templates: None,
     }

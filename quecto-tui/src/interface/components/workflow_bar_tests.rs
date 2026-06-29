@@ -156,6 +156,39 @@ fn workflow_widget_shown_when_issue_active() {
 }
 
 #[test]
+fn is_empty_only_for_no_content_bar() {
+    // A `0/0`, no-steps, no-issue, no-template bar is empty regardless of mode.
+    let mut empty = make_state(None, 0, 0);
+    empty.mode = Some("active".into());
+    assert!(empty.is_empty());
+    empty.mode = Some("selecting_template".into());
+    assert!(empty.is_empty());
+    // Any real content makes it non-empty.
+    assert!(!make_state(None, 0, 14).is_empty()); // total > 0
+    assert!(!make_state(Some(5), 0, 0).is_empty()); // issue set
+}
+
+#[test]
+fn signals_end_or_reset_matches_only_real_terminal_mode() {
+    // The kernel emits exactly three modes (WorkflowMode::wire_str); only the
+    // terminal one clears an empty bar. (#901 / finding reconciliation)
+    let mut state = make_state(None, 0, 0);
+
+    state.mode = Some("complete".into());
+    assert!(state.signals_end_or_reset(), "complete is terminal");
+
+    for transient in ["active", "selecting_template"] {
+        state.mode = Some(transient.into());
+        assert!(
+            !state.signals_end_or_reset(),
+            "{transient} is transient, must not clear"
+        );
+    }
+    state.mode = None;
+    assert!(!state.signals_end_or_reset(), "absent mode must not clear");
+}
+
+#[test]
 fn workflow_widget_complete_shows_done() {
     let state = make_state(Some(100), 14, 14);
     let lines = render_widget(&state, 100);
