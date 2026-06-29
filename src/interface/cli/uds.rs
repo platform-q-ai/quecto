@@ -601,13 +601,22 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     // command's handler runs) suppresses workflow auto-continue and discards
     // queued work, so the bound workflow does NOT resume at this idle boundary —
     // it stays stopped until re-driven by a fresh prompt. Abort beats any steer.
-    // RED placeholder — behaviour added in the GREEN commit.
+    if ctx.turn_control.take_abort() {
+        ctx.turn_control.clear_steer();
+        ctx.session.drain_pending();
+        return;
+    }
 
     drain_and_run_pending(ctx).await;
 
     // Bounded so a misbehaving model that ignores the workflow isn't nudged forever.
     const MAX_WORKFLOW_NUDGES: usize = 128;
     for _ in 0..MAX_WORKFLOW_NUDGES {
+        // #896: an explicit steer outranks the auto-continue nudge — yield so the
+        // steered instruction is obeyed next instead of being overridden.
+        if ctx.turn_control.is_steer_pending() {
+            break;
+        }
         let before = workflow_progress_fingerprint(ctx);
         let Some(message) = workflow_nudge_message(ctx) else {
             break;

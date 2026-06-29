@@ -185,8 +185,50 @@ impl ExecTool {
             stderr_task,
         };
 
-        // RED placeholder — process-group reaper added in the GREEN commit.
-        run_child_with_timeout(child, stream_tasks, timeout_dur).await
+        // Arm a process-group reaper: if this future is dropped (an abort cancels
+        // the in-flight tool call, #895 AC3) the guard SIGKILLs the whole group
+        // so no grandchild outlives the cancel. Disarmed once the child is fully
+        // awaited (normal completion or timeout already reaped it).
+        let mut group_guard = ProcessGroupGuard::new(child.id());
+        let result = run_child_with_timeout(child, stream_tasks, timeout_dur).await;
+        group_guard.disarm();
+        result
+    }
+}
+
+/// Best-effort reaper that kills a child's process group on drop (#895 AC3).
+///
+/// Spawned children run in their own group (`process_group(0)`), so signalling
+/// the negative pgid terminates the shell AND any descendants it forked. Uses
+/// `kill(1)` to avoid taking a direct `libc` dependency, matching the project
+/// convention (see `subagent_cascade`).
+struct ProcessGroupGuard {
+    pid: Option<u32>,
+}
+
+impl ProcessGroupGuard {
+    fn new(pid: Option<u32>) -> Self {
+        Self { pid }
+    }
+
+    /// Cancel the on-drop kill — the child has already been awaited/reaped.
+    fn disarm(&mut self) {
+        self.pid = None;
+    }
+}
+
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.pid {
+            // Negative target = process group. Detached, fire-and-forget.
+            let _ = std::process::Command::new("kill")
+                .arg("-KILL")
+                .arg(format!("-{pid}"))
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
     }
 }
 
@@ -250,7 +292,14 @@ fn build_shell_command(
         .current_dir(workspace)
         .env_clear();
 
-    // RED placeholder — process-group kill on cancel added in the GREEN commit.
+    // Put the child in its own process group (pgid == child pid) so a cancel can
+    // kill the WHOLE tree — the shell plus any grandchildren — not just the shell
+    // leader (#895 AC3). `kill_on_drop` then guarantees the leader dies when the
+    // in-flight tool future is dropped on abort; the group kill in
+    // `ProcessGroupGuard` reaps the rest.
+    #[cfg(unix)]
+    cmd.process_group(0);
+    cmd.kill_on_drop(true);
 
     for (k, v) in source_env {
         cmd.env(k, v);

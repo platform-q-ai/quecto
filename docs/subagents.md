@@ -197,9 +197,9 @@ output (see [Notification model](#notification-model)).
 | Command | Description | Requires `message` |
 |---------|-------------|--------------------|
 | `prompt` | Send a task/message to the subagent | Yes |
-| `steer` | Interrupt and redirect the agent | Yes |
+| `steer` | Interrupt and redirect the agent (takes precedence over the workflow auto-continue nudge) | Yes |
 | `follow_up` | Queue a message for after the current run | Yes |
-| `abort` | Cancel the agent's current run | No |
+| `abort` | Full stop: cancel the current run, kill in-flight tool/child processes, and suppress workflow auto-continue (does not resume) | No |
 | `kill` | Terminate the subagent process (SIGTERM) | No |
 | `await` | Block until the subagent reaches a terminal state | No |
 | `get_state` | Check if the agent is idle or streaming | No |
@@ -644,6 +644,13 @@ Later, when I need help:
 ```
 
 ### Aborting a stuck agent
+
+`abort` is a **full stop**: it cancels the current turn, terminates any in-flight
+tool call and its child processes (e.g. a long-running `bash`), discards queued
+work, and suppresses workflow auto-continue so a workflow-bound agent does **not**
+resume afterward. It stays stopped until you re-drive it with a fresh `prompt`.
+The three control verbs stay distinct — `follow_up` = queue, `steer` = redirect,
+`abort` = stop.
 
 ```
 "The researcher seems stuck.
