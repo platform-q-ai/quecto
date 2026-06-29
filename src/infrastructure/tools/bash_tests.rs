@@ -608,3 +608,82 @@ fn test_exec_options_default_and_clone() {
     // Debug derive exercised.
     assert!(format!("{:?}", cloned).contains("ExecOptions"));
 }
+
+/// Abort = full stop (#895 AC3): when the tool future is dropped mid-run
+/// (the agent loop cancels in-flight tool calls), the spawned child and its
+/// whole process group must be terminated — a `sleep && touch` chain must NOT
+/// reach the `touch`, proving the long bash did not survive the cancel.
+#[tokio::test]
+async fn test_exec_drop_kills_child_process_group() {
+    let (tool, tmp) = test_exec(false);
+    let marker = tmp.path().join("survived-abort.marker");
+    let cmd = format!(
+        r#"{{"command": "sleep 3 && touch '{}'"}}"#,
+        marker.display()
+    );
+
+    {
+        let fut = tool.execute(&cmd);
+        tokio::pin!(fut);
+        // Poll long enough to spawn the child, then drop the future (cancel).
+        let _ = tokio::time::timeout(Duration::from_millis(400), &mut fut).await;
+        // `fut` dropped here at end of scope → child must be killed.
+    }
+
+    // Wait past the child's sleep; if it survived, the marker would appear.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert!(
+        !marker.exists(),
+        "child process must be killed on cancel; the sleep&&touch reached touch"
+    );
+}
+
+/// Abort = full stop (#895 AC3), descendant reaping: the leader shell exits
+/// immediately, leaving a backgrounded subshell alive in the SAME process
+/// group. `kill_on_drop` alone only reaps the (already-gone) leader, so the
+/// detached subshell would survive and write the marker. Only the
+/// `ProcessGroupGuard`'s `kill -KILL -pgid` reaches the whole group. This test
+/// fails if the process-group machinery is removed, unlike the `&&` chain test
+/// above which the leader kill alone already defeats.
+#[tokio::test]
+async fn test_exec_drop_kills_whole_process_group() {
+    let (tool, tmp) = test_exec(false);
+    let marker = tmp.path().join("survived-group-abort.marker");
+    // `( ... ) &` backgrounds a subshell in the leader's process group while the
+    // leader stays alive on its own `sleep` (keeping the future pending until we
+    // drop it). `kill_on_drop` only reaps the leader shell; the backgrounded
+    // subshell survives and touches the marker unless the whole group is killed.
+    //
+    // Timing is chosen for CI robustness: the subshell waits a generous SLEEP_S
+    // before it would touch the marker, so even a heavily loaded runner that lags
+    // the drop far past its 300ms target still cancels the group well before the
+    // touch would fire — no false failure. A broken implementation (leader-only
+    // kill) leaves the subshell alive and it touches the marker at ~SLEEP_S,
+    // which the post-drop poll below catches within OBSERVE_S.
+    const SLEEP_S: u64 = 8;
+    const OBSERVE_S: u64 = SLEEP_S + 4;
+    let cmd = format!(
+        r#"{{"command": "( sleep {SLEEP_S} && touch '{}' ) & sleep {}"}}"#,
+        marker.display(),
+        SLEEP_S + 10,
+    );
+
+    {
+        let fut = tool.execute(&cmd);
+        tokio::pin!(fut);
+        let _ = tokio::time::timeout(Duration::from_millis(300), &mut fut).await;
+        // `fut` dropped here → ProcessGroupGuard must kill the whole group.
+    }
+
+    // Poll across the whole window the subshell would need to surface the marker.
+    // Fail fast the moment a leaked subshell writes it; otherwise confirm absence
+    // for the full OBSERVE_S (longer than SLEEP_S, so a survivor cannot hide).
+    let deadline = std::time::Instant::now() + Duration::from_secs(OBSERVE_S);
+    while std::time::Instant::now() < deadline {
+        assert!(
+            !marker.exists(),
+            "whole process group must be killed on cancel; detached subshell survived"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}

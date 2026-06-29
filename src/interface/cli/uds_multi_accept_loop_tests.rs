@@ -39,6 +39,7 @@ fn make_args(
         broadcast_tx: broadcast_tx.clone(),
         cmd_tx: cmd_tx.clone(),
         cancel_handle: Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+        turn_control: Arc::default(),
         live_clients: Arc::new(AtomicU32::new(0)),
         client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(),
         conversation_snapshot: Arc::new(tokio::sync::RwLock::new(vec![Message::user("hello")])),

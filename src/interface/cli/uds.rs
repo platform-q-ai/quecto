@@ -1,7 +1,7 @@
 use super::protocol::{AgentCommand, AgentEvent, StreamingBehavior};
 use super::uds_cancel::{
-    CancelHandle, CancelSlot, PromptArgs, PromptMessageArgs, PromptOutcome, arm_cancel,
-    disarm_cancel, fire_cancel, run_agent_message, run_agent_prompt,
+    CancelHandle, CancelSlot, PromptArgs, PromptMessageArgs, PromptOutcome, TurnControl,
+    TurnControlHandle, arm_cancel, disarm_cancel, fire_cancel, run_agent_message, run_agent_prompt,
 };
 use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_broadcast};
 use super::uds_query::query_response_data;
@@ -10,6 +10,7 @@ use super::uds_session::{AgentSession, clear_conversation, rewind_to_message_ind
 use super::uds_session::{
     compute_session_stats, compute_session_stats_with_usage, messages_tail_json,
 };
+use super::uds_workflow_nudge::{workflow_nudge_message, workflow_progress_fingerprint};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionStore};
@@ -223,6 +224,7 @@ async fn single_client_loop(
             ephemeral,
             system_prompt: &system_prompt,
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+            turn_control: std::sync::Arc::<TurnControl>::default(),
             broadcast_tx: None,
             ext_registry,
             client_tool_registry: super::uds_ext_protocol::new_client_tool_registry(),
@@ -280,7 +282,17 @@ pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt:
 pub(super) const MAX_LINE_BYTES: usize = 1024 * 1024;
 
 pub(super) fn is_cancel_command(trimmed: &str) -> bool {
-    trimmed.contains("\"type\":\"abort\"") || trimmed.contains("\"type\":\"steer\"")
+    is_abort_command(trimmed) || is_steer_command(trimmed)
+}
+
+/// Reader-side classification so the eager cancel and the abort/steer control
+/// flag are set together, before the command is dispatched (#895/#896).
+pub(super) fn is_abort_command(trimmed: &str) -> bool {
+    trimmed.contains("\"type\":\"abort\"")
+}
+
+pub(super) fn is_steer_command(trimmed: &str) -> bool {
+    trimmed.contains("\"type\":\"steer\"")
 }
 
 pub(super) enum LineResult {
@@ -310,6 +322,7 @@ async fn run_command_loop(
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     let cancel_for_reader = std::sync::Arc::clone(&ctx.cancel_handle);
+    let control_for_reader = std::sync::Arc::clone(&ctx.turn_control);
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<String>>(64);
 
@@ -318,7 +331,16 @@ async fn run_command_loop(
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
-                    if line.len() <= MAX_LINE_BYTES && is_cancel_command(line.trim()) {
+                    let trimmed = line.trim();
+                    if line.len() <= MAX_LINE_BYTES && is_cancel_command(trimmed) {
+                        // Record operator intent BEFORE firing the cancel so the
+                        // post-cancel idle drain cannot observe the cancel and
+                        // run a nudge before the abort/steer flag lands (#895/#896).
+                        if is_abort_command(trimmed) {
+                            control_for_reader.mark_abort();
+                        } else if is_steer_command(trimmed) {
+                            control_for_reader.mark_steer();
+                        }
                         fire_cancel(&cancel_for_reader);
                     }
                     if tx.send(Some(line)).await.is_err() {
@@ -379,6 +401,9 @@ pub(crate) struct DispatchCtx<'a> {
     pub ephemeral: bool,
     pub system_prompt: &'a str,
     pub cancel_handle: CancelHandle,
+    /// Cross-task control flags for abort/steer vs workflow auto-continue
+    /// (#895/#896). Set by the reader task, read at the idle boundary.
+    pub turn_control: TurnControlHandle,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub ext_registry: Option<ExtRegistry>,
     pub client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
@@ -531,6 +556,12 @@ struct PromptCommand {
 }
 
 async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
+    // A genuine `prompt` takes over from any stale steer gate. The reader marks
+    // `steer_pending` from a loose `"type":"steer"` substring match, so a prompt
+    // whose body merely quotes the protocol (or a line that fails to parse) could
+    // otherwise leave the gate stuck `true`, permanently suppressing the
+    // auto-continue nudge (#896 AC3). `handle_steer` is the only other clearer.
+    ctx.turn_control.clear_steer();
     let PromptCommand {
         id,
         type_name,
@@ -574,11 +605,26 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
 
 /// Drain pending messages, then inject core workflow nudges while progress is advancing (#562).
 pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
+    // #895: abort = full stop. A pending abort (set by the reader before this
+    // command's handler runs) suppresses workflow auto-continue and discards
+    // queued work, so the bound workflow does NOT resume at this idle boundary —
+    // it stays stopped until re-driven by a fresh prompt. Abort beats any steer.
+    if ctx.turn_control.take_abort() {
+        ctx.turn_control.clear_steer();
+        ctx.session.drain_pending();
+        return;
+    }
+
     drain_and_run_pending(ctx).await;
 
     // Bounded so a misbehaving model that ignores the workflow isn't nudged forever.
     const MAX_WORKFLOW_NUDGES: usize = 128;
     for _ in 0..MAX_WORKFLOW_NUDGES {
+        // #896: an explicit steer outranks the auto-continue nudge — yield so the
+        // steered instruction is obeyed next instead of being overridden.
+        if ctx.turn_control.is_steer_pending() {
+            break;
+        }
         let before = workflow_progress_fingerprint(ctx);
         let Some(message) = workflow_nudge_message(ctx) else {
             break;
@@ -590,31 +636,6 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
             break;
         }
     }
-}
-
-fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<String> {
-    let (Some(ws), Some(wc)) = (&ctx.workflow_state, &ctx.workflow_config) else {
-        return None;
-    };
-    if !wc.auto_continue && !wc.completion_nudge {
-        return None;
-    }
-    let Ok(engine) = ws.lock() else { return None };
-    wc.auto_continue
-        .then(|| engine.auto_continue_nudge())
-        .flatten()
-        .or_else(|| {
-            wc.completion_nudge
-                .then(|| engine.completion_nudge())
-                .flatten()
-        })
-}
-
-fn workflow_progress_fingerprint(ctx: &DispatchCtx<'_>) -> Option<String> {
-    let ws = ctx.workflow_state.as_ref()?;
-    let engine = ws.lock().ok()?;
-    let snapshot = engine.snapshot(true);
-    serde_json::to_string(&snapshot).ok()
 }
 
 async fn run_prompt_dispatch(
@@ -701,6 +722,9 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         }
     }
 }
+#[cfg(test)]
+#[path = "uds_abort_steer_tests.rs"]
+mod abort_steer_tests;
 #[cfg(test)]
 #[path = "uds_parse_tests.rs"]
 mod parse_tests;

@@ -138,7 +138,9 @@ Queue a message that will be processed after the current (or next) agent run com
 
 ### `abort`
 
-Cancel the current agent run. If the agent is idle, this is a no-op.
+Cancel the current agent run. **`abort` is a full stop**, not a pause: the agent
+stops completely and does **not** resume on its own. If the agent is idle, this is
+a no-op.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -146,7 +148,15 @@ Cancel the current agent run. If the agent is idle, this is a no-op.
 | `id` | string | no | Correlation ID |
 
 **Behavior:**
-- **Agent running:** Fires the cancellation signal. The agent stops after the current tool completes. The user message from the cancelled run is removed from history
+- **Agent running:** Fires the cancellation signal. The agent stops after the
+  current tool completes, in-flight tool calls and their child processes (e.g. a
+  long `bash`) are terminated via the process group, and the user message from
+  the cancelled run is removed from history.
+- **Workflow auto-continue is suppressed:** if the agent is bound to a workflow,
+  `abort` clears any queued work and prevents the workflow auto-continue nudge
+  from re-driving it. The agent stays stopped until explicitly re-driven by a
+  fresh `prompt`. There is no "abort but keep going" mode — a resumable pause
+  would be a separate command, never an overload of `abort`.
 - **Agent idle:** No-op (acknowledged successfully)
 
 **Response:** Always `success: true`.
