@@ -307,14 +307,76 @@ impl App {
 
     /// Flush all deferred notes into the chat as passive status lines, in order
     /// (#816/#828). Counterpart to `push_or_defer_note`.
+    ///
+    /// When MORE THAN ONE successful-completion note drains together at the idle
+    /// boundary, collapse them into ONE coalesced `◆` summary line listing the
+    /// names (capped, with a `(+M more)` tail) — the display analogue of the
+    /// context-side coalescing #894 (#900). A single completion keeps its own
+    /// verbatim line; errored/exited notes never fold and pass through as their
+    /// own `◆` lines, preserving their failure detail. The coalesced summary
+    /// takes the position of the FIRST completion so ordering is stable.
     pub(super) fn flush_deferred_notes(
         chat: &mut Chat,
         deferred: &mut std::collections::VecDeque<String>,
     ) {
-        for note in deferred.drain(..) {
-            chat.add_entry(ChatEntry::Status {
-                text: format!("◆ {note}"),
-            });
+        let drained: Vec<String> = deferred.drain(..).collect();
+        let names: Vec<&str> = drained
+            .iter()
+            .filter_map(|m| Self::completion_note_name(m))
+            .collect();
+        // Fewer than two completions: nothing to coalesce — emit verbatim.
+        if names.len() < 2 {
+            for note in &drained {
+                chat.add_entry(ChatEntry::Status {
+                    text: format!("◆ {note}"),
+                });
+            }
+            return;
+        }
+        let summary = Self::coalesced_completion_summary(&names);
+        let mut emitted_summary = false;
+        for note in &drained {
+            if Self::completion_note_name(note).is_some() {
+                // Replace the run of completions with one summary at the first.
+                if !emitted_summary {
+                    chat.add_entry(ChatEntry::Status {
+                        text: format!("◆ {summary}"),
+                    });
+                    emitted_summary = true;
+                }
+            } else {
+                chat.add_entry(ChatEntry::Status {
+                    text: format!("◆ {note}"),
+                });
+            }
         }
     }
+
+    /// Detect a successful-completion note and extract the sub-agent name (#900).
+    /// Mirrors the kernel wording `Sub-agent '<name>' finished.` emitted by
+    /// `SubagentNotification::Completed::to_message` (subagent_registry). Errored
+    /// (`Agent '<name>' failed: …`) and exited notes do NOT match, so they fall
+    /// through as their own verbatim `◆` lines.
+    fn completion_note_name(message: &str) -> Option<&str> {
+        let rest = message.strip_prefix("Sub-agent '")?;
+        let end = rest.find("' finished.")?;
+        Some(&rest[..end])
+    }
+
+    /// Build the body of a coalesced completion summary:
+    /// `"N sub-agents finished: a, b, c (+M more)"`, capping the listed names at
+    /// [`COALESCE_NAME_CAP`] (#900), mirroring #894's context-side cap.
+    fn coalesced_completion_summary(names: &[&str]) -> String {
+        let total = names.len();
+        let shown = total.min(COALESCE_NAME_CAP);
+        let mut list = names[..shown].join(", ");
+        if total > shown {
+            list.push_str(&format!(" (+{} more)", total - shown));
+        }
+        format!("{total} sub-agents finished: {list}")
+    }
 }
+
+/// Maximum number of sub-agent names listed verbatim in a coalesced completion
+/// summary line before the remainder collapses to a `(+M more)` tail (#900).
+const COALESCE_NAME_CAP: usize = 10;

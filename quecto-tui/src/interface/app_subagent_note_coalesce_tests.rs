@@ -6,8 +6,8 @@
 //! the headless render harness so they pin what the operator actually sees.
 
 use crate::infrastructure::client::Event;
-use crate::interface::app::tui_harness::*;
 use crate::interface::ansi::strip_ansi;
+use crate::interface::app::tui_harness::*;
 
 /// Build a completion note message EXACTLY as the kernel's
 /// `SubagentNotification::Completed::to_message` does (subagent_registry), so the
@@ -144,9 +144,11 @@ async fn completion_names_are_capped_with_more_tail() {
     // AC1: the listed names are capped (~10) with a `(+M more)` tail.
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
+    // Short names so the whole coalesced line (incl. the tail) stays within the
+    // chat pane width and is not clipped by the viewport.
     const N: u64 = 13;
     for i in 0..N {
-        notify_completion(&mut h, i, &format!("agent-{i:02}"));
+        notify_completion(&mut h, i, &format!("a{i}"));
     }
     h.event(Event::AgentEnd {
         messages: Vec::new(),
