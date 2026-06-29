@@ -250,17 +250,35 @@ fn just_selected_zero_of_n_shows_step_one_not_complete() {
 }
 
 #[test]
-fn selecting_template_empty_steps_renders_starting_not_complete() {
-    // #903: a VISIBLE-but-not-started state (selector mode, empty steps) must
-    // exercise the new `"starting…"` fallback in both renderers, never the
-    // spurious "✓ Workflow complete!" path.
+fn dormant_selector_with_templates_is_hidden() {
+    // #912b: a fresh `--workflow` boot sits in `selecting_template` with
+    // templates available but nothing selected. It must NOT render a
+    // "0/1 auto:on starting…" bar (the user-reported boot screen). Having
+    // templates to choose is not enough — the bar appears only once a workflow
+    // is genuinely engaged.
     let mut state = make_state(None, 0, 0);
     state.mode = Some("selecting_template".into());
-    // A GENUINE selector affordance carries templates to choose (#912); a bare
-    // dormant `selecting_template`/`0/0` with none is hidden instead.
-    state.template_count = 2;
-    assert!(state.is_visible(), "selector mode is visible");
-    assert!(!state.is_complete(), "selector mode is not complete");
+    state.template_count = 2; // templates available, nothing selected
+    assert!(
+        !state.is_visible(),
+        "a dormant selector with templates must be hidden"
+    );
+    assert!(
+        render_widget(&state, 100).is_empty(),
+        "no widget for a dormant selector"
+    );
+}
+
+#[test]
+fn active_empty_steps_renders_starting_not_complete() {
+    // #903: a VISIBLE but not-started workflow (active template, no current
+    // step) must exercise the `"starting…"` fallback in both renderers, never
+    // the spurious "✓ Workflow complete!" path.
+    let mut state = make_state(None, 0, 0);
+    state.mode = Some("active".into());
+    state.template_name = Some("Feature".into()); // genuine active template → visible
+    assert!(state.is_visible(), "active workflow is visible");
+    assert!(!state.is_complete(), "active workflow is not complete");
 
     let lines = render_widget(&state, 100);
     assert!(!lines.is_empty(), "selector-mode widget must render");
@@ -404,10 +422,12 @@ fn current_phase_none_when_all_done() {
 }
 
 #[test]
-fn selector_mode_visible_even_without_issue() {
-    let mut state = make_state(None, 0, 0);
-    state.mode = Some("selecting_template".into());
-    state.template_count = 2;
+fn active_workflow_visible_even_without_issue() {
+    // Visibility does not require an active issue: a genuinely active workflow
+    // with real steps shows even when no issue is set. (A dormant selector is
+    // separately hidden — see `dormant_selector_with_templates_is_hidden`.)
+    let mut state = make_state(None, 1, 3); // 3 real steps
+    state.mode = Some("active".into());
     assert!(state.is_visible());
 }
 
