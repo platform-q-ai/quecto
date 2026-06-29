@@ -82,6 +82,14 @@ impl WorkflowBarState {
         matches!(self.mode.as_deref(), Some("complete"))
     }
 
+    /// Whether the workflow is GENUINELY complete (#903): every step done
+    /// (`done >= total > 0`) or the kernel signalled the terminal `complete`
+    /// mode. An empty-steps / not-started snapshot (`done < total`, or no steps)
+    /// is NOT complete and must never render "✓ Workflow complete!".
+    pub fn is_complete(&self) -> bool {
+        self.mode.as_deref() == Some("complete") || (self.total > 0 && self.done >= self.total)
+    }
+
     /// Find the current phase (phase of the first unchecked step).
     pub fn current_phase(&self) -> Option<&str> {
         self.steps
