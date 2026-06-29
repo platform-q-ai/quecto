@@ -547,6 +547,14 @@ pub struct QuectoWorld {
     pub gateway_import_stderr: Option<String>,
     /// RefreshableProvider result (issue #255)
     pub refreshable_result: Option<Result<LlmResponse, DomainError>>,
+    /// RetryingProvider scenarios (#931): inner counting provider.
+    pub retry_inner: Option<Arc<dyn LlmProvider>>,
+    /// RetryingProvider scenarios (#931): shared inner-call counter.
+    pub retry_call_count: Option<Arc<std::sync::atomic::AtomicU32>>,
+    /// RetryingProvider scenarios (#931): max attempts for the decorator.
+    pub retry_max_attempts: Option<u32>,
+    /// RetryingProvider scenarios (#931): whether the decorated call succeeded.
+    pub retry_succeeded: Option<bool>,
     // --- Workflow V2 (UDS-only, #568–#577) ---
     // V1 BDD workflow fields removed. V2 workflow is covered by unit tests in:
     //   src/domain/workflow_tests.rs

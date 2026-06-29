@@ -58,7 +58,37 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
         return ProviderErrorClass::from_status(status);
     }
 
+    if let Some(status) = extract_parenthesized_status(&lowered) {
+        return ProviderErrorClass::from_status(status);
+    }
+
     classify_keyword_paths(&lowered)
+}
+
+/// Recognise a parenthesised HTTP status such as `provider error (400): ...`,
+/// which some error strings use instead of an `HTTP <code>` prefix.
+fn extract_parenthesized_status(lowered: &str) -> Option<u16> {
+    let mut search_from = 0;
+    while let Some(rel) = lowered[search_from..].find('(') {
+        let open = search_from + rel;
+        let after = &lowered[open + 1..];
+        let bytes = after.as_bytes();
+        if bytes.len() >= 4
+            && bytes[0].is_ascii_digit()
+            && bytes[1].is_ascii_digit()
+            && bytes[2].is_ascii_digit()
+            && bytes[3] == b')'
+        {
+            let code = ((bytes[0] - b'0') as u16) * 100
+                + ((bytes[1] - b'0') as u16) * 10
+                + ((bytes[2] - b'0') as u16);
+            if (100..=599).contains(&code) {
+                return Some(code);
+            }
+        }
+        search_from = open + 1;
+    }
+    None
 }
 
 fn classify_keyword_paths(lowered: &str) -> ProviderErrorClass {

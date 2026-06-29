@@ -2,6 +2,7 @@ pub mod anthropic;
 pub mod codex;
 pub mod openai;
 pub mod refreshable;
+pub mod retry;
 pub mod router;
 pub mod sse_common;
 

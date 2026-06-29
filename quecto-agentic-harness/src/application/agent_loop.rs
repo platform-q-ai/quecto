@@ -11,17 +11,23 @@ use crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
-use crate::domain::provider_error::classify_provider_error;
+use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
 use crate::domain::session::{ContextSpillStore, SpillEntry};
 use crate::domain::tool::ToolRegistry;
 
+#[path = "agent_loop_errors.rs"]
+mod agent_loop_errors;
 #[path = "agent_loop_pruning.rs"]
 mod agent_loop_pruning;
 mod agent_loop_session;
+use agent_loop_errors::{enhance_provider_error, is_context_or_output_limit_error};
 
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 const MAX_PROVIDER_ATTEMPTS: usize = 3;
 const PROVIDER_RETRY_BACKOFF_MS: u64 = 100;
+/// How many times a model-malformed request is re-prompted as addressable
+/// feedback before the turn fails, bounding a persistently malforming model (#931).
+const MAX_MALFORMED_REQUEST_RETRIES: u32 = 3;
 
 /// Configuration for building an agent loop.
 pub struct AgentLoopConfig {
@@ -553,6 +559,8 @@ impl AgentLoopImpl {
         // Start true to build initial manifest from any prior session spills.
         let mut spills_dirty = true;
         let mut usage_totals = UsageTotals::default();
+        // Count of model-malformed requests turned into addressable feedback.
+        let mut malformed_retries: u32 = 0;
 
         loop {
             self.refresh_dynamic_system_prompt(messages);
@@ -592,6 +600,35 @@ impl AgentLoopImpl {
             let response = match response {
                 Ok(r) => r,
                 Err(e) => {
+                    // A model-malformed `Client`/4xx rejection (e.g.
+                    // invalid_request / malformed tool call) must not kill the
+                    // turn: convert it into addressable feedback and re-prompt so
+                    // the model can self-correct (#931 AC2), bounded so a
+                    // persistently malforming model still terminates. A context/
+                    // output-limit 4xx is terminal and handled by
+                    // `enhance_provider_error` below, not re-prompted.
+                    let is_malformed_request = match &e {
+                        DomainError::Provider(m) => {
+                            classify_provider_error(&e) == ProviderErrorClass::Client
+                                && !is_context_or_output_limit_error(m)
+                        }
+                        _ => false,
+                    };
+                    if is_malformed_request && malformed_retries < MAX_MALFORMED_REQUEST_RETRIES {
+                        malformed_retries += 1;
+                        tracing::warn!(
+                            target: "provider_retry",
+                            attempt = malformed_retries,
+                            max = MAX_MALFORMED_REQUEST_RETRIES,
+                            error = %e,
+                            "provider rejected request as malformed — re-prompting with addressable feedback"
+                        );
+                        messages.push(Message::user(format!(
+                            "Your previous request was rejected by the provider as malformed (not retryable): {e}\n\nPlease correct the request — for example fix any malformed tool call arguments or invalid fields — and try again.",
+                        )));
+                        current_turn += 1;
+                        continue;
+                    }
                     // Audit: Error on provider failure
                     self.audit(
                         current_turn,
@@ -684,36 +721,6 @@ impl AgentLoopImpl {
             }
         }
     }
-}
-
-fn enhance_provider_error(err: DomainError) -> DomainError {
-    let DomainError::Provider(message) = err else {
-        return err;
-    };
-
-    if is_context_or_output_limit_error(&message)
-        && !message
-            .to_ascii_lowercase()
-            .contains("context/output limit")
-    {
-        return DomainError::Provider(format!(
-            "{message}\n\nContext/output limit: the provider rejected the request because the prompt plus requested output appears to exceed a model limit. Try reducing prompt history, lowering max output tokens, or enabling/prioritizing context pruning before retrying."
-        ));
-    }
-
-    DomainError::Provider(message)
-}
-
-fn is_context_or_output_limit_error(message: &str) -> bool {
-    let lowered = message.to_ascii_lowercase();
-    (lowered.contains("maximum context length")
-        || lowered.contains("context length")
-        || lowered.contains("context window")
-        || lowered.contains("too many tokens")
-        || lowered.contains("max_tokens")
-        || lowered.contains("max output")
-        || lowered.contains("requested") && lowered.contains("tokens"))
-        && (lowered.contains("token") || lowered.contains("context"))
 }
 
 impl AgentLoop for AgentLoopImpl {

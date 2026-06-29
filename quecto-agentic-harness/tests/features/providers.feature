@@ -44,6 +44,38 @@ Feature: LLM Providers
     When I send a chat request with model "gpt-4o" through the router
     Then the request should fail with a provider error
 
+  # --- #931: bounded retry-with-backoff for transient provider errors ---
+
+  Scenario: A transient server error is recovered transparently by retrying
+    Given a retrying provider that fails 2 times with "provider error (503): service unavailable" then succeeds
+    And the retry decorator allows up to 4 attempts
+    When I send a chat request through the retrying provider
+    Then the request eventually succeeds despite the transient failures
+
+  Scenario: A rate-limit error is recovered transparently by retrying
+    Given a retrying provider that fails 1 time with "provider error (429): rate limit exceeded" then succeeds
+    And the retry decorator allows up to 4 attempts
+    When I send a chat request through the retrying provider
+    Then the request eventually succeeds despite the transient failures
+
+  Scenario: A persistently failing transient error fails once the budget is exhausted
+    Given a retrying provider that always fails with "provider error (500): internal server error"
+    And the retry decorator allows up to 3 attempts
+    When I send a chat request through the retrying provider
+    Then the request fails after retries are exhausted
+
+  Scenario: A client 4xx error fails immediately without retrying
+    Given a retrying provider that always fails with "provider error (400): invalid_request_error"
+    And the retry decorator allows up to 4 attempts
+    When I send a chat request through the retrying provider
+    Then the request fails without being retried
+
+  Scenario: A cancelled request fails immediately without retrying
+    Given a retrying provider that always fails with "request cancelled"
+    And the retry decorator allows up to 4 attempts
+    When I send a chat request through the retrying provider
+    Then the request fails without being retried
+
   Scenario: Provider sends chat request with tools
     Given an OpenAI provider with a mock server
     And the mock server returns a chat response with content "Hello!"
