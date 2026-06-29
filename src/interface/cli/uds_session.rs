@@ -41,6 +41,12 @@ pub enum PendingMessage {
         sequence: u64,
         content: String,
     },
+    /// A SINGLE informational note summarizing a batch of sub-agent completions
+    /// that drained together at one idle boundary (#894). Built by
+    /// [`coalesce_pending`]; the body already lists the agent names.
+    CoalescedSubagentNotification {
+        content: String,
+    },
 }
 
 impl PendingMessage {
@@ -69,8 +75,74 @@ impl PendingMessage {
                 sequence,
                 escape_text(&content)
             )),
+            Self::CoalescedSubagentNotification { content } => Message::system(format!(
+                "<subagent_notification source=\"spawn_tool\" coalesced=\"true\">\n{}\n</subagent_notification>",
+                escape_text(&content)
+            )),
         }
     }
+}
+
+/// Maximum number of agent names listed verbatim in a coalesced completion note
+/// before the remainder is summarized as a `(+M more)` tail (#894).
+const COALESCE_NAME_CAP: usize = 10;
+
+/// Collapse a batch of pending messages drained together so that MORE THAN ONE
+/// sub-agent completion note surfaces as a SINGLE informational summary (#894).
+///
+/// When a burst of children finish during one busy parent turn, every note is
+/// buffered (deferred to the idle boundary by #816) and drains together here. K
+/// separate "…ready for inspection" notes would send the parent into a catch-up
+/// loop; instead they collapse to one ambient note listing the names (capped),
+/// so the parent decides if/when to inspect.
+///
+/// A single completion (or zero) passes through untouched — a clean one-line
+/// note. Non-notification pending messages (steer/follow-up) are preserved in
+/// order; the lone coalesced note takes the position of the first notification.
+pub fn coalesce_pending(pending: Vec<PendingMessage>) -> Vec<PendingMessage> {
+    let names: Vec<&str> = pending
+        .iter()
+        .filter_map(|m| match m {
+            PendingMessage::SubagentNotification { agent_id, .. } => Some(agent_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    if names.len() <= 1 {
+        return pending;
+    }
+    let coalesced = PendingMessage::CoalescedSubagentNotification {
+        content: coalesced_note_text(&names),
+    };
+    let mut out = Vec::with_capacity(pending.len() - names.len() + 1);
+    let mut inserted = false;
+    for msg in pending {
+        match msg {
+            PendingMessage::SubagentNotification { .. } => {
+                if !inserted {
+                    out.push(coalesced.clone());
+                    inserted = true;
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Build the body of a coalesced completion note: `"N sub-agents finished
+/// (a, b, c). …"`, capping the name list at [`COALESCE_NAME_CAP`] with a
+/// `(+M more)` tail (#894).
+fn coalesced_note_text(names: &[&str]) -> String {
+    let total = names.len();
+    let shown = total.min(COALESCE_NAME_CAP);
+    let mut list = names[..shown].join(", ");
+    if total > shown {
+        list.push_str(&format!(" (+{} more)", total - shown));
+    }
+    format!(
+        "{total} sub-agents finished ({list}). \
+         Review with agent_cmd get_messages when you need their output."
+    )
 }
 
 fn escape_attr(value: &str) -> String {
@@ -483,5 +555,78 @@ mod passive_subagent_notification_tests {
         assert_eq!(session.state_snapshot(0, None, 0).pending_message_count, 0);
         assert!(session.drain_pending().is_empty());
         assert!(!session.record_subagent_notification("worker".into(), 1));
+    }
+}
+
+#[cfg(test)]
+mod coalesce_pending_tests {
+    use super::*;
+
+    fn note(agent: &str) -> PendingMessage {
+        PendingMessage::subagent_notification(agent.into(), 1, format!("{agent} done"))
+    }
+
+    /// A burst of N completions buffered during one busy parent turn collapses to
+    /// exactly ONE informational summary note at the idle flush (#894 AC#1/#5).
+    #[test]
+    fn burst_of_completions_coalesces_to_single_note() {
+        let pending: Vec<PendingMessage> = (0..5).map(|i| note(&format!("basic-{i}"))).collect();
+        let out = coalesce_pending(pending);
+        assert_eq!(out.len(), 1, "K>1 notes must collapse to one, got {out:?}");
+        let content = out.into_iter().next().unwrap().into_message().content;
+        assert!(content.contains("5 sub-agents finished"), "got: {content}");
+        assert!(content.contains("basic-0"), "names listed, got: {content}");
+        assert!(content.contains("basic-4"), "names listed, got: {content}");
+        // Informational, not imperative (#894 AC#2).
+        assert!(content.contains("get_messages"), "got: {content}");
+        assert!(
+            !content.contains("ready for inspection"),
+            "must not read as a standing order, got: {content}"
+        );
+    }
+
+    /// Past the name cap the tail is summarized as "(+M more)" (#894 AC#1).
+    #[test]
+    fn coalesced_note_caps_name_list() {
+        let pending: Vec<PendingMessage> = (0..13).map(|i| note(&format!("w{i}"))).collect();
+        let out = coalesce_pending(pending);
+        assert_eq!(out.len(), 1);
+        let content = out.into_iter().next().unwrap().into_message().content;
+        assert!(content.contains("13 sub-agents finished"), "got: {content}");
+        assert!(content.contains("(+3 more)"), "cap tail, got: {content}");
+    }
+
+    /// A single completion passes through unchanged — one clean one-line note
+    /// (#894 AC#3).
+    #[test]
+    fn single_completion_is_not_coalesced() {
+        let out = coalesce_pending(vec![note("solo")]);
+        assert_eq!(out.len(), 1);
+        match &out[0] {
+            PendingMessage::SubagentNotification { agent_id, .. } => {
+                assert_eq!(agent_id, "solo");
+            }
+            other => panic!("single note must pass through untouched, got {other:?}"),
+        }
+    }
+
+    /// Non-notification pending messages (steer/follow-up) are preserved; only the
+    /// notifications collapse.
+    #[test]
+    fn user_messages_are_preserved() {
+        let pending = vec![
+            PendingMessage::user("steer me".into()),
+            note("a"),
+            note("b"),
+        ];
+        let out = coalesce_pending(pending);
+        assert_eq!(
+            out.len(),
+            2,
+            "one user msg + one coalesced note, got {out:?}"
+        );
+        assert!(matches!(out[0], PendingMessage::User(_)));
+        let content = out[1].clone().into_message().content;
+        assert!(content.contains("2 sub-agents finished"), "got: {content}");
     }
 }

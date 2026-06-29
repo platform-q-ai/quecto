@@ -660,12 +660,12 @@ impl SubagentNotification {
     /// Format this notification as a human-readable message suitable for
     /// injection into the parent LLM's conversation.
     pub fn to_message(&self) -> String {
-        // Keep this a single concise line — it surfaces as a passive one-line note
-        // in the TUI and as a system note in the parent's context. The child's full
-        // output is NOT repeated here; inspect it with `agent_cmd get_messages_tail`.
+        // Keep this a single concise line — surfaces as a passive note in the TUI and a
+        // system note in the parent's context; child output is NOT repeated (inspect via
+        // `agent_cmd get_messages`). Informational, not imperative — no "inspect now" (#894).
         match self {
             Self::Completed { agent_id, .. } => {
-                format!("Agent '{agent_id}' completed and is ready for inspection")
+                format!("Sub-agent '{agent_id}' finished; inspect via agent_cmd get_messages")
             }
             Self::Errored { agent_id, error } => {
                 format!("Agent '{agent_id}' failed: {error}")

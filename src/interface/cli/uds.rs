@@ -654,7 +654,11 @@ async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
 async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
     let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828
     loop {
-        let pending = ctx.session.drain_pending();
+        // Coalesce a burst of buffered sub-agent completion notes into ONE
+        // informational note at the idle flush (#894) — K separate notes would
+        // send the parent into a catch-up loop. Per-agent dedup already happened
+        // at enqueue; #816 deferral is preserved (this only runs at idle).
+        let pending = super::uds_session::coalesce_pending(ctx.session.drain_pending());
         if pending.is_empty() {
             break;
         }
