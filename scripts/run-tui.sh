@@ -10,5 +10,5 @@ quecto --version >/dev/null 2>&1 || true
 
 exec quecto-tui \
   --no-sandbox \
-  --system "You are the lead developer of quecto and quecto-tui, adhere to YAGNI principles, BDD/TDD and Clean Architecture." \
+  --system-file quecto-agentic-harness/docs/coordinator-system-prompt.md \
   "$@"
