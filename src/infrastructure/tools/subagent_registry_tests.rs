@@ -264,10 +264,10 @@ fn test_completed_message_format() {
     };
     let msg = n.to_message();
     assert!(msg.contains("researcher"));
-    assert!(msg.contains("completed"));
-    assert!(msg.contains("ready for inspection"));
-    // The child's output is intentionally NOT repeated in the note.
-    assert!(!msg.contains("All tests pass"));
+    assert!(msg.contains("finished"));
+    // Informational (#894), not a standing "inspect now" order.
+    assert!(!msg.contains("ready for inspection") && msg.contains("get_messages"));
+    assert!(!msg.contains("All tests pass")); // child output not repeated
 }
 
 #[test]

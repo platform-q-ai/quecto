@@ -356,6 +356,7 @@ async fn run_dispatch_loop(
                         agent_id.clone(),
                         sequence,
                         notif.to_message(),
+                        notif.is_completion(),
                     );
                     if is_new {
                         should_deliver = true;

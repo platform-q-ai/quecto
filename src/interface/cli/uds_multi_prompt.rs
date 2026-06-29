@@ -67,7 +67,12 @@ pub(crate) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
     // agent internally.
     for notif in drain_result.notifications {
         let (agent_id, sequence) = notif.dedupe_key();
-        session.enqueue_subagent_notification(agent_id, sequence, notif.to_message());
+        session.enqueue_subagent_notification(
+            agent_id,
+            sequence,
+            notif.to_message(),
+            notif.is_completion(),
+        );
     }
 
     match drain_result.result {
