@@ -225,13 +225,17 @@ impl Drop for ProcessGroupGuard {
             // Negative target = process group. Route through the shell's `kill`
             // builtin: the standalone `kill(1)` shipped by util-linux rejects the
             // negative-pgid form ("cannot find process"), whereas the POSIX shell
-            // builtin honours it portably. Detached, fire-and-forget.
+            // builtin honours it portably. `kill` is a near-instant syscall, so we
+            // wait for it (`status`) rather than fire-and-forget (`spawn`): on a
+            // loaded host a detached kill can be starved long enough for an
+            // in-flight grandchild to race ahead and complete its side effects
+            // before the SIGKILL ever lands. Waiting guarantees delivery.
             let _ = std::process::Command::new("/bin/sh")
                 .arg("-c")
                 .arg(format!("kill -KILL -- -{pid}"))
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
-                .spawn();
+                .status();
         }
     }
 }

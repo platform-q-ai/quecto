@@ -653,21 +653,37 @@ async fn test_exec_drop_kills_whole_process_group() {
     // leader stays alive on its own `sleep` (keeping the future pending until we
     // drop it). `kill_on_drop` only reaps the leader shell; the backgrounded
     // subshell survives and touches the marker unless the whole group is killed.
+    //
+    // Timing is chosen for CI robustness: the subshell waits a generous SLEEP_S
+    // before it would touch the marker, so even a heavily loaded runner that lags
+    // the drop far past its 300ms target still cancels the group well before the
+    // touch would fire — no false failure. A broken implementation (leader-only
+    // kill) leaves the subshell alive and it touches the marker at ~SLEEP_S,
+    // which the post-drop poll below catches within OBSERVE_S.
+    const SLEEP_S: u64 = 8;
+    const OBSERVE_S: u64 = SLEEP_S + 4;
     let cmd = format!(
-        r#"{{"command": "( sleep 3 && touch '{}' ) & sleep 5"}}"#,
-        marker.display()
+        r#"{{"command": "( sleep {SLEEP_S} && touch '{}' ) & sleep {}"}}"#,
+        marker.display(),
+        SLEEP_S + 10,
     );
 
     {
         let fut = tool.execute(&cmd);
         tokio::pin!(fut);
-        let _ = tokio::time::timeout(Duration::from_millis(400), &mut fut).await;
+        let _ = tokio::time::timeout(Duration::from_millis(300), &mut fut).await;
         // `fut` dropped here → ProcessGroupGuard must kill the whole group.
     }
 
-    tokio::time::sleep(Duration::from_secs(4)).await;
-    assert!(
-        !marker.exists(),
-        "whole process group must be killed on cancel; detached subshell survived"
-    );
+    // Poll across the whole window the subshell would need to surface the marker.
+    // Fail fast the moment a leaked subshell writes it; otherwise confirm absence
+    // for the full OBSERVE_S (longer than SLEEP_S, so a survivor cannot hide).
+    let deadline = std::time::Instant::now() + Duration::from_secs(OBSERVE_S);
+    while std::time::Instant::now() < deadline {
+        assert!(
+            !marker.exists(),
+            "whole process group must be killed on cancel; detached subshell survived"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
