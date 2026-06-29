@@ -428,3 +428,110 @@ async fn event_line_invalid_json_panics_with_context() {
     }));
     assert!(result.is_err());
 }
+
+// ── Regression tests: workflow-bar display cluster (#912/#913/#915 + fleet) ───
+// RED-phase: these assert the FIXED behaviour and currently FAIL.
+mod workflow_display_regression {
+    use super::*;
+    use crate::infrastructure::client::{Event, SubagentInfoEvent, SubagentWorkflow};
+
+    fn info(id: &str, status: &str, wf: Option<(&str, u32, u32)>, parent: Option<&str>) -> SubagentInfoEvent {
+        SubagentInfoEvent {
+            agent_id: id.into(), status: status.into(), last_tool: None, last_error: None,
+            pid: 0, socket_path: None, parent_id: parent.map(|s| s.to_string()),
+            workflow: wf.map(|(m, d, t)| SubagentWorkflow { mode: m.into(), steps_completed: d, steps_total: t }),
+        }
+    }
+    fn wf_state(agent_id: Option<&str>, done: u32, total: u32, with_steps: bool, with_issue: bool) -> Event {
+        let steps: Vec<serde_json::Value> = if with_steps {
+            (0..total).map(|i| serde_json::json!({"index": i+1, "label": format!("Step {}", i+1), "phase": "build", "done": i < done})).collect()
+        } else { Vec::new() };
+        Event::WorkflowState {
+            agent_id: agent_id.map(|s| s.to_string()), steps,
+            progress: serde_json::json!({"done": done, "total": total, "percent": if total>0 {done*100/total} else {0}}),
+            active_issue: if with_issue { Some(serde_json::json!({"number": 42, "title": "demo"})) } else { None },
+            mode: Some("active".into()), active_template: None, available_templates: None,
+        }
+    }
+    fn get_state_dormant(auto: bool) -> Event {
+        Event::Response { id: None, command: "get_state".into(), success: true,
+            data: Some(serde_json::json!({"isStreaming": false, "messageCount": 1,
+                "workflow": {"mode":"selecting_template","progress":{"done":0,"total":0},"steps":[],
+                    "automation":{"autoContinue":auto,"completionNudge":false}}})), error: None }
+    }
+
+    // #912: a master with workflow ENABLED but nothing SELECTED (dormant
+    // selecting_template) must NOT render a workflow bar.
+    #[tokio::test]
+    async fn master_dormant_selecting_template_shows_no_bar() {
+        let mut h = TuiHarness::sized(100, 24).await;
+        h.event(Event::AgentStart); h.event(Event::AgentEnd { messages: vec![] });
+        h.select(None);
+        h.event(get_state_dormant(true));
+        let pane = h.main_pane();
+        assert!(!pane.contains("starting") && !pane.contains("auto:"),
+            "#912: master with no workflow selected must show NO workflow bar, got:\n{pane}");
+    }
+
+    // #913: selecting a sub-agent that has a workflow in the registry snapshot
+    // must render its main-pane bar immediately (seeded from the snapshot),
+    // without needing a routed get_state/live workflow_state.
+    #[tokio::test]
+    async fn subagent_bar_seeded_from_snapshot_on_select() {
+        let mut h = TuiHarness::sized(100, 24).await;
+        h.event(Event::AgentStart);
+        h.event(spawn_start("wfsub"));
+        h.event(subagents_changed(vec![info("wfsub", "running", Some(("active", 2, 6)), None)]));
+        h.select(Some("wfsub"));
+        let pane = h.main_pane();
+        assert!(pane.contains("2/6") || pane.contains("Step"),
+            "#913: selecting a sub-agent with a workflow snapshot must show its bar (2/6), got:\n{pane}");
+    }
+
+    // #915: a transient 0/0-with-issue workflow_state must NOT regress an
+    // already-advanced bar down to 'starting…'.
+    #[tokio::test]
+    async fn sticky_bar_not_regressed_by_zero_with_issue() {
+        let mut h = TuiHarness::sized(100, 24).await;
+        h.event(Event::AgentStart);
+        h.event(spawn_start("wfsub"));
+        h.event(subagents_changed(vec![info("wfsub", "running", Some(("active", 2, 6)), None)]));
+        h.select(Some("wfsub"));
+        h.route("wfsub", wf_state(None, 2, 6, true, true)); // 2/6 advanced bar
+        h.route("wfsub", wf_state(None, 0, 0, false, true)); // transient 0/0 WITH issue
+        let pane = h.main_pane();
+        assert!(pane.contains("2/6") && !pane.contains("starting"),
+            "#915: a 0/0-with-issue event must not regress an advanced bar to 'starting…', got:\n{pane}");
+    }
+
+    // Complex fleet: master triages simple + workflow + nested children. The
+    // display must stay stable (no flicker/judder) AND each fixed behaviour holds.
+    #[tokio::test]
+    async fn fleet_triage_display_is_correct_and_stable() {
+        let mut h = TuiHarness::sized(110, 44).await;
+        h.event(Event::AgentStart);
+        let fleet = vec![
+            info("simple-1", "running", None, None),
+            info("wf-1", "running", Some(("active", 0, 5)), None),
+            info("wf-2", "running", Some(("active", 2, 18)), None),
+            info("nested-parent", "running", Some(("active", 1, 3)), None),
+            info("gc-wf", "running", Some(("active", 1, 2)), Some("nested-parent")),
+        ];
+        for id in ["simple-1","wf-1","wf-2","nested-parent","gc-wf"] { h.event(spawn_start(id)); }
+        h.event(subagents_changed(fleet.clone()));
+        h.tick(); h.tick();
+        // stable, no flicker
+        assert!(h.flashes().is_empty(), "fleet: flicker detected: {:?}\n{}", h.flashes(), h.dump());
+        // select a workflow child -> bar shows immediately from snapshot (#913)
+        h.select(Some("wf-2"));
+        assert!(h.main_pane().contains("2/18") || h.main_pane().contains("Step"),
+            "fleet: selected wf-2 must show its bar from the snapshot:\n{}", h.main_pane());
+        // completion-note coalescing (deferred then flushed)
+        h.event(Event::SubagentNotification{agent_id:"wf-1".into(), sequence:1, message:"Sub-agent 'wf-1' finished. Review with agent_cmd get_messages when you need its output.".into()});
+        h.event(Event::SubagentNotification{agent_id:"wf-2".into(), sequence:1, message:"Sub-agent 'wf-2' finished. Review with agent_cmd get_messages when you need its output.".into()});
+        h.event(Event::AgentEnd { messages: vec![] });
+        let frame = h.full_frame();
+        assert!(frame.contains("2 sub-agents finished"),
+            "fleet: 2 completion notes must coalesce into one summary, got:\n{frame}");
+    }
+}
