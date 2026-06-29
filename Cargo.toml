@@ -38,6 +38,12 @@ tar = "0.4"
 # Secret redaction in surfaced subagent error causes (#752). Already present
 # transitively via tracing-subscriber's env-filter.
 regex = "1"
+# Direct process-group signalling on abort (#895). Already in the tree
+# transitively; promoted to a direct dep so the abort reaper can SIGKILL a
+# child's whole process group via a syscall rather than a non-portable shell
+# `kill` (dash and bash parse `kill -- -<pgid>` differently).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [features]
 default = []

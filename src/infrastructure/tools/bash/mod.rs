@@ -199,10 +199,9 @@ impl ExecTool {
 /// Best-effort reaper that kills a child's process group on drop (#895 AC3).
 ///
 /// Spawned children run in their own group (`process_group(0)`), so signalling
-/// the negative pgid terminates the shell AND any descendants it forked. Uses
-/// the shell's `kill` builtin (via `/bin/sh -c`) to avoid a direct `libc`
-/// dependency while still honouring negative-pgid signalling, which the
-/// standalone util-linux `kill(1)` rejects.
+/// the negative pgid terminates the shell AND any descendants it forked. Signals
+/// directly via `libc::kill` rather than `kill(1)`, whose negative-pgid handling
+/// is shell-dependent (dash's builtin silently no-ops on it).
 struct ProcessGroupGuard {
     pid: Option<u32>,
 }
@@ -222,20 +221,22 @@ impl Drop for ProcessGroupGuard {
     fn drop(&mut self) {
         #[cfg(unix)]
         if let Some(pid) = self.pid {
-            // Negative target = process group. Route through the shell's `kill`
-            // builtin: the standalone `kill(1)` shipped by util-linux rejects the
-            // negative-pgid form ("cannot find process"), whereas the POSIX shell
-            // builtin honours it portably. `kill` is a near-instant syscall, so we
-            // wait for it (`status`) rather than fire-and-forget (`spawn`): on a
-            // loaded host a detached kill can be starved long enough for an
-            // in-flight grandchild to race ahead and complete its side effects
-            // before the SIGKILL ever lands. Waiting guarantees delivery.
-            let _ = std::process::Command::new("/bin/sh")
-                .arg("-c")
-                .arg(format!("kill -KILL -- -{pid}"))
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+            // SIGKILL the child's whole process group. A negative pid signals the
+            // entire group (pgid == child pid, set via `process_group(0)`), so the
+            // leader AND any descendants it forked are reaped. We signal directly
+            // via `libc::kill` rather than shelling out to `kill(1)`: the negative
+            // -pgid form is parsed inconsistently across shells/`kill`
+            // implementations (e.g. dash's builtin silently no-ops on it, so the
+            // group was never signalled on Debian/Ubuntu `/bin/sh` hosts). The
+            // syscall is unambiguous and near-instant.
+            //
+            // `kill(2)` is async-signal-safe and takes plain integers; we pass a
+            // pid we own and a constant signal, so it cannot violate Rust memory
+            // safety. A stale/dead pid simply yields ESRCH, which we ignore.
+            // SAFETY: FFI call to `libc::kill` with owned-pid + constant signal.
+            unsafe {
+                libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+            }
         }
     }
 }
