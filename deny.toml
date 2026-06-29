@@ -6,8 +6,14 @@ ignore = []
 
 [licenses]
 exceptions = [
+    # Workspace-internal proprietary crates. After the #908 monorepo refactor the
+    # repo root is a pure workspace, so `cargo deny` checks every member's graph
+    # (not just the old root crate's), surfacing the sibling crates below.
     { allow = ["LicenseRef-Proprietary"], crate = "quecto" },
     { allow = ["LicenseRef-Proprietary"], crate = "quecto-tui" },
+    { allow = ["LicenseRef-Proprietary"], crate = "quecto-api" },
+    { allow = ["LicenseRef-Proprietary"], crate = "quecto-mcp" },
+    { allow = ["LicenseRef-Proprietary"], crate = "quecto-runtime-manager" },
 ]
 allow = [
     "MIT",
