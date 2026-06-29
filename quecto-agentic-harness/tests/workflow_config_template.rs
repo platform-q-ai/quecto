@@ -352,7 +352,7 @@ fn feature_js_dimensions_array_matches_full_default_set() {
     // the only copy that actually DRIVES execution, yet the config/doc guards do not
     // cover it — so it could silently revert to the trio with every test green,
     // defeating #845. Guard the executable source of truth directly.
-    let js = read_repo_file(".claude/workflows/feature.js");
+    let js = read_repo_file("../.claude/workflows/feature.js");
 
     // Extract the `const DIMENSIONS = [ ... ]` literal so we assert on the array
     // that runs, not any prose/prompt text elsewhere in the file.
