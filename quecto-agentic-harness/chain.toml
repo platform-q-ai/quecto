@@ -95,10 +95,10 @@ non_behavioral_features = [
 
   # quecto-api — HTTP/WS gateway crate. Its domain is the gateway itself;
   # it does not share the quecto agent's domain nouns.
-  "quecto-api/tests/features/health.feature",
-  "quecto-api/tests/features/prompt.feature",
-  "quecto-api/tests/features/state.feature",
-  "quecto-api/tests/features/websocket.feature",
+  "../quecto-api/tests/features/health.feature",
+  "../quecto-api/tests/features/prompt.feature",
+  "../quecto-api/tests/features/state.feature",
+  "../quecto-api/tests/features/websocket.feature",
 ]
 
 # ────────────────────────────────────────────────────────────────────────────

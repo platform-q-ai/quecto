@@ -211,7 +211,7 @@ fn agent_cmd_docs_match_tool_schema() {
 fn run_tui_prewarms_cold_binary_before_exec() {
     // #808: run-tui.sh must pay the cold-binary cost before launching the TUI,
     // POSIX-safely (no failure if `quecto` is not yet on PATH).
-    let script = read_repo_file("scripts/run-tui.sh");
+    let script = read_repo_file("../scripts/run-tui.sh");
     let warm_idx = script
         .find("quecto --version")
         .expect("run-tui.sh must pre-warm `quecto --version`");
@@ -232,7 +232,7 @@ fn run_tui_prewarms_cold_binary_before_exec() {
 fn readmes_document_cold_start_and_mitigations() {
     // #808: both READMEs must document the cold-binary first launch and both
     // mitigations (run-tui.sh pre-warm + the 30s direct-launch deadline).
-    for path in ["README.md", "quecto-tui/README.md"] {
+    for path in ["README.md", "../quecto-tui/README.md"] {
         let content = read_repo_file(path);
         let lower = content.to_lowercase();
         assert!(

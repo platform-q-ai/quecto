@@ -34,7 +34,7 @@ Nested lists are also affected: a nested unordered list under an unordered paren
 
 ## Root cause
 
-In `quecto-tui/src/interface/components/markdown.rs`, the renderer tracks list state with:
+In `src/interface/components/markdown.rs`, the renderer tracks list state with:
 
 ```rust
 let mut ordered_list_index: Vec<u64> = Vec::new();
@@ -169,7 +169,7 @@ Alternatively, track the per-item prefix width during rendering and pass it thro
 
 ### 4. Tests to add
 
-In `quecto-tui/src/interface/components/markdown_tests.rs`:
+In `src/interface/components/markdown_tests.rs`:
 
 - `unordered_list_uses_bullets`: assert unordered list renders `•` markers.
 - `ordered_list_uses_numbers`: assert ordered list renders `1.`, `2.`, etc.

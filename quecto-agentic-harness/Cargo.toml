@@ -1,0 +1,73 @@
+[package]
+name = "quecto"
+version = "0.81.9"
+edition = "2024"
+description = "Ultra-lightweight personal AI assistant"
+license = "LicenseRef-Proprietary"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-std", "sync"] }
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Utilities
+uuid = { version = "1", features = ["v4"] }
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+dirs = "6"
+tempfile = "3"
+thiserror = "2"
+unicode-normalization = "0.1"
+similar = "2"
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.8"
+urlencoding = "2"
+flate2 = "1"
+tar = "0.4"
+# Secret redaction in surfaced subagent error causes (#752). Already present
+# transitively via tracing-subscriber's env-filter.
+regex = "1"
+
+# Direct process-group signalling on abort (#895). Already in the tree
+# transitively; promoted to a direct dep so the abort reaper can SIGKILL a
+# child's whole process group via a syscall rather than a non-portable shell
+# `kill` (dash and bash parse `kill -- -<pgid>` differently).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[features]
+default = []
+test-support = []
+
+[dev-dependencies]
+cucumber = "0.21"
+futures = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tempfile = "3"
+wiremock = "0.6"
+regex = "1"
+filetime = "0.2"
+serial_test = "3"
+# `test-harness` exposes quecto-tui's headless render harness so the `bdd`
+# target can drive the real TUI render/key path without a TTY (#805).
+quecto-tui = { version = "0.10.0", path = "../quecto-tui", features = ["test-harness"] }
+
+[[test]]
+name = "bdd"
+harness = false
+# BDD steps reach into test-only surface (e.g. `*_public`, `parse_args_for_test`,
+# `run_repl_with_tty_captured`, `ReplRecorderOptions`) that is gated behind
+# `#[cfg(any(test, feature = "test-support"))]`. Without this line, invoking
+# `cargo test --test bdd` fails with 40+ "function not found" errors because
+# the integration-test target is a separate crate compilation that doesn't
+# inherit the unit-test `#[cfg(test)]`. `required-features` makes cargo pull
+# the feature in automatically whenever the bdd target is built.
+required-features = ["test-support"]

@@ -2,7 +2,7 @@ use super::*;
 
 #[then(expr = "Cargo.toml should contain a release profile with {string}")]
 fn then_cargo_toml_has_release_profile_with(_world: &mut QuectoWorld, expected: String) {
-    let content = std::fs::read_to_string("Cargo.toml").expect("read Cargo.toml");
+    let content = std::fs::read_to_string("../Cargo.toml").expect("read workspace Cargo.toml");
 
     // Find the [profile.release] section
     let section_start = content

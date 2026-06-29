@@ -69,7 +69,7 @@ Code):
      flags (thinking, tools, vision) for community models don't exist; the kernel
      degrades gracefully (request still works) but cost/҂context UX is blind.
    - **The selector model list is a hardcoded constant.** `KNOWN_MODELS` in
-     `quecto-tui/src/interface/components/model_selector.rs` is compiled in, so
+      `../quecto-tui/src/interface/components/model_selector.rs` is compiled in, so
      community models never appear in `/model` without a recompile — and when we
      *did* compile them in, the short names (`glm-5.2`) didn't match Fireworks'
      real IDs (`accounts/fireworks/models/glm-5p2`), producing 404s.

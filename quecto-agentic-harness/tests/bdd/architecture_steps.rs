@@ -80,7 +80,8 @@ fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
 
 #[then("the pre-push script should lint with --workspace flag")]
 fn then_pre_push_lints_workspace(_world: &mut QuectoWorld) {
-    let content = std::fs::read_to_string("scripts/pre-push.sh").expect("read scripts/pre-push.sh");
+    let content =
+        std::fs::read_to_string("../scripts/pre-push.sh").expect("read ../scripts/pre-push.sh");
     // Find the actual clippy invocation line (not echo/comment lines).
     let has_workspace_clippy = content.lines().any(|line| {
         let trimmed = line.trim();
@@ -94,7 +95,8 @@ fn then_pre_push_lints_workspace(_world: &mut QuectoWorld) {
 
 #[then("the pre-push script should run the mocked e2e suite by default")]
 fn then_pre_push_runs_mock_e2e(_world: &mut QuectoWorld) {
-    let content = std::fs::read_to_string("scripts/pre-push.sh").expect("read scripts/pre-push.sh");
+    let content =
+        std::fs::read_to_string("../scripts/pre-push.sh").expect("read ../scripts/pre-push.sh");
 
     // (a) The default e2e lane must invoke the zero-cost mocked copy (tagged
     //     @mock-llm) via run-bdd-shards.sh.
@@ -131,7 +133,8 @@ fn then_pre_push_runs_mock_e2e(_world: &mut QuectoWorld) {
 
 #[then("the pre-push script should not probe for a provider key to auto-run the paid suite")]
 fn then_pre_push_no_key_autorun(_world: &mut QuectoWorld) {
-    let content = std::fs::read_to_string("scripts/pre-push.sh").expect("read scripts/pre-push.sh");
+    let content =
+        std::fs::read_to_string("../scripts/pre-push.sh").expect("read ../scripts/pre-push.sh");
     // Behaviour under test: a `.env` provider key must NOT auto-trigger the paid
     // suite. The old design probed key presence (`OPENAI_API_KEY`) to fold a
     // `REAL_LLM_STATE=run` decision
@@ -151,7 +154,8 @@ fn then_pre_push_no_key_autorun(_world: &mut QuectoWorld) {
 
 #[then("the pre-push script should gate the live real-LLM suite behind an explicit opt-in flag")]
 fn then_pre_push_real_llm_optin(_world: &mut QuectoWorld) {
-    let content = std::fs::read_to_string("scripts/pre-push.sh").expect("read scripts/pre-push.sh");
+    let content =
+        std::fs::read_to_string("../scripts/pre-push.sh").expect("read ../scripts/pre-push.sh");
     // The live (paid) suite must remain runnable on demand via an explicit,
     // documented opt-in env flag.
     assert!(
