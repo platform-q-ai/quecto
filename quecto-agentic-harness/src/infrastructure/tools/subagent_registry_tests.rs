@@ -57,11 +57,11 @@ fn verdict_failed_on_error_and_nonzero_exit() {
 }
 
 #[test]
-fn verdict_incomplete_on_timeout() {
-    assert_eq!(
-        WorkflowResult::derive("timeout", None, None, None).status,
-        VerdictStatus::Incomplete
-    );
+fn verdict_running_on_timeout() {
+    // #925: a timeout is a check-in on a STILL-RUNNING child, not a failure or
+    // "gave up" (see await_extra_tests for the progress framing with a workflow).
+    let r = WorkflowResult::derive("timeout", None, None, None);
+    assert_eq!(r.status, VerdictStatus::Running);
 }
 
 #[test]
