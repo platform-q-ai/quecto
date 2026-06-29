@@ -42,7 +42,44 @@ impl WorkflowBarState {
         if self.mode.as_deref() == Some("selecting_template") {
             return true;
         }
-        self.issue_number.is_some() && self.total > 0
+        // Show on selection (#901): a just-selected workflow with a known total
+        // (e.g. `0/18`) renders immediately, not only once a step completes or
+        // an issue is set.
+        self.total > 0 || self.issue_number.is_some()
+    }
+
+    /// Whether the bar carries NO meaningful workflow content. Used by the
+    /// per-agent routing stickiness guard (#901) to tell a transient/empty
+    /// `workflow_state` event apart from a real one.
+    pub fn is_empty(&self) -> bool {
+        self.steps.is_empty()
+            && self.done == 0
+            && self.total == 0
+            && self.issue_number.is_none()
+            && self.template_name.is_none()
+            && self.template_count == 0
+    }
+
+    /// Whether the event explicitly signals a workflow END, so an
+    /// otherwise-empty bar is allowed to CLEAR a currently-visible one (#901).
+    ///
+    /// The kernel only ever emits three `workflow_state.mode` values
+    /// (`src/domain/workflow.rs`, `WorkflowMode::wire_str`):
+    /// `"selecting_template"`, `"active"`, `"complete"`. Of these only
+    /// `"complete"` is terminal; the other two are transient/intermediate and
+    /// must NOT clear a visible workflow. (The forwarded descendant path —
+    /// `canonical_workflow_forward` — drops steps/templates, so a forwarded
+    /// `complete` whose progress has reset to `0/0` would otherwise look empty
+    /// and stick; this lets it clear.)
+    ///
+    /// NOTE: a genuine reset of an UNBOUND engine re-enters the selector as
+    /// `selecting_template`/`0/0`, which on the forwarded path is byte-identical
+    /// to a `#899` transient and is therefore intentionally NOT treated as a
+    /// clear — bound sub-agents (the common case) never return to the selector,
+    /// so this preserves anti-flicker (AC#2/#4) at the cost of leaving an
+    /// unbound reset sticky until the agent exits.
+    pub fn signals_end_or_reset(&self) -> bool {
+        matches!(self.mode.as_deref(), Some("complete"))
     }
 
     /// Find the current phase (phase of the first unchecked step).
@@ -269,8 +306,10 @@ fn phase_pill_line(state: &WorkflowBarState) -> Option<String> {
 }
 
 fn is_widget_visible(state: &WorkflowBarState) -> bool {
-    // Match Quecto workflow: hide when nothing is started and no active issue.
-    state.done > 0 || state.issue_number.is_some()
+    // Show on selection (#901): visible once a workflow is started, has an
+    // active issue, OR is a just-selected workflow with a known total (`0/N`).
+    // Selector mode shows even before a total is known.
+    state.is_visible() || state.done > 0
 }
 
 fn truncate_line(text: &str, width: usize) -> String {
