@@ -45,8 +45,13 @@ impl WorkflowBarState {
         // steps, no templates and no active issue) must NOT render a spurious
         // `auto:on · starting…` bar.
         if self.mode.as_deref() == Some("selecting_template") {
-            return self.template_count > 0
-                || !self.steps.is_empty()
+            // A dormant selector — templates available but nothing selected —
+            // must NOT render a spurious "0/1 auto:on starting…" bar on a fresh
+            // `--workflow` boot (#912). Having templates to choose is not enough;
+            // show the bar only once a workflow is genuinely engaged (real steps,
+            // an active template, or an active issue). Template selection moves
+            // the engine to `active` mode, where the bar then appears.
+            return !self.steps.is_empty()
                 || self.template_name.is_some()
                 || self.issue_number.is_some();
         }

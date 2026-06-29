@@ -488,7 +488,10 @@ mod workflow_display_regression {
             command: "get_state".into(),
             success: true,
             data: Some(serde_json::json!({"isStreaming": false, "messageCount": 1,
+                // A real `--workflow` boot is selector mode WITH templates
+                // available but nothing selected (#912b) — this must still hide.
                 "workflow": {"mode":"selecting_template","progress":{"done":0,"total":0},"steps":[],
+                    "availableTemplates":[{"id":"feature","label":"Feature"},{"id":"fix","label":"Fix"}],
                     "automation":{"autoContinue":auto,"completionNudge":false}}})),
             error: None,
         }
