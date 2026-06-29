@@ -413,18 +413,45 @@ async fn drain_refreshes_busy_state_snapshot_per_turn() {
         provider_reload_inputs: None,
     };
 
+    // Two pending messages drive TWO inner turns through the drain loop, so the
+    // refresh fires per turn across a multi-turn chain (AC2) — not just once when
+    // the whole command returns. Each turn adds a user + assistant message, so a
+    // step-by-step refresh leaves the snapshot at the full post-chain count.
     ctx.session.enqueue_pending("do the work".to_string());
+    ctx.session.enqueue_pending("keep going".to_string());
     super::drain_and_run_pending(&mut ctx).await;
 
-    let snap = state_snapshot.read().await;
+    let expected_count = ctx.messages.len();
     assert!(
-        snap.message_count > 0,
-        "message count must advance after the turn, got {}",
-        snap.message_count
+        expected_count >= 4,
+        "two inner turns should each add a user+assistant message, got {expected_count}"
+    );
+
+    // AC1: state snapshot tracks the live workflow + advanced message count.
+    let snap = state_snapshot.read().await;
+    assert_eq!(
+        snap.message_count, expected_count,
+        "busy state snapshot must reflect the post-chain message count, not the initial pre-turn view"
     );
     assert!(
         snap.workflow.is_some(),
         "busy state snapshot must reflect the selected workflow, not the initial pre-turn view"
+    );
+    drop(snap);
+
+    // AC3: the conversation + session_stats snapshots refresh per turn too, not
+    // just get_state — a regression dropping any of those refresh calls is caught.
+    let convo = ctx.conversation_snapshot.read().await;
+    assert_eq!(
+        convo.len(),
+        expected_count,
+        "busy conversation snapshot must advance with the conversation, not stay empty"
+    );
+    drop(convo);
+    let stats = ctx.session_stats_snapshot.read().await;
+    assert_eq!(
+        stats.total_messages, expected_count,
+        "busy session_stats snapshot must reflect the post-chain message count"
     );
 }
 
