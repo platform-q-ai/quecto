@@ -242,6 +242,7 @@ pub(super) async fn multi_client_loop(
         extension_snapshot: extension_snapshot.clone(),
         busy: busy.clone(),
         subagent_registry: subagent_registry.clone(),
+        workflow_state: wf_state.clone(),
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)

@@ -263,3 +263,78 @@ fn build_get_subagents_line_empty_when_no_registry() {
         0
     );
 }
+
+// ─── #914: busy get_state reflects LIVE workflow progress mid-turn ─────────────
+#[test]
+fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
+    use crate::domain::workflow::{
+        WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
+    };
+    use crate::interface::cli::uds_snapshots::{
+        build_get_state_line_live, build_get_state_line_with_streaming,
+    };
+    use std::sync::{Arc, Mutex};
+
+    let step = |k: &str| WorkflowTemplateStep {
+        key: k.into(),
+        label: k.to_uppercase(),
+        phase: "p".into(),
+        guidance: None,
+    };
+    let config = WorkflowConfig {
+        auto_continue: true,
+        completion_nudge: false,
+        selector_prompt: None,
+        templates: vec![WorkflowTemplate {
+            id: "t".into(),
+            label: "T".into(),
+            description: "d".into(),
+            when_to_use: None,
+            steps: vec![step("a"), step("b"), step("c")],
+            guards: vec![],
+        }],
+    };
+    let mut engine = WorkflowEngine::new(config, false).unwrap();
+    engine.select_template("t", None).unwrap();
+
+    // Frozen snapshot captured at turn boundary (0/3), with automation flags.
+    let mut frozen_wf = serde_json::to_value(engine.snapshot(true)).unwrap();
+    frozen_wf["automation"] = serde_json::json!({"autoContinue": true, "completionNudge": false});
+    let state = SessionState {
+        model: "m".into(),
+        is_streaming: true,
+        session_key: "k".into(),
+        message_count: 1,
+        pending_message_count: 0,
+        max_context_tokens: 1,
+        workflow: Some(frozen_wf),
+    };
+
+    // Steps get checked off MID-TURN via the workflow tool — engine now at 2/3.
+    engine.check(1).unwrap();
+    engine.check(2).unwrap();
+    let handle = Arc::new(Mutex::new(engine));
+
+    // The frozen-snapshot builder is stale (still 0/3) — this is the bug.
+    let frozen_v: serde_json::Value =
+        serde_json::from_str(build_get_state_line_with_streaming(&state, true).trim()).unwrap();
+    assert_eq!(
+        frozen_v["data"]["workflow"]["progress"]["done"], 0,
+        "frozen snapshot reports pre-turn 0/3 (the stale path #914 fixes)"
+    );
+
+    // #914 fix: the live builder reports the engine's current 2/3.
+    let live_v: serde_json::Value =
+        serde_json::from_str(build_get_state_line_live(&state, &Some(handle), true).trim())
+            .unwrap();
+    assert_eq!(
+        live_v["data"]["workflow"]["progress"]["done"], 2,
+        "live get_state must reflect mid-turn progress (2/3), not the frozen snapshot"
+    );
+    assert_eq!(live_v["data"]["workflow"]["progress"]["total"], 3);
+    // Automation flags are preserved from the frozen snapshot.
+    assert_eq!(
+        live_v["data"]["workflow"]["automation"]["autoContinue"],
+        true
+    );
+}

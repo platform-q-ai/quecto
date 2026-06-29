@@ -22,6 +22,9 @@ pub(super) struct AcceptLoopArgs {
     pub(super) busy: BusyFlag,
     pub(super) subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    /// Live workflow engine (#914): read mid-turn so a busy `get_state` reports
+    /// current step progress, not the turn-boundary frozen snapshot.
+    pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -40,6 +43,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
         extension_snapshot,
         busy,
         subagent_registry,
+        workflow_state,
     } = args;
     tokio::spawn(async move {
         loop {
@@ -79,6 +83,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                             &session_stats_snapshot,
                             &extension_snapshot,
                             &subagent_registry,
+                            &workflow_state,
                         )
                         .await;
                         for line in snapshot_lines {
