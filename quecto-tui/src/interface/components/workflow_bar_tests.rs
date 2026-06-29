@@ -365,6 +365,28 @@ fn compact_line_complete_state_has_no_misleading_step() {
 }
 
 #[test]
+fn compact_line_exposes_auto_continue_state() {
+    // #897 AC2: the always-visible main-pane line must surface auto_continue so
+    // its overriding of "wait"-style instructions is never surprising.
+    let mut state = make_state(Some(100), 3, 14);
+    state.workflow_auto_continue = true;
+    let on = render_compact_line(&state).expect("active workflow renders a compact line");
+    let on_clean = crate::interface::ansi::strip_ansi(&on).to_lowercase();
+    assert!(
+        on_clean.contains("auto:on"),
+        "compact line must show auto-continue ON: {on_clean}"
+    );
+
+    state.workflow_auto_continue = false;
+    let off = render_compact_line(&state).expect("active workflow renders a compact line");
+    let off_clean = crate::interface::ansi::strip_ansi(&off).to_lowercase();
+    assert!(
+        off_clean.contains("auto:off"),
+        "compact line must show auto-continue OFF: {off_clean}"
+    );
+}
+
+#[test]
 fn compact_line_none_when_inactive() {
     let state = make_state(None, 0, 0);
     assert!(

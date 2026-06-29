@@ -379,13 +379,12 @@ async fn response_rewind_to_unmatched_is_noop() {
 }
 
 #[tokio::test]
-async fn response_clear_history_and_unknown_are_noop() {
+async fn response_unknown_is_noop() {
     let mut h = harness().await;
     let a = h.app_mut();
     let before = a.master_session.chat.entry_count();
-    respond(a, None, "clear_history", true, None, None);
     respond(a, None, "totally_unknown_command", true, None, None);
-    // Neither response is surfaced: no chat entries added, no notifications.
+    // An unknown response is not surfaced: no chat entries, no notifications.
     assert_eq!(
         a.master_session.chat.entry_count(),
         before,
@@ -394,6 +393,37 @@ async fn response_clear_history_and_unknown_are_noop() {
     assert!(
         a.notifications.is_empty(),
         "noop responses must not raise notifications"
+    );
+}
+
+#[tokio::test]
+async fn response_clear_history_signals_workflow_retained() {
+    // #897 AC1: clearing history must visibly distinguish the cleared
+    // conversation from the workflow engine state, which is retained by design.
+    let mut h = harness().await;
+    let a = h.app_mut();
+    let before = a.master_session.chat.entry_count();
+    respond(a, None, "clear_history", true, None, None);
+    assert_eq!(
+        a.master_session.chat.entry_count(),
+        before,
+        "clear_history must not add chat entries"
+    );
+    let text = a
+        .notifications
+        .render(120)
+        .iter()
+        .map(|line| super::app_methods::strip_ansi(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_lowercase();
+    assert!(
+        text.contains("history cleared"),
+        "must signal that history was cleared: {text}"
+    );
+    assert!(
+        text.contains("workflow retained"),
+        "must signal that the workflow was retained: {text}"
     );
 }
 
