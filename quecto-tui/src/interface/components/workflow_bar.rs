@@ -227,20 +227,22 @@ pub fn render_compact_line(state: &WorkflowBarState) -> Option<String> {
         None => theme::success("✓ Workflow complete!"),
     };
 
-    let mut line = format!("{bar}  {context}");
-    if let Some(number) = state.issue_number {
-        line.push_str(&theme::dim(" · "));
-        line.push_str(&theme::accent(&theme::bold(&format!("#{number}"))));
-    }
     // #897 AC2: surface auto_continue in the always-visible main pane so its
-    // overriding of "wait"-style instructions is never surprising.
+    // overriding of "wait"-style instructions is never surprising. Place it
+    // ahead of the ellipsizable context/issue-number so it survives clipping
+    // under narrow widths (the caller clamps to the box inner width).
     let auto = if state.workflow_auto_continue {
         "on"
     } else {
         "off"
     };
+    let mut line = format!("{bar}  {}", theme::dim(&format!("auto:{auto}")));
     line.push_str(&theme::dim(" · "));
-    line.push_str(&theme::dim(&format!("auto:{auto}")));
+    line.push_str(&context);
+    if let Some(number) = state.issue_number {
+        line.push_str(&theme::dim(" · "));
+        line.push_str(&theme::accent(&theme::bold(&format!("#{number}"))));
+    }
     Some(line)
 }
 

@@ -115,6 +115,16 @@ impl App {
         if let Some(value) = automation.get("completionNudge").and_then(|v| v.as_bool()) {
             self.workflow_completion_nudge = value;
         }
+        self.mirror_automation_to_bar();
+    }
+
+    /// Mirror the live (App-global) automation flags onto the master workflow
+    /// bar so the always-visible compact line reflects the real auto-continue
+    /// state instead of the hard-coded `false` from `parse_workflow_event`
+    /// (#897 AC2). Call after any (re)build of `master_session.workflow_bar`.
+    pub(super) fn mirror_automation_to_bar(&mut self) {
+        self.master_session.workflow_bar.workflow_auto_continue = self.workflow_auto_continue;
+        self.master_session.workflow_bar.workflow_completion_nudge = self.workflow_completion_nudge;
     }
 
     fn handle_workflow_automation(&mut self, data: Option<serde_json::Value>) {
