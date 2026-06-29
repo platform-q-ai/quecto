@@ -138,10 +138,9 @@ pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_id: 
 /// Check-and-consume the await-dedupe flag for `agent_id`. Returns `true` when
 /// the passive completion note should be SUPPRESSED because a manual `await`
 /// already reported this terminal result; in that case the flag is cleared so a
-/// future re-run still notifies. Returns `false` (and leaves state untouched)
-/// otherwise. Race-free against `execute_await` because the UDS dispatch loop is
-/// single-threaded: the await tool call sets the flag before the loop processes
-/// the queued notification.
+/// future re-run still notifies. Returns `false` otherwise. Race-free against
+/// `execute_await`: the UDS dispatch loop is single-threaded, so the await tool
+/// call sets the flag before the loop processes the queued notification.
 pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_id: &str) -> bool {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(entry) = entries.get_mut(agent_id) {
@@ -157,8 +156,7 @@ pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_id: 
 /// registry, the form both UDS dispatch paths hold (#828). Returns `true` when
 /// the passive completion note should be suppressed (a manual `await` already
 /// reported it); `false` when there is no registry or no pending flag. Wraps
-/// [`take_completion_consumed_by_await`] so the suppress predicate lives in ONE
-/// place instead of being mirrored across `uds_multi`/`uds_multi_prompt`.
+/// [`take_completion_consumed_by_await`] so the predicate lives in ONE place.
 pub fn consume_await_dedupe(registry: &Option<SubagentRegistry>, agent_id: &str) -> bool {
     registry
         .as_ref()
@@ -505,13 +503,12 @@ pub struct ResultProgress {
 
 impl WorkflowResult {
     /// Derive the verdict from the await lifecycle status, reason, and workflow.
-    ///
-    /// - `Completed` — only when positively observed: the agent is idle AND its
-    ///   workflow reached `complete`.
+    /// - `Completed` — idle AND workflow `complete` (only when positively observed).
     /// - `Failed` — an await/agent error, or a non-clean process exit.
-    /// - `Incomplete` — went idle without completing, timed out, or exited
-    ///   cleanly before completion (a persistent subagent exiting is not the
-    ///   success path; completion is observed at idle, never inferred from exit).
+    /// - `Incomplete` — went idle without completing, or exited cleanly before it
+    ///   (completion is observed at idle, never inferred from exit).
+    /// - `Running` — await timed out while the child is still running (#925): a
+    ///   check-in, not a failure/"gave up"; summary names progress + next action.
     pub fn derive(
         status: &str,
         reason: Option<&str>,
@@ -522,14 +519,9 @@ impl WorkflowResult {
             done: w.steps_completed,
             total: w.steps_total,
         });
-        // Compare against the typed domain mode rather than a magic literal, so
-        // a rename of WorkflowMode cannot silently regress the verdict.
         let complete = workflow.is_some_and(|w| w.mode == WorkflowMode::Complete.wire_str());
-        let progress = || {
-            workflow
-                .map(|w| format!("{}/{} steps", w.steps_completed, w.steps_total))
-                .unwrap_or_else(|| "no workflow".to_string())
-        };
+        let steps = workflow.map(|w| format!("{}/{} steps", w.steps_completed, w.steps_total));
+        let progress = || steps.clone().unwrap_or_else(|| "no workflow".to_string());
         let (verdict, summary): (VerdictStatus, String) = match status {
             "idle" if complete => (
                 VerdictStatus::Completed,
@@ -553,13 +545,21 @@ impl WorkflowResult {
                     )
                 }
             }
-            "timeout" => (
-                VerdictStatus::Incomplete,
-                "await timed out before the subagent completed".to_string(),
-            ),
-            // Keep the reason context the verdict produced and append the
-            // concrete run-level cause when one was surfaced (#752), so the
-            // summary stays derived here rather than post-mutated by callers.
+            // #925: a timeout fires only after idle/exit did NOT — the child is
+            // almost always STILL RUNNING; frame as a check-in, not an error.
+            "timeout" => {
+                let at = steps
+                    .as_deref()
+                    .map(|s| format!(" at {s}"))
+                    .unwrap_or_default();
+                let msg = format!(
+                    "await timed out; sub-agent still running{at} — \
+                     re-await, steer, or wait (not an error)"
+                );
+                (VerdictStatus::Running, msg)
+            }
+            // Append the concrete run-level cause when surfaced (#752); keep the
+            // summary derived here rather than post-mutated by callers.
             "error" => {
                 let base = format!("await error: {}", reason.unwrap_or("unknown"));
                 let summary = match error {

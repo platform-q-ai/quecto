@@ -69,6 +69,41 @@ fn test_await_result_round_trip() {
     assert_eq!(result, back);
 }
 
+#[test]
+fn timeout_with_in_progress_workflow_reads_as_still_running_checkin() {
+    // #925: timing out mid-workflow (3/4) must read as a CHECK-IN on a child
+    // that is STILL RUNNING — not Incomplete (gave up) and not Failed (error).
+    // The verdict and summary (a) name the progress, (b) say "still running",
+    // (c) tell the parent the next action, and (d) say it is NOT an error. The
+    // tool result itself stays non-error and serializes the timeout lifecycle.
+    use crate::domain::workflow::VerdictStatus;
+    let wf = WorkflowSnapshot {
+        mode: "active".into(),
+        steps_completed: 3,
+        steps_total: 4,
+    };
+    let r = AwaitResult::new("timeout", None, "bot-1".into(), 90000, Some(wf));
+    assert_eq!(r.status, "timeout");
+    assert_eq!(r.result.status, VerdictStatus::Running);
+    assert_ne!(r.result.status, VerdictStatus::Incomplete);
+    assert_ne!(r.result.status, VerdictStatus::Failed);
+    let progress = r.result.workflow_progress.as_ref().unwrap();
+    assert_eq!((progress.done, progress.total), (3, 4));
+    let s = r.result.summary.to_lowercase();
+    assert!(
+        s.contains("3/4"),
+        "summary must name progress: {}",
+        r.result.summary
+    );
+    assert!(s.contains("still running"), "summary: {}", r.result.summary);
+    assert!(s.contains("not an error"), "summary: {}", r.result.summary);
+    assert!(
+        s.contains("re-await") || s.contains("steer") || s.contains("wait"),
+        "summary must name next action: {}",
+        r.result.summary
+    );
+}
+
 // ── UDS transport tests (#557) ───────────────────────────────────
 
 /// Mock UDS server that replicates the multi-client broadcast pattern:

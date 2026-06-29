@@ -107,6 +107,10 @@ pub enum VerdictStatus {
     Completed,
     Failed,
     Incomplete,
+    /// The await timed out while the child is STILL RUNNING (#925). This is a
+    /// check-in, not a terminal outcome: it is explicitly NOT a failure and NOT
+    /// "incomplete/gave up". The parent should re-await, steer, or wait.
+    Running,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
