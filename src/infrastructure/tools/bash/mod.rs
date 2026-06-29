@@ -200,8 +200,9 @@ impl ExecTool {
 ///
 /// Spawned children run in their own group (`process_group(0)`), so signalling
 /// the negative pgid terminates the shell AND any descendants it forked. Uses
-/// `kill(1)` to avoid taking a direct `libc` dependency, matching the project
-/// convention (see `subagent_cascade`).
+/// the shell's `kill` builtin (via `/bin/sh -c`) to avoid a direct `libc`
+/// dependency while still honouring negative-pgid signalling, which the
+/// standalone util-linux `kill(1)` rejects.
 struct ProcessGroupGuard {
     pid: Option<u32>,
 }
@@ -221,10 +222,13 @@ impl Drop for ProcessGroupGuard {
     fn drop(&mut self) {
         #[cfg(unix)]
         if let Some(pid) = self.pid {
-            // Negative target = process group. Detached, fire-and-forget.
-            let _ = std::process::Command::new("kill")
-                .arg("-KILL")
-                .arg(format!("-{pid}"))
+            // Negative target = process group. Route through the shell's `kill`
+            // builtin: the standalone `kill(1)` shipped by util-linux rejects the
+            // negative-pgid form ("cannot find process"), whereas the POSIX shell
+            // builtin honours it portably. Detached, fire-and-forget.
+            let _ = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("kill -KILL -- -{pid}"))
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn();

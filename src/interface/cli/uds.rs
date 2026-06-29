@@ -10,6 +10,7 @@ use super::uds_session::{AgentSession, clear_conversation, rewind_to_message_ind
 use super::uds_session::{
     compute_session_stats, compute_session_stats_with_usage, messages_tail_json,
 };
+use super::uds_workflow_nudge::{workflow_nudge_message, workflow_progress_fingerprint};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionStore};
@@ -332,14 +333,15 @@ async fn run_command_loop(
                 Ok(Some(line)) => {
                     let trimmed = line.trim();
                     if line.len() <= MAX_LINE_BYTES && is_cancel_command(trimmed) {
-                        fire_cancel(&cancel_for_reader);
-                        // Record operator intent BEFORE the command is dispatched
-                        // so the post-cancel idle drain honours it (#895/#896).
+                        // Record operator intent BEFORE firing the cancel so the
+                        // post-cancel idle drain cannot observe the cancel and
+                        // run a nudge before the abort/steer flag lands (#895/#896).
                         if is_abort_command(trimmed) {
                             control_for_reader.mark_abort();
                         } else if is_steer_command(trimmed) {
                             control_for_reader.mark_steer();
                         }
+                        fire_cancel(&cancel_for_reader);
                     }
                     if tx.send(Some(line)).await.is_err() {
                         break;
@@ -554,6 +556,12 @@ struct PromptCommand {
 }
 
 async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
+    // A genuine `prompt` takes over from any stale steer gate. The reader marks
+    // `steer_pending` from a loose `"type":"steer"` substring match, so a prompt
+    // whose body merely quotes the protocol (or a line that fails to parse) could
+    // otherwise leave the gate stuck `true`, permanently suppressing the
+    // auto-continue nudge (#896 AC3). `handle_steer` is the only other clearer.
+    ctx.turn_control.clear_steer();
     let PromptCommand {
         id,
         type_name,
@@ -628,31 +636,6 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
             break;
         }
     }
-}
-
-fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<String> {
-    let (Some(ws), Some(wc)) = (&ctx.workflow_state, &ctx.workflow_config) else {
-        return None;
-    };
-    if !wc.auto_continue && !wc.completion_nudge {
-        return None;
-    }
-    let Ok(engine) = ws.lock() else { return None };
-    wc.auto_continue
-        .then(|| engine.auto_continue_nudge())
-        .flatten()
-        .or_else(|| {
-            wc.completion_nudge
-                .then(|| engine.completion_nudge())
-                .flatten()
-        })
-}
-
-fn workflow_progress_fingerprint(ctx: &DispatchCtx<'_>) -> Option<String> {
-    let ws = ctx.workflow_state.as_ref()?;
-    let engine = ws.lock().ok()?;
-    let snapshot = engine.snapshot(true);
-    serde_json::to_string(&snapshot).ok()
 }
 
 async fn run_prompt_dispatch(

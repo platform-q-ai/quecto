@@ -399,6 +399,7 @@ async fn drain_refreshes_busy_state_snapshot_per_turn() {
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        turn_control: std::sync::Arc::default(),
         session: &mut session,
         stdout: &mut writer,
         session_key: &mut session_key,

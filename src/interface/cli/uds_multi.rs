@@ -566,14 +566,15 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
         }
         let trimmed = line.trim();
         if is_cancel_command(trimmed) {
-            fire_cancel(&cancel_handle);
-            // Record operator intent ahead of dispatch so the post-cancel idle
-            // drain honours abort (full stop) / steer (precedence) (#895/#896).
+            // Record operator intent BEFORE firing the cancel so the post-cancel
+            // idle drain cannot observe the cancel and run a nudge before the
+            // abort/steer flag lands (#895/#896).
             if super::uds::is_abort_command(trimmed) {
                 turn_control.mark_abort();
             } else if super::uds::is_steer_command(trimmed) {
                 turn_control.mark_steer();
             }
+            fire_cancel(&cancel_handle);
         }
         // Intercept `tool_result` inline — the dispatch loop is
         // single-threaded and is blocked waiting for the agent's

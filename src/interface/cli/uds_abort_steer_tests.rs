@@ -228,3 +228,86 @@ async fn steer_marker_is_obeyed_after_mid_turn_cancel() {
         "handling the steer releases the gate"
     );
 }
+
+/// Regression for the stuck-steer-gate hazard: the reader marks `steer_pending`
+/// from a loose `"type":"steer"` substring match, so a non-steer command whose
+/// body merely quotes the protocol can leave the gate stuck `true`. A genuine
+/// `follow_up` must clear it so the auto-continue nudge is not permanently
+/// suppressed (#896 AC3 — no regression to workflow progress).
+#[tokio::test]
+async fn follow_up_clears_stuck_steer_gate() {
+    let mut env = Env::with_selected_feature();
+    // Simulate a false-positive substring classification leaving the gate set.
+    env.turn_control.mark_steer();
+
+    let mut ctx = env.ctx();
+    super::uds_dispatch::handle_follow_up(&mut ctx, Some("f"), "follow_up", "work".into()).await;
+
+    assert!(
+        !ctx.turn_control.is_steer_pending(),
+        "a genuine follow_up must release a stale steer gate"
+    );
+    assert!(
+        !ctx.messages.is_empty(),
+        "with the gate cleared the follow_up drains and the nudge runs"
+    );
+}
+
+/// The reader-side classifier and the drain seam are wired together end-to-end
+/// for abort (#895 AC4): a real `"type":"abort"` line classifies, sets the flag
+/// via `mark_abort`, and the subsequent idle drain suppresses the nudge and
+/// discards queued work — defending the wiring, not just hand-set flags.
+#[tokio::test]
+async fn abort_command_line_classified_then_suppresses_nudge() {
+    let abort_line = r#"{"type":"abort"}"#;
+    assert!(
+        super::is_abort_command(abort_line),
+        "abort line must classify as abort"
+    );
+    assert!(
+        !super::is_steer_command(abort_line),
+        "abort line must not classify as steer"
+    );
+
+    let mut env = Env::with_selected_feature();
+    env.session.enqueue_pending("queued".into());
+    // Drive the exact reader path: classify → mark the control flag.
+    if super::is_abort_command(abort_line) {
+        env.turn_control.mark_abort();
+    } else if super::is_steer_command(abort_line) {
+        env.turn_control.mark_steer();
+    }
+
+    let mut ctx = env.ctx();
+    super::drain_pending_and_nudge(&mut ctx).await;
+
+    assert!(
+        ctx.messages.is_empty(),
+        "classified abort must suppress the auto-continue nudge"
+    );
+    assert!(
+        ctx.session.drain_pending().is_empty(),
+        "classified abort must discard queued work"
+    );
+}
+
+/// Abort beats steer at the drain seam (#895): with both flags pending, the
+/// drain takes the abort path (full stop, queue discarded) rather than merely
+/// yielding to the steer.
+#[tokio::test]
+async fn abort_beats_steer_at_drain_seam() {
+    let mut env = Env::with_selected_feature();
+    env.session.enqueue_pending("queued".into());
+    env.turn_control.mark_abort();
+    env.turn_control.mark_steer();
+
+    let mut ctx = env.ctx();
+    super::drain_pending_and_nudge(&mut ctx).await;
+
+    assert!(ctx.messages.is_empty(), "abort path must win over steer");
+    assert!(
+        ctx.session.drain_pending().is_empty(),
+        "abort discards queued work even when a steer is also pending"
+    );
+    assert!(!ctx.turn_control.is_abort_pending(), "abort flag consumed");
+}

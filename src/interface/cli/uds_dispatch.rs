@@ -376,6 +376,10 @@ pub(super) async fn handle_follow_up(
     type_name: &str,
     message: String,
 ) -> bool {
+    // A genuine `follow_up` clears any stale steer gate left by a loose
+    // `"type":"steer"` substring match in the reader, so the auto-continue nudge
+    // is not permanently suppressed (#896 AC3). See `handle_prompt`.
+    ctx.turn_control.clear_steer();
     ctx.session.enqueue_pending(message);
     let ev = AgentEvent::ok(id, type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
