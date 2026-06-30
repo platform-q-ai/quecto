@@ -367,21 +367,22 @@ fn then_uds_protocol_supports_resuming_session(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the quecto-tui resume selector should render with an opaque border")]
-fn then_tui_resume_selector_has_opaque_border(_world: &mut QuectoWorld) {
+#[then("the quecto-tui resume selector should render with a themed box border")]
+fn then_tui_resume_selector_has_themed_border(_world: &mut QuectoWorld) {
     let overlay = std::fs::read_to_string("../quecto-tui/src/interface/select_overlay.rs")
         .expect("read quecto-tui select_overlay source");
     let theme = std::fs::read_to_string("../quecto-tui/src/interface/theme.rs")
         .expect("read quecto-tui theme source");
     assert!(
         overlay.contains("build_resume_selector_overlay")
-            && overlay.contains("SELECTOR_BORDER_WIDTH")
+            && overlay.contains('┌')
+            && overlay.contains('│')
             && overlay.contains("apply_overlay_bg"),
-        "resume selector should be rendered as a padded opaque overlay instead of raw text over chat history"
+        "resume selector should be rendered as a bordered overlay box instead of raw text over chat history"
     );
     assert!(
         theme.contains("BG_OVERLAY") && theme.contains("apply_overlay_bg"),
-        "theme should expose an opaque overlay background for modal readability"
+        "theme should expose an overlay background helper so the modal follows the active theme"
     );
 }
 
