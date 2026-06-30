@@ -311,6 +311,16 @@ pub fn run_repl<R: BufRead, W: Write>(
     // 3. Otherwise (non-TTY pipe/redirect), use None (silent).
     let (progress_callback, spinner_handle) = resolve_progress_callback(ctx, is_tty);
 
+    // #935: clamp the effective output cap to the model's registry max_tokens so
+    // a model whose real output limit is lower than the configured global
+    // default (e.g. Fireworks qwen3p7-plus = 65536) never receives a larger
+    // value. Mirror the CLI build path (interface/cli/agent.rs) so the REPL does
+    // not silently bypass the clamp.
+    let model_max_tokens =
+        crate::infrastructure::model_registry::ModelRegistry::model_cap_from_base_dir(
+            ctx.base_dir,
+            &model,
+        );
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: ctx.provider.clone(),
         tool_registry: Box::new(registry),
@@ -326,7 +336,8 @@ pub fn run_repl<R: BufRead, W: Write>(
         effort: resolve_effort_from_config(ctx.config),
         system_prompt_provider: None,
         audit_log: None,
-    });
+    })
+    .with_model_max_tokens(model_max_tokens);
 
     let session_store = FileSessionStore::new(ctx.base_dir);
 

@@ -39,6 +39,21 @@ Feature: LLM Providers
     Then the error should be classified as "server"
     And the error should be retryable
 
+  # --- #935: clamp per-model max_tokens to the model's output cap ---
+
+  Scenario: A model's request output cap is clamped to the model's output limit
+    Given a model whose output cap is 65536 tokens
+    And a configured max_tokens of 200000
+    When the agent builds a request for that model
+    Then the request output cap should be 65536
+
+  # --- #935: an explicit client error code wrapped in a 5xx is non-retryable ---
+
+  Scenario: A 500 declaring an invalid_request_error client code fails fast as a client error
+    Given a 500 response whose body declares an "invalid_request_error" client code
+    Then the error should be classified as "client"
+    And the error should not be retryable
+
   Scenario: Provider router forwards error without fallback
     Given a provider router with a failing OpenAI and a succeeding Anthropic
     When I send a chat request with model "gpt-4o" through the router

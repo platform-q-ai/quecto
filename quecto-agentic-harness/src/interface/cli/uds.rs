@@ -14,6 +14,7 @@ use super::uds_workflow_nudge::{workflow_nudge_message, workflow_progress_finger
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionStore};
+use crate::infrastructure::model_registry::ModelRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 
 pub use super::protocol::parse_command_line;
@@ -459,26 +460,22 @@ struct SetModelArgs {
 }
 
 async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool {
-    let SetModelArgs {
-        id,
-        type_name,
-        model,
-        provider,
-        model_id,
-    } = args;
     super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
-    let resolved_model = match resolve_set_model_target(model, provider, model_id) {
+    let resolved_model = match resolve_set_model_target(args.model, args.provider, args.model_id) {
         Ok(m) => m,
         Err(msg) => {
-            let ev = AgentEvent::err(id.as_deref(), &type_name, msg);
+            let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, msg);
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             return false;
         }
     };
-    ctx.agent.set_model(resolved_model.clone());
+    // #935: re-derive the per-model cap so a model switch re-clamps subsequent
+    // turns; set_model takes both atomically so model and cap cannot diverge.
+    let cap = ModelRegistry::model_cap_from_base_dir(ctx.base_dir, &resolved_model);
+    ctx.agent.set_model(resolved_model.clone(), cap);
     ctx.session.set_model(resolved_model);
     tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched");
-    let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
+    let ev = AgentEvent::ok(args.id.as_deref(), &args.type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }

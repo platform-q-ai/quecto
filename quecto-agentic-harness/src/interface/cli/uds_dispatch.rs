@@ -538,5 +538,9 @@ pub(super) async fn dispatch_ext_command(
 mod cov_tests;
 
 #[cfg(test)]
+#[path = "uds_dispatch_935_clamp_tests.rs"]
+mod clamp_935_tests;
+
+#[cfg(test)]
 #[path = "uds_dispatch_843_tests.rs"]
 mod tests_843;

@@ -201,3 +201,83 @@ fn classify_status_separators_between_marker_and_code() {
         ProviderErrorClass::RateLimit
     );
 }
+
+// =======================================================================
+// #935: an explicit client error code wrapped in a 5xx status is a
+// non-retryable Client error (not a retryable Server error). Fireworks
+// returns invalid_request_error (e.g. max_tokens exceeds the model output
+// cap) inside an HTTP 500; classifying it Server caused 3 futile retries
+// and a misleading "retry later". These FAIL before the fix because the
+// "http 500" status is extracted first and mapped to Server.
+// =======================================================================
+
+#[test]
+fn invalid_request_error_in_500_is_client_not_server() {
+    let err = provider(
+        "HTTP 500 from Fireworks: {\"error\":{\"code\":\"invalid_request_error\",\
+         \"message\":\"max_tokens 200000 exceeds the model output limit of 65536\"}}",
+    );
+    let class = classify_provider_error(&err);
+    assert_eq!(
+        class,
+        ProviderErrorClass::Client,
+        "a 5xx whose body declares invalid_request_error must classify as Client, got {class}"
+    );
+    assert!(
+        !class.is_retryable(),
+        "invalid_request_error wrapped in a 5xx must be non-retryable"
+    );
+}
+
+#[test]
+fn openai_style_invalid_request_type_in_5xx_is_client() {
+    let err = provider(
+        "HTTP 502: {\"error\":{\"type\":\"invalid_request_error\",\"message\":\"unsupported value\"}}",
+    );
+    let class = classify_provider_error(&err);
+    assert_eq!(
+        class,
+        ProviderErrorClass::Client,
+        "OpenAI-style \"type\":\"invalid_request_error\" inside a 5xx must classify as Client, got {class}"
+    );
+    assert!(!class.is_retryable());
+}
+
+#[test]
+fn genuine_500_without_client_code_remains_server() {
+    // Regression guard: a real server error (no explicit client code) must
+    // stay retryable Server.
+    let err = provider("HTTP 500: {\"error\":{\"message\":\"internal server error\"}}");
+    assert_eq!(
+        classify_provider_error(&err),
+        ProviderErrorClass::Server,
+        "a plain 500 with no client code must remain a retryable Server error"
+    );
+}
+
+#[test]
+fn invalid_request_error_only_in_free_text_message_stays_server() {
+    // A genuine transient 5xx whose free-text message merely *echoes* the phrase
+    // `invalid_request_error` (reflected request content / a quoted upstream
+    // payload) must NOT be force-classified as non-retryable Client. The match
+    // is anchored to the structured `code`/`type` position, so this stays a
+    // retryable Server error. FAILS before the fix (bare substring match).
+    let err = provider(
+        "HTTP 503: {\"error\":{\"message\":\"upstream overloaded while handling \
+         your invalid_request_error retry; please try again\"}}",
+    );
+    assert_eq!(
+        classify_provider_error(&err),
+        ProviderErrorClass::Server,
+        "the phrase appearing only in free text must not flip a transient 5xx to Client"
+    );
+}
+
+#[test]
+fn invalid_request_error_with_whitespace_around_colon_is_client() {
+    // Whitespace-tolerant structured match.
+    let err = provider(
+        "HTTP 500: {\"error\": {\"code\" : \"invalid_request_error\", \"message\":\"bad\"}}",
+    );
+    assert_eq!(classify_provider_error(&err), ProviderErrorClass::Client);
+}

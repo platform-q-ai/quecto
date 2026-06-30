@@ -15,6 +15,8 @@ use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error}
 use crate::domain::session::{ContextSpillStore, SpillEntry};
 use crate::domain::tool::ToolRegistry;
 
+#[path = "agent_loop_clamp.rs"]
+mod agent_loop_clamp;
 #[path = "agent_loop_errors.rs"]
 mod agent_loop_errors;
 #[path = "agent_loop_pruning.rs"]
@@ -67,6 +69,8 @@ pub struct AgentLoopImpl {
     tool_registry: Box<dyn ToolRegistry>,
     model: String,
     max_tokens: u32,
+    /// Per-model registry output cap, if known; see `agent_loop_clamp` (#935).
+    model_max_tokens: Option<u32>,
     temperature: f32,
     max_tool_iterations: u32,
     spill_store: Option<Arc<dyn ContextSpillStore>>,
@@ -116,6 +120,7 @@ impl AgentLoopImpl {
             tool_registry: config.tool_registry,
             model: config.model.clone(),
             max_tokens: config.max_tokens,
+            model_max_tokens: None,
             temperature: config.temperature,
             max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
             spill_store: config.spill_store,
@@ -128,11 +133,6 @@ impl AgentLoopImpl {
             system_prompt_provider: config.system_prompt_provider,
             audit_log: config.audit_log,
         }
-    }
-
-    /// Switch the model used for all subsequent LLM calls.
-    pub fn set_model(&mut self, model: String) {
-        self.model = model;
     }
 
     /// Replace the LLM provider after config reload.
@@ -277,7 +277,7 @@ impl AgentLoopImpl {
             messages,
             tools: tool_defs,
             model: &self.model,
-            max_tokens: self.max_tokens,
+            max_tokens: self.effective_max_tokens(),
             temperature: self.temperature,
             session_id,
             tool_choice: None,
