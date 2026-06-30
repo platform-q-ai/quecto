@@ -4,9 +4,38 @@
 //! provider string into a classified, actionable message: name the error class
 //! and the remediation so the agent/parent can react sensibly.
 
+use crate::domain::audit::AuditEvent;
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
-use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+use crate::domain::provider_error::{
+    ProviderErrorClass, classify_provider_error, provider_http_status,
+};
+
+/// Build the audit events that persist a terminal provider failure (#937).
+///
+/// Returns, in emit order, the rich [`AuditEvent::ProviderError`] carrying the
+/// *full*, untruncated error body (with provider name, classified class, and
+/// recovered HTTP status) plus the generic [`AuditEvent::Error`] for back-compat
+/// consumers. The ProviderError body is redacted by
+/// [`AuditEvent::provider_error`] before it is persisted, so a failed turn is
+/// retrievable from `~/.quecto/audit` instead of evaporating with the truncated
+/// TUI line. Emitted once per terminal failure (the caller invokes this only
+/// after retries/malformed re-prompts are exhausted), never per retry.
+pub(super) fn provider_failure_audit_events(provider: &str, err: &DomainError) -> [AuditEvent; 2] {
+    [
+        AuditEvent::provider_error(
+            provider,
+            &classify_provider_error(err),
+            provider_http_status(err),
+            &err.to_string(),
+        ),
+        AuditEvent::Error {
+            source: "provider".into(),
+            tool: None,
+            message: err.to_string(),
+        },
+    ]
+}
 
 /// Append addressable "your request was malformed, please fix it" feedback so a
 /// model-malformed request becomes a correctable next turn rather than a fatal

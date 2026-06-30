@@ -64,6 +64,27 @@ Feature: Append-only audit log
     And the serialized JSON contains "deploy"
     And the serialized JSON contains "stack"
 
+  Scenario: AuditEvent ProviderError round-trips through JSON
+    Given an AuditEvent::ProviderError with provider "fireworks" class "client" http_status 400 body "{\"error\":\"bad\"}"
+    When the event is serialized to JSON
+    Then it deserializes back to an identical ProviderError event
+
+  Scenario: AuditEvent ProviderError retains the full untruncated body
+    Given a redacting AuditEvent::ProviderError for provider "fireworks" class "client" http_status 400 with a 5000 char body containing secret "sk-abc123SECRETvalue"
+    When the event is serialized to JSON
+    Then the serialized JSON does not contain "sk-abc123SECRETvalue"
+    And the serialized JSON contains "[REDACTED]"
+    And the persisted ProviderError body is at least 4000 characters
+
+  # --- Behaviour: terminal provider failure is persisted by the agent loop (#937) ---
+
+  Scenario: A terminal provider failure persists the full redacted error to the audit log
+    Given a provider that fails terminally with a 5000 char body containing secret "sk-abc123SECRETvalue"
+    When the agent processes a turn against that provider
+    Then the audit log contains exactly one provider error event
+    And the persisted provider error body is the full untruncated text
+    And the persisted provider error body has the secret redacted
+
   Scenario: AuditEvent GuardBlocked round-trips through JSON
     Given an [AuditEvent]::GuardBlocked with command_preview "git commit" guard_message "Complete steps first" before_step_key "commit"
     When the event is serialized to JSON
