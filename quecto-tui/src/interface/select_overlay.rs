@@ -36,15 +36,31 @@ fn build_select_list_overlay(
         .clamp(1, SELECTOR_MAX_PANEL_WIDTH);
     let border_width = SELECTOR_BORDER_WIDTH.min(panel_width.saturating_sub(20) / 2);
     let content_width = panel_width.saturating_sub(border_width * 2).max(1);
-    let side_padding = " ".repeat(border_width);
 
     let mut content_lines = vec![theme::bold(title)];
     content_lines.extend(selector.render(content_width));
     content_lines.push(theme::dim(footer));
 
+    build_overlay_from_content(
+        content_lines,
+        content_width,
+        panel_width,
+        border_width,
+        terminal_height,
+    )
+}
+
+fn build_overlay_from_content(
+    content_lines: Vec<String>,
+    content_width: usize,
+    panel_width: usize,
+    border_width: usize,
+    terminal_height: usize,
+) -> (Vec<String>, usize) {
     let max_height = terminal_height.saturating_sub(4).max(1);
     let vertical_border = border_width.min(max_height.saturating_sub(1) / 2);
     let blank = theme::apply_overlay_bg("", panel_width);
+    let side_padding = " ".repeat(border_width);
 
     let mut overlay_lines = Vec::new();
     overlay_lines.extend(std::iter::repeat_n(blank.clone(), vertical_border));
@@ -85,6 +101,29 @@ pub fn build_rewind_selector_overlay(
         "Enter select · Esc cancel",
         selector,
         terminal_width,
+        terminal_height,
+    )
+}
+
+pub fn build_model_selector_overlay(
+    selector: &mut crate::interface::components::model_selector::ModelSelector,
+    terminal_width: usize,
+    terminal_height: usize,
+) -> (Vec<String>, usize) {
+    let panel_width = terminal_width
+        .saturating_sub(4)
+        .clamp(1, SELECTOR_MAX_PANEL_WIDTH);
+    let border_width = SELECTOR_BORDER_WIDTH.min(panel_width.saturating_sub(20) / 2);
+    let content_width = panel_width.saturating_sub(border_width * 2).max(1);
+
+    let mut content_lines = selector.render(content_width);
+    content_lines.push(theme::dim("Enter select · Esc cancel"));
+
+    build_overlay_from_content(
+        content_lines,
+        content_width,
+        panel_width,
+        border_width,
         terminal_height,
     )
 }
@@ -198,6 +237,72 @@ mod tests {
             lines.iter().any(|l| l.contains(theme::BG_OVERLAY)),
             "at least one line should use the opaque background"
         );
+    }
+
+    #[test]
+    fn overlay_background_is_not_pure_black() {
+        // Theme-aware: overlay should use a dark gray, not pure black (#000000),
+        // so it's readable on both dark and light terminal themes.
+        assert_ne!(
+            theme::BG_OVERLAY,
+            "\x1b[48;2;0;0;0m",
+            "overlay background should not be pure black"
+        );
+    }
+
+    #[test]
+    fn model_selector_overlay_has_opaque_background() {
+        use crate::interface::components::model_selector::ModelSelector;
+        let mut sel = ModelSelector::new(None);
+        let (lines, _) = build_model_selector_overlay(&mut sel, 100, 40);
+        assert!(
+            lines.iter().any(|l| l.contains(theme::BG_OVERLAY)),
+            "model selector overlay should use the opaque background"
+        );
+    }
+
+    #[test]
+    fn model_selector_overlay_has_title_and_footer() {
+        use crate::interface::components::model_selector::ModelSelector;
+        let mut sel = ModelSelector::new(None);
+        let (lines, _) = build_model_selector_overlay(&mut sel, 100, 40);
+        let joined = lines.join("\n");
+        assert!(joined.contains("Select Model"), "should contain title");
+        assert!(joined.contains("Esc cancel"), "should contain footer hint");
+    }
+
+    #[test]
+    fn model_selector_overlay_contains_models() {
+        use crate::interface::components::model_selector::ModelSelector;
+        let mut sel = ModelSelector::new(None);
+        let (lines, _) = build_model_selector_overlay(&mut sel, 100, 40);
+        let joined = lines.join("\n");
+        assert!(joined.contains("claude"), "should contain a model name");
+    }
+
+    #[test]
+    fn model_selector_overlay_width_is_bounded() {
+        use crate::interface::components::model_selector::ModelSelector;
+        let mut sel = ModelSelector::new(None);
+        let (_, width) = build_model_selector_overlay(&mut sel, 200, 40);
+        assert!(
+            width <= SELECTOR_MAX_PANEL_WIDTH,
+            "overlay width {width} should not exceed max {SELECTOR_MAX_PANEL_WIDTH}"
+        );
+    }
+
+    #[test]
+    fn model_selector_overlay_lines_are_uniform_width() {
+        use crate::interface::components::model_selector::ModelSelector;
+        let mut sel = ModelSelector::new(None);
+        let (lines, width) = build_model_selector_overlay(&mut sel, 100, 40);
+        for (i, line) in lines.iter().enumerate() {
+            let vis = crate::interface::utils::visible_width(line);
+            assert_eq!(
+                vis, width,
+                "line {i} has visible width {vis} but overlay width is {width}"
+            );
+        }
     }
 
     #[test]

@@ -150,8 +150,8 @@ pub fn apply_bg(text: &str, width: usize, bg_fn: fn(&str) -> String) -> String {
 pub const BG_PENDING: &str = "\x1b[48;2;40;40;50m"; // #282832
 pub const BG_SUCCESS: &str = "\x1b[48;2;40;50;40m"; // #283228
 pub const BG_ERROR: &str = "\x1b[48;2;60;40;40m"; // #3c2828
-/// Opaque modal overlay background — black for maximum contrast over chat text.
-pub const BG_OVERLAY: &str = "\x1b[48;2;0;0;0m";
+/// Opaque modal overlay background — dark gray for contrast on both dark and light themes.
+pub const BG_OVERLAY: &str = "\x1b[48;2;30;30;30m";
 
 /// Extract the background ANSI escape code from a bg function.
 ///

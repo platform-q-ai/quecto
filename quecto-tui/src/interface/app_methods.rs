@@ -2,7 +2,7 @@ use super::app_selection::{SelectionAnchor, apply_selection_highlight};
 use super::*;
 use crate::application::session_payloads::{self, ResumedChatMessage};
 use crate::interface::select_overlay::{
-    build_resume_selector_overlay, build_rewind_selector_overlay,
+    build_model_selector_overlay, build_resume_selector_overlay, build_rewind_selector_overlay,
 };
 use crate::interface::theme;
 
@@ -510,8 +510,8 @@ impl App {
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
         if let Some(selector) = &mut self.model_selector {
-            let overlay_width = width.saturating_sub(4).min(60);
-            let selector_lines = selector.render(overlay_width);
+            let (selector_lines, overlay_width) =
+                build_model_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
 
