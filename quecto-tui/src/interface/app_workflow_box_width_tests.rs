@@ -45,7 +45,7 @@ fn box_tool_and_body_widths(h: &mut TuiHarness) -> (usize, usize, usize) {
     let box_w = {
         let now = tokio::time::Instant::now();
         h.app_mut()
-            .render_main_pane_workflow(body_w, now)
+            .render_main_pane_workflow(body_w, body_w + 1, now)
             .iter()
             .find(|l| l.contains('┌'))
             .map(|l| visible_width(l))

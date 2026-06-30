@@ -621,7 +621,7 @@ async fn main_pane_compact_line_reflects_live_auto_continue_state(// #897 AC2
 
     let now = tokio::time::Instant::now();
     let render = |a: &App| -> String {
-        a.render_main_pane_workflow(120, now)
+        a.render_main_pane_workflow(120, 120, now)
             .iter()
             .map(|l| super::app_methods::strip_ansi(l))
             .collect::<Vec<_>>()

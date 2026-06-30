@@ -459,7 +459,8 @@ impl App {
         // Sub-agent-first main pane (#820): the selected agent's title line and
         // boxed single-line workflow bar sit at the top of the body, above the
         // chat (replacing the removed bottom workflow bar).
-        let main_pane_workflow = self.render_main_pane_workflow(width, now);
+        let main_box_width = width + usize::from(panel_visible);
+        let main_pane_workflow = self.render_main_pane_workflow(width, main_box_width, now);
         let workflow_height = main_pane_workflow.len();
         lines.extend(main_pane_workflow);
 
@@ -547,8 +548,7 @@ impl App {
             }
         }
 
-        // Store rendered lines for text selection extraction (#528), before
-        // highlight injection leaks reverse-video escapes (#546 review).
+        // Store rendered lines for text selection extraction (#528).
         if self.selection.is_some() {
             self.last_rendered_lines = lines.clone();
         } else {

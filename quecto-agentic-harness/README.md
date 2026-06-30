@@ -774,7 +774,7 @@ Pre-merge controls (real-LLM lane):
 - `QUECTO_REAL_LLM_TAG` scenario tag to run (default `manual-real-llm`; use `real-llm-smoke` for the old smoke subset)
 - `QUECTO_PREMERGE_FORCE=1` to bypass cache and rerun merge-time checks
 
-Coverage is intentionally not part of git hooks. Run coverage in nightly CI (recommended with `cargo llvm-cov`) to keep local dev loops fast.
+Coverage runs in the full pre-push/pre-merge gate. For manual checks without pushing, use `cargo llvm-cov` (or `scripts/pre-push.sh` for the canonical full local gate); expect that path to take longer than the commit-time hook.
 
 ## Directory Structure
 

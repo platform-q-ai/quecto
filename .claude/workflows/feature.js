@@ -33,8 +33,8 @@ phase('RED')
 await agent(
   `Task: ${TASK}\n\n` +
   `STEP — Update Scenarios / add features (RED phase, part 1). Update BDD feature files and ` +
-  `task-facing scenarios FIRST after `gh issue view <N> --json title,body,comments`, and identify explicit, checkable acceptance criteria for the change. See docs/agent-dev-quickstart.md.\n` +
-  `STEP — Write/update unit tests. Use `cargo test -p quecto --lib <name_substring>` or `cargo test -p quecto-tui --lib <name_substring>` (never `-p quecto-agentic-harness`; see docs/agent-dev-quickstart.md). Run a quick targeted smoke check to confirm they compile; the full ` +
+  `task-facing scenarios FIRST after 'gh issue view <N> --json title,body,comments', and identify explicit, checkable acceptance criteria for the change. See docs/agent-dev-quickstart.md.\n` +
+  `STEP — Write/update unit tests. Use 'cargo test -p quecto --lib <name_substring>' or 'cargo test -p quecto-tui --lib <name_substring>' (never '-p quecto-agentic-harness'; see docs/agent-dev-quickstart.md). Run a quick targeted smoke check to confirm they compile; the full ` +
   `suite and coverage run on push.\n` +
   `STEP — Ensure new/modified tests FAIL (RED). Run only the new/modified targeted test to confirm it fails ` +
   `before any implementation. Report the failing test names and the acceptance criteria.`,
@@ -142,7 +142,7 @@ phase('Conformance')
 let conformance = await agent(
   `Task: ${TASK}. PR: ${pr}\n\n` +
   `SYSTEMATIC ACCEPTANCE REVIEW — a hard gate before merge. Read the ORIGINAL issue's acceptance ` +
-  `criteria (`gh issue view <N> --json title,body,comments`) and the PR diff (gh pr diff <PR>), and ` +
+  `criteria ('gh issue view <N> --json title,body,comments') and the PR diff (gh pr diff <PR>), and ` +
   `inspect the actual branch code. For EVERY acceptance criterion, decide met / partial / unmet and cite ` +
   `concrete file:line evidence — a criterion counts as met ONLY with evidence in the code, never on the ` +
   `strength of the PR description's claims. Be skeptical. Do NOT modify code. Output a per-criterion table, ` +
