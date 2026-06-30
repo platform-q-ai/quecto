@@ -730,6 +730,9 @@ async fn test_progress_callback_done_fired_on_text_response() {
     assert!(has_done, "expected Done event, got: {:?}", *fired);
 }
 
+#[path = "agent_loop_931_tests.rs"]
+mod retry_malformed_tests;
+
 #[path = "agent_loop_progress_tests.rs"]
 mod progress_tests;
 

@@ -8,6 +8,7 @@ use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
+use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
 use crate::infrastructure::providers::router::ProviderRouter;
 
 const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
@@ -234,7 +235,16 @@ pub fn build_agent_provider(
         );
     }
 
-    Ok(Arc::new(ProviderRouter::new(provider_list)))
+    // Wrap the router in the retry decorator so transient/retryable provider
+    // errors (429 / 5xx-529 / network) are retried with bounded backoff + jitter
+    // (honouring Retry-After) before the turn fails; Client/Auth/Cancelled pass
+    // straight through (#931). Composed outside refreshable so a refreshed-token
+    // retry still benefits from transient-error retries.
+    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::new(provider_list));
+    Ok(Arc::new(RetryingProvider::new(
+        router,
+        RetryConfig::default(),
+    )))
 }
 
 #[cfg(feature = "test-support")]

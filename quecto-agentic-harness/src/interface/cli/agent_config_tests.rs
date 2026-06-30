@@ -345,10 +345,17 @@ fn test_build_agent_provider_allows_models_json_remote_http_when_explicit() {
 fn router_provider_names(
     provider: &std::sync::Arc<dyn crate::domain::provider::LlmProvider>,
 ) -> Vec<String> {
-    let router = provider
+    // build_agent_provider wraps the router in a RetryingProvider (#931); unwrap
+    // the decorator to reach the underlying router for introspection.
+    let retrying = provider
+        .as_any()
+        .downcast_ref::<crate::infrastructure::providers::retry::RetryingProvider>()
+        .expect("build_agent_provider should return a RetryingProvider");
+    let router = retrying
+        .inner()
         .as_any()
         .downcast_ref::<crate::infrastructure::providers::router::ProviderRouter>()
-        .expect("build_agent_provider should return a ProviderRouter");
+        .expect("RetryingProvider should wrap a ProviderRouter");
     router
         .provider_names()
         .into_iter()

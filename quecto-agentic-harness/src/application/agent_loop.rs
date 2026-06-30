@@ -11,17 +11,25 @@ use crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
-use crate::domain::provider_error::classify_provider_error;
+use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
 use crate::domain::session::{ContextSpillStore, SpillEntry};
 use crate::domain::tool::ToolRegistry;
 
+#[path = "agent_loop_errors.rs"]
+mod agent_loop_errors;
 #[path = "agent_loop_pruning.rs"]
 mod agent_loop_pruning;
 mod agent_loop_session;
+use agent_loop_errors::{
+    append_malformed_feedback, enhance_provider_error, is_context_or_output_limit_error,
+};
 
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 const MAX_PROVIDER_ATTEMPTS: usize = 3;
 const PROVIDER_RETRY_BACKOFF_MS: u64 = 100;
+/// How many times a model-malformed request is re-prompted as addressable
+/// feedback before the turn fails, bounding a persistently malforming model (#931).
+const MAX_MALFORMED_REQUEST_RETRIES: u32 = 3;
 
 /// Configuration for building an agent loop.
 pub struct AgentLoopConfig {
@@ -502,19 +510,27 @@ impl AgentLoopImpl {
         &self,
         request: ChatRequest<'_>,
     ) -> Result<LlmResponse, DomainError> {
+        // Transient-error retry is owned by the `RetryingProvider` decorator, so
+        // the non-streaming path makes a single call and passes the error
+        // through (only enhancing it); re-retrying here would double the budget.
+        if !self.streaming {
+            return self
+                .provider
+                .chat(request)
+                .await
+                .map_err(enhance_provider_error);
+        }
+
+        // Streaming initiation *is* retried here: the decorator forwards
+        // `chat_stream` without retry, so this loop owns stream re-initiation.
         for attempt in 1..=MAX_PROVIDER_ATTEMPTS {
-            let result = if self.streaming {
-                match self.stream_chat_once(request.clone()).await {
-                    Ok(response) => Ok(response),
-                    Err(stream_error) if stream_error.emitted_event => {
-                        // Once the provider has emitted any stream content,
-                        // replaying the request would duplicate/corrupt output.
-                        return Err(enhance_provider_error(stream_error.error));
-                    }
-                    Err(stream_error) => Err(stream_error.error),
+            let result = match self.stream_chat_once(request.clone()).await {
+                Ok(response) => Ok(response),
+                Err(stream_error) if stream_error.emitted_event => {
+                    // Replaying after emitted content would corrupt output.
+                    return Err(enhance_provider_error(stream_error.error));
                 }
-            } else {
-                self.provider.chat(request.clone()).await
+                Err(stream_error) => Err(stream_error.error),
             };
 
             match result {
@@ -529,7 +545,7 @@ impl AgentLoopImpl {
                         attempt,
                         max_attempts = MAX_PROVIDER_ATTEMPTS,
                         error_class = %class,
-                        "retrying provider request after transient failure"
+                        "retrying stream initiation after transient failure"
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(
                         PROVIDER_RETRY_BACKOFF_MS * attempt as u64,
@@ -553,6 +569,8 @@ impl AgentLoopImpl {
         // Start true to build initial manifest from any prior session spills.
         let mut spills_dirty = true;
         let mut usage_totals = UsageTotals::default();
+        // Count of model-malformed requests turned into addressable feedback.
+        let mut malformed_retries: u32 = 0;
 
         loop {
             self.refresh_dynamic_system_prompt(messages);
@@ -583,15 +601,34 @@ impl AgentLoopImpl {
             }
 
             let llm_start = std::time::Instant::now();
-            // Use streaming when enabled (UDS mode) so token events are
-            // forwarded in real time.  REPL/one-shot use the
-            // non-streaming path.
+            // Streaming (UDS mode) forwards token events in real time; REPL/
+            // one-shot use the non-streaming path.
             let response = self.call_provider_with_retries(request).await;
 
             let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
             let response = match response {
                 Ok(r) => r,
                 Err(e) => {
+                    // A model-malformed `Client`/4xx rejection must not kill the
+                    // turn: re-prompt with addressable feedback so the model
+                    // self-corrects (#931 AC2), bounded by MAX_MALFORMED_REQUEST_
+                    // RETRIES. Context/output-limit 4xx is terminal (below).
+                    let is_malformed_request = matches!(&e, DomainError::Provider(m)
+                        if classify_provider_error(&e) == ProviderErrorClass::Client
+                            && !is_context_or_output_limit_error(m));
+                    if is_malformed_request && malformed_retries < MAX_MALFORMED_REQUEST_RETRIES {
+                        malformed_retries += 1;
+                        tracing::warn!(
+                            target: "provider_retry",
+                            attempt = malformed_retries,
+                            max = MAX_MALFORMED_REQUEST_RETRIES,
+                            error = %e,
+                            "provider rejected request as malformed — re-prompting with addressable feedback"
+                        );
+                        append_malformed_feedback(messages, &e);
+                        current_turn += 1;
+                        continue;
+                    }
                     // Audit: Error on provider failure
                     self.audit(
                         current_turn,
@@ -684,36 +721,6 @@ impl AgentLoopImpl {
             }
         }
     }
-}
-
-fn enhance_provider_error(err: DomainError) -> DomainError {
-    let DomainError::Provider(message) = err else {
-        return err;
-    };
-
-    if is_context_or_output_limit_error(&message)
-        && !message
-            .to_ascii_lowercase()
-            .contains("context/output limit")
-    {
-        return DomainError::Provider(format!(
-            "{message}\n\nContext/output limit: the provider rejected the request because the prompt plus requested output appears to exceed a model limit. Try reducing prompt history, lowering max output tokens, or enabling/prioritizing context pruning before retrying."
-        ));
-    }
-
-    DomainError::Provider(message)
-}
-
-fn is_context_or_output_limit_error(message: &str) -> bool {
-    let lowered = message.to_ascii_lowercase();
-    (lowered.contains("maximum context length")
-        || lowered.contains("context length")
-        || lowered.contains("context window")
-        || lowered.contains("too many tokens")
-        || lowered.contains("max_tokens")
-        || lowered.contains("max output")
-        || lowered.contains("requested") && lowered.contains("tokens"))
-        && (lowered.contains("token") || lowered.contains("context"))
 }
 
 impl AgentLoop for AgentLoopImpl {
