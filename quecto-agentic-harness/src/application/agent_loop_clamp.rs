@@ -8,19 +8,18 @@
 use super::AgentLoopImpl;
 
 impl AgentLoopImpl {
-    /// Switch the active model. Pair with [`Self::set_model_max_tokens`] so the
-    /// per-model output cap is re-derived and a model switch re-clamps.
-    pub fn set_model(&mut self, model: String) {
+    /// Switch the active model and its per-model output cap together so they can
+    /// never diverge. `model_max_tokens` is the new model's registry cap (or
+    /// `None` for no clamp); the effective request tokens become
+    /// `min(max_tokens, cap)`. Taking the cap as a parameter (rather than a
+    /// separate setter) ensures every switch re-clamps with no fragile two-call
+    /// protocol (#935).
+    pub fn set_model(&mut self, model: String, model_max_tokens: Option<u32>) {
         self.model = model;
-    }
-
-    /// Set the per-model output cap used to clamp the effective request tokens
-    /// to `min(max_tokens, cap)`. `None` clears (use `max_tokens` verbatim).
-    pub fn set_model_max_tokens(&mut self, model_max_tokens: Option<u32>) {
         self.model_max_tokens = model_max_tokens;
     }
 
-    /// Builder variant of [`Self::set_model_max_tokens`].
+    /// Builder variant: set the per-model output cap at construction time.
     pub fn with_model_max_tokens(mut self, model_max_tokens: Option<u32>) -> Self {
         self.model_max_tokens = model_max_tokens;
         self

@@ -346,6 +346,33 @@ fn max_tokens_for_returns_none_for_unknown_or_unqualified_model() {
 }
 
 #[test]
+fn max_tokens_for_returns_none_when_model_omits_max_tokens() {
+    // A model that exists in models.json but does NOT declare `maxTokens` has no
+    // real output limit known to the registry. It must return None (no clamp),
+    // not the synthesized 16_384 default — otherwise a user whose configured
+    // max_tokens exceeds 16_384 would have every request silently over-clamped.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("models.json");
+    std::fs::write(
+        &path,
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"no-cap-model"}]}}}"#,
+    )
+    .unwrap();
+
+    let registry = ModelRegistry::load_from_path(&path).unwrap();
+    // The field still carries the synthesized default for display purposes...
+    assert_eq!(
+        registry
+            .find("fireworks", "no-cap-model")
+            .unwrap()
+            .max_tokens,
+        16_384
+    );
+    // ...but the clamp lookup must treat an absent cap as "unknown".
+    assert_eq!(registry.max_tokens_for("fireworks/no-cap-model"), None);
+}
+
+#[test]
 fn model_cap_from_base_dir_reads_models_json() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(

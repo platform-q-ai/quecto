@@ -88,9 +88,9 @@ async fn request_output_cap_not_raised_to_model_cap() {
 }
 
 /// Acceptance criterion 3 (application half): once the per-model cap is updated
-/// via `set_model_max_tokens`, the next turn re-clamps. This proves the setter
-/// that the interface `set_model` path calls; the registry lookup that feeds it
-/// is proven by `model_registry_tests::max_tokens_for_*`.
+/// via `set_model`, the next turn re-clamps. This proves the switch path the
+/// interface uses; the registry lookup that feeds it is proven by
+/// `model_registry_tests::max_tokens_for_*`.
 #[tokio::test]
 async fn set_model_max_tokens_re_clamps_for_subsequent_turns() {
     let provider = Arc::new(MockProvider::new(vec![
@@ -118,8 +118,7 @@ async fn set_model_max_tokens_re_clamps_for_subsequent_turns() {
     agent.run_loop(&mut m1).await.unwrap();
 
     // Switch to a lower-cap model and re-clamp.
-    agent.set_model("fireworks/qwen3p7-plus".to_string());
-    agent.set_model_max_tokens(Some(65_536));
+    agent.set_model("fireworks/qwen3p7-plus".to_string(), Some(65_536));
     let mut m2 = vec![Message::user("b")];
     agent.run_loop(&mut m2).await.unwrap();
 

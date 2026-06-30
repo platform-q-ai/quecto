@@ -254,3 +254,30 @@ fn genuine_500_without_client_code_remains_server() {
         "a plain 500 with no client code must remain a retryable Server error"
     );
 }
+
+#[test]
+fn invalid_request_error_only_in_free_text_message_stays_server() {
+    // A genuine transient 5xx whose free-text message merely *echoes* the phrase
+    // `invalid_request_error` (reflected request content / a quoted upstream
+    // payload) must NOT be force-classified as non-retryable Client. The match
+    // is anchored to the structured `code`/`type` position, so this stays a
+    // retryable Server error. FAILS before the fix (bare substring match).
+    let err = provider(
+        "HTTP 503: {\"error\":{\"message\":\"upstream overloaded while handling \
+         your invalid_request_error retry; please try again\"}}",
+    );
+    assert_eq!(
+        classify_provider_error(&err),
+        ProviderErrorClass::Server,
+        "the phrase appearing only in free text must not flip a transient 5xx to Client"
+    );
+}
+
+#[test]
+fn invalid_request_error_with_whitespace_around_colon_is_client() {
+    // Whitespace-tolerant structured match.
+    let err = provider(
+        "HTTP 500: {\"error\": {\"code\" : \"invalid_request_error\", \"message\":\"bad\"}}",
+    );
+    assert_eq!(classify_provider_error(&err), ProviderErrorClass::Client);
+}

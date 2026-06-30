@@ -20,6 +20,12 @@ pub struct ModelRecord {
     pub input: Vec<String>,
     pub context_window: u32,
     pub max_tokens: u32,
+    /// Whether `max_tokens` was explicitly declared for this model (JSON
+    /// `maxTokens`) rather than the synthesized default. Only an explicit cap is
+    /// a real output limit, so the #935 clamp (`max_tokens_for`) applies only
+    /// when this is true — a listed model that omits `maxTokens` must not be
+    /// silently clamped to the default.
+    pub max_tokens_explicit: bool,
     pub cost: ModelCost,
     pub reasoning: bool,
     /// How this provider authenticates. `ApiKey` uses the resolved `api_key`;
@@ -390,6 +396,7 @@ impl ModelRegistry {
                 }
                 if let Some(v) = model.max_tokens {
                     record.max_tokens = v;
+                    record.max_tokens_explicit = true;
                 }
                 if let Some(v) = model.reasoning {
                     record.reasoning = v;
@@ -421,11 +428,15 @@ impl ModelRegistry {
     /// The registry output cap for a `provider/id` qualified model string, if
     /// the model is known (#935). Used to clamp the effective per-request
     /// output tokens to `min(configured_max_tokens, model.max_tokens)`. Returns
-    /// `None` when the model is unknown or the id is not `provider/id`-shaped,
-    /// so callers fall back to the configured value (no clamp).
+    /// `None` when the model is unknown, the id is not `provider/id`-shaped, or
+    /// the model does not declare an explicit `maxTokens` (a synthesized default
+    /// is not a real output limit and must not clamp), so callers fall back to
+    /// the configured value (no clamp).
     pub fn max_tokens_for(&self, qualified: &str) -> Option<u32> {
         let (provider, id) = qualified.split_once('/')?;
-        self.find(provider, id).map(|m| m.max_tokens)
+        self.find(provider, id)
+            .filter(|m| m.max_tokens_explicit)
+            .map(|m| m.max_tokens)
     }
 
     /// Load the registry from `<base_dir>/models.json` (falling back to the
@@ -464,6 +475,7 @@ impl ModelRecord {
             input: vec!["text".to_string()],
             context_window: 128_000,
             max_tokens: 16_384,
+            max_tokens_explicit: false,
             cost: ModelCost::default(),
             reasoning: false,
             auth: AuthMode::ApiKey,

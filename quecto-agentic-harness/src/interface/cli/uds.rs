@@ -469,10 +469,10 @@ async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool
             return false;
         }
     };
-    ctx.agent.set_model(resolved_model.clone());
-    // #935: re-derive the per-model cap so a model switch re-clamps subsequent turns.
+    // #935: re-derive the per-model cap so a model switch re-clamps subsequent
+    // turns; set_model takes both atomically so model and cap cannot diverge.
     let cap = ModelRegistry::model_cap_from_base_dir(ctx.base_dir, &resolved_model);
-    ctx.agent.set_model_max_tokens(cap);
+    ctx.agent.set_model(resolved_model.clone(), cap);
     ctx.session.set_model(resolved_model);
     tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched");
     let ev = AgentEvent::ok(args.id.as_deref(), &args.type_name, None);

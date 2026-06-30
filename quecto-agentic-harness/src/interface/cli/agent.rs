@@ -717,6 +717,9 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
 mod agent_provider;
 pub use agent_provider::build_agent_provider;
 #[cfg(test)]
+#[path = "agent_935_clamp_tests.rs"]
+mod clamp_935_tests;
+#[cfg(test)]
 #[path = "agent_config_tests.rs"]
 mod config_tests;
 #[cfg(test)]
