@@ -515,27 +515,31 @@ impl App {
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
 
-        // Enforce width on every (body) line.
+        let full_width_box = |line: &str, c| {
+            line.contains(c) && crate::interface::utils::visible_width(line) == self.terminal.width
+        };
+        let is_full_width_workflow_box = |line: &str| {
+            full_width_box(line, '┌') || full_width_box(line, '└') || full_width_box(line, '│')
+        };
         for line in &mut lines {
-            if crate::interface::utils::visible_width(line) > width {
+            if crate::interface::utils::visible_width(line) > width
+                && !is_full_width_workflow_box(line)
+            {
                 *line = crate::interface::utils::truncate_to_width(line, width, None);
             }
         }
 
-        // Prefix the persistent left panel onto each row (#800). Panel cells are
-        // pre-padded to exactly `panel_width` visible columns, so concatenation
-        // yields full-width rows.
         if panel_visible {
             let panel = self.render_subagent_panel(panel_width, height, now);
-            // The divider is bright/colored on the focused pane and dim on the
-            // other, so it doubles as the focus indicator (#802). Panel focused
-            // → the panel side is "lit" (accent rule); else dim.
             let divider = if matches!(self.focus, Focus::Panel) {
                 theme::accent("│")
             } else {
                 theme::dim("│")
             };
             for (i, line) in lines.iter_mut().enumerate() {
+                if is_full_width_workflow_box(line) {
+                    continue;
+                }
                 let cell = panel
                     .get(i)
                     .cloned()
@@ -544,12 +548,8 @@ impl App {
             }
         }
 
-        // Store rendered lines for text selection extraction (#528), but only
-        // while a selection is (or was) active. The clean copy is consumed
-        // exclusively by mouse text-selection extraction, so idle/streaming
-        // frames must not deep-clone the whole screen buffer every tick (#757).
-        // Must happen BEFORE highlight injection to avoid leaking
-        // reverse-video escapes into the extraction buffer (#546 review).
+        // Store rendered lines for text selection extraction (#528), before
+        // highlight injection leaks reverse-video escapes (#546 review).
         if self.selection.is_some() {
             self.last_rendered_lines = lines.clone();
         } else {

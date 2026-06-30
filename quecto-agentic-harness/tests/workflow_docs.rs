@@ -30,7 +30,7 @@ fn workflow_guards(config: &Value) -> &[Value] {
 }
 
 fn assert_reference_steps(steps: &[Value]) {
-    assert_eq!(steps.len(), 17);
+    assert_eq!(steps.len(), 18);
     assert_eq!(steps.first().unwrap()["key"], "hooks");
     assert_eq!(
         steps.first().unwrap()["label"],
@@ -43,9 +43,9 @@ fn assert_reference_steps(steps: &[Value]) {
     // ends at `pre_merge` (report the PR, do NOT merge) then `cleanup`.
     assert!(steps.iter().all(|s| s["key"] != "merge"));
     assert!(steps.iter().all(|s| s["key"] != "pull"));
-    assert_eq!(steps[15]["key"], "pre_merge");
+    assert_eq!(steps[16]["key"], "pre_merge");
     assert_eq!(
-        steps[15]["label"],
+        steps[16]["label"],
         "Confirm the pre-push gate passed and report the PR (do NOT merge)"
     );
     assert_eq!(steps.last().unwrap()["key"], "cleanup");
@@ -92,8 +92,9 @@ fn readme_lists_full_17_step_reference_workflow() {
         "13 - Fix all valid review concerns",
         "14 - Push changes to remote",
         "15 - Reply to the reviewers comments on the PR and mark resolved (use graphql)",
-        "16 - Confirm the pre-push gate passed and report the PR (do NOT merge)",
-        "17 - Clean up sub agents",
+        "16 - Verify the PR meets every issue acceptance criterion",
+        "17 - Confirm the pre-push gate passed and report the PR (do NOT merge)",
+        "18 - Clean up sub agents",
     ] {
         assert!(
             readme.contains(expected),

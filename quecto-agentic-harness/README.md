@@ -672,8 +672,9 @@ Quecto development uses the repository-local Quecto workflow checklist:
 13 - Fix all valid review concerns
 14 - Push changes to remote
 15 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
-16 - Confirm the pre-push gate passed and report the PR (do NOT merge)
-17 - Clean up sub agents
+16 - Verify the PR meets every issue acceptance criterion
+17 - Confirm the pre-push gate passed and report the PR (do NOT merge)
+18 - Clean up sub agents
 
 ## Quality gates
 
