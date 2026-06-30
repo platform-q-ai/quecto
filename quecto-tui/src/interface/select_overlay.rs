@@ -32,11 +32,12 @@ fn build_select_list_overlay(
     terminal_width: usize,
     terminal_height: usize,
 ) -> (Vec<String>, usize) {
-    let mut content_lines = vec![theme::bold(title)];
-    content_lines.extend(selector.render(terminal_width));
-    content_lines.push(theme::dim(footer));
-    let render_fn = |_content_width: usize| content_lines.clone();
-    build_select_overlay(terminal_width, terminal_height, render_fn)
+    build_select_overlay(terminal_width, terminal_height, |content_width| {
+        let mut content_lines = vec![theme::bold(title)];
+        content_lines.extend(selector.render(content_width));
+        content_lines.push(theme::dim(footer));
+        content_lines
+    })
 }
 
 fn build_select_overlay(
@@ -112,7 +113,7 @@ pub fn build_rewind_selector_overlay(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interface::components::model_selector::ModelSelector;
+    use crate::interface::components::model_selector::{ModelEntry, ModelSelector};
     use crate::interface::components::select_list::{SelectItem, SelectList};
 
     fn sample_selector() -> SelectList {
@@ -190,8 +191,20 @@ mod tests {
 
     #[test]
     fn model_overlay_lines_span_full_width() {
-        let mut sel = ModelSelector::new(Some("anthropic-api/claude-fable-5"));
+        let mut sel = ModelSelector::with_models(
+            vec![ModelEntry {
+                id: "custom/model-a".to_string(),
+                provider: "Custom".to_string(),
+                auth: None,
+                is_current: false,
+            }],
+            None,
+        );
         let (lines, width) = build_model_selector_overlay(&mut sel, 100, 40);
+        assert_eq!(
+            width, SELECTOR_MAX_PANEL_WIDTH,
+            "panel should use the max width for a 100-column terminal"
+        );
         for (i, line) in lines.iter().enumerate() {
             assert_eq!(
                 crate::interface::utils::visible_width(line),
@@ -203,31 +216,59 @@ mod tests {
 
     #[test]
     fn model_overlay_uses_opaque_background() {
-        let mut sel = ModelSelector::new(Some("anthropic-api/claude-fable-5"));
-        let (lines, _) = build_model_selector_overlay(&mut sel, 100, 40);
-        assert!(
-            lines.iter().all(|line| line.contains(theme::BG_OVERLAY)),
-            "every model overlay line should use the opaque background"
+        let mut sel = ModelSelector::with_models(
+            vec![ModelEntry {
+                id: "custom/model-a".to_string(),
+                provider: "Custom".to_string(),
+                auth: None,
+                is_current: false,
+            }],
+            None,
         );
+        let (lines, width) = build_model_selector_overlay(&mut sel, 100, 40);
+        for (i, line) in lines.iter().enumerate() {
+            assert!(
+                line.contains(theme::BG_OVERLAY),
+                "line {i} should use the opaque background"
+            );
+            assert_eq!(
+                crate::interface::utils::visible_width(line),
+                width,
+                "line {i} has wrong width"
+            );
+        }
     }
 
     #[test]
     fn model_overlay_contains_selector_items() {
-        let mut sel = ModelSelector::new(None);
+        let mut sel = ModelSelector::with_models(
+            vec![ModelEntry {
+                id: "custom/model-a".to_string(),
+                provider: "Custom".to_string(),
+                auth: None,
+                is_current: false,
+            }],
+            None,
+        );
         let (lines, _) = build_model_selector_overlay(&mut sel, 100, 40);
         let joined = lines.join("\n");
         assert!(joined.contains("Select Model"), "should contain title");
-        assert!(joined.contains("claude-fable-5"), "should contain a model");
+        assert!(
+            joined.contains("custom/model-a"),
+            "should contain the custom model"
+        );
     }
 
     #[test]
     fn model_overlay_width_is_bounded() {
-        let mut sel = ModelSelector::new(None);
+        let mut sel = ModelSelector::with_models(Vec::new(), None);
         let (_, width) = build_model_selector_overlay(&mut sel, 200, 40);
         assert!(
             width <= SELECTOR_MAX_PANEL_WIDTH,
             "overlay width {width} should not exceed max {SELECTOR_MAX_PANEL_WIDTH}"
         );
+        let (_, width) = build_model_selector_overlay(&mut sel, 2, 40);
+        assert_eq!(width, 1, "panel width should clamp to 1 for tiny terminals");
     }
 
     // ── rewind selector overlay ─────────────────────────────────────

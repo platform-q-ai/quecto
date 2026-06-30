@@ -377,7 +377,13 @@ async fn model_selector_overlay_renders_with_theme_background() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.open_model_selector();
-    a.handle_list_models(Some(serde_json::json!({ "models": [] })));
+    a.handle_list_models(Some(serde_json::json!({
+        "models": [{
+            "id": "openai-api/gpt-5.5",
+            "provider": "OpenAI API",
+            "auth": null
+        }]
+    })));
     assert!(a.model_selector.is_some());
     let frame = a.compose_frame();
     let joined = frame.join("\n");
@@ -389,7 +395,11 @@ async fn model_selector_overlay_renders_with_theme_background() {
         joined.contains("Select Model"),
         "frame should contain the model selector title"
     );
-    // Every overlay line should span the same overlay width.
+    assert!(
+        joined.contains("gpt-5.5"),
+        "frame should contain a rendered model entry"
+    );
+    // The overlay region should be a contiguous block of same-width lines.
     let overlay_lines: Vec<&String> = frame
         .iter()
         .filter(|l| l.contains(theme::BG_OVERLAY))
