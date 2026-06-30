@@ -93,3 +93,4 @@ Feature: TUI Quecto-style tool output — unified entries, bg colors, tool-speci
     Given a completed bash tool with long output
     When rendered at width 40
     Then no line should exceed 40 visible characters
+

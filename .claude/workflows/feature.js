@@ -99,8 +99,16 @@ const DIMENSION_FOCUS = {
   'Conformance-to-AC': ` Re-read the issue's acceptance criteria for this task and check EACH is actually met by the diff — including documentation and protocol updates — independent of the separate conformance step. Flag any unmet criterion.`,
   'Test-quality': ' Focus on whether the tests are genuine — would they fail before the fix, not hollow.',
 }
+const prText = String(pr || '')
+const prNumberMatch = prText.match(/(?:#|pull\/)?(\d+)/)
+if (!prNumberMatch) {
+  throw new Error('reviewers MUST NOT be dispatched before a PR exists; commit/push/PR step must return a PR number')
+}
+const prNumber = prNumberMatch[1]
 const reviews = await parallel(DIMENSIONS.map(dim => () => agent(
-  `You are an independent ${dim} reviewer for this Quecto PR. PR/context: ${pr}\n\n` +
+  `You are an independent ${dim} reviewer for this Quecto PR. PR/context: #${prNumber}\n\n` +
+  `PRECONDITION: reviewers MUST NOT be dispatched before a PR exists; stop if this prompt does not include a PR number. ` +
+  `Use the PR number only. Explicitly forbid passing a raw diff: do NOT accept a pasted raw diff in the prompt; fetch it yourself. ` +
   `Run your OWN independent review on the single dimension '${dim}'.${DIMENSION_FOCUS[dim] || ''} Read the diff with ` +
   `gh pr diff <PR>. Be skeptical — report ONLY real issues. Do NOT modify code. ` +
   `Post findings as INLINE review comments on the PR via the GitHub GraphQL API (gh api graphql): ` +

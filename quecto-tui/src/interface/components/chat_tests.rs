@@ -702,3 +702,45 @@ fn streaming_append_only_extends_the_tail() {
     );
     assert!(after.contains("partial answer continued"));
 }
+
+#[test]
+fn tool_start_clears_interrupted_assistant_cursor_and_next_segment_streams() {
+    let mut chat = Chat::new();
+    chat.append_token("I will check");
+
+    let streaming = render_plain(&mut chat, 80);
+    assert!(
+        streaming.contains('▌'),
+        "active assistant streaming should show cursor: {streaming:?}"
+    );
+
+    chat.start_tool(
+        "tool-1".into(),
+        "bash".into(),
+        r#"{"command":"echo hi"}"#.into(),
+    );
+    let during_tool = render_plain(&mut chat, 80);
+    assert!(
+        during_tool.contains("$ echo hi"),
+        "tool should render: {during_tool}"
+    );
+    assert!(
+        !during_tool.contains("I will check▌"),
+        "tool start should finalize prior assistant text before rendering tool: {during_tool:?}"
+    );
+
+    chat.complete_tool("tool-1", "hi", false, Some(1));
+    chat.append_token("Done");
+    let next_streaming = render_plain(&mut chat, 80);
+    assert!(
+        next_streaming.contains("Done▌"),
+        "assistant text after tool result should stream with its own cursor: {next_streaming:?}"
+    );
+
+    chat.finalize_assistant();
+    let final_render = render_plain(&mut chat, 80);
+    assert!(
+        !final_render.contains('▌'),
+        "finalized assistant text should not leave a cursor: {final_render:?}"
+    );
+}

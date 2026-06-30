@@ -168,6 +168,28 @@ fn examples_config_reviewers_default_dimensions_include_full_set() {
         g.contains("SINGLE parallel batch"),
         "examples/config.json reviewers guidance should keep the SINGLE parallel batch invariant"
     );
+    assert_reviewer_pr_number_hardening(&g, "examples/config.json");
+}
+
+fn assert_reviewer_pr_number_hardening(g: &str, source: &str) {
+    let lower = g.to_lowercase();
+    assert!(
+        lower.contains("must not be dispatched before a pr exists")
+            || lower.contains("must not dispatch reviewers before a pr exists"),
+        "{source} reviewers guidance should block dispatch before a PR exists: {g}"
+    );
+    assert!(
+        lower.contains("forbid") && lower.contains("raw diff"),
+        "{source} reviewers guidance should explicitly forbid passing a raw diff: {g}"
+    );
+    assert!(
+        g.contains("PR number") && g.contains("gh pr diff <PR>"),
+        "{source} reviewers guidance should require PR number + gh pr diff <PR>: {g}"
+    );
+    assert!(
+        lower.contains("inline") && lower.contains("on the pr"),
+        "{source} reviewers guidance should require inline comments on the PR: {g}"
+    );
 }
 
 /// Extract the `reviewers` step's `guidance` value out of the embedded config in
@@ -216,4 +238,5 @@ fn workflow_guide_reviewers_default_dimensions_include_full_set() {
         g.contains("SINGLE parallel batch"),
         "docs/workflow.md reviewers guidance should keep the SINGLE parallel batch invariant"
     );
+    assert_reviewer_pr_number_hardening(g, "docs/workflow.md");
 }
