@@ -220,11 +220,27 @@ fn given_provider_error(
 ) {
     let event = AuditEvent::ProviderError {
         provider,
-        class,
+        class: class_from_str(&class),
         http_status: Some(http_status),
-        body,
+        body: body.into(),
     };
     world.audit_event = Some(event);
+}
+
+/// Map a wire class string to the typed [`ProviderErrorClass`]. The variant now
+/// stores the enum directly (#939 review), so the step builders translate once
+/// here instead of every reader re-parsing the string.
+fn class_from_str(class: &str) -> quecto::domain::provider_error::ProviderErrorClass {
+    use quecto::domain::provider_error::ProviderErrorClass;
+    match class {
+        "rate_limit" => ProviderErrorClass::RateLimit,
+        "auth" => ProviderErrorClass::Auth,
+        "server" => ProviderErrorClass::Server,
+        "client" => ProviderErrorClass::Client,
+        "network" => ProviderErrorClass::Network,
+        "cancelled" => ProviderErrorClass::Cancelled,
+        _ => ProviderErrorClass::Unknown,
+    }
 }
 
 #[given(
@@ -238,16 +254,7 @@ fn given_provider_error_redacting(
     body_len: usize,
     secret: String,
 ) {
-    use quecto::domain::provider_error::ProviderErrorClass;
-    let cls = match class.as_str() {
-        "rate_limit" => ProviderErrorClass::RateLimit,
-        "auth" => ProviderErrorClass::Auth,
-        "server" => ProviderErrorClass::Server,
-        "client" => ProviderErrorClass::Client,
-        "network" => ProviderErrorClass::Network,
-        "cancelled" => ProviderErrorClass::Cancelled,
-        _ => ProviderErrorClass::Unknown,
-    };
+    let cls = class_from_str(&class);
     let filler = "y".repeat(body_len.saturating_sub(secret.len()));
     let body = format!("{secret} {filler}");
     let event = AuditEvent::provider_error(provider, &cls, Some(http_status), &body);

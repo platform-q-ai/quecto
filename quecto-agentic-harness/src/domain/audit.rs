@@ -89,13 +89,17 @@ pub enum AuditEvent {
     ///
     /// Captures the *full*, untruncated error body so it survives past the
     /// TUI line-truncation that otherwise loses it (#937). Persisted once per
-    /// terminal failure (not per retry) and routed through `redact_secrets`
-    /// before it lands on disk.
+    /// terminal failure (not per retry). The `body` is a
+    /// [`crate::domain::redaction::Redacted`] newtype whose only text
+    /// constructors scrub secrets, so redaction-before-persistence is enforced
+    /// by the type system: building this variant directly cannot bypass it
+    /// (#939 review). `class` is the typed [`ProviderErrorClass`] so readers
+    /// match on the enum instead of re-parsing a string.
     ProviderError {
         provider: String,
-        class: String,
+        class: crate::domain::provider_error::ProviderErrorClass,
         http_status: Option<u16>,
-        body: String,
+        body: crate::domain::redaction::Redacted,
     },
 }
 
@@ -146,9 +150,9 @@ impl AuditEvent {
     ) -> Self {
         AuditEvent::ProviderError {
             provider: provider.into(),
-            class: class.as_str().to_string(),
+            class: class.clone(),
             http_status,
-            body: crate::domain::redaction::redact_secrets(body),
+            body: crate::domain::redaction::Redacted::new(body),
         }
     }
 }
@@ -486,9 +490,10 @@ mod tests {
 
     #[test]
     fn provider_error_round_trip() {
+        use crate::domain::provider_error::ProviderErrorClass;
         let event = AuditEvent::ProviderError {
             provider: "fireworks".into(),
-            class: "client".into(),
+            class: ProviderErrorClass::Client,
             http_status: Some(400),
             body: r#"{"error":{"type":"invalid_request_error","message":"bad"}}"#.into(),
         };
@@ -497,13 +502,16 @@ mod tests {
         assert_eq!(event, back);
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(val["event"], "provider_error");
+        // Typed class still serializes to the stable snake_case wire string.
+        assert_eq!(val["class"], "client");
     }
 
     #[test]
     fn provider_error_null_status_round_trip() {
+        use crate::domain::provider_error::ProviderErrorClass;
         let event = AuditEvent::ProviderError {
             provider: "anthropic".into(),
-            class: "network".into(),
+            class: ProviderErrorClass::Network,
             http_status: None,
             body: "connection reset".into(),
         };
@@ -515,22 +523,37 @@ mod tests {
     #[test]
     fn provider_error_keeps_full_untruncated_body() {
         use crate::domain::provider_error::ProviderErrorClass;
+        use crate::domain::redaction::redact_secrets;
         // A body far longer than any TUI/preview cap (200 chars) must survive
-        // intact in the persisted audit record (#937 AC1/AC5).
+        // intact in the persisted audit record (#937 AC1/AC5). A planted secret
+        // is woven into the long body so this test would also break if the
+        // constructor ever stopped redacting OR started truncating: we assert
+        // the persisted body equals the *redacted* original exactly (so any
+        // truncation cap wired into the path would change the length and fail),
+        // and that the secret is gone while the bulk filler survives.
+        let secret = "sk-abc123SECRETvalue0001";
         let long_message = "x".repeat(5000);
-        let body = format!(r#"{{"error":{{"message":"{long_message}"}}}}"#);
+        let body = format!(r#"{{"error":{{"key":"{secret}","message":"{long_message}"}}}}"#);
         let AuditEvent::ProviderError {
             body: persisted, ..
         } = AuditEvent::provider_error("fireworks", &ProviderErrorClass::Client, Some(400), &body)
         else {
             panic!("expected ProviderError");
         };
-        assert_eq!(persisted, body, "full body must be retained untruncated");
+        // Exact match against the redacted (not truncated) original: this is the
+        // identity that a truncation regression would break.
+        assert_eq!(
+            persisted.as_str(),
+            redact_secrets(&body),
+            "persisted body must be the full, redacted-but-untruncated original"
+        );
         assert!(
             persisted.len() > 4000,
             "body kept whole: {}",
             persisted.len()
         );
+        assert!(persisted.contains(&long_message), "filler survived whole");
+        assert!(!persisted.contains(secret), "planted secret was redacted");
     }
 
     #[test]

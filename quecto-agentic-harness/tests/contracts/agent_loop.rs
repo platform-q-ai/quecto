@@ -178,7 +178,11 @@ async fn terminal_provider_failure_persists_full_redacted_body_via_audit() {
     };
 
     assert_eq!(provider, "failprov", "provider name captured");
-    assert_eq!(class, "client", "classified error class captured");
+    assert_eq!(
+        *class,
+        quecto::domain::provider_error::ProviderErrorClass::Client,
+        "classified error class captured"
+    );
     assert_eq!(*http_status, Some(400), "http status captured when known");
     // Full untruncated body retained except for the redacted secret span.
     assert!(
@@ -198,6 +202,18 @@ async fn terminal_provider_failure_persists_full_redacted_body_via_audit() {
         persisted.contains("[REDACTED]"),
         "redaction marker must be present: {persisted}"
     );
+
+    // Security (#939 review): the secret must be absent from the serialized
+    // JSON of *every* emitted event, not just the ProviderError. An earlier
+    // version also emitted an unredacted generic Error carrying the same body,
+    // leaking the secret on the adjacent line; that event is now dropped.
+    for ev in events.iter() {
+        let json = serde_json::to_string(ev).unwrap();
+        assert!(
+            !json.contains(secret),
+            "no emitted event may contain the unredacted secret: {json}"
+        );
+    }
 }
 
 #[tokio::test]

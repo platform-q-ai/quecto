@@ -11,30 +11,29 @@ use crate::domain::provider_error::{
     ProviderErrorClass, classify_provider_error, provider_http_status,
 };
 
-/// Build the audit events that persist a terminal provider failure (#937).
+/// Build the audit event that persists a terminal provider failure (#937).
 ///
-/// Returns, in emit order, the rich [`AuditEvent::ProviderError`] carrying the
-/// *full*, untruncated error body (with provider name, classified class, and
-/// recovered HTTP status) plus the generic [`AuditEvent::Error`] for back-compat
-/// consumers. The ProviderError body is redacted by
-/// [`AuditEvent::provider_error`] before it is persisted, so a failed turn is
-/// retrievable from `~/.quecto/audit` instead of evaporating with the truncated
-/// TUI line. Emitted once per terminal failure (the caller invokes this only
-/// after retries/malformed re-prompts are exhausted), never per retry.
-pub(super) fn provider_failure_audit_events(provider: &str, err: &DomainError) -> [AuditEvent; 2] {
-    [
-        AuditEvent::provider_error(
-            provider,
-            &classify_provider_error(err),
-            provider_http_status(err),
-            &err.to_string(),
-        ),
-        AuditEvent::Error {
-            source: "provider".into(),
-            tool: None,
-            message: err.to_string(),
-        },
-    ]
+/// Returns the rich [`AuditEvent::ProviderError`] carrying the *full*,
+/// untruncated error body (with provider name, classified class, and recovered
+/// HTTP status). The body is redacted by [`AuditEvent::provider_error`] before
+/// it is persisted, so a failed turn is retrievable from `~/.quecto/audit`
+/// instead of evaporating with the truncated TUI line.
+///
+/// Only this single event is emitted. An earlier version also emitted a generic
+/// [`AuditEvent::Error`] carrying the same `err.to_string()` "for back-compat",
+/// but that copy was *not* redacted, so any secret echoed in the body landed on
+/// disk in cleartext on the Error line right next to the scrubbed ProviderError
+/// (PR #939 security review). No consumer required the duplicate, so it is
+/// dropped: the redacted ProviderError is the sole, complete record. Emitted
+/// once per terminal failure (the caller invokes this only after
+/// retries/malformed re-prompts are exhausted), never per retry.
+pub(super) fn provider_failure_audit_event(provider: &str, err: &DomainError) -> AuditEvent {
+    AuditEvent::provider_error(
+        provider,
+        &classify_provider_error(err),
+        provider_http_status(err),
+        &err.to_string(),
+    )
 }
 
 /// Append addressable "your request was malformed, please fix it" feedback so a

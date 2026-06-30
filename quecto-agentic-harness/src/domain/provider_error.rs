@@ -1,7 +1,12 @@
 use crate::domain::error::DomainError;
 
 /// Stable provider error classes used by application-layer retry decisions.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The `snake_case` serde rename matches [`ProviderErrorClass::as_str`], so the
+/// persisted audit wire format (`AuditEvent::ProviderError.class`) is unchanged
+/// while readers keep the typed enum instead of re-parsing a string.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProviderErrorClass {
     RateLimit,
     Auth,

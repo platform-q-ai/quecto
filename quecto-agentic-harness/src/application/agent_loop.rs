@@ -24,7 +24,7 @@ mod agent_loop_pruning;
 mod agent_loop_session;
 use agent_loop_errors::{
     append_malformed_feedback, enhance_provider_error, is_context_or_output_limit_error,
-    provider_failure_audit_events,
+    provider_failure_audit_event,
 };
 
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
@@ -631,11 +631,12 @@ impl AgentLoopImpl {
                         continue;
                     }
                     // Audit: persist the FULL provider error body (redacted)
-                    // plus a generic Error once per terminal failure, never per
-                    // retry, so it survives TUI line-truncation (#937).
-                    for ev in provider_failure_audit_events(self.provider.name(), &e) {
-                        self.audit(current_turn, ev).await;
-                    }
+                    // once per terminal failure, never per retry, so it survives
+                    // TUI line-truncation (#937). `provider` is the harness
+                    // adapter name (e.g. `openai`), not the upstream endpoint
+                    // (#939 review).
+                    let ev = provider_failure_audit_event(self.provider.name(), &e);
+                    self.audit(current_turn, ev).await;
                     self.notify(|| AgentProgressEvent::Done);
                     return Err(e);
                 }
