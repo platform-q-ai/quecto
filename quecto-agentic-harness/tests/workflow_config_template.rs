@@ -440,6 +440,14 @@ fn feature_js_dimensions_array_matches_full_default_set() {
         lower.contains("inline") && lower.contains("on the pr"),
         "feature.js reviewer prompt should require inline comments on the PR"
     );
+    assert!(
+        reviewer_block.contains("prNumberMatch") && reviewer_block.contains("prNumber"),
+        "feature.js should parse and validate the returned PR number before dispatching reviewers"
+    );
+    assert!(
+        reviewer_block.contains("PR/context: #${prNumber}"),
+        "feature.js should pass only the validated PR number to reviewer prompts"
+    );
 }
 
 #[test]
