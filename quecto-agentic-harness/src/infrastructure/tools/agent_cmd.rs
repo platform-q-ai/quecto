@@ -463,6 +463,9 @@ impl Tool for AgentCmdTool {
 }
 
 #[cfg(test)]
+#[path = "agent_cmd_await_exclusion_tests.rs"]
+mod await_exclusion_tests;
+#[cfg(test)]
 #[path = "agent_cmd_definition_tests.rs"]
 mod definition_tests;
 #[cfg(test)]

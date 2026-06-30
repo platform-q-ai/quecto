@@ -349,7 +349,7 @@ polling loops that burn LLM tokens.
 
 | Status | Reason | Description |
 |--------|--------|-------------|
-| `idle` | `completed` | Agent stayed idle for the full `idle_timeout` window |
+| `idle` | `idle` | Agent stayed idle for the full `idle_timeout` window (or immediately when `idle_timeout: 0`) |
 | `exited` | `exit_code_0` | Process exited cleanly |
 | `exited` | `exit_code_<N>` | Process exited with error code N |
 | `exited` | `signal_<N>` | Process killed by signal N |
@@ -357,6 +357,14 @@ polling loops that burn LLM tokens.
 | `error` | `agent_not_found` | Agent ID not in registry |
 | `error` | `connection_failed` | Socket exists but connection refused |
 | `error` | `another_await_active` | Another `await` is already waiting on this agent |
+
+> The `status`/`reason` fields above describe the await **lifecycle** (how the
+> wait ended). They are distinct from the typed **verdict** in `result.status`
+> (`completed` / `incomplete` / `failed` / `running`), which is what a parent
+> branches on. An `idle` lifecycle yields a `completed` verdict only when the
+> agent's workflow actually reached `complete`; otherwise the verdict is
+> `incomplete`. So a finished idle agent returns `reason: "idle"`, not
+> `reason: "completed"`.
 
 **Examples:**
 
@@ -372,8 +380,13 @@ polling loops that burn LLM tokens.
 
 - **Auto-continue safe:** The `idle_timeout` window correctly filters brief
   idle gaps between auto-continue workflow steps.
-- **One awaiter per agent:** A second `await` on the same agent returns
-  `"another_await_active"` immediately.
+- **One awaiter per agent:** Only one `await` can be *in flight* per agent at a
+  time. A second **concurrent** `await` — from another connection/caller or a
+  racing turn — returns `"another_await_active"` immediately. Note that multiple
+  `await`s issued as sibling tool calls within a single turn are executed
+  **sequentially** by the agent loop, so they do not overlap and each succeeds in
+  turn; you only see `"another_await_active"` when two awaiters genuinely race the
+  same agent.
 - **Interacts with abort/steer/kill:** `abort` and `steer` do not interrupt
   `await` — it continues waiting. `kill` causes `await` to return with
   `"exited"` status.
