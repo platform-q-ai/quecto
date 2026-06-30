@@ -58,8 +58,16 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
         return ProviderErrorClass::from_status(status);
     }
 
+    // A parenthesised `(NNN)` group is a weaker signal than an `http`/`status`
+    // prefix: it can match an unrelated number (e.g. an errno like `(110)` in
+    // "connection timed out (110)"). Only trust it when it maps to a *known*
+    // class; otherwise fall through to keyword classification so a genuine
+    // Network/Server error is not silently demoted to non-retryable `Unknown`.
     if let Some(status) = extract_parenthesized_status(&lowered) {
-        return ProviderErrorClass::from_status(status);
+        let class = ProviderErrorClass::from_status(status);
+        if class != ProviderErrorClass::Unknown {
+            return class;
+        }
     }
 
     classify_keyword_paths(&lowered)

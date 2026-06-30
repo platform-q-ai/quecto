@@ -84,6 +84,34 @@ fn classify_prefers_http_status_over_keywords() {
 }
 
 #[test]
+fn classify_parenthesized_status_known_code() {
+    // A parenthesised status that maps to a known class is trusted.
+    assert_eq!(
+        classify_provider_error(&provider("provider error (400): invalid_request")),
+        ProviderErrorClass::Client
+    );
+    assert_eq!(
+        classify_provider_error(&provider("provider error (503): service unavailable")),
+        ProviderErrorClass::Server
+    );
+}
+
+#[test]
+fn classify_parenthesized_unknown_code_falls_through_to_keywords() {
+    // An errno-like parenthesised number that is NOT a known HTTP status must
+    // not demote a genuine transient error to non-retryable `Unknown`; the
+    // keyword path must still classify it (#931 review).
+    assert_eq!(
+        classify_provider_error(&provider("connection timed out (110)")),
+        ProviderErrorClass::Network
+    );
+    assert_eq!(
+        classify_provider_error(&provider("read failed (104): connection reset")),
+        ProviderErrorClass::Network
+    );
+}
+
+#[test]
 fn classify_cancelled_variants() {
     assert_eq!(
         classify_provider_error(&provider("request cancelled by user")),

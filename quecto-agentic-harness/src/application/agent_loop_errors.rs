@@ -5,7 +5,31 @@
 //! and the remediation so the agent/parent can react sensibly.
 
 use crate::domain::error::DomainError;
+use crate::domain::message::{Message, Role};
 use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+
+/// Append addressable "your request was malformed, please fix it" feedback so a
+/// model-malformed request becomes a correctable next turn rather than a fatal
+/// error (#931 AC2).
+///
+/// The rejection happens before any assistant message is added this turn, so the
+/// trailing message is often already a user / tool-result. Appending a second
+/// consecutive `user` turn is itself rejected as a 400 by some providers
+/// (Anthropic), which would re-enter this branch and burn the retry budget
+/// without the model ever self-correcting. Merge into the trailing user message
+/// when there is one; otherwise push a fresh one.
+pub(super) fn append_malformed_feedback(messages: &mut Vec<Message>, err: &DomainError) {
+    let feedback = format!(
+        "Your previous request was rejected by the provider as malformed (not retryable): {err}\n\nPlease correct the request — for example fix any malformed tool call arguments or invalid fields — and try again.",
+    );
+    match messages.last_mut() {
+        Some(last) if last.role == Role::User => {
+            last.content.push_str("\n\n");
+            last.content.push_str(&feedback);
+        }
+        _ => messages.push(Message::user(feedback)),
+    }
+}
 
 pub(super) fn enhance_provider_error(err: DomainError) -> DomainError {
     let DomainError::Provider(message) = err else {
@@ -34,8 +58,8 @@ pub(super) fn enhance_provider_error(err: DomainError) -> DomainError {
 
 /// Class-specific remediation appended to a terminal provider error so the
 /// agent/parent gets an actionable message (e.g. "rate limited … try later")
-/// instead of a raw string. `Client` (4xx) is the request's own fault and is
-/// passed through without retry-later advice.
+/// instead of a raw string. `Auth` gets a re-authenticate hint (no retry-later);
+/// `Client` (4xx) is the request's own fault and is passed through unchanged.
 fn terminal_class_guidance(err: &DomainError) -> Option<&'static str> {
     match classify_provider_error(err) {
         ProviderErrorClass::RateLimit => Some(
@@ -47,8 +71,10 @@ fn terminal_class_guidance(err: &DomainError) -> Option<&'static str> {
         ProviderErrorClass::Network => Some(
             "Network: could not reach the provider (connection/timeout). It was retried and still failed — check connectivity and retry later.",
         ),
-        ProviderErrorClass::Auth
-        | ProviderErrorClass::Client
+        ProviderErrorClass::Auth => Some(
+            "Authentication: the provider rejected your credentials (not retryable). Check the API key or re-authenticate (`quecto auth login`), then retry.",
+        ),
+        ProviderErrorClass::Client
         | ProviderErrorClass::Cancelled
         | ProviderErrorClass::Unknown => None,
     }

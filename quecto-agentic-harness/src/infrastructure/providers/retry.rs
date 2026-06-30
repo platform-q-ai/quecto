@@ -6,7 +6,8 @@
 //! failures up to a bounded number of attempts before giving up. `Client`
 //! (4xx), `Auth` and `Cancelled` errors are passed straight through and never
 //! retried. When a `Retry-After` / `retry-after-ms` hint is present on a 429/529
-//! it is honoured for the backoff delay instead of the exponential default.
+//! it is honoured for the backoff delay instead of the exponential default
+//! (clamped to `max_backoff`, since the hint comes from an untrusted string).
 //!
 //! Only the non-streaming `chat()` path is retried: a stream cannot be replayed
 //! mid-flight, so `chat_stream` / `chat_stream_incremental` retry nothing here
@@ -120,7 +121,11 @@ impl RetryingProvider {
     fn backoff_delay(&self, attempt: u32, err: &DomainError) -> Duration {
         if let DomainError::Provider(msg) = err {
             if let Some(hint) = parse_retry_after(&msg.to_ascii_lowercase()) {
-                return hint;
+                // Clamp the provider-supplied hint to `max_backoff`. The value is
+                // parsed from an untrusted provider error string, so a hostile or
+                // buggy endpoint emitting e.g. `retry-after: 999999999` must not
+                // be able to block the turn in `sleep` past the bounded ceiling.
+                return hint.min(self.config.max_backoff);
             }
         }
         let exp = self
@@ -128,7 +133,11 @@ impl RetryingProvider {
             .base_backoff
             .saturating_mul(2u32.saturating_pow(attempt.saturating_sub(1)));
         let capped = exp.min(self.config.max_backoff);
-        capped.saturating_add(jitter(self.config.base_backoff))
+        // Apply the ceiling *after* jitter so a single delay never exceeds
+        // `max_backoff` (the documented bound).
+        capped
+            .saturating_add(jitter(self.config.base_backoff))
+            .min(self.config.max_backoff)
     }
 }
 

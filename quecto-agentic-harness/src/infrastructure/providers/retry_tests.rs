@@ -285,8 +285,16 @@ async fn test_honours_retry_after_seconds_hint() {
         1,
         "provider error (529): overloaded_error, retry-after: 7",
     ));
+    // A real `max_backoff` (well above the 7s hint) so the hint is honoured
+    // verbatim; `base_backoff` is zero so the exponential default is 0 and the
+    // 7s value can only come from the hint path.
+    let config = RetryConfig {
+        max_attempts: 4,
+        base_backoff: Duration::ZERO,
+        max_backoff: Duration::from_secs(30),
+    };
     let (sleeper, delays) = recording_sleeper();
-    let retrying = RetryingProvider::with_sleeper(inner, RetryConfig::no_delay(4), sleeper);
+    let retrying = RetryingProvider::with_sleeper(inner, config, sleeper);
 
     let result = retrying.chat(test_request()).await;
     assert!(result.is_ok());
@@ -294,6 +302,33 @@ async fn test_honours_retry_after_seconds_hint() {
         delays.lock().unwrap().clone(),
         vec![Duration::from_secs(7)],
         "a `Retry-After` seconds hint must be honoured"
+    );
+}
+
+#[tokio::test]
+async fn test_oversized_retry_after_hint_is_clamped_to_max_backoff() {
+    let count = Arc::new(AtomicU32::new(0));
+    // A hostile/buggy provider returns an enormous Retry-After. It must be
+    // clamped to max_backoff, never block for the untrusted duration.
+    let inner = Arc::new(CountingMockProvider::new(
+        count.clone(),
+        1,
+        "provider error (429): rate limit exceeded, retry-after: 999999999",
+    ));
+    let config = RetryConfig {
+        max_attempts: 4,
+        base_backoff: Duration::from_millis(500),
+        max_backoff: Duration::from_secs(30),
+    };
+    let (sleeper, delays) = recording_sleeper();
+    let retrying = RetryingProvider::with_sleeper(inner, config, sleeper);
+
+    let result = retrying.chat(test_request()).await;
+    assert!(result.is_ok());
+    assert_eq!(
+        delays.lock().unwrap().clone(),
+        vec![Duration::from_secs(30)],
+        "an oversized Retry-After hint must be clamped to max_backoff"
     );
 }
 

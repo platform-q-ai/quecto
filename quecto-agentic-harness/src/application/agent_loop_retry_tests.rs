@@ -2,14 +2,24 @@ use super::*;
 
 #[tokio::test]
 async fn retries_retryable_provider_failures_before_returning_success() {
+    // Non-streaming transient retry is owned by the `RetryingProvider`
+    // decorator (composed over the router in `build_agent_provider`); the agent
+    // loop no longer double-retries the non-streaming path. Compose the decorator
+    // here so this end-to-end test exercises the real production stack.
     let provider = Arc::new(MockProvider::new_results(vec![
         Err(DomainError::Provider(
             "HTTP 503 Service Unavailable".to_string(),
         )),
         Ok(text_response("recovered")),
     ]));
+    let retrying = Arc::new(
+        crate::infrastructure::providers::retry::RetryingProvider::new(
+            provider.clone(),
+            crate::infrastructure::providers::retry::RetryConfig::no_delay(4),
+        ),
+    );
     let agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider: provider.clone(),
+        provider: retrying,
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
         max_tokens: 1024,

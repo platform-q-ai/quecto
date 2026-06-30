@@ -18,57 +18,73 @@ fn enhanced(message: &str) -> String {
 
 #[test]
 fn test_enhance_rate_limit_error_adds_classified_guidance() {
-    let out = enhanced("provider error (429): rate limit exceeded");
+    let input = "provider error (429): rate limit exceeded";
+    let out = enhanced(input);
+    // Discriminating: the appended guidance — not the raw input — must add the
+    // class name and remediation. "throttled" never appears in the raw string.
+    assert!(
+        out.len() > input.len(),
+        "enhancement must append guidance: {out}"
+    );
     let lowered = out.to_ascii_lowercase();
     assert!(
-        lowered.contains("rate limit"),
-        "terminal error should name the rate-limit class: {out}"
+        lowered.contains("throttled"),
+        "appended guidance should name the rate-limit class: {out}"
     );
     assert!(
-        lowered.contains("retry") || lowered.contains("later") || lowered.contains("backoff"),
+        lowered.contains("retry") || lowered.contains("later") || lowered.contains("frequency"),
         "terminal rate-limit error should include actionable remediation: {out}"
     );
 }
 
 #[test]
 fn test_enhance_server_overload_error_adds_classified_guidance() {
-    let out = enhanced(
-        "HTTP 529 from Anthropic: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}",
+    let input =
+        "HTTP 529 from Anthropic: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}";
+    let out = enhanced(input);
+    assert!(
+        out.len() > input.len(),
+        "enhancement must append guidance: {out}"
     );
     let lowered = out.to_ascii_lowercase();
     assert!(
-        lowered.contains("overload") || lowered.contains("server"),
-        "terminal error should name the server/overload class: {out}"
+        lowered.contains("server/overload"),
+        "appended guidance should name the server/overload class: {out}"
     );
     assert!(
-        lowered.contains("retry") || lowered.contains("later"),
+        lowered.contains("retried") && lowered.contains("retry later"),
         "terminal server error should include actionable remediation: {out}"
     );
 }
 
 #[test]
 fn test_enhance_network_error_adds_classified_guidance() {
-    let out = enhanced("connection reset by peer");
+    let input = "connection reset by peer";
+    let out = enhanced(input);
+    assert!(
+        out.len() > input.len(),
+        "enhancement must append guidance: {out}"
+    );
     let lowered = out.to_ascii_lowercase();
     assert!(
-        lowered.contains("network") || lowered.contains("connection"),
-        "terminal error should name the network class: {out}"
+        lowered.contains("connectivity"),
+        "appended guidance should name the network remediation: {out}"
     );
     assert!(
-        lowered.contains("retry") || lowered.contains("connectivity") || lowered.contains("later"),
+        lowered.contains("retry") && lowered.contains("could not reach"),
         "terminal network error should include actionable remediation: {out}"
     );
 }
 
 #[test]
 fn test_enhance_client_error_is_passed_through_without_retry_advice() {
-    // A 4xx is the model's fault (e.g. malformed request); it should not be
-    // dressed up as a "retry later" transient error.
-    let out = enhanced("provider error (400): invalid_request_error");
-    let lowered = out.to_ascii_lowercase();
-    assert!(
-        !lowered.contains("retry later"),
-        "client 4xx should not advise retry-later: {out}"
+    // A 4xx is the model's fault (e.g. malformed request); it must be passed
+    // through verbatim — no class guidance, no "retry later" dressing.
+    let input = "provider error (400): invalid_request_error";
+    let out = enhanced(input);
+    assert_eq!(
+        out, input,
+        "client 4xx must be passed through unchanged (no enhancement): {out}"
     );
 }
 
@@ -130,6 +146,18 @@ async fn test_malformed_tool_call_api_rejection_is_addressable_not_fatal() {
          got {}",
         provider.request_count()
     );
+    // The malformed feedback must merge into the trailing user message rather
+    // than append a second consecutive `user` turn (which some providers reject
+    // as a 400, re-entering the branch forever).
+    let consecutive_user = messages.windows(2).any(|w| {
+        w[0].role == crate::domain::message::Role::User
+            && w[1].role == crate::domain::message::Role::User
+    });
+    assert!(
+        !consecutive_user,
+        "re-prompt must not create two consecutive user messages: {:?}",
+        messages.iter().map(|m| &m.role).collect::<Vec<_>>()
+    );
 }
 
 // =======================================================================
@@ -144,8 +172,10 @@ async fn test_malformed_tool_call_api_rejection_is_addressable_not_fatal() {
 #[tokio::test]
 async fn test_terminal_auth_error_fails_the_turn_with_classified_message() {
     // 401 is never retryable and never addressable — it must fail the turn.
+    // Raw text deliberately lacks the word "auth" so the assertion below is
+    // satisfied only by the appended Auth-class guidance, not the raw string.
     let responses = vec![Err(DomainError::Provider(
-        "provider error (401): unauthorized".to_string(),
+        "provider error (401): invalid credentials".to_string(),
     ))];
     let provider = Arc::new(MockProvider::new_results(responses));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -171,8 +201,8 @@ async fn test_terminal_auth_error_fails_the_turn_with_classified_message() {
     let err = result.expect_err("a terminal 401 must fail the turn, not be swallowed");
     let lowered = err.to_string().to_ascii_lowercase();
     assert!(
-        lowered.contains("auth"),
-        "terminal error should name the class: {err}"
+        lowered.contains("authentication") && lowered.contains("re-authenticate"),
+        "terminal error should carry classified Auth guidance: {err}"
     );
 }
 

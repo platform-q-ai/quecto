@@ -122,9 +122,11 @@ fn enhance_provider_error_does_not_double_append() {
 
 #[test]
 fn enhance_provider_error_passes_through_non_limit() {
-    let err = DomainError::Provider("auth failed".into());
+    // An Unknown-class provider error (no recognised status/keyword) carries no
+    // class guidance and must pass through verbatim.
+    let err = DomainError::Provider("something unexpected went wrong".into());
     match super::enhance_provider_error(err) {
-        DomainError::Provider(m) => assert_eq!(m, "auth failed"),
+        DomainError::Provider(m) => assert_eq!(m, "something unexpected went wrong"),
         other => panic!("expected Provider, got {other:?}"),
     }
 }
