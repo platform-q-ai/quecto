@@ -414,6 +414,48 @@ async fn model_selector_overlay_renders_with_theme_background() {
     }
 }
 
+/// The resume / rewind / model-selector overlays must follow the Quecto theme
+/// palette, not render a hardcoded black background. All three share
+/// `theme::apply_overlay_bg` / `BG_OVERLAY`, so this asserts the shared overlay
+/// background is themed (exercised via the model selector through the real
+/// `compose_frame` render path).
+#[tokio::test]
+async fn overlays_follow_theme_background_not_black() {
+    use crate::interface::theme;
+    const BLACK_BG: &str = "\x1b[48;2;0;0;0m";
+
+    // The shared overlay background must not be hardcoded black.
+    assert_ne!(
+        theme::BG_OVERLAY,
+        BLACK_BG,
+        "overlay background must follow the Quecto theme palette, not hardcoded black"
+    );
+
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.open_model_selector();
+    a.handle_list_models(Some(serde_json::json!({
+        "models": [{ "id": "openai-api/gpt-5.5", "provider": "OpenAI API", "auth": null }]
+    })));
+    assert!(a.model_selector.is_some());
+
+    let joined = a.compose_frame().join("\n");
+    assert!(
+        joined.contains(theme::BG_OVERLAY),
+        "overlay must paint the theme background"
+    );
+    assert!(
+        !joined.contains(BLACK_BG),
+        "overlay must not render a hardcoded black background — it should follow the theme"
+    );
+    // (b): the modal is delineated by a themed box border, not an opaque fill —
+    // the bg is the terminal default so it adapts to the active (light/dark) theme.
+    assert!(
+        joined.contains('┌') && joined.contains('│') && joined.contains('└'),
+        "overlay must be rendered as a themed box border"
+    );
+}
+
 // ── app_methods: notifications, reset, selection ─────────────────────
 
 #[tokio::test]
