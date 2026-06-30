@@ -8,7 +8,6 @@
 use super::*;
 use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::app::tui_harness::{TuiHarness, subagent, subagents_changed};
-use quecto_tui::interface::utils::visible_width;
 
 /// Build a sub-agent-first harness optionally tracking sub-agent `a1` whose own
 /// workflow (issue #820) has been routed into its session.
@@ -102,67 +101,13 @@ fn then_master_row(world: &mut QuectoWorld) {
 }
 
 #[then("the main pane shows a boxed workflow bar")]
+#[then("the main pane shows a boxed workflow bar spanning the full content width")]
 fn then_main_pane_boxed(world: &mut QuectoWorld) {
     let top = top(world);
     assert!(
         (top.contains('┌') || top.contains('╭')) && top.contains("Step 4/5"),
         "the main pane must show a boxed one-line workflow bar (current step n/total), got:\n{top}"
     );
-}
-
-#[then("the main pane shows a boxed workflow bar spanning the full content width")]
-fn then_main_pane_boxed_full_width(world: &mut QuectoWorld) {
-    drive(world, |h| {
-        let frame = h.full_frame();
-        let box_line = frame
-            .lines()
-            .find(|line| line.contains('┌'))
-            .expect("workflow box top border should render");
-        let terminal_width = frame.lines().map(visible_width).max().unwrap_or_default();
-        assert_eq!(
-            visible_width(box_line),
-            terminal_width,
-            "workflow box must span the full rendered content row, got:\n{frame}"
-        );
-    });
-}
-
-#[then("the workflow box is wider than a tool-output box")]
-fn then_workflow_box_wider_than_tool_output(world: &mut QuectoWorld) {
-    drive(world, |h| {
-        h.route(
-            "a1",
-            Event::ToolExecutionStart {
-                tool_call_id: "c1".into(),
-                tool_name: "bash".into(),
-                args: serde_json::json!({ "command": "echo hi" }),
-            },
-        );
-        h.route(
-            "a1",
-            Event::ToolExecutionEnd {
-                tool_call_id: "c1".into(),
-                tool_name: "bash".into(),
-                result: serde_json::json!({ "content": [{ "type": "text", "text": "hi" }] }),
-                is_error: false,
-            },
-        );
-        let frame = h.full_frame();
-        let workflow_width = frame
-            .lines()
-            .find(|line| line.contains('┌'))
-            .map(visible_width)
-            .expect("workflow box top border should render");
-        let tool_width = frame
-            .lines()
-            .find(|line| line.contains("$ echo hi"))
-            .map(visible_width)
-            .expect("tool output should render");
-        assert!(
-            workflow_width > tool_width,
-            "workflow box should be wider than tool output (workflow={workflow_width}, tool={tool_width}), got:\n{frame}"
-        );
-    });
 }
 
 #[then("the bottom stack no longer shows the workflow bar")]

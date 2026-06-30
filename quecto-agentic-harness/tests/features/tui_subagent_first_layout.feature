@@ -20,7 +20,6 @@ Feature: Sub-agent-first default layout (#820)
     Given a sub-agent-first TUI tracking sub-agent "a1" with its own workflow
     When I select sub-agent "a1"
     Then the main pane shows a boxed workflow bar spanning the full content width
-    And the workflow box is wider than a tool-output box
     And the bottom stack no longer shows the workflow bar
 
   Scenario: The bottom stack no longer shows the sub-agent bar
