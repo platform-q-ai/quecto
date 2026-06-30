@@ -34,6 +34,35 @@ pub fn truncate_error_body(mut body: String) -> String {
     body
 }
 
+/// Extract a `Retry-After` / `retry-after-ms` hint from HTTP response headers
+/// and render it as a suffix to append to the error string, so the retry
+/// decorator's `parse_retry_after` honours it on *real* provider responses
+/// (#931). Without this the hint only ever existed in the JSON body of some
+/// providers (often not at all), so the decorator always fell back to
+/// exponential backoff. Returns an empty string when neither header is present.
+///
+/// Pass `response.headers()` *before* the response body is consumed (`.text()`
+/// takes the response by value).
+pub fn retry_after_suffix(headers: &reqwest::header::HeaderMap) -> String {
+    if let Some(ms) = headers
+        .get("retry-after-ms")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return format!(" retry-after-ms: {ms}");
+    }
+    if let Some(secs) = headers
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return format!(" retry-after: {secs}");
+    }
+    String::new()
+}
+
 use crate::domain::provider::StreamEvent;
 
 /// Outcome of processing a single SSE line.
@@ -148,6 +177,35 @@ mod tests {
     #[test]
     fn max_error_body_bytes_is_4096() {
         assert_eq!(MAX_ERROR_BODY_BYTES, 4096);
+    }
+
+    fn header_map(headers: &[(&str, &str)]) -> reqwest::header::HeaderMap {
+        let mut map = reqwest::header::HeaderMap::new();
+        for (k, v) in headers {
+            map.insert(
+                reqwest::header::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                reqwest::header::HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        map
+    }
+
+    #[test]
+    fn retry_after_suffix_prefers_ms_header() {
+        let h = header_map(&[("retry-after", "5"), ("retry-after-ms", "1234")]);
+        assert_eq!(retry_after_suffix(&h), " retry-after-ms: 1234");
+    }
+
+    #[test]
+    fn retry_after_suffix_falls_back_to_seconds() {
+        let h = header_map(&[("retry-after", "7")]);
+        assert_eq!(retry_after_suffix(&h), " retry-after: 7");
+    }
+
+    #[test]
+    fn retry_after_suffix_empty_when_absent() {
+        let h = header_map(&[]);
+        assert_eq!(retry_after_suffix(&h), "");
     }
 
     #[test]

@@ -479,34 +479,8 @@ async fn test_await_timeout_when_running() {
     assert!(parsed["reason"].is_null());
 }
 
-#[tokio::test]
-async fn test_await_duplicate_returns_error() {
-    use super::super::subagent_registry::SubagentStatus;
-    let registry = new_registry();
-    let dir = tempfile::tempdir().unwrap();
-    let sock_path = dir.path().join("test.sock");
-
-    let _listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
-
-    let mut entry = SubagentEntry::new(sock_path, 0);
-    entry.status = SubagentStatus::Running;
-    registry.lock().unwrap().insert("w1".to_string(), entry);
-
-    let active_awaits = new_active_awaits();
-    // Pre-register an active await.
-    active_awaits.lock().unwrap().insert("w1".to_string());
-
-    let tool = AgentCmdTool::with_active_awaits(registry, active_awaits);
-    let result = tool
-        .execute(r#"{"agent_id":"w1","command":"await","timeout":5}"#)
-        .await
-        .unwrap();
-    assert!(!result.is_error);
-    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    assert_eq!(parsed["status"], "error");
-    assert_eq!(parsed["reason"], "another_await_active");
-    assert_eq!(parsed["elapsed_ms"], 0);
-}
+// Awaiter mutual-exclusion tests live in `agent_cmd_await_exclusion_tests.rs`
+// (kept separate to respect the per-file line cap).
 
 #[tokio::test]
 async fn test_await_stale_socket_returns_connection_failed() {

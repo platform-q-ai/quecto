@@ -289,10 +289,13 @@ impl AnthropicProvider {
 
         let status = response.status().as_u16();
         if status != 200 {
+            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
+                response.headers(),
+            );
             let text = response.text().await.unwrap_or_default();
             return Err(DomainError::Provider(format!(
-                "HTTP {} from Anthropic: {}",
-                status, text
+                "HTTP {} from Anthropic: {}{}",
+                status, text, retry_after
             )));
         }
 
@@ -367,13 +370,16 @@ impl AnthropicProvider {
 
         let status = response.status().as_u16();
         if status != 200 {
+            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
+                response.headers(),
+            );
             let text = crate::infrastructure::providers::sse_common::truncate_error_body(
                 response.text().await.unwrap_or_default(),
             );
             let _ = tx
                 .send(StreamEvent::Error(format!(
-                    "HTTP {} from Anthropic: {}",
-                    status, text
+                    "HTTP {} from Anthropic: {}{}",
+                    status, text, retry_after
                 )))
                 .await;
             return;

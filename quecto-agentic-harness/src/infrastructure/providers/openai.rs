@@ -217,10 +217,11 @@ impl OpenAiProvider {
 
         let status = response.status().as_u16();
         if status != 200 {
+            let retry_after = super::sse_common::retry_after_suffix(response.headers());
             let text = response.text().await.unwrap_or_default();
             return Err(DomainError::Provider(format!(
-                "HTTP {} from OpenAI: {}",
-                status, text
+                "HTTP {} from OpenAI: {}{}",
+                status, text, retry_after
             )));
         }
 
@@ -260,11 +261,12 @@ impl OpenAiProvider {
         };
         let status = response.status().as_u16();
         if status != 200 {
+            let retry_after = super::sse_common::retry_after_suffix(response.headers());
             let text =
                 super::sse_common::truncate_error_body(response.text().await.unwrap_or_default());
             let _ = tx
                 .send(StreamEvent::Error(format!(
-                    "HTTP {status} from OpenAI: {text}"
+                    "HTTP {status} from OpenAI: {text}{retry_after}"
                 )))
                 .await;
             return;
@@ -307,6 +309,7 @@ impl LlmProvider for OpenAiProvider {
                 .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
 
             let status = response.status().as_u16();
+            let retry_after = super::sse_common::retry_after_suffix(response.headers());
             let response_text = response
                 .text()
                 .await
@@ -314,8 +317,8 @@ impl LlmProvider for OpenAiProvider {
 
             if status != 200 {
                 return Err(DomainError::Provider(format!(
-                    "HTTP {} from OpenAI: {}",
-                    status, response_text
+                    "HTTP {} from OpenAI: {}{}",
+                    status, response_text, retry_after
                 )));
             }
 

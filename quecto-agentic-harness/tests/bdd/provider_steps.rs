@@ -183,6 +183,152 @@ fn when_send_through_router_with_model(world: &mut QuectoWorld, model: String) {
     }
 }
 
+// ===========================================================================
+// #931: Retry decorator (RetryingProvider) steps
+// ===========================================================================
+
+/// Counting mock provider for retry-decorator BDD scenarios: fails the first
+/// `fail_until` calls with a configurable error, then succeeds. Shares an
+/// atomic counter so the scenario can assert the exact number of attempts.
+#[derive(Debug)]
+struct BddCountingProvider {
+    call_count: Arc<std::sync::atomic::AtomicU32>,
+    fail_until: u32,
+    error_message: String,
+}
+
+impl LlmProvider for BddCountingProvider {
+    fn name(&self) -> &str {
+        "bdd-counting"
+    }
+
+    fn chat(
+        &self,
+        _request: quecto::domain::provider::ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        use std::sync::atomic::Ordering;
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        let fail = n < self.fail_until;
+        let msg = self.error_message.clone();
+        Box::pin(async move {
+            if fail {
+                Err(DomainError::Provider(msg))
+            } else {
+                Ok(LlmResponse {
+                    content: Some("retry-success".to_string()),
+                    tool_calls: vec![],
+                    usage: None,
+                    stop_reason: None,
+                    thinking_blocks: vec![],
+                })
+            }
+        })
+    }
+}
+
+#[given(expr = "a retrying provider that fails {int} time(s) with {string} then succeeds")]
+fn given_retrying_provider_fails_n(world: &mut QuectoWorld, n: u32, message: String) {
+    let count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    world.retry_call_count = Some(count.clone());
+    world.retry_inner = Some(Arc::new(BddCountingProvider {
+        call_count: count,
+        fail_until: n,
+        error_message: message,
+    }));
+}
+
+#[given(expr = "a retrying provider that always fails with {string}")]
+fn given_retrying_provider_always_fails(world: &mut QuectoWorld, message: String) {
+    let count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    world.retry_call_count = Some(count.clone());
+    world.retry_inner = Some(Arc::new(BddCountingProvider {
+        call_count: count,
+        fail_until: u32::MAX,
+        error_message: message,
+    }));
+}
+
+#[given(expr = "the retry decorator allows up to {int} attempts")]
+fn given_retry_max_attempts(world: &mut QuectoWorld, attempts: u32) {
+    world.retry_max_attempts = Some(attempts);
+}
+
+#[when("I send a chat request through the retrying provider")]
+fn when_send_through_retrying_provider(world: &mut QuectoWorld) {
+    use quecto::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
+    let inner = world.retry_inner.clone().expect("no retry inner provider");
+    let attempts = world.retry_max_attempts.unwrap_or(4);
+    let provider = RetryingProvider::new(inner, RetryConfig::no_delay(attempts));
+
+    let messages = vec![Message::user("test")];
+    let req = quecto::domain::provider::ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: "test-model",
+        max_tokens: 1024,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let outcome = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(provider.chat(req));
+    world.retry_succeeded = Some(outcome.is_ok());
+}
+
+fn retry_inner_call_count(world: &QuectoWorld) -> u32 {
+    use std::sync::atomic::Ordering;
+    world
+        .retry_call_count
+        .as_ref()
+        .expect("no retry call counter")
+        .load(Ordering::SeqCst)
+}
+
+#[then("the request eventually succeeds despite the transient failures")]
+fn then_retry_recovers(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.retry_succeeded,
+        Some(true),
+        "expected the request to recover and succeed"
+    );
+    assert!(
+        retry_inner_call_count(world) > 1,
+        "recovery implies the transient failure was retried (>1 attempt)"
+    );
+}
+
+#[then("the request fails after retries are exhausted")]
+fn then_retry_exhausted(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.retry_succeeded,
+        Some(false),
+        "expected the request to fail after exhausting retries"
+    );
+    assert!(
+        retry_inner_call_count(world) > 1,
+        "a retryable error should have been retried before giving up (>1 attempt)"
+    );
+}
+
+#[then("the request fails without being retried")]
+fn then_fails_without_retry(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.retry_succeeded,
+        Some(false),
+        "expected the request to fail"
+    );
+    assert_eq!(
+        retry_inner_call_count(world),
+        1,
+        "a non-retryable error must not be retried — exactly one attempt"
+    );
+}
+
 #[then("the request should fail with a provider error")]
 fn then_request_fails_with_provider_error(world: &mut QuectoWorld) {
     assert_eq!(

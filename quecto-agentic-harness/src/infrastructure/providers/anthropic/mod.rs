@@ -501,6 +501,9 @@ impl LlmProvider for AnthropicProvider {
                 .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
 
             let status = response.status().as_u16();
+            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
+                response.headers(),
+            );
             let response_text = response
                 .text()
                 .await
@@ -508,8 +511,8 @@ impl LlmProvider for AnthropicProvider {
 
             if status != 200 {
                 return Err(DomainError::Provider(format!(
-                    "HTTP {} from Anthropic: {}",
-                    status, response_text
+                    "HTTP {} from Anthropic: {}{}",
+                    status, response_text, retry_after
                 )));
             }
 
