@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use crate::interface::component::Component;
+use crate::interface::components::model_selector::ModelSelector;
 use crate::interface::components::select_list::SelectList;
 use crate::interface::theme;
 
@@ -31,6 +32,19 @@ fn build_select_list_overlay(
     terminal_width: usize,
     terminal_height: usize,
 ) -> (Vec<String>, usize) {
+    build_select_overlay(terminal_width, terminal_height, |content_width| {
+        let mut content_lines = vec![theme::bold(title)];
+        content_lines.extend(selector.render(content_width));
+        content_lines.push(theme::dim(footer));
+        content_lines
+    })
+}
+
+fn build_select_overlay(
+    terminal_width: usize,
+    terminal_height: usize,
+    render_content: impl FnOnce(usize) -> Vec<String>,
+) -> (Vec<String>, usize) {
     let panel_width = terminal_width
         .saturating_sub(4)
         .clamp(1, SELECTOR_MAX_PANEL_WIDTH);
@@ -38,10 +52,7 @@ fn build_select_list_overlay(
     let content_width = panel_width.saturating_sub(border_width * 2).max(1);
     let side_padding = " ".repeat(border_width);
 
-    let mut content_lines = vec![theme::bold(title)];
-    content_lines.extend(selector.render(content_width));
-    content_lines.push(theme::dim(footer));
-
+    let content_lines = render_content(content_width);
     let max_height = terminal_height.saturating_sub(4).max(1);
     let vertical_border = border_width.min(max_height.saturating_sub(1) / 2);
     let blank = theme::apply_overlay_bg("", panel_width);
@@ -75,6 +86,16 @@ pub fn build_resume_selector_overlay(
     )
 }
 
+pub fn build_model_selector_overlay(
+    selector: &mut ModelSelector,
+    terminal_width: usize,
+    terminal_height: usize,
+) -> (Vec<String>, usize) {
+    build_select_overlay(terminal_width, terminal_height, |content_width| {
+        selector.render(content_width)
+    })
+}
+
 pub fn build_rewind_selector_overlay(
     selector: &mut SelectList,
     terminal_width: usize,
@@ -92,6 +113,7 @@ pub fn build_rewind_selector_overlay(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interface::components::model_selector::{ModelEntry, ModelSelector};
     use crate::interface::components::select_list::{SelectItem, SelectList};
 
     fn sample_selector() -> SelectList {
@@ -163,6 +185,90 @@ mod tests {
             lines.len() <= 6,
             "overlay should be clamped to terminal_height - 4 = 6"
         );
+    }
+
+    // ── model selector overlay ────────────────────────────────────
+
+    #[test]
+    fn model_overlay_lines_span_full_width() {
+        let mut sel = ModelSelector::with_models(
+            vec![ModelEntry {
+                id: "custom/model-a".to_string(),
+                provider: "Custom".to_string(),
+                auth: None,
+                is_current: false,
+            }],
+            None,
+        );
+        let (lines, width) = build_model_selector_overlay(&mut sel, 100, 40);
+        assert_eq!(
+            width, SELECTOR_MAX_PANEL_WIDTH,
+            "panel should use the max width for a 100-column terminal"
+        );
+        for (i, line) in lines.iter().enumerate() {
+            assert_eq!(
+                crate::interface::utils::visible_width(line),
+                width,
+                "line {i} has wrong width"
+            );
+        }
+    }
+
+    #[test]
+    fn model_overlay_uses_opaque_background() {
+        let mut sel = ModelSelector::with_models(
+            vec![ModelEntry {
+                id: "custom/model-a".to_string(),
+                provider: "Custom".to_string(),
+                auth: None,
+                is_current: false,
+            }],
+            None,
+        );
+        let (lines, width) = build_model_selector_overlay(&mut sel, 100, 40);
+        for (i, line) in lines.iter().enumerate() {
+            assert!(
+                line.contains(theme::BG_OVERLAY),
+                "line {i} should use the opaque background"
+            );
+            assert_eq!(
+                crate::interface::utils::visible_width(line),
+                width,
+                "line {i} has wrong width"
+            );
+        }
+    }
+
+    #[test]
+    fn model_overlay_contains_selector_items() {
+        let mut sel = ModelSelector::with_models(
+            vec![ModelEntry {
+                id: "custom/model-a".to_string(),
+                provider: "Custom".to_string(),
+                auth: None,
+                is_current: false,
+            }],
+            None,
+        );
+        let (lines, _) = build_model_selector_overlay(&mut sel, 100, 40);
+        let joined = lines.join("\n");
+        assert!(joined.contains("Select Model"), "should contain title");
+        assert!(
+            joined.contains("custom/model-a"),
+            "should contain the custom model"
+        );
+    }
+
+    #[test]
+    fn model_overlay_width_is_bounded() {
+        let mut sel = ModelSelector::with_models(Vec::new(), None);
+        let (_, width) = build_model_selector_overlay(&mut sel, 200, 40);
+        assert!(
+            width <= SELECTOR_MAX_PANEL_WIDTH,
+            "overlay width {width} should not exceed max {SELECTOR_MAX_PANEL_WIDTH}"
+        );
+        let (_, width) = build_model_selector_overlay(&mut sel, 2, 40);
+        assert_eq!(width, 1, "panel width should clamp to 1 for tiny terminals");
     }
 
     // ── rewind selector overlay ─────────────────────────────────────
