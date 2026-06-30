@@ -10,9 +10,7 @@ use crate::interface::theme;
 /// Time window for idle double-Escape to open the rewind selector.
 pub const DOUBLE_ESC_WINDOW: Duration = Duration::from_millis(750);
 
-/// Width of the opaque padding around selector content.
-const SELECTOR_BORDER_WIDTH: usize = 6;
-/// Maximum width of selector modal, including opaque padding.
+/// Maximum width of the selector modal, including its box border.
 const SELECTOR_MAX_PANEL_WIDTH: usize = 88;
 
 fn pad_ansi_to_width(text: &str, width: usize) -> String {
@@ -48,25 +46,47 @@ fn build_select_overlay(
     let panel_width = terminal_width
         .saturating_sub(4)
         .clamp(1, SELECTOR_MAX_PANEL_WIDTH);
-    let border_width = SELECTOR_BORDER_WIDTH.min(panel_width.saturating_sub(20) / 2);
-    let content_width = panel_width.saturating_sub(border_width * 2).max(1);
-    let side_padding = " ".repeat(border_width);
+    // A box border ("│ … │") needs the two border columns plus a space of
+    // padding on each side; narrower than that, fall back to plain padded rows.
+    let bordered = panel_width >= 6;
+    let content_width = if bordered {
+        panel_width - 4
+    } else {
+        panel_width
+    }
+    .max(1);
 
     let content_lines = render_content(content_width);
     let max_height = terminal_height.saturating_sub(4).max(1);
-    let vertical_border = border_width.min(max_height.saturating_sub(1) / 2);
-    let blank = theme::apply_overlay_bg("", panel_width);
 
+    // Every row runs through `apply_overlay_bg`, which sets the terminal's
+    // DEFAULT background — so the modal follows the active theme like the rest of
+    // the TUI. A box border (default foreground) gives it structure without a
+    // hardcoded opaque fill.
     let mut overlay_lines = Vec::new();
-    overlay_lines.extend(std::iter::repeat_n(blank.clone(), vertical_border));
-    for line in content_lines {
-        let padded = pad_ansi_to_width(&line, content_width);
+    if bordered {
+        let horizontal = "─".repeat(panel_width - 2);
         overlay_lines.push(theme::apply_overlay_bg(
-            &format!("{side_padding}{padded}{side_padding}"),
+            &format!("┌{horizontal}┐"),
             panel_width,
         ));
+        for line in content_lines {
+            let padded = pad_ansi_to_width(&line, content_width);
+            overlay_lines.push(theme::apply_overlay_bg(
+                &format!("│ {padded} │"),
+                panel_width,
+            ));
+        }
+        overlay_lines.push(theme::apply_overlay_bg(
+            &format!("└{horizontal}┘"),
+            panel_width,
+        ));
+    } else {
+        for line in content_lines {
+            let padded = pad_ansi_to_width(&line, content_width);
+            overlay_lines.push(theme::apply_overlay_bg(&padded, panel_width));
+        }
     }
-    overlay_lines.extend(std::iter::repeat_n(blank, vertical_border));
     overlay_lines.truncate(max_height);
 
     (overlay_lines, panel_width)

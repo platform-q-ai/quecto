@@ -80,7 +80,7 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     And the UDS protocol should support resuming a session
 
   Scenario: TUI resume selector is readable above chat history
-    Then the quecto-tui resume selector should render with an opaque border
+    Then the quecto-tui resume selector should render with a themed box border
 
   Scenario: TUI does not render a separate workflow header bar
     Then quecto-tui should not render a separate workflow header bar
