@@ -515,11 +515,9 @@ impl App {
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
 
-        let full_width_box = |line: &str, c| {
-            line.contains(c) && crate::interface::utils::visible_width(line) == self.terminal.width
-        };
         let is_full_width_workflow_box = |line: &str| {
-            full_width_box(line, '┌') || full_width_box(line, '└') || full_width_box(line, '│')
+            crate::interface::utils::visible_width(line) == self.terminal.width
+                && (line.contains('┌') || line.contains('└') || line.contains('│'))
         };
         for line in &mut lines {
             if crate::interface::utils::visible_width(line) > width
