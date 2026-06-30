@@ -85,6 +85,22 @@ pub enum AuditEvent {
         tool: Option<String>,
         message: String,
     },
+    /// A provider call that ultimately failed (after any retries) on a turn.
+    ///
+    /// Captures the *full*, untruncated error body so it survives past the
+    /// TUI line-truncation that otherwise loses it (#937). Persisted once per
+    /// terminal failure (not per retry). The `body` is a
+    /// [`crate::domain::redaction::Redacted`] newtype whose only text
+    /// constructors scrub secrets, so redaction-before-persistence is enforced
+    /// by the type system: building this variant directly cannot bypass it
+    /// (#939 review). `class` is the typed [`ProviderErrorClass`] so readers
+    /// match on the enum instead of re-parsing a string.
+    ProviderError {
+        provider: String,
+        class: crate::domain::provider_error::ProviderErrorClass,
+        http_status: Option<u16>,
+        body: crate::domain::redaction::Redacted,
+    },
 }
 
 /// Envelope wrapper for a single audit log line.
@@ -115,6 +131,30 @@ pub trait AuditSink: Send + Sync {
                 + '_,
         >,
     >;
+}
+
+impl AuditEvent {
+    /// Build a [`AuditEvent::ProviderError`] carrying the full, untruncated
+    /// provider error body, with secrets scrubbed before persistence (#937).
+    ///
+    /// The `body` is the complete error string built by the provider client
+    /// (e.g. the embedded HTTP `.text()`), not a TUI preview — this is the
+    /// whole point: the audit record must retain what the TUI throws away.
+    /// It is routed through [`crate::domain::redaction::redact_secrets`] so
+    /// any API key echoed back in the error never lands on disk.
+    pub fn provider_error(
+        provider: impl Into<String>,
+        class: &crate::domain::provider_error::ProviderErrorClass,
+        http_status: Option<u16>,
+        body: &str,
+    ) -> Self {
+        AuditEvent::ProviderError {
+            provider: provider.into(),
+            class: class.clone(),
+            http_status,
+            body: crate::domain::redaction::Redacted::new(body),
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -446,6 +486,94 @@ mod tests {
         };
         assert!(!command.contains("sk-livedeadbeef0001"), "out={command}");
         assert!(command.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn provider_error_round_trip() {
+        use crate::domain::provider_error::ProviderErrorClass;
+        let event = AuditEvent::ProviderError {
+            provider: "fireworks".into(),
+            class: ProviderErrorClass::Client,
+            http_status: Some(400),
+            body: r#"{"error":{"type":"invalid_request_error","message":"bad"}}"#.into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AuditEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["event"], "provider_error");
+        // Typed class still serializes to the stable snake_case wire string.
+        assert_eq!(val["class"], "client");
+    }
+
+    #[test]
+    fn provider_error_null_status_round_trip() {
+        use crate::domain::provider_error::ProviderErrorClass;
+        let event = AuditEvent::ProviderError {
+            provider: "anthropic".into(),
+            class: ProviderErrorClass::Network,
+            http_status: None,
+            body: "connection reset".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AuditEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn provider_error_keeps_full_untruncated_body() {
+        use crate::domain::provider_error::ProviderErrorClass;
+        use crate::domain::redaction::redact_secrets;
+        // A body far longer than any TUI/preview cap (200 chars) must survive
+        // intact in the persisted audit record (#937 AC1/AC5). A planted secret
+        // is woven into the long body so this test would also break if the
+        // constructor ever stopped redacting OR started truncating: we assert
+        // the persisted body equals the *redacted* original exactly (so any
+        // truncation cap wired into the path would change the length and fail),
+        // and that the secret is gone while the bulk filler survives.
+        let secret = "sk-abc123SECRETvalue0001";
+        let long_message = "x".repeat(5000);
+        let body = format!(r#"{{"error":{{"key":"{secret}","message":"{long_message}"}}}}"#);
+        let AuditEvent::ProviderError {
+            body: persisted, ..
+        } = AuditEvent::provider_error("fireworks", &ProviderErrorClass::Client, Some(400), &body)
+        else {
+            panic!("expected ProviderError");
+        };
+        // Exact match against the redacted (not truncated) original: this is the
+        // identity that a truncation regression would break.
+        assert_eq!(
+            persisted.as_str(),
+            redact_secrets(&body),
+            "persisted body must be the full, redacted-but-untruncated original"
+        );
+        assert!(
+            persisted.len() > 4000,
+            "body kept whole: {}",
+            persisted.len()
+        );
+        assert!(persisted.contains(&long_message), "filler survived whole");
+        assert!(!persisted.contains(secret), "planted secret was redacted");
+    }
+
+    #[test]
+    fn provider_error_redacts_planted_secret() {
+        use crate::domain::provider_error::ProviderErrorClass;
+        let body = r#"{"error":{"message":"rejected request with key sk-abc123SECRETvalue here"}}"#;
+        let event =
+            AuditEvent::provider_error("openai", &ProviderErrorClass::Auth, Some(401), body);
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            !json.contains("sk-abc123SECRETvalue"),
+            "planted secret must be redacted: {json}"
+        );
+        assert!(json.contains("[REDACTED]"), "should mark redaction: {json}");
+        assert!(
+            json.contains("rejected request"),
+            "non-secret text kept: {json}"
+        );
+        assert!(json.contains("openai"), "provider kept: {json}");
+        assert!(json.contains("auth"), "class kept: {json}");
     }
 
     #[test]

@@ -6,7 +6,59 @@
 //! the two-copy drift risk where tightening one redactor silently leaves the
 //! other leaking. Pure; no I/O.
 
+use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
+
+/// A string guaranteed to have passed through [`redact_secrets`].
+///
+/// Its only text constructors ([`Redacted::new`], `From<&str>`/`From<String>`)
+/// redact on the way in, so a value of this type cannot carry an un-scrubbed
+/// secret-shaped span. This turns the "redact before persistence" invariant for
+/// [`crate::domain::audit::AuditEvent::ProviderError`] into a property the type
+/// system enforces rather than a convention an emitter could bypass by building
+/// the raw variant directly (#937 review). Serializes transparently as the inner
+/// string, so the on-disk/wire format is unchanged. Deserialization (reading the
+/// audit file back) trusts the already-redacted on-disk value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Redacted(String);
+
+impl Redacted {
+    /// Redact `raw` and wrap it. The sole entry point from untrusted text.
+    pub(crate) fn new(raw: &str) -> Self {
+        Self(redact_secrets(raw))
+    }
+
+    /// Borrow the redacted contents as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for Redacted {
+    fn from(raw: &str) -> Self {
+        Self::new(raw)
+    }
+}
+
+impl From<String> for Redacted {
+    fn from(raw: String) -> Self {
+        Self::new(&raw)
+    }
+}
+
+impl std::ops::Deref for Redacted {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for Redacted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// Credential-shaped patterns scrubbed to `[REDACTED]`.
 ///

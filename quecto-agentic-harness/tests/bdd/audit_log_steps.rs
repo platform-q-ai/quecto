@@ -209,6 +209,255 @@ fn then_json_contains(world: &mut QuectoWorld, needle: String) {
 }
 
 #[given(
+    expr = r#"an AuditEvent::ProviderError with provider {string} class {string} http_status {int} body {string}"#
+)]
+fn given_provider_error(
+    world: &mut QuectoWorld,
+    provider: String,
+    class: String,
+    http_status: u16,
+    body: String,
+) {
+    let event = AuditEvent::ProviderError {
+        provider,
+        class: class_from_str(&class),
+        http_status: Some(http_status),
+        body: body.into(),
+    };
+    world.audit_event = Some(event);
+}
+
+/// Map a wire class string to the typed [`ProviderErrorClass`]. The variant now
+/// stores the enum directly (#939 review), so the step builders translate once
+/// here instead of every reader re-parsing the string.
+fn class_from_str(class: &str) -> quecto::domain::provider_error::ProviderErrorClass {
+    use quecto::domain::provider_error::ProviderErrorClass;
+    match class {
+        "rate_limit" => ProviderErrorClass::RateLimit,
+        "auth" => ProviderErrorClass::Auth,
+        "server" => ProviderErrorClass::Server,
+        "client" => ProviderErrorClass::Client,
+        "network" => ProviderErrorClass::Network,
+        "cancelled" => ProviderErrorClass::Cancelled,
+        _ => ProviderErrorClass::Unknown,
+    }
+}
+
+#[given(
+    expr = r#"a redacting AuditEvent::ProviderError for provider {string} class {string} http_status {int} with a {int} char body containing secret {string}"#
+)]
+fn given_provider_error_redacting(
+    world: &mut QuectoWorld,
+    provider: String,
+    class: String,
+    http_status: u16,
+    body_len: usize,
+    secret: String,
+) {
+    let cls = class_from_str(&class);
+    let filler = "y".repeat(body_len.saturating_sub(secret.len()));
+    let body = format!("{secret} {filler}");
+    let event = AuditEvent::provider_error(provider, &cls, Some(http_status), &body);
+    world.audit_event = Some(event);
+}
+
+// ===========================================================================
+// Behaviour: terminal provider failure persisted by the agent loop (#937)
+// ===========================================================================
+
+/// A provider that always fails terminally with a fixed error body.
+#[derive(Debug)]
+struct LoopFailingProvider {
+    body: String,
+}
+impl quecto::domain::provider::LlmProvider for LoopFailingProvider {
+    fn name(&self) -> &str {
+        "failprov"
+    }
+    fn chat<'a>(
+        &'a self,
+        _req: quecto::domain::provider::ChatRequest<'a>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        quecto::domain::message::LlmResponse,
+                        quecto::domain::error::DomainError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
+        let body = self.body.clone();
+        Box::pin(async move { Err(quecto::domain::error::DomainError::Provider(body)) })
+    }
+}
+
+/// An audit sink that records every emitted event for inspection.
+#[derive(Default)]
+struct LoopRecordingSink {
+    events: std::sync::Mutex<Vec<AuditEvent>>,
+}
+impl quecto::domain::audit::AuditSink for LoopRecordingSink {
+    fn emit(
+        &self,
+        _turn: u32,
+        event: AuditEvent,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), quecto::domain::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        self.events.lock().unwrap().push(event);
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct LoopEmptyRegistry;
+impl quecto::domain::tool::ToolRegistry for LoopEmptyRegistry {
+    fn definitions(&self) -> &[quecto::domain::tool::ToolDefinition] {
+        &[]
+    }
+    fn execute(
+        &self,
+        name: &str,
+        _args: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        quecto::domain::tool::ToolResult,
+                        quecto::domain::error::DomainError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        let n = name.to_string();
+        Box::pin(async move {
+            Err(quecto::domain::error::DomainError::Tool(format!(
+                "no tool: {n}"
+            )))
+        })
+    }
+}
+
+#[given(
+    expr = r#"a provider that fails terminally with a {int} char body containing secret {string}"#
+)]
+fn given_loop_failing_provider(world: &mut QuectoWorld, body_len: usize, secret: String) {
+    // A body far past any TUI/preview truncation cap, with a planted secret and
+    // an HTTP 400 + invalid_request_error so it routes as a terminal client error.
+    let filler = "y".repeat(body_len);
+    let body = format!(
+        r#"HTTP 400: {{"error":{{"type":"invalid_request_error","key":"{secret}","message":"server hated this {filler}"}}}}"#
+    );
+    world.audit_long_content = Some(filler);
+    world.audit_session_key = Some(secret);
+    world.audit_json = Some(body);
+}
+
+#[when("the agent processes a turn against that provider")]
+fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
+    use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+    use quecto::domain::agent::AgentLoop;
+
+    let body = world.audit_json.take().expect("no provider body");
+    let sink = std::sync::Arc::new(LoopRecordingSink::default());
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: std::sync::Arc::new(LoopFailingProvider { body }),
+        tool_registry: Box::new(LoopEmptyRegistry),
+        model: "test-model".into(),
+        max_tokens: 1000,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "bdd".into(),
+        context_collapse_after_turns: 100,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: Some(sink.clone() as std::sync::Arc<dyn quecto::domain::audit::AuditSink>),
+    });
+
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let mut messages = vec![quecto::domain::message::Message::user("hi")];
+    let result = rt.block_on(agent.process(&mut messages));
+    assert!(result.is_err(), "a terminal provider failure must error");
+
+    world.audit_loop_events = sink.events.lock().unwrap().clone();
+}
+
+#[then("the audit log contains exactly one provider error event")]
+fn then_loop_one_provider_error(world: &mut QuectoWorld) {
+    let count = world
+        .audit_loop_events
+        .iter()
+        .filter(|e| matches!(e, AuditEvent::ProviderError { .. }))
+        .count();
+    assert_eq!(
+        count, 1,
+        "exactly one ProviderError per terminal failure (AC4); got {count}"
+    );
+}
+
+fn loop_provider_error_body(world: &QuectoWorld) -> &str {
+    world
+        .audit_loop_events
+        .iter()
+        .find_map(|e| match e {
+            AuditEvent::ProviderError { body, .. } => Some(body.as_str()),
+            _ => None,
+        })
+        .expect("no ProviderError event recorded")
+}
+
+#[then("the persisted provider error body is the full untruncated text")]
+fn then_loop_body_full(world: &mut QuectoWorld) {
+    let body = loop_provider_error_body(world);
+    let filler = world.audit_long_content.as_ref().expect("no filler");
+    assert!(
+        body.len() > 4000,
+        "body must be the full untruncated error (len={})",
+        body.len()
+    );
+    assert!(
+        body.contains(filler.as_str()),
+        "the complete body must survive, not a truncated preview"
+    );
+}
+
+#[then("the persisted provider error body has the secret redacted")]
+fn then_loop_body_redacted(world: &mut QuectoWorld) {
+    let body = loop_provider_error_body(world);
+    let secret = world.audit_session_key.as_ref().expect("no secret");
+    assert!(
+        !body.contains(secret.as_str()),
+        "planted secret must be redacted: {body}"
+    );
+    assert!(
+        body.contains("[REDACTED]"),
+        "redaction marker must be present: {body}"
+    );
+}
+
+#[then(expr = r#"the persisted ProviderError body is at least {int} characters"#)]
+fn then_provider_error_body_len(world: &mut QuectoWorld, min_len: usize) {
+    let event = world.audit_event.as_ref().expect("no audit event");
+    let AuditEvent::ProviderError { body, .. } = event else {
+        panic!("expected ProviderError event");
+    };
+    assert!(
+        body.len() >= min_len,
+        "body must retain full length (>= {min_len}); got {}",
+        body.len()
+    );
+}
+
+#[given(
     expr = r#"an AuditEvent::GuardBlocked with command_preview {string} guard_message {string} before_step_key {string}"#
 )]
 fn given_guard_blocked(
@@ -253,6 +502,7 @@ fn when_serialized(world: &mut QuectoWorld) {
 #[then("it deserializes back to an identical SubagentCmd event")]
 #[then("it deserializes back to an identical GuardBlocked event")]
 #[then("it deserializes back to an identical Error event")]
+#[then("it deserializes back to an identical ProviderError event")]
 fn then_round_trips(world: &mut QuectoWorld) {
     let json = world.audit_json.as_ref().expect("no JSON");
     let original = world.audit_event.as_ref().expect("no original event");

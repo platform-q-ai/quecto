@@ -699,6 +699,8 @@ pub struct QuectoWorld {
     pub audit_long_content: Option<String>,
     /// Generated content preview
     pub audit_content_preview: Option<String>,
+    /// Audit events captured from a real agent-loop run (#937 emission path)
+    pub audit_loop_events: Vec<quecto::domain::audit::AuditEvent>,
     // --- agent_cmd await (#612) ---
     /// Parsed await result for BDD assertions
     pub await_result: Option<serde_json::Value>,

@@ -1,7 +1,12 @@
 use crate::domain::error::DomainError;
 
 /// Stable provider error classes used by application-layer retry decisions.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The `snake_case` serde rename matches [`ProviderErrorClass::as_str`], so the
+/// persisted audit wire format (`AuditEvent::ProviderError.class`) is unchanged
+/// while readers keep the typed enum instead of re-parsing a string.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProviderErrorClass {
     RateLimit,
     Auth,
@@ -80,6 +85,20 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
     }
 
     classify_keyword_paths(&lowered)
+}
+
+/// Best-effort HTTP status extracted from a provider error, if the body
+/// encodes one (`HTTP 429`, `status: 500`, `provider error (400)`, ...).
+///
+/// Used by the audit emitter (#937) to tag the persisted `ProviderError`
+/// record with a status when one is recoverable from the message. Returns
+/// `None` for non-provider errors or bodies without a recognisable status.
+pub fn provider_http_status(err: &DomainError) -> Option<u16> {
+    let DomainError::Provider(msg) = err else {
+        return None;
+    };
+    let lowered = msg.to_ascii_lowercase();
+    extract_http_status(&lowered).or_else(|| extract_parenthesized_status(&lowered))
 }
 
 /// Recognise a parenthesised HTTP status such as `provider error (400): ...`,
