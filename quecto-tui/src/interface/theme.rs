@@ -150,8 +150,9 @@ pub fn apply_bg(text: &str, width: usize, bg_fn: fn(&str) -> String) -> String {
 pub const BG_PENDING: &str = "\x1b[48;2;40;40;50m"; // #282832
 pub const BG_SUCCESS: &str = "\x1b[48;2;40;50;40m"; // #283228
 pub const BG_ERROR: &str = "\x1b[48;2;60;40;40m"; // #3c2828
-/// Opaque modal overlay background — black for maximum contrast over chat text.
-pub const BG_OVERLAY: &str = "\x1b[48;2;0;0;0m";
+/// Opaque modal overlay background — dark neutral gray for contrast on both
+/// dark and light terminal themes (Issue #924).
+pub const BG_OVERLAY: &str = "\x1b[48;2;28;28;28m";
 
 /// Extract the background ANSI escape code from a bg function.
 ///
@@ -365,6 +366,42 @@ mod tests {
         assert_eq!(BG_PENDING, "\x1b[48;2;40;40;50m");
         assert_eq!(BG_SUCCESS, "\x1b[48;2;40;50;40m");
         assert_eq!(BG_ERROR, "\x1b[48;2;60;40;40m");
+    }
+
+    #[test]
+    fn overlay_background_provides_contrast_on_light_themes() {
+        // Issue #924: overlay background should not be pure black (#000000),
+        // which is unreadable on light terminal themes. It should be a dark
+        // neutral color that provides contrast on both dark and light themes.
+        assert!(
+            !BG_OVERLAY.contains("48;2;0;0;0"),
+            "BG_OVERLAY should not be pure black for better contrast on light themes"
+        );
+        assert!(
+            BG_OVERLAY.contains("48;2;"),
+            "BG_OVERLAY should use truecolor background"
+        );
+        // Parse RGB values to verify they're in the dark neutral range
+        if let Some(rgb) = BG_OVERLAY
+            .strip_prefix("\x1b[48;2;")
+            .and_then(|s| s.strip_suffix('m'))
+        {
+            let parts: Vec<&str> = rgb.split(';').collect();
+            if parts.len() == 3 {
+                let r: u8 = parts[0].parse().unwrap_or(0);
+                let g: u8 = parts[1].parse().unwrap_or(0);
+                let b: u8 = parts[2].parse().unwrap_or(0);
+                assert!(
+                    r < 64 && g < 64 && b < 64,
+                    "overlay should be dark (RGB < 64)"
+                );
+                let max_diff = r.abs_diff(g).max(g.abs_diff(b)).max(r.abs_diff(b));
+                assert!(
+                    max_diff < 32,
+                    "overlay should be neutral gray (components within 32 of each other)"
+                );
+            }
+        }
     }
 
     // ── gap fix: re-assert bg after ANY bg-clearing escape, not just \x1b[0m ──

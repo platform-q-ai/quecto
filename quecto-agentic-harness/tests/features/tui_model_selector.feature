@@ -87,3 +87,33 @@ Feature: TUI model selector overlay — scrollable list with fuzzy search
     Given a model selector with known models
     When rendered at width 40
     Then no rendered line should exceed 40 visible characters
+
+  # ---------------------------------------------------------------------------
+  # Theme-aware overlay treatment (Issue #924)
+  # ---------------------------------------------------------------------------
+
+  Scenario: Model selector uses opaque overlay background
+    Given a model selector with known models
+    When rendered at width 80
+    Then the overlay should have an opaque background across its full width
+
+  Scenario: Model selector overlay has consistent modal treatment
+    Given a model selector with known models
+    When rendered at width 80
+    Then the overlay should have top and bottom border padding
+    And all overlay lines should have uniform width
+
+  Scenario: Model selector overlay remains readable on light terminal themes
+    Given a model selector with known models
+    When rendered at width 80
+    Then the overlay background should provide contrast on light themes
+
+  Scenario: Resume selector overlay remains readable on light terminal themes
+    Given a resume selector with sample items
+    When rendered at width 80
+    Then the overlay background should provide contrast on light themes
+
+  Scenario: Rewind selector overlay remains readable on light terminal themes
+    Given a rewind selector with sample items
+    When rendered at width 80
+    Then the overlay background should provide contrast on light themes
