@@ -74,18 +74,37 @@ impl OpenAiProvider {
         let tools = request.tools;
         let model = request.model;
         let max_tokens = request.max_tokens;
+        // #938: strict OpenAI-compatible endpoints (Fireworks qwen3p7-plus)
+        // reject any non-leading `system` message. Preserve only the *first*
+        // `system` message regardless of its position; demote every later one to
+        // `user`, prefixing the content with "[system] " to keep the framing.
+        // Tracking `seen_system` (rather than `idx > 0`) avoids an implicit
+        // "system is always first" invariant: a non-system message preceding the
+        // system prompt no longer causes the real system message to be demoted.
+        let mut seen_system = false;
         let msgs: Vec<serde_json::Value> = messages
             .iter()
             .map(|m| {
+                let is_system = matches!(m.role, Role::System);
+                let demote_system = is_system && seen_system;
+                if is_system {
+                    seen_system = true;
+                }
                 let role = match m.role {
+                    Role::System if demote_system => "user",
                     Role::System => "system",
                     Role::User => "user",
                     Role::Assistant => "assistant",
                     Role::Tool => "tool",
                 };
+                let content = if demote_system {
+                    format!("[system] {}", m.content)
+                } else {
+                    m.content.clone()
+                };
                 let mut obj = serde_json::json!({
                     "role": role,
-                    "content": m.content,
+                    "content": content,
                 });
                 if !m.tool_calls.is_empty() {
                     let tcs: Vec<serde_json::Value> = m
