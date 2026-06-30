@@ -181,7 +181,9 @@ impl App {
                 } else {
                     args.to_string()
                 };
-                if !super::app_events::suppress_tool_box(&tool_name, &args) {
+                if super::app_events::suppress_tool_box(&tool_name, &args) {
+                    chat.finalize_assistant();
+                } else {
                     chat.start_tool(tool_call_id, tool_name, args_str);
                 }
             }

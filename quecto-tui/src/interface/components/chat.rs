@@ -148,6 +148,7 @@ impl Chat {
 
     /// Start a tool execution — creates a ToolExecution entry.
     pub fn start_tool(&mut self, tool_call_id: String, tool_name: String, args: String) {
+        self.finalize_assistant();
         let parsed_args = serde_json::from_str(&args).ok();
         self.entries.push(ChatEntry::ToolExecution {
             tool_call_id,

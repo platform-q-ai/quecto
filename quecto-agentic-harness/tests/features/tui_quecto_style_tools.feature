@@ -93,3 +93,17 @@ Feature: TUI Quecto-style tool output — unified entries, bg colors, tool-speci
     Given a completed bash tool with long output
     When rendered at width 40
     Then no line should exceed 40 visible characters
+  # ---------------------------------------------------------------------------
+  # Streaming cursor boundaries around tools
+  # ---------------------------------------------------------------------------
+
+  Scenario: Assistant typing cursor clears when a tool starts mid-turn
+    Given an assistant message is actively streaming text "I will check"
+    Then the assistant text should show the dim typing cursor "▌"
+    When a tool execution starts in the same turn
+    Then the interrupted assistant text should not end with the typing cursor "▌"
+    And the running tool should render without a lingering assistant typing cursor
+    When the tool result is followed by assistant text "Done"
+    Then the new assistant text segment should show its own dim typing cursor "▌"
+    When the agent turn ends
+    Then no assistant message should end with the typing cursor "▌"

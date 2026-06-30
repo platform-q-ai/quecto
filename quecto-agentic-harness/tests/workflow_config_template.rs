@@ -347,6 +347,32 @@ fn reviewers_step_preserves_single_batch_and_submits_non_pending() {
 }
 
 #[test]
+fn reviewers_step_requires_pr_number_not_raw_diff_and_pr_precondition() {
+    // #946: reviewers must review the PR, not an pasted raw diff blob, and must
+    // not be dispatched before the PR exists.
+    let config = read_native_config();
+    let g = guidance(&config, "reviewers");
+    let lower = g.to_lowercase();
+    assert!(
+        lower.contains("must not be dispatched before a pr exists")
+            || lower.contains("must not dispatch reviewers before a pr exists"),
+        "reviewers guidance should explicitly block dispatch before a PR exists: {g}"
+    );
+    assert!(
+        lower.contains("forbid") && lower.contains("raw diff"),
+        "reviewers guidance should explicitly forbid passing a raw diff: {g}"
+    );
+    assert!(
+        g.contains("PR number") && g.contains("gh pr diff <PR>"),
+        "reviewers guidance should require passing the PR number and fetching the diff with gh pr diff <PR>: {g}"
+    );
+    assert!(
+        lower.contains("inline") && lower.contains("on the pr"),
+        "reviewers guidance should require inline comments on the PR: {g}"
+    );
+}
+
+#[test]
 fn feature_js_dimensions_array_matches_full_default_set() {
     // #862 review (Medium): `.claude/workflows/feature.js`'s `DIMENSIONS` array is
     // the only copy that actually DRIVES execution, yet the config/doc guards do not
@@ -381,8 +407,15 @@ fn feature_js_dimensions_array_matches_full_default_set() {
 
     // The Conformance-to-AC reviewer must re-read the acceptance criteria and check
     // documentation, and reviews must be submitted (never left PENDING) — assert the
-    // executable prompt carries this, mirroring the config guards.
-    let lower = js.to_lowercase();
+    // executable reviewer dispatch block carries this, mirroring the config guards.
+    let reviewer_block = js
+        .split_once("// Always dispatch the full default dimension set")
+        .expect("feature.js should describe and dispatch parallel reviewers")
+        .1
+        .split_once("// ── Fix reviews")
+        .expect("feature.js reviewer block should end before fix phase")
+        .0;
+    let lower = reviewer_block.to_lowercase();
     assert!(
         lower.contains("acceptance criteria") && lower.contains("documentation"),
         "feature.js Conformance-to-AC prompt should re-read acceptance criteria incl. documentation"
@@ -390,6 +423,22 @@ fn feature_js_dimensions_array_matches_full_default_set() {
     assert!(
         lower.contains("submittedat") && lower.contains("pending"),
         "feature.js reviewer prompt should require a submitted (non-PENDING) review"
+    );
+    assert!(
+        lower.contains("must not dispatch reviewers before a pr exists")
+            || lower.contains("must not be dispatched before a pr exists"),
+        "feature.js reviewer prompt should forbid dispatch before a PR exists"
+    );
+    assert!(
+        lower.contains("forbid")
+            && lower.contains("raw diff")
+            && reviewer_block.contains("PR number")
+            && reviewer_block.contains("gh pr diff <PR>"),
+        "feature.js reviewer prompt should forbid raw diffs and require PR number + gh pr diff <PR>"
+    );
+    assert!(
+        lower.contains("inline") && lower.contains("on the pr"),
+        "feature.js reviewer prompt should require inline comments on the PR"
     );
 }
 

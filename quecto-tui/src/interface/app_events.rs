@@ -134,7 +134,9 @@ impl App {
                 .map(str::to_string);
         }
         let is_spawn = tool_name == "spawn";
-        if !suppress_tool_box(&tool_name, &args) {
+        if suppress_tool_box(&tool_name, &args) {
+            self.master_session.chat.finalize_assistant();
+        } else {
             self.master_session
                 .chat
                 .start_tool(tool_call_id, tool_name, args_str);
@@ -363,6 +365,9 @@ pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> b
     tool_name == "spawn"
 }
 
+#[cfg(test)]
+#[path = "app_events_cursor_tests.rs"]
+mod cursor_tests;
 #[cfg(test)]
 #[path = "app_events_tests.rs"]
 mod tests;
