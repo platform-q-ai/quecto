@@ -81,6 +81,43 @@ fn build_request_body_omits_tools_when_empty() {
     assert!(body.get("tools").is_none());
 }
 
+// --- #938: demote non-leading system messages to user ---
+
+fn roles_of(body: &serde_json::Value) -> Vec<String> {
+    let msgs = body["messages"].as_array().unwrap();
+    msgs.iter()
+        .map(|m| m["role"].as_str().unwrap().into())
+        .collect()
+}
+
+#[test]
+fn build_request_body_demotes_non_leading_system_to_user() {
+    let messages = vec![
+        Message::system("You are helpful."),
+        Message::user("hi"),
+        Message::assistant("hello", vec![]),
+        Message::system("subagent finished"),
+        Message::user("continue"),
+    ];
+    let body = OpenAiProvider::build_request_body(&req(&messages, &[], "qwen3p7-plus"));
+    // Mirrors the live curl repro: no non-leading "system" role survives.
+    assert_eq!(
+        roles_of(&body),
+        ["system", "user", "assistant", "user", "user"]
+    );
+    // Leading system kept verbatim; mid-conversation system demoted + prefixed.
+    assert_eq!(body["messages"][0]["content"], "You are helpful.");
+    assert_eq!(body["messages"][3]["content"], "[system] subagent finished");
+}
+
+#[test]
+fn build_request_body_leading_only_system_unchanged() {
+    let messages = vec![Message::system("You are helpful."), Message::user("hi")];
+    let body = OpenAiProvider::build_request_body(&req(&messages, &[], "qwen3p7-plus"));
+    assert_eq!(roles_of(&body), ["system", "user"]);
+    assert_eq!(body["messages"][0]["content"], "You are helpful.");
+}
+
 // --- parse_response ---
 
 #[test]
