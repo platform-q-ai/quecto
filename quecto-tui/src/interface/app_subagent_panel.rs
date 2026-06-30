@@ -603,7 +603,7 @@ impl App {
         // Title ALWAYS renders; the boxed bar is conditional on a workflow (#820).
         let mut out = vec![pad_cell(&self.main_pane_title(state, now), width)];
         if let Some(content) = workflow_bar::render_compact_line(state) {
-            let box_width = self.terminal.width.max(width).max(4); // Full row (#947), wider than tools.
+            let box_width = (width + usize::from(self.terminal.width > width)).max(4);
             let inner = box_width - 2;
             out.push(theme::dim(&format!("┌{}┐", "─".repeat(inner))));
             out.push(format!(

@@ -516,7 +516,7 @@ impl App {
         }
 
         let is_full_width_workflow_box = |line: &str| {
-            crate::interface::utils::visible_width(line) == self.terminal.width
+            crate::interface::utils::visible_width(line) == width + 1
                 && (line.contains('┌') || line.contains('└') || line.contains('│'))
         };
         for line in &mut lines {
@@ -535,14 +535,15 @@ impl App {
                 theme::dim("│")
             };
             for (i, line) in lines.iter_mut().enumerate() {
-                if is_full_width_workflow_box(line) {
-                    continue;
-                }
                 let cell = panel
                     .get(i)
                     .cloned()
                     .unwrap_or_else(|| " ".repeat(panel_width));
-                *line = format!("{cell}{divider} {line}");
+                *line = if is_full_width_workflow_box(line) {
+                    format!("{cell}{divider}{line}")
+                } else {
+                    format!("{cell}{divider} {line}")
+                };
             }
         }
 

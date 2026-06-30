@@ -66,11 +66,10 @@ fn box_tool_and_body_widths(h: &mut TuiHarness) -> (usize, usize, usize) {
 /// to the body column. This fails against the old body/tool-box alignment.
 fn assert_workflow_box_is_full_width_and_wider_than_tools(h: &mut TuiHarness, ctx: &str) {
     let (box_w, tool_w, body_w) = box_tool_and_body_widths(h);
-    let (_panel_w, _divider_w, _) = h.app_mut().frame_split();
-    let terminal_w = h.app_mut().terminal.width;
+    let expected_box_w = body_w + 1;
     assert_eq!(
-        box_w, terminal_w,
-        "[{ctx}] workflow box border must span the full terminal/main-panel content row"
+        box_w, expected_box_w,
+        "[{ctx}] workflow box border must span the full main-panel content width"
     );
     assert_eq!(
         tool_w, body_w,
