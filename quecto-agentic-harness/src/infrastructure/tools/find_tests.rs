@@ -87,120 +87,6 @@ fn test_format_find_directory_trailing_slash() {
 
 // --- Quecto compatibility: nested .gitignore and float limit ---
 
-#[test]
-fn test_discover_nested_gitignore_finds_files() {
-    let tmp = TempDir::new().unwrap();
-    // Create nested .gitignore files
-    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
-    std::fs::write(tmp.path().join(".gitignore"), "target/\n").unwrap();
-    std::fs::write(tmp.path().join("src/.gitignore"), "generated/\n").unwrap();
-    let found = discover_gitignore_files(tmp.path());
-    // Should find only the root .gitignore (nested ones are not returned
-    // because --ignore-file applies globally, not scoped to the directory)
-    assert_eq!(
-        found.len(),
-        1,
-        "should find exactly root .gitignore, got: {:?}",
-        found
-    );
-    assert!(
-        found[0].ends_with(".gitignore") && !found[0].ends_with("src/.gitignore"),
-        "should be root .gitignore, got: {:?}",
-        found
-    );
-}
-
-#[test]
-fn test_discover_nested_gitignore_empty_dir() {
-    let tmp = TempDir::new().unwrap();
-    let found = discover_gitignore_files(tmp.path());
-    assert!(found.is_empty(), "no .gitignore → empty list");
-}
-
-#[test]
-fn test_discover_gitignore_excludes_catch_all() {
-    let tmp = TempDir::new().unwrap();
-    std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
-    // Legitimate gitignore
-    std::fs::write(tmp.path().join(".gitignore"), "target/\n").unwrap();
-    // Catch-all gitignore (blocks everything)
-    std::fs::write(tmp.path().join("sub/.gitignore"), "*\n!.gitignore\n").unwrap();
-    let found = discover_gitignore_files(tmp.path());
-    // The catch-all should be excluded
-    let catch_all = found.iter().any(|p| p.ends_with("sub/.gitignore"));
-    assert!(
-        !catch_all,
-        "catch-all gitignore (*) should be excluded from --ignore-file list, got: {:?}",
-        found
-    );
-    // The legitimate one should be included
-    let has_root = found
-        .iter()
-        .any(|p| p.ends_with(".gitignore") && !p.ends_with("sub/.gitignore"));
-    assert!(
-        has_root,
-        "legitimate gitignore should be included, got: {:?}",
-        found
-    );
-}
-
-#[test]
-fn test_discover_gitignore_excludes_bare_star_only() {
-    let tmp = TempDir::new().unwrap();
-    // A gitignore that is just "*" with no negations
-    std::fs::write(tmp.path().join(".gitignore"), "*\n").unwrap();
-    let found = discover_gitignore_files(tmp.path());
-    assert!(
-        found.is_empty(),
-        "bare '*' gitignore should be excluded, got: {:?}",
-        found
-    );
-}
-
-#[test]
-fn test_discover_gitignore_excludes_double_star_variants() {
-    let tmp = TempDir::new().unwrap();
-    // ** is equivalent to * in gitignore scope
-    std::fs::write(tmp.path().join(".gitignore"), "**\n!.gitignore\n").unwrap();
-    let found = discover_gitignore_files(tmp.path());
-    assert!(
-        found.is_empty(),
-        "'**' catch-all gitignore should be excluded, got: {:?}",
-        found
-    );
-}
-
-#[test]
-fn test_is_catch_all_gitignore_double_star_slash_variants() {
-    use crate::infrastructure::tools::find::is_catch_all_gitignore;
-    let tmp = TempDir::new().unwrap();
-
-    for pattern in &["**", "**/", "**/*"] {
-        let p = tmp.path().join(".gitignore");
-        std::fs::write(&p, format!("{}\n!.gitignore\n", pattern)).unwrap();
-        assert!(
-            is_catch_all_gitignore(&p),
-            "pattern '{}' should be detected as catch-all",
-            pattern
-        );
-    }
-}
-
-#[test]
-fn test_is_catch_all_gitignore_oversized_file_is_not_excluded() {
-    use crate::infrastructure::tools::find::is_catch_all_gitignore;
-    let tmp = TempDir::new().unwrap();
-    let p = tmp.path().join(".gitignore");
-    // Write a file larger than 64 KiB — should not be treated as catch-all
-    // (safe default: include it, let fd decide)
-    let big = "target/\n".repeat(10_000); // ~80 KiB
-    std::fs::write(&p, big).unwrap();
-    assert!(
-        !is_catch_all_gitignore(&p),
-        "oversized gitignore should default to non-catch-all (include it)"
-    );
-}
-
 #[tokio::test]
 async fn test_find_not_suppressed_by_catchall_gitignore_in_subdir() {
     let (tool, _ws, tmp) = test_find();
@@ -521,11 +407,10 @@ fn test_find_schema_includes_path_segment_example() {
     );
 }
 
-// --- Nested gitignore global application bug ---
+// --- Nested gitignore scoping ---
 // A .gitignore with specific patterns (e.g. *.json) in a subdirectory
-// must NOT suppress matching files outside that subdirectory.
-// Previously, discover_gitignore_files passed all nested .gitignore files
-// via --ignore-file, which fd applies globally.
+// must NOT suppress matching files outside that subdirectory. fd's
+// `--no-require-git` mode applies each .gitignore scoped to its own subtree.
 
 #[tokio::test]
 async fn test_find_not_suppressed_by_nested_gitignore_with_specific_patterns() {
@@ -584,6 +469,75 @@ async fn test_find_path_glob_not_suppressed_by_nested_gitignore() {
     assert!(
         result.content.contains("config.json"),
         "config.json should not be suppressed by other/.gitignore, got: {}",
+        result.content
+    );
+}
+
+// --- Nested .gitignore in a subdirectory is respected, scoped to that subtree ---
+// Regression: fd's git-repo auto-detection is sensitive to ambient state, so the
+// tool must use `--no-require-git` to honour `.gitignore` files based purely on
+// the tree contents. The rule must apply scoped to its own directory subtree.
+
+#[tokio::test]
+async fn test_find_respects_nested_gitignore_in_non_git_workspace() {
+    let (tool, _ws, tmp) = test_find();
+    std::fs::create_dir_all(tmp.path().join("src/generated")).unwrap();
+    std::fs::write(tmp.path().join("src/main.rs"), "").unwrap();
+    std::fs::write(tmp.path().join("src/generated/auto.rs"), "").unwrap();
+    // src/.gitignore ignores the generated/ subdirectory, scoped to src/.
+    std::fs::write(tmp.path().join("src/.gitignore"), "generated/\n").unwrap();
+
+    if !fd_available() {
+        return;
+    }
+
+    let result = tool.execute(r#"{"pattern": "*.rs"}"#).await.unwrap();
+    assert!(!result.is_error, "got: {}", result.content);
+    assert!(
+        result.content.contains("main.rs"),
+        "main.rs should be found, got: {}",
+        result.content
+    );
+    assert!(
+        !result.content.contains("auto.rs"),
+        "auto.rs is under src/generated/ which src/.gitignore ignores, got: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn test_find_respects_nested_gitignore_in_git_workspace() {
+    let (tool, _ws, tmp) = test_find();
+    // Mirror the BDD scenario: a real git repo with a nested .gitignore.
+    let status = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(tmp.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status();
+    // If git is unavailable, skip rather than fail.
+    if !matches!(status, Ok(s) if s.success()) {
+        return;
+    }
+    std::fs::create_dir_all(tmp.path().join("src/generated")).unwrap();
+    std::fs::write(tmp.path().join("src/main.rs"), "").unwrap();
+    std::fs::write(tmp.path().join("src/generated/auto.rs"), "").unwrap();
+    std::fs::write(tmp.path().join("src/.gitignore"), "generated/\n").unwrap();
+
+    if !fd_available() {
+        return;
+    }
+
+    let result = tool.execute(r#"{"pattern": "*.rs"}"#).await.unwrap();
+    assert!(!result.is_error, "got: {}", result.content);
+    assert!(
+        result.content.contains("main.rs"),
+        "got: {}",
+        result.content
+    );
+    assert!(
+        !result.content.contains("auto.rs"),
+        "auto.rs should be suppressed by nested src/.gitignore, got: {}",
         result.content
     );
 }

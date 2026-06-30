@@ -173,14 +173,12 @@ impl Tool for FindTool {
                 .map(|v| (v.round() as usize).clamp(1, MAX_RESULT_LIMIT))
                 .unwrap_or(DEFAULT_RESULT_LIMIT);
 
-            let gitignore_files = discover_gitignore_files(&full_path);
             let (stdout_bytes, stderr_bytes, exit_code) = run_fd(FdArgs {
                 fd_cmd: &fd_cmd,
                 workspace: &workspace,
                 pattern,
                 search_dir: &full_path,
                 limit,
-                gitignore_files: &gitignore_files,
             })
             .await?;
 
@@ -226,7 +224,6 @@ struct FdArgs<'a> {
     /// The resolved, sandbox-validated directory to search.
     search_dir: &'a std::path::Path,
     limit: usize,
-    gitignore_files: &'a [PathBuf],
 }
 
 /// Spawn fd, read capped stdout/stderr, reap child.
@@ -247,20 +244,29 @@ async fn run_fd(a: FdArgs<'_>) -> Result<(Vec<u8>, Vec<u8>, Option<i32>), Domain
         Cow::Borrowed(a.pattern)
     };
 
-    // Build: fd --glob [--full-path] --color=never --hidden --max-results N
-    //           [--ignore-file ...] -- <pattern> <search_dir>
+    // Build: fd --glob [--full-path] --color=never --hidden --no-require-git
+    //           --max-results N -- <pattern> <search_dir>
+    //
+    // `--no-require-git` makes fd honour every `.gitignore` it encounters,
+    // applying each one **scoped to its own directory subtree** (fd's native
+    // per-directory ignore semantics), instead of only doing so when it can
+    // detect an enclosing `.git`. This is the key to respecting nested
+    // `.gitignore` files reliably: fd's git-repo auto-detection is sensitive
+    // to ambient state (config, repo layout) and would intermittently fail to
+    // recognise a workspace as a repo, silently dropping all ignore rules and
+    // leaking ignored files into results. With `--no-require-git` the result
+    // depends only on the `.gitignore` files in the tree, not on whether fd
+    // happened to detect `.git`.
     let mut cmd = tokio::process::Command::new(a.fd_cmd);
     cmd.current_dir(a.workspace)
         .arg("--glob")
         .arg("--color=never")
         .arg("--hidden")
+        .arg("--no-require-git")
         .arg("--max-results")
         .arg(a.limit.to_string());
     if needs_full_path {
         cmd.arg("--full-path");
-    }
-    for gitignore in a.gitignore_files {
-        cmd.arg("--ignore-file").arg(gitignore);
     }
     cmd.arg("--")
         .arg(effective_pattern.as_ref())
@@ -309,92 +315,6 @@ async fn run_fd(a: FdArgs<'_>) -> Result<(Vec<u8>, Vec<u8>, Option<i32>), Domain
     let status = child.wait().await;
     let exit_code = status.ok().and_then(|s| s.code());
     Ok((stdout_bytes, stderr_bytes, exit_code))
-}
-
-/// Discover the `.gitignore` file at the root of `search_dir`.
-///
-/// fd natively respects `.gitignore` files inside git repositories. For
-/// non-git-repo trees, we pass the **root-level** `.gitignore` via
-/// `--ignore-file` so its rules are applied.
-///
-/// **Only the root `.gitignore` is returned.** Nested `.gitignore` files are
-/// NOT passed via `--ignore-file` because fd applies `--ignore-file` rules
-/// **globally** — a `*.json` rule in `vendor/.gitignore` would suppress
-/// `.json` files everywhere, not just under `vendor/`. Within a git repo,
-/// fd already handles nested `.gitignore` scoping correctly via git's
-/// native ignore machinery.
-///
-/// **Tradeoff**: In non-git workspaces, nested `.gitignore` files are no
-/// longer respected. This is acceptable because (a) the global application
-/// bug caused incorrect results (files missing from find output), and
-/// (b) non-git workspaces with meaningful nested `.gitignore` are rare.
-///
-/// **Catch-all filtering** still applies: a root `.gitignore` whose only
-/// rules are `*`, `**`, `**/`, or `**/*` (plus negations/comments) is
-/// excluded to prevent blanket suppression.
-///
-/// Safety:
-/// - Only reads the search root directory (no recursive traversal)
-/// - Uses `symlink_metadata` to reject symlinks (prevents traversal outside workspace)
-pub(crate) fn discover_gitignore_files(search_dir: &std::path::Path) -> Vec<PathBuf> {
-    let gitignore_path = search_dir.join(".gitignore");
-    // Use symlink_metadata so a symlink to a .gitignore outside the workspace
-    // is rejected (is_file() returns false for symlinks).
-    match std::fs::symlink_metadata(&gitignore_path) {
-        Ok(meta) if meta.is_file() && !is_catch_all_gitignore(&gitignore_path) => {
-            vec![gitignore_path]
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// Maximum bytes read from a single `.gitignore` file when checking for catch-all rules.
-/// Guards against OOM from a malformed or adversarially crafted file with no newlines.
-const MAX_GITIGNORE_READ_BYTES: u64 = 64 * 1024;
-
-/// Returns `true` when a `.gitignore` file contains a catch-all rule that
-/// would suppress every file if applied globally via `--ignore-file`.
-///
-/// Catch-all patterns detected: `*`, `**`, `**/`, `**/*`.
-/// A gitignore is considered catch-all when it contains only such patterns
-/// plus blank lines, comments, and negations — no real content rules.
-///
-/// Examples that are catch-all (excluded):
-/// - `*`
-/// - `*\n!.gitignore`
-/// - `**\n# comment\n!README.md`
-///
-/// Examples that are NOT catch-all (included):
-/// - `target/\n*.log`
-/// - `node_modules/`
-pub(crate) fn is_catch_all_gitignore(path: &std::path::Path) -> bool {
-    use std::io::{BufRead, BufReader, Read};
-    // Size guard: skip unreasonably large files rather than risk OOM.
-    // A legitimate .gitignore is never 64 KiB.
-    if let Ok(meta) = std::fs::metadata(path) {
-        if meta.len() > MAX_GITIGNORE_READ_BYTES {
-            return false;
-        }
-    }
-    let Ok(f) = std::fs::File::open(path) else {
-        return false;
-    };
-    // Wrap in a byte-capped reader as a second safety net.
-    let capped = f.take(MAX_GITIGNORE_READ_BYTES);
-    let mut has_catch_all = false;
-    for line in BufReader::new(capped).lines().map_while(Result::ok) {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue; // blank or comment — skip
-        }
-        if matches!(trimmed, "*" | "**" | "**/" | "**/*") {
-            has_catch_all = true;
-        } else if !trimmed.starts_with('!') {
-            // A real content rule (not a negation) — cannot be a pure catch-all.
-            return false;
-        }
-    }
-    has_catch_all
 }
 
 /// Format fd output: relativise paths to the search dir, apply byte cap, append hints.
