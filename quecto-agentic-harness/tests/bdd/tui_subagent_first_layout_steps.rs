@@ -8,6 +8,7 @@
 use super::*;
 use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::app::tui_harness::{TuiHarness, subagent, subagents_changed};
+use quecto_tui::interface::utils::visible_width;
 
 /// Build a sub-agent-first harness optionally tracking sub-agent `a1` whose own
 /// workflow (issue #820) has been routed into its session.
@@ -107,6 +108,35 @@ fn then_main_pane_boxed(world: &mut QuectoWorld) {
         (top.contains('┌') || top.contains('╭')) && top.contains("Step 4/5"),
         "the main pane must show a boxed one-line workflow bar (current step n/total), got:\n{top}"
     );
+}
+
+#[then("the main pane shows a boxed workflow bar spanning the full content width")]
+fn then_main_pane_boxed_full_width(world: &mut QuectoWorld) {
+    drive(world, |h| {
+        let frame = h.full_frame();
+        let border = frame
+            .lines()
+            .find(|line| line.contains('┌'))
+            .expect("workflow box top border should render");
+        let header = frame
+            .lines()
+            .find(|line| line.contains("quecto-tui"))
+            .expect("header should render with the main-pane divider");
+        let divider = header.find('│').expect("header should include divider");
+        let panel_w = visible_width(&header[..divider]);
+        let terminal_w = frame.lines().map(visible_width).max().unwrap_or_default();
+        let expected = terminal_w - panel_w - 1;
+        let border_segment = &border[border.find('┌').expect("border starts with ┌")..];
+        assert_eq!(
+            visible_width(border_segment),
+            expected,
+            "workflow box must consume the divider-adjacent main-pane content width, got:\n{frame}"
+        );
+        assert!(
+            !border.contains("│ ┌"),
+            "workflow box must be wider than the old body/tool width by consuming the gutter, got:\n{frame}"
+        );
+    });
 }
 
 #[then("the bottom stack no longer shows the workflow bar")]

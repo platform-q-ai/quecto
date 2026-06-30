@@ -459,7 +459,8 @@ impl App {
         // Sub-agent-first main pane (#820): the selected agent's title line and
         // boxed single-line workflow bar sit at the top of the body, above the
         // chat (replacing the removed bottom workflow bar).
-        let main_pane_workflow = self.render_main_pane_workflow(width, now);
+        let main_box_width = width + usize::from(panel_visible);
+        let main_pane_workflow = self.render_main_pane_workflow(width, main_box_width, now);
         let workflow_height = main_pane_workflow.len();
         lines.extend(main_pane_workflow);
 
@@ -515,21 +516,20 @@ impl App {
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
 
-        // Enforce width on every (body) line.
+        let is_full_width_workflow_box = |line: &str| {
+            crate::interface::utils::visible_width(line) == width + 1
+                && (line.contains('┌') || line.contains('└') || line.contains('│'))
+        };
         for line in &mut lines {
-            if crate::interface::utils::visible_width(line) > width {
+            if crate::interface::utils::visible_width(line) > width
+                && !is_full_width_workflow_box(line)
+            {
                 *line = crate::interface::utils::truncate_to_width(line, width, None);
             }
         }
 
-        // Prefix the persistent left panel onto each row (#800). Panel cells are
-        // pre-padded to exactly `panel_width` visible columns, so concatenation
-        // yields full-width rows.
         if panel_visible {
             let panel = self.render_subagent_panel(panel_width, height, now);
-            // The divider is bright/colored on the focused pane and dim on the
-            // other, so it doubles as the focus indicator (#802). Panel focused
-            // → the panel side is "lit" (accent rule); else dim.
             let divider = if matches!(self.focus, Focus::Panel) {
                 theme::accent("│")
             } else {
@@ -540,16 +540,15 @@ impl App {
                     .get(i)
                     .cloned()
                     .unwrap_or_else(|| " ".repeat(panel_width));
-                *line = format!("{cell}{divider} {line}");
+                *line = if is_full_width_workflow_box(line) {
+                    format!("{cell}{divider}{line}")
+                } else {
+                    format!("{cell}{divider} {line}")
+                };
             }
         }
 
-        // Store rendered lines for text selection extraction (#528), but only
-        // while a selection is (or was) active. The clean copy is consumed
-        // exclusively by mouse text-selection extraction, so idle/streaming
-        // frames must not deep-clone the whole screen buffer every tick (#757).
-        // Must happen BEFORE highlight injection to avoid leaking
-        // reverse-video escapes into the extraction buffer (#546 review).
+        // Store rendered lines for text selection extraction (#528).
         if self.selection.is_some() {
             self.last_rendered_lines = lines.clone();
         } else {

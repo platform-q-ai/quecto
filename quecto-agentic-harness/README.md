@@ -672,8 +672,9 @@ Quecto development uses the repository-local Quecto workflow checklist:
 13 - Fix all valid review concerns
 14 - Push changes to remote
 15 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
-16 - Confirm the pre-push gate passed and report the PR (do NOT merge)
-17 - Clean up sub agents
+16 - Verify the PR meets every issue acceptance criterion
+17 - Confirm the pre-push gate passed and report the PR (do NOT merge)
+18 - Clean up sub agents
 
 ## Quality gates
 
@@ -773,7 +774,7 @@ Pre-merge controls (real-LLM lane):
 - `QUECTO_REAL_LLM_TAG` scenario tag to run (default `manual-real-llm`; use `real-llm-smoke` for the old smoke subset)
 - `QUECTO_PREMERGE_FORCE=1` to bypass cache and rerun merge-time checks
 
-Coverage is intentionally not part of git hooks. Run coverage in nightly CI (recommended with `cargo llvm-cov`) to keep local dev loops fast.
+Coverage runs in the full pre-push/pre-merge gate. For manual checks without pushing, use `cargo llvm-cov` (or `scripts/pre-push.sh` for the canonical full local gate); expect that path to take longer than the commit-time hook.
 
 ## Directory Structure
 

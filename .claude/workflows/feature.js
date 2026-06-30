@@ -1,6 +1,6 @@
 export const meta = {
   name: 'feature',
-  description: 'Quecto feature workflow: hooks → RED (BDD/TDD) → BDD review → GREEN → push gate → PR → parallel reviewers → fix → merge.',
+  description: 'Quecto feature workflow: hooks → RED (BDD/TDD) → BDD review → GREEN → push gate → PR → parallel reviewers → fix → conformance → report PR (no merge).',
   whenToUse: 'Use for all Quecto development work in this repository. Pass the issue/task description as args.',
   phases: [
     { title: 'Setup', detail: 'Install/verify local quality hooks' },
@@ -11,7 +11,7 @@ export const meta = {
     { title: 'PR Review', detail: 'Parallel Architecture/Security/Performance reviewers' },
     { title: 'Fix Reviews', detail: 'Triage findings, fix, push, resolve threads' },
     { title: 'Conformance', detail: 'Systematic check the PR meets every issue acceptance criterion before merge' },
-    { title: 'Merge', detail: 'Confirm gate, merge, sync local master, cleanup' },
+    { title: 'Report', detail: 'Confirm gate/checks, report PR ready, cleanup (do not merge)' },
   ],
 }
 
@@ -22,7 +22,7 @@ const TASK = args ? (typeof args === 'string' ? args : JSON.stringify(args)) : '
 phase('Setup')
 await agent(
   `Quecto feature workflow for: ${TASK}\n\n` +
-  `STEP — Install/check local quality hooks. Run scripts/install-hooks.sh, then verify pre-commit, ` +
+  `STEP — Install/check local quality hooks. Run scripts/install-hooks.sh, then consult docs/agent-dev-quickstart.md and verify pre-commit, ` +
   `pre-push, and the git --no-verify wrapper are installed/active before any code is edited. ` +
   `Never bypass hooks with --no-verify. Report hook status.`,
   { label: 'hooks', phase: 'Setup' }
@@ -33,10 +33,10 @@ phase('RED')
 await agent(
   `Task: ${TASK}\n\n` +
   `STEP — Update Scenarios / add features (RED phase, part 1). Update BDD feature files and ` +
-  `task-facing scenarios FIRST, and identify explicit, checkable acceptance criteria for the change.\n` +
-  `STEP — Write/update unit tests. Run a quick targeted smoke check to confirm they compile; the full ` +
+  `task-facing scenarios FIRST after 'gh issue view <N> --json title,body,comments', and identify explicit, checkable acceptance criteria for the change. See docs/agent-dev-quickstart.md.\n` +
+  `STEP — Write/update unit tests. Use 'cargo test -p quecto --lib <name_substring>' or 'cargo test -p quecto-tui --lib <name_substring>' (never '-p quecto-agentic-harness'; see docs/agent-dev-quickstart.md). Run a quick targeted smoke check to confirm they compile; the full ` +
   `suite and coverage run on push.\n` +
-  `STEP — Ensure new/modified tests FAIL (RED). Run only the new/modified tests to confirm they fail ` +
+  `STEP — Ensure new/modified tests FAIL (RED). Run only the new/modified targeted test to confirm it fails ` +
   `before any implementation. Report the failing test names and the acceptance criteria.`,
   { label: 'red', phase: 'RED' }
 )
@@ -66,7 +66,7 @@ await agent(
   `STEP — Refactor. Tidy only what this change touches (naming, duplication, clarity); minimal, no ` +
   `speculative abstraction.\n` +
   `STEP — Ensure tests still pass. Re-run the targeted tests and confirm GREEN. Respect the file-size ` +
-  `cap and strict clippy before pushing.`,
+  `cap and strict clippy before pushing. Do not manually re-run the whole suite before commit; push/pre-push does that.`,
   { label: 'green', phase: 'GREEN' }
 )
 
@@ -74,10 +74,10 @@ await agent(
 phase('Ship')
 const pr = await agent(
   `Task: ${TASK}\n\n` +
-  `STEP — Commit. If on the default branch (master), create a feature branch first. Write a clear, ` +
+  `STEP — Commit. If on the default branch (master), create a feature branch first. Stage only intended files. Remember git commit pre-commit does not run unit/BDD tests; see docs/agent-dev-quickstart.md. Write a clear, ` +
   `descriptive commit message with any required commit trailers. GUARD: hook setup and RED/GREEN must be ` +
   `done first.\n` +
-  `STEP — Push. This triggers the full local gate: fmt, strict clippy, unit/architecture/contracts/` +
+  `STEP — Push. This triggers the full local gate (or run scripts/pre-push.sh without pushing; see docs/agent-dev-quickstart.md): fmt, strict clippy, unit/architecture/contracts/` +
   `repo_docs, the 24-shard non-real BDD suite, region coverage at/above threshold (quecto and quecto-tui), ` +
   `machete, deny, and the zero-cost mocked @mock-llm e2e lane (the live suite is opt-in via ` +
   `QUECTO_RUN_REAL_LLM=1). Fix every failure; never use --no-verify — a bypassed gate does NOT count as ` +
@@ -110,7 +110,7 @@ const reviews = await parallel(DIMENSIONS.map(dim => () => agent(
   `PRECONDITION: reviewers MUST NOT be dispatched before a PR exists; stop if this prompt does not include a PR number. ` +
   `Use the PR number only. Explicitly forbid passing a raw diff: do NOT accept a pasted raw diff in the prompt; fetch it yourself. ` +
   `Run your OWN independent review on the single dimension '${dim}'.${DIMENSION_FOCUS[dim] || ''} Read the diff with ` +
-  `gh pr diff <PR>. Be skeptical — report ONLY real issues. Do NOT modify code. ` +
+  `gh pr diff <PR>. Use the addPullRequestReview event COMMENT snippet in docs/agent-dev-quickstart.md. Be skeptical — report ONLY real issues. Do NOT modify code. ` +
   `Post findings as INLINE review comments on the PR via the GitHub GraphQL API (gh api graphql): ` +
   `fetch the PR node id and head SHA with gh pr view <PR> --json id,headRefOid, then submit one review ` +
   `carrying inline comments via the addPullRequestReview mutation (event COMMENT, comments array of ` +
@@ -142,7 +142,7 @@ phase('Conformance')
 let conformance = await agent(
   `Task: ${TASK}. PR: ${pr}\n\n` +
   `SYSTEMATIC ACCEPTANCE REVIEW — a hard gate before merge. Read the ORIGINAL issue's acceptance ` +
-  `criteria (gh issue view the issue number referenced in TASK) and the PR diff (gh pr diff <PR>), and ` +
+  `criteria ('gh issue view <N> --json title,body,comments') and the PR diff (gh pr diff <PR>), and ` +
   `inspect the actual branch code. For EVERY acceptance criterion, decide met / partial / unmet and cite ` +
   `concrete file:line evidence — a criterion counts as met ONLY with evidence in the code, never on the ` +
   `strength of the PR description's claims. Be skeptical. Do NOT modify code. Output a per-criterion table, ` +
@@ -169,11 +169,7 @@ if (/CONFORMANCE:\s*FAIL/i.test(conformance)) {
   )
 }
 
-// ── Merge gate: refuse to merge if any upstream phase ERRORED or conformance failed ──
-// agent() returns null when a phase agent dies on a terminal error (e.g. API/
-// connectivity). A null reviewer/fix/conformance means that phase did NOT run —
-// merging anyway is exactly how a PR can land without real review/conformance
-// (the #818 incident). Block the merge instead of riding through on auto-merge.
+// ── Report gate: refuse a clean hand-off if any upstream phase errored or conformance failed ──
 const reviewsCompleted = reviews.filter(Boolean).length
 const conformancePass = !!conformance && /CONFORMANCE:\s*PASS/i.test(conformance)
 if (reviewsCompleted < DIMENSIONS.length || fixResolve === null || !conformancePass) {
@@ -184,29 +180,22 @@ if (reviewsCompleted < DIMENSIONS.length || fixResolve === null || !conformanceP
     fixResolve === null ? 'the fix/resolve phase errored' : null,
     !conformancePass ? 'conformance did not return CONFORMANCE: PASS' : null,
   ].filter(Boolean).join('; ')
-  log(`MERGE BLOCKED — ${reason}. Leaving PR ${pr} open for manual attention; NOT merging.`)
-  return { pr, merged: false, blocked: reason, conformance }
+  log(`REPORT BLOCKED — ${reason}. Leaving PR ${pr} open for manual attention; NOT merging.`)
+  return { pr, ready: false, blocked: reason, conformance }
 }
 
-// ── Merge, sync, cleanup ───────────────────────────────────────────────────
-phase('Merge')
+// ── Report PR readiness, do not merge ─────────────────────────────────────
+phase('Report')
 const result = await agent(
   `Task: ${TASK}. PR: ${pr}\n\n` +
   `Acceptance-conformance verdict:\n${conformance}\n\n` +
-  `STEP — Confirm the pre-push gate passed IN FULL on the latest pushed commit (coverage threshold, ` +
-  `machete, deny, and the mocked @mock-llm e2e lane) WITHOUT --no-verify, and the required CI checks ` +
-  `"Unit Tests" and "Mock LLM E2E Tests" are green. A push that bypassed the gate with --no-verify does ` +
-  `NOT count as passing — if the gate was bypassed, do NOT merge; re-push cleanly or report and stop. ` +
-  `GUARD: do NOT merge unless (a) all review findings are addressed, (b) the conformance verdict above is ` +
-  `"CONFORMANCE: PASS", and (c) the gate genuinely passed (not bypassed). If any is false, do NOT merge — ` +
-  `report and stop.\n` +
-  `STEP — Merge with: gh pr merge <PR> --merge --auto --delete-branch (auto-merge waits for the required ` +
-  `"Unit Tests" and "Mock LLM E2E Tests" checks). The default branch is protected with enforce_admins; ` +
-  `do not force or bypass.\n` +
-  `STEP — Move to local master: git checkout master && git pull --ff-only to sync the merge.\n` +
-  `Return the final merge status.`,
-  { label: 'merge-sync', phase: 'Merge' }
+  `STEP — Confirm the latest push's pre-push gate passed IN FULL on the latest pushed commit ` +
+  `(coverage threshold, machete, deny, and the mocked @mock-llm e2e lane) WITHOUT --no-verify, ` +
+  `and the required CI checks "Unit Tests" and "Mock LLM E2E Tests" are green (` +
+  `gh pr checks <PR>). Also confirm reviewers posted inline findings and all threads are resolved. ` +
+  `Do NOT run gh pr merge or git merge and do NOT set auto-merge. Report the PR number and summary, then stop.`,
+  { label: 'report-pr', phase: 'Report' }
 )
 
-log('Feature workflow complete.')
+log('Feature workflow complete — PR reported, not merged.')
 return { pr, result }

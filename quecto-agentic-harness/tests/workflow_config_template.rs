@@ -451,6 +451,55 @@ fn feature_js_dimensions_array_matches_full_default_set() {
 }
 
 #[test]
+fn feature_workflow_points_agents_to_quickstart_and_exact_commands() {
+    let config = read_native_config();
+    let quickstart = read_repo_file("docs/agent-dev-quickstart.md");
+    for needle in [
+        "cargo test -p quecto --lib <name_substring>",
+        "cargo test -p quecto-tui --lib <name_substring>",
+        "never `-p quecto-agentic-harness`",
+        "gh issue view <N> --json title,body,comments",
+        "gh pr diff <PR>",
+        "addPullRequestReview",
+        "LLVM_COV=$(command -v llvm-cov) LLVM_PROFDATA=$(command -v llvm-profdata)",
+        "scripts/pre-push.sh",
+        "git commit` pre-commit does NOT run unit/BDD tests",
+        "git push` pre-push runs the full new+old suite",
+        "Do not manually re-run the whole suite",
+    ] {
+        assert!(
+            quickstart.contains(needle),
+            "quickstart missing canonical wording: {needle}"
+        );
+    }
+
+    for key in [
+        "hooks",
+        "scenarios",
+        "tests",
+        "red",
+        "verify",
+        "commit",
+        "push",
+        "conformance",
+        "reviewers",
+    ] {
+        let g = guidance(&config, key);
+        assert!(
+            g.contains("docs/agent-dev-quickstart.md") || g.contains("agent-dev-quickstart.md"),
+            "`{key}` guidance should point to the agent/dev quickstart: {g}"
+        );
+    }
+
+    assert!(guidance(&config, "tests").contains("cargo test -p quecto --lib <name_substring>"));
+    assert!(guidance(&config, "tests").contains("cargo test -p quecto-tui --lib <name_substring>"));
+    assert!(guidance(&config, "red").contains("quick targeted"));
+    assert!(guidance(&config, "verify").contains("Do not manually re-run the whole suite"));
+    assert!(guidance(&config, "push").contains("scripts/pre-push.sh"));
+    assert!(guidance(&config, "reviewers").contains("addPullRequestReview"));
+}
+
+#[test]
 fn reviewer_mechanic_deduplicated() {
     let config = read_native_config();
 
