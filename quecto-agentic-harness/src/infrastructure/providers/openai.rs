@@ -74,14 +74,22 @@ impl OpenAiProvider {
         let tools = request.tools;
         let model = request.model;
         let max_tokens = request.max_tokens;
+        // #938: strict OpenAI-compatible endpoints (Fireworks qwen3p7-plus)
+        // reject any non-leading `system` message. Preserve only the *first*
+        // `system` message regardless of its position; demote every later one to
+        // `user`, prefixing the content with "[system] " to keep the framing.
+        // Tracking `seen_system` (rather than `idx > 0`) avoids an implicit
+        // "system is always first" invariant: a non-system message preceding the
+        // system prompt no longer causes the real system message to be demoted.
+        let mut seen_system = false;
         let msgs: Vec<serde_json::Value> = messages
             .iter()
-            .enumerate()
-            .map(|(idx, m)| {
-                // #938: strict OpenAI-compatible endpoints (Fireworks qwen3p7-plus)
-                // reject any non-leading `system` message; demote it to `user` and
-                // prefix the content with "[system] " to preserve the framing.
-                let demote_system = matches!(m.role, Role::System) && idx > 0;
+            .map(|m| {
+                let is_system = matches!(m.role, Role::System);
+                let demote_system = is_system && seen_system;
+                if is_system {
+                    seen_system = true;
+                }
                 let role = match m.role {
                     Role::System if demote_system => "user",
                     Role::System => "system",

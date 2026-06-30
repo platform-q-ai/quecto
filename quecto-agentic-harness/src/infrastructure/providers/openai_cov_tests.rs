@@ -111,6 +111,22 @@ fn build_request_body_demotes_non_leading_system_to_user() {
 }
 
 #[test]
+fn build_request_body_consecutive_leading_system_demotes_second() {
+    // Boundary: only the *first* system survives even when a second system
+    // immediately follows it (guards against a regression keying off
+    // "previous message was system" instead of "first system seen").
+    let messages = vec![
+        Message::system("You are helpful."),
+        Message::system("Also be terse."),
+        Message::user("hi"),
+    ];
+    let body = OpenAiProvider::build_request_body(&req(&messages, &[], "qwen3p7-plus"));
+    assert_eq!(roles_of(&body), ["system", "user", "user"]);
+    assert_eq!(body["messages"][0]["content"], "You are helpful.");
+    assert_eq!(body["messages"][1]["content"], "[system] Also be terse.");
+}
+
+#[test]
 fn build_request_body_leading_only_system_unchanged() {
     let messages = vec![Message::system("You are helpful."), Message::user("hi")];
     let body = OpenAiProvider::build_request_body(&req(&messages, &[], "qwen3p7-plus"));
