@@ -371,6 +371,39 @@ async fn model_selector_pending_keeps_open() {
     assert!(a.model_selector.is_some());
 }
 
+#[tokio::test]
+async fn model_selector_overlay_renders_with_theme_background() {
+    use crate::interface::theme;
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.open_model_selector();
+    a.handle_list_models(Some(serde_json::json!({ "models": [] })));
+    assert!(a.model_selector.is_some());
+    let frame = a.compose_frame();
+    let joined = frame.join("\n");
+    assert!(
+        joined.contains(theme::BG_OVERLAY),
+        "model selector overlay should use the theme background"
+    );
+    assert!(
+        joined.contains("Select Model"),
+        "frame should contain the model selector title"
+    );
+    // Every overlay line should span the same overlay width.
+    let overlay_lines: Vec<&String> = frame
+        .iter()
+        .filter(|l| l.contains(theme::BG_OVERLAY))
+        .collect();
+    let first_width = crate::interface::utils::visible_width(overlay_lines[0]);
+    for line in &overlay_lines {
+        assert_eq!(
+            crate::interface::utils::visible_width(line),
+            first_width,
+            "all overlay lines should have the same width"
+        );
+    }
+}
+
 // ── app_methods: notifications, reset, selection ─────────────────────
 
 #[tokio::test]
