@@ -313,3 +313,49 @@ fn registry_oauth_auth_block_top_level_api_key_resolves_from_env() {
         std::env::remove_var("QUECTO_TEST_AUTH_BLOCK_KEY");
     }
 }
+
+// === #935: per-model output-cap lookup (the seam that feeds the clamp) ===
+
+#[test]
+fn max_tokens_for_returns_model_cap_for_known_model() {
+    // This is the registry-lookup seam that the agent build and the set_model
+    // path use to re-derive a model's output cap. A lower-cap model (e.g.
+    // Fireworks qwen3p7-plus = 65536) must report its real cap so the clamp
+    // can apply min(configured, cap).
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("models.json");
+    std::fs::write(
+        &path,
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"qwen3p7-plus","maxTokens":65536}]}}}"#,
+    )
+    .unwrap();
+
+    let registry = ModelRegistry::load_from_path(&path).unwrap();
+    assert_eq!(
+        registry.max_tokens_for("fireworks/qwen3p7-plus"),
+        Some(65_536)
+    );
+}
+
+#[test]
+fn max_tokens_for_returns_none_for_unknown_or_unqualified_model() {
+    let registry = ModelRegistry::builtin();
+    assert_eq!(registry.max_tokens_for("fireworks/does-not-exist"), None);
+    // Not provider/id-shaped → no clamp.
+    assert_eq!(registry.max_tokens_for("bare-model-name"), None);
+}
+
+#[test]
+fn model_cap_from_base_dir_reads_models_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"qwen3p7-plus","maxTokens":65536}]}}}"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        ModelRegistry::model_cap_from_base_dir(tmp.path(), "fireworks/qwen3p7-plus"),
+        Some(65_536)
+    );
+}

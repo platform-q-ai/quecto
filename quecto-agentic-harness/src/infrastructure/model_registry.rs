@@ -418,6 +418,25 @@ impl ModelRegistry {
         &self.models
     }
 
+    /// The registry output cap for a `provider/id` qualified model string, if
+    /// the model is known (#935). Used to clamp the effective per-request
+    /// output tokens to `min(configured_max_tokens, model.max_tokens)`. Returns
+    /// `None` when the model is unknown or the id is not `provider/id`-shaped,
+    /// so callers fall back to the configured value (no clamp).
+    pub fn max_tokens_for(&self, qualified: &str) -> Option<u32> {
+        let (provider, id) = qualified.split_once('/')?;
+        self.find(provider, id).map(|m| m.max_tokens)
+    }
+
+    /// Load the registry from `<base_dir>/models.json` (falling back to the
+    /// built-in registry on any error) and return the output cap for a
+    /// `provider/id` model, if known (#935).
+    pub fn model_cap_from_base_dir(base_dir: &Path, qualified: &str) -> Option<u32> {
+        let registry =
+            Self::load_from_path(&base_dir.join("models.json")).unwrap_or_else(|_| Self::builtin());
+        registry.max_tokens_for(qualified)
+    }
+
     fn upsert(&mut self, record: ModelRecord) {
         if let Some(existing) = self
             .models

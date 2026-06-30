@@ -82,6 +82,90 @@ fn then_error_not_retryable(world: &mut QuectoWorld) {
     assert!(!class.is_retryable(), "expected error to not be retryable");
 }
 
+#[given(expr = "a 500 response whose body declares an {string} client code")]
+fn given_500_with_client_code(world: &mut QuectoWorld, code: String) {
+    // Push the wire detail into the step, keeping the feature declarative (#935).
+    use quecto::domain::error::DomainError;
+    let message = format!(
+        "HTTP 500 from provider: {{\"error\":{{\"code\":\"{code}\",\"message\":\"max_tokens 200000 exceeds the model output limit of 65536\"}}}}"
+    );
+    let err = DomainError::Provider(message);
+    world.error_class = Some(classify_provider_error(&err));
+}
+
+// ===========================================================================
+// #935: per-model max_tokens clamp (the headline Fireworks fix)
+// ===========================================================================
+
+#[given(expr = "a model whose output cap is {int} tokens")]
+fn given_model_output_cap(world: &mut QuectoWorld, cap: u32) {
+    super::agent_loop_steps::ensure_mock_llm(world);
+    world
+        .env_overrides
+        .insert("_model_output_cap".into(), cap.to_string());
+}
+
+#[given(expr = "a configured max_tokens of {int}")]
+fn given_configured_max_tokens_935(world: &mut QuectoWorld, configured: u32) {
+    world
+        .env_overrides
+        .insert("_configured_max_tokens".into(), configured.to_string());
+}
+
+#[when("the agent builds a request for that model")]
+fn when_agent_builds_request_for_model(world: &mut QuectoWorld) {
+    let configured: u32 = world
+        .env_overrides
+        .get("_configured_max_tokens")
+        .and_then(|v| v.parse().ok())
+        .expect("configured max_tokens not set");
+    let cap: u32 = world
+        .env_overrides
+        .get("_model_output_cap")
+        .and_then(|v| v.parse().ok())
+        .expect("model output cap not set");
+    let provider = world.mock_llm.clone().expect("mock LLM not configured");
+    provider.push_response(LlmResponse {
+        content: Some("done".to_string()),
+        tool_calls: vec![],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    });
+    let agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
+        provider: provider.clone() as Arc<dyn LlmProvider>,
+        tool_registry: Box::new(ToolRegistryImpl::new()),
+        model: "fireworks/qwen3p7-plus".to_string(),
+        max_tokens: configured,
+        temperature: 0.7,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_turns: u32::MAX,
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+    })
+    .with_model_max_tokens(Some(cap));
+    let mut messages = vec![Message::user("hi")];
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(agent.process(&mut messages))
+        .expect("agent process failed in clamp scenario");
+}
+
+#[then(expr = "the request output cap should be {int}")]
+fn then_request_output_cap(world: &mut QuectoWorld, expected: u32) {
+    let provider = world.mock_llm.as_ref().expect("mock LLM not configured");
+    assert_eq!(
+        provider.last_max_tokens(),
+        Some(expected),
+        "the request the provider received must carry the clamped output cap"
+    );
+}
+
 // ===========================================================================
 // Provider Fallback Steps
 // ===========================================================================

@@ -48,6 +48,9 @@ struct MockLlmProvider {
     responses: Mutex<Vec<LlmResponse>>,
     /// Captured tool definitions from the most recent chat() call.
     last_tool_defs: Mutex<Vec<ToolDefinition>>,
+    /// Captured `max_tokens` (effective output cap) from the most recent
+    /// chat() call (#935).
+    last_max_tokens: Mutex<Option<u32>>,
 }
 
 impl MockLlmProvider {
@@ -55,6 +58,7 @@ impl MockLlmProvider {
         Self {
             responses: Mutex::new(vec![]),
             last_tool_defs: Mutex::new(vec![]),
+            last_max_tokens: Mutex::new(None),
         }
     }
 
@@ -64,6 +68,10 @@ impl MockLlmProvider {
 
     fn last_tool_defs(&self) -> Vec<ToolDefinition> {
         self.last_tool_defs.lock().unwrap().clone()
+    }
+
+    fn last_max_tokens(&self) -> Option<u32> {
+        *self.last_max_tokens.lock().unwrap()
     }
 }
 
@@ -77,6 +85,7 @@ impl LlmProvider for MockLlmProvider {
         request: quecto::domain::provider::ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         *self.last_tool_defs.lock().unwrap() = request.tools.to_vec();
+        *self.last_max_tokens.lock().unwrap() = Some(request.max_tokens);
         let response = {
             let mut responses = self.responses.lock().unwrap();
             if responses.is_empty() {

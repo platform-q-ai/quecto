@@ -55,7 +55,16 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
     let lowered = msg.to_ascii_lowercase();
 
     if let Some(status) = extract_http_status(&lowered) {
-        return ProviderErrorClass::from_status(status);
+        let class = ProviderErrorClass::from_status(status);
+        // #935: some providers (e.g. Fireworks) wrap an explicit client error
+        // code such as `invalid_request_error` inside a 5xx status. Such a
+        // request can never succeed on retry (the request itself is invalid),
+        // so classify it as non-retryable `Client` and fail fast with the real
+        // message instead of futile retries and misleading "retry later".
+        if class == ProviderErrorClass::Server && declares_client_error_code(&lowered) {
+            return ProviderErrorClass::Client;
+        }
+        return class;
     }
 
     // A parenthesised `(NNN)` group is a weaker signal than an `http`/`status`
@@ -97,6 +106,14 @@ fn extract_parenthesized_status(lowered: &str) -> Option<u16> {
         search_from = open + 1;
     }
     None
+}
+
+/// Does the (lowercased) error body declare an explicit client error code,
+/// e.g. Fireworks/OpenAI `invalid_request_error` (as a `code` or `type`)? Such
+/// a code means the request is malformed and will never succeed on retry, even
+/// when wrapped in a 5xx status (#935).
+fn declares_client_error_code(lowered: &str) -> bool {
+    lowered.contains("invalid_request_error")
 }
 
 fn classify_keyword_paths(lowered: &str) -> ProviderErrorClass {

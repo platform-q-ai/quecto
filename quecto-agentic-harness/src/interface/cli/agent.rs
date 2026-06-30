@@ -403,6 +403,15 @@ pub(crate) fn build_agent_from_config(
         flags
             .max_iterations
             .unwrap_or(config.agents.defaults.max_tool_iterations),
+    )
+    // #935: clamp the effective output cap to the model's registry max_tokens
+    // so a model whose real output limit is lower than the configured global
+    // default (e.g. Fireworks qwen3p7-plus = 65536) never receives a larger
+    // value. The set_model path re-derives this so a model switch re-clamps.
+    .with_model_max_tokens(
+        crate::infrastructure::model_registry::ModelRegistry::model_cap_from_base_dir(
+            base_dir, &model,
+        ),
     );
 
     Some(AgentBuildResult {

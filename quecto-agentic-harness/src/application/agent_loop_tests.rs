@@ -14,6 +14,8 @@ pub(super) struct MockProvider {
     last_tool_defs: Mutex<Vec<ToolDefinition>>,
     /// Captured first system prompts from every chat() call.
     seen_system_prompts: Mutex<Vec<String>>,
+    /// Captured `max_tokens` (effective output cap) from every chat() call (#935).
+    seen_max_tokens: Mutex<Vec<u32>>,
     request_count: Mutex<usize>,
 }
 
@@ -23,6 +25,7 @@ impl MockProvider {
             responses: Mutex::new(responses.into_iter().map(Ok).collect()),
             last_tool_defs: Mutex::new(vec![]),
             seen_system_prompts: Mutex::new(vec![]),
+            seen_max_tokens: Mutex::new(vec![]),
             request_count: Mutex::new(0),
         }
     }
@@ -32,8 +35,13 @@ impl MockProvider {
             responses: Mutex::new(responses),
             last_tool_defs: Mutex::new(vec![]),
             seen_system_prompts: Mutex::new(vec![]),
+            seen_max_tokens: Mutex::new(vec![]),
             request_count: Mutex::new(0),
         }
+    }
+
+    pub(super) fn seen_max_tokens(&self) -> Vec<u32> {
+        self.seen_max_tokens.lock().unwrap().clone()
     }
 
     fn request_count(&self) -> usize {
@@ -119,6 +127,8 @@ impl LlmProvider for MockProvider {
         // Capture tool defs
         *self.request_count.lock().unwrap() += 1;
         *self.last_tool_defs.lock().unwrap() = request.tools.to_vec();
+        let max_tokens = request.max_tokens;
+        self.seen_max_tokens.lock().unwrap().push(max_tokens);
         let system_prompt = request
             .messages
             .iter()
@@ -730,11 +740,11 @@ async fn test_progress_callback_done_fired_on_text_response() {
     assert!(has_done, "expected Done event, got: {:?}", *fired);
 }
 
-#[path = "agent_loop_931_tests.rs"]
-mod retry_malformed_tests;
-
-#[path = "agent_loop_progress_tests.rs"]
-mod progress_tests;
-
+#[path = "agent_loop_935_tests.rs"]
+mod clamp_max_tokens_tests;
 #[path = "agent_loop_context_tokens_tests.rs"]
 mod context_tokens_tests;
+#[path = "agent_loop_progress_tests.rs"]
+mod progress_tests;
+#[path = "agent_loop_931_tests.rs"]
+mod retry_malformed_tests;
