@@ -6,9 +6,9 @@
 //!     even with no sub-agents (not gated on `!subagent_local.is_empty()`);
 //!   * panel rows carry NO status dot/glyph; the NAME TEXT is coloured by status
 //!     (running = green, idle = orange/yellow, errored = red);
-//!   * selecting an agent fills the MAIN PANE: a title line plus a BOXED,
-//!     single-line yellow workflow bar (progress + phase + n/total) — no
-//!     phase-pills line and no hints line;
+//!   * selecting an agent fills the MAIN PANE: a title line plus a full-width
+//!     workflow status bar (progress + phase + n/total) — no phase-pills line
+//!     and no hints line;
 //!   * the old sub-agent bar and the workflow bar no longer render in the bottom
 //!     stack (`compose_bottom`);
 //!   * `compose_frame` stays render-idempotent (no flash) with the panel.
@@ -304,10 +304,10 @@ async fn selection_uses_left_accent_bar_one_line_tall() {
     );
 }
 
-// ── Main pane: boxed, single-line workflow bar for the selected agent ────────
+// ── Main pane: full-width workflow status bar for the selected agent ─────────
 
 #[tokio::test]
-async fn main_pane_shows_boxed_workflow_for_selected_agent() {
+async fn main_pane_shows_workflow_status_bar_for_selected_agent() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![subagent(
@@ -319,13 +319,18 @@ async fn main_pane_shows_boxed_workflow_for_selected_agent() {
     h.app_mut()
         .route_subagent_event("worker", workflow_event(Some("worker")));
     let top = top_region(&mut h);
+    let stripped = strip_ansi(&top);
     assert!(
-        top.contains('┌') || top.contains('╭'),
-        "the relocated workflow bar must be BOXED in the main pane:\n{top}"
+        stripped.lines().any(|line| {
+            line.rsplit_once("│ ").is_some_and(|(_, segment)| {
+                !segment.is_empty() && segment.chars().all(|c| c == '─')
+            })
+        }),
+        "the relocated workflow status bar must render full-width rules in the main pane:\n{top}"
     );
     assert!(
         top.contains("Step 4/5"),
-        "the boxed workflow bar must show the current step n/total in the main pane:\n{top}"
+        "the workflow status bar must show the current step n/total in the main pane:\n{top}"
     );
     assert!(
         top.contains("#820"),
