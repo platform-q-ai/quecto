@@ -110,6 +110,30 @@ process. If a UDS client attempts to register a tool with a disabled name
 via `register_tools`, the registration is silently rejected. This prevents
 bypassing the restriction at runtime.
 
+## Disabling tools when spawning a child (`disable_tools` / `read_only`)
+
+The same capability is available on the `spawn` tool, so a coordinator can
+launch a child agent with a restricted tool set — the spawn path and this CLI
+`--disable-tool` flag are two entry points to the same registry-removal
+mechanism.
+
+- `disable_tools: [<tool names>]` — remove the named tools from the child's
+  registry before its session starts, so the child's model never sees them.
+- `read_only: true` — a convenience that expands to `disable_tools: ["write",
+  "edit"]`, i.e. the child keeps `bash`, `read`, `grep`, `find` and `agent_cmd`
+  but cannot use the `write` or `edit` tools.
+
+```json
+{ "task": "Review PR #123 for security issues", "read_only": true }
+```
+
+As with `--disable-tool`, this is **not a hard sandbox**: a child can still
+mutate the workspace via `bash` (e.g. `sed`, `>` redirects). It is
+defense-in-depth against accidental writes, not an isolation boundary — for
+stronger guarantees use a workspace/sandbox posture. See
+`docs {"name":"subagents"}` for the full spawn reference and a read-only
+reviewer example.
+
 ## Interaction with other flags
 
 | Flag combination | Behaviour |

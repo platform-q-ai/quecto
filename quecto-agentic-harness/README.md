@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.81.11**.
+Current version: **0.81.12**.
 
 ## Quick Start
 
@@ -665,16 +665,17 @@ Quecto development uses the repository-local Quecto workflow checklist:
 6 - Implement code (GREEN)
 7 - Refactor (perf, security, clean arch)
 8 - Ensure tests still pass (GREEN)
-9 - Commit
-10 - Push (pre-push hook will run tests and linting)
-11 - Create PR
-12 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)
-13 - Fix all valid review concerns
-14 - Push changes to remote
-15 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
-16 - Verify the PR meets every issue acceptance criterion
-17 - Confirm the pre-push gate passed and report the PR (do NOT merge)
-18 - Clean up sub agents
+9 - Bump semver for every changed crate and sync version docs
+10 - Commit
+11 - Push (pre-push hook will run tests and linting)
+12 - Create PR
+13 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)
+14 - Fix all valid review concerns
+15 - Push changes to remote
+16 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
+17 - Verify the PR meets every issue acceptance criterion
+18 - Confirm the pre-push gate passed and report the PR (do NOT merge)
+19 - Clean up sub agents
 
 ## Quality gates
 

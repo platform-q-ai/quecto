@@ -30,7 +30,9 @@ fn workflow_guards(config: &Value) -> &[Value] {
 }
 
 fn assert_reference_steps(steps: &[Value]) {
-    assert_eq!(steps.len(), 18);
+    // #950 added a `version_bump` step (after `verify`, before `commit`), taking
+    // the reference workflow to 19 steps.
+    assert_eq!(steps.len(), 19);
     assert_eq!(steps.first().unwrap()["key"], "hooks");
     assert_eq!(
         steps.first().unwrap()["label"],
@@ -39,13 +41,17 @@ fn assert_reference_steps(steps: &[Value]) {
     assert_eq!(steps[1]["key"], "scenarios");
     assert_eq!(steps[3]["key"], "red");
     assert_eq!(steps[4]["key"], "bdd_review");
+    // #950: version_bump sits after verify (7) and before commit (9).
+    assert_eq!(steps[7]["key"], "verify");
+    assert_eq!(steps[8]["key"], "version_bump");
+    assert_eq!(steps[9]["key"], "commit");
     // #886: the `merge` and `pull` hand-off steps are removed; the workflow now
     // ends at `pre_merge` (report the PR, do NOT merge) then `cleanup`.
     assert!(steps.iter().all(|s| s["key"] != "merge"));
     assert!(steps.iter().all(|s| s["key"] != "pull"));
-    assert_eq!(steps[16]["key"], "pre_merge");
+    assert_eq!(steps[17]["key"], "pre_merge");
     assert_eq!(
-        steps[16]["label"],
+        steps[17]["label"],
         "Confirm the pre-push gate passed and report the PR (do NOT merge)"
     );
     assert_eq!(steps.last().unwrap()["key"], "cleanup");
@@ -73,7 +79,7 @@ fn readme_workflow_config_uses_guards_not_deprecated_fields() {
 }
 
 #[test]
-fn readme_lists_full_17_step_reference_workflow() {
+fn readme_lists_full_19_step_reference_workflow() {
     let readme = read_repo_file("README.md");
 
     for expected in [
@@ -85,16 +91,17 @@ fn readme_lists_full_17_step_reference_workflow() {
         "6 - Implement code (GREEN)",
         "7 - Refactor (perf, security, clean arch)",
         "8 - Ensure tests still pass (GREEN)",
-        "9 - Commit",
-        "10 - Push (pre-push hook will run tests and linting)",
-        "11 - Create PR",
-        "12 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)",
-        "13 - Fix all valid review concerns",
-        "14 - Push changes to remote",
-        "15 - Reply to the reviewers comments on the PR and mark resolved (use graphql)",
-        "16 - Verify the PR meets every issue acceptance criterion",
-        "17 - Confirm the pre-push gate passed and report the PR (do NOT merge)",
-        "18 - Clean up sub agents",
+        "9 - Bump semver for every changed crate and sync version docs",
+        "10 - Commit",
+        "11 - Push (pre-push hook will run tests and linting)",
+        "12 - Create PR",
+        "13 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)",
+        "14 - Fix all valid review concerns",
+        "15 - Push changes to remote",
+        "16 - Reply to the reviewers comments on the PR and mark resolved (use graphql)",
+        "17 - Verify the PR meets every issue acceptance criterion",
+        "18 - Confirm the pre-push gate passed and report the PR (do NOT merge)",
+        "19 - Clean up sub agents",
     ] {
         assert!(
             readme.contains(expected),
@@ -210,6 +217,70 @@ fn doc_reviewers_guidance(guide: &str) -> &str {
         .split_once('"')
         .expect("reviewers guidance should be a closed JSON string")
         .0
+}
+
+fn step_guidance<'a>(config: &'a Value, key: &str) -> &'a str {
+    workflow_steps(config)
+        .iter()
+        .find(|s| s["key"] == key)
+        .unwrap_or_else(|| panic!("feature template should have a `{key}` step"))["guidance"]
+        .as_str()
+        .unwrap_or_else(|| panic!("step `{key}` should have string guidance"))
+}
+
+#[test]
+fn examples_config_mirrors_bdd_strictness_and_version_bump() {
+    // #953 + #950: the examples/config.json mirror must carry the strengthened BDD
+    // section and the version_bump step.
+    let config = read_workflow_config();
+
+    let scenarios = step_guidance(&config, "scenarios").to_lowercase();
+    assert!(
+        scenarios.contains("declarative") && scenarios.contains("one behaviour per scenario"),
+        "examples/config.json scenarios should teach best-practice Gherkin"
+    );
+
+    let bdd = step_guidance(&config, "bdd_review").to_lowercase();
+    assert!(
+        bdd.contains("strict")
+            && bdd.contains("every valid")
+            && bdd.contains("regardless of severity"),
+        "examples/config.json bdd_review should be strict and fix every valid concern"
+    );
+
+    let fix = step_guidance(&config, "fix_reviews").to_lowercase();
+    assert!(
+        fix.contains("every valid") && fix.contains("regardless of severity"),
+        "examples/config.json fix_reviews should require fixing every valid concern"
+    );
+
+    // #950 version_bump present between verify and commit.
+    let vb = step_guidance(&config, "version_bump");
+    assert!(
+        vb.contains("semver")
+            && vb.contains("Current version:")
+            && vb.contains("repo_docs.feature"),
+        "examples/config.json version_bump should bump semver and sync version docs"
+    );
+}
+
+#[test]
+fn workflow_guide_mirrors_version_bump_and_strict_bdd() {
+    // docs/workflow.md embeds the same config; it must show the version_bump step
+    // and the strict BDD wording (#953/#950).
+    let guide = read_repo_file("docs/workflow.md");
+    assert!(
+        guide.contains("\"key\": \"version_bump\""),
+        "docs/workflow.md should embed the version_bump step"
+    );
+    assert!(
+        guide.contains("one behaviour per scenario"),
+        "docs/workflow.md should embed the best-practice Gherkin checklist"
+    );
+    assert!(
+        guide.contains("regardless of severity"),
+        "docs/workflow.md should embed the all-valid-concerns rule"
+    );
 }
 
 #[test]

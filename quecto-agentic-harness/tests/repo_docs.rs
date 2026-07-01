@@ -208,6 +208,61 @@ fn agent_cmd_docs_match_tool_schema() {
 }
 
 #[test]
+fn subagent_docs_document_readonly_and_disable_tools_spawn() {
+    // #960: the agent-facing docs served by the docs tool must document the
+    // spawn `disable_tools` / `read_only` capability (#957) so a coordinator can
+    // discover it, including the not-a-hard-sandbox caveat and a spawn example.
+    let subagents = read_repo_file("docs/subagents.md");
+    let disable = read_repo_file("docs/disable-tools.md");
+
+    // At least one of the two served docs must describe the spawn options; assert
+    // on both so each stays coherent with the capability.
+    assert!(
+        subagents.contains("read_only") && subagents.contains("disable_tools"),
+        "docs/subagents.md should document the spawn read_only / disable_tools options"
+    );
+    // read_only is the convenience that expands to disabling write + edit.
+    let subagents_lower = subagents.to_lowercase();
+    assert!(
+        subagents.contains("\"write\"") && subagents.contains("\"edit\""),
+        "docs/subagents.md should note read_only expands to disabling write + edit"
+    );
+    // Removed from the child registry before its session starts (defense-in-depth).
+    // Anchor on the claim phrase, not two stray single-word substrings.
+    assert!(
+        subagents_lower.contains("removed from the child registry")
+            && subagents_lower.contains("before its session"),
+        "docs/subagents.md should explain the tools are removed from the child registry before its session starts"
+    );
+    // The NOT-a-hard-sandbox caveat: a child can still mutate via bash.
+    assert!(
+        subagents_lower.contains("not a hard sandbox"),
+        "docs/subagents.md should carry the not-a-hard-sandbox caveat"
+    );
+    assert!(
+        subagents_lower.contains("mutate via bash")
+            || subagents_lower.contains("mutate via `bash`"),
+        "docs/subagents.md should note a child can still mutate via bash"
+    );
+
+    // The disable-tools doc must cross-reference the spawn read_only path so the
+    // CLI --disable-tool flag and the spawn path are documented together.
+    let disable_lower = disable.to_lowercase();
+    assert!(
+        disable.contains("read_only"),
+        "docs/disable-tools.md should cross-reference the spawn read_only convenience"
+    );
+    assert!(
+        disable_lower.contains("not a hard sandbox"),
+        "docs/disable-tools.md should carry the not-a-hard-sandbox caveat"
+    );
+    assert!(
+        disable.contains("--disable-tool"),
+        "docs/disable-tools.md should keep referencing the CLI --disable-tool flag"
+    );
+}
+
+#[test]
 fn run_tui_prewarms_cold_binary_before_exec() {
     // #808: run-tui.sh must pay the cold-binary cost before launching the TUI,
     // POSIX-safely (no failure if `quecto` is not yet on PATH).

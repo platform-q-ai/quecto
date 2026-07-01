@@ -488,6 +488,182 @@ fn feature_workflow_guidance_is_self_contained() {
 }
 
 #[test]
+fn bdd_section_teaches_best_practice_gherkin() {
+    // #953 AC1: the behaviourally-led Gherkin + step-test best-practice checklist
+    // must live INLINE (no external-doc pointer). Gherkin-structure guidance sits
+    // on `scenarios`; step-test (RED/hollow) discipline sits on the `tests` step
+    // where it belongs — the tokens are asserted against their proper step.
+    let config = read_native_config();
+    let scenarios = guidance(&config, "scenarios").to_lowercase();
+    for token in [
+        "declarative",
+        "given-when-then",
+        "one behaviour per scenario",
+        "implementation detail",
+        "ubiquitous",
+        "every acceptance criterion maps to a scenario",
+    ] {
+        assert!(
+            scenarios.contains(token),
+            "scenarios guidance should teach best-practice Gherkin token `{token}`: {scenarios}"
+        );
+    }
+
+    // Step-test discipline belongs to the RED `tests` step.
+    let tests = guidance(&config, "tests").to_lowercase();
+    for token in ["behavioural", "deterministic", "isolated", "hollow"] {
+        assert!(
+            tests.contains(token),
+            "tests guidance should teach step-test discipline token `{token}`: {tests}"
+        );
+    }
+}
+
+#[test]
+fn bdd_review_is_strict_and_fixes_all_valid_concerns() {
+    // #953 AC2/AC3: strict reviewer that flags every genuine best-practice
+    // deviation, and the implementer must address EVERY valid concern regardless
+    // of severity (fix or documented decline) before GREEN.
+    let config = read_native_config();
+    let g = guidance(&config, "bdd_review").to_lowercase();
+    assert!(
+        g.contains("strict"),
+        "bdd_review should instruct a strict reviewer: {g}"
+    );
+    assert!(
+        g.contains("every genuine") || g.contains("every best-practice"),
+        "bdd_review should flag every genuine best-practice deviation: {g}"
+    );
+    // The best-practice checklist the reviewer explicitly checks.
+    assert!(
+        g.contains("declarative") && g.contains("one behaviour per scenario"),
+        "bdd_review should name the best-practice checklist it verifies: {g}"
+    );
+    // All-valid-concerns rule.
+    assert!(
+        g.contains("every valid") && g.contains("regardless of severity"),
+        "bdd_review should require addressing every valid concern regardless of severity: {g}"
+    );
+    assert!(
+        g.contains("decline"),
+        "bdd_review should allow a documented decline for invalid concerns: {g}"
+    );
+    assert!(
+        g.contains("green"),
+        "bdd_review should require concerns resolved before GREEN: {g}"
+    );
+}
+
+#[test]
+fn fix_reviews_addresses_all_valid_concerns() {
+    // #953 AC3: fix_reviews must address EVERY valid concern regardless of
+    // severity, not just high-priority ones.
+    let config = read_native_config();
+    let g = guidance(&config, "fix_reviews").to_lowercase();
+    assert!(
+        g.contains("every valid") && g.contains("regardless of severity"),
+        "fix_reviews should require fixing every valid concern regardless of severity: {g}"
+    );
+    assert!(
+        g.contains("decline"),
+        "fix_reviews should allow a documented decline for invalid concerns: {g}"
+    );
+}
+
+#[test]
+fn version_bump_step_present_between_verify_and_commit() {
+    // #950: a `version_bump` step must exist, positioned after `verify` and before
+    // `commit` so the bump is committed and goes through the gate.
+    let config = read_native_config();
+    let vb = step(&config, "version_bump");
+    assert_eq!(
+        vb["phase"], "ci_cd",
+        "version_bump should be a ci_cd-phase step"
+    );
+    assert!(
+        step_index(&config, "verify") < step_index(&config, "version_bump"),
+        "version_bump should come after verify"
+    );
+    assert!(
+        step_index(&config, "version_bump") < step_index(&config, "commit"),
+        "version_bump should come before commit"
+    );
+
+    let g = guidance(&config, "version_bump");
+    let lower = g.to_lowercase();
+    assert!(
+        lower.contains("semver") && (lower.contains("patch") || lower.contains("minor")),
+        "version_bump guidance should describe patch/minor semver bumps: {g}"
+    );
+    assert!(
+        lower.contains("changed") && lower.contains("do not bump"),
+        "version_bump guidance should bump only changed crates, not unchanged ones: {g}"
+    );
+    // Version docs kept in lockstep.
+    assert!(
+        g.contains("Current version:"),
+        "version_bump guidance should update the README Current version line: {g}"
+    );
+    assert!(
+        g.contains("repo_docs.feature"),
+        "version_bump guidance should keep repo_docs.feature in lockstep: {g}"
+    );
+    assert!(
+        g.contains("quecto-tui"),
+        "version_bump guidance should cover the quecto-tui crate: {g}"
+    );
+    assert!(
+        g.contains("Done when"),
+        "version_bump guidance should carry a Done when exit criterion: {g}"
+    );
+}
+
+#[test]
+fn feature_js_bdd_review_is_strict_and_has_version_bump() {
+    // #953 + #950 mirrored into the executable feature.js. Anchor each assertion to
+    // the specific step block that runs (the BDD-review agent prompt and the Version
+    // phase), not a whole-file substring — `"version"` etc. appear incidentally, so a
+    // whole-file `contains` could pass even if the wording landed in the wrong place.
+    let js = read_repo_file("../.claude/workflows/feature.js");
+
+    // The BDD-review agent prompt: from `phase('BDD Review')` up to `phase('GREEN')`.
+    let bdd_block = js
+        .split_once("phase('BDD Review')")
+        .expect("feature.js should have a BDD Review phase")
+        .1
+        .split_once("phase('GREEN')")
+        .expect("feature.js BDD Review phase should precede GREEN")
+        .0
+        .to_lowercase();
+    assert!(
+        bdd_block.contains("strict"),
+        "feature.js BDD review prompt should instruct a strict reviewer: {bdd_block}"
+    );
+    assert!(
+        bdd_block.contains("every valid") && bdd_block.contains("regardless of severity"),
+        "feature.js BDD review prompt should require addressing every valid concern regardless of severity: {bdd_block}"
+    );
+    assert!(
+        bdd_block.contains("one behaviour per scenario"),
+        "feature.js BDD review prompt should carry the best-practice checklist token: {bdd_block}"
+    );
+
+    // The Version phase block: from `phase('Version')` up to `phase('Ship')`.
+    let version_block = js
+        .split_once("phase('Version')")
+        .expect("feature.js should have a Version phase")
+        .1
+        .split_once("phase('Ship')")
+        .expect("feature.js Version phase should precede Ship")
+        .0
+        .to_lowercase();
+    assert!(
+        version_block.contains("semver") && version_block.contains("bump"),
+        "feature.js Version phase should bump semver: {version_block}"
+    );
+}
+
+#[test]
 fn reviewer_mechanic_deduplicated() {
     let config = read_native_config();
 

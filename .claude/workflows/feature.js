@@ -45,24 +45,29 @@ await agent(
 // ── BDD Review (independent sub-agent) ─────────────────────────────────────
 phase('BDD Review')
 const bddReview = await agent(
-  `You are an independent BDD/test-quality reviewer for the Quecto repo. Task under review: ${TASK}\n\n` +
+  `You are an independent, STRICT BDD/test-quality reviewer for the Quecto repo. Task under review: ${TASK}\n\n` +
   `Run your OWN independent review on the single dimension 'BDD/test quality'. Read the changed BDD ` +
-  `feature files, step tests, and unit tests (use git diff to find them). Verify scenarios follow BDD ` +
-  `best practice: clear Given-When-Then, explicit and testable acceptance criteria, one logical scenario ` +
-  `per feature, NO implementation details in scenario steps, appropriate step abstraction/reusability. ` +
-  `Verify unit tests are behavioural, well-named, focused, and assert the right things. Be skeptical — ` +
-  `report ONLY real issues. Review-only role: do NOT create or modify any repo files — no writes, no edits, no ` +
-  `mutating commands (this is an instruction, not a sandbox guarantee). Return a report with, per finding: ` +
-  `file:line, severity, the problem, and a concrete fix.`,
+  `feature files, step tests, and unit tests (use git diff to find them). BDD quality is foundational, so ` +
+  `be STRICT and uncompromising: flag EVERY genuine best-practice deviation, not just egregious ones ` +
+  `(while staying skeptical — report ONLY real issues, never invalid or hallucinated findings). Explicitly ` +
+  `check the checklist: declarative/behaviour-focused scenarios with NO implementation detail in steps; ` +
+  `strict Given-When-Then discipline (Given=context, When=single triggering action, Then=observable ` +
+  `outcome); one behaviour per scenario; ubiquitous/domain language; no conjunctive steps hiding multiple ` +
+  `actions; reusable, well-abstracted steps; genuine behavioural, non-hollow step/unit assertions that ` +
+  `would fail before the fix; and every acceptance criterion maps to a scenario. Review-only role: do NOT ` +
+  `create or modify any repo files — no writes, no edits, no mutating commands (this is an instruction, not ` +
+  `a sandbox guarantee). Return a report with, per finding: file:line, severity, the problem, and a ` +
+  `concrete best-practice fix.`,
   { label: 'bdd-review', phase: 'BDD Review' }
 )
-log('BDD review complete — address valid findings before GREEN.')
+log('BDD review complete — address EVERY valid finding regardless of severity before GREEN.')
 
 // ── GREEN ──────────────────────────────────────────────────────────────────
 phase('GREEN')
 await agent(
   `Task: ${TASK}\n\n` +
-  `First, fix any valid BDD/test-quality concerns from this review:\n${bddReview}\n\n` +
+  `First, address EVERY valid BDD/test-quality concern from this review regardless of severity — fix it, ` +
+  `or explicitly decline it with a documented rationale (reviewers can be wrong) — before GREEN:\n${bddReview}\n\n` +
   `STEP — Implement code (GREEN). Write the code needed to satisfy the failing tests; implement it in ` +
   `full regardless of size.\n` +
   `STEP — Refactor. Tidy only what this change touches (naming, duplication, clarity); minimal, no ` +
@@ -146,7 +151,9 @@ const fixResolve = await agent(
   `Task: ${TASK}. PR: ${pr}\n\n` +
   `Reviewer findings posted inline:\n${reviews.filter(Boolean).join('\n\n---\n\n')}\n\n` +
   `STEP — Fix all valid review concerns. Triage each inline finding; confirm it is genuinely valid before ` +
-  `changing anything (reviewers can be wrong). Fix forward in the same branch. Track accepted vs declined.\n` +
+  `changing anything (reviewers can be wrong). Address EVERY valid concern regardless of severity — not just ` +
+  `high-priority ones: fix it in the same branch, or explicitly decline it with a documented rationale. ` +
+  `Track accepted vs declined.\n` +
   `STEP — Push changes. The full pre-push gate runs again; wait for it to pass.\n` +
   `STEP — Reply to EVERY review comment and resolve threads. For accepted findings note the fix and commit; ` +
   `for declined ones explain why. Resolve each thread with the GraphQL resolveReviewThread mutation ` +
