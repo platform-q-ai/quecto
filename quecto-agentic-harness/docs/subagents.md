@@ -438,10 +438,12 @@ whole parent → child tree from the event stream — no per-child polling requi
 
 Two complementary ways to observe a child's progress:
 
-- **Pull — `get_subagents`:** each entry now carries `parent_id` and an optional
-  `workflow` snapshot (`{mode, steps_completed, steps_total}`) for that child,
-  kept current by the parent's per-child monitor. Good for a point-in-time view
-  of every child at once.
+- **Pull — `get_subagents`:** each entry now carries `parent_id`, `readOnly`
+  / `read_only` observer status (true when the child was spawned read-only, or
+  with both `write` and `edit` disabled), and an optional `workflow` snapshot
+  (`{mode, steps_completed, steps_total}`) for that child, kept current by the
+  parent's per-child monitor. Good for a point-in-time view of every child at
+  once.
 - **Push — forwarded events:** the parent's monitor re-emits each child's
   `workflow_state` events onto the **parent's** own event stream, re-stamped
   with the child's identity. A supervisor watching one socket sees its whole
