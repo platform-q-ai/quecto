@@ -249,6 +249,13 @@ impl TuiHarness {
         self.app.focus_region() == Focus::Panel
     }
 
+    /// The terminal width this harness was constructed with (independent of
+    /// rendered frame content — useful for assertions that must not derive
+    /// width from the frame itself).
+    pub fn terminal_width(&self) -> usize {
+        self.width
+    }
+
     /// The 0-based panel highlight index.
     pub fn highlight(&self) -> usize {
         self.app.panel_highlight_index()

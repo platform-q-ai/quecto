@@ -127,7 +127,8 @@ fn then_main_pane_boxed_aligned(world: &mut QuectoWorld) {
         // The workflow box's left border column must line up with the tool/message
         // content column (one space after the divider), and its width must equal
         // the body width — not consume the gutter.
-        let terminal_w = frame.lines().map(visible_width).max().unwrap_or_default();
+        // Use harness terminal width (independent source) instead of deriving from frame
+        let terminal_w = h.terminal_width();
         let expected = terminal_w - panel_w - 1 - 1; // panel + divider + gutter
         let border_segment = &border[border.find('┌').expect("border starts with ┌")..];
         assert_eq!(

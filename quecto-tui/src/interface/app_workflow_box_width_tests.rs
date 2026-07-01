@@ -44,16 +44,16 @@ fn box_tool_and_body_widths(h: &mut TuiHarness) -> (usize, usize, usize) {
         .active_chat_mut()
         .complete_tool("c1", "hi", false, Some(5));
     let body_w = h.app_mut().body_width();
-    let box_w = {
-        let now = tokio::time::Instant::now();
-        h.app_mut()
-            .render_main_pane_workflow(body_w, body_w, now)
-            .iter()
-            .find(|l| l.contains('┌'))
-            .map(|l| visible_width(l))
-            .expect("workflow box top border should render")
-    };
+    // Measure workflow box width from the actual rendered frame, not by calling
+    // render_main_pane_workflow directly. This ensures we test the production
+    // calculation in render() where main_box_width = width.
     let frame: Vec<String> = h.full_frame().lines().map(|s| s.to_string()).collect();
+    let box_w = frame
+        .iter()
+        .find(|l| l.contains('┌'))
+        .map(|l| visible_width(l))
+        .expect("workflow box top border should render")
+        .saturating_sub(h.app_mut().frame_split().0 + h.app_mut().frame_split().1);
     let tool_w = frame
         .iter()
         .find(|l| l.contains("$ echo hi"))
@@ -165,16 +165,35 @@ async fn boxed_workflow_truncates_at_narrow_width() {
         border_line.contains("│ ┌"),
         "narrow: workflow box must start after gutter, got:\n{border_line}"
     );
+    // Verify box structure is preserved: content line should have left and right borders
     let content_line = frame
         .iter()
         .find(|l| l.contains('│') && l.contains('░'))
         .expect("workflow content line should render");
 
-    // The full composed line should not exceed the terminal width (60).
-    let line_width = visible_width(content_line);
+    // Find the workflow box by locating the '│' immediately before the '░' content
+    let progress_pos = content_line.find('░').expect("progress bar should render");
+    // The box left border is the '│' just before the progress bar
+    let box_start = content_line[..progress_pos]
+        .rfind('│')
+        .expect("box left border should exist");
+    let box_portion = &content_line[box_start..];
+
+    // Verify the box has proper structure: starts with border, ends with border
+    assert!(
+        box_portion.starts_with('│'),
+        "narrow: workflow box content must start with border, got:\n{box_portion}"
+    );
+    assert!(
+        box_portion.ends_with('│'),
+        "narrow: workflow box content must end with border (right edge preserved), got:\n{box_portion}"
+    );
+
+    // Verify the box width matches body width
+    let box_width = visible_width(box_portion);
     assert_eq!(
-        line_width, 60,
-        "narrow: workflow content line width ({}) must equal terminal width (60)",
-        line_width
+        box_width, body_w,
+        "narrow: workflow box width ({}) must equal body width ({})",
+        box_width, body_w
     );
 }
