@@ -213,10 +213,20 @@ fn doc_reviewers_guidance(guide: &str) -> &str {
         .split_once("\"guidance\": \"")
         .expect("reviewers step in docs should have a guidance field")
         .1;
-    after_guidance
-        .split_once('"')
-        .expect("reviewers guidance should be a closed JSON string")
-        .0
+    // The guidance is a JSON string; scan to its closing quote, skipping escaped
+    // `\"` — the read-only instruction embeds `["write", "edit"]`, so a naive
+    // split on the first `"` would truncate before the dimensions. The embedded
+    // config is ASCII (non-ASCII is `\u`-escaped), so byte indexing is safe.
+    let bytes = after_guidance.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'"' => return &after_guidance[..i],
+            _ => i += 1,
+        }
+    }
+    panic!("reviewers guidance should be a closed JSON string");
 }
 
 fn step_guidance<'a>(config: &'a Value, key: &str) -> &'a str {

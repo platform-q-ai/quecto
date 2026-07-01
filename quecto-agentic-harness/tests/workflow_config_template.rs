@@ -652,84 +652,46 @@ fn feature_js_bdd_review_is_strict() {
     );
 }
 
-#[test]
-fn reviewer_mechanic_deduplicated() {
-    let config = read_native_config();
-
-    // The shared spawn -> await -> read mechanic must be documented in exactly
-    // one shared location and not re-embedded in both review steps. We assert
-    // the structural property ("documented once, not duplicated") rather than
-    // pinning it to a specific host field or harness tool name, so the mechanic
-    // can be relocated without churning this test.
-    //
-    // Candidate shared homes: the template `shared_guidance`/`notes`/
-    // `description`, or the workflow `selector_prompt`. The two review steps
-    // (`bdd_review`, `reviewers`) must reference, not restate, the mechanic.
-    let needle = "spawn";
-
-    let mut shared_locations = 0;
-    let feature = feature_template(&config);
-    for field in ["shared_guidance", "notes", "description"] {
-        if feature
-            .get(field)
-            .and_then(Value::as_str)
-            .is_some_and(|s| s.contains("await") && s.contains("get_messages"))
-        {
-            shared_locations += 1;
-        }
-    }
-    if config["workflow"]["selector_prompt"]
-        .as_str()
-        .is_some_and(|s| s.contains("await") && s.contains("get_messages"))
-    {
-        shared_locations += 1;
-    }
-    assert_eq!(
-        shared_locations, 1,
-        "the shared sub-agent review mechanic should be documented in exactly one shared location"
-    );
-
-    // Neither review step should re-spell the full mechanic; they reference it.
-    let bdd = guidance(&config, "bdd_review");
-    let reviewers = guidance(&config, "reviewers");
-    let bdd_restates = bdd.contains("await") && bdd.contains(needle);
-    let reviewers_restates = reviewers.contains("await") && reviewers.contains(needle);
-    assert!(
-        !bdd_restates && !reviewers_restates,
-        "review steps should reference the shared mechanic, not restate the spawn/await flow"
-    );
-}
+// NOTE: the former `reviewer_mechanic_deduplicated` guard was removed. It
+// required the shared spawn/await/read mechanic to live in exactly one shared
+// field (`shared_guidance`) and forbade the review steps from restating it — but
+// `shared_guidance` is not a `WorkflowTemplate` field, so serde dropped it and
+// the read-only instruction never reached a running agent. Correctness beats
+// DRY here: each review step's `guidance` now carries the instruction inline,
+// verified by `reviewer_spawns_are_read_only` (spec) and the runtime guard in
+// `templates.rs`.
 
 #[test]
 fn reviewer_spawns_are_read_only() {
     // #957: both the `bdd_review` and PR `reviewers` spawns must launch reviewers
     // read-only — `write` and `edit` removed from the child registry so the model
     // never sees them (defense-in-depth against reviewers writing stray files).
-    // The shared review mechanic is the single home for this instruction.
+    // The instruction MUST live in each review step's own `guidance` — a field
+    // the runtime deserializes — NOT a `shared_guidance` field serde silently
+    // drops (that phantom field made this instruction inert at runtime). See the
+    // matching runtime guard in `templates.rs`.
     let config = read_native_config();
-    let feature = feature_template(&config);
-    let shared = feature["shared_guidance"]
-        .as_str()
-        .expect("feature template should have string shared_guidance");
-    let lower = shared.to_lowercase();
-    assert!(
-        lower.contains("read_only") || lower.contains("read-only"),
-        "shared review mechanic should launch reviewers read-only: {shared}"
-    );
-    // The disabled set must be EXACTLY write + edit. Anchor to the canonical
-    // quoted list (rather than free-floating `write`/`edit` substrings, which
-    // also match "written"/"credit") so the guard proves the precise contract.
-    assert!(
-        shared.contains(r#"["write", "edit"]"#) || shared.contains(r#"["write","edit"]"#),
-        "shared review mechanic should disable exactly [\"write\", \"edit\"]: {shared}"
-    );
-    // Reviewers keep their non-mutating toolset — the guidance must positively
-    // name the retained tools so criterion 3 (bash/read/grep/find/agent_cmd
-    // intact) is verified directly, not merely inferred from the disable list.
-    for keep in ["bash", "read", "grep", "find", "agent_cmd"] {
+    for key in ["bdd_review", "reviewers"] {
+        let g = guidance(&config, key);
+        let lower = g.to_lowercase();
         assert!(
-            shared.contains(keep),
-            "reviewers must retain `{keep}`; guidance should name it as kept: {shared}"
+            lower.contains("read_only") || lower.contains("read-only"),
+            "`{key}` guidance should launch reviewers read-only: {g}"
         );
+        // The disabled set must be EXACTLY write + edit. Anchor to the canonical
+        // quoted list (rather than free-floating `write`/`edit` substrings, which
+        // also match "written"/"credit").
+        assert!(
+            g.contains(r#"["write", "edit"]"#) || g.contains(r#"["write","edit"]"#),
+            "`{key}` guidance should disable exactly [\"write\", \"edit\"]: {g}"
+        );
+        // Reviewers keep their non-mutating toolset — name the retained tools so
+        // criterion 3 (bash/read/grep/find/agent_cmd intact) is verified directly.
+        for keep in ["bash", "read", "grep", "find", "agent_cmd"] {
+            assert!(
+                g.contains(keep),
+                "`{key}` reviewers must retain `{keep}`; guidance should name it: {g}"
+            );
+        }
     }
 }

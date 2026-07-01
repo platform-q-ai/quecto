@@ -149,7 +149,7 @@ fn select_template_starts_run() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
-    assert_eq!(engine.progress().total, 17);
+    assert_eq!(engine.progress().total, 19);
     assert_eq!(engine.current_step().unwrap().index, 1);
 }
 
@@ -298,7 +298,7 @@ fn guards_block_until_before_step_key_threshold() {
     engine.select_template("feature", None).unwrap();
     let err = engine.check_guards().unwrap_err();
     assert!(err.to_string().contains("Complete step 1"));
-    for step in 1..=17 {
+    for step in 1..=19 {
         engine.check(step).unwrap();
     }
     assert!(engine.check_guards().is_ok());
@@ -407,6 +407,7 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
             "green",
             "refactor",
             "verify",
+            "version_bump",
             "commit",
             "push",
             "pr",
@@ -414,36 +415,38 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
             "fix_reviews",
             "push_fixes",
             "resolve_threads",
+            "conformance",
             "pre_merge",
             "cleanup",
         ]
     );
-    assert_eq!(snap.progress.total, 17);
+    assert_eq!(snap.progress.total, 19);
     assert_eq!(snap.steps[0].label, "Install/check local quality hooks");
-    assert_eq!(snap.steps[1].label, "Update Scenarios / Add new features");
-    assert_eq!(
-        snap.steps[3].label,
-        "Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite"
-    );
     assert_eq!(
         snap.steps[4].label,
         "Despatch BDD sub-agent to review BDD feature, step tests and unit tests"
     );
-    assert_eq!(snap.steps[6].label, "Refactor");
-    assert_eq!(snap.steps[7].label, "Ensure tests still pass");
     assert_eq!(
-        snap.steps[9].label,
+        snap.steps[8].label,
+        "Bump semver for every changed crate and sync version docs"
+    );
+    assert_eq!(
+        snap.steps[10].label,
         "Push (pre-push hook will run tests and linting)"
     );
     assert_eq!(
-        snap.steps[11].label,
+        snap.steps[12].label,
         "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)"
     );
     assert_eq!(
-        snap.steps[15].label,
+        snap.steps[16].label,
+        "Verify the PR meets every issue acceptance criterion"
+    );
+    assert_eq!(
+        snap.steps[17].label,
         "Confirm the pre-push gate passed and report the PR (do NOT merge)"
     );
-    assert_eq!(snap.steps[16].label, "Clean up sub agents");
+    assert_eq!(snap.steps[18].label, "Clean up sub agents");
 }
 
 #[test]
@@ -470,7 +473,7 @@ fn feature_template_guards_commit_push_and_merge_like_config_file() {
         vec!["git merge".to_string(), "gh pr merge".to_string()]
     );
     assert_eq!(feature.guards[1].before_step_key, "cleanup");
-    assert!(feature.guards[1].message.contains("Complete code review"));
+    assert!(feature.guards[1].message.contains("conformance gate"));
 }
 
 #[test]
