@@ -1,4 +1,6 @@
 use serde::Deserialize;
+
+use crate::domain::message::claude_sonnet_5_pricing;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -146,6 +148,14 @@ impl ModelRegistry {
             ),
             (
                 "anthropic-api",
+                "claude-sonnet-5",
+                "Claude Sonnet 5 (API key)",
+                ProviderApi::AnthropicMessages,
+                AuthMode::ApiKey,
+                None,
+            ),
+            (
+                "anthropic-api",
                 "claude-sonnet-4-6",
                 "Claude Sonnet 4.6 (API key)",
                 ProviderApi::AnthropicMessages,
@@ -196,6 +206,14 @@ impl ModelRegistry {
                 "anthropic-oauth",
                 "claude-opus-4-5",
                 "Claude Opus 4.5 (OAuth)",
+                ProviderApi::AnthropicMessages,
+                AuthMode::OAuth,
+                Some("anthropic"),
+            ),
+            (
+                "anthropic-oauth",
+                "claude-sonnet-5",
+                "Claude Sonnet 5 (OAuth)",
                 ProviderApi::AnthropicMessages,
                 AuthMode::OAuth,
                 Some("anthropic"),
@@ -332,6 +350,19 @@ impl ModelRegistry {
             let mut record = ModelRecord::with_defaults(provider, id, Some(name), api);
             record.auth = auth;
             record.oauth_provider = oauth_provider.map(str::to_string);
+            if id == "claude-sonnet-5" {
+                record.input = vec!["text".to_string(), "image".to_string()];
+                record.context_window = 1_000_000;
+                record.max_tokens = 128_000;
+                record.max_tokens_explicit = true;
+                let pricing = claude_sonnet_5_pricing();
+                record.cost = ModelCost {
+                    input: pricing.input_micro_usd_per_million as f64 / 1_000_000.0,
+                    output: pricing.output_micro_usd_per_million as f64 / 1_000_000.0,
+                    cache_read: pricing.cache_read_micro_usd_per_million as f64 / 1_000_000.0,
+                    cache_write: pricing.cache_write_micro_usd_per_million as f64 / 1_000_000.0,
+                };
+            }
             r.upsert(record);
         }
         r
