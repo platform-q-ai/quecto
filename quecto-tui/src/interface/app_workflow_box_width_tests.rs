@@ -1,11 +1,13 @@
-//! Width-alignment + current-step-context tests for the main-pane workflow box
-//! (#882/#947), driven through the headless render harness.
+//! Width-alignment + current-step-context tests for the main-pane workflow status
+//! bar (#882/#947/#952), driven through the headless render harness.
 //!
-//! The bordered box that frames the single-line workflow bar must span the full
-//! main-panel content width. It is intentionally wider than the inset
-//! tool-output/background blocks, and that relationship must survive terminal
-//! resize. The boxed line must also surface concise current-step context (step
-//! n/total, phase, label, issue) without wrapping or overflowing.
+//! The status bar that frames the single-line workflow summary must be the SAME
+//! width as the tool-output / message background blocks and left-aligned to the
+//! same content column (one gutter space after the panel divider). This fails
+//! against the post-#949 gutter-consuming render where the bar was one column
+//! wider and ate the gutter. The status line must also surface concise
+//! current-step context (step n/total, phase, label, issue) without wrapping or
+//! overflowing.
 
 use super::tui_harness::*;
 use crate::infrastructure::client::Event;
@@ -28,11 +30,11 @@ fn workflow_event() -> Event {
     }
 }
 
-/// Visible widths of the workflow box's top border row (the line containing
-/// `┌`), a representative tool-output box row, and the body-width contract.
-/// The workflow box should use the wider main-panel contract while tool output
-/// remains inset to the body/tool contract. (#947)
-fn box_tool_and_body_widths(h: &mut TuiHarness) -> (usize, usize, usize) {
+/// Visible widths of the workflow status bar's top rule row, a representative
+/// tool-output background row, and the body-width contract. After #952 the
+/// workflow bar must equal the body/tool width and start at the same content
+/// column (one gutter space after the divider).
+fn workflow_tool_and_body_widths(h: &mut TuiHarness) -> (usize, usize, usize) {
     h.app_mut().active_chat_mut().start_tool(
         "c1".into(),
         "bash".into(),
@@ -42,67 +44,82 @@ fn box_tool_and_body_widths(h: &mut TuiHarness) -> (usize, usize, usize) {
         .active_chat_mut()
         .complete_tool("c1", "hi", false, Some(5));
     let body_w = h.app_mut().body_width();
-    let box_w = {
-        let now = tokio::time::Instant::now();
-        h.app_mut()
-            .render_main_pane_workflow(body_w, body_w + 1, now)
-            .iter()
-            .find(|l| l.contains('┌'))
-            .map(|l| visible_width(l))
-            .expect("workflow box top border should render")
-    };
+    // Measure workflow box width from the actual rendered frame, not by calling
+    // render_main_pane_workflow directly. This ensures we test the production
+    // calculation in render() where main_box_width = width.
     let frame: Vec<String> = h.full_frame().lines().map(|s| s.to_string()).collect();
+    let workflow_w = frame
+        .iter()
+        .find(|l| {
+            strip_ansi(l).rsplit_once("│ ").is_some_and(|(_, segment)| {
+                !segment.is_empty() && segment.chars().all(|c| c == '─')
+            })
+        })
+        .map(|l| visible_width(l))
+        .expect("workflow status top rule should render")
+        .saturating_sub(h.app_mut().frame_split().0 + h.app_mut().frame_split().1);
     let tool_w = frame
         .iter()
         .find(|l| l.contains("$ echo hi"))
         .map(|l| visible_width(l))
         .expect("a tool-output box row should render")
         .saturating_sub(h.app_mut().frame_split().0 + h.app_mut().frame_split().1);
-    (box_w, tool_w, body_w)
+    (workflow_w, tool_w, body_w)
 }
 
-/// Pin the new width contract: after the persistent panel is prefixed, the
-/// workflow box consumes the full terminal row, while tool output remains inset
-/// to the body column. This fails against the old body/tool-box alignment.
-fn assert_workflow_box_is_full_width_and_wider_than_tools(h: &mut TuiHarness, ctx: &str) {
-    let (box_w, tool_w, body_w) = box_tool_and_body_widths(h);
-    let expected_box_w = body_w + 1;
+/// Pin the width contract after #952: the workflow status bar must equal the
+/// body/tool width and left-align to the same content column (one gutter after
+/// the divider). This fails against the post-#949 gutter-consuming render where
+/// the bar was one column wider.
+fn assert_workflow_bar_aligned_with_tools(h: &mut TuiHarness, ctx: &str) {
+    let (workflow_w, tool_w, body_w) = workflow_tool_and_body_widths(h);
     assert_eq!(
-        box_w, expected_box_w,
-        "[{ctx}] workflow box border must span the full main-panel content width"
+        workflow_w, body_w,
+        "[{ctx}] workflow status bar width must equal the body width (not consume the gutter)"
     );
     assert_eq!(
-        tool_w, body_w,
-        "[{ctx}] tool-output block keeps the existing body/tool alignment"
+        workflow_w, tool_w,
+        "[{ctx}] workflow status bar width must equal the tool-output width"
     );
+    // Verify left-edge alignment in the composed frame: the rule must appear
+    // after the normal gutter (one space after the divider), matching tool rows.
+    let frame: Vec<String> = h.full_frame().lines().map(|s| s.to_string()).collect();
+    let rule_line = frame
+        .iter()
+        .find(|l| {
+            strip_ansi(l).rsplit_once("│ ").is_some_and(|(_, segment)| {
+                !segment.is_empty() && segment.chars().all(|c| c == '─')
+            })
+        })
+        .expect("workflow status top rule should render in frame");
     assert!(
-        box_w > tool_w,
-        "[{ctx}] workflow box must be visibly wider than tool output (box={box_w}, tool={tool_w})"
+        strip_ansi(rule_line).contains("│ ─"),
+        "[{ctx}] workflow status bar must start one column after the divider (aligned to tool/message content column), got:\n{rule_line}"
     );
 }
 
 #[tokio::test]
-async fn boxed_workflow_spans_full_width_and_is_wider_than_tool_output() {
+async fn workflow_status_bar_aligned_with_tool_output() {
     let mut h = TuiHarness::sized(100, 30).await;
     h.event(workflow_event());
-    assert_workflow_box_is_full_width_and_wider_than_tools(&mut h, "width=100");
+    assert_workflow_bar_aligned_with_tools(&mut h, "width=100");
 }
 
 #[tokio::test]
-async fn boxed_workflow_width_survives_resize() {
+async fn workflow_status_bar_alignment_survives_resize() {
     let mut h = TuiHarness::sized(120, 30).await;
     h.event(workflow_event());
-    assert_workflow_box_is_full_width_and_wider_than_tools(&mut h, "width=120");
+    assert_workflow_bar_aligned_with_tools(&mut h, "width=120");
 
-    // Resize narrower (as a SIGWINCH would) and re-check that both the box and
-    // the tool block re-derive to the new body-width contract.
+    // Resize narrower (as a SIGWINCH would) and re-check that both the workflow
+    // bar and the tool block re-derive to the new body-width contract.
     h.app_mut().terminal.width = 72;
     h.app_mut().terminal.height = 30;
-    assert_workflow_box_is_full_width_and_wider_than_tools(&mut h, "width=72 (after resize)");
+    assert_workflow_bar_aligned_with_tools(&mut h, "width=72 (after resize)");
 }
 
 #[tokio::test]
-async fn boxed_workflow_shows_current_step_context() {
+async fn workflow_status_bar_shows_current_step_context() {
     let mut h = TuiHarness::sized(120, 30).await;
     h.event(workflow_event());
     let pane = strip_ansi(&h.main_pane());
@@ -121,5 +138,69 @@ async fn boxed_workflow_shows_current_step_context() {
     assert!(
         pane.contains("#882"),
         "the boxed bar must show the active issue:\n{pane}"
+    );
+}
+
+#[tokio::test]
+async fn workflow_status_bar_truncates_at_narrow_width() {
+    let mut h = TuiHarness::sized(60, 30).await;
+    h.event(Event::WorkflowState {
+        agent_id: None,
+        steps: vec![
+            serde_json::json!({"index":1,"label":"Very long step name that should truncate","phase":"green","done":false}),
+        ],
+        progress: serde_json::json!({"done":0,"total":1,"percent":0}),
+        active_issue: Some(serde_json::json!({"number":952,"title":"workflow box alignment fix"})),
+        mode: Some("active".to_string()),
+        active_template: None,
+        available_templates: None,
+    });
+    let (workflow_w, tool_w, body_w) = workflow_tool_and_body_widths(&mut h);
+    assert_eq!(
+        workflow_w, body_w,
+        "narrow: workflow status bar width must equal body width"
+    );
+    assert_eq!(
+        workflow_w, tool_w,
+        "narrow: workflow status bar width must equal tool width"
+    );
+    let frame: Vec<String> = h.full_frame().lines().map(|s| s.to_string()).collect();
+    let rule_line = frame
+        .iter()
+        .find(|l| {
+            strip_ansi(l).rsplit_once("│ ").is_some_and(|(_, segment)| {
+                !segment.is_empty() && segment.chars().all(|c| c == '─')
+            })
+        })
+        .expect("workflow status top rule should render");
+    assert!(
+        strip_ansi(rule_line).contains("│ ─"),
+        "narrow: workflow status bar must start after gutter, got:\n{rule_line}"
+    );
+
+    // Verify the content line survives truncation without overflowing or losing
+    // its full-width status-row contract.
+    let content_line = frame
+        .iter()
+        .find(|l| l.contains('░'))
+        .expect("workflow content line should render");
+    let stripped = strip_ansi(content_line);
+    let divider = stripped
+        .find('│')
+        .expect("composed frame should include divider");
+    let status_portion = &stripped[divider + '│'.len_utf8() + 1..];
+    assert!(
+        status_portion.starts_with(' '),
+        "narrow: workflow status content should preserve left padding, got:\n{status_portion}"
+    );
+    assert_eq!(
+        visible_width(status_portion),
+        body_w,
+        "narrow: workflow status content width must equal body width"
+    );
+    assert_eq!(
+        visible_width(content_line),
+        h.terminal_width(),
+        "narrow: composed workflow status row must not overflow the terminal"
     );
 }

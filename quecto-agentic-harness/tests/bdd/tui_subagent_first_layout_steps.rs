@@ -7,21 +7,22 @@
 
 use super::*;
 use quecto_tui::infrastructure::client::Event;
+use quecto_tui::interface::ansi::strip_ansi;
 use quecto_tui::interface::app::tui_harness::{TuiHarness, subagent, subagents_changed};
 use quecto_tui::interface::utils::visible_width;
 
 /// Build a sub-agent-first harness optionally tracking sub-agent `a1` whose own
 /// workflow (issue #820) has been routed into its session.
-async fn build(with_subagent: bool) -> TuiHarness {
+async fn build(with_subagent: bool, subagent_id: &str) -> TuiHarness {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     if with_subagent {
         h.event(subagents_changed(vec![subagent(
-            "a1",
+            subagent_id,
             "running",
             Some(("active", 3, 5)),
         )]));
-        h.route("a1", workflow_event("a1"));
+        h.route(subagent_id, workflow_event(subagent_id));
     }
     h
 }
@@ -46,9 +47,9 @@ fn workflow_event(agent: &str) -> Event {
     }
 }
 
-fn init(world: &mut QuectoWorld, with_subagent: bool) {
+fn init(world: &mut QuectoWorld, with_subagent: bool, subagent_id: &str) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    let h = rt.block_on(build(with_subagent));
+    let h = rt.block_on(build(with_subagent, subagent_id));
     world.tui_parity_rt = Some(rt);
     world.tui_parity = Some(TuiParityHarness(h));
 }
@@ -79,12 +80,12 @@ fn top(world: &mut QuectoWorld) -> String {
 
 #[given("a sub-agent-first TUI with no sub-agents")]
 fn given_no_subagents(world: &mut QuectoWorld) {
-    init(world, false);
+    init(world, false, "");
 }
 
 #[given(expr = "a sub-agent-first TUI tracking sub-agent {string} with its own workflow")]
-fn given_tracking(world: &mut QuectoWorld, _id: String) {
-    init(world, true);
+fn given_tracking(world: &mut QuectoWorld, id: String) {
+    init(world, true, &id);
 }
 
 // The `When I select sub-agent "..."` step is shared with the parity steps
@@ -110,31 +111,45 @@ fn then_main_pane_boxed(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the main pane shows a boxed workflow bar spanning the full content width")]
-fn then_main_pane_boxed_full_width(world: &mut QuectoWorld) {
+#[then("the main pane shows a workflow status bar aligned to the tool/message content column")]
+fn then_main_pane_status_aligned(world: &mut QuectoWorld) {
     drive(world, |h| {
         let frame = h.full_frame();
-        let border = frame
+        let rule = frame
             .lines()
-            .find(|line| line.contains('┌'))
-            .expect("workflow box top border should render");
+            .find(|line| {
+                strip_ansi(line)
+                    .rsplit_once("│ ")
+                    .is_some_and(|(_, segment)| {
+                        !segment.is_empty() && segment.chars().all(|c| c == '─')
+                    })
+            })
+            .expect("workflow status rule should render");
         let header = frame
             .lines()
             .find(|line| line.contains("quecto-tui"))
             .expect("header should render with the main-pane divider");
         let divider = header.find('│').expect("header should include divider");
         let panel_w = visible_width(&header[..divider]);
-        let terminal_w = frame.lines().map(visible_width).max().unwrap_or_default();
-        let expected = terminal_w - panel_w - 1;
-        let border_segment = &border[border.find('┌').expect("border starts with ┌")..];
+        // The workflow status bar must line up with the tool/message content
+        // column (one space after the divider), and its width must equal the
+        // body width — not consume the gutter. Use harness terminal width
+        // (independent source) instead of deriving from frame.
+        let terminal_w = h.terminal_width();
+        let expected = terminal_w - panel_w - 1 - 1; // panel + divider + gutter
+        let stripped_rule = strip_ansi(rule);
+        let rule_segment = stripped_rule
+            .split_once("│ ")
+            .map(|(_, segment)| segment)
+            .expect("workflow status rule should start after divider gutter");
         assert_eq!(
-            visible_width(border_segment),
+            visible_width(rule_segment),
             expected,
-            "workflow box must consume the divider-adjacent main-pane content width, got:\n{frame}"
+            "workflow status bar must equal the body/tool width (not consume the gutter), got:\n{frame}"
         );
         assert!(
-            !border.contains("│ ┌"),
-            "workflow box must be wider than the old body/tool width by consuming the gutter, got:\n{frame}"
+            stripped_rule.contains("│ ─"),
+            "workflow status bar must start one column after the divider (aligned to tool/message content column), got:\n{frame}"
         );
     });
 }
