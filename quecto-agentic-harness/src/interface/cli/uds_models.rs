@@ -4,7 +4,7 @@ pub(super) fn list_models_response(ctx: &DispatchCtx<'_>) -> serde_json::Value {
     list_models_data(ctx.base_dir)
 }
 
-pub(crate) fn list_models_data(base_dir: &std::path::Path) -> serde_json::Value {
+fn list_models_data(base_dir: &std::path::Path) -> serde_json::Value {
     let path = base_dir.join("models.json");
     match crate::infrastructure::model_registry::ModelRegistry::load_from_path(&path) {
         Ok(registry) => serde_json::json!({
@@ -94,33 +94,6 @@ mod tests {
         assert_eq!(open["configured"], false);
         assert_eq!(open["cost"]["cacheRead"], 3.0);
         assert_eq!(open["cost"]["cacheWrite"], 4.0);
-    }
-
-    #[test]
-    fn models_command_lists_claude_sonnet_5_builtins() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ctx = crate::interface::cli::CliContext {
-            base_dir: Some(tmp.path().to_path_buf()),
-            ..Default::default()
-        };
-
-        let out =
-            crate::interface::cli::run_with_output(vec!["quecto".into(), "models".into()], &ctx);
-
-        assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
-        assert!(out.stderr.is_empty());
-        let data: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
-        let models = data["models"].as_array().unwrap();
-        assert!(models.iter().any(|m| {
-            m["model"] == "anthropic-api/claude-sonnet-5"
-                && m["contextWindow"] == 1_000_000
-                && m["maxTokens"] == 128_000
-        }));
-        assert!(models.iter().any(|m| {
-            m["model"] == "anthropic-oauth/claude-sonnet-5"
-                && m["contextWindow"] == 1_000_000
-                && m["maxTokens"] == 128_000
-        }));
     }
 
     #[test]

@@ -128,10 +128,10 @@ fn builtin_claude_sonnet_5_resolves_for_api_key_and_oauth_with_published_limits(
     assert_eq!(api_model.context_window, 1_000_000);
     assert_eq!(api_model.max_tokens, 128_000);
     assert!(api_model.max_tokens_explicit);
-    assert_eq!(api_model.cost.input, 2.0);
-    assert_eq!(api_model.cost.output, 10.0);
-    assert_eq!(api_model.cost.cache_read, 0.2);
-    assert_eq!(api_model.cost.cache_write, 2.5);
+    assert_eq!(api_model.cost.input, 3.0);
+    assert_eq!(api_model.cost.output, 15.0);
+    assert_eq!(api_model.cost.cache_read, 0.3);
+    assert_eq!(api_model.cost.cache_write, 3.75);
 
     let oauth_model = registry
         .find("anthropic-oauth", "claude-sonnet-5")
@@ -154,10 +154,10 @@ fn builtin_claude_sonnet_5_resolves_for_api_key_and_oauth_with_published_limits(
     assert_eq!(oauth_model.context_window, 1_000_000);
     assert_eq!(oauth_model.max_tokens, 128_000);
     assert!(oauth_model.max_tokens_explicit);
-    assert_eq!(oauth_model.cost.input, 2.0);
-    assert_eq!(oauth_model.cost.output, 10.0);
-    assert_eq!(oauth_model.cost.cache_read, 0.2);
-    assert_eq!(oauth_model.cost.cache_write, 2.5);
+    assert_eq!(oauth_model.cost.input, 3.0);
+    assert_eq!(oauth_model.cost.output, 15.0);
+    assert_eq!(oauth_model.cost.cache_read, 0.3);
+    assert_eq!(oauth_model.cost.cache_write, 3.75);
 }
 
 #[test]

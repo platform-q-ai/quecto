@@ -115,7 +115,6 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         // agent-targeted tails by the early intercept at the top).
         AgentCommand::ClearHistory { .. }
         | AgentCommand::ListModels { .. }
-        | AgentCommand::GetModels { .. }
         | AgentCommand::GetExtensions { .. }
         | AgentCommand::GetSubagents { .. }
         | AgentCommand::GetState { .. }

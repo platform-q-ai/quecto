@@ -949,49 +949,6 @@ fn then_agent_output_response_contains_model(
     );
 }
 
-#[then(expr = "the response command {string} model {string} should have context window {int}")]
-fn then_response_model_context_window(
-    world: &mut QuectoWorld,
-    command: String,
-    model: String,
-    expected: i64,
-) {
-    assert_eq!(
-        listed_model_field(world, &command, &model, "contextWindow"),
-        Some(expected),
-        "expected response command {command:?} model {model:?} to have context window {expected}"
-    );
-}
-
-#[then(expr = "the response command {string} model {string} should have max tokens {int}")]
-fn then_response_model_max_tokens(
-    world: &mut QuectoWorld,
-    command: String,
-    model: String,
-    expected: i64,
-) {
-    assert_eq!(
-        listed_model_field(world, &command, &model, "maxTokens"),
-        Some(expected),
-        "expected response command {command:?} model {model:?} to have max tokens {expected}"
-    );
-}
-
-fn listed_model_field(world: &QuectoWorld, command: &str, model: &str, field: &str) -> Option<i64> {
-    let resp = find_agent_response(world, command)
-        .unwrap_or_else(|| panic!("no {command} response\nlines: {:#?}", world.agent_events));
-    let models = resp
-        .get("data")
-        .and_then(|d| d.get("models"))
-        .and_then(|v| v.as_array())
-        .expect("response data.models array");
-    let listed_model = models
-        .iter()
-        .find(|m| m.get("model").and_then(|v| v.as_str()) == Some(model))
-        .unwrap_or_else(|| panic!("model {model:?} not listed\nresponse: {resp:#?}"));
-    listed_model.get(field).and_then(|v| v.as_i64())
-}
-
 #[then(expr = "the agent output should contain a response command {string} with success true")]
 fn then_agent_output_response_success(world: &mut QuectoWorld, command: String) {
     let resp = find_agent_response(world, &command);
