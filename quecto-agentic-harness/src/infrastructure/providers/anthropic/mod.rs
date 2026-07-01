@@ -131,6 +131,7 @@ impl AnthropicProvider {
             || starts_with_ci(model, "claude-opus-4-8")
             || starts_with_ci(model, "claude-sonnet-4-6")
             || starts_with_ci(model, "claude-sonnet-5")
+            || starts_with_ci(model, "claude-fable-5")
     }
 
     fn model_omits_interleaved_thinking_beta(model: &str) -> bool {
@@ -138,6 +139,7 @@ impl AnthropicProvider {
         starts_with_ci(model, "claude-opus-4-6")
             || starts_with_ci(model, "claude-sonnet-4-6")
             || starts_with_ci(model, "claude-sonnet-5")
+            || starts_with_ci(model, "claude-fable-5")
     }
 
     // -----------------------------------------------------------------------
