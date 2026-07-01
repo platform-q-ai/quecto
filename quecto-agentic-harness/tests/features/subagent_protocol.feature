@@ -22,6 +22,7 @@ Feature: Subagent protocol commands (#524)
     And subagent info "reviewer" should be read-only
     And subagent info "formatter" should have status "idle"
     And subagent info "formatter" should be read-write
+    And the subagent info list should contain both observer and read-write states
 
   @wip
   Scenario: get_subagents includes error status and last_error

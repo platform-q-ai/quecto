@@ -308,7 +308,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `tool_result` | `toolCallId`, `content`, optional `isError` | Return result of an `execute_tool` request |
 | `clear_history` | optional `id` | Clear conversation history, preserve system prompt |
 | `set_workflow_automation` | optional `id`, `autoContinue`, `completionNudge` | Toggle core workflow auto-continue/completion nudges for this UDS session |
-| `get_subagents` | optional `id` | Return spawned subagents and live status |
+| `get_subagents` | optional `id` | Return spawned subagents and live status. Each entry includes `readOnly` to identify observer sub-agents spawned with write/edit disabled |
 
 **Events** (emitted as JSON lines):
 
@@ -324,7 +324,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `execute_tool` | Routed to extension client that registered the tool (not broadcast) |
 | `extensions_changed` | Broadcast when extension list changes |
 | `subagent_notification` | Passive child-agent completion/error/exit notification for UI visibility |
-| `subagent_state_changed` | Broadcast replacement snapshot of spawned subagent statuses |
+| `subagent_state_changed` | Broadcast replacement snapshot of spawned subagent statuses, including `readOnly` observer status |
 | `workflow_state` | Broadcast when workflow mode/progress/template state changes |
 | `response` | Response to a command (with `id`, `command`, `success`, optional `data`/`error`) |
 

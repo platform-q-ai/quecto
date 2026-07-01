@@ -21,6 +21,7 @@ pub const STREAMING_INDICATOR: &str = "●";
 /// terminal, so it degrades gracefully and never causes misalignment. Rendered
 /// in the terminal default colour (no theme colour) to stay theme-consistent.
 pub const OBSERVER_GLYPH: &str = "⊙";
+pub const OBSERVER_MARKER: &str = " ⊙";
 
 /// Apply an SGR code around text, with reset after.
 fn styled(code: u8, text: &str) -> String {

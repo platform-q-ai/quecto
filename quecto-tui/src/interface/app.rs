@@ -640,10 +640,6 @@ impl TrackedSubagent {
         if new_info.parent_id.is_none() {
             new_info.parent_id = self.info.parent_id.clone();
         }
-        // Preserve known observer status across older kernel updates (#966).
-        if !new_info.read_only && self.info.read_only {
-            new_info.read_only = true;
-        }
         let now = tokio::time::Instant::now();
         if subagent_status_is_active(&new_info.status) {
             // Resumed work — let the timer run again.

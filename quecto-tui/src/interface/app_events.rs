@@ -221,7 +221,7 @@ impl App {
             socket_path: None,
             parent_id: None,
             workflow: None,
-            read_only: false,
+            read_only: spawn_args_are_read_only(args),
         });
         // Mark this as an unconfirmed local guess: the kernel has not registered
         // the child yet, so a snapshot taken in that window must not evict it
@@ -347,6 +347,19 @@ fn sanitized_arg(args: &serde_json::Value, key: &str, fallback: &str) -> String 
     )
 }
 
+fn spawn_args_are_read_only(args: &serde_json::Value) -> bool {
+    args.get("read_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || args
+            .get("disable_tools")
+            .and_then(|v| v.as_array())
+            .is_some_and(|tools| {
+                let has = |name| tools.iter().any(|v| v.as_str() == Some(name));
+                has("write") && has("edit")
+            })
+}
+
 /// Whether a tool's chat box should be hidden. Only `spawn` is suppressed —
 /// its effect is shown in the sub-agent panel / status bar instead. Every
 /// model-issued `agent_cmd` command renders a normal tool box (#871), including
@@ -369,6 +382,9 @@ pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> b
 #[cfg(test)]
 #[path = "app_events_cursor_tests.rs"]
 mod cursor_tests;
+#[cfg(test)]
+#[path = "app_events_readonly_tests.rs"]
+mod readonly_tests;
 #[cfg(test)]
 #[path = "app_events_tests.rs"]
 mod tests;

@@ -512,10 +512,8 @@ impl App {
         };
         let stalk_vis = visible_width(&row.prefix);
         let timer = self.panel_row_timer(row.id.as_deref(), now);
-        let observer = self
-            .panel_row_observer(row.id.as_deref())
-            .map(|g| format!(" {g}"));
-        let observer_vis = observer.as_ref().map_or(0, |o| visible_width(o));
+        let observer = self.panel_row_observer(row.id.as_deref()).unwrap_or("");
+        let observer_vis = visible_width(observer);
         let usable = width.saturating_sub(1);
         let name_avail = usable.saturating_sub(1 + stalk_vis + 1 + observer_vis + timer.len());
         let name = truncate_to_width(&sanitize_panel_label(&row.label), name_avail, Some("…"));
@@ -524,7 +522,6 @@ impl App {
         if active {
             name = theme::bold(&name);
         }
-        let observer = observer.unwrap_or_default();
         let pad = usable.saturating_sub(1 + stalk_vis + name_vis + observer_vis + timer.len());
         let line = format!(
             "{selbar}{}{name}{observer}{}{} ",
@@ -539,7 +536,7 @@ impl App {
         let id = id?;
         let entry = self.subagent_local.get(id)?;
         if entry.info.read_only {
-            Some(theme::OBSERVER_GLYPH)
+            Some(theme::OBSERVER_MARKER)
         } else {
             None
         }

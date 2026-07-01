@@ -227,6 +227,18 @@ fn then_subagent_readwrite(world: &mut QuectoWorld, agent_id: String) {
     );
 }
 
+#[then("the subagent info list should contain both observer and read-write states")]
+fn then_subagent_info_list_has_mixed_observer_states(world: &mut QuectoWorld) {
+    assert!(
+        world.subagent_infos.iter().any(|info| info.read_only),
+        "expected at least one observer entry in subagent info list"
+    );
+    assert!(
+        world.subagent_infos.iter().any(|info| !info.read_only),
+        "expected at least one read-write entry in subagent info list"
+    );
+}
+
 // ─── SubagentInfo serialization steps ─────────────────────────────────────────
 
 #[given(expr = "a SubagentInfo with agentId {string} status {string} lastTool {string} pid {int}")]

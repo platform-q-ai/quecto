@@ -37,8 +37,10 @@ async fn read_only_subagent_shows_observer_marker_without_shifting_rows() {
         " ",
         "observer marker should appear in the next cell after the read-only sub-agent name:\n{panel}"
     );
-    let timer_col =
-        |row: &str| unicode_width::UnicodeWidthStr::width(&row[..row.rfind("0:00").unwrap()]);
+    let timer_col = |row: &str| {
+        row.rfind("0:")
+            .map(|i| unicode_width::UnicodeWidthStr::width(&row[..i]))
+    };
     assert_eq!(
         timer_col(reviewer),
         timer_col(worker),
