@@ -459,7 +459,7 @@ impl App {
         // Sub-agent-first main pane (#820): the selected agent's title line and
         // boxed single-line workflow bar sit at the top of the body, above the
         // chat (replacing the removed bottom workflow bar).
-        let main_box_width = width + usize::from(panel_visible);
+        let main_box_width = width;
         let main_pane_workflow = self.render_main_pane_workflow(width, main_box_width, now);
         let workflow_height = main_pane_workflow.len();
         lines.extend(main_pane_workflow);
@@ -518,14 +518,8 @@ impl App {
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
 
-        let is_full_width_workflow_box = |line: &str| {
-            crate::interface::utils::visible_width(line) == width + 1
-                && (line.contains('┌') || line.contains('└') || line.contains('│'))
-        };
         for line in &mut lines {
-            if crate::interface::utils::visible_width(line) > width
-                && !is_full_width_workflow_box(line)
-            {
+            if crate::interface::utils::visible_width(line) > width {
                 *line = crate::interface::utils::truncate_to_width(line, width, None);
             }
         }
@@ -542,11 +536,7 @@ impl App {
                     .get(i)
                     .cloned()
                     .unwrap_or_else(|| " ".repeat(panel_width));
-                *line = if is_full_width_workflow_box(line) {
-                    format!("{cell}{divider}{line}")
-                } else {
-                    format!("{cell}{divider} {line}")
-                };
+                *line = format!("{cell}{divider} {line}");
             }
         }
 

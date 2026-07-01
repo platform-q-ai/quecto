@@ -16,10 +16,10 @@ Feature: Sub-agent-first default layout (#820)
     Given a sub-agent-first TUI with no sub-agents
     Then the left panel shows the master row
 
-  Scenario: A selected agent's workflow shows as a full-width boxed bar in the main pane
+  Scenario: A selected agent's workflow shows as a boxed bar aligned to the tool/message content column in the main pane
     Given a sub-agent-first TUI tracking sub-agent "a1" with its own workflow
     When I select sub-agent "a1"
-    Then the main pane shows a boxed workflow bar spanning the full content width
+    Then the main pane shows a boxed workflow bar aligned to the tool/message content column
     And the bottom stack no longer shows the workflow bar
 
   Scenario: The bottom stack no longer shows the sub-agent bar
