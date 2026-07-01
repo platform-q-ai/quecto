@@ -338,7 +338,7 @@ async fn status_reflects_complete_mode() {
         .await
         .unwrap();
 
-    for step in 1..=17 {
+    for step in 1..=19 {
         let result = tool
             .execute(&format!(r#"{{"action":"check","step":{step}}}"#))
             .await
@@ -460,7 +460,11 @@ async fn check_guards_is_command_scoped_for_multi_guard_templates() {
     tool.execute(r#"{"action":"select_template","template":"feature"}"#)
         .await
         .unwrap();
-    for step in 1..=8 {
+    // Check every step before `commit` so the commit guard is satisfied. The
+    // feature template has 9 steps ahead of `commit` (hooks, scenarios, tests,
+    // red, bdd_review, green, refactor, verify, version_bump — the last added by
+    // #950).
+    for step in 1..=9 {
         tool.execute(&format!(r#"{{"action":"check","step":{step}}}"#))
             .await
             .unwrap();
@@ -477,7 +481,7 @@ async fn check_guards_is_command_scoped_for_multi_guard_templates() {
         .await
         .unwrap();
     assert!(merge_result.is_error, "merge guard should remain active");
-    assert!(merge_result.content.contains("Complete code review"));
+    assert!(merge_result.content.contains("conformance gate"));
 }
 
 #[tokio::test]
