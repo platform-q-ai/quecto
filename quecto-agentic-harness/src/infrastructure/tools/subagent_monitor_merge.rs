@@ -114,6 +114,7 @@ fn merge_descendants(
         entry.workflow = d
             .get("workflow")
             .and_then(|w| serde_json::from_value(w.clone()).ok());
+        entry.read_only = d.get("readOnly").and_then(|v| v.as_bool()).unwrap_or(false);
         entry.updated_at = Instant::now();
     }
 

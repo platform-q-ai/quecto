@@ -33,7 +33,6 @@ fn unique_suffix() -> u128 {
         .unwrap()
         .as_nanos()
 }
-
 #[tokio::test]
 async fn subagent_notification_appends_one_status_line() {
     let mut app = test_app().await;
@@ -340,6 +339,7 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
             socket_path: None,
             parent_id: None,
             workflow: None,
+            read_only: false,
         }],
     });
     // A workflow_state forwarded up from the child (agent_id = "child", a
@@ -443,6 +443,7 @@ async fn handles_subagent_workflow_and_error_events() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     };
     app.handle_event(Event::SubagentStateChanged {
         subagents: vec![info.clone()],
@@ -478,7 +479,6 @@ async fn handles_subagent_workflow_and_error_events() {
     });
     assert!(!app.agent_state.is_running());
 }
-
 #[test]
 fn sanitized_arg_strips_control_chars_and_uses_fallback() {
     let args = serde_json::json!({"agent_id":"a\u{0007}b"});

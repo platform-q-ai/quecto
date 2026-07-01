@@ -21,6 +21,7 @@ fn info(id: &str, status: &str) -> crate::infrastructure::client::SubagentInfoEv
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     }
 }
 
@@ -44,6 +45,7 @@ fn info_with_workflow(
             steps_completed: done,
             steps_total: total,
         }),
+        read_only: false,
     }
 }
 

@@ -238,6 +238,11 @@ pub struct SubagentInfoEvent {
     /// Latest workflow snapshot for this subagent, if any (PRD Stage B).
     #[serde(default)]
     pub workflow: Option<SubagentWorkflow>,
+    /// Whether this sub-agent was spawned read-only (`write` + `edit` disabled).
+    /// Drives the observer marker in the left panel (#966). Defaults to `false`
+    /// for older kernels that did not surface the field.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 /// Workflow snapshot mirror carried on a subagent entry (PRD Stage B).

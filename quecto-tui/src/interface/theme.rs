@@ -12,6 +12,17 @@ pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", 
 /// the `Spinner` component.
 pub const STREAMING_INDICATOR: &str = "●";
 
+/// Observer marker drawn next to a read-only sub-agent's name in the left panel
+/// (#966). A circled-dot glyph (U+2299) reads as a watchful eye / observer:
+/// "can see but cannot mutate". Chosen over the emoji `👁` (U+1F441) because the
+/// emoji's terminal display width is ambiguous (`unicode-width` reports 1 but
+/// most terminals render it as 2), which would break the panel's column-aligned
+/// layout. `⊙` is a BMP mathematical operator with a stable width of 1 on every
+/// terminal, so it degrades gracefully and never causes misalignment. Rendered
+/// in the terminal default colour (no theme colour) to stay theme-consistent.
+pub const OBSERVER_GLYPH: &str = "⊙";
+pub const OBSERVER_MARKER: &str = " ⊙";
+
 /// Apply an SGR code around text, with reset after.
 fn styled(code: u8, text: &str) -> String {
     format!("\x1b[{}m{}\x1b[0m", code, text)

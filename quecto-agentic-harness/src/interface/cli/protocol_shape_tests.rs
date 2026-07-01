@@ -43,7 +43,6 @@ fn tool_execution_end_matches_spec_shape() {
     assert_eq!(j["isError"], false); // camelCase
     assert!(j.get("is_error").is_none());
 }
-
 #[test]
 fn turn_end_matches_spec_shape() {
     let ev = AgentEvent::TurnEnd {
@@ -497,6 +496,7 @@ fn subagent_info_camel_case_serialization() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     };
     let j = round_trip(&info);
     assert_eq!(j["agentId"], "test-agent");
@@ -519,6 +519,7 @@ fn subagent_info_null_fields_omitted() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     };
     let j = round_trip(&info);
     assert!(j.get("lastTool").is_none());
@@ -536,6 +537,7 @@ fn subagent_info_with_error_field() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     };
     let j = round_trip(&info);
     assert_eq!(j["lastError"], "tool 'bash' returned error");
@@ -554,6 +556,7 @@ fn subagent_state_changed_event_matches_spec() {
                 socket_path: None,
                 parent_id: None,
                 workflow: None,
+                read_only: false,
             },
             SubagentInfo {
                 agent_id: "formatter".into(),
@@ -564,6 +567,7 @@ fn subagent_state_changed_event_matches_spec() {
                 socket_path: None,
                 parent_id: None,
                 workflow: None,
+                read_only: false,
             },
         ],
     };
@@ -592,6 +596,7 @@ fn subagent_state_changed_event_roundtrip() {
             socket_path: None,
             parent_id: None,
             workflow: None,
+            read_only: false,
         }],
     };
     let json = ev.to_json_line();

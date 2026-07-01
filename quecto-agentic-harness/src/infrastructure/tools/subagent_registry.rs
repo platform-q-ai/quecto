@@ -99,6 +99,10 @@ pub struct SubagentEntry {
     /// Terminal-completion latch (#904): consumed by the first `complete`-mode
     /// `agent_end`, re-armed when the workflow leaves `complete`.
     pub completion_armed: bool,
+    /// Whether this sub-agent was spawned read-only (`write` + `edit` disabled).
+    /// Surfaced through `get_subagents` so the TUI can mark it as an observer
+    /// (#966). Display flag only; enforcement is #957.
+    pub read_only: bool,
 }
 
 impl SubagentEntry {
@@ -119,6 +123,7 @@ impl SubagentEntry {
             workflow: None,
             completion_consumed_by_await: false,
             completion_armed: true,
+            read_only: false,
         }
     }
 }

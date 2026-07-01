@@ -304,6 +304,24 @@ impl TuiHarness {
             .join("\n")
     }
 
+    /// The left sub-agent panel region of the frame — the first `panel_width`
+    /// columns of every line, ANSI-stripped — for asserting on panel content
+    /// such as the read-only observer marker (#966).
+    pub fn left_panel(&mut self) -> String {
+        let (panel_width, _, _) = self.app.frame_split();
+        self.app
+            .compose_frame()
+            .iter()
+            .map(|l| {
+                let stripped = strip_ansi(l);
+                let chars: Vec<char> = stripped.chars().collect();
+                let take: Vec<char> = chars.into_iter().take(panel_width).collect();
+                take.into_iter().collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     pub async fn drain_commands(&mut self) -> Vec<String> {
         for _ in 0..5 {
             tokio::task::yield_now().await;
@@ -419,7 +437,21 @@ pub fn subagent_with_socket(
             steps_completed: d,
             steps_total: t,
         }),
+        read_only: false,
     }
+}
+
+/// A read-only sub-agent event (`read_only: true`) for observer-marker tests
+/// (#966). Otherwise identical to `subagent_with_socket`.
+pub fn subagent_readonly(
+    id: &str,
+    status: &str,
+    wf: Option<(&str, u32, u32)>,
+    socket_path: Option<std::path::PathBuf>,
+) -> SubagentInfoEvent {
+    let mut ev = subagent_with_socket(id, status, wf, socket_path);
+    ev.read_only = true;
+    ev
 }
 
 /// `get_subagents`-style push of the full sub-agent list.

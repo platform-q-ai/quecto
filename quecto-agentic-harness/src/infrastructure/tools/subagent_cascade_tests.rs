@@ -93,3 +93,37 @@ fn cascade_remove_and_state_changed_noop_returns_none() {
     );
     assert_eq!(r.lock().unwrap().len(), 4);
 }
+
+#[test]
+fn state_changed_event_serializes_read_only_observer_flag() {
+    let r = new_registry();
+    {
+        let mut guard = r.lock().unwrap();
+        let mut observer = SubagentEntry::new(PathBuf::from("/observer.sock"), 11);
+        observer.read_only = true;
+        guard.insert("observer".into(), observer);
+        guard.insert(
+            "worker".into(),
+            SubagentEntry::new(PathBuf::from("/worker.sock"), 12),
+        );
+    }
+
+    let event = build_state_changed_event(&r);
+    let v: serde_json::Value = serde_json::from_str(&event).unwrap();
+
+    let observer = v["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["agentId"] == "observer")
+        .expect("observer entry should be serialized");
+    let worker = v["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["agentId"] == "worker")
+        .expect("worker entry should be serialized");
+
+    assert_eq!(observer["readOnly"], true);
+    assert_eq!(worker["readOnly"], false);
+}

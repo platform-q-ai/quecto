@@ -1,11 +1,3 @@
-//! Sub-agent-first persistent left panel + multi-session switching (#800).
-//!
-//! Replaces the bolt-on inspector (#795/#796/#798). A persistent left column
-//! lists the **Master Agent** and the sub-agent tree (indented by `parent_id`).
-//! Selecting an agent switches the main body to that agent's own `SessionView`,
-//! rendering its full live session via a direct **connect-on-select** UDS
-//! connection to the sub-agent's own socket. Esc returns to the master.
-
 use super::*;
 use crate::interface::theme;
 
@@ -447,9 +439,6 @@ impl App {
         out
     }
 
-    /// Render the persistent left panel into exactly `height` rows, each padded
-    /// to `width` visible columns. Row 0 is a panel header; the selected row is
-    /// highlighted. Width-aware so the horizontal split joins cleanly (#800).
     pub(super) fn render_subagent_panel(
         &self,
         width: usize,
@@ -460,8 +449,6 @@ impl App {
         let selected = self.panel_nav.selected();
         let active = self.active_agent_id.as_deref();
 
-        // No header — the panel is just the agent rows + a footer hint.
-        // Each agent renders as 1–2 lines: name row, plus a workflow bar beneath.
         let blocks: Vec<Vec<String>> = rows
             .iter()
             .enumerate()
@@ -507,9 +494,8 @@ impl App {
         lines
     }
 
-    /// The agent name row: `<sel-bar><stalk><name>…<timer>`. Selection is a `▌`
-    /// accent bar in column 0 (identical for master and indented agents); active
-    /// = bold; status = name colour; timer = bare right-aligned `m:ss`.
+    /// The agent name row: `<sel-bar><stalk><name>…<timer>`; read-only
+    /// sub-agents show the observer marker after the name (#966).
     fn panel_name_line(
         &self,
         row: &PanelRow,
@@ -526,30 +512,36 @@ impl App {
         };
         let stalk_vis = visible_width(&row.prefix);
         let timer = self.panel_row_timer(row.id.as_deref(), now);
-        // Reserve a 1-col right gutter so the timer doesn't butt against the
-        // divider, mirroring the main pane's `│ ` left gutter. Layout within the
-        // usable span: sel-bar(1) + stalk + one-space gap + timer; rest is name.
+        let observer = self.panel_row_observer(row.id.as_deref()).unwrap_or("");
+        let observer_vis = visible_width(observer);
         let usable = width.saturating_sub(1);
-        let name_avail = usable.saturating_sub(1 + stalk_vis + 1 + timer.len());
+        let name_avail = usable.saturating_sub(1 + stalk_vis + 1 + observer_vis + timer.len());
         let name = truncate_to_width(&sanitize_panel_label(&row.label), name_avail, Some("…"));
         let name_vis = visible_width(&name);
         let mut name = status_colored_name(&row.status, &name);
         if active {
             name = theme::bold(&name);
         }
-        let pad = usable.saturating_sub(1 + stalk_vis + name_vis + timer.len());
+        let pad = usable.saturating_sub(1 + stalk_vis + name_vis + observer_vis + timer.len());
         let line = format!(
-            "{selbar}{}{name}{}{} ",
+            "{selbar}{}{name}{observer}{}{} ",
             theme::dim(&row.prefix),
             " ".repeat(pad),
             theme::dim(&timer),
         );
-        // Final clamp to exactly `width` (narrow terminals / deep nesting, #875).
         pad_cell(&line, width)
     }
 
-    /// Bare `m:ss` panel timer: running tracks the live clock, non-running reads
-    /// the frozen run duration (#838), master shows uptime. No status word.
+    fn panel_row_observer(&self, id: Option<&str>) -> Option<&'static str> {
+        let id = id?;
+        let entry = self.subagent_local.get(id)?;
+        if entry.info.read_only {
+            Some(theme::OBSERVER_MARKER)
+        } else {
+            None
+        }
+    }
+
     fn panel_row_timer(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         match id {
             None => fmt_mss(now.saturating_duration_since(self.started_at).as_secs()),

@@ -349,6 +349,9 @@ pub struct QuectoWorld {
     pub tui_parity_rt: Option<tokio::runtime::Runtime>,
     /// TUI sub-agent session-parity BDD (#805): the headless render harness.
     pub tui_parity: Option<TuiParityHarness>,
+    /// TUI observer-marker BDD (#966): currently tracked sub-agents and whether
+    /// each is read-only, used to exercise selective departure.
+    pub tui_expected_subagents: Vec<(String, bool)>,
     /// The sub-agent id currently being viewed (#828): captured on select so
     /// backfill/assertion steps route to the right session, not a literal id.
     pub tui_viewed_agent: Option<String>,
@@ -1058,6 +1061,7 @@ mod tui_cold_start_steps;
 mod tui_file_mention_steps;
 mod tui_subagent_first_layout_steps;
 mod tui_subagent_parity_steps;
+mod tui_subagent_readonly_marker_steps;
 mod uds_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;

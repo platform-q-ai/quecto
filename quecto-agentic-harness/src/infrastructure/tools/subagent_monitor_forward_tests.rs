@@ -183,6 +183,33 @@ fn forward_child_state_changed_preserves_existing_status_when_status_omitted() {
 }
 
 #[test]
+fn forward_child_state_changed_preserves_descendant_read_only_flag() {
+    let registry = super::super::subagent_registry::new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("child".to_string(), test_entry());
+
+    let line = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"observer","status":"running","parentId":"child","readOnly":true},{"agentId":"worker","status":"running","parentId":"child","readOnly":false}]}"#;
+    let out = forward_child_state_changed(line, &registry, "child").expect("forwarded");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+
+    {
+        let guard = registry.lock().unwrap();
+        assert!(
+            guard["observer"].read_only,
+            "forwarded readOnly:true must be merged into the root registry"
+        );
+        assert!(
+            !guard["worker"].read_only,
+            "forwarded readOnly:false must remain read-write"
+        );
+    }
+    assert_eq!(find_subagent(&v, "observer")["readOnly"], true);
+    assert_eq!(find_subagent(&v, "worker")["readOnly"], false);
+}
+
+#[test]
 fn handle_monitor_line_skips_full_state_broadcast_for_tool_boundaries() {
     let registry = super::super::subagent_registry::new_registry();
     let mut child = test_entry();

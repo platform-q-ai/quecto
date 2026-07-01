@@ -6,7 +6,6 @@ fn test_tool() -> SpawnTool {
         true,
     )
 }
-
 #[test]
 fn parse_args_accepts_by_value_workflow_spec() {
     let tool = test_tool();
@@ -30,6 +29,65 @@ fn parse_args_without_workflow_spec_leaves_it_none() {
     let tool = test_tool();
     let cfg = tool.parse_args_for_test(r#"{"task":"t"}"#).unwrap();
     assert!(cfg.workflow_spec.is_none());
+}
+
+#[test]
+fn parse_read_only_marks_config_as_observer() {
+    let tool = SpawnTool::new(vec![], true);
+    let cfg = tool
+        .parse_args(r#"{"task":"review","read_only":true}"#)
+        .unwrap();
+    assert!(
+        cfg.read_only,
+        "read_only spawn arguments must mark the sub-agent as an observer"
+    );
+}
+
+#[test]
+fn parse_disable_write_and_edit_marks_config_as_observer() {
+    let tool = SpawnTool::new(vec![], true);
+    for args in [
+        r#"{"task":"review","disable_tools":["write","edit"]}"#,
+        r#"{"task":"review","disable_tools":["edit","write"]}"#,
+        r#"{"task":"review","disable_tools":["read","write","edit"]}"#,
+    ] {
+        let cfg = tool.parse_args(args).unwrap();
+        assert!(
+            cfg.read_only,
+            "disabling both write and edit must mark the sub-agent as read-only for {args}"
+        );
+    }
+}
+
+#[test]
+fn parse_single_mutation_tool_disabled_does_not_mark_config_as_observer() {
+    let tool = SpawnTool::new(vec![], true);
+    for args in [
+        r#"{"task":"review","disable_tools":["write"]}"#,
+        r#"{"task":"review","disable_tools":["edit"]}"#,
+    ] {
+        let cfg = tool.parse_args(args).unwrap();
+        assert!(
+            !cfg.read_only,
+            "disabling only one mutation tool must not mark the sub-agent as read-only for {args}"
+        );
+    }
+}
+#[tokio::test]
+async fn execute_stub_mode_registers_read_only_observer() {
+    let tool = SpawnTool::new(vec![], true);
+    let _result = tool
+        .execute(r#"{"task":"review","agent_id":"reviewer","read_only":true}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry.lock().unwrap();
+    let entry = registry
+        .get("reviewer")
+        .expect("spawned read-only sub-agent should be registered");
+    assert!(
+        entry.read_only,
+        "registered sub-agent state must identify read-only observers"
+    );
 }
 
 #[test]

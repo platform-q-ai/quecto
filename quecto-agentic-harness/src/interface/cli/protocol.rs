@@ -391,6 +391,10 @@ pub struct SubagentInfo {
     /// Latest workflow snapshot for this subagent, if any (PRD Stage B).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<crate::infrastructure::tools::subagent_registry::WorkflowSnapshot>,
+    /// Whether this sub-agent was spawned read-only (`write` + `edit` disabled).
+    /// The TUI renders an observer marker next to its name when true (#966).
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 /// Metadata for a registered extension, used in `ExtensionsChanged` events
@@ -462,6 +466,7 @@ pub fn build_subagent_info_list(
                 socket_path: Some(entry.socket_path.to_string_lossy().into_owned()),
                 parent_id: entry.parent_id.clone(),
                 workflow: entry.workflow.clone(),
+                read_only: entry.read_only,
             })
             .collect()
     }; // guard dropped here — sort happens outside critical section

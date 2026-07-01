@@ -1,9 +1,3 @@
-//! Application — the main TUI event loop.
-//!
-//! Wires all components together: terminal, UDS client, editor, chat,
-//! spinner, footer, autocomplete, overlays, notifications, Kitty protocol,
-//! signal handling, and extension management.
-
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -713,6 +707,9 @@ mod app_selection_tests;
 #[cfg(test)]
 #[path = "app_subagent_first_tests.rs"]
 mod app_subagent_first_tests;
+#[cfg(test)]
+#[path = "app_subagent_panel_observer_tests.rs"]
+mod app_subagent_panel_observer_tests;
 #[cfg(test)]
 #[path = "app_subagent_panel_tests.rs"]
 mod app_subagent_panel_tests;

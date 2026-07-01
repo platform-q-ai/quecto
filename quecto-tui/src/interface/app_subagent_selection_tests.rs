@@ -12,6 +12,7 @@ fn make_tracked(id: &str, status: &str) -> (String, super::TrackedSubagent) {
             socket_path: None,
             parent_id: None,
             workflow: None,
+            read_only: false,
         }),
     )
 }
@@ -127,6 +128,7 @@ fn tracked_subagent_new_sets_exited_at_for_exited() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     });
     assert!(entry.exited_at.is_some());
 }
@@ -142,6 +144,7 @@ fn tracked_subagent_new_no_exited_at_for_running() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     });
     assert!(entry.exited_at.is_none());
 }
@@ -157,6 +160,7 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     });
     assert!(entry.exited_at.is_none());
 
@@ -169,6 +173,7 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     });
     assert!(entry.exited_at.is_some());
 }
@@ -184,6 +189,7 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     });
     assert!(entry.exited_at.is_some());
 
@@ -196,8 +202,41 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     });
     assert!(entry.exited_at.is_none());
+}
+
+#[test]
+fn tracked_subagent_update_clears_read_only_marker_on_authoritative_read_write_update() {
+    let mut entry = super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
+        agent_id: "w1".into(),
+        status: "running".into(),
+        last_tool: None,
+        last_error: None,
+        pid: 0,
+        socket_path: None,
+        parent_id: None,
+        workflow: None,
+        read_only: true,
+    });
+
+    entry.update_info(crate::infrastructure::client::SubagentInfoEvent {
+        agent_id: "w1".into(),
+        status: "running".into(),
+        last_tool: None,
+        last_error: None,
+        pid: 0,
+        socket_path: None,
+        parent_id: None,
+        workflow: None,
+        read_only: false,
+    });
+
+    assert!(
+        !entry.info.read_only,
+        "an explicit read-write update must clear stale observer status"
+    );
 }
 
 #[test]
@@ -297,6 +336,7 @@ fn mk_info(id: &str, status: &str) -> crate::infrastructure::client::SubagentInf
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     }
 }
 

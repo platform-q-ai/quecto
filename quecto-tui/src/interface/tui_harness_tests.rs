@@ -454,6 +454,7 @@ mod workflow_display_regression {
                 steps_completed: d,
                 steps_total: t,
             }),
+            read_only: false,
         }
     }
     fn wf_state(

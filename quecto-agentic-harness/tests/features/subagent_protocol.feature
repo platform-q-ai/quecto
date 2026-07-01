@@ -11,15 +11,18 @@ Feature: Subagent protocol commands (#524)
     Then the subagent info list should be empty
 
   @wip
-  Scenario: get_subagents returns snapshot of all registered subagents
-    Given a registry with subagent "reviewer" status "running" last_tool "bash" pid 1234
-    And a registry with subagent "formatter" status "idle" last_tool "" pid 5678
-    When I build a SubagentInfo list from the registry
+  Scenario: get_subagents identifies read-only observers
+    Given a read-only observer sub-agent "reviewer" is registered
+    And a read-write sub-agent "formatter" is registered
+    When a client requests sub-agent state
     Then the subagent info list should have 2 entries
     And subagent info "reviewer" should have status "running"
     And subagent info "reviewer" should have last_tool "bash"
     And subagent info "reviewer" should have pid 1234
+    And subagent info "reviewer" should be read-only
     And subagent info "formatter" should have status "idle"
+    And subagent info "formatter" should be read-write
+    And the subagent info list should contain both observer and read-write states
 
   @wip
   Scenario: get_subagents includes error status and last_error
@@ -96,6 +99,14 @@ Feature: Subagent protocol commands (#524)
     When I serialize and deserialize the event
     Then the deserialized event should be SubagentStateChanged
     And the deserialized subagents should contain "monitor-test" with status "running"
+
+  @wip
+  Scenario: subagent_state_changed event preserves observer status
+    Given a SubagentStateChanged event for read-only sub-agent "reviewer" and read-write sub-agent "worker"
+    When I serialize and deserialize the event
+    Then the deserialized event should be SubagentStateChanged
+    And the deserialized subagents should contain "reviewer" as read-only
+    And the deserialized subagents should contain "worker" as read-write
 
   # ─── build_subagent_info_list helper ─────────────────────────────────────────
 

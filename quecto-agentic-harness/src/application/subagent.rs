@@ -44,6 +44,7 @@ mod tests {
             workflow_spec: None,
             model: None,
             disable_tools: Vec::new(),
+            read_only: false,
         };
         let ctx = SubagentContext::from_config(&config);
         assert_eq!(ctx.task, "Do stuff");
@@ -63,6 +64,7 @@ mod tests {
             workflow_spec: None,
             model: None,
             disable_tools: Vec::new(),
+            read_only: false,
         };
         let ctx = SubagentContext::from_config(&config);
         assert!(ctx.restrict_to_workspace);
@@ -81,6 +83,7 @@ mod tests {
             workflow_spec: None,
             model: None,
             disable_tools: Vec::new(),
+            read_only: false,
         };
         let ctx = SubagentContext::from_config(&config);
         assert!(!ctx.restrict_to_workspace);
@@ -99,6 +102,7 @@ mod tests {
             workflow_spec: None,
             model: None,
             disable_tools: Vec::new(),
+            read_only: false,
         };
         let ctx = SubagentContext::from_config(&config);
         assert_eq!(ctx.task, "");
