@@ -90,3 +90,53 @@ fn test_926_empty_base_dir_still_keeps_notification_rx_live() {
         "a live notify_tx must never be paired with a dropped notify_rx (#926)"
     );
 }
+
+/// #957: the END STATE of a read-only child. A child launched with
+/// `--disable-tool write --disable-tool edit` (what a `read_only: true` spawn
+/// forwards) must build a registry with `write`/`edit` removed — the model never
+/// sees them — while its non-mutating toolset (`bash`/`read`/`grep`/`find`/
+/// `agent_cmd`) stays intact. Asserts the registry end-state directly rather than
+/// inferring it transitively from the `remove_all` unit tests.
+#[test]
+fn test_957_read_only_child_registry_omits_write_edit_keeps_others() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = config_with_provider();
+    let mut flags = spawn_capable_flags();
+    flags.disabled_tools = vec!["write".to_string(), "edit".to_string()];
+    let mut stderr = String::new();
+    let mut build = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        config: &config,
+        http_client: &reqwest::Client::new(),
+        flags: &flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+    });
+    // Guard against a vacuous pass: the base registry must actually expose the
+    // tools we intend to remove, so the post-removal absence proves removal (not
+    // that they were never registered — the exact regression a read-only guard
+    // must catch).
+    let before = build.registry.names();
+    for t in ["write", "edit"] {
+        assert!(
+            before.contains(&t.to_string()),
+            "base registry must expose `{t}` before removal; names = {before:?}"
+        );
+    }
+    // Mirror the child CLI: tools named on `--disable-tool` are removed before
+    // the session starts (agent.rs applies `registry.remove_all`).
+    build.registry.remove_all(&flags.disabled_tools);
+    let names = build.registry.names();
+    for gone in ["write", "edit"] {
+        assert!(
+            !names.contains(&gone.to_string()),
+            "read-only child must not expose `{gone}`; names = {names:?}"
+        );
+    }
+    for kept in ["bash", "read", "grep", "find", "agent_cmd"] {
+        assert!(
+            names.contains(&kept.to_string()),
+            "read-only child must retain `{kept}`; names = {names:?}"
+        );
+    }
+}

@@ -319,3 +319,49 @@ Feature: SpawnTool — child agent process spawning
   Scenario: Tool definition schema includes model field
     Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
     Then the spawn tool schema should include property "model"
+
+  # --- read-only / disable_tools passthrough (#957) ---
+
+  Scenario: Parse a request with an explicit disable_tools list
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","disable_tools":["write","edit"]}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have disable_tools "write,edit"
+
+  Scenario: read_only expands to write and edit
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","read_only":true}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have disable_tools "write,edit"
+
+  Scenario: read_only unions with disable_tools and de-dupes
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","read_only":true,"disable_tools":["write","bash"]}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have disable_tools "write,edit,bash"
+
+  Scenario: Parse a request without disable_tools or read_only has none
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work"}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have no disable_tools
+
+  Scenario: Non-string entry in disable_tools is rejected
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","disable_tools":[123]}'
+    Then the spawn result should be an error
+    And the spawn result should contain "disable_tools"
+
+  Scenario: Non-boolean read_only is rejected
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","read_only":"true"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "read_only"
+
+  Scenario: Tool definition schema includes disable_tools field
+    Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
+    Then the spawn tool schema should include property "disable_tools"
+
+  Scenario: Tool definition schema includes read_only field
+    Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
+    Then the spawn tool schema should include property "read_only"
