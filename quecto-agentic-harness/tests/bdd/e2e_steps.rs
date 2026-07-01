@@ -1993,7 +1993,7 @@ fn given_credential_store_valid_anthropic_oauth(world: &mut QuectoWorld, account
     store
         .store(Credential {
             provider: "anthropic".to_string(),
-            token: "sk-ant-oat01-sonnet-5".to_string(),
+            token: "test-oauth-token-sonnet-5".to_string(),
             method: AuthMethod::OAuth,
             expires_at: Some(4_102_444_800),
             refresh_token: Some("refresh-token".to_string()),

@@ -48,13 +48,15 @@ impl AnthropicProvider {
         client: reqwest::Client,
         router_name: impl Into<String>,
     ) -> Self {
-        let is_oauth = crate::infrastructure::auth::oauth::is_anthropic_oauth_token(&api_key);
+        let router_name = router_name.into();
+        let is_oauth = router_name == "anthropic-oauth"
+            || crate::infrastructure::auth::oauth::is_anthropic_oauth_token(&api_key);
         Self {
             api_key,
             api_base: api_base.unwrap_or_else(|| "https://api.anthropic.com".to_string()),
             client,
             is_oauth,
-            router_name: router_name.into(),
+            router_name,
         }
     }
 

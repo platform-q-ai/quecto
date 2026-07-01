@@ -1,4 +1,6 @@
 use serde::Deserialize;
+
+use crate::domain::message::claude_sonnet_5_pricing;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -353,11 +355,12 @@ impl ModelRegistry {
                 record.context_window = 1_000_000;
                 record.max_tokens = 128_000;
                 record.max_tokens_explicit = true;
+                let pricing = claude_sonnet_5_pricing();
                 record.cost = ModelCost {
-                    input: 2.0,
-                    output: 10.0,
-                    cache_read: 0.2,
-                    cache_write: 2.5,
+                    input: pricing.input_micro_usd_per_million as f64 / 1_000_000.0,
+                    output: pricing.output_micro_usd_per_million as f64 / 1_000_000.0,
+                    cache_read: pricing.cache_read_micro_usd_per_million as f64 / 1_000_000.0,
+                    cache_write: pricing.cache_write_micro_usd_per_million as f64 / 1_000_000.0,
                 };
             }
             r.upsert(record);

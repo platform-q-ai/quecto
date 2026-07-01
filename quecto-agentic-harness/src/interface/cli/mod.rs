@@ -176,6 +176,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
     let exit_code = {
         match args[1].as_str() {
             "agent" => agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
+            "models" => cmd_models(ctx, &mut stdout, &mut stderr),
             "status" => commands::cmd_status(ctx, &mut stdout, &mut stderr),
             "auth" => auth::cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
             "help" | "--help" | "-h" => {
@@ -199,6 +200,19 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
         stderr,
         exit_code,
     }
+}
+
+fn cmd_models(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
+    let data = uds_models::list_models_data(&ctx.base_dir());
+    if let Some(err) = data.get("error").and_then(|v| v.as_str()) {
+        stderr.push_str(err);
+        stderr.push('\n');
+        return 1;
+    }
+
+    stdout.push_str(&serde_json::to_string_pretty(&data).expect("serialize model list"));
+    stdout.push('\n');
+    0
 }
 
 /// Run the REPL with the given input/output, capturing output for BDD testing.
@@ -535,6 +549,7 @@ fn help_text(out: &mut String) {
         "                       --disable-tool <name>  Remove a tool from the registry (repeatable)\n",
     );
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
+    out.push_str("  models      List configured and built-in models\n");
     out.push_str("  status      Show status\n");
     out.push_str("  help        Show this help\n");
     out.push_str("  version     Show version information\n");

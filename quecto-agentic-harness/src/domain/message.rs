@@ -445,29 +445,43 @@ pub(crate) fn starts_with_ci(model: &str, prefix: &str) -> bool {
 
 /// Look up pricing for a known model. Returns `None` for unknown models.
 ///
-/// **Allowlist**: only `claude-sonnet-4`, `claude-opus-4`, and `claude-haiku-4`
-/// families are recognised. Any other model string returns `None`, preventing a
-/// spoofed model name from silently matching unintended pricing.
+/// **Allowlist**: only `claude-sonnet-5`, `claude-sonnet-4`, `claude-opus-4`,
+/// and `claude-haiku-4` families are recognised. Any other model string returns
+/// `None`, preventing a spoofed model name from silently matching unintended
+/// pricing.
 ///
 /// Rates are expressed as micro-USD per million tokens (integer arithmetic, no f64 drift).
 /// Cache write = 1.25× base input (5-minute TTL). Cache read = 0.1× base input.
 ///
-/// Sources (March 2026):
+/// Sources:
+///   Sonnet 5: intro $2 in / $10 out through 2026-08-31, then $3 in / $15 out per MTok
 ///   Opus 4.6 / 4.5: $5 in / $25 out / $6.25 cache-write / $0.50 cache-read per MTok
 ///   Sonnet 4.6 / 4.5 / 4: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
 ///   Haiku 4.5: $1 in / $5 out / $1.25 cache-write / $0.10 cache-read per MTok
-pub fn model_pricing(model: &str) -> Option<ModelPricing> {
-    // Check newer, more-specific aliases before broader model-family prefixes.
-    if starts_with_ci(model, "claude-sonnet-5") {
-        // Sonnet 5 introductory pricing: $2.00 / $10.00 per million tokens.
-        return Some(ModelPricing {
+pub(crate) fn claude_sonnet_5_pricing() -> ModelPricing {
+    // Keep the temporary intro rate while it is still active; use the standard
+    // Sonnet rate after the published promotion window ends.
+    if std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .is_ok_and(|now| now.as_secs() <= 1_788_220_799)
+    {
+        ModelPricing {
             input_micro_usd_per_million: 2_000_000,
             output_micro_usd_per_million: 10_000_000,
             cache_write_micro_usd_per_million: 2_500_000,
             cache_read_micro_usd_per_million: 200_000,
-        });
+        }
+    } else {
+        ModelPricing {
+            input_micro_usd_per_million: 3_000_000,
+            output_micro_usd_per_million: 15_000_000,
+            cache_write_micro_usd_per_million: 3_750_000,
+            cache_read_micro_usd_per_million: 300_000,
+        }
     }
+}
 
+pub fn model_pricing(model: &str) -> Option<ModelPricing> {
     if starts_with_ci(model, "claude-opus-4") {
         // Opus 4.5 / 4.6: $5.00 / $25.00 / $6.25 / $0.50 per million tokens → micro-USD
         // (Opus 4.1 and earlier had $15/$75 but those models are retired/deprecated.)
@@ -477,6 +491,8 @@ pub fn model_pricing(model: &str) -> Option<ModelPricing> {
             cache_read_micro_usd_per_million: 500_000,
             cache_write_micro_usd_per_million: 6_250_000,
         })
+    } else if starts_with_ci(model, "claude-sonnet-5") {
+        Some(claude_sonnet_5_pricing())
     } else if starts_with_ci(model, "claude-sonnet-4") {
         // Sonnet 4.x: $3.00 / $15.00 / $3.75 / $0.30 per million tokens → micro-USD
         Some(ModelPricing {
@@ -554,8 +570,8 @@ mod tests {
         let usage = UsageInfo {
             prompt_tokens: 1_000_000,
             completion_tokens: 100_000,
-            cache_read_tokens: None,
-            cache_write_tokens: None,
+            cache_read_tokens: Some(1_000_000),
+            cache_write_tokens: Some(1_000_000),
             context_tokens: None,
             cost: None,
         };
@@ -563,7 +579,9 @@ mod tests {
         let cost = pricing.cost_for(&usage);
         assert_eq!(cost.input_cost_micro_usd, 2_000_000);
         assert_eq!(cost.output_cost_micro_usd, 1_000_000);
-        assert_eq!(cost.total_cost_micro_usd, 3_000_000);
+        assert_eq!(cost.cache_read_cost_micro_usd, 200_000);
+        assert_eq!(cost.cache_write_cost_micro_usd, 2_500_000);
+        assert_eq!(cost.total_cost_micro_usd, 5_700_000);
     }
 
     #[test]

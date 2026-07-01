@@ -40,6 +40,7 @@ fn test_help_command_shows_usage() {
             "agent",
             "status",
             "auth",
+            "models",
             "help",
             "version",
         ],
@@ -80,7 +81,10 @@ fn test_unknown_command() {
 fn test_help_text_includes_all_commands() {
     let mut out = String::new();
     help_text(&mut out);
-    assert_contains_all(&out, &["agent", "auth", "status", "help", "version"]);
+    assert_contains_all(
+        &out,
+        &["agent", "auth", "models", "status", "help", "version"],
+    );
 }
 
 #[test]

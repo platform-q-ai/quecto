@@ -15,26 +15,16 @@ Feature: Runtime model registry for discoverable models
     And a config file with an OpenAI provider pointing at a mock server
     When I start the UDS agent with no session
     And I send command "list_models" with id "models-1"
+    And I send command "get_models" with id "models-2"
     And I close the UDS connection
     Then the agent output should contain a response command "list_models" with model "anthropic-api/claude-sonnet-5"
     And the agent output should contain a response command "list_models" with model "anthropic-oauth/claude-sonnet-5"
+    And the agent output should contain a response command "get_models" with model "anthropic-api/claude-sonnet-5"
+    And the agent output should contain a response command "get_models" with model "anthropic-oauth/claude-sonnet-5"
     And the response command "list_models" model "anthropic-api/claude-sonnet-5" should have context window 1000000
     And the response command "list_models" model "anthropic-api/claude-sonnet-5" should have max tokens 128000
     And the response command "list_models" model "anthropic-oauth/claude-sonnet-5" should have context window 1000000
     And the response command "list_models" model "anthropic-oauth/claude-sonnet-5" should have max tokens 128000
-
-  Scenario: get_models exposes the same Claude Sonnet 5 published limits
-    Given a temp base directory
-    And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
-    And I send command "get_models" with id "models-2"
-    And I close the UDS connection
-    Then the agent output should contain a response command "get_models" with model "anthropic-api/claude-sonnet-5"
-    And the agent output should contain a response command "get_models" with model "anthropic-oauth/claude-sonnet-5"
-    And the response command "get_models" model "anthropic-api/claude-sonnet-5" should have context window 1000000
-    And the response command "get_models" model "anthropic-api/claude-sonnet-5" should have max tokens 128000
-    And the response command "get_models" model "anthropic-oauth/claude-sonnet-5" should have context window 1000000
-    And the response command "get_models" model "anthropic-oauth/claude-sonnet-5" should have max tokens 128000
 
   Scenario: Claude Sonnet 5 OAuth can be selected by qualified name
     Given a temp base directory
@@ -48,7 +38,7 @@ Feature: Runtime model registry for discoverable models
   Scenario: Claude Sonnet 5 OAuth is accepted by the spawned agent entrypoint
     Given a mocked Anthropic workspace is configured
     And the credential store has a valid OAuth credential for anthropic account "acct-sonnet-5"
-    And the mock expects Authorization header "Bearer sk-ant-oat01-sonnet-5" and returns "SONNET_5_OAUTH_OK"
+    And the mock expects Authorization header "Bearer test-oauth-token-sonnet-5" and returns "SONNET_5_OAUTH_OK"
     When I run quecto agent --model "anthropic-oauth/claude-sonnet-5" -s - -m "Reply with SONNET_5_OAUTH_OK"
     Then the exit code should be 0
     And stdout should contain "SONNET_5_OAUTH_OK"
