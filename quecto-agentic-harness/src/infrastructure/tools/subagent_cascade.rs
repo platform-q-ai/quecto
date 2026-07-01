@@ -150,6 +150,7 @@ pub fn build_state_changed_event_locked(guard: &HashMap<String, SubagentEntry>) 
                     obj.insert("lastError".into(), serde_json::json!(err));
                 }
                 obj.insert("pid".into(), serde_json::json!(entry.pid));
+                obj.insert("readOnly".into(), serde_json::json!(entry.read_only));
                 obj.insert(
                     "socketPath".into(),
                     serde_json::json!(entry.socket_path.to_string_lossy()),
