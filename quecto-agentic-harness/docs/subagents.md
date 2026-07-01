@@ -74,6 +74,40 @@ connects to the child's UDS socket directly from Rust.
 - **`workflow_spec` vs `workflow`.** `workflow: true` makes the workflow tool available so the *child* picks a template; `workflow_spec` hands the child a specific template **by value** and binds it. They are independent of `config`, which supplies the child's runtime (providers/model/default template library).
 - **`model` (optional).** Sets the child's model at launch — accepts either a full `provider/model` string (e.g. `openai/gpt-5.5`) or a `provider` + `model_id` pair, the same format(s) as `agent_cmd set_model` (and validated by the same logic). It is forwarded to the child as `--model`, so the child's **first turn** (if `task` is given) already runs on the chosen model — no follow-up `set_model` round-trip needed. **Precedence:** an explicit `model` arg wins over any model from a forwarded `--config`, which wins over the built-in default. An invalid combination (e.g. `provider` without `model_id`) is a clear spawn error rather than a silent fall-back to the default.
 
+#### Spawning read-only (`read_only` / `disable_tools`)
+
+A parent can launch a child with specific tools removed, so the child cannot use
+them at all:
+
+- **`disable_tools` (optional).** An array of tool names (e.g. `["write",
+  "edit"]`). Each named tool is **removed from the child registry before its session starts**,
+  so the child's model never sees them in its tool definitions and cannot invoke
+  them — defense-in-depth beyond a prompt instruction.
+- **`read_only` (optional).** A convenience that expands to
+  `disable_tools: ["write", "edit"]`. The child keeps `bash`, `read`, `grep`,
+  `find` and `agent_cmd`, but the `"write"` and `"edit"` tools are gone.
+
+This is the recommended posture for reviewers, which should inspect and report
+but not mutate the repo:
+
+```json
+{
+  "name": "spawn",
+  "arguments": {
+    "agent_id": "pr-reviewer",
+    "task": "Review PR #123 for security issues and post inline findings",
+    "read_only": true
+  }
+}
+```
+
+**Caveat — this is not a hard sandbox.** Removing `write`/`edit` stops those
+tools, but a child can still mutate via `bash` (e.g. `sed`, `>` redirects). Reviewers keep `bash`/`read`/`grep`/`find`/`agent_cmd` precisely so
+they can fetch a diff and post comments; treat `read_only` as a guard against
+accidental writes, not an isolation boundary. For stronger guarantees use a
+workspace/sandbox posture. The CLI `--disable-tool` flag is the equivalent for a
+top-level agent — see `docs {"name":"disable-tools"}`.
+
 **Example:**
 
 ```json

@@ -22,3 +22,13 @@ Feature: Embedded capability docs reachable from any directory
     When I read the embedded doc "nonexistent"
     Then reading the embedded doc should fail
     And the embedded doc content should contain "quecto"
+
+  Scenario: the subagents doc documents the read-only spawn option
+    When I read the embedded doc "subagents"
+    Then the embedded doc content should contain "read_only"
+    And the embedded doc content should contain "disable_tools"
+
+  Scenario: the disable-tools doc documents the spawn read-only convenience and its caveat
+    When I read the embedded doc "disable-tools"
+    Then the embedded doc content should contain "read_only"
+    And the embedded doc content should contain "not a hard sandbox"
