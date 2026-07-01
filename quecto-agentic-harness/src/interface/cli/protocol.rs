@@ -88,6 +88,11 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Compatibility alias for clients that ask to get the runtime model list.
+    GetModels {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
     /// Return persisted CLI sessions available for resume.
     ListSessions {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -211,6 +216,7 @@ impl AgentCommand {
             Self::GetMessagesTail { id, .. } => id.as_deref(),
             Self::GetSessionStats { id } => id.as_deref(),
             Self::ListModels { id } => id.as_deref(),
+            Self::GetModels { id } => id.as_deref(),
             Self::ListSessions { id } => id.as_deref(),
             Self::NewSession { id } => id.as_deref(),
             Self::ResumeSession { id, .. } => id.as_deref(),
@@ -237,6 +243,7 @@ impl AgentCommand {
             Self::GetMessagesTail { .. } => "get_messages_tail",
             Self::GetSessionStats { .. } => "get_session_stats",
             Self::ListModels { .. } => "list_models",
+            Self::GetModels { .. } => "get_models",
             Self::ListSessions { .. } => "list_sessions",
             Self::NewSession { .. } => "new_session",
             Self::ResumeSession { .. } => "resume_session",

@@ -51,7 +51,9 @@ pub(super) fn query_response_data(
         AgentCommand::GetExtensions { .. } => Some(
             serde_json::json!({ "extensions": super::uds_extensions::build_extension_list(ctx) }),
         ),
-        AgentCommand::ListModels { .. } => Some(super::uds_models::list_models_response(ctx)),
+        AgentCommand::ListModels { .. } | AgentCommand::GetModels { .. } => {
+            Some(super::uds_models::list_models_response(ctx))
+        }
         AgentCommand::GetSubagents { .. } => {
             let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
             Some(serde_json::json!({ "subagents": list }))
@@ -198,6 +200,10 @@ mod tests {
         assert!(query_response_data(&AgentCommand::GetExtensions { id: None }, &ctx).unwrap()["extensions"].is_array());
         assert!(
             query_response_data(&AgentCommand::ListModels { id: None }, &ctx).unwrap()["models"]
+                .is_array()
+        );
+        assert!(
+            query_response_data(&AgentCommand::GetModels { id: None }, &ctx).unwrap()["models"]
                 .is_array()
         );
         assert!(query_response_data(&AgentCommand::GetSubagents { id: None }, &ctx).unwrap()["subagents"].is_array());

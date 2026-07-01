@@ -1986,6 +1986,22 @@ fn given_credential_store_valid_openai_oauth(world: &mut QuectoWorld, account_id
         .expect("store credential");
 }
 
+#[given(expr = "the credential store has a valid OAuth credential for anthropic account {string}")]
+fn given_credential_store_valid_anthropic_oauth(world: &mut QuectoWorld, account_id: String) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-ant-oat01-sonnet-5".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(4_102_444_800),
+            refresh_token: Some("refresh-token".to_string()),
+            account_id: Some(account_id),
+        })
+        .expect("store credential");
+}
+
 #[given(expr = "the credential store has an expired token {string} for provider {string}")]
 fn given_credential_store_expired_token(world: &mut QuectoWorld, token: String, provider: String) {
     let base = base_path(world);
@@ -2012,11 +2028,20 @@ fn given_mock_expects_auth_header(
     rt.block_on(async {
         let server = wiremock::MockServer::start().await;
         let new_uri = server.uri();
-        let body = openai_text_json(&response_content);
+        let provider = world
+            .mock_provider_kind
+            .as_deref()
+            .unwrap_or("openai")
+            .to_string();
+        let (path, body) = if provider == "anthropic" {
+            ("/v1/messages", anthropic_text_json(&response_content))
+        } else {
+            ("/chat/completions", openai_text_json(&response_content))
+        };
         // Mount mock that ONLY matches the expected Authorization header.
         // If the wrong token is sent, wiremock returns 404, causing failure.
         wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/chat/completions"))
+            .and(wiremock::matchers::path(path))
             .and(wiremock::matchers::header(
                 "Authorization",
                 expected_header.as_str(),
@@ -2025,31 +2050,36 @@ fn given_mock_expects_auth_header(
             .mount(&server)
             .await;
 
-        // Read existing config to preserve api_key, only replace api_base
-        let base = base_path(world);
-        let config_str =
-            std::fs::read_to_string(base.join("config.json")).expect("read existing config");
-        let mut config: serde_json::Value =
-            serde_json::from_str(&config_str).expect("parse config");
-        if config["providers"].get("openai").is_some() {
-            config["providers"]["openai"]["api_base"] = serde_json::Value::String(new_uri.clone());
-        }
-        if let Some(endpoints) = config
-            .get_mut("providers")
-            .and_then(|providers| providers.get_mut("openai_compatible"))
-            .and_then(|openai_compatible| openai_compatible.get_mut("endpoints"))
-            .and_then(|endpoints| endpoints.as_array_mut())
-        {
-            for endpoint in endpoints {
-                endpoint["api_base"] = serde_json::Value::String(new_uri.clone());
+        if provider == "anthropic" {
+            rewrite_config_to_provider_uri(world, "anthropic", &new_uri);
+        } else {
+            // Read existing config to preserve api_key, only replace api_base
+            let base = base_path(world);
+            let config_str =
+                std::fs::read_to_string(base.join("config.json")).expect("read existing config");
+            let mut config: serde_json::Value =
+                serde_json::from_str(&config_str).expect("parse config");
+            if config["providers"].get("openai").is_some() {
+                config["providers"]["openai"]["api_base"] =
+                    serde_json::Value::String(new_uri.clone());
             }
+            if let Some(endpoints) = config
+                .get_mut("providers")
+                .and_then(|providers| providers.get_mut("openai_compatible"))
+                .and_then(|openai_compatible| openai_compatible.get_mut("endpoints"))
+                .and_then(|endpoints| endpoints.as_array_mut())
+            {
+                for endpoint in endpoints {
+                    endpoint["api_base"] = serde_json::Value::String(new_uri.clone());
+                }
+            }
+            std::fs::write(
+                base.join("config.json"),
+                serde_json::to_string_pretty(&config).unwrap(),
+            )
+            .expect("rewrite config");
+            world._wiremock_server_uri = Some(new_uri);
         }
-        std::fs::write(
-            base.join("config.json"),
-            serde_json::to_string_pretty(&config).unwrap(),
-        )
-        .expect("rewrite config");
-        world._wiremock_server_uri = Some(new_uri);
         std::mem::forget(server);
     });
     std::mem::forget(rt);

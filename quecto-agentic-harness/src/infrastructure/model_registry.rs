@@ -146,6 +146,14 @@ impl ModelRegistry {
             ),
             (
                 "anthropic-api",
+                "claude-sonnet-5",
+                "Claude Sonnet 5 (API key)",
+                ProviderApi::AnthropicMessages,
+                AuthMode::ApiKey,
+                None,
+            ),
+            (
+                "anthropic-api",
                 "claude-sonnet-4-6",
                 "Claude Sonnet 4.6 (API key)",
                 ProviderApi::AnthropicMessages,
@@ -196,6 +204,14 @@ impl ModelRegistry {
                 "anthropic-oauth",
                 "claude-opus-4-5",
                 "Claude Opus 4.5 (OAuth)",
+                ProviderApi::AnthropicMessages,
+                AuthMode::OAuth,
+                Some("anthropic"),
+            ),
+            (
+                "anthropic-oauth",
+                "claude-sonnet-5",
+                "Claude Sonnet 5 (OAuth)",
                 ProviderApi::AnthropicMessages,
                 AuthMode::OAuth,
                 Some("anthropic"),
@@ -332,6 +348,18 @@ impl ModelRegistry {
             let mut record = ModelRecord::with_defaults(provider, id, Some(name), api);
             record.auth = auth;
             record.oauth_provider = oauth_provider.map(str::to_string);
+            if id == "claude-sonnet-5" {
+                record.input = vec!["text".to_string(), "image".to_string()];
+                record.context_window = 1_000_000;
+                record.max_tokens = 128_000;
+                record.max_tokens_explicit = true;
+                record.cost = ModelCost {
+                    input: 2.0,
+                    output: 10.0,
+                    cache_read: 0.2,
+                    cache_write: 2.5,
+                };
+            }
             r.upsert(record);
         }
         r

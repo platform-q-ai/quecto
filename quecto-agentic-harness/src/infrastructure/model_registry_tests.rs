@@ -107,6 +107,90 @@ fn registry_missing_file_returns_builtin_models() {
 }
 
 #[test]
+fn builtin_claude_sonnet_5_resolves_for_api_key_and_oauth_with_published_limits() {
+    let registry = ModelRegistry::builtin();
+
+    let api_model = registry
+        .find("anthropic-api", "claude-sonnet-5")
+        .expect("Claude Sonnet 5 API-key model should be built in");
+    assert_eq!(api_model.qualified_id(), "anthropic-api/claude-sonnet-5");
+    assert_eq!(
+        api_model.display_name.as_deref(),
+        Some("Claude Sonnet 5 (API key)")
+    );
+    assert_eq!(api_model.api, ProviderApi::AnthropicMessages);
+    assert_eq!(api_model.auth, AuthMode::ApiKey);
+    assert!(api_model.oauth_provider.is_none());
+    assert_eq!(
+        api_model.input,
+        vec!["text".to_string(), "image".to_string()]
+    );
+    assert_eq!(api_model.context_window, 1_000_000);
+    assert_eq!(api_model.max_tokens, 128_000);
+    assert!(api_model.max_tokens_explicit);
+    assert_eq!(api_model.cost.input, 2.0);
+    assert_eq!(api_model.cost.output, 10.0);
+
+    let oauth_model = registry
+        .find("anthropic-oauth", "claude-sonnet-5")
+        .expect("Claude Sonnet 5 OAuth model should be built in");
+    assert_eq!(
+        oauth_model.qualified_id(),
+        "anthropic-oauth/claude-sonnet-5"
+    );
+    assert_eq!(
+        oauth_model.display_name.as_deref(),
+        Some("Claude Sonnet 5 (OAuth)")
+    );
+    assert_eq!(oauth_model.api, ProviderApi::AnthropicMessages);
+    assert_eq!(oauth_model.auth, AuthMode::OAuth);
+    assert_eq!(oauth_model.oauth_provider.as_deref(), Some("anthropic"));
+    assert_eq!(
+        oauth_model.input,
+        vec!["text".to_string(), "image".to_string()]
+    );
+    assert_eq!(oauth_model.context_window, 1_000_000);
+    assert_eq!(oauth_model.max_tokens, 128_000);
+    assert!(oauth_model.max_tokens_explicit);
+    assert_eq!(oauth_model.cost.input, 2.0);
+    assert_eq!(oauth_model.cost.output, 10.0);
+}
+
+#[test]
+fn builtin_claude_sonnet_5_is_ordered_before_sonnet_4_6_for_each_auth_mode() {
+    let registry = ModelRegistry::builtin();
+    for provider in ["anthropic-api", "anthropic-oauth"] {
+        let sonnet_5 = registry
+            .models()
+            .iter()
+            .position(|m| m.provider == provider && m.id == "claude-sonnet-5")
+            .unwrap_or_else(|| panic!("missing {provider}/claude-sonnet-5"));
+        let sonnet_4_6 = registry
+            .models()
+            .iter()
+            .position(|m| m.provider == provider && m.id == "claude-sonnet-4-6")
+            .unwrap_or_else(|| panic!("missing {provider}/claude-sonnet-4-6"));
+        assert!(
+            sonnet_5 < sonnet_4_6,
+            "{provider}/claude-sonnet-5 should appear before claude-sonnet-4-6"
+        );
+    }
+}
+
+#[test]
+fn max_tokens_for_returns_claude_sonnet_5_output_cap_for_both_auth_modes() {
+    let registry = ModelRegistry::builtin();
+    assert_eq!(
+        registry.max_tokens_for("anthropic-api/claude-sonnet-5"),
+        Some(128_000)
+    );
+    assert_eq!(
+        registry.max_tokens_for("anthropic-oauth/claude-sonnet-5"),
+        Some(128_000)
+    );
+}
+
+#[test]
 fn registry_loads_all_protocols_and_model_overrides() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("models.json");
