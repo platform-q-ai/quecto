@@ -619,11 +619,14 @@ fn version_bump_step_present_between_verify_and_commit() {
 }
 
 #[test]
-fn feature_js_bdd_review_is_strict_and_has_version_bump() {
-    // #953 + #950 mirrored into the executable feature.js. Anchor each assertion to
-    // the specific step block that runs (the BDD-review agent prompt and the Version
-    // phase), not a whole-file substring — `"version"` etc. appear incidentally, so a
-    // whole-file `contains` could pass even if the wording landed in the wrong place.
+fn feature_js_bdd_review_is_strict() {
+    // #953 mirrored into the executable feature.js. Anchor each assertion to the
+    // specific BDD-review agent prompt block that runs, not a whole-file substring —
+    // `"strict"` etc. can appear incidentally, so a whole-file `contains` could pass
+    // even if the wording landed in the wrong place. (feature.js already carried a
+    // doc-syncing Version phase before this change, so #950 adds nothing new to guard
+    // here; the quecto template's new `version_bump` step is covered by
+    // `version_bump_step_present_between_verify_and_commit`.)
     let js = read_repo_file("../.claude/workflows/feature.js");
 
     // The BDD-review agent prompt: from `phase('BDD Review')` up to `phase('GREEN')`.
@@ -646,20 +649,6 @@ fn feature_js_bdd_review_is_strict_and_has_version_bump() {
     assert!(
         bdd_block.contains("one behaviour per scenario"),
         "feature.js BDD review prompt should carry the best-practice checklist token: {bdd_block}"
-    );
-
-    // The Version phase block: from `phase('Version')` up to `phase('Ship')`.
-    let version_block = js
-        .split_once("phase('Version')")
-        .expect("feature.js should have a Version phase")
-        .1
-        .split_once("phase('Ship')")
-        .expect("feature.js Version phase should precede Ship")
-        .0
-        .to_lowercase();
-    assert!(
-        version_block.contains("semver") && version_block.contains("bump"),
-        "feature.js Version phase should bump semver: {version_block}"
     );
 }
 
