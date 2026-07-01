@@ -41,6 +41,7 @@ fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
             steps_completed: 1,
             steps_total: 3,
         }),
+        read_only: false,
     }
 }
 

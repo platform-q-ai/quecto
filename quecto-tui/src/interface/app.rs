@@ -1,9 +1,3 @@
-//! Application — the main TUI event loop.
-//!
-//! Wires all components together: terminal, UDS client, editor, chat,
-//! spinner, footer, autocomplete, overlays, notifications, Kitty protocol,
-//! signal handling, and extension management.
-
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -646,6 +640,10 @@ impl TrackedSubagent {
         if new_info.parent_id.is_none() {
             new_info.parent_id = self.info.parent_id.clone();
         }
+        // Preserve known observer status across older kernel updates (#966).
+        if !new_info.read_only && self.info.read_only {
+            new_info.read_only = true;
+        }
         let now = tokio::time::Instant::now();
         if subagent_status_is_active(&new_info.status) {
             // Resumed work — let the timer run again.
@@ -713,6 +711,9 @@ mod app_selection_tests;
 #[cfg(test)]
 #[path = "app_subagent_first_tests.rs"]
 mod app_subagent_first_tests;
+#[cfg(test)]
+#[path = "app_subagent_panel_observer_tests.rs"]
+mod app_subagent_panel_observer_tests;
 #[cfg(test)]
 #[path = "app_subagent_panel_tests.rs"]
 mod app_subagent_panel_tests;

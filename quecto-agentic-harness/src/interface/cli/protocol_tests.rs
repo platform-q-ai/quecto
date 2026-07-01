@@ -233,6 +233,7 @@ fn test_subagent_state_changed_event_serializes() {
             socket_path: None,
             parent_id: None,
             workflow: None,
+            read_only: false,
         }],
     };
     let json = ev.to_json_line();
@@ -265,6 +266,7 @@ fn test_subagent_info_null_fields_omitted() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     };
     let json = serde_json::to_string(&info).unwrap();
     assert!(!json.contains("lastTool"));
@@ -282,6 +284,7 @@ fn test_subagent_info_with_error() {
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     };
     let json = serde_json::to_string(&info).unwrap();
     assert!(json.contains("\"lastError\":\"connection refused\""));

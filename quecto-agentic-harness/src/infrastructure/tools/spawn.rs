@@ -1,8 +1,3 @@
-// Spawn tool: spawns a child quecto agent process as a UDS-mode background agent.
-//
-// The child runs `quecto agent --mode uds --persist` and the parent interacts
-// with it via the companion `agent_cmd` tool (#421).
-
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
@@ -18,13 +13,6 @@ pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 
 use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
 
-/// Validate a config file path supplied via the spawn tool's JSON input.
-///
-/// Rejects paths that contain `..` components to prevent path-traversal attacks
-/// (e.g. `../../../../etc/shadow`).  Absolute paths and relative paths without
-/// traversal are accepted — the config file may legitimately live anywhere the
-/// user chooses, but the LLM must not be able to escape to arbitrary system paths
-/// via traversal sequences.
 fn inherited_runtime_config_path() -> Option<PathBuf> {
     std::env::var("QUECTO_RUNTIME_CONFIG_PATH")
         .ok()
@@ -299,6 +287,12 @@ impl SpawnTool {
 
         let disable_tools = parse_disable_tools(&args)?;
 
+        // Observer sub-agents have both mutation tools disabled (#966).
+        let read_only = {
+            let has = |name: &str| disable_tools.iter().any(|t| t == name);
+            has("write") && has("edit")
+        };
+
         Ok(SubagentConfig {
             task,
             agent_id,
@@ -310,10 +304,11 @@ impl SpawnTool {
             workflow_spec,
             model,
             disable_tools,
+            read_only,
         })
     }
 
-    /// Launch a child quecto agent in UDS mode and register it in the registry.
+    /// Launch a child agent in UDS mode and register it.
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {
         let binary = std::env::current_exe()
             .map_err(|e| DomainError::Tool(format!("cannot find quecto binary: {e}")))?;
@@ -430,6 +425,9 @@ impl SpawnTool {
             // without it every entry's parent_id stayed None, so grandchildren
             // could never nest under their real parent in the sub-agent panel.
             entry.parent_id = self.parent_id.clone();
+            // Record whether this child is a read-only observer so the TUI can
+            // mark it (#966); enforcement is done by disabling the tools (#957).
+            entry.read_only = config.read_only;
             register_and_broadcast(
                 &self.registry,
                 self.broadcast_tx.as_ref(),
@@ -658,6 +656,9 @@ impl Tool for SpawnTool {
                         // agent's own id so the panel tree nests correctly, and
                         // broadcast the immediate registration (#866).
                         stub_entry.parent_id = self.parent_id.clone();
+                        // Record the read-only flag in stub mode too so BDD tests
+                        // can assert the snapshot carries it (#966).
+                        stub_entry.read_only = config.read_only;
                         register_and_broadcast(
                             &self.registry,
                             self.broadcast_tx.as_ref(),

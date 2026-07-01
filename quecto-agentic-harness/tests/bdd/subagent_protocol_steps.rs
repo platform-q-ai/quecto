@@ -27,6 +27,41 @@ fn given_registry_with_subagent(
     last_tool: String,
     pid: i32,
 ) {
+    insert_registry_subagent(world, agent_id, status, last_tool, pid, false);
+}
+
+#[given(
+    expr = "a registry with read-only subagent {string} status {string} last_tool {string} pid {int}"
+)]
+#[allow(clippy::too_many_arguments)]
+fn given_registry_with_readonly_subagent(
+    world: &mut QuectoWorld,
+    agent_id: String,
+    status: String,
+    last_tool: String,
+    pid: i32,
+) {
+    insert_registry_subagent(world, agent_id, status, last_tool, pid, true);
+}
+
+#[given(expr = "a read-only observer sub-agent {string} is registered")]
+fn given_registered_observer(world: &mut QuectoWorld, agent_id: String) {
+    insert_registry_subagent(world, agent_id, "running".into(), "bash".into(), 1234, true);
+}
+
+#[given(expr = "a read-write sub-agent {string} is registered")]
+fn given_registered_readwrite(world: &mut QuectoWorld, agent_id: String) {
+    insert_registry_subagent(world, agent_id, "idle".into(), "".into(), 5678, false);
+}
+
+fn insert_registry_subagent(
+    world: &mut QuectoWorld,
+    agent_id: String,
+    status: String,
+    last_tool: String,
+    pid: i32,
+    read_only: bool,
+) {
     if world.subagent_protocol_registry.is_none() {
         world.subagent_protocol_registry = Some(new_registry());
     }
@@ -41,6 +76,7 @@ fn given_registry_with_subagent(
         "exited" => SubagentStatus::Exited,
         _ => panic!("unknown status: {status}"),
     };
+    entry.read_only = read_only;
     if !last_tool.is_empty() {
         entry.last_tool = Some(last_tool);
     }
@@ -56,6 +92,7 @@ fn given_subagent_has_error(world: &mut QuectoWorld, agent_id: String, error: St
 }
 
 #[when("I build a SubagentInfo list from the registry")]
+#[when("a client requests sub-agent state")]
 fn when_build_info_list(world: &mut QuectoWorld) {
     world.subagent_infos = build_subagent_info_list(&world.subagent_protocol_registry);
 }
@@ -164,6 +201,32 @@ fn then_subagent_last_error(world: &mut QuectoWorld, agent_id: String, error: St
     );
 }
 
+#[then(expr = "subagent info {string} should be read-only")]
+fn then_subagent_readonly(world: &mut QuectoWorld, agent_id: String) {
+    let info = world
+        .subagent_infos
+        .iter()
+        .find(|i| i.agent_id == agent_id)
+        .unwrap_or_else(|| panic!("subagent '{}' not found in list", agent_id));
+    assert!(
+        info.read_only,
+        "subagent info for {agent_id} must identify a read-only observer"
+    );
+}
+
+#[then(expr = "subagent info {string} should be read-write")]
+fn then_subagent_readwrite(world: &mut QuectoWorld, agent_id: String) {
+    let info = world
+        .subagent_infos
+        .iter()
+        .find(|i| i.agent_id == agent_id)
+        .unwrap_or_else(|| panic!("subagent '{}' not found in list", agent_id));
+    assert!(
+        !info.read_only,
+        "subagent info for {agent_id} must not identify a read-write sub-agent as an observer"
+    );
+}
+
 // ─── SubagentInfo serialization steps ─────────────────────────────────────────
 
 #[given(expr = "a SubagentInfo with agentId {string} status {string} lastTool {string} pid {int}")]
@@ -188,6 +251,7 @@ fn given_subagent_info(
         socket_path: None,
         parent_id: None,
         workflow: None,
+        read_only: false,
     });
 }
 
@@ -281,6 +345,7 @@ fn given_state_changed_event(world: &mut QuectoWorld, count: usize) {
             socket_path: None,
             parent_id: None,
             workflow: None,
+            read_only: false,
         })
         .collect();
     world.protocol_event = Some(AgentEvent::SubagentStateChanged { subagents });
@@ -303,7 +368,44 @@ fn given_state_changed_one(
             socket_path: None,
             parent_id: None,
             workflow: None,
+            read_only: false,
         }],
+    });
+}
+
+#[given(
+    expr = "a SubagentStateChanged event for read-only sub-agent {string} and read-write sub-agent {string}"
+)]
+fn given_state_changed_observer_and_readwrite(
+    world: &mut QuectoWorld,
+    observer: String,
+    readwrite: String,
+) {
+    world.protocol_event = Some(AgentEvent::SubagentStateChanged {
+        subagents: vec![
+            SubagentInfo {
+                agent_id: observer,
+                status: "running".to_string(),
+                last_tool: None,
+                last_error: None,
+                pid: 1,
+                socket_path: None,
+                parent_id: None,
+                workflow: None,
+                read_only: true,
+            },
+            SubagentInfo {
+                agent_id: readwrite,
+                status: "idle".to_string(),
+                last_tool: None,
+                last_error: None,
+                pid: 2,
+                socket_path: None,
+                parent_id: None,
+                workflow: None,
+                read_only: false,
+            },
+        ],
     });
 }
 
@@ -344,15 +446,35 @@ fn then_event_is_state_changed(world: &mut QuectoWorld) {
 
 #[then(expr = "the deserialized subagents should contain {string} with status {string}")]
 fn then_deserialized_contains(world: &mut QuectoWorld, agent_id: String, status: String) {
+    let found = deserialized_subagent(world, &agent_id);
+    assert_eq!(found.status, status);
+}
+
+#[then(expr = "the deserialized subagents should contain {string} as read-only")]
+fn then_deserialized_readonly(world: &mut QuectoWorld, agent_id: String) {
+    let found = deserialized_subagent(world, &agent_id);
+    assert!(
+        found.read_only,
+        "deserialized sub-agent {agent_id} should preserve read-only observer status"
+    );
+}
+
+#[then(expr = "the deserialized subagents should contain {string} as read-write")]
+fn then_deserialized_readwrite(world: &mut QuectoWorld, agent_id: String) {
+    let found = deserialized_subagent(world, &agent_id);
+    assert!(
+        !found.read_only,
+        "deserialized sub-agent {agent_id} should preserve read-write status"
+    );
+}
+
+fn deserialized_subagent<'a>(world: &'a QuectoWorld, agent_id: &str) -> &'a SubagentInfo {
     let ev = world.deserialized_event.as_ref().unwrap();
     match ev {
-        AgentEvent::SubagentStateChanged { subagents } => {
-            let found = subagents
-                .iter()
-                .find(|s| s.agent_id == agent_id)
-                .unwrap_or_else(|| panic!("agent '{}' not found", agent_id));
-            assert_eq!(found.status, status);
-        }
+        AgentEvent::SubagentStateChanged { subagents } => subagents
+            .iter()
+            .find(|s| s.agent_id == agent_id)
+            .unwrap_or_else(|| panic!("agent '{agent_id}' not found")),
         _ => panic!("expected SubagentStateChanged"),
     }
 }

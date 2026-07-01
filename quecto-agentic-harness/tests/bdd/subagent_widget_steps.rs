@@ -34,6 +34,7 @@ fn given_bar_with_agents(world: &mut QuectoWorld, step: &cucumber::gherkin::Step
             socket_path: None,
             parent_id: None,
             workflow: None,
+            read_only: false,
         })
         .collect();
     world.widget_subagent_infos = agents;

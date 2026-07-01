@@ -7,7 +7,7 @@ Feature: Repository documentation
   @docs
   Scenario: README documents current release metadata and private license
     When I read the repository file "README.md"
-    Then the output should contain "Current version: **0.81.14**"
+    Then the output should contain "Current version: **0.81.15**"
     And the output should contain "## License"
     And the output should contain "LicenseRef-Proprietary"
     And the output should contain "private repository"

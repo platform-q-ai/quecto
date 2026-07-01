@@ -17,6 +17,7 @@ fn base_config() -> SubagentConfig {
         workflow_spec: None,
         model: None,
         disable_tools: Vec::new(),
+        read_only: false,
     }
 }
 

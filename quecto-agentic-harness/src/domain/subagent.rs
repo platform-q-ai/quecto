@@ -34,6 +34,11 @@ pub struct SubagentConfig {
     /// disabled. Used to launch read-only children (e.g. reviewers) with `write`
     /// and `edit` removed so the model never sees them (#957).
     pub disable_tools: Vec<String>,
+    /// Whether this sub-agent was spawned read-only — i.e. both `write` and
+    /// `edit` are disabled (via `read_only: true` or an equivalent
+    /// `disable_tools` set). Surfaced to the TUI so the left panel can mark the
+    /// agent as an observer (#966). Purely a display flag; enforcement is #957.
+    pub read_only: bool,
 }
 
 /// A validated model argument, in either of the two forms accepted by
@@ -132,6 +137,7 @@ mod tests {
             workflow_spec: None,
             model: None,
             disable_tools: Vec::new(),
+            read_only: false,
         };
         assert!(cfg.config_path.is_none());
         assert!(!cfg.workflow);
@@ -151,6 +157,7 @@ mod tests {
             workflow_spec: None,
             model: None,
             disable_tools: Vec::new(),
+            read_only: false,
         };
         assert_eq!(cfg.config_path, Some(PathBuf::from("/custom/config.json")));
     }
@@ -168,6 +175,7 @@ mod tests {
             workflow_spec: None,
             model: None,
             disable_tools: Vec::new(),
+            read_only: false,
         };
         assert!(cfg.workflow);
         assert!(cfg.workflow_guards);

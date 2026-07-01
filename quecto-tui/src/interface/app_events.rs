@@ -221,6 +221,7 @@ impl App {
             socket_path: None,
             parent_id: None,
             workflow: None,
+            read_only: false,
         });
         // Mark this as an unconfirmed local guess: the kernel has not registered
         // the child yet, so a snapshot taken in that window must not evict it
