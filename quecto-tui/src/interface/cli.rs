@@ -104,9 +104,18 @@ fn parse_flags(args: &[String]) -> CliFlags {
             // `--disable-tool <name>` (repeatable) removes a tool from the
             // spawned coordinator's registry. Forwarded verbatim to the child so
             // the operator can launch it read-only (e.g. write/edit off) (#957).
-            "--disable-tool" if i + 1 < args.len() => {
-                flags.disable_tools.push(args[i + 1].clone());
-                i += 2;
+            "--disable-tool" => {
+                if i + 1 < args.len() {
+                    flags.disable_tools.push(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    // A trailing `--disable-tool` with no value would silently make a
+                    // read-only launch read-write; surface it instead of dropping it.
+                    eprintln!(
+                        "warning: --disable-tool requires a tool name; ignoring trailing flag"
+                    );
+                    i += 1;
+                }
             }
             _ => i += 1,
         }

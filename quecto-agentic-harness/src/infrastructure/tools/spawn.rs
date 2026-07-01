@@ -52,23 +52,24 @@ fn parse_disable_tools(args: &serde_json::Value) -> Result<Vec<String>, String> 
     };
 
     // `read_only` expands to write+edit first; explicit `disable_tools` unions in.
-    if args.get("read_only").and_then(|v| v.as_bool()) == Some(true) {
-        push_unique("write", &mut tools);
-        push_unique("edit", &mut tools);
-    }
-    match args.get("disable_tools") {
-        Some(v) if !v.is_null() => {
-            let arr = v
-                .as_array()
-                .ok_or_else(|| "disable_tools must be an array of tool names".to_string())?;
-            for entry in arr {
-                let name = entry.as_str().ok_or_else(|| {
-                    "disable_tools entries must be strings (tool names)".to_string()
-                })?;
-                push_unique(name, &mut tools);
-            }
+    // A present-but-non-boolean `read_only` is an LLM-addressable error (mirroring
+    // the `disable_tools` handling) rather than a silently-dropped safety flag.
+    if let Some(v) = args.get("read_only").filter(|v| !v.is_null()) {
+        if v.as_bool().ok_or("read_only must be a boolean")? {
+            push_unique("write", &mut tools);
+            push_unique("edit", &mut tools);
         }
-        _ => {}
+    }
+    if let Some(v) = args.get("disable_tools").filter(|v| !v.is_null()) {
+        let arr = v
+            .as_array()
+            .ok_or("disable_tools must be an array of tool names")?;
+        for entry in arr {
+            let name = entry
+                .as_str()
+                .ok_or("disable_tools entries must be strings (tool names)")?;
+            push_unique(name, &mut tools);
+        }
     }
     Ok(tools)
 }

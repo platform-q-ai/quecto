@@ -112,6 +112,17 @@ fn test_957_read_only_child_registry_omits_write_edit_keeps_others() {
         stderr: &mut stderr,
         broadcast_tx: None,
     });
+    // Guard against a vacuous pass: the base registry must actually expose the
+    // tools we intend to remove, so the post-removal absence proves removal (not
+    // that they were never registered — the exact regression a read-only guard
+    // must catch).
+    let before = build.registry.names();
+    for t in ["write", "edit"] {
+        assert!(
+            before.contains(&t.to_string()),
+            "base registry must expose `{t}` before removal; names = {before:?}"
+        );
+    }
     // Mirror the child CLI: tools named on `--disable-tool` are removed before
     // the session starts (agent.rs applies `registry.remove_all`).
     build.registry.remove_all(&flags.disabled_tools);

@@ -41,6 +41,14 @@ fn parse_disable_tool_repeatable() {
 }
 
 #[test]
+fn parse_trailing_disable_tool_without_value_is_dropped() {
+    // A trailing `--disable-tool` with no value must not capture a bogus tool name;
+    // it is dropped (with a stderr warning) rather than silently consumed.
+    let flags = parse_flags(&args("--disable-tool"));
+    assert!(flags.disable_tools.is_empty());
+}
+
+#[test]
 fn build_args_forward_disable_tool_to_owned_agent() {
     let flags = parse_flags(&args("--disable-tool write --disable-tool edit"));
     let agent_args = build_agent_args(&flags);

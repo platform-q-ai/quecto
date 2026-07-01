@@ -51,8 +51,8 @@ const bddReview = await agent(
   `best practice: clear Given-When-Then, explicit and testable acceptance criteria, one logical scenario ` +
   `per feature, NO implementation details in scenario steps, appropriate step abstraction/reusability. ` +
   `Verify unit tests are behavioural, well-named, focused, and assert the right things. Be skeptical — ` +
-  `report ONLY real issues. You are launched read-only (the write and edit tools are disabled — read_only), ` +
-  `so you physically cannot create or modify repo files; do NOT attempt to. Return a report with, per finding: ` +
+  `report ONLY real issues. Review-only role: do NOT create or modify any repo files — no writes, no edits, no ` +
+  `mutating commands (this is an instruction, not a sandbox guarantee). Return a report with, per finding: ` +
   `file:line, severity, the problem, and a concrete fix.`,
   { label: 'bdd-review', phase: 'BDD Review' }
 )
@@ -127,7 +127,7 @@ const reviews = await parallel(DIMENSIONS.map(dim => () => agent(
   `Use the PR number only. Explicitly forbid passing a raw diff: do NOT accept a pasted raw diff in the prompt; fetch it yourself. ` +
   `Run your OWN independent review on the single dimension '${dim}'.${DIMENSION_FOCUS[dim] || ''} Read the diff with ` +
   `gh pr diff <PR>. Post findings as inline comments via the addPullRequestReview GraphQL mutation with event COMMENT. Be skeptical — report ONLY real issues. ` +
-  `You are launched read-only (the write and edit tools are disabled — read_only); you keep bash/read/grep/find/agent_cmd to fetch the diff and post inline comments, but cannot create or modify repo files. ` +
+  `Review-only role: use bash/read/grep/find/agent_cmd to fetch the diff and post inline comments, but do NOT create or modify any repo files — no writes, no edits, no mutating commands (this is an instruction, not a sandbox guarantee). ` +
   `Post findings as INLINE review comments on the PR via the GitHub GraphQL API (gh api graphql): ` +
   `fetch the PR node id and head SHA with gh pr view <PR> --json id,headRefOid, then submit one review ` +
   `carrying inline comments via the addPullRequestReview mutation (event COMMENT, comments array of ` +

@@ -352,6 +352,12 @@ Feature: SpawnTool — child agent process spawning
     Then the spawn result should be an error
     And the spawn result should contain "disable_tools"
 
+  Scenario: Non-boolean read_only is rejected
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","read_only":"true"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "read_only"
+
   Scenario: Tool definition schema includes disable_tools field
     Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
     Then the spawn tool schema should include property "disable_tools"
