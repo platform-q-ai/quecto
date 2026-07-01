@@ -7,6 +7,7 @@ export const meta = {
     { title: 'RED', detail: 'Update scenarios, write tests, confirm they fail' },
     { title: 'BDD Review', detail: 'Sub-agent reviews BDD feature/step/unit tests' },
     { title: 'GREEN', detail: 'Implement, refactor, verify tests pass' },
+    { title: 'Version', detail: 'Bump semver for every changed crate + sync version docs' },
     { title: 'Ship', detail: 'Commit, push (full gate), open PR' },
     { title: 'PR Review', detail: 'Parallel Architecture/Security/Performance reviewers' },
     { title: 'Fix Reviews', detail: 'Triage findings, fix, push, resolve threads' },
@@ -50,8 +51,9 @@ const bddReview = await agent(
   `best practice: clear Given-When-Then, explicit and testable acceptance criteria, one logical scenario ` +
   `per feature, NO implementation details in scenario steps, appropriate step abstraction/reusability. ` +
   `Verify unit tests are behavioural, well-named, focused, and assert the right things. Be skeptical — ` +
-  `report ONLY real issues. Do NOT modify code. Return a report with, per finding: file:line, severity, ` +
-  `the problem, and a concrete fix.`,
+  `report ONLY real issues. You are launched read-only (the write and edit tools are disabled — read_only), ` +
+  `so you physically cannot create or modify repo files; do NOT attempt to. Return a report with, per finding: ` +
+  `file:line, severity, the problem, and a concrete fix.`,
   { label: 'bdd-review', phase: 'BDD Review' }
 )
 log('BDD review complete — address valid findings before GREEN.')
@@ -68,6 +70,20 @@ await agent(
   `STEP — Ensure tests still pass. Re-run the targeted tests and confirm GREEN. Respect the file-size ` +
   `cap and strict clippy before pushing. Do not manually re-run the whole suite before commit; push/pre-push does that.`,
   { label: 'green', phase: 'GREEN' }
+)
+
+// ── Version bump: semver for every changed crate + version docs ────────────
+phase('Version')
+await agent(
+  `Task: ${TASK}\n\n` +
+  `STEP — Bump semver for every crate this change touches. Determine which crates have modified source ` +
+  `(e.g. 'git diff --name-only master...HEAD' plus unstaged changes) and, for EACH changed crate, bump ` +
+  `its version in that crate's Cargo.toml — patch by default, minor for a notable feature. Do NOT bump ` +
+  `crates you did not change. Keep version docs in lockstep: for the 'quecto' kernel update README.md ` +
+  `'Current version: **x.y.z**' and the matching assertion in ` +
+  `quecto-agentic-harness/tests/features/repo_docs.feature so both equal the new version; for any other ` +
+  `crate, update whatever doc/test asserts its version. Report the old→new version for each bumped crate.`,
+  { label: 'version-bump', phase: 'Version' }
 )
 
 // ── Ship: commit, push (full gate), PR ─────────────────────────────────────
@@ -110,7 +126,8 @@ const reviews = await parallel(DIMENSIONS.map(dim => () => agent(
   `PRECONDITION: reviewers MUST NOT be dispatched before a PR exists; stop if this prompt does not include a PR number. ` +
   `Use the PR number only. Explicitly forbid passing a raw diff: do NOT accept a pasted raw diff in the prompt; fetch it yourself. ` +
   `Run your OWN independent review on the single dimension '${dim}'.${DIMENSION_FOCUS[dim] || ''} Read the diff with ` +
-  `gh pr diff <PR>. Post findings as inline comments via the addPullRequestReview GraphQL mutation with event COMMENT. Be skeptical — report ONLY real issues. Do NOT modify code. ` +
+  `gh pr diff <PR>. Post findings as inline comments via the addPullRequestReview GraphQL mutation with event COMMENT. Be skeptical — report ONLY real issues. ` +
+  `You are launched read-only (the write and edit tools are disabled — read_only); you keep bash/read/grep/find/agent_cmd to fetch the diff and post inline comments, but cannot create or modify repo files. ` +
   `Post findings as INLINE review comments on the PR via the GitHub GraphQL API (gh api graphql): ` +
   `fetch the PR node id and head SHA with gh pr view <PR> --json id,headRefOid, then submit one review ` +
   `carrying inline comments via the addPullRequestReview mutation (event COMMENT, comments array of ` +

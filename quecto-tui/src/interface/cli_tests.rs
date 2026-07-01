@@ -35,6 +35,32 @@ fn build_args_forward_no_workflow_to_owned_agent() {
 }
 
 #[test]
+fn parse_disable_tool_repeatable() {
+    let flags = parse_flags(&args("--disable-tool write --disable-tool edit"));
+    assert_eq!(flags.disable_tools, vec!["write", "edit"]);
+}
+
+#[test]
+fn build_args_forward_disable_tool_to_owned_agent() {
+    let flags = parse_flags(&args("--disable-tool write --disable-tool edit"));
+    let agent_args = build_agent_args(&flags);
+    let names: Vec<&str> = agent_args
+        .iter()
+        .zip(agent_args.iter().skip(1))
+        .filter(|(a, _)| a.as_str() == "--disable-tool")
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert_eq!(names, vec!["write", "edit"]);
+}
+
+#[test]
+fn build_args_omit_disable_tool_when_none() {
+    let flags = parse_flags(&args(""));
+    let agent_args = build_agent_args(&flags);
+    assert!(!agent_args.contains(&"--disable-tool".to_string()));
+}
+
+#[test]
 fn parse_config_and_system() {
     let flags = parse_flags(&args("--config ./repo/config.json --system hello"));
     assert_eq!(

@@ -15,6 +15,9 @@ struct CliFlags {
     workflow_disabled: bool,
     config_path: Option<PathBuf>,
     system_prompt: Option<String>,
+    /// Tool names to forward to the spawned coordinator as `--disable-tool <name>`
+    /// (repeatable). Empty means none are disabled (#957 TUI forward fix).
+    disable_tools: Vec<String>,
 }
 
 pub fn run(args: Vec<String>) -> i32 {
@@ -41,6 +44,7 @@ fn parse_flags(args: &[String]) -> CliFlags {
         workflow_disabled: false,
         config_path: None,
         system_prompt: None,
+        disable_tools: Vec::new(),
     };
     // An explicit `--system` literal takes precedence over `--system-file`
     // regardless of order; track it so a later/earlier `--system-file` can't
@@ -96,6 +100,13 @@ fn parse_flags(args: &[String]) -> CliFlags {
             "--workflow-guards" => {
                 flags.workflow_guards = true;
                 i += 1;
+            }
+            // `--disable-tool <name>` (repeatable) removes a tool from the
+            // spawned coordinator's registry. Forwarded verbatim to the child so
+            // the operator can launch it read-only (e.g. write/edit off) (#957).
+            "--disable-tool" if i + 1 < args.len() => {
+                flags.disable_tools.push(args[i + 1].clone());
+                i += 2;
             }
             _ => i += 1,
         }
@@ -215,6 +226,10 @@ fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     if let Some(ref prompt) = flags.system_prompt {
         args.push("--system".to_string());
         args.push(prompt.clone());
+    }
+    for tool in &flags.disable_tools {
+        args.push("--disable-tool".to_string());
+        args.push(tool.clone());
     }
     args
 }

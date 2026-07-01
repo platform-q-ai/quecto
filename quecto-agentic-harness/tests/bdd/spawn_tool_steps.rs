@@ -393,6 +393,47 @@ fn then_parsed_spawn_config_has_no_model(world: &mut QuectoWorld) {
     );
 }
 
+#[then(expr = "the parsed spawn config should have disable_tools {string}")]
+fn then_parsed_spawn_config_has_disable_tools(world: &mut QuectoWorld, expected: String) {
+    let cfg = world
+        .subagent_config
+        .as_ref()
+        .expect("subagent_config not set — was parse_args called?");
+    // Assert SET semantics (union + de-dup), not a private ordering: the
+    // contract specifies which tools end up disabled, not the sequence they are
+    // emitted in. Compare as sorted sets and check there are no duplicates.
+    let mut expected: Vec<&str> = expected.split(',').collect();
+    expected.sort_unstable();
+    let mut got: Vec<&str> = cfg.disable_tools.iter().map(String::as_str).collect();
+    let got_len = got.len();
+    got.sort_unstable();
+    got.dedup();
+    assert_eq!(
+        got.len(),
+        got_len,
+        "disable_tools should have no duplicates, got {:?}",
+        cfg.disable_tools
+    );
+    assert_eq!(
+        got, expected,
+        "expected disable_tools set {:?}, got {:?}",
+        expected, cfg.disable_tools
+    );
+}
+
+#[then("the parsed spawn config should have no disable_tools")]
+fn then_parsed_spawn_config_has_no_disable_tools(world: &mut QuectoWorld) {
+    let cfg = world
+        .subagent_config
+        .as_ref()
+        .expect("subagent_config not set — was parse_args called?");
+    assert!(
+        cfg.disable_tools.is_empty(),
+        "expected no disable_tools, got {:?}",
+        cfg.disable_tools
+    );
+}
+
 #[then(expr = "the spawn tool schema should include property {string}")]
 fn then_spawn_tool_schema_includes_property(world: &mut QuectoWorld, property: String) {
     let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");

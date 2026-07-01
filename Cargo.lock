@@ -1669,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "quecto"
-version = "0.81.10"
+version = "0.81.11"
 dependencies = [
  "base64",
  "cucumber",
@@ -1757,7 +1757,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-tui"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "libc",
  "pulldown-cmark",

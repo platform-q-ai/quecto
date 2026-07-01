@@ -29,6 +29,11 @@ pub struct SubagentConfig {
     /// Resolved to the canonical `provider/model` form. When `None`, the child
     /// resolves its model from the inherited `--config` or the built-in default.
     pub model: Option<String>,
+    /// Tool names to remove from the child's registry before its session starts
+    /// (forwarded as `--disable-tool <name>` per entry). Empty means no tools are
+    /// disabled. Used to launch read-only children (e.g. reviewers) with `write`
+    /// and `edit` removed so the model never sees them (#957).
+    pub disable_tools: Vec<String>,
 }
 
 /// A validated model argument, in either of the two forms accepted by
@@ -126,6 +131,7 @@ mod tests {
             workflow_guards: false,
             workflow_spec: None,
             model: None,
+            disable_tools: Vec::new(),
         };
         assert!(cfg.config_path.is_none());
         assert!(!cfg.workflow);
@@ -144,6 +150,7 @@ mod tests {
             workflow_guards: false,
             workflow_spec: None,
             model: None,
+            disable_tools: Vec::new(),
         };
         assert_eq!(cfg.config_path, Some(PathBuf::from("/custom/config.json")));
     }
@@ -160,6 +167,7 @@ mod tests {
             workflow_guards: true,
             workflow_spec: None,
             model: None,
+            disable_tools: Vec::new(),
         };
         assert!(cfg.workflow);
         assert!(cfg.workflow_guards);

@@ -16,6 +16,7 @@ fn base_config() -> SubagentConfig {
         workflow_guards: false,
         workflow_spec: None,
         model: None,
+        disable_tools: Vec::new(),
     }
 }
 
@@ -58,6 +59,33 @@ fn omits_model_flag_when_absent() {
     assert!(
         !strs.iter().any(|a| a == "--model"),
         "no --model expected, got {strs:?}"
+    );
+}
+
+#[test]
+fn forwards_disable_tool_for_each_entry() {
+    let mut cfg = base_config();
+    cfg.disable_tools = vec!["write".into(), "edit".into()];
+    let args = build_child_cli_args(&spec(&cfg));
+    let strs = as_strings(&args);
+    // Expect a `--disable-tool write` and a `--disable-tool edit` pair.
+    let names: Vec<&str> = strs
+        .iter()
+        .zip(strs.iter().skip(1))
+        .filter(|(a, _)| *a == "--disable-tool")
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert_eq!(names, vec!["write", "edit"], "got {strs:?}");
+}
+
+#[test]
+fn omits_disable_tool_when_empty() {
+    let cfg = base_config();
+    let args = build_child_cli_args(&spec(&cfg));
+    let strs = as_strings(&args);
+    assert!(
+        !strs.iter().any(|a| a == "--disable-tool"),
+        "no --disable-tool expected, got {strs:?}"
     );
 }
 

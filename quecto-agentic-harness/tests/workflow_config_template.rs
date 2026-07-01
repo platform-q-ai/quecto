@@ -534,3 +534,37 @@ fn reviewer_mechanic_deduplicated() {
         "review steps should reference the shared mechanic, not restate the spawn/await flow"
     );
 }
+
+#[test]
+fn reviewer_spawns_are_read_only() {
+    // #957: both the `bdd_review` and PR `reviewers` spawns must launch reviewers
+    // read-only — `write` and `edit` removed from the child registry so the model
+    // never sees them (defense-in-depth against reviewers writing stray files).
+    // The shared review mechanic is the single home for this instruction.
+    let config = read_native_config();
+    let feature = feature_template(&config);
+    let shared = feature["shared_guidance"]
+        .as_str()
+        .expect("feature template should have string shared_guidance");
+    let lower = shared.to_lowercase();
+    assert!(
+        lower.contains("read_only") || lower.contains("read-only"),
+        "shared review mechanic should launch reviewers read-only: {shared}"
+    );
+    // The disabled set must be EXACTLY write + edit. Anchor to the canonical
+    // quoted list (rather than free-floating `write`/`edit` substrings, which
+    // also match "written"/"credit") so the guard proves the precise contract.
+    assert!(
+        shared.contains(r#"["write", "edit"]"#) || shared.contains(r#"["write","edit"]"#),
+        "shared review mechanic should disable exactly [\"write\", \"edit\"]: {shared}"
+    );
+    // Reviewers keep their non-mutating toolset — the guidance must positively
+    // name the retained tools so criterion 3 (bash/read/grep/find/agent_cmd
+    // intact) is verified directly, not merely inferred from the disable list.
+    for keep in ["bash", "read", "grep", "find", "agent_cmd"] {
+        assert!(
+            shared.contains(keep),
+            "reviewers must retain `{keep}`; guidance should name it as kept: {shared}"
+        );
+    }
+}
