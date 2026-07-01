@@ -451,52 +451,40 @@ fn feature_js_dimensions_array_matches_full_default_set() {
 }
 
 #[test]
-fn feature_workflow_points_agents_to_quickstart_and_exact_commands() {
+fn feature_workflow_guidance_is_self_contained() {
     let config = read_native_config();
-    let quickstart = read_repo_file("docs/agent-dev-quickstart.md");
-    for needle in [
-        "cargo test -p quecto --lib <name_substring>",
-        "cargo test -p quecto-tui --lib <name_substring>",
-        "never `-p quecto-agentic-harness`",
-        "gh issue view <N> --json title,body,comments",
-        "gh pr diff <PR>",
-        "addPullRequestReview",
-        "LLVM_COV=$(command -v llvm-cov) LLVM_PROFDATA=$(command -v llvm-profdata)",
-        "scripts/pre-push.sh",
-        "git commit` pre-commit does NOT run unit/BDD tests",
-        "git push` pre-push runs the full new+old suite",
-        "Do not manually re-run the whole suite",
-    ] {
+
+    // Regression guard: the workflow guidance must carry every instruction an
+    // agent needs INLINE — it must NOT tell the agent to go read an external
+    // repo doc. Agents run from the repo root and a filesystem read of
+    // `docs/…` (e.g. the deleted `agent-dev-quickstart.md`) throws
+    // `read failed: No such file or directory` on the orientation step of
+    // every feature run. The workflow file is the complete brief.
+    for s in steps(&config) {
+        let g = s["guidance"].as_str().unwrap_or("");
         assert!(
-            quickstart.contains(needle),
-            "quickstart missing canonical wording: {needle}"
+            !g.contains("agent-dev-quickstart"),
+            "step `{}` guidance must be self-contained, not point to an external doc: {g}",
+            s["key"]
         );
     }
 
-    for key in [
-        "hooks",
-        "scenarios",
-        "tests",
-        "red",
-        "verify",
-        "commit",
-        "push",
-        "conformance",
-        "reviewers",
-    ] {
-        let g = guidance(&config, key);
-        assert!(
-            g.contains("docs/agent-dev-quickstart.md") || g.contains("agent-dev-quickstart.md"),
-            "`{key}` guidance should point to the agent/dev quickstart: {g}"
-        );
-    }
-
-    assert!(guidance(&config, "tests").contains("cargo test -p quecto --lib <name_substring>"));
-    assert!(guidance(&config, "tests").contains("cargo test -p quecto-tui --lib <name_substring>"));
+    // The canonical commands the quickstart used to hold now live inline in the
+    // steps that need them.
+    let tests = guidance(&config, "tests");
+    assert!(tests.contains("cargo test -p quecto --lib <name_substring>"));
+    assert!(tests.contains("cargo test -p quecto-tui --lib <name_substring>"));
+    assert!(tests.contains("never `-p quecto-agentic-harness`"));
+    assert!(
+        guidance(&config, "scenarios").contains("gh issue view <N> --json title,body,comments")
+    );
     assert!(guidance(&config, "red").contains("quick targeted"));
     assert!(guidance(&config, "verify").contains("Do not manually re-run the whole suite"));
     assert!(guidance(&config, "push").contains("scripts/pre-push.sh"));
-    assert!(guidance(&config, "reviewers").contains("addPullRequestReview"));
+    let reviewers = guidance(&config, "reviewers");
+    assert!(reviewers.contains("gh pr diff <PR>"));
+    assert!(reviewers.contains("addPullRequestReview"));
+    assert!(guidance(&config, "hooks").contains("git commit"));
 }
 
 #[test]

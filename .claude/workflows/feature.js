@@ -22,7 +22,7 @@ const TASK = args ? (typeof args === 'string' ? args : JSON.stringify(args)) : '
 phase('Setup')
 await agent(
   `Quecto feature workflow for: ${TASK}\n\n` +
-  `STEP — Install/check local quality hooks. Run scripts/install-hooks.sh, then consult docs/agent-dev-quickstart.md and verify pre-commit, ` +
+  `STEP — Install/check local quality hooks. Run scripts/install-hooks.sh, then verify pre-commit, ` +
   `pre-push, and the git --no-verify wrapper are installed/active before any code is edited. ` +
   `Never bypass hooks with --no-verify. Report hook status.`,
   { label: 'hooks', phase: 'Setup' }
@@ -33,8 +33,8 @@ phase('RED')
 await agent(
   `Task: ${TASK}\n\n` +
   `STEP — Update Scenarios / add features (RED phase, part 1). Update BDD feature files and ` +
-  `task-facing scenarios FIRST after 'gh issue view <N> --json title,body,comments', and identify explicit, checkable acceptance criteria for the change. See docs/agent-dev-quickstart.md.\n` +
-  `STEP — Write/update unit tests. Use 'cargo test -p quecto --lib <name_substring>' or 'cargo test -p quecto-tui --lib <name_substring>' (never '-p quecto-agentic-harness'; see docs/agent-dev-quickstart.md). Run a quick targeted smoke check to confirm they compile; the full ` +
+  `task-facing scenarios FIRST after 'gh issue view <N> --json title,body,comments', and identify explicit, checkable acceptance criteria for the change.\n` +
+  `STEP — Write/update unit tests. Use 'cargo test -p quecto --lib <name_substring>' or 'cargo test -p quecto-tui --lib <name_substring>' (never '-p quecto-agentic-harness'). Run a quick targeted smoke check to confirm they compile; the full ` +
   `suite and coverage run on push.\n` +
   `STEP — Ensure new/modified tests FAIL (RED). Run only the new/modified targeted test to confirm it fails ` +
   `before any implementation. Report the failing test names and the acceptance criteria.`,
@@ -74,10 +74,10 @@ await agent(
 phase('Ship')
 const pr = await agent(
   `Task: ${TASK}\n\n` +
-  `STEP — Commit. If on the default branch (master), create a feature branch first. Stage only intended files. Remember git commit pre-commit does not run unit/BDD tests; see docs/agent-dev-quickstart.md. Write a clear, ` +
+  `STEP — Commit. If on the default branch (master), create a feature branch first. Stage only intended files. Remember git commit pre-commit does not run unit/BDD tests. Write a clear, ` +
   `descriptive commit message with any required commit trailers. GUARD: hook setup and RED/GREEN must be ` +
   `done first.\n` +
-  `STEP — Push. This triggers the full local gate (or run scripts/pre-push.sh without pushing; see docs/agent-dev-quickstart.md): fmt, strict clippy, unit/architecture/contracts/` +
+  `STEP — Push. This triggers the full local gate (or run scripts/pre-push.sh without pushing): fmt, strict clippy, unit/architecture/contracts/` +
   `repo_docs, the 24-shard non-real BDD suite, region coverage at/above threshold (quecto and quecto-tui), ` +
   `machete, deny, and the zero-cost mocked @mock-llm e2e lane (the live suite is opt-in via ` +
   `QUECTO_RUN_REAL_LLM=1). Fix every failure; never use --no-verify — a bypassed gate does NOT count as ` +
@@ -110,7 +110,7 @@ const reviews = await parallel(DIMENSIONS.map(dim => () => agent(
   `PRECONDITION: reviewers MUST NOT be dispatched before a PR exists; stop if this prompt does not include a PR number. ` +
   `Use the PR number only. Explicitly forbid passing a raw diff: do NOT accept a pasted raw diff in the prompt; fetch it yourself. ` +
   `Run your OWN independent review on the single dimension '${dim}'.${DIMENSION_FOCUS[dim] || ''} Read the diff with ` +
-  `gh pr diff <PR>. Use the addPullRequestReview event COMMENT snippet in docs/agent-dev-quickstart.md. Be skeptical — report ONLY real issues. Do NOT modify code. ` +
+  `gh pr diff <PR>. Post findings as inline comments via the addPullRequestReview GraphQL mutation with event COMMENT. Be skeptical — report ONLY real issues. Do NOT modify code. ` +
   `Post findings as INLINE review comments on the PR via the GitHub GraphQL API (gh api graphql): ` +
   `fetch the PR node id and head SHA with gh pr view <PR> --json id,headRefOid, then submit one review ` +
   `carrying inline comments via the addPullRequestReview mutation (event COMMENT, comments array of ` +
