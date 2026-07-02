@@ -227,9 +227,7 @@ async fn full_height_multi_agent_renderer_no_desync_or_bleed() {
     for i in 1..=8 {
         h.event(tool_end(&format!("tc-spawn-agent-{i}"), "spawn"));
     }
-    h.event(Event::AgentEnd {
-        messages: Vec::new(),
-    });
+    h.event(Event::AgentEnd);
 
     // Capture-only renderer fed the REAL composed frames. A green BG_SUCCESS
     // tool box is spliced onto a chat row so a success box is on-screen exactly

@@ -6,12 +6,15 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
 /// Maximum line size from the agent (1 MiB, matching quecto's protocol limit).
-const MAX_LINE_BYTES: usize = 1_048_576;
+///
+/// Public so out-of-crate tests (the harness BDD suite) can build boundary
+/// frames against the real cap instead of a duplicated literal.
+pub const MAX_LINE_BYTES: usize = 1_048_576;
 
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
 
@@ -118,17 +121,13 @@ pub enum Command {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     AgentStart,
-    AgentEnd {
-        messages: Vec<serde_json::Value>,
-    },
+    AgentEnd,
     Token {
         token: String,
     },
     TurnStart,
     TurnEnd {
         message: serde_json::Value,
-        #[serde(rename = "toolResults", default)]
-        tool_results: Vec<serde_json::Value>,
     },
     ToolExecutionStart {
         #[serde(rename = "toolCallId")]
@@ -352,6 +351,39 @@ fn serialize_command(cmd: &Command) -> Result<String, ClientError> {
     Ok(json)
 }
 
+async fn read_bounded_line<R>(reader: &mut R, line: &mut Vec<u8>) -> std::io::Result<usize>
+where
+    R: AsyncBufRead + Unpin,
+{
+    line.clear();
+    // Reclaim memory here rather than in the caller's loop so the reclaim
+    // runs on every iteration, including ones that drop the previous line
+    // (oversized, invalid UTF-8, empty) and skip the caller's loop tail.
+    if line.capacity() > 64 * 1024 {
+        line.shrink_to(8 * 1024);
+    }
+    let mut total = 0;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok(total);
+        }
+
+        let newline_pos = available.iter().position(|byte| *byte == b'\n');
+        let take = newline_pos.map_or(available.len(), |pos| pos + 1);
+        // Once the line reaches MAX_LINE_BYTES, remaining_capacity stays 0 and
+        // the rest of the oversized line is consumed without being copied.
+        let copy_len = MAX_LINE_BYTES.saturating_sub(line.len()).min(take);
+        line.extend_from_slice(&available[..copy_len]);
+        total += take;
+        reader.consume(take);
+
+        if newline_pos.is_some() {
+            return Ok(total);
+        }
+    }
+}
+
 impl CommandSender {
     /// Send a command to the agent.
     pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {
@@ -401,21 +433,24 @@ impl Client {
         // Spawn background event reader
         tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
-            let mut line = String::new();
+            let mut line = Vec::new();
             loop {
-                line.clear();
-                match reader.read_line(&mut line).await {
+                match read_bounded_line(&mut reader, &mut line).await {
                     Ok(0) => break, // EOF — agent closed the connection
                     Ok(_) => {
-                        // Enforce max line size to prevent OOM from malicious/buggy agents.
-                        if line.len() > MAX_LINE_BYTES {
+                        // Enforce max line size while framing so malicious/buggy agents
+                        // cannot inflate this buffer beyond the protocol cap.
+                        if line.len() >= MAX_LINE_BYTES && !line.ends_with(b"\n") {
                             // Drop oversized lines silently. The TUI owns the
                             // terminal, so printing to stderr here would smear
                             // diagnostics over the UI (same policy as the
                             // unparseable-event branch below).
                             continue;
                         }
-                        let trimmed = line.trim();
+                        let trimmed = match std::str::from_utf8(&line) {
+                            Ok(value) => value.trim(),
+                            Err(_) => continue,
+                        };
                         if trimmed.is_empty() {
                             continue;
                         }
@@ -442,10 +477,6 @@ impl Client {
                         // disconnect to the UI on the next send.
                         break;
                     }
-                }
-                // Reclaim memory if a large line inflated the buffer.
-                if line.capacity() > 64 * 1024 {
-                    line.shrink_to(8 * 1024);
                 }
             }
         });
@@ -492,6 +523,10 @@ impl Client {
         Self { cmd_tx, event_rx }
     }
 }
+
+#[cfg(test)]
+#[path = "client_defence_tests.rs"]
+mod client_defence_tests;
 
 #[cfg(test)]
 #[path = "client_tests.rs"]

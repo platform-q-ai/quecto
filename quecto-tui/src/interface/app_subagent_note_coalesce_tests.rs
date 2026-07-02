@@ -44,9 +44,7 @@ async fn burst_of_completions_coalesces_to_one_summary_line() {
     notify_completion(&mut h, 0, "issue-895-feature");
     notify_completion(&mut h, 1, "basic-10");
     notify_completion(&mut h, 2, "basic-11");
-    h.event(Event::AgentEnd {
-        messages: Vec::new(),
-    });
+    h.event(Event::AgentEnd);
 
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert_eq!(
@@ -76,9 +74,7 @@ async fn single_completion_keeps_its_own_line() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     notify_completion(&mut h, 0, "solo-agent");
-    h.event(Event::AgentEnd {
-        messages: Vec::new(),
-    });
+    h.event(Event::AgentEnd);
 
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert_eq!(
@@ -114,9 +110,7 @@ async fn errored_and_exited_are_not_folded_into_summary() {
         sequence: 3,
         message: "Agent 'gone' exited unexpectedly".into(),
     });
-    h.event(Event::AgentEnd {
-        messages: Vec::new(),
-    });
+    h.event(Event::AgentEnd);
 
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     // One summary line + one error line + one exited line = three `◆` lines.
@@ -150,9 +144,7 @@ async fn completion_names_are_capped_with_more_tail() {
     for i in 0..N {
         notify_completion(&mut h, i, &format!("a{i}"));
     }
-    h.event(Event::AgentEnd {
-        messages: Vec::new(),
-    });
+    h.event(Event::AgentEnd);
 
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert_eq!(
@@ -185,9 +177,7 @@ async fn coalesced_notes_still_defer_until_idle() {
         "completion notes must stay DEFERRED while the parent is mid-turn:\n{mid}"
     );
 
-    h.event(Event::AgentEnd {
-        messages: Vec::new(),
-    });
+    h.event(Event::AgentEnd);
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
         frame.contains("2 sub-agents finished:"),

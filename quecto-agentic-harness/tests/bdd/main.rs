@@ -354,6 +354,8 @@ pub struct QuectoWorld {
     /// TUI observer-marker BDD (#966): currently tracked sub-agents and whether
     /// each is read-only, used to exercise selective departure.
     pub tui_expected_subagents: Vec<(String, bool)>,
+    /// TUI UDS client defensive-bounds BDD (#982): socket/client state.
+    pub tui_defence_stream: Option<tui_uds_client_defence_steps::TuiDefenceStream>,
     /// The sub-agent id currently being viewed (#828): captured on select so
     /// backfill/assertion steps route to the right session, not a literal id.
     pub tui_viewed_agent: Option<String>,
@@ -1074,6 +1076,7 @@ mod tui_file_mention_steps;
 mod tui_subagent_first_layout_steps;
 mod tui_subagent_parity_steps;
 mod tui_subagent_readonly_marker_steps;
+mod tui_uds_client_defence_steps;
 mod uds_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;

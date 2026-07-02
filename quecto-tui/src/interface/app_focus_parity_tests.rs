@@ -281,7 +281,6 @@ async fn footer_reflects_active_session() {
             "contextTokens": 100_000,
             "maxContextTokens": 200_000,
         }),
-        tool_results: vec![],
     });
 
     // Sub-agent a1's OWN footer, delivered over its direct connection: a
@@ -306,7 +305,6 @@ async fn footer_reflects_active_session() {
                 "contextTokens": 50_000,
                 "maxContextTokens": 200_000,
             }),
-            tool_results: vec![],
         },
     );
     h.app_mut().route_subagent_event(
