@@ -4,7 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Role, ToolCall};
+use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 
 /// OpenAI-compatible LLM provider.
@@ -207,9 +207,17 @@ impl OpenAiProvider {
             }
         }
 
+        // Non-streaming chat historically reports `context_tokens: None` and lets
+        // the gauge fall back to `prompt_tokens` (which already counts the full
+        // prompt); only the streaming/SSE paths surface `total_tokens`. Preserve
+        // that per-path behaviour after consolidating onto the shared parser.
         let usage = body["usage"]
             .as_object()
-            .map(crate::infrastructure::providers::usage::parse_openai_usage);
+            .map(crate::infrastructure::providers::usage::parse_openai_usage)
+            .map(|u| UsageInfo {
+                context_tokens: None,
+                ..u
+            });
 
         Ok(LlmResponse {
             content,
@@ -489,6 +497,10 @@ mod tests {
         let usage = response.usage.unwrap();
         assert_eq!(usage.prompt_tokens, 10);
         assert_eq!(usage.completion_tokens, 5);
+        // Non-streaming chat reports `context_tokens: None` (gauge falls back to
+        // `prompt_tokens`) even though `total_tokens` is present — only the SSE
+        // paths surface `total_tokens`. Locks the #996/PR-999 behaviour parity.
+        assert_eq!(usage.context_tokens, None);
     }
 
     #[tokio::test]

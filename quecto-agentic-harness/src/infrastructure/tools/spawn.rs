@@ -728,13 +728,7 @@ pub fn shutdown_all(registry: &SubagentRegistry) {
             tracing::info!(agent = %name, "aborted monitor task");
         }
         if entry.pid != 0 {
-            // Direct SIGTERM via libc avoids fork+exec of `kill(1)` and its
-            // blocking `.status()` wait, which would stall a tokio worker per
-            // subagent. A stale/dead pid simply yields ESRCH, which we ignore.
-            // SAFETY: FFI call to `libc::kill` with an owned pid and constant signal.
-            unsafe {
-                libc::kill(entry.pid as libc::pid_t, libc::SIGTERM);
-            }
+            crate::infrastructure::tools::subagent_cascade::sigterm_pid(entry.pid);
             tracing::info!(agent = %name, pid = entry.pid, "sent SIGTERM to subagent");
         }
     }

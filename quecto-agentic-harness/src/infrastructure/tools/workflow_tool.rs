@@ -520,4 +520,56 @@ mod tests {
             serde_json::json!(WorkflowMode::SelectingTemplate)
         );
     }
+
+    fn guard_template(id: &str) -> crate::domain::workflow::WorkflowTemplate {
+        use crate::domain::workflow::{WorkflowGuardRule, WorkflowTemplate, WorkflowTemplateStep};
+        WorkflowTemplate {
+            id: id.to_string(),
+            label: id.to_string(),
+            description: String::new(),
+            when_to_use: None,
+            steps: vec![WorkflowTemplateStep {
+                key: "s1".to_string(),
+                label: "S1".to_string(),
+                phase: "p".to_string(),
+                guidance: None,
+            }],
+            guards: vec![WorkflowGuardRule {
+                commands: vec!["git push".to_string()],
+                before_step_key: "s1".to_string(),
+                message: "do s1 first".to_string(),
+            }],
+        }
+    }
+
+    /// #996 item 3 (PR #999 review): `parsed_rules_for` must parse a template's
+    /// guards once and reuse the `Arc` on subsequent calls for the SAME id, and
+    /// must rebuild when the active template id changes (no stale-cache bleed).
+    #[test]
+    fn parsed_rules_cache_reuses_by_id_and_invalidates_on_change() {
+        let engine = Arc::new(Mutex::new(
+            WorkflowEngine::new(WorkflowConfig::default(), true).unwrap(),
+        ));
+        let guard = WorkflowGuard::new(engine);
+
+        let a = guard_template("alpha");
+        let first = guard.parsed_rules_for(&a);
+        let second = guard.parsed_rules_for(&a);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "same template id must return the cached Arc, not re-parse"
+        );
+
+        let b = guard_template("beta");
+        let third = guard.parsed_rules_for(&b);
+        assert!(
+            !Arc::ptr_eq(&second, &third),
+            "a different template id must rebuild the parsed rules"
+        );
+        assert_eq!(third[0].before_step_key, "s1");
+
+        // Switching back re-parses (cache holds a single active entry).
+        let fourth = guard.parsed_rules_for(&a);
+        assert!(!Arc::ptr_eq(&first, &fourth));
+    }
 }

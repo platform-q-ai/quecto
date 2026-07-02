@@ -312,3 +312,23 @@ fn apply_auth_headers_omits_account_id_when_absent() {
     assert!(headers.get("authorization").is_some());
     assert!(headers.get("chatgpt-account-id").is_none());
 }
+
+/// Regression guard (#996 item 9, PR #999 review): `for_streaming_task` clones
+/// the provider for a spawned streaming task. Every field — the routing
+/// `provider_name`, `api_key`/`api_base`, and the OAuth `account_id` — must
+/// survive the clone; a silent field-drop would stream under the wrong
+/// provider identity or account.
+#[test]
+fn openai_for_streaming_task_preserves_all_fields() {
+    let provider = OpenAiProvider::with_client_and_name(
+        "openai-oauth",
+        jwt_with_account("acct-42"),
+        Some("https://openai.example".to_string()),
+        reqwest::Client::new(),
+    );
+    let cloned = provider.for_streaming_task();
+    assert_eq!(cloned.name(), "openai-oauth");
+    assert_eq!(cloned.api_key, provider.api_key);
+    assert_eq!(cloned.api_base, "https://openai.example");
+    assert_eq!(cloned.account_id, Some("acct-42".to_string()));
+}
