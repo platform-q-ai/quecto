@@ -632,9 +632,15 @@ fn adr_records_review_restructure_decision() {
         lower.contains("tautolog"),
         "ADR context should record the tautological/vacuous assertion escape"
     );
+    // "verify" && "find" alone are hollow ("find" matches "findings"
+    // anywhere); pin the distinctive wave-structure phrasings instead.
     assert!(
-        lower.contains("verify") && lower.contains("find"),
-        "ADR decision should describe find -> verify -> single-post waves"
+        lower.contains("adversarial"),
+        "ADR decision should describe the adversarial verify wave"
+    );
+    assert!(
+        lower.contains("exactly one submitted") || lower.contains("single-post"),
+        "ADR decision should record the single-post wave"
     );
     assert!(
         lower.contains("red evidence") || lower.contains("per-assertion"),

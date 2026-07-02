@@ -25,8 +25,11 @@ pub fn assert_reviewer_finder_waves(g: &str, source: &str) {
         "hunk",                   // line-by-line hunk scan
         "Removed-behavior audit", // deleted-line invariant re-establishment
         "Cross-file tracer",      // callers/callees/consumers of changed symbols
-        "Security",
-        "Performance",
+        // Distinctive #1004 phrasings: the bare tokens "Security"/"Performance"
+        // already appeared in the pre-#1004 guidance, so they carried no RED
+        // evidence on their own.
+        "path traversal", // Security angle detail
+        "Performance/efficiency",
         "Reuse",
         "altitude",       // bandaid vs. mechanism, same-defect-class grep
         "falsifiability", // test falsifiability
