@@ -87,6 +87,6 @@ fn status_text_shows_guidance_for_incomplete_non_current_steps() {
     let status = engine.status_text();
     assert!(status.contains("CURRENT STEP"));
     // An upcoming, non-current step's guidance is visible:
-    assert!(status.contains("INLINE review comments"));
+    assert!(status.contains("INLINE review comment"));
     assert!(status.contains("addPullRequestReview"));
 }
