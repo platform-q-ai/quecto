@@ -19,6 +19,16 @@ Feature: Agent Loop
     When the agent processes [message] "What are my notes?"
     Then the response should be "Your notes say: Buy groceries"
 
+  Scenario: Tool result preview handles multibyte output at the byte limit
+    Given a configured agent with a mock LLM
+    And the LLM returns a tool call for "read" with args:
+      | path | notes.txt |
+    And the tool "read" returns output whose byte limit falls inside a multibyte character
+    And the LLM then returns "Done"
+    When the agent reports progress while processing [message] "Read my notes"
+    Then the tool result preview should contain only complete characters
+    And the tool result preview should stay within the byte limit
+
   Scenario: Message triggers multiple tool calls in sequence
     Given a configured agent with a mock LLM
     And the LLM returns tool calls in sequence: "read", "write"

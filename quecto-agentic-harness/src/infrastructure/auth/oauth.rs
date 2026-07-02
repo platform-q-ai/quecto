@@ -101,8 +101,6 @@ pub fn generate_pkce() -> PkceCodes {
     }
 }
 
-use crate::infrastructure::providers::sse_common::truncate_error_body;
-
 /// Build the Anthropic OAuth authorization URL with PKCE.
 pub fn build_anthropic_auth_url(config: &OAuthConfig, pkce: &PkceCodes, state: &str) -> String {
     let params = [
@@ -158,10 +156,10 @@ pub async fn exchange_anthropic_code(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
+        let _ = discard_error_body(resp).await;
         return Err(DomainError::Provider(format!(
-            "token exchange failed ({}): {}",
-            status, error_body
+            "token exchange failed ({})",
+            status
         )));
     }
 
@@ -193,10 +191,10 @@ pub async fn refresh_anthropic_token(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
+        let _ = discard_error_body(resp).await;
         return Err(DomainError::Provider(format!(
-            "token refresh failed ({}): {}",
-            status, error_body
+            "token refresh failed ({})",
+            status
         )));
     }
 
@@ -261,10 +259,10 @@ pub async fn exchange_openai_code(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
+        let _ = discard_error_body(resp).await;
         return Err(DomainError::Provider(format!(
-            "OpenAI token exchange failed ({}): {}",
-            status, error_body
+            "OpenAI token exchange failed ({})",
+            status
         )));
     }
 
@@ -293,10 +291,10 @@ pub async fn refresh_openai_token(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
+        let _ = discard_error_body(resp).await;
         return Err(DomainError::Provider(format!(
-            "OpenAI token refresh failed ({}): {}",
-            status, error_body
+            "OpenAI token refresh failed ({})",
+            status
         )));
     }
 
@@ -460,8 +458,13 @@ impl std::fmt::Debug for DeviceCodeResponse {
     }
 }
 
-/// Maximum error body size to read from OAuth server responses (4 KB).
-const MAX_ERROR_BODY_BYTES: usize = 4096;
+/// Drop an OAuth error response without reading its body. Never buffering the
+/// body — regardless of the server's `Content-Length`, transfer encoding, or
+/// frame sizes — is the only strict way to guarantee the CLI does not read an
+/// unbounded amount from a malicious or misbehaving server. Error bodies may
+/// also contain provider internals or secrets, so callers report only the
+/// HTTP status, never response details.
+async fn discard_error_body(_resp: reqwest::Response) {}
 
 /// Initiate a device code flow: POST to the device code endpoint and
 /// return the response containing the user code and verification URI.
@@ -477,13 +480,9 @@ pub async fn request_device_code(config: &OAuthConfig) -> Result<DeviceCodeRespo
 
     let status = resp.status().as_u16();
     if status != 200 {
-        // Read and discard the body (truncated to prevent OOM from
-        // malicious servers), but do NOT include server response
-        // details in the error message to avoid leaking internals.
-        let _ = resp
-            .bytes()
-            .await
-            .map(|b| b.len().min(MAX_ERROR_BODY_BYTES));
+        // Drop the response without reading its body. Do NOT include server
+        // response details in the error message to avoid leaking internals.
+        let _ = discard_error_body(resp).await;
         return Err(DomainError::Provider(format!(
             "device code request failed ({})",
             status
@@ -503,3 +502,7 @@ pub fn is_anthropic_oauth_token(token: &str) -> bool {
 #[cfg(test)]
 #[path = "oauth_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "oauth_error_body_tests.rs"]
+mod error_body_tests;

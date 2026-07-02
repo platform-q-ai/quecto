@@ -84,6 +84,61 @@ fn when_store_token(world: &mut QuectoWorld, token: String, provider: String) {
         .unwrap();
 }
 
+/// Simulates an unrelated writer dropping a temp file beside the credential
+/// store, using the same naming convention `atomic_write` uses, without going
+/// through the store's own `store()`/`save_all()` path. This proves a stray
+/// temp file can't be mistaken for the credentials file before a rename makes
+/// it visible; it does not exercise `atomic_write`'s own crash-safety, which
+/// is covered end-to-end by the `atomic_write` and `credential_store` unit
+/// tests (they call the real write path, not a simulation).
+#[when(
+    expr = "an unrelated writer leaves a stray temp file beside the credential store for {string}"
+)]
+fn when_stray_temp_file_left_beside_store(world: &mut QuectoWorld, provider: String) {
+    let store = world
+        .credential_store
+        .as_ref()
+        .expect("credential store not set");
+    world.credential_file_before_update = Some(std::fs::read(store.path()).unwrap());
+
+    let mut pending = store.load_snapshot().unwrap();
+    pending.insert(
+        provider.clone(),
+        Credential {
+            provider,
+            token: "new-token".to_string(),
+            method: AuthMethod::Token,
+            expires_at: None,
+            refresh_token: None,
+            account_id: None,
+        },
+    );
+    let pending_json = serde_json::to_vec_pretty(&pending).unwrap();
+    let pending_path = store
+        .path()
+        .parent()
+        .expect("credentials path has a parent")
+        .join(".credentials.json.pending-update.tmp");
+    std::fs::write(pending_path, pending_json).unwrap();
+}
+
+#[then("the credential file should be unchanged")]
+fn then_credential_file_should_be_unchanged(world: &mut QuectoWorld) {
+    let store = world
+        .credential_store
+        .as_ref()
+        .expect("credential store not set");
+    let before = world
+        .credential_file_before_update
+        .as_ref()
+        .expect("credential file snapshot not captured");
+    assert_eq!(
+        &std::fs::read(store.path()).unwrap(),
+        before,
+        "a stray temp file beside the store must leave the active credential file unchanged"
+    );
+}
+
 #[when("I check auth status")]
 fn when_check_auth_status(world: &mut QuectoWorld) {
     let store = world
