@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn test_read_error_body_bounded_stops_at_documented_cap() {
+async fn test_discard_error_body_bounded_does_not_wait_for_oversized_response() {
     use std::io::Write;
     use std::net::TcpListener;
 
@@ -17,8 +17,9 @@ async fn test_read_error_body_bounded_stops_at_documented_cap() {
             MAX_ERROR_BODY_BYTES * 4
         )
         .unwrap();
-        stream.write_all(&vec![b'x'; MAX_ERROR_BODY_BYTES]).unwrap();
-        stream.write_all(b"sentinel-after-cap").unwrap();
+        stream
+            .write_all(b"server-secret-detail-before-cap")
+            .unwrap();
         stream.flush().unwrap();
         std::thread::sleep(std::time::Duration::from_secs(5));
     });
@@ -29,20 +30,11 @@ async fn test_read_error_body_bounded_stops_at_documented_cap() {
         .await
         .unwrap();
     let start = std::time::Instant::now();
-    let body = read_error_body_bounded(resp).await;
+    discard_error_body_bounded(resp).await;
 
-    assert_eq!(
-        body.len(),
-        MAX_ERROR_BODY_BYTES,
-        "bounded error reader must retain at most the documented cap"
-    );
     assert!(
         start.elapsed() < std::time::Duration::from_secs(1),
-        "bounded error reader should stop after the capped prefix, not wait for the full body"
-    );
-    assert!(
-        !String::from_utf8_lossy(&body).contains("sentinel-after-cap"),
-        "bounded error reader must not consume bytes beyond the documented cap"
+        "bounded error handling should not wait for or buffer the oversized response body"
     );
     drop(handle);
 }
@@ -72,4 +64,46 @@ async fn test_device_code_error_message_omits_oversized_response_details() {
         !err.contains("server-secret-detail"),
         "device code errors must not include response body details"
     );
+}
+
+#[tokio::test]
+async fn test_token_error_messages_omit_response_details() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("server-secret-detail"))
+        .mount(&server)
+        .await;
+
+    let config = OAuthConfig::with_base_url(&server.uri());
+
+    let errors = [
+        exchange_anthropic_code(&config, "code#state", "verifier")
+            .await
+            .unwrap_err()
+            .to_string(),
+        refresh_anthropic_token(&config, "refresh")
+            .await
+            .unwrap_err()
+            .to_string(),
+        exchange_openai_code(&config, "code", "verifier")
+            .await
+            .unwrap_err()
+            .to_string(),
+        refresh_openai_token(&config, "refresh")
+            .await
+            .unwrap_err()
+            .to_string(),
+    ];
+
+    for err in errors {
+        assert!(err.contains("500"), "error should include status: {err}");
+        assert!(
+            !err.contains("server-secret-detail"),
+            "OAuth token errors must not include response body details: {err}"
+        );
+    }
 }

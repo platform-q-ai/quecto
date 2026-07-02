@@ -84,18 +84,53 @@ fn when_store_token(world: &mut QuectoWorld, token: String, provider: String) {
         .unwrap();
 }
 
-#[when(expr = "a credential update for {string} is prepared but not completed")]
-fn when_credential_update_prepared_but_not_completed(world: &mut QuectoWorld, _provider: String) {
+#[when(expr = "a credential update for {string} is interrupted before replacement")]
+fn when_credential_update_interrupted_before_replacement(
+    world: &mut QuectoWorld,
+    provider: String,
+) {
     let store = world
         .credential_store
         .as_ref()
         .expect("credential store not set");
-    let tmp_replacement = store
+    world.credential_file_before_update = Some(std::fs::read(store.path()).unwrap());
+
+    let mut pending = store.load_snapshot().unwrap();
+    pending.insert(
+        provider.clone(),
+        Credential {
+            provider,
+            token: "new-token".to_string(),
+            method: AuthMethod::Token,
+            expires_at: None,
+            refresh_token: None,
+            account_id: None,
+        },
+    );
+    let pending_json = serde_json::to_vec_pretty(&pending).unwrap();
+    let pending_path = store
         .path()
         .parent()
         .expect("credentials path has a parent")
         .join(".credentials.json.pending-update.tmp");
-    std::fs::write(&tmp_replacement, b"{\n  \"credentials\": {}\n}").unwrap();
+    std::fs::write(pending_path, pending_json).unwrap();
+}
+
+#[then("the credential file should be unchanged")]
+fn then_credential_file_should_be_unchanged(world: &mut QuectoWorld) {
+    let store = world
+        .credential_store
+        .as_ref()
+        .expect("credential store not set");
+    let before = world
+        .credential_file_before_update
+        .as_ref()
+        .expect("credential file snapshot not captured");
+    assert_eq!(
+        &std::fs::read(store.path()).unwrap(),
+        before,
+        "interrupted credential update must leave the active credential file unchanged"
+    );
 }
 
 #[when("I check auth status")]

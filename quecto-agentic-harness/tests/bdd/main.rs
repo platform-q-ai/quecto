@@ -291,6 +291,8 @@ pub struct QuectoWorld {
     pub credential_store: Option<CredentialStore>,
     /// Auth status summary from the last check
     pub auth_status: Option<Vec<CredentialStatus>>,
+    /// Raw credential file bytes captured before an interrupted update
+    pub credential_file_before_update: Option<Vec<u8>>,
     /// Spawn tool result
     pub spawn_result: Option<ToolResult>,
     /// Spawn tool for BDD

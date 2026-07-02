@@ -101,8 +101,6 @@ pub fn generate_pkce() -> PkceCodes {
     }
 }
 
-use crate::infrastructure::providers::sse_common::truncate_error_body;
-
 /// Build the Anthropic OAuth authorization URL with PKCE.
 pub fn build_anthropic_auth_url(config: &OAuthConfig, pkce: &PkceCodes, state: &str) -> String {
     let params = [
@@ -158,10 +156,10 @@ pub async fn exchange_anthropic_code(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
+        let _ = discard_error_body_bounded(resp).await;
         return Err(DomainError::Provider(format!(
-            "token exchange failed ({}): {}",
-            status, error_body
+            "token exchange failed ({})",
+            status
         )));
     }
 
@@ -193,10 +191,10 @@ pub async fn refresh_anthropic_token(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
+        let _ = discard_error_body_bounded(resp).await;
         return Err(DomainError::Provider(format!(
-            "token refresh failed ({}): {}",
-            status, error_body
+            "token refresh failed ({})",
+            status
         )));
     }
 
@@ -261,10 +259,10 @@ pub async fn exchange_openai_code(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
+        let _ = discard_error_body_bounded(resp).await;
         return Err(DomainError::Provider(format!(
-            "OpenAI token exchange failed ({}): {}",
-            status, error_body
+            "OpenAI token exchange failed ({})",
+            status
         )));
     }
 
@@ -293,10 +291,10 @@ pub async fn refresh_openai_token(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
+        let _ = discard_error_body_bounded(resp).await;
         return Err(DomainError::Provider(format!(
-            "OpenAI token refresh failed ({}): {}",
-            status, error_body
+            "OpenAI token refresh failed ({})",
+            status
         )));
     }
 
@@ -463,18 +461,13 @@ impl std::fmt::Debug for DeviceCodeResponse {
 /// Maximum error body size to read from OAuth server responses (4 KB).
 const MAX_ERROR_BODY_BYTES: usize = 4096;
 
-async fn read_error_body_bounded(mut resp: reqwest::Response) -> Vec<u8> {
-    let mut body = Vec::with_capacity(MAX_ERROR_BODY_BYTES);
-    while body.len() < MAX_ERROR_BODY_BYTES {
-        match resp.chunk().await {
-            Ok(Some(chunk)) => {
-                let remaining = MAX_ERROR_BODY_BYTES - body.len();
-                body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-            }
-            Ok(None) | Err(_) => break,
-        }
-    }
-    body
+async fn discard_error_body_bounded(_resp: reqwest::Response) {
+    // Intentionally do not read the response body on OAuth failures. This is the
+    // only strict way to guarantee the CLI does not buffer more than the
+    // documented cap regardless of the server's Content-Length, transfer
+    // encoding, or frame sizes. Error bodies may also contain provider internals
+    // or secrets, so callers report only the HTTP status.
+    let _ = MAX_ERROR_BODY_BYTES;
 }
 
 /// Initiate a device code flow: POST to the device code endpoint and
@@ -494,7 +487,7 @@ pub async fn request_device_code(config: &OAuthConfig) -> Result<DeviceCodeRespo
         // Read and discard at most a small prefix to avoid retaining a large
         // error response from a malicious server. Do NOT include server response
         // details in the error message to avoid leaking internals.
-        let _ = read_error_body_bounded(resp).await;
+        let _ = discard_error_body_bounded(resp).await;
         return Err(DomainError::Provider(format!(
             "device code request failed ({})",
             status
