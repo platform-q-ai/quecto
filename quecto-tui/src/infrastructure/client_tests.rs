@@ -192,12 +192,19 @@ fn event_unknown_type_deserializes_as_unknown() {
 fn event_deserializes_agent_end() {
     let json = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"hi"}]}"#;
     let event: Event = serde_json::from_str(json).unwrap();
-    match event {
-        Event::AgentEnd { messages } => {
-            assert_eq!(messages.len(), 1);
-        }
-        _ => panic!("expected AgentEnd"),
-    }
+    assert!(matches!(event, Event::AgentEnd));
+}
+
+#[test]
+fn agent_end_does_not_retain_unused_messages_payload() {
+    let json = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"unused-agent-end-payload"}]}"#;
+    let event: Event = serde_json::from_str(json).unwrap();
+
+    assert!(matches!(event, Event::AgentEnd));
+    assert!(
+        !format!("{event:?}").contains("unused-agent-end-payload"),
+        "agent_end messages are not consumed by the TUI and must not be retained"
+    );
 }
 
 // ── Integration: result text extraction ─────────────────────────
@@ -422,11 +429,26 @@ fn event_deserializes_turn_end() {
         r#"{"type":"turn_end","message":{"role":"assistant","content":"hi"},"toolResults":[]}"#;
     let event: Event = serde_json::from_str(json).unwrap();
     match event {
-        Event::TurnEnd { message, .. } => {
+        Event::TurnEnd { message } => {
             assert_eq!(message["role"], "assistant");
         }
         _ => panic!("expected TurnEnd"),
     }
+}
+
+#[test]
+fn turn_end_keeps_message_but_does_not_retain_unused_tool_results() {
+    let json = r#"{"type":"turn_end","message":{"role":"assistant","content":"kept"},"toolResults":[{"content":[{"type":"text","text":"unused-turn-end-payload"}]}]}"#;
+    let event: Event = serde_json::from_str(json).unwrap();
+
+    match &event {
+        Event::TurnEnd { message } => assert_eq!(message["content"], "kept"),
+        _ => panic!("expected TurnEnd"),
+    }
+    assert!(
+        !format!("{event:?}").contains("unused-turn-end-payload"),
+        "turn_end tool results are not consumed by the TUI and must not be retained"
+    );
 }
 
 #[test]

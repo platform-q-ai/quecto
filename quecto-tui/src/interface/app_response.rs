@@ -164,9 +164,7 @@ impl App {
         let Some(arr) = data.get("subagents") else {
             return;
         };
-        if let Ok(infos) = serde_json::from_value::<
-            Vec<crate::infrastructure::client::SubagentInfoEvent>,
-        >(arr.clone())
+        if let Ok(infos) = <Vec<crate::infrastructure::client::SubagentInfoEvent> as serde::Deserialize>::deserialize(arr)
         {
             self.update_subagent_bar(infos);
         }

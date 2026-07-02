@@ -85,7 +85,6 @@ async fn master_tool_start_finalizes_streaming_assistant_cursor() {
 
     app.handle_event(Event::TurnEnd {
         message: serde_json::json!({}),
-        tool_results: vec![],
     });
     plain = rendered_chat(&mut app);
     assert!(
@@ -97,7 +96,7 @@ async fn master_tool_start_finalizes_streaming_assistant_cursor() {
         token: "Again".into(),
     });
     app.handle_event(Event::AgentStart);
-    app.handle_event(Event::AgentEnd { messages: vec![] });
+    app.handle_event(Event::AgentEnd);
     plain = rendered_chat(&mut app);
     assert!(
         !plain.contains('▌'),

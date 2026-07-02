@@ -6,12 +6,12 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
 /// Maximum line size from the agent (1 MiB, matching quecto's protocol limit).
-const MAX_LINE_BYTES: usize = 1_048_576;
+pub const MAX_LINE_BYTES: usize = 1_048_576;
 
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
 
@@ -118,17 +118,13 @@ pub enum Command {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     AgentStart,
-    AgentEnd {
-        messages: Vec<serde_json::Value>,
-    },
+    AgentEnd,
     Token {
         token: String,
     },
     TurnStart,
     TurnEnd {
         message: serde_json::Value,
-        #[serde(rename = "toolResults", default)]
-        tool_results: Vec<serde_json::Value>,
     },
     ToolExecutionStart {
         #[serde(rename = "toolCallId")]
@@ -352,6 +348,46 @@ fn serialize_command(cmd: &Command) -> Result<String, ClientError> {
     Ok(json)
 }
 
+async fn read_bounded_line<R>(reader: &mut R, line: &mut String) -> std::io::Result<usize>
+where
+    R: AsyncBufRead + Unpin,
+{
+    line.clear();
+    let mut total = 0;
+    let mut discard_rest = false;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok(total);
+        }
+
+        let newline_pos = available.iter().position(|byte| *byte == b'\n');
+        let take = newline_pos.map_or(available.len(), |pos| pos + 1);
+        let remaining_capacity = MAX_LINE_BYTES.saturating_sub(line.len());
+        if !discard_rest && remaining_capacity > 0 {
+            let copy_len = remaining_capacity.min(take);
+            line.push_str(&String::from_utf8_lossy(&available[..copy_len]));
+            discard_rest = copy_len < take;
+        }
+        total += take;
+        reader.consume(take);
+
+        if newline_pos.is_some() {
+            return Ok(total);
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-harness"))]
+pub async fn read_bounded_line_capacity_for_test<R>(reader: &mut R) -> std::io::Result<usize>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut line = String::new();
+    read_bounded_line(reader, &mut line).await?;
+    Ok(line.capacity())
+}
+
 impl CommandSender {
     /// Send a command to the agent.
     pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {
@@ -404,11 +440,12 @@ impl Client {
             let mut line = String::new();
             loop {
                 line.clear();
-                match reader.read_line(&mut line).await {
+                match read_bounded_line(&mut reader, &mut line).await {
                     Ok(0) => break, // EOF — agent closed the connection
                     Ok(_) => {
-                        // Enforce max line size to prevent OOM from malicious/buggy agents.
-                        if line.len() > MAX_LINE_BYTES {
+                        // Enforce max line size while framing so malicious/buggy agents
+                        // cannot inflate this buffer beyond the protocol cap.
+                        if line.len() >= MAX_LINE_BYTES && !line.ends_with('\n') {
                             // Drop oversized lines silently. The TUI owns the
                             // terminal, so printing to stderr here would smear
                             // diagnostics over the UI (same policy as the
@@ -492,6 +529,10 @@ impl Client {
         Self { cmd_tx, event_rx }
     }
 }
+
+#[cfg(test)]
+#[path = "client_defence_tests.rs"]
+mod defence_tests;
 
 #[cfg(test)]
 #[path = "client_tests.rs"]

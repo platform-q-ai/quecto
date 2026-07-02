@@ -140,7 +140,7 @@ impl App {
                 session.observed_run_state = true;
                 session.footer.set_streaming(true);
             }
-            Event::AgentEnd { .. } | Event::TurnEnd { .. } => {
+            Event::AgentEnd | Event::TurnEnd { .. } => {
                 session.running = false;
                 session.observed_run_state = true;
                 session.footer.set_streaming(false);
@@ -166,11 +166,11 @@ impl App {
         }
         // Flush deferred grandchild notes once this child goes idle (after the
         // streamed response is finalized below).
-        let flush_notes = matches!(ev, Event::AgentEnd { .. } | Event::TurnEnd { .. });
+        let flush_notes = matches!(ev, Event::AgentEnd | Event::TurnEnd { .. });
         let chat = &mut session.chat;
         match ev {
             Event::Token { token } => chat.append_token(&token),
-            Event::AgentEnd { .. } | Event::TurnEnd { .. } => chat.finalize_assistant(),
+            Event::AgentEnd | Event::TurnEnd { .. } => chat.finalize_assistant(),
             Event::ToolExecutionStart {
                 tool_call_id,
                 tool_name,
