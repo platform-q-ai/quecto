@@ -463,6 +463,20 @@ impl std::fmt::Debug for DeviceCodeResponse {
 /// Maximum error body size to read from OAuth server responses (4 KB).
 const MAX_ERROR_BODY_BYTES: usize = 4096;
 
+async fn read_error_body_bounded(mut resp: reqwest::Response) -> Vec<u8> {
+    let mut body = Vec::with_capacity(MAX_ERROR_BODY_BYTES);
+    while body.len() < MAX_ERROR_BODY_BYTES {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                let remaining = MAX_ERROR_BODY_BYTES - body.len();
+                body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+            }
+            Ok(None) | Err(_) => break,
+        }
+    }
+    body
+}
+
 /// Initiate a device code flow: POST to the device code endpoint and
 /// return the response containing the user code and verification URI.
 pub async fn request_device_code(config: &OAuthConfig) -> Result<DeviceCodeResponse, DomainError> {
@@ -477,13 +491,10 @@ pub async fn request_device_code(config: &OAuthConfig) -> Result<DeviceCodeRespo
 
     let status = resp.status().as_u16();
     if status != 200 {
-        // Read and discard the body (truncated to prevent OOM from
-        // malicious servers), but do NOT include server response
+        // Read and discard at most a small prefix to avoid retaining a large
+        // error response from a malicious server. Do NOT include server response
         // details in the error message to avoid leaking internals.
-        let _ = resp
-            .bytes()
-            .await
-            .map(|b| b.len().min(MAX_ERROR_BODY_BYTES));
+        let _ = read_error_body_bounded(resp).await;
         return Err(DomainError::Provider(format!(
             "device code request failed ({})",
             status
@@ -503,3 +514,7 @@ pub fn is_anthropic_oauth_token(token: &str) -> bool {
 #[cfg(test)]
 #[path = "oauth_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "oauth_error_body_tests.rs"]
+mod error_body_tests;

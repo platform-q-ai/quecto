@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 #[tokio::test]
 async fn test_progress_callback_tool_started_fired_for_each_tool_call() {
@@ -292,6 +293,47 @@ async fn test_progress_callback_tool_finished_includes_tool_call_id() {
     } else {
         panic!("expected ToolFinished event, got: {:?}", *fired);
     }
+}
+
+#[tokio::test]
+async fn test_progress_callback_tool_finished_preview_handles_mid_codepoint_cap() {
+    let multibyte = "€".repeat(DEFAULT_OUTPUT_CAP_BYTES / "€".len() + 1);
+    let (agent, _, events) = make_agent_with_callback(
+        vec![
+            tool_call_response("bash", r#"{"command":"emit multibyte"}"#),
+            text_response("done"),
+        ],
+        vec![("bash", &multibyte)],
+    );
+    let mut messages = vec![Message::user("run it")];
+
+    agent.run_loop(&mut messages).await.unwrap();
+
+    let fired = events.lock().unwrap();
+    let result_content = fired
+        .iter()
+        .find_map(|e| {
+            if let crate::domain::agent::AgentProgressEvent::ToolFinished {
+                result_content, ..
+            } = e
+            {
+                Some(result_content)
+            } else {
+                None
+            }
+        })
+        .expect("expected ToolFinished event");
+    let expected_chars = DEFAULT_OUTPUT_CAP_BYTES / "€".len();
+    let expected = "€".repeat(expected_chars);
+    assert_eq!(
+        result_content, &expected,
+        "preview should keep the maximal valid UTF-8 prefix within the byte cap"
+    );
+    assert_eq!(
+        result_content.len(),
+        expected_chars * "€".len(),
+        "preview should stay within byte cap without dropping valid complete characters"
+    );
 }
 
 #[path = "agent_loop_retry_tests.rs"]

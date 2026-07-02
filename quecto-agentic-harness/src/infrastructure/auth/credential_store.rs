@@ -124,8 +124,8 @@ impl CredentialStore {
 
     /// Save all credentials to disk with restricted file permissions (0600).
     ///
-    /// On Unix, uses `OpenOptions` with mode 0o600 to create the file atomically
-    /// with restricted permissions, avoiding the TOCTOU race of write-then-chmod.
+    /// On Unix, writes the same-directory replacement file with mode 0o600 before
+    /// atomically renaming it into place, avoiding write-then-chmod exposure.
     fn save_all(&self, credentials: &HashMap<String, Credential>) -> Result<(), DomainError> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -138,37 +138,16 @@ impl CredentialStore {
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| DomainError::Config(format!("failed to serialize credentials: {}", e)))?;
 
-        // On Unix, open with mode 0o600 from the start to avoid the TOCTOU race
-        // where a new file is briefly world-readable between write() and chmod().
-        // Also re-enforce permissions on every write in case they were externally weakened.
+        // Write a same-directory temporary file, then rename it over the target.
+        // The previous credentials file remains intact until the replacement is
+        // fully written, so a crash/kill during save does not leave an empty or
+        // partially written credential store.
         #[cfg(unix)]
-        {
-            use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
-            use std::os::unix::fs::PermissionsExt;
-            let mut f = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&self.path)
-                .map_err(|e| {
-                    DomainError::Config(format!("failed to open credentials file: {}", e))
-                })?;
-            f.write_all(json.as_bytes())
-                .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
-            // Re-enforce permissions in case the file already existed with weaker perms.
-            let permissions = std::fs::Permissions::from_mode(0o600);
-            std::fs::set_permissions(&self.path, permissions).map_err(|e| {
-                DomainError::Config(format!("failed to set credentials file permissions: {}", e))
-            })?;
-        }
-
+        let mode = Some(0o600);
         #[cfg(not(unix))]
-        {
-            std::fs::write(&self.path, json)
-                .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
-        }
+        let mode = None;
+        crate::infrastructure::atomic_write::atomic_write(&self.path, json.as_bytes(), mode)
+            .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
 
         Ok(())
     }
@@ -435,6 +414,38 @@ mod tests {
     }
 
     // --- Sandbox hardening: credential file permission tests ---
+
+    #[test]
+    fn test_atomic_replacement_preserves_existing_credentials_until_rename() {
+        let tmp = TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        store
+            .store(make_credential("openai", "old-token", AuthMethod::Token))
+            .unwrap();
+        let before = std::fs::read(store.path()).unwrap();
+
+        let tmp_replacement = tmp.path().join(".credentials.json.test-replacement.tmp");
+        let replacement = b"{\n  \"credentials\": {}\n}";
+        std::fs::write(&tmp_replacement, replacement).unwrap();
+
+        assert_eq!(
+            std::fs::read(store.path()).unwrap(),
+            before,
+            "writing a replacement beside the credential file must not alter current credentials"
+        );
+        assert_eq!(
+            store.get("openai").unwrap().unwrap().token,
+            "old-token",
+            "previous credential must remain readable before the replacement is renamed"
+        );
+
+        std::fs::rename(&tmp_replacement, store.path()).unwrap();
+        assert_eq!(
+            std::fs::read(store.path()).unwrap(),
+            replacement,
+            "the replacement should become visible only after the final rename"
+        );
+    }
 
     #[cfg(unix)]
     #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use quecto::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 // Agent Loop Steps
 // ===========================================================================
@@ -14,6 +15,14 @@ pub(super) fn ensure_mock_llm(world: &mut QuectoWorld) -> Arc<MockLlmProvider> {
 
 /// Helper: build an AgentLoopImpl from the world's current state.
 fn build_agent_loop(world: &QuectoWorld, max_iterations: Option<u32>) -> AgentLoopImpl {
+    build_agent_loop_with_callback(world, max_iterations, None)
+}
+
+fn build_agent_loop_with_callback(
+    world: &QuectoWorld,
+    max_iterations: Option<u32>,
+    progress_callback: Option<Arc<dyn Fn(quecto::domain::agent::AgentProgressEvent) + Send + Sync>>,
+) -> AgentLoopImpl {
     let provider = world.mock_llm.clone().expect("mock LLM not configured") as Arc<dyn LlmProvider>;
 
     // Build a tool registry from mock_tools or tool_registry
@@ -42,7 +51,7 @@ fn build_agent_loop(world: &QuectoWorld, max_iterations: Option<u32>) -> AgentLo
         session_key: String::new(),
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: 190_000,
-        progress_callback: None,
+        progress_callback,
         streaming: false,
         effort: None,
         system_prompt_provider: None,
@@ -94,6 +103,15 @@ fn given_llm_returns_tool_call(world: &mut QuectoWorld, tool_name: String, step:
 #[given(expr = "the tool {string} returns {string}")]
 fn given_tool_returns(world: &mut QuectoWorld, tool_name: String, response: String) {
     let tool = Arc::new(MockBddTool::new(&tool_name, &response));
+    world.mock_tools.insert(tool_name, tool);
+}
+
+#[given(
+    expr = "the tool {string} returns output whose byte limit falls inside a multibyte character"
+)]
+fn given_tool_returns_mid_codepoint_output(world: &mut QuectoWorld, tool_name: String) {
+    let output = "€".repeat(DEFAULT_OUTPUT_CAP_BYTES / "€".len() + 1);
+    let tool = Arc::new(MockBddTool::new(&tool_name, &output));
     world.mock_tools.insert(tool_name, tool);
 }
 
@@ -239,6 +257,32 @@ fn when_agent_processes_message(world: &mut QuectoWorld, message: String) {
     world.agent_result = Some(result.expect("agent process failed"));
 }
 
+#[when(expr = "the agent reports progress while processing message {string}")]
+fn when_agent_processes_message_with_progress(world: &mut QuectoWorld, message: String) {
+    let preview = Arc::new(std::sync::Mutex::new(None));
+    let preview_for_callback = Arc::clone(&preview);
+    let callback = Arc::new(move |event| {
+        if let quecto::domain::agent::AgentProgressEvent::ToolFinished { result_content, .. } =
+            event
+        {
+            *preview_for_callback.lock().unwrap() = Some(result_content);
+        }
+    });
+    let max_iter = world
+        .env_overrides
+        .get("_max_tool_iterations")
+        .and_then(|v| v.parse::<u32>().ok());
+    let agent = build_agent_loop_with_callback(world, max_iter, Some(callback));
+
+    let mut messages = vec![Message::user(message)];
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(agent.process(&mut messages));
+
+    world.agent_result = Some(result.expect("agent process failed"));
+    world.tool_result_preview = preview.lock().unwrap().clone();
+}
+
 #[when("the agent sends a request to the LLM")]
 fn when_agent_sends_request(world: &mut QuectoWorld) {
     let agent = build_agent_loop(world, None);
@@ -284,6 +328,36 @@ fn then_both_tools_executed(world: &mut QuectoWorld) {
         result.tool_iterations, 2,
         "expected 2 tool iterations, got {}",
         result.tool_iterations
+    );
+}
+
+#[then("the tool result preview should contain only complete characters")]
+fn then_tool_result_preview_contains_complete_characters(world: &mut QuectoWorld) {
+    let preview = world
+        .tool_result_preview
+        .as_ref()
+        .expect("tool result preview not captured");
+    assert!(
+        preview.chars().all(|ch| ch == '€'),
+        "preview must contain only complete multibyte characters, got {preview:?}"
+    );
+    assert!(
+        !preview.is_empty(),
+        "preview should retain complete characters"
+    );
+}
+
+#[then("the tool result preview should stay within the byte limit")]
+fn then_tool_result_preview_stays_within_byte_limit(world: &mut QuectoWorld) {
+    let preview = world
+        .tool_result_preview
+        .as_ref()
+        .expect("tool result preview not captured");
+    let expected_chars = DEFAULT_OUTPUT_CAP_BYTES / "€".len();
+    assert_eq!(
+        preview,
+        &"€".repeat(expected_chars),
+        "preview should keep the maximal valid UTF-8 prefix within the byte limit"
     );
 }
 

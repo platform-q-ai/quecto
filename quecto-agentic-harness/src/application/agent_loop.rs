@@ -7,7 +7,6 @@ use crate::domain::agent::{
     AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
 };
 use crate::domain::audit::{AuditEvent, AuditSink};
-use crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
@@ -19,6 +18,8 @@ use crate::domain::tool::ToolRegistry;
 mod agent_loop_clamp;
 #[path = "agent_loop_errors.rs"]
 mod agent_loop_errors;
+#[path = "agent_loop_preview.rs"]
+mod agent_loop_preview;
 #[path = "agent_loop_pruning.rs"]
 mod agent_loop_pruning;
 mod agent_loop_session;
@@ -376,12 +377,7 @@ impl AgentLoopImpl {
         // Emit ToolFinished so the REPL can replace the spinner line.
         // Cap result_content for the progress event to avoid cloning huge strings.
         // The TUI only previews the first ~10 lines anyway.
-        const MAX_RESULT_EVENT_BYTES: usize = DEFAULT_OUTPUT_CAP_BYTES;
-        let result_preview = if content.len() > MAX_RESULT_EVENT_BYTES {
-            content[..MAX_RESULT_EVENT_BYTES].to_string()
-        } else {
-            content.clone()
-        };
+        let result_preview = agent_loop_preview::tool_result_preview(&content);
         self.notify(|| AgentProgressEvent::ToolFinished {
             tool_call_id: tc.id.clone(),
             name: tc.name.clone(),

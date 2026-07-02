@@ -84,6 +84,20 @@ fn when_store_token(world: &mut QuectoWorld, token: String, provider: String) {
         .unwrap();
 }
 
+#[when(expr = "a credential update for {string} is prepared but not completed")]
+fn when_credential_update_prepared_but_not_completed(world: &mut QuectoWorld, _provider: String) {
+    let store = world
+        .credential_store
+        .as_ref()
+        .expect("credential store not set");
+    let tmp_replacement = store
+        .path()
+        .parent()
+        .expect("credentials path has a parent")
+        .join(".credentials.json.pending-update.tmp");
+    std::fs::write(&tmp_replacement, b"{\n  \"credentials\": {}\n}").unwrap();
+}
+
 #[when("I check auth status")]
 fn when_check_auth_status(world: &mut QuectoWorld) {
     let store = world

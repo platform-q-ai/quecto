@@ -478,6 +478,8 @@ pub struct QuectoWorld {
     pub efficiency_usage: Option<quecto::domain::message::UsageInfo>,
     /// Provider entry loaded from a legacy config blob
     pub efficiency_provider_entry: Option<quecto::infrastructure::config::ProviderEntry>,
+    /// Captured tool-result preview from agent progress events
+    pub tool_result_preview: Option<String>,
     // --- Grep BDD fields ---
     /// Temp dir for grep workspace (kept alive)
     pub _grep_temp_dir: Option<TempDir>,
