@@ -272,55 +272,33 @@ fn pre_merge_confirms_inline_findings_and_resolved_threads() {
 }
 
 #[test]
-fn reviewers_step_default_dimensions_include_full_set() {
-    // Issue #845: the standard review fan-out must ALWAYS include, at minimum,
-    // Architecture, Security, Performance, Correctness, Conformance-to-AC and
-    // Test-quality — not gate Correctness/Test-quality on "larger changes".
+fn reviewers_step_describes_finder_waves() {
+    // Issue #1004: the PR review fan-out is restructured from six broad
+    // self-judging dimensions into narrow mechanical finder angles with
+    // find -> verify -> single-post waves. The full token set lives in the
+    // shared helper so this native copy, examples/config.json and
+    // docs/workflow.md are pinned identically and none can silently drift.
     let config = read_native_config();
     let g = guidance(&config, "reviewers");
-
-    for dim in [
-        "Architecture",
-        "Security",
-        "Performance",
-        "Correctness",
-        "Conformance-to-AC",
-        "Test-quality",
-    ] {
-        assert!(
-            g.contains(dim),
-            "reviewers guidance should list `{dim}` in the default dimension set, got: {g}"
-        );
-    }
-
-    // The old gating phrasing ("for larger changes") must be gone — these are
-    // defaults now, not conditional extras.
-    assert!(
-        !g.contains("for larger changes"),
-        "reviewers guidance should not gate dimensions on 'for larger changes'"
-    );
+    common::assert_reviewer_finder_waves(g, "workflow-config.json");
 }
 
 #[test]
-fn reviewers_step_conformance_reviewer_checks_acceptance_criteria_and_docs() {
-    // The Conformance-to-AC reviewer must re-read the issue's acceptance criteria
-    // and check each is actually met, including docs/protocol updates.
+fn conformance_step_retains_acceptance_criteria_and_documentation_checks() {
+    // Issue #1004: Conformance-to-AC leaves the reviewer wave (asserted by the
+    // shared finder-waves helper); the standalone `conformance` step keeps that
+    // responsibility. The deleted per-dimension reviewer used to pin that AC
+    // conformance explicitly covers documentation/protocol updates — that check
+    // must survive on the step that now owns it.
     let config = read_native_config();
-    let g = guidance(&config, "reviewers").to_lowercase();
+    let g = guidance(&config, "conformance").to_lowercase();
     assert!(
-        g.contains("acceptance criteria"),
-        "reviewers guidance should require re-reading the acceptance criteria"
+        g.contains("acceptance criterion") || g.contains("acceptance criteria"),
+        "conformance step must verify the issue acceptance criteria: {g}"
     );
-    // Tighter than a bare "docs" substring (which matches "docs/protocol", URLs,
-    // etc.): require the Conformance-to-AC clause to explicitly say each AC must be
-    // met INCLUDING documentation.
     assert!(
         g.contains("documentation"),
-        "Conformance-to-AC reviewer should explicitly check documentation updates"
-    );
-    assert!(
-        g.contains("conformance-to-ac"),
-        "reviewers guidance should name the Conformance-to-AC dimension"
+        "conformance step must explicitly cover documentation/protocol updates: {g}"
     );
 }
 
@@ -551,6 +529,106 @@ fn bdd_review_is_strict_and_fixes_all_valid_concerns() {
     assert!(
         g.contains("green"),
         "bdd_review should require concerns resolved before GREEN: {g}"
+    );
+}
+
+#[test]
+fn bdd_review_dispatches_three_narrow_finders() {
+    // Issue #1004: bdd_review becomes three narrow parallel finders whose
+    // findings must quote the offending line and give a concrete fix.
+    let config = read_native_config();
+    let g = guidance(&config, "bdd_review");
+    let lower = g.to_lowercase();
+
+    assert!(
+        g.contains("Gherkin discipline"),
+        "bdd_review should name the Gherkin discipline finder: {g}"
+    );
+    assert!(
+        g.contains("Falsifiability"),
+        "bdd_review should name the Falsifiability finder: {g}"
+    );
+    assert!(
+        g.contains("Coverage"),
+        "bdd_review should name the Coverage finder: {g}"
+    );
+    // Findings must quote the offending line + concrete fix.
+    assert!(
+        lower.contains("quote the offending line"),
+        "bdd_review findings must quote the offending line: {g}"
+    );
+    assert!(
+        lower.contains("concrete fix"),
+        "bdd_review findings must include a concrete fix: {g}"
+    );
+    // Falsifiability: per assertion, name the change that would fail it; flag
+    // self-asserted state, constant comparisons, type-level facts.
+    assert!(
+        lower.contains("constant")
+            && (lower.contains("self-asserted") || lower.contains("type-level")),
+        "falsifiability finder should flag constant comparisons / self-asserted state / type-level facts: {g}"
+    );
+    // Coverage: AC<->scenario mapping + boundary pinning on both sides.
+    assert!(
+        lower.contains("boundary") && lower.contains("both sides"),
+        "coverage finder should require both sides of every numeric/size limit tested: {g}"
+    );
+}
+
+#[test]
+fn red_step_requires_per_assertion_failure_evidence() {
+    // Issue #1004: RED evidence is per new Then step and per new test assertion,
+    // not per test target — every new assertion must individually be shown to
+    // fail before implementation. A tautology cannot produce that evidence.
+    let config = read_native_config();
+    let g = guidance(&config, "red");
+    let lower = g.to_lowercase();
+    assert!(
+        lower.contains("per new then step") || lower.contains("every new then step"),
+        "red guidance should require failure evidence per new Then step: {g}"
+    );
+    assert!(
+        lower.contains("per new test assertion") || lower.contains("every new assertion"),
+        "red guidance should require failure evidence per new test assertion: {g}"
+    );
+    // "individually" alone is a common English word; pin the distinctive
+    // phrase so an unrelated sentence cannot satisfy this.
+    assert!(
+        lower.contains("individually be shown to fail"),
+        "red guidance should require each assertion to individually be shown to fail: {g}"
+    );
+}
+
+#[test]
+fn adr_records_review_restructure_decision() {
+    // Issue #1004: an ADR records the move from six broad self-judging PR
+    // reviewers to find -> verify -> single-post waves and the per-assertion
+    // RED evidence gate, with the PR #1001 retrospective as context.
+    let adr = read_repo_file(
+        "docs/architecture-design-records/adr-0007-review-finder-waves-adversarial-verification.md",
+    );
+    let lower = adr.to_lowercase();
+    for section in ["## Context", "## Decision", "## Consequences"] {
+        assert!(
+            adr.contains(section),
+            "ADR should have a `{section}` section"
+        );
+    }
+    assert!(
+        adr.contains("#1001"),
+        "ADR context should cite the PR #1001 retrospective"
+    );
+    assert!(
+        lower.contains("tautolog"),
+        "ADR context should record the tautological/vacuous assertion escape"
+    );
+    assert!(
+        lower.contains("verify") && lower.contains("find"),
+        "ADR decision should describe find -> verify -> single-post waves"
+    );
+    assert!(
+        lower.contains("red evidence") || lower.contains("per-assertion"),
+        "ADR decision should record the per-assertion RED evidence gate"
     );
 }
 
