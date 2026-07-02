@@ -44,3 +44,11 @@ Feature: Mouse text selection and clipboard copy (#528)
     When the OSC 52 clipboard flush fails
     Then the clipboard copy result should be an error
     And clipboard failure feedback should not include the copied text
+
+  @wip @issue-1002
+  Scenario: Mouse selection copies only conversation content
+    Given the TUI shows navigation content beside conversation content
+    When the user copies a mouse selection that begins outside the conversation
+    Then the clipboard text should contain only the selected conversation content
+    And the clipboard text should not contain navigation content
+    And the clipboard text should not contain the divider

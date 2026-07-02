@@ -684,6 +684,8 @@ impl App {
         };
 
         let lines = &self.last_rendered_lines;
+        let (panel_width, divider_width, _) = self.frame_split();
+        let body_start_col = panel_width.saturating_add(divider_width);
         let mut result = String::new();
 
         for row in start.row..=end.row {
@@ -705,8 +707,8 @@ impl App {
                 chars.len()
             };
 
-            let col_start = col_start.min(chars.len());
-            let col_end = col_end.min(chars.len());
+            let col_start = col_start.max(body_start_col).min(chars.len());
+            let col_end = col_end.max(body_start_col).min(chars.len());
 
             let segment: String = chars[col_start..col_end].iter().collect();
 

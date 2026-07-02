@@ -1,6 +1,7 @@
 //! Tests for pure helper functions in `app_methods.rs` (issue #729).
 
 use super::app_methods;
+use super::app_selection::SelectionAnchor;
 use crate::infrastructure::client::Client;
 use crate::infrastructure::terminal::Terminal;
 use crate::interface::component::Component;
@@ -197,6 +198,98 @@ fn subagent_activity_line_frame_wraps() {
     // Frame index beyond SPINNER_FRAMES.len() should wrap without panic.
     let line = app_methods::subagent_activity_line(1, 1000);
     assert!(!line.is_empty());
+}
+
+#[tokio::test]
+async fn extract_selection_omits_navigation_panel_and_divider_columns() {
+    let mut app = test_app_for_methods().await;
+    app.agent_connected = true;
+
+    for terminal_width in [50, 80] {
+        app.terminal.width = terminal_width;
+        let (panel_width, divider_width, _) = app.frame_split();
+        let body_start = panel_width + divider_width;
+        let line = format!("{:<panel_width$}│ BODY text", "NAVIGATION");
+        assert!(line[..panel_width].contains("NAVIGATION"));
+        assert_eq!(line.chars().nth(panel_width), Some('│'));
+        assert_eq!(line.chars().nth(body_start - 1), Some(' '));
+        assert_eq!(line.chars().nth(body_start), Some('B'));
+        let end_col = line.chars().count() as u16;
+        app.last_rendered_lines = vec![line];
+
+        let cases = [
+            (0, "BODY text"),
+            (body_start.saturating_sub(1) as u16, "BODY text"),
+            (body_start as u16, "BODY text"),
+            (body_start.saturating_add(1) as u16, "ODY text"),
+        ];
+
+        for (start_col, expected) in cases {
+            let copied = app.extract_selection(
+                &SelectionAnchor {
+                    col: start_col,
+                    row: 0,
+                },
+                &SelectionAnchor {
+                    col: end_col,
+                    row: 0,
+                },
+            );
+            assert_eq!(
+                copied, expected,
+                "terminal width {terminal_width}, selection starting at column {start_col}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn extract_selection_multi_row_omits_panel_and_divider() {
+    let mut app = test_app_for_methods().await;
+    app.agent_connected = true;
+
+    for terminal_width in [50, 80] {
+        app.terminal.width = terminal_width;
+        let (panel_width, divider_width, _) = app.frame_split();
+        let body_start = panel_width + divider_width;
+
+        // Three rows with panel + divider + body content.
+        let row0 = format!("{:<panel_width$}│ Row zero body", "NAV");
+        let row1 = format!("{:<panel_width$}│ Row one body", "NAV");
+        let row2 = format!("{:<panel_width$}│ Row two body", "NAV");
+        app.last_rendered_lines = vec![row0.clone(), row1.clone(), row2.clone()];
+
+        // Selection spans all three rows, starting at column 0 (inside the panel).
+        let end_col = row0.chars().count() as u16;
+        let copied = app.extract_selection(
+            &SelectionAnchor { col: 0, row: 0 },
+            &SelectionAnchor {
+                col: end_col,
+                row: 2,
+            },
+        );
+
+        let body_content = |line: &str| -> String { line.chars().skip(body_start).collect() };
+        let expected = [
+            body_content(&row0),
+            body_content(&row1),
+            body_content(&row2),
+        ]
+        .join("\n");
+        assert_eq!(
+            copied, expected,
+            "terminal width {terminal_width}: multi-row selection from col 0 must skip panel+divider on every row"
+        );
+        // Negative: no panel label or divider leaked into the copied text.
+        assert!(
+            !copied.contains("NAV"),
+            "copied text must not contain panel content: {copied:?}"
+        );
+        assert!(
+            !copied.contains('│'),
+            "copied text must not contain the divider: {copied:?}"
+        );
+    }
 }
 
 // ── strip_ansi ───────────────────────────────────────────────────────────
