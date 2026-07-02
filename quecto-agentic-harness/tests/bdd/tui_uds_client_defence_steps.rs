@@ -5,19 +5,23 @@
 //! event frame.
 
 use super::*;
-use quecto_tui::infrastructure::client::{Client, Event};
+use quecto_tui::infrastructure::client::{Client, Event, MAX_LINE_BYTES};
 
-const MAX_LINE_BYTES: usize = 1_048_576;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixListener;
+
+/// Marker embedded in the oversized frame's token payload. The frame is valid
+/// JSON, so if the client ever regressed to unbounded reads it would parse and
+/// deliver a token containing this marker — which the ignore step rejects.
+const OVERSIZED_MARKER: &str = "oversized-payload-";
 
 #[derive(Debug)]
 pub struct TuiDefenceStream {
     runtime: tokio::runtime::Runtime,
     socket_path: PathBuf,
     listener: Option<UnixListener>,
+    received_events: Vec<Event>,
     latest_event: Option<Event>,
-    oversized_retained_capacity: Option<usize>,
     completion_agent_end: Option<Event>,
     completion_turn_end: Option<Event>,
     expected_under_cap_token_len: Option<usize>,
@@ -36,8 +40,8 @@ fn tui_connected_to_agent_event_stream(world: &mut QuectoWorld) {
         runtime,
         socket_path,
         listener: Some(listener),
+        received_events: Vec::new(),
         latest_event: None,
-        oversized_retained_capacity: None,
         completion_agent_end: None,
         completion_turn_end: None,
         expected_under_cap_token_len: None,
@@ -53,7 +57,7 @@ fn send_frames_and_receive(world: &mut QuectoWorld, frames: Vec<Vec<u8>>) -> Vec
     let socket_path = stream.socket_path.clone();
     let listener = stream.listener.take().expect("listener");
     let rt = &stream.runtime;
-    let (mut client, _) = rt.block_on(async move {
+    let mut client = rt.block_on(async move {
         let client_future = Client::connect(&socket_path);
         let server = async move {
             let (mut socket, _) = listener.accept().await.expect("server accepts");
@@ -63,7 +67,7 @@ fn send_frames_and_receive(world: &mut QuectoWorld, frames: Vec<Vec<u8>>) -> Vec
             socket.flush().await.expect("flush");
         };
         let (client, _) = tokio::join!(client_future, server);
-        (client.expect("client connects"), ())
+        client.expect("client connects")
     });
     let mut events = Vec::new();
     loop {
@@ -83,14 +87,21 @@ fn send_frames_and_receive(world: &mut QuectoWorld, frames: Vec<Vec<u8>>) -> Vec
     "the agent sends an event larger than the supported event size followed by a valid token event"
 )]
 fn agent_sends_oversized_then_valid(world: &mut QuectoWorld) {
-    let oversized = [vec![b'x'; MAX_LINE_BYTES + 65_536], b"\n".to_vec()].concat();
+    // A well-formed token event whose total frame size exceeds the cap. Were
+    // the client's bound ever removed, this would parse and be delivered as a
+    // token carrying OVERSIZED_MARKER, which the ignore step would catch.
+    let mut oversized = String::with_capacity(MAX_LINE_BYTES + 131_072);
+    oversized.push_str(r#"{"type":"token","token":""#);
+    oversized.push_str(OVERSIZED_MARKER);
+    oversized.push_str(&"x".repeat(MAX_LINE_BYTES + 65_536));
+    oversized.push_str("\"}\n");
     let valid = br#"{"type":"token","token":"later"}
 "#
     .to_vec();
-    let events = send_frames_and_receive(world, vec![oversized, valid]);
+    let events = send_frames_and_receive(world, vec![oversized.into_bytes(), valid]);
     let stream = world.tui_defence_stream.as_mut().expect("stream");
-    stream.latest_event = events.into_iter().next();
-    stream.oversized_retained_capacity = Some(MAX_LINE_BYTES);
+    stream.latest_event = events.first().cloned();
+    stream.received_events = events;
 }
 
 #[when("the agent sends an event just below the supported event size limit")]
@@ -137,20 +148,11 @@ fn agent_reports_completion_with_undisplayed_details(world: &mut QuectoWorld) {
 fn tui_ignores_oversized_event(world: &mut QuectoWorld) {
     let stream = world.tui_defence_stream.as_ref().expect("stream");
     assert!(
-        !matches!(stream.latest_event, Some(Event::Unknown)),
+        !stream.received_events.iter().any(|event| matches!(
+            event,
+            Event::Token { token } if token.contains(OVERSIZED_MARKER)
+        )),
         "oversized event must not be delivered as an event"
-    );
-}
-
-#[then("the oversized event should stay within the supported event size allowance")]
-fn oversized_event_stays_within_allowance(world: &mut QuectoWorld) {
-    let stream = world.tui_defence_stream.as_ref().expect("stream");
-    assert!(
-        stream
-            .oversized_retained_capacity
-            .expect("oversized allowance")
-            <= MAX_LINE_BYTES + 4096,
-        "oversized event exceeded the supported event-size allowance"
     );
 }
 

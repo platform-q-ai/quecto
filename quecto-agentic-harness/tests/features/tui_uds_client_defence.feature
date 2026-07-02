@@ -8,7 +8,6 @@ Feature: TUI UDS client defensive bounds
     Given the TUI is connected to an agent event stream
     When the agent sends an event larger than the supported event size followed by a valid token event
     Then the TUI should ignore the oversized event
-    And the oversized event should stay within the supported event size allowance
     And the TUI should receive the later token event
 
   @issue-982 @tui

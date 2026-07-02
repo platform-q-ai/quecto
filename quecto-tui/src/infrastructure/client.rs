@@ -11,7 +11,10 @@ use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
 /// Maximum line size from the agent (1 MiB, matching quecto's protocol limit).
-const MAX_LINE_BYTES: usize = 1_048_576;
+///
+/// Public so out-of-crate tests (the harness BDD suite) can build boundary
+/// frames against the real cap instead of a duplicated literal.
+pub const MAX_LINE_BYTES: usize = 1_048_576;
 
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
 
@@ -353,8 +356,13 @@ where
     R: AsyncBufRead + Unpin,
 {
     line.clear();
+    // Reclaim memory here rather than in the caller's loop so the reclaim
+    // runs on every iteration, including ones that drop the previous line
+    // (oversized, invalid UTF-8, empty) and skip the caller's loop tail.
+    if line.capacity() > 64 * 1024 {
+        line.shrink_to(8 * 1024);
+    }
     let mut total = 0;
-    let mut discard_rest = false;
     loop {
         let available = reader.fill_buf().await?;
         if available.is_empty() {
@@ -363,12 +371,10 @@ where
 
         let newline_pos = available.iter().position(|byte| *byte == b'\n');
         let take = newline_pos.map_or(available.len(), |pos| pos + 1);
-        let remaining_capacity = MAX_LINE_BYTES.saturating_sub(line.len());
-        if !discard_rest && remaining_capacity > 0 {
-            let copy_len = remaining_capacity.min(take);
-            line.extend_from_slice(&available[..copy_len]);
-            discard_rest = copy_len < take;
-        }
+        // Once the line reaches MAX_LINE_BYTES, remaining_capacity stays 0 and
+        // the rest of the oversized line is consumed without being copied.
+        let copy_len = MAX_LINE_BYTES.saturating_sub(line.len()).min(take);
+        line.extend_from_slice(&available[..copy_len]);
         total += take;
         reader.consume(take);
 
@@ -471,10 +477,6 @@ impl Client {
                         // disconnect to the UI on the next send.
                         break;
                     }
-                }
-                // Reclaim memory if a large line inflated the buffer.
-                if line.capacity() > 64 * 1024 {
-                    line.shrink_to(8 * 1024);
                 }
             }
         });

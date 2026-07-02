@@ -196,15 +196,15 @@ fn event_deserializes_agent_end() {
 }
 
 #[test]
-fn agent_end_does_not_retain_unused_messages_payload() {
+fn agent_end_tolerates_unused_messages_payload() {
+    // The wire format still carries `messages`; deserialization must succeed
+    // while serde drops the unconsumed field. Retention itself is asserted by
+    // the BDD step "undisplayed completion details do not remain in the
+    // client event", which fires if the field is ever re-added to the enum.
     let json = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"unused-agent-end-payload"}]}"#;
     let event: Event = serde_json::from_str(json).unwrap();
 
     assert!(matches!(event, Event::AgentEnd));
-    assert!(
-        !format!("{event:?}").contains("unused-agent-end-payload"),
-        "agent_end messages are not consumed by the TUI and must not be retained"
-    );
 }
 
 // ── Integration: result text extraction ─────────────────────────
@@ -437,7 +437,9 @@ fn event_deserializes_turn_end() {
 }
 
 #[test]
-fn turn_end_keeps_message_but_does_not_retain_unused_tool_results() {
+fn turn_end_keeps_message_and_tolerates_unused_tool_results() {
+    // See agent_end_tolerates_unused_messages_payload for why retention is
+    // not re-asserted here.
     let json = r#"{"type":"turn_end","message":{"role":"assistant","content":"kept"},"toolResults":[{"content":[{"type":"text","text":"unused-turn-end-payload"}]}]}"#;
     let event: Event = serde_json::from_str(json).unwrap();
 
@@ -445,10 +447,6 @@ fn turn_end_keeps_message_but_does_not_retain_unused_tool_results() {
         Event::TurnEnd { message } => assert_eq!(message["content"], "kept"),
         _ => panic!("expected TurnEnd"),
     }
-    assert!(
-        !format!("{event:?}").contains("unused-turn-end-payload"),
-        "turn_end tool results are not consumed by the TUI and must not be retained"
-    );
 }
 
 #[test]

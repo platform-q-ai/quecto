@@ -1,6 +1,41 @@
 use super::*;
 use tokio::io::AsyncWriteExt;
 
+/// Guard that removes a test's temp dir (and its socket) on drop, so reruns
+/// under a recycled PID never hit a stale socket file.
+struct TempDirGuard(std::path::PathBuf);
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Bind a fresh Unix socket under a per-test temp dir. Returns the listener,
+/// the socket path, and a guard that cleans the dir up on drop.
+fn bind_test_socket(name: &str) -> (tokio::net::UnixListener, std::path::PathBuf, TempDirGuard) {
+    let dir = std::env::temp_dir().join(format!("quecto-tui-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let socket_path = dir.join("agent.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    (listener, socket_path, TempDirGuard(dir))
+}
+
+/// Build a well-formed token event frame (without trailing newline) whose
+/// total length is exactly `frame_len` bytes.
+fn token_frame_of_len(frame_len: usize) -> (String, usize) {
+    let token_prefix = r#"{"type":"token","token":""#;
+    let token_suffix = r#""}"#;
+    let token_len = frame_len - token_prefix.len() - token_suffix.len();
+    let mut frame = String::with_capacity(frame_len);
+    frame.push_str(token_prefix);
+    frame.push_str(&"a".repeat(token_len));
+    frame.push_str(token_suffix);
+    assert_eq!(frame.len(), frame_len);
+    (frame, token_len)
+}
+
 #[tokio::test]
 async fn oversized_line_read_keeps_buffer_bounded_and_resumes_at_next_line() {
     let oversized = vec![b'x'; MAX_LINE_BYTES + 65_536];
@@ -29,6 +64,11 @@ async fn oversized_line_read_keeps_buffer_bounded_and_resumes_at_next_line() {
         bytes_read > 0,
         "reader should resume at the next framed event"
     );
+    assert!(
+        line.capacity() <= 64 * 1024,
+        "the next read must reclaim the buffer inflated by the oversized frame; capacity was {}",
+        line.capacity()
+    );
     let event: Event = serde_json::from_str(std::str::from_utf8(&line).unwrap().trim()).unwrap();
     match event {
         Event::Token { token } => assert_eq!(token, "after"),
@@ -38,14 +78,7 @@ async fn oversized_line_read_keeps_buffer_bounded_and_resumes_at_next_line() {
 
 #[tokio::test]
 async fn client_connect_drops_invalid_utf8_instead_of_normalizing_it() {
-    let dir = std::env::temp_dir().join(format!(
-        "quecto-tui-invalid-utf8-client-test-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let socket_path = dir.join("agent.sock");
-    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    let (listener, socket_path, _dir) = bind_test_socket("invalid-utf8-client-test");
 
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
@@ -76,23 +109,11 @@ async fn client_connect_drops_invalid_utf8_instead_of_normalizing_it() {
 
 #[tokio::test]
 async fn client_connect_handles_line_just_under_cap() {
-    let dir = std::env::temp_dir().join(format!(
-        "quecto-tui-under-cap-client-test-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let socket_path = dir.join("agent.sock");
-    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    let (listener, socket_path, _dir) = bind_test_socket("under-cap-client-test");
 
-    let token_prefix = r#"{"type":"token","token":""#;
-    let token_suffix = r#""}"#;
-    let token_len = MAX_LINE_BYTES - token_prefix.len() - token_suffix.len() - 1;
-    let mut frame = String::with_capacity(MAX_LINE_BYTES);
-    frame.push_str(token_prefix);
-    frame.push_str(&"a".repeat(token_len));
-    frame.push_str(token_suffix);
-    assert_eq!(frame.len(), MAX_LINE_BYTES - 1);
+    // Content of MAX-1 bytes; with the newline the line is exactly MAX bytes —
+    // the largest frame the client accepts.
+    let (frame, token_len) = token_frame_of_len(MAX_LINE_BYTES - 1);
 
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
@@ -108,6 +129,44 @@ async fn client_connect_handles_line_just_under_cap() {
     {
         Some(Event::Token { token }) => assert_eq!(token.len(), token_len),
         other => panic!("line just under cap should be handled normally, got {other:?}"),
+    }
+
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn client_connect_drops_line_exactly_at_cap() {
+    let (listener, socket_path, _dir) = bind_test_socket("at-cap-client-test");
+
+    // Content of exactly MAX bytes: with the newline the line is one byte over
+    // the cap — the first frame that must be dropped. Pins the flip point so
+    // an off-by-one in read_bounded_line's capacity/newline handling cannot
+    // land silently between the accepted MAX-1 case and the +64KiB case.
+    let (frame, _) = token_frame_of_len(MAX_LINE_BYTES);
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream.write_all(frame.as_bytes()).await.unwrap();
+        stream.write_all(b"\n").await.unwrap();
+        stream
+            .write_all(b"{\"type\":\"token\",\"token\":\"after\"}\n")
+            .await
+            .unwrap();
+        stream.flush().await.unwrap();
+    });
+
+    let mut client = Client::connect(&socket_path).await.unwrap();
+    match tokio::time::timeout(std::time::Duration::from_secs(2), client.recv())
+        .await
+        .unwrap()
+    {
+        Some(Event::Token { token }) => {
+            assert_eq!(
+                token, "after",
+                "at-cap frame must be dropped, not delivered"
+            );
+        }
+        other => panic!("expected the event after the at-cap frame, got {other:?}"),
     }
 
     server.await.unwrap();
