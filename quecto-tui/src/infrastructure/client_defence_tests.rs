@@ -10,7 +10,7 @@ async fn oversized_line_read_keeps_buffer_bounded_and_resumes_at_next_line() {
     ]
     .concat();
     let mut reader = tokio::io::BufReader::new(input.as_slice());
-    let mut line = String::new();
+    let mut line = Vec::new();
 
     let bytes_read = read_bounded_line(&mut reader, &mut line).await.unwrap();
     assert!(
@@ -29,11 +29,49 @@ async fn oversized_line_read_keeps_buffer_bounded_and_resumes_at_next_line() {
         bytes_read > 0,
         "reader should resume at the next framed event"
     );
-    let event: Event = serde_json::from_str(line.trim()).unwrap();
+    let event: Event = serde_json::from_str(std::str::from_utf8(&line).unwrap().trim()).unwrap();
     match event {
         Event::Token { token } => assert_eq!(token, "after"),
         other => panic!("unexpected event after oversized line: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn client_connect_drops_invalid_utf8_instead_of_normalizing_it() {
+    let dir = std::env::temp_dir().join(format!(
+        "quecto-tui-invalid-utf8-client-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let socket_path = dir.join("agent.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream
+            .write_all(b"{\"type\":\"token\",\"token\":\"")
+            .await
+            .unwrap();
+        stream.write_all(&[0xff]).await.unwrap();
+        stream.write_all(b"\"}\n").await.unwrap();
+        stream
+            .write_all(b"{\"type\":\"token\",\"token\":\"after\"}\n")
+            .await
+            .unwrap();
+        stream.flush().await.unwrap();
+    });
+
+    let mut client = Client::connect(&socket_path).await.unwrap();
+    match tokio::time::timeout(std::time::Duration::from_secs(2), client.recv())
+        .await
+        .unwrap()
+    {
+        Some(Event::Token { token }) => assert_eq!(token, "after"),
+        other => panic!("invalid UTF-8 frame should be dropped before later event, got {other:?}"),
+    }
+
+    server.await.unwrap();
 }
 
 #[tokio::test]

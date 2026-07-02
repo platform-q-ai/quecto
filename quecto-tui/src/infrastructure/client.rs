@@ -11,7 +11,7 @@ use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
 /// Maximum line size from the agent (1 MiB, matching quecto's protocol limit).
-pub const MAX_LINE_BYTES: usize = 1_048_576;
+const MAX_LINE_BYTES: usize = 1_048_576;
 
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
 
@@ -348,7 +348,7 @@ fn serialize_command(cmd: &Command) -> Result<String, ClientError> {
     Ok(json)
 }
 
-async fn read_bounded_line<R>(reader: &mut R, line: &mut String) -> std::io::Result<usize>
+async fn read_bounded_line<R>(reader: &mut R, line: &mut Vec<u8>) -> std::io::Result<usize>
 where
     R: AsyncBufRead + Unpin,
 {
@@ -366,7 +366,7 @@ where
         let remaining_capacity = MAX_LINE_BYTES.saturating_sub(line.len());
         if !discard_rest && remaining_capacity > 0 {
             let copy_len = remaining_capacity.min(take);
-            line.push_str(&String::from_utf8_lossy(&available[..copy_len]));
+            line.extend_from_slice(&available[..copy_len]);
             discard_rest = copy_len < take;
         }
         total += take;
@@ -376,16 +376,6 @@ where
             return Ok(total);
         }
     }
-}
-
-#[cfg(any(test, feature = "test-harness"))]
-pub async fn read_bounded_line_capacity_for_test<R>(reader: &mut R) -> std::io::Result<usize>
-where
-    R: AsyncBufRead + Unpin,
-{
-    let mut line = String::new();
-    read_bounded_line(reader, &mut line).await?;
-    Ok(line.capacity())
 }
 
 impl CommandSender {
@@ -437,22 +427,24 @@ impl Client {
         // Spawn background event reader
         tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
-            let mut line = String::new();
+            let mut line = Vec::new();
             loop {
-                line.clear();
                 match read_bounded_line(&mut reader, &mut line).await {
                     Ok(0) => break, // EOF — agent closed the connection
                     Ok(_) => {
                         // Enforce max line size while framing so malicious/buggy agents
                         // cannot inflate this buffer beyond the protocol cap.
-                        if line.len() >= MAX_LINE_BYTES && !line.ends_with('\n') {
+                        if line.len() >= MAX_LINE_BYTES && !line.ends_with(b"\n") {
                             // Drop oversized lines silently. The TUI owns the
                             // terminal, so printing to stderr here would smear
                             // diagnostics over the UI (same policy as the
                             // unparseable-event branch below).
                             continue;
                         }
-                        let trimmed = line.trim();
+                        let trimmed = match std::str::from_utf8(&line) {
+                            Ok(value) => value.trim(),
+                            Err(_) => continue,
+                        };
                         if trimmed.is_empty() {
                             continue;
                         }

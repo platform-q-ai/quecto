@@ -5,9 +5,9 @@
 //! event frame.
 
 use super::*;
-use quecto_tui::infrastructure::client::{
-    Client, Event, MAX_LINE_BYTES, read_bounded_line_capacity_for_test,
-};
+use quecto_tui::infrastructure::client::{Client, Event};
+
+const MAX_LINE_BYTES: usize = 1_048_576;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixListener;
 
@@ -17,9 +17,9 @@ pub struct TuiDefenceStream {
     socket_path: PathBuf,
     listener: Option<UnixListener>,
     latest_event: Option<Event>,
-    oversized_capacity: Option<usize>,
     completion_agent_end: Option<Event>,
     completion_turn_end: Option<Event>,
+    expected_under_cap_token_len: Option<usize>,
     _temp_dir: TempDir,
 }
 
@@ -36,9 +36,9 @@ fn tui_connected_to_agent_event_stream(world: &mut QuectoWorld) {
         socket_path,
         listener: Some(listener),
         latest_event: None,
-        oversized_capacity: None,
         completion_agent_end: None,
         completion_turn_end: None,
+        expected_under_cap_token_len: None,
         _temp_dir: temp_dir,
     });
 }
@@ -88,15 +88,6 @@ fn agent_sends_oversized_then_valid(world: &mut QuectoWorld) {
     let events = send_frames_and_receive(world, vec![oversized, valid]);
     let stream = world.tui_defence_stream.as_mut().expect("stream");
     stream.latest_event = events.into_iter().next();
-
-    let oversized_for_capacity = [vec![b'x'; MAX_LINE_BYTES + 65_536], b"\n".to_vec()].concat();
-    let mut reader = tokio::io::BufReader::new(oversized_for_capacity.as_slice());
-    stream.oversized_capacity = Some(
-        stream
-            .runtime
-            .block_on(read_bounded_line_capacity_for_test(&mut reader))
-            .expect("bounded read capacity"),
-    );
 }
 
 #[when("the agent sends an event just below the supported event size limit")]
@@ -113,21 +104,30 @@ fn agent_sends_event_just_below_limit(world: &mut QuectoWorld) {
     let events = send_frames_and_receive(world, vec![frame.into_bytes()]);
     let stream = world.tui_defence_stream.as_mut().expect("stream");
     stream.latest_event = events.into_iter().next();
+    stream.expected_under_cap_token_len = Some(token_len);
 }
 
 #[when("the agent reports completion with details the TUI does not display")]
 fn agent_reports_completion_with_undisplayed_details(world: &mut QuectoWorld) {
-    let agent_end: Event = serde_json::from_str(
-        r#"{"type":"agent_end","messages":[{"role":"assistant","content":"undisplayed-agent-detail"}]}"#,
-    )
-    .expect("agent_end parses");
-    let turn_end: Event = serde_json::from_str(
-        r#"{"type":"turn_end","message":{"role":"assistant","content":"visible","contextTokens":7,"maxContextTokens":10},"toolResults":[{"content":[{"type":"text","text":"undisplayed-tool-detail"}]}]}"#,
-    )
-    .expect("turn_end parses");
+    let events = send_frames_and_receive(
+        world,
+        vec![
+            br#"{"type":"agent_end","messages":[{"role":"assistant","content":"undisplayed-agent-detail"}]}
+"#
+            .to_vec(),
+            br#"{"type":"turn_end","message":{"role":"assistant","content":"visible","contextTokens":7,"maxContextTokens":10},"toolResults":[{"content":[{"type":"text","text":"undisplayed-tool-detail"}]}]}
+"#
+            .to_vec(),
+        ],
+    );
     let stream = world.tui_defence_stream.as_mut().expect("stream");
-    stream.completion_agent_end = Some(agent_end);
-    stream.completion_turn_end = Some(turn_end);
+    for event in events {
+        match event {
+            Event::AgentEnd => stream.completion_agent_end = Some(Event::AgentEnd),
+            Event::TurnEnd { .. } => stream.completion_turn_end = Some(event),
+            _ => {}
+        }
+    }
 }
 
 #[then("the TUI should ignore the oversized event")]
@@ -136,15 +136,6 @@ fn tui_ignores_oversized_event(world: &mut QuectoWorld) {
     assert!(
         !matches!(stream.latest_event, Some(Event::Unknown)),
         "oversized event must not be delivered as an event"
-    );
-}
-
-#[then("the oversized event should not grow the client beyond the supported event size allowance")]
-fn oversized_event_stays_within_allowance(world: &mut QuectoWorld) {
-    let stream = world.tui_defence_stream.as_ref().expect("stream");
-    assert!(
-        stream.oversized_capacity.expect("capacity") <= MAX_LINE_BYTES + 4096,
-        "oversized event exceeded the supported allowance"
     );
 }
 
@@ -160,7 +151,14 @@ fn tui_receives_later_token_event(world: &mut QuectoWorld) {
 #[then("the TUI should receive the event")]
 fn tui_receives_event(world: &mut QuectoWorld) {
     let stream = world.tui_defence_stream.as_ref().expect("stream");
-    assert!(matches!(stream.latest_event, Some(Event::Token { .. })));
+    match &stream.latest_event {
+        Some(Event::Token { token }) => assert_eq!(
+            Some(token.len()),
+            stream.expected_under_cap_token_len,
+            "just-below-limit token should be delivered intact"
+        ),
+        other => panic!("expected token event, got {other:?}"),
+    }
 }
 
 #[then("completion is shown as before")]
