@@ -72,12 +72,20 @@ impl ClientToolState {
         reply: tokio::sync::oneshot::Sender<ToolResult>,
         timeout: std::time::Duration,
     ) {
-        let now = std::time::Instant::now();
-        let deadline = now + timeout;
-        self.pending_results
-            .retain(|_, pending| pending.deadline > now);
+        let deadline = std::time::Instant::now() + timeout;
+        self.sweep_expired_pending();
         self.pending_results
             .insert(tool_call_id, PendingResult { reply, deadline });
+    }
+
+    /// Drop pending entries whose deadline has passed. Called from every path
+    /// that already touches the map (`insert_pending`, `handle_tool_result`) so
+    /// a timed-out call on an otherwise idle client is reclaimed by the
+    /// client's own late `tool_result`, not only by the next insert.
+    pub fn sweep_expired_pending(&mut self) {
+        let now = std::time::Instant::now();
+        self.pending_results
+            .retain(|_, pending| pending.deadline > now);
     }
 }
 
@@ -305,6 +313,10 @@ pub fn handle_tool_result(args: ToolResultArgs<'_>) {
                 image_blocks: vec![],
             });
         }
+        // Reclaim any other entries whose caller has already timed out — e.g.
+        // this very result arriving late for a call `UdsTool::execute` gave up
+        // on — so an idle client doesn't hold stale slots until its next call.
+        state.sweep_expired_pending();
     }
 }
 

@@ -294,6 +294,50 @@ fn insert_pending_sweeps_expired_entries() {
     }
 }
 
+/// Regression (PR #999 review): a call that times out on an otherwise idle
+/// client must not hold its `pending_results` slot until the next insert.
+/// The client's own late `tool_result` — even for a different call id — runs
+/// `sweep_expired_pending` and reclaims the stale entry.
+#[test]
+fn tool_result_sweeps_expired_entries_on_idle_client() {
+    use crate::interface::cli::uds_ext_protocol::{
+        PendingResult, ToolResultArgs, handle_tool_result,
+    };
+
+    let registry = new_client_tool_registry();
+    let client_id = 56;
+    {
+        let mut reg = registry.lock().unwrap();
+        let state = reg.entry(client_id).or_default();
+        // A call whose `UdsTool::execute` caller already timed out (receiver
+        // dropped, deadline in the past) with no subsequent insert.
+        let (timed_out_tx, timed_out_rx) = tokio::sync::oneshot::channel();
+        drop(timed_out_rx);
+        state.pending_results.insert(
+            "timed-out-call".into(),
+            PendingResult {
+                reply: timed_out_tx,
+                deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
+            },
+        );
+    }
+
+    // A late tool_result for an unrelated (already-drained) id arrives.
+    handle_tool_result(ToolResultArgs {
+        client_id,
+        tool_call_id: "some-other-call",
+        content: "late",
+        is_error: false,
+        registry: &registry,
+    });
+
+    let reg = registry.lock().unwrap();
+    assert!(
+        reg[&client_id].pending_results.is_empty(),
+        "expired entry must be reclaimed by the client's next tool_result, not only the next insert"
+    );
+}
+
 #[tokio::test]
 async fn forwarder_cleans_pending_when_writer_has_no_receiver() {
     use crate::domain::extension_tool::ToolInvocation;
