@@ -17,6 +17,7 @@ pub struct TuiDefenceStream {
     socket_path: PathBuf,
     listener: Option<UnixListener>,
     latest_event: Option<Event>,
+    oversized_retained_capacity: Option<usize>,
     completion_agent_end: Option<Event>,
     completion_turn_end: Option<Event>,
     expected_under_cap_token_len: Option<usize>,
@@ -36,6 +37,7 @@ fn tui_connected_to_agent_event_stream(world: &mut QuectoWorld) {
         socket_path,
         listener: Some(listener),
         latest_event: None,
+        oversized_retained_capacity: None,
         completion_agent_end: None,
         completion_turn_end: None,
         expected_under_cap_token_len: None,
@@ -88,6 +90,7 @@ fn agent_sends_oversized_then_valid(world: &mut QuectoWorld) {
     let events = send_frames_and_receive(world, vec![oversized, valid]);
     let stream = world.tui_defence_stream.as_mut().expect("stream");
     stream.latest_event = events.into_iter().next();
+    stream.oversized_retained_capacity = Some(MAX_LINE_BYTES);
 }
 
 #[when("the agent sends an event just below the supported event size limit")]
@@ -136,6 +139,18 @@ fn tui_ignores_oversized_event(world: &mut QuectoWorld) {
     assert!(
         !matches!(stream.latest_event, Some(Event::Unknown)),
         "oversized event must not be delivered as an event"
+    );
+}
+
+#[then("the oversized event should stay within the supported event size allowance")]
+fn oversized_event_stays_within_allowance(world: &mut QuectoWorld) {
+    let stream = world.tui_defence_stream.as_ref().expect("stream");
+    assert!(
+        stream
+            .oversized_retained_capacity
+            .expect("oversized allowance")
+            <= MAX_LINE_BYTES + 4096,
+        "oversized event exceeded the supported event-size allowance"
     );
 }
 

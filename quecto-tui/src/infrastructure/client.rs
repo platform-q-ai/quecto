@@ -524,7 +524,7 @@ impl Client {
 
 #[cfg(test)]
 #[path = "client_defence_tests.rs"]
-mod defence_tests;
+mod client_defence_tests;
 
 #[cfg(test)]
 #[path = "client_tests.rs"]
