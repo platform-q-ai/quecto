@@ -351,80 +351,90 @@ fn reviewers_step_requires_pr_number_not_raw_diff_and_pr_precondition() {
 }
 
 #[test]
-fn feature_js_dimensions_array_matches_full_default_set() {
-    // #862 review (Medium): `.claude/workflows/feature.js`'s `DIMENSIONS` array is
-    // the only copy that actually DRIVES execution, yet the config/doc guards do not
-    // cover it — so it could silently revert to the trio with every test green,
-    // defeating #845. Guard the executable source of truth directly.
+fn feature_js_reviewers_run_finder_waves() {
+    // #862 established that `.claude/workflows/feature.js` is the only copy that
+    // actually DRIVES execution under Claude Code, so it is guarded directly.
+    // Issue #1004 (PR #1005 review finding): the executable PR-review block must
+    // carry the same find -> verify -> single-post wave structure as the native
+    // config — pinned via the SAME shared helper so it cannot silently revert to
+    // the six broad self-posting dimensions with every test green.
     let js = read_repo_file("../.claude/workflows/feature.js");
 
-    // Extract the `const DIMENSIONS = [ ... ]` literal so we assert on the array
-    // that runs, not any prose/prompt text elsewhere in the file.
-    let after = js
-        .split_once("const DIMENSIONS = [")
-        .expect("feature.js should declare `const DIMENSIONS = [...]`")
-        .1;
-    let array = after
-        .split_once(']')
-        .expect("feature.js DIMENSIONS array should be closed with ]")
-        .0;
-
-    for dim in [
-        "Architecture",
-        "Security",
-        "Performance",
-        "Correctness",
-        "Conformance-to-AC",
-        "Test-quality",
-    ] {
-        assert!(
-            array.contains(dim),
-            "feature.js DIMENSIONS array should include `{dim}`, got: {array}"
-        );
-    }
-
-    // The Conformance-to-AC reviewer must re-read the acceptance criteria and check
-    // documentation, and reviews must be submitted (never left PENDING) — assert the
-    // executable reviewer dispatch block carries this, mirroring the config guards.
+    // The executable reviewer dispatch block: from the PR Review phase marker to
+    // the fix phase.
     let reviewer_block = js
-        .split_once("// Always dispatch the full default dimension set")
-        .expect("feature.js should describe and dispatch parallel reviewers")
+        .split_once("phase('PR Review')")
+        .expect("feature.js should have a PR Review phase")
         .1
         .split_once("// ── Fix reviews")
         .expect("feature.js reviewer block should end before fix phase")
         .0;
+    common::assert_reviewer_finder_waves(reviewer_block, "feature.js PR-review block");
+
     let lower = reviewer_block.to_lowercase();
     assert!(
-        lower.contains("acceptance criteria") && lower.contains("documentation"),
-        "feature.js Conformance-to-AC prompt should re-read acceptance criteria incl. documentation"
-    );
-    assert!(
         lower.contains("submittedat") && lower.contains("pending"),
-        "feature.js reviewer prompt should require a submitted (non-PENDING) review"
+        "feature.js Wave 3 prompt should require a submitted (non-PENDING) review"
     );
     assert!(
-        lower.contains("must not dispatch reviewers before a pr exists")
-            || lower.contains("must not be dispatched before a pr exists"),
-        "feature.js reviewer prompt should forbid dispatch before a PR exists"
+        lower.contains("must not be dispatched before a pr exists"),
+        "feature.js finder prompt should forbid dispatch before a PR exists"
     );
     assert!(
         lower.contains("forbid")
             && lower.contains("raw diff")
             && reviewer_block.contains("PR number")
             && reviewer_block.contains("gh pr diff <PR>"),
-        "feature.js reviewer prompt should forbid raw diffs and require PR number + gh pr diff <PR>"
+        "feature.js finder prompt should forbid raw diffs and require PR number + gh pr diff <PR>"
     );
     assert!(
         lower.contains("inline") && lower.contains("on the pr"),
-        "feature.js reviewer prompt should require inline comments on the PR"
+        "feature.js Wave 3 prompt should require inline comments on the PR"
     );
     assert!(
         reviewer_block.contains("prNumberMatch") && reviewer_block.contains("prNumber"),
-        "feature.js should parse and validate the returned PR number before dispatching reviewers"
+        "feature.js should parse and validate the returned PR number before dispatching finders"
     );
     assert!(
         reviewer_block.contains("PR/context: #${prNumber}"),
-        "feature.js should pass only the validated PR number to reviewer prompts"
+        "feature.js should pass only the validated PR number to finder prompts"
+    );
+
+    // Conformance-to-AC left the reviewer wave; the executable conformance
+    // phase keeps the acceptance-criteria + documentation responsibility.
+    let conformance_block = js
+        .split_once("phase('Conformance')")
+        .expect("feature.js should have a Conformance phase")
+        .1
+        .to_lowercase();
+    assert!(
+        conformance_block.contains("acceptance") && conformance_block.contains("documentation"),
+        "feature.js conformance prompt should verify acceptance criteria incl. documentation"
+    );
+}
+
+#[test]
+fn feature_js_red_requires_per_assertion_failure_evidence() {
+    // Issue #1004 mirrored into the executable feature.js: RED evidence is per
+    // new Then step / per new test assertion, not per test target.
+    let js = read_repo_file("../.claude/workflows/feature.js");
+    let red_block = js
+        .split_once("phase('RED')")
+        .expect("feature.js should have a RED phase")
+        .1
+        .split_once("phase('BDD Review')")
+        .expect("feature.js RED phase should precede BDD Review")
+        .0
+        .to_lowercase();
+    assert!(
+        (red_block.contains("per new then step") || red_block.contains("every new then step"))
+            && (red_block.contains("per new test assertion")
+                || red_block.contains("every new assertion")),
+        "feature.js RED step must require failure evidence per new Then step and per new assertion: {red_block}"
+    );
+    assert!(
+        red_block.contains("individually be shown to fail"),
+        "feature.js RED step must require each assertion to individually be shown to fail: {red_block}"
     );
 }
 
@@ -727,6 +737,22 @@ fn feature_js_bdd_review_is_strict() {
     assert!(
         bdd_block.contains("one behaviour per scenario"),
         "feature.js BDD review prompt should carry the best-practice checklist token: {bdd_block}"
+    );
+    // Issue #1004 (PR #1005 review finding): the executable bdd_review runs the
+    // same three narrow finders as the native config, with quoted-line findings.
+    for token in ["gherkin discipline", "falsifiability", "coverage"] {
+        assert!(
+            bdd_block.contains(token),
+            "feature.js BDD review should name the `{token}` finder: {bdd_block}"
+        );
+    }
+    assert!(
+        bdd_block.contains("quote the offending line") && bdd_block.contains("concrete fix"),
+        "feature.js BDD review findings must quote the offending line with a concrete fix: {bdd_block}"
+    );
+    assert!(
+        bdd_block.contains("both sides"),
+        "feature.js BDD coverage finder must pin both sides of numeric/size limits: {bdd_block}"
     );
 }
 
