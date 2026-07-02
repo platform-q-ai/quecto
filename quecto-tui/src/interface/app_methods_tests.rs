@@ -243,6 +243,55 @@ async fn extract_selection_omits_navigation_panel_and_divider_columns() {
     }
 }
 
+#[tokio::test]
+async fn extract_selection_multi_row_omits_panel_and_divider() {
+    let mut app = test_app_for_methods().await;
+    app.agent_connected = true;
+
+    for terminal_width in [50, 80] {
+        app.terminal.width = terminal_width;
+        let (panel_width, divider_width, _) = app.frame_split();
+        let body_start = panel_width + divider_width;
+
+        // Three rows with panel + divider + body content.
+        let row0 = format!("{:<panel_width$}│ Row zero body", "NAV");
+        let row1 = format!("{:<panel_width$}│ Row one body", "NAV");
+        let row2 = format!("{:<panel_width$}│ Row two body", "NAV");
+        app.last_rendered_lines = vec![row0.clone(), row1.clone(), row2.clone()];
+
+        // Selection spans all three rows, starting at column 0 (inside the panel).
+        let end_col = row0.chars().count() as u16;
+        let copied = app.extract_selection(
+            &SelectionAnchor { col: 0, row: 0 },
+            &SelectionAnchor {
+                col: end_col,
+                row: 2,
+            },
+        );
+
+        let body_content = |line: &str| -> String { line.chars().skip(body_start).collect() };
+        let expected = [
+            body_content(&row0),
+            body_content(&row1),
+            body_content(&row2),
+        ]
+        .join("\n");
+        assert_eq!(
+            copied, expected,
+            "terminal width {terminal_width}: multi-row selection from col 0 must skip panel+divider on every row"
+        );
+        // Negative: no panel label or divider leaked into the copied text.
+        assert!(
+            !copied.contains("NAV"),
+            "copied text must not contain panel content: {copied:?}"
+        );
+        assert!(
+            !copied.contains('│'),
+            "copied text must not contain the divider: {copied:?}"
+        );
+    }
+}
+
 // ── strip_ansi ───────────────────────────────────────────────────────────
 
 #[test]
