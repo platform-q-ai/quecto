@@ -39,25 +39,9 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
         }
 
         if let Some(u) = chunk.get("usage").and_then(|v| v.as_object()) {
-            usage = Some(UsageInfo {
-                prompt_tokens: u
-                    .get("prompt_tokens")
-                    .and_then(|v| v.as_u64())
-                    .and_then(|n| u32::try_from(n).ok())
-                    .unwrap_or(0),
-                completion_tokens: u
-                    .get("completion_tokens")
-                    .and_then(|v| v.as_u64())
-                    .and_then(|n| u32::try_from(n).ok())
-                    .unwrap_or(0),
-                cache_read_tokens: None,
-                cache_write_tokens: None,
-                context_tokens: u
-                    .get("total_tokens")
-                    .and_then(|v| v.as_u64())
-                    .and_then(|n| u32::try_from(n).ok()),
-                cost: None,
-            });
+            usage = Some(crate::infrastructure::providers::usage::parse_openai_usage(
+                u,
+            ));
         }
     }
 

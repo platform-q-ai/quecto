@@ -194,13 +194,19 @@ pub fn content_preview(content: &str, max_chars: usize) -> String {
     if content.len() <= max_chars {
         return content.to_string();
     }
-    // Slow path: multi-byte content or long ASCII — count characters.
-    let char_count = content.chars().count();
-    if char_count <= max_chars {
-        content.to_string()
-    } else {
-        let truncated: String = content.chars().take(max_chars.saturating_sub(3)).collect();
-        format!("{truncated}...")
+    // Bounded scan: only walk up to `max_chars` characters. If the string has
+    // at most `max_chars` chars, return it verbatim; otherwise cut on the char
+    // boundary `max_chars - 3` chars in and append the ellipsis.
+    match content.char_indices().nth(max_chars) {
+        None => content.to_string(),
+        Some(_) => {
+            let keep = max_chars.saturating_sub(3);
+            let end = content
+                .char_indices()
+                .nth(keep)
+                .map_or(content.len(), |(idx, _)| idx);
+            format!("{}...", &content[..end])
+        }
     }
 }
 

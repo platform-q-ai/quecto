@@ -89,8 +89,6 @@ pub struct ProviderEntry {
     pub api_key: String,
     #[serde(default)]
     pub api_base: String,
-    #[serde(default)]
-    pub auth_method: String,
     /// When true for the `openai` slot, use the config `api_key` directly and
     /// do not convert ChatGPT OAuth JWTs from the credential store into Codex.
     #[serde(default)]
@@ -112,8 +110,6 @@ pub struct OpenAiCompatibleEndpoint {
     #[serde(default)]
     pub api_base: String,
     #[serde(default)]
-    pub auth_method: String,
-    #[serde(default)]
     pub allow_remote_http: bool,
 }
 
@@ -122,7 +118,6 @@ impl std::fmt::Debug for ProviderEntry {
         f.debug_struct("ProviderEntry")
             .field("api_key", &"[REDACTED]")
             .field("api_base", &self.api_base)
-            .field("auth_method", &self.auth_method)
             .field("disable_codex_routing", &self.disable_codex_routing)
             .finish()
     }
@@ -142,7 +137,6 @@ impl std::fmt::Debug for OpenAiCompatibleEndpoint {
             .field("prefix", &self.prefix)
             .field("api_key", &"[REDACTED]")
             .field("api_base", &self.api_base)
-            .field("auth_method", &self.auth_method)
             .field("allow_remote_http", &self.allow_remote_http)
             .finish()
     }
@@ -620,7 +614,6 @@ mod tests {
         let entry = ProviderEntry {
             api_key: "sk-secret-key-12345".to_string(),
             api_base: "https://api.openai.com/v1".to_string(),
-            auth_method: "token".to_string(),
             disable_codex_routing: false,
         };
         let debug = format!("{:?}", entry);

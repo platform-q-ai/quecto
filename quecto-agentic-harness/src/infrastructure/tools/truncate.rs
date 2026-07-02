@@ -242,13 +242,13 @@ pub fn truncate_tail(content: &str, max_lines: usize, max_bytes: usize) -> Trunc
 /// If the line exceeds the limit, truncates and appends `... [truncated]`.
 /// Returns `(truncated_line, was_truncated)`.
 pub fn truncate_line(line: &str, max_chars: usize) -> (String, bool) {
-    let char_count = line.chars().count();
-    if char_count <= max_chars {
-        return (line.to_string(), false);
+    // Bounded scan: only walk up to `max_chars` characters. `nth(max_chars)`
+    // yields the byte offset of the first character past the limit (or None if
+    // the line fits), so we never count the whole line.
+    match line.char_indices().nth(max_chars) {
+        None => (line.to_string(), false),
+        Some((end, _)) => (format!("{}... [truncated]", &line[..end]), true),
     }
-
-    let truncated: String = line.chars().take(max_chars).collect();
-    (format!("{}... [truncated]", truncated), true)
 }
 
 /// Human-readable size formatting: "1.2KB", "3.5MB", "512B".

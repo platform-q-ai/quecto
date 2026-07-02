@@ -53,12 +53,15 @@ pub fn estimate_message_tokens(msg: &Message) -> usize {
 ///
 /// Returns `Cow::Borrowed` when the string fits (no allocation).
 pub fn truncate_utf8_safe(s: &str, max_chars: usize) -> std::borrow::Cow<'_, str> {
-    let char_count = s.chars().count();
-    if char_count <= max_chars {
-        std::borrow::Cow::Borrowed(s)
-    } else {
-        let truncated: String = s.chars().take(max_chars.saturating_sub(3)).collect();
-        std::borrow::Cow::Owned(format!("{truncated}..."))
+    // Bounded scan: only walk up to `max_chars` characters instead of counting
+    // the whole (possibly huge) string just to build a short preview.
+    match s.char_indices().nth(max_chars) {
+        None => std::borrow::Cow::Borrowed(s),
+        Some(_) => {
+            let keep = max_chars.saturating_sub(3);
+            let end = s.char_indices().nth(keep).map_or(s.len(), |(idx, _)| idx);
+            std::borrow::Cow::Owned(format!("{}...", &s[..end]))
+        }
     }
 }
 

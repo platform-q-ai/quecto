@@ -85,13 +85,15 @@ pub fn terminate_removed_entry(entry: &SubagentEntry) {
         handle.abort();
     }
     if entry.pid != 0 {
-        // Use kill(1) rather than libc::kill to avoid adding libc as a dependency.
-        let _ = std::process::Command::new("kill")
-            .arg("-TERM")
-            .arg(entry.pid.to_string())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        // Direct SIGTERM via libc (already a direct dependency; see bash/mod.rs).
+        // Avoids fork+exec of `kill(1)` and its blocking `.status()` wait, which
+        // would stall a tokio worker for every subagent in the tree.
+        // A stale/dead pid simply yields ESRCH, which we ignore.
+        //
+        // SAFETY: FFI call to `libc::kill` with an owned pid and a constant signal.
+        unsafe {
+            libc::kill(entry.pid as libc::pid_t, libc::SIGTERM);
+        }
     }
 }
 

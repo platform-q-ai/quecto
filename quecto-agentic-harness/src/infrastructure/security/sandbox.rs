@@ -359,13 +359,39 @@ fn extract_string_literals(command: &str) -> String {
     }
 
     let mut extra = String::new();
-    // Normalize metacharacters to a common separator
-    let mut normalized = command.to_string();
-    for mc in &["&&", "||"] {
-        normalized = normalized.replace(mc, ";");
+    // Normalize metacharacters (`&&`, `||`, `|`, newline) to a common `;`
+    // separator in a single scan, instead of four sequential `.replace()`
+    // passes that each allocated a fresh command-sized string (#996 item 7).
+    let bytes = command.as_bytes();
+    let mut normalized = String::with_capacity(command.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'&' if i + 1 < bytes.len() && bytes[i + 1] == b'&' => {
+                normalized.push(';');
+                i += 2;
+            }
+            b'|' => {
+                normalized.push(';');
+                // Collapse `||` to a single separator, matching the old
+                // replace("||", ";") then replace("|", ";") behaviour.
+                i += if i + 1 < bytes.len() && bytes[i + 1] == b'|' {
+                    2
+                } else {
+                    1
+                };
+            }
+            b'\n' => {
+                normalized.push(';');
+                i += 1;
+            }
+            _ => {
+                let ch = command[i..].chars().next().unwrap_or('\0');
+                normalized.push(ch);
+                i += ch.len_utf8();
+            }
+        }
     }
-    normalized = normalized.replace('|', ";");
-    normalized = normalized.replace('\n', ";");
 
     for segment in normalized.split(';') {
         let trimmed = segment.trim();

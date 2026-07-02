@@ -161,12 +161,11 @@ fn test_client_disconnect_cancels_pending() {
     let r = new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::oneshot::channel();
     {
-        r.lock()
-            .unwrap()
-            .entry(1)
-            .or_default()
-            .pending_results
-            .insert("call-1".into(), tx);
+        r.lock().unwrap().entry(1).or_default().insert_pending(
+            "call-1".into(),
+            tx,
+            std::time::Duration::from_secs(30),
+        );
     }
     handle_client_disconnect(1, &r);
     let result = rx.try_recv().unwrap();
@@ -179,12 +178,11 @@ fn test_handle_tool_result_delivers() {
     let r = new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::oneshot::channel();
     {
-        r.lock()
-            .unwrap()
-            .entry(1)
-            .or_default()
-            .pending_results
-            .insert("call-1".into(), tx);
+        r.lock().unwrap().entry(1).or_default().insert_pending(
+            "call-1".into(),
+            tx,
+            std::time::Duration::from_secs(30),
+        );
     }
     handle_tool_result(ToolResultArgs {
         client_id: 1,
@@ -254,35 +252,46 @@ fn test_two_clients_different_tools() {
 
 // ─── forward_tool_requests cleanup-on-delivery-failure (V3) ────────────
 
-/// When the targeted writer channel's receiver has been dropped
-/// (client disconnected, test harness never connected one), every
-/// `send` returns `Err(SendError)`. Without cleanup the oneshot
-/// sender would sit in `pending_results` until the 30-second
-/// UdsTool timeout fired — forever, for repeated calls into a
-/// dead writer. The forwarder must remove the pending entry so
-/// the oneshot drops and UdsTool::execute returns "Extension
-/// disconnected during execution" immediately.
-#[tokio::test]
-async fn pending_timeout_cleanup_removes_stale_entry() {
+/// `insert_pending` sweeps entries whose deadline has already passed. A stale
+/// entry (its caller long since unblocked by `UdsTool::execute`'s own timeout)
+/// must not linger in `pending_results` once a fresh call arrives — the lazy
+/// sweep reclaims the map slot without a per-call spawned timer task (#996).
+#[test]
+fn insert_pending_sweeps_expired_entries() {
+    use crate::interface::cli::uds_ext_protocol::PendingResult;
+
     let registry = new_client_tool_registry();
     let client_id = 55;
-    let (reply_tx, _reply_rx) = tokio::sync::oneshot::channel();
     {
         let mut reg = registry.lock().unwrap();
         let state = reg.entry(client_id).or_default();
-        state.pending_results.insert("stale-call".into(), reply_tx);
+        // A stale entry whose deadline is already in the past.
+        let (stale_tx, _stale_rx) = tokio::sync::oneshot::channel();
+        state.pending_results.insert(
+            "stale-call".into(),
+            PendingResult {
+                reply: stale_tx,
+                deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
+            },
+        );
+
+        // Inserting a fresh, live entry sweeps the expired one.
+        let (fresh_tx, _fresh_rx) = tokio::sync::oneshot::channel();
+        state.insert_pending(
+            "fresh-call".into(),
+            fresh_tx,
+            std::time::Duration::from_secs(30),
+        );
+
+        assert!(
+            !state.pending_results.contains_key("stale-call"),
+            "expired entry must be swept on the next insert"
+        );
+        assert!(
+            state.pending_results.contains_key("fresh-call"),
+            "the freshly inserted live entry must remain"
+        );
     }
-
-    spawn_pending_timeout_cleanup(
-        client_id,
-        "stale-call".into(),
-        registry.clone(),
-        std::time::Duration::from_millis(10),
-    );
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    let reg = registry.lock().unwrap();
-    assert!(reg[&client_id].pending_results.is_empty());
 }
 
 #[tokio::test]

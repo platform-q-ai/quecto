@@ -5,6 +5,7 @@ pub mod refreshable;
 pub mod retry;
 pub mod router;
 pub mod sse_common;
+pub mod usage;
 
 use std::sync::Arc;
 

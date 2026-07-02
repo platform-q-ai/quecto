@@ -11,6 +11,28 @@ fn test_anthropic_provider_name() {
     assert_eq!(provider.name(), "anthropic");
 }
 
+/// Regression (#996 item 9): the incremental streaming path reconstructs the
+/// provider for its spawned task. It previously hardcoded the router name to
+/// "anthropic", clobbering registry-built providers that carry a custom prefix
+/// (e.g. "anthropic-oauth"). `for_streaming_task` must preserve every field,
+/// including `router_name`, so the task-local clone keeps the same identity.
+#[test]
+fn for_streaming_task_preserves_custom_router_name() {
+    let provider = AnthropicProvider::with_client_and_name(
+        "sk-ant-test".to_string(),
+        None,
+        reqwest::Client::new(),
+        "anthropic-oauth",
+    );
+    assert_eq!(provider.name(), "anthropic-oauth");
+    let cloned = provider.for_streaming_task();
+    assert_eq!(
+        cloned.name(),
+        "anthropic-oauth",
+        "streaming task clone must preserve the custom router name, not reset to 'anthropic'"
+    );
+}
+
 #[tokio::test]
 async fn test_chat_text_response() {
     let server = MockServer::start().await;

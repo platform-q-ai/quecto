@@ -471,6 +471,13 @@ pub struct QuectoWorld {
     pub truncation_result: Option<quecto::infrastructure::tools::truncate::TruncationResult>,
     /// Result from truncate_line
     pub truncation_line_result: Option<(String, bool)>,
+    // --- Issue #996 efficiency BDD fields ---
+    /// Bounded preview output for the efficiency scenarios
+    pub efficiency_preview: Option<String>,
+    /// Parsed usage from the consolidated parser
+    pub efficiency_usage: Option<quecto::domain::message::UsageInfo>,
+    /// Provider entry loaded from a legacy config blob
+    pub efficiency_provider_entry: Option<quecto::infrastructure::config::ProviderEntry>,
     // --- Grep BDD fields ---
     /// Temp dir for grep workspace (kept alive)
     pub _grep_temp_dir: Option<TempDir>,
@@ -1034,6 +1041,7 @@ mod exec_tool_steps;
 mod extension_steps;
 mod find_steps;
 mod grep_steps;
+mod harness_efficiency_steps;
 mod ls_steps;
 mod mouse_selection_steps;
 mod observability_steps;

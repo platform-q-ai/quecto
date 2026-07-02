@@ -1,6 +1,6 @@
 [package]
 name = "quecto"
-version = "0.81.15"
+version = "0.81.16"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"

@@ -4,7 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
+use crate::domain::message::{LlmResponse, Role, ToolCall};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 
 /// OpenAI-compatible LLM provider.
@@ -21,6 +21,19 @@ pub struct OpenAiProvider {
 impl OpenAiProvider {
     pub fn new(api_key: String, api_base: Option<String>) -> Self {
         Self::with_client(api_key, api_base, reqwest::Client::new())
+    }
+
+    /// Clone this provider for a spawned streaming task, preserving every field
+    /// (including `provider_name`). The `reqwest::Client` clone is cheap — it
+    /// shares the underlying connection pool.
+    fn for_streaming_task(&self) -> Self {
+        Self {
+            provider_name: self.provider_name.clone(),
+            api_key: self.api_key.clone(),
+            api_base: self.api_base.clone(),
+            client: self.client.clone(),
+            account_id: self.account_id.clone(),
+        }
     }
 
     /// Create with a shared `reqwest::Client` (avoids duplicate connection pools).
@@ -194,16 +207,9 @@ impl OpenAiProvider {
             }
         }
 
-        let usage = body["usage"].as_object().map(|u| UsageInfo {
-            prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-            completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens: None,
-            cache_write_tokens: None,
-            // OpenAI `prompt_tokens` already counts the full prompt (cached
-            // tokens are a subset), so the gauge falls back to `prompt_tokens`.
-            context_tokens: None,
-            cost: None,
-        });
+        let usage = body["usage"]
+            .as_object()
+            .map(crate::infrastructure::providers::usage::parse_openai_usage);
 
         Ok(LlmResponse {
             content,
@@ -373,21 +379,10 @@ impl LlmProvider for OpenAiProvider {
         // Request a final usage chunk (see `chat_stream`).
         body["stream_options"] = serde_json::json!({ "include_usage": true });
         let url = format!("{}/chat/completions", self.api_base);
-        let provider_name = self.provider_name.clone();
-        let api_key = self.api_key.clone();
-        let api_base = self.api_base.clone();
-        let account_id = self.account_id.clone();
-        let client = self.client.clone();
+        let provider = self.for_streaming_task();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {
-                let provider = OpenAiProvider {
-                    provider_name,
-                    api_key,
-                    api_base,
-                    client,
-                    account_id,
-                };
                 provider.pump_sse_incremental(body, &url, tx).await;
             });
             rx

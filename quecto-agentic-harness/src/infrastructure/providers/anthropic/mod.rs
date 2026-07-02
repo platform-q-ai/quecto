@@ -58,6 +58,19 @@ impl AnthropicProvider {
         }
     }
 
+    /// Clone this provider for a spawned streaming task, preserving every field
+    /// (crucially the router-facing `router_name`). The `reqwest::Client` clone
+    /// is cheap — it shares the underlying connection pool.
+    fn for_streaming_task(&self) -> Self {
+        Self {
+            api_key: self.api_key.clone(),
+            api_base: self.api_base.clone(),
+            client: self.client.clone(),
+            is_oauth: self.is_oauth,
+            router_name: self.router_name.clone(),
+        }
+    }
+
     pub fn is_oauth(&self) -> bool {
         self.is_oauth
     }
@@ -581,9 +594,12 @@ impl LlmProvider for AnthropicProvider {
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
 
-        let api_key = self.api_key.clone();
-        let api_base = self.api_base.clone();
-        let client = self.client.clone();
+        // Clone the whole provider (all fields, including `router_name`) so the
+        // spawned streaming task carries the same identity. The previous code
+        // reconstructed the struct inline with a hardcoded `"anthropic"`
+        // router_name, resetting registry-built providers (e.g. the
+        // `anthropic-oauth` prefix) back to the default key.
+        let provider = self.for_streaming_task();
 
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
@@ -594,13 +610,6 @@ impl LlmProvider for AnthropicProvider {
                 return rx;
             }
             tokio::spawn(async move {
-                let provider = AnthropicProvider {
-                    api_key,
-                    api_base,
-                    client,
-                    is_oauth,
-                    router_name: "anthropic".to_string(),
-                };
                 provider
                     .stream_chat_incremental_with_body(anthropic_sse::IncrementalStreamParams {
                         base: anthropic_sse::StreamParams {
