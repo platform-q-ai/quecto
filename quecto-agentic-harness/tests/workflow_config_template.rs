@@ -272,55 +272,33 @@ fn pre_merge_confirms_inline_findings_and_resolved_threads() {
 }
 
 #[test]
-fn reviewers_step_default_dimensions_include_full_set() {
-    // Issue #845: the standard review fan-out must ALWAYS include, at minimum,
-    // Architecture, Security, Performance, Correctness, Conformance-to-AC and
-    // Test-quality — not gate Correctness/Test-quality on "larger changes".
+fn reviewers_step_describes_finder_waves() {
+    // Issue #1004: the PR review fan-out is restructured from six broad
+    // self-judging dimensions into narrow mechanical finder angles with
+    // find -> verify -> single-post waves. The full token set lives in the
+    // shared helper so this native copy, examples/config.json and
+    // docs/workflow.md are pinned identically and none can silently drift.
     let config = read_native_config();
     let g = guidance(&config, "reviewers");
-
-    for dim in [
-        "Architecture",
-        "Security",
-        "Performance",
-        "Correctness",
-        "Conformance-to-AC",
-        "Test-quality",
-    ] {
-        assert!(
-            g.contains(dim),
-            "reviewers guidance should list `{dim}` in the default dimension set, got: {g}"
-        );
-    }
-
-    // The old gating phrasing ("for larger changes") must be gone — these are
-    // defaults now, not conditional extras.
-    assert!(
-        !g.contains("for larger changes"),
-        "reviewers guidance should not gate dimensions on 'for larger changes'"
-    );
+    common::assert_reviewer_finder_waves(g, "workflow-config.json");
 }
 
 #[test]
-fn reviewers_step_conformance_reviewer_checks_acceptance_criteria_and_docs() {
-    // The Conformance-to-AC reviewer must re-read the issue's acceptance criteria
-    // and check each is actually met, including docs/protocol updates.
+fn conformance_step_retains_acceptance_criteria_and_documentation_checks() {
+    // Issue #1004: Conformance-to-AC leaves the reviewer wave (asserted by the
+    // shared finder-waves helper); the standalone `conformance` step keeps that
+    // responsibility. The deleted per-dimension reviewer used to pin that AC
+    // conformance explicitly covers documentation/protocol updates — that check
+    // must survive on the step that now owns it.
     let config = read_native_config();
-    let g = guidance(&config, "reviewers").to_lowercase();
+    let g = guidance(&config, "conformance").to_lowercase();
     assert!(
-        g.contains("acceptance criteria"),
-        "reviewers guidance should require re-reading the acceptance criteria"
+        g.contains("acceptance criterion") || g.contains("acceptance criteria"),
+        "conformance step must verify the issue acceptance criteria: {g}"
     );
-    // Tighter than a bare "docs" substring (which matches "docs/protocol", URLs,
-    // etc.): require the Conformance-to-AC clause to explicitly say each AC must be
-    // met INCLUDING documentation.
     assert!(
         g.contains("documentation"),
-        "Conformance-to-AC reviewer should explicitly check documentation updates"
-    );
-    assert!(
-        g.contains("conformance-to-ac"),
-        "reviewers guidance should name the Conformance-to-AC dimension"
+        "conformance step must explicitly cover documentation/protocol updates: {g}"
     );
 }
 
@@ -373,80 +351,90 @@ fn reviewers_step_requires_pr_number_not_raw_diff_and_pr_precondition() {
 }
 
 #[test]
-fn feature_js_dimensions_array_matches_full_default_set() {
-    // #862 review (Medium): `.claude/workflows/feature.js`'s `DIMENSIONS` array is
-    // the only copy that actually DRIVES execution, yet the config/doc guards do not
-    // cover it — so it could silently revert to the trio with every test green,
-    // defeating #845. Guard the executable source of truth directly.
+fn feature_js_reviewers_run_finder_waves() {
+    // #862 established that `.claude/workflows/feature.js` is the only copy that
+    // actually DRIVES execution under Claude Code, so it is guarded directly.
+    // Issue #1004 (PR #1005 review finding): the executable PR-review block must
+    // carry the same find -> verify -> single-post wave structure as the native
+    // config — pinned via the SAME shared helper so it cannot silently revert to
+    // the six broad self-posting dimensions with every test green.
     let js = read_repo_file("../.claude/workflows/feature.js");
 
-    // Extract the `const DIMENSIONS = [ ... ]` literal so we assert on the array
-    // that runs, not any prose/prompt text elsewhere in the file.
-    let after = js
-        .split_once("const DIMENSIONS = [")
-        .expect("feature.js should declare `const DIMENSIONS = [...]`")
-        .1;
-    let array = after
-        .split_once(']')
-        .expect("feature.js DIMENSIONS array should be closed with ]")
-        .0;
-
-    for dim in [
-        "Architecture",
-        "Security",
-        "Performance",
-        "Correctness",
-        "Conformance-to-AC",
-        "Test-quality",
-    ] {
-        assert!(
-            array.contains(dim),
-            "feature.js DIMENSIONS array should include `{dim}`, got: {array}"
-        );
-    }
-
-    // The Conformance-to-AC reviewer must re-read the acceptance criteria and check
-    // documentation, and reviews must be submitted (never left PENDING) — assert the
-    // executable reviewer dispatch block carries this, mirroring the config guards.
+    // The executable reviewer dispatch block: from the PR Review phase marker to
+    // the fix phase.
     let reviewer_block = js
-        .split_once("// Always dispatch the full default dimension set")
-        .expect("feature.js should describe and dispatch parallel reviewers")
+        .split_once("phase('PR Review')")
+        .expect("feature.js should have a PR Review phase")
         .1
         .split_once("// ── Fix reviews")
         .expect("feature.js reviewer block should end before fix phase")
         .0;
+    common::assert_reviewer_finder_waves(reviewer_block, "feature.js PR-review block");
+
     let lower = reviewer_block.to_lowercase();
     assert!(
-        lower.contains("acceptance criteria") && lower.contains("documentation"),
-        "feature.js Conformance-to-AC prompt should re-read acceptance criteria incl. documentation"
-    );
-    assert!(
         lower.contains("submittedat") && lower.contains("pending"),
-        "feature.js reviewer prompt should require a submitted (non-PENDING) review"
+        "feature.js Wave 3 prompt should require a submitted (non-PENDING) review"
     );
     assert!(
-        lower.contains("must not dispatch reviewers before a pr exists")
-            || lower.contains("must not be dispatched before a pr exists"),
-        "feature.js reviewer prompt should forbid dispatch before a PR exists"
+        lower.contains("must not be dispatched before a pr exists"),
+        "feature.js finder prompt should forbid dispatch before a PR exists"
     );
     assert!(
         lower.contains("forbid")
             && lower.contains("raw diff")
             && reviewer_block.contains("PR number")
             && reviewer_block.contains("gh pr diff <PR>"),
-        "feature.js reviewer prompt should forbid raw diffs and require PR number + gh pr diff <PR>"
+        "feature.js finder prompt should forbid raw diffs and require PR number + gh pr diff <PR>"
     );
     assert!(
         lower.contains("inline") && lower.contains("on the pr"),
-        "feature.js reviewer prompt should require inline comments on the PR"
+        "feature.js Wave 3 prompt should require inline comments on the PR"
     );
     assert!(
         reviewer_block.contains("prNumberMatch") && reviewer_block.contains("prNumber"),
-        "feature.js should parse and validate the returned PR number before dispatching reviewers"
+        "feature.js should parse and validate the returned PR number before dispatching finders"
     );
     assert!(
         reviewer_block.contains("PR/context: #${prNumber}"),
-        "feature.js should pass only the validated PR number to reviewer prompts"
+        "feature.js should pass only the validated PR number to finder prompts"
+    );
+
+    // Conformance-to-AC left the reviewer wave; the executable conformance
+    // phase keeps the acceptance-criteria + documentation responsibility.
+    let conformance_block = js
+        .split_once("phase('Conformance')")
+        .expect("feature.js should have a Conformance phase")
+        .1
+        .to_lowercase();
+    assert!(
+        conformance_block.contains("acceptance") && conformance_block.contains("documentation"),
+        "feature.js conformance prompt should verify acceptance criteria incl. documentation"
+    );
+}
+
+#[test]
+fn feature_js_red_requires_per_assertion_failure_evidence() {
+    // Issue #1004 mirrored into the executable feature.js: RED evidence is per
+    // new Then step / per new test assertion, not per test target.
+    let js = read_repo_file("../.claude/workflows/feature.js");
+    let red_block = js
+        .split_once("phase('RED')")
+        .expect("feature.js should have a RED phase")
+        .1
+        .split_once("phase('BDD Review')")
+        .expect("feature.js RED phase should precede BDD Review")
+        .0
+        .to_lowercase();
+    assert!(
+        (red_block.contains("per new then step") || red_block.contains("every new then step"))
+            && (red_block.contains("per new test assertion")
+                || red_block.contains("every new assertion")),
+        "feature.js RED step must require failure evidence per new Then step and per new assertion: {red_block}"
+    );
+    assert!(
+        red_block.contains("individually be shown to fail"),
+        "feature.js RED step must require each assertion to individually be shown to fail: {red_block}"
     );
 }
 
@@ -555,6 +543,112 @@ fn bdd_review_is_strict_and_fixes_all_valid_concerns() {
 }
 
 #[test]
+fn bdd_review_dispatches_three_narrow_finders() {
+    // Issue #1004: bdd_review becomes three narrow parallel finders whose
+    // findings must quote the offending line and give a concrete fix.
+    let config = read_native_config();
+    let g = guidance(&config, "bdd_review");
+    let lower = g.to_lowercase();
+
+    assert!(
+        g.contains("Gherkin discipline"),
+        "bdd_review should name the Gherkin discipline finder: {g}"
+    );
+    assert!(
+        g.contains("Falsifiability"),
+        "bdd_review should name the Falsifiability finder: {g}"
+    );
+    assert!(
+        g.contains("Coverage"),
+        "bdd_review should name the Coverage finder: {g}"
+    );
+    // Findings must quote the offending line + concrete fix.
+    assert!(
+        lower.contains("quote the offending line"),
+        "bdd_review findings must quote the offending line: {g}"
+    );
+    assert!(
+        lower.contains("concrete fix"),
+        "bdd_review findings must include a concrete fix: {g}"
+    );
+    // Falsifiability: per assertion, name the change that would fail it; flag
+    // self-asserted state, constant comparisons, type-level facts.
+    assert!(
+        lower.contains("constant")
+            && (lower.contains("self-asserted") || lower.contains("type-level")),
+        "falsifiability finder should flag constant comparisons / self-asserted state / type-level facts: {g}"
+    );
+    // Coverage: AC<->scenario mapping + boundary pinning on both sides.
+    assert!(
+        lower.contains("boundary") && lower.contains("both sides"),
+        "coverage finder should require both sides of every numeric/size limit tested: {g}"
+    );
+}
+
+#[test]
+fn red_step_requires_per_assertion_failure_evidence() {
+    // Issue #1004: RED evidence is per new Then step and per new test assertion,
+    // not per test target — every new assertion must individually be shown to
+    // fail before implementation. A tautology cannot produce that evidence.
+    let config = read_native_config();
+    let g = guidance(&config, "red");
+    let lower = g.to_lowercase();
+    assert!(
+        lower.contains("per new then step") || lower.contains("every new then step"),
+        "red guidance should require failure evidence per new Then step: {g}"
+    );
+    assert!(
+        lower.contains("per new test assertion") || lower.contains("every new assertion"),
+        "red guidance should require failure evidence per new test assertion: {g}"
+    );
+    // "individually" alone is a common English word; pin the distinctive
+    // phrase so an unrelated sentence cannot satisfy this.
+    assert!(
+        lower.contains("individually be shown to fail"),
+        "red guidance should require each assertion to individually be shown to fail: {g}"
+    );
+}
+
+#[test]
+fn adr_records_review_restructure_decision() {
+    // Issue #1004: an ADR records the move from six broad self-judging PR
+    // reviewers to find -> verify -> single-post waves and the per-assertion
+    // RED evidence gate, with the PR #1001 retrospective as context.
+    let adr = read_repo_file(
+        "docs/architecture-design-records/adr-0007-review-finder-waves-adversarial-verification.md",
+    );
+    let lower = adr.to_lowercase();
+    for section in ["## Context", "## Decision", "## Consequences"] {
+        assert!(
+            adr.contains(section),
+            "ADR should have a `{section}` section"
+        );
+    }
+    assert!(
+        adr.contains("#1001"),
+        "ADR context should cite the PR #1001 retrospective"
+    );
+    assert!(
+        lower.contains("tautolog"),
+        "ADR context should record the tautological/vacuous assertion escape"
+    );
+    // "verify" && "find" alone are hollow ("find" matches "findings"
+    // anywhere); pin the distinctive wave-structure phrasings instead.
+    assert!(
+        lower.contains("adversarial"),
+        "ADR decision should describe the adversarial verify wave"
+    );
+    assert!(
+        lower.contains("exactly one submitted") || lower.contains("single-post"),
+        "ADR decision should record the single-post wave"
+    );
+    assert!(
+        lower.contains("red evidence") || lower.contains("per-assertion"),
+        "ADR decision should record the per-assertion RED evidence gate"
+    );
+}
+
+#[test]
 fn fix_reviews_addresses_all_valid_concerns() {
     // #953 AC3: fix_reviews must address EVERY valid concern regardless of
     // severity, not just high-priority ones.
@@ -649,6 +743,22 @@ fn feature_js_bdd_review_is_strict() {
     assert!(
         bdd_block.contains("one behaviour per scenario"),
         "feature.js BDD review prompt should carry the best-practice checklist token: {bdd_block}"
+    );
+    // Issue #1004 (PR #1005 review finding): the executable bdd_review runs the
+    // same three narrow finders as the native config, with quoted-line findings.
+    for token in ["gherkin discipline", "falsifiability", "coverage"] {
+        assert!(
+            bdd_block.contains(token),
+            "feature.js BDD review should name the `{token}` finder: {bdd_block}"
+        );
+    }
+    assert!(
+        bdd_block.contains("quote the offending line") && bdd_block.contains("concrete fix"),
+        "feature.js BDD review findings must quote the offending line with a concrete fix: {bdd_block}"
+    );
+    assert!(
+        bdd_block.contains("both sides"),
+        "feature.js BDD coverage finder must pin both sides of numeric/size limits: {bdd_block}"
     );
 }
 

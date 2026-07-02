@@ -1,6 +1,6 @@
 mod common;
 
-use common::read_repo_file;
+use common::{assert_reviewer_finder_waves, read_repo_file};
 use serde_json::Value;
 
 fn read_workflow_config() -> Value {
@@ -87,7 +87,7 @@ fn readme_lists_full_19_step_reference_workflow() {
         "2 - Update Scenarios / Add new features",
         "3 - Write/update unit tests (run a quick smoke check; full suite runs on push)",
         "4 - Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite",
-        "5 - Despatch BDD sub-agent to review BDD feature, step tests and unit tests",
+        "5 - Despatch three BDD review finders (Gherkin discipline, Falsifiability, Coverage)",
         "6 - Implement code (GREEN)",
         "7 - Refactor (perf, security, clean arch)",
         "8 - Ensure tests still pass (GREEN)",
@@ -95,7 +95,7 @@ fn readme_lists_full_19_step_reference_workflow() {
         "10 - Commit",
         "11 - Push (pre-push hook will run tests and linting)",
         "12 - Create PR",
-        "13 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)",
+        "13 - Despatch narrow parallel review finders, verify adversarially, post one review",
         "14 - Fix all valid review concerns",
         "15 - Push changes to remote",
         "16 - Reply to the reviewers comments on the PR and mark resolved (use graphql)",
@@ -148,28 +148,17 @@ fn reviewers_guidance(config: &Value) -> String {
         .to_string()
 }
 
+// Issue #1004: the mirror tests reuse `common::assert_reviewer_finder_waves`
+// — the same helper the native-config test runs — so the three copies are
+// pinned to the identical token set and a mirror cannot silently drop an
+// angle, wave or verdict semantic the native config carries.
+
 #[test]
-fn examples_config_reviewers_default_dimensions_include_full_set() {
-    // Issue #845: the mirror config must list the same full default dimension set.
+fn examples_config_reviewers_describe_finder_waves() {
+    // Issue #1004: the mirror config must carry the same three-wave structure.
     let config = read_workflow_config();
     let g = reviewers_guidance(&config);
-    for dim in [
-        "Architecture",
-        "Security",
-        "Performance",
-        "Correctness",
-        "Conformance-to-AC",
-        "Test-quality",
-    ] {
-        assert!(
-            g.contains(dim),
-            "examples/config.json reviewers guidance should list `{dim}`"
-        );
-    }
-    assert!(
-        !g.contains("for larger changes"),
-        "examples/config.json reviewers guidance should not gate dimensions on 'for larger changes'"
-    );
+    assert_reviewer_finder_waves(&g, "examples/config.json");
     // #862 review (Low): the single parallel batch (wall-clock) invariant phrasing
     // must match the native config so this mirror cannot silently drop it.
     assert!(
@@ -275,6 +264,61 @@ fn examples_config_mirrors_bdd_strictness_and_version_bump() {
 }
 
 #[test]
+fn examples_config_mirrors_bdd_finders_and_per_assertion_red() {
+    // Issue #1004: the mirror config carries the three narrow bdd_review finders
+    // and the per-assertion RED evidence gate.
+    let config = read_workflow_config();
+
+    let bdd = step_guidance(&config, "bdd_review");
+    for token in ["Gherkin discipline", "Falsifiability", "Coverage"] {
+        assert!(
+            bdd.contains(token),
+            "examples/config.json bdd_review should name the `{token}` finder"
+        );
+    }
+    let bdd_lower = bdd.to_lowercase();
+    assert!(
+        bdd_lower.contains("quote the offending line"),
+        "examples/config.json bdd_review findings must quote the offending line"
+    );
+    assert!(
+        bdd_lower.contains("both sides"),
+        "examples/config.json bdd_review coverage finder must pin both sides of limits"
+    );
+
+    let red = step_guidance(&config, "red").to_lowercase();
+    assert!(
+        (red.contains("per new then step") || red.contains("every new then step"))
+            && (red.contains("per new test assertion") || red.contains("every new assertion"))
+            && red.contains("individually be shown to fail"),
+        "examples/config.json red step must require per-assertion failure evidence"
+    );
+}
+
+#[test]
+fn workflow_guide_mirrors_finder_waves_and_per_assertion_red() {
+    // docs/workflow.md must embed the #1004 wording too.
+    let guide = read_repo_file("docs/workflow.md");
+    for token in [
+        "Gherkin discipline",
+        "Removed-behavior audit",
+        "Cross-file tracer",
+        "concrete failure scenario",
+    ] {
+        assert!(
+            guide.contains(token),
+            "docs/workflow.md should embed the #1004 token `{token}`"
+        );
+    }
+    // "individually" alone is a common English word matched against the whole
+    // guide; pin the distinctive per-assertion RED gate phrase instead.
+    assert!(
+        guide.contains("individually be shown to fail"),
+        "docs/workflow.md should embed the per-assertion RED evidence gate"
+    );
+}
+
+#[test]
 fn workflow_guide_mirrors_version_bump_and_strict_bdd() {
     // docs/workflow.md embeds the same config; it must show the version_bump step
     // and the strict BDD wording (#953/#950).
@@ -294,27 +338,11 @@ fn workflow_guide_mirrors_version_bump_and_strict_bdd() {
 }
 
 #[test]
-fn workflow_guide_reviewers_default_dimensions_include_full_set() {
-    // docs/workflow.md mirrors the native config and must stay in sync (#845).
+fn workflow_guide_reviewers_describe_finder_waves() {
+    // docs/workflow.md mirrors the native config and must stay in sync (#1004).
     let guide = read_repo_file("docs/workflow.md");
     let g = doc_reviewers_guidance(&guide);
-    for dim in [
-        "Architecture",
-        "Security",
-        "Performance",
-        "Correctness",
-        "Conformance-to-AC",
-        "Test-quality",
-    ] {
-        assert!(
-            g.contains(dim),
-            "docs/workflow.md reviewers guidance should list `{dim}`, got: {g}"
-        );
-    }
-    assert!(
-        !g.contains("for larger changes"),
-        "docs/workflow.md reviewers guidance should not gate dimensions on 'larger changes'"
-    );
+    assert_reviewer_finder_waves(g, "docs/workflow.md");
     // #862 review (Low): keep the single parallel batch invariant phrasing aligned.
     assert!(
         g.contains("SINGLE parallel batch"),

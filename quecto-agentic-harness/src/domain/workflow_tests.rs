@@ -424,7 +424,7 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
     assert_eq!(snap.steps[0].label, "Install/check local quality hooks");
     assert_eq!(
         snap.steps[4].label,
-        "Despatch BDD sub-agent to review BDD feature, step tests and unit tests"
+        "Despatch three BDD review finders (Gherkin discipline, Falsifiability, Coverage)"
     );
     assert_eq!(
         snap.steps[8].label,
@@ -436,7 +436,7 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
     );
     assert_eq!(
         snap.steps[12].label,
-        "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)"
+        "Despatch narrow parallel review finders, verify adversarially, post one review"
     );
     assert_eq!(
         snap.steps[16].label,
