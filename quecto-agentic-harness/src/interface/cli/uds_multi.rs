@@ -98,6 +98,7 @@ pub(super) struct MultiClientArgs<'a> {
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
+    pub last_persisted_message_index: usize,
 }
 
 /// A command line from a client.
@@ -160,6 +161,7 @@ pub(super) async fn multi_client_loop(
     let pre_broadcast_tx = args.broadcast_tx;
     let provider_reload = args.provider_reload;
     let provider_reload_inputs = args.provider_reload_inputs;
+    let last_persisted_message_index = args.last_persisted_message_index;
     let MultiClientArgs {
         mut agent,
         base_dir,
@@ -279,6 +281,7 @@ pub(super) async fn multi_client_loop(
         workflow_config: wf_config,
         provider_reload,
         provider_reload_inputs,
+        last_persisted_message_index,
     };
 
     run_dispatch_loop(

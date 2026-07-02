@@ -29,6 +29,37 @@ Feature: Session Management
     Then the [session] should be found
     And the conversation history should contain 3 messages
 
+  @session @issue-987
+  Scenario: Completed turns preserve previously saved session data
+    Given a [session] workspace
+    And a [session] "cli:efficient" with 2 messages in history
+    When the [session] "cli:efficient" records a completed turn
+    Then the [session] "cli:efficient" should reload with 4 messages
+    And the [session] "cli:efficient" storage should preserve the previously saved data
+
+  @session @issue-987
+  Scenario: Interrupted turns preserve the last completed session
+    Given a [session] workspace
+    And a [session] "cli:durable" with 2 messages in history
+    When the [session] "cli:durable" has an interrupted turn
+    Then the [session] "cli:durable" should reload with 2 messages
+
+  @session @issue-987
+  Scenario: Replaced histories remain loadable
+    Given a [session] workspace
+    And a [session] "cli:replace" with 6 messages in history
+    When the [session] "cli:replace" keeps only the latest 2 messages
+    Then the [session] "cli:replace" should reload with 2 messages
+    And the [session] "cli:replace" storage should replace the previous data
+
+  @session @issue-987
+  Scenario: Stored messages retain their conversation content after appended turns
+    Given a [session] workspace
+    And a [session] "cli:faithful" with distinct conversation content
+    When the [session] "cli:faithful" records a completed turn
+    And the [session] store is recreated from the same directory
+    Then the [session] "cli:faithful" should reload with the same conversation content
+
   @session
   Scenario: Corrupt session files do not block session listing
     Given a [session] workspace

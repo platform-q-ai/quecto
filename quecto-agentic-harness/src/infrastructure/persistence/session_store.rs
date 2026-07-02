@@ -16,114 +16,9 @@ pub struct FileSessionStore {
     sessions_dir: PathBuf,
 }
 
-// -- Serializable structs for JSON persistence --
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct SessionFile {
-    key: String,
-    messages: Vec<MessageRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    workflow_run: Option<WorkflowRunPersisted>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct MessageRecord {
-    role: String,
-    content: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    tool_calls: Vec<ToolCallRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    tool_call_id: Option<String>,
-    // Context-pruning metadata (all optional for backward compat)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    turn: Option<u32>,
-    /// `None` = absent in old files (use constructor default);
-    /// `Some(true/false)` = explicitly persisted value.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    is_pinned: Option<bool>,
-    #[serde(default, skip_serializing_if = "skip_if_false")]
-    is_manifest: bool,
-    #[serde(default, skip_serializing_if = "skip_if_false")]
-    is_collapsed: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    tool_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    input_preview: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    spill_id: Option<String>,
-    #[serde(default, skip_serializing_if = "skip_if_false")]
-    is_error: bool,
-    /// Stop reason for assistant messages (serialised as raw Anthropic string).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    stop_reason: Option<String>,
-    /// Extended thinking blocks from assistant messages (#437-5).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    thinking_blocks: Vec<ThinkingBlockRecord>,
-}
-
-fn skip_if_false(v: &bool) -> bool {
-    !v
-}
-
-/// Lightweight view of a session file used by `list()` to derive the title,
-/// message count and key WITHOUT constructing the full message records
-/// (#765). Only the fields actually needed for a summary are described, so
-/// heavy per-message details (tool calls, thinking blocks, pruning metadata)
-/// are not materialized — they are skipped by serde rather than parsed into
-/// owned structs and discarded.
-///
-/// This does NOT reduce parse/I/O to sub-linear: `list()` still reads the
-/// whole file and serde still tokenizes the entire JSON document (ignored
-/// fields are consumed via `IgnoredAny`, which lexes every byte). The win is
-/// a constant-factor reduction: no allocation/construction of the heavy
-/// `MessageRecord` graph (its `Vec<ThinkingBlockRecord>`, `Vec<ToolCallRecord>`,
-/// owned strings and optional metadata). `role`/`content` borrow from the
-/// input buffer (zero-copy when no JSON escapes are present), so even the
-/// per-message body strings are not copied in the common case.
-///
-/// NOTE: the lightweight model is an independent serde view of [`SessionFile`]
-/// / [`MessageRecord`]. The `session_header_*` tests pin the shared field
-/// names (`key`, `messages`, `role`, `content`) so the two cannot silently
-/// drift apart.
-#[derive(serde::Deserialize)]
-struct SessionHeader<'a> {
-    #[serde(borrow)]
-    key: std::borrow::Cow<'a, str>,
-    #[serde(default, borrow)]
-    messages: Vec<MessageHeader<'a>>,
-}
-
-/// Per-message header: just the role (for counting/title selection) and the
-/// content (for the title). Every other field is ignored by serde.
-#[derive(serde::Deserialize)]
-struct MessageHeader<'a> {
-    #[serde(borrow)]
-    role: std::borrow::Cow<'a, str>,
-    #[serde(default, borrow)]
-    content: std::borrow::Cow<'a, str>,
-}
-
-/// Uses the same strings that `StopReason::parse` accepts so that
-/// round-trips are lossless regardless of which provider produced the value.
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct ToolCallRecord {
-    id: String,
-    name: String,
-    arguments: String,
-}
-
-/// Serializable representation of a thinking block (#437-5).
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type")]
-enum ThinkingBlockRecord {
-    /// Normal thinking block with visible reasoning text and signature.
-    #[serde(rename = "normal")]
-    Normal { thinking: String, signature: String },
-    /// Redacted thinking block (reasoning hidden by safety filters).
-    #[serde(rename = "redacted")]
-    Redacted { data: String },
-}
+#[path = "session_store_records.rs"]
+mod session_store_records;
+use session_store_records::*;
 
 impl FileSessionStore {
     /// Create a new file-based session store rooted at the given directory.
@@ -164,13 +59,9 @@ impl SessionStore for FileSessionStore {
             let data = tokio::fs::read_to_string(&path)
                 .await
                 .map_err(|e| DomainError::Session(format!("failed to read session: {}", e)))?;
-            let file: SessionFile = serde_json::from_str(&data)
+            let session = parse_session_data(&data)
                 .map_err(|e| DomainError::Session(format!("failed to parse session: {}", e)))?;
-            Ok(Some(Session {
-                key: file.key,
-                messages: file.messages.into_iter().map(record_to_message).collect(),
-                workflow_run: file.workflow_run,
-            }))
+            Ok(Some(session))
         })
     }
 
@@ -179,24 +70,31 @@ impl SessionStore for FileSessionStore {
         session: &Session,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         let path = self.session_path(&session.key);
-        let file = SessionFile {
-            key: session.key.clone(),
-            messages: session.messages.iter().map(message_to_record).collect(),
-            workflow_run: session.workflow_run.clone(),
-        };
+        let session = session.clone();
         Box::pin(async move {
             self.ensure_dir().await?;
-            let json = serde_json::to_string_pretty(&file)
-                .map_err(|e| DomainError::Session(format!("failed to serialize session: {}", e)))?;
-            // Write atomically: temp file + rename
-            let tmp_path = path.with_extension("tmp");
-            tokio::fs::write(&tmp_path, json.as_bytes())
-                .await
-                .map_err(|e| DomainError::Session(format!("failed to write session: {}", e)))?;
-            tokio::fs::rename(&tmp_path, &path)
-                .await
-                .map_err(|e| DomainError::Session(format!("failed to rename session: {}", e)))?;
-            Ok(())
+            append_or_compact(&path, &session).await
+        })
+    }
+
+    fn save_delta<'a>(
+        &'a self,
+        key: &'a str,
+        messages: &'a [Message],
+        previously_persisted: usize,
+        workflow_run: Option<WorkflowRunPersisted>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        let path = self.session_path(key);
+        Box::pin(async move {
+            self.ensure_dir().await?;
+            append_known_delta(
+                &path,
+                key,
+                messages,
+                previously_persisted,
+                workflow_run.as_ref(),
+            )
+            .await
         })
     }
 
@@ -258,7 +156,7 @@ impl SessionStore for FileSessionStore {
                         continue;
                     }
                 };
-                let header: SessionHeader = match serde_json::from_str(&content) {
+                let header: SessionHeader = match parse_session_header(&content) {
                     Ok(header) => header,
                     Err(err) => {
                         tracing::warn!(
@@ -300,6 +198,240 @@ impl SessionStore for FileSessionStore {
 
 // -- Conversion helpers --
 
+fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Error> {
+    if let Ok(header) = serde_json::from_str::<SessionHeader<'_>>(data) {
+        return Ok(header);
+    }
+
+    let mut key = std::borrow::Cow::Borrowed("");
+    let mut messages = Vec::new();
+    let mut parsed_any = false;
+    for line in data.lines().filter(|line| !line.trim().is_empty()) {
+        let record: SessionRecord = match serde_json::from_str(line) {
+            Ok(record) => record,
+            Err(err) if parsed_any => {
+                tracing::warn!(error = %err, "ignoring incomplete trailing session record");
+                break;
+            }
+            Err(err) => return Err(err),
+        };
+        parsed_any = true;
+        match record {
+            SessionRecord::Snapshot(file) => {
+                key = file.key.into();
+                messages = file
+                    .messages
+                    .into_iter()
+                    .map(|message| MessageHeader {
+                        role: message.role.into(),
+                        content: message.content.into(),
+                    })
+                    .collect();
+            }
+            SessionRecord::Append {
+                messages: added, ..
+            } => {
+                messages.extend(added.into_iter().map(|message| MessageHeader {
+                    role: message.role.into(),
+                    content: message.content.into(),
+                }));
+            }
+        }
+    }
+    Ok(SessionHeader { key, messages })
+}
+
+fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
+    if let Ok(file) = serde_json::from_str::<SessionFile>(data) {
+        return Ok(session_from_file(file));
+    }
+
+    let mut session: Option<Session> = None;
+    let mut parsed_any = false;
+    for line in data.lines().filter(|line| !line.trim().is_empty()) {
+        let record: SessionRecord = match serde_json::from_str(line) {
+            Ok(record) => record,
+            Err(err) if parsed_any => {
+                tracing::warn!(error = %err, "ignoring incomplete trailing session record");
+                break;
+            }
+            Err(err) => return Err(err),
+        };
+        parsed_any = true;
+        match record {
+            SessionRecord::Snapshot(file) => session = Some(session_from_file(file)),
+            SessionRecord::Append {
+                start_index,
+                messages,
+                workflow_run,
+                workflow_run_cleared,
+            } => {
+                if let Some(session) = &mut session {
+                    if let Some(start_index) = start_index {
+                        if start_index != session.messages.len() {
+                            tracing::warn!(
+                                start_index,
+                                current_len = session.messages.len(),
+                                "ignoring out-of-order session append record"
+                            );
+                            break;
+                        }
+                    }
+                    session
+                        .messages
+                        .extend(messages.into_iter().map(record_to_message));
+                    if workflow_run_cleared {
+                        session.workflow_run = None;
+                    } else if workflow_run.is_some() {
+                        session.workflow_run = workflow_run;
+                    }
+                }
+            }
+        }
+    }
+    Ok(session.unwrap_or_else(|| Session::new("")))
+}
+
+fn session_from_file(file: SessionFile) -> Session {
+    Session {
+        key: file.key,
+        messages: file.messages.into_iter().map(record_to_message).collect(),
+        workflow_run: file.workflow_run,
+    }
+}
+
+async fn is_jsonl_session_file(path: &Path) -> Result<bool, DomainError> {
+    use tokio::io::AsyncReadExt;
+
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
+    let mut prefix = [0_u8; 64];
+    let len = file
+        .read(&mut prefix)
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
+    let prefix = std::str::from_utf8(&prefix[..len]).unwrap_or("");
+    Ok(prefix.trim_start().starts_with(r#"{"type":"#))
+}
+
+async fn append_known_delta(
+    path: &Path,
+    key: &str,
+    messages: &[Message],
+    previously_persisted: usize,
+    workflow_run: Option<&WorkflowRunPersisted>,
+) -> Result<(), DomainError> {
+    if previously_persisted == 0
+        || previously_persisted > messages.len()
+        || !path.exists()
+        || !is_jsonl_session_file(path).await?
+    {
+        let session = Session {
+            key: key.to_string(),
+            messages: messages.to_vec(),
+            workflow_run: workflow_run.cloned(),
+        };
+        return write_compacted(path, &session).await;
+    }
+
+    let added = &messages[previously_persisted..];
+    let record = SessionRecordRef::Append {
+        start_index: Some(previously_persisted),
+        messages: added.iter().map(message_to_record_ref).collect(),
+        workflow_run,
+        workflow_run_cleared: workflow_run.is_none(),
+    };
+    append_record(path, &record).await
+}
+
+async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainError> {
+    if !path.exists() || !is_jsonl_session_file(path).await? {
+        return write_compacted(path, session).await;
+    }
+
+    let data = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
+    let previous = parse_session_data(&data)
+        .map_err(|e| DomainError::Session(format!("failed to parse session: {e}")))?;
+    if previous.key != session.key
+        || session.messages.len() < previous.messages.len()
+        || session.messages[..previous.messages.len()]
+            .iter()
+            .map(message_to_record)
+            .zip(previous.messages.iter().map(message_to_record))
+            .any(|(current, saved)| current != saved)
+    {
+        return write_compacted(path, session).await;
+    }
+
+    let added = &session.messages[previous.messages.len()..];
+    if added.is_empty() && session.workflow_run == previous.workflow_run {
+        return Ok(());
+    }
+
+    let record = SessionRecordRef::Append {
+        start_index: Some(previous.messages.len()),
+        messages: added.iter().map(message_to_record_ref).collect(),
+        workflow_run: session.workflow_run.as_ref(),
+        workflow_run_cleared: session.workflow_run.is_none(),
+    };
+    append_record(path, &record).await
+}
+
+async fn write_compacted(path: &Path, session: &Session) -> Result<(), DomainError> {
+    let record = SessionRecordRef::Snapshot(SessionFileRef {
+        key: &session.key,
+        messages: session.messages.iter().map(message_to_record_ref).collect(),
+        workflow_run: session.workflow_run.as_ref(),
+    });
+    let mut line = serde_json::to_string(&record)
+        .map_err(|e| DomainError::Session(format!("failed to serialize session: {e}")))?;
+    line.push('\n');
+    let tmp_path = path.with_extension("tmp");
+    tokio::fs::write(&tmp_path, line.as_bytes())
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to write session: {e}")))?;
+    tokio::fs::rename(&tmp_path, path)
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to rename session: {e}")))?;
+    Ok(())
+}
+
+async fn append_record(path: &Path, record: &SessionRecordRef<'_>) -> Result<(), DomainError> {
+    use tokio::io::AsyncWriteExt;
+
+    reject_symlink(path).await?;
+    let mut line = serde_json::to_string(record)
+        .map_err(|e| DomainError::Session(format!("failed to serialize session: {e}")))?;
+    line.push('\n');
+    let mut file = tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to open session for append: {e}")))?;
+    file.write_all(line.as_bytes())
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to append session: {e}")))?;
+    file.flush()
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to flush session: {e}")))?;
+    Ok(())
+}
+
+async fn reject_symlink(path: &Path) -> Result<(), DomainError> {
+    let metadata = tokio::fs::symlink_metadata(path)
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to inspect session: {e}")))?;
+    if metadata.file_type().is_symlink() {
+        return Err(DomainError::Session(
+            "refusing to append to symlinked session file".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn role_to_str(role: &Role) -> &str {
     match role {
         Role::System => "system",
@@ -332,6 +464,46 @@ fn first_user_message(messages: &[MessageHeader<'_>]) -> String {
         .filter(|s| !s.is_empty())
         .map(|s| s.chars().take(TRANSPORT_CHAR_CAP).collect())
         .unwrap_or_default()
+}
+
+fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
+    MessageRecordRef {
+        role: role_to_str(&msg.role),
+        content: &msg.content,
+        tool_calls: msg
+            .tool_calls
+            .iter()
+            .map(|tc| ToolCallRecordRef {
+                id: &tc.id,
+                name: &tc.name,
+                arguments: &tc.arguments,
+            })
+            .collect(),
+        tool_call_id: msg.tool_call_id.as_deref(),
+        turn: msg.turn,
+        is_pinned: Some(msg.is_pinned),
+        is_manifest: msg.is_manifest,
+        is_collapsed: msg.is_collapsed,
+        tool_name: msg.tool_name.as_deref(),
+        input_preview: msg.input_preview.as_deref(),
+        spill_id: msg.spill_id.as_deref(),
+        is_error: msg.is_error,
+        stop_reason: msg.stop_reason.as_ref().map(|sr| sr.to_string()),
+        thinking_blocks: msg
+            .thinking_blocks
+            .iter()
+            .map(|tb| match tb {
+                ThinkingBlock::Normal {
+                    thinking,
+                    signature,
+                } => ThinkingBlockRecordRef::Normal {
+                    thinking,
+                    signature,
+                },
+                ThinkingBlock::Redacted { data } => ThinkingBlockRecordRef::Redacted { data },
+            })
+            .collect(),
+    }
 }
 
 fn message_to_record(msg: &Message) -> MessageRecord {
@@ -427,6 +599,10 @@ fn record_to_message(rec: MessageRecord) -> Message {
 #[cfg(test)]
 #[path = "session_store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_store_metadata_tests.rs"]
+mod metadata_tests;
 
 #[cfg(test)]
 #[path = "session_store_chat_tests.rs"]

@@ -17,8 +17,6 @@ use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::model_registry::ModelRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 
-pub use super::protocol::parse_command_line;
-
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;
@@ -95,6 +93,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             return 1;
         }
     };
+    let loaded_message_count = loaded_session.messages.len();
     let messages = loaded_session.messages;
     if let (Some(ws), Some(persisted)) = (&workflow_state, loaded_session.workflow_run) {
         if let Ok(mut engine) = ws.lock() {
@@ -117,6 +116,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 workflow_state,
                 provider_reload,
                 provider_reload_inputs,
+                last_persisted_message_index: loaded_message_count,
             },
             std_stream,
             session_store,
@@ -151,6 +151,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 broadcast_tx,
                 provider_reload,
                 provider_reload_inputs,
+                last_persisted_message_index: loaded_message_count,
             },
             listener,
             session_store,
@@ -171,6 +172,7 @@ struct SingleClientArgs<'a> {
     workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
+    last_persisted_message_index: usize,
 }
 
 async fn single_client_loop(
@@ -190,6 +192,7 @@ async fn single_client_loop(
         workflow_state,
         provider_reload,
         provider_reload_inputs,
+        last_persisted_message_index,
     } = args;
     std_stream
         .set_nonblocking(true)
@@ -236,6 +239,7 @@ async fn single_client_loop(
             workflow_config: None,
             provider_reload,
             provider_reload_inputs,
+            last_persisted_message_index,
         },
     )
     .await;
@@ -310,7 +314,7 @@ pub(super) fn parse_line(line: &str) -> LineResult {
     if line.is_empty() {
         return LineResult::ParseError(String::new());
     }
-    match parse_command_line(line) {
+    match super::protocol::parse_command_line(line) {
         Ok(c) => LineResult::Command(c),
         Err(e) => LineResult::ParseError(e),
     }
@@ -416,6 +420,7 @@ pub(crate) struct DispatchCtx<'a> {
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
+    pub last_persisted_message_index: usize,
 }
 
 pub(super) async fn emit_event_to_broadcast_or_writer(
@@ -721,11 +726,8 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 run_agent_message(args).await;
             }
             disarm_cancel(&ctx.cancel_handle);
-            // #899: refresh busy-child snapshots after EACH inner turn so a busy
-            // get_state/get_messages/get_session_stats/get_extensions mid-workflow
-            // tracks progress + message count step-by-step across the auto-continue
-            // nudge chain, instead of staying frozen at the pre-turn snapshot until
-            // the whole dispatched command returns. (No mid-turn note delivery — #816.)
+            // #899: keep busy-child snapshots fresh across auto-continue nudges
+            // instead of frozen at the pre-turn snapshot until dispatch returns.
             super::uds_snapshots::refresh_busy_snapshots(ctx).await;
         }
     }

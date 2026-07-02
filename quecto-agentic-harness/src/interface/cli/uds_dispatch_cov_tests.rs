@@ -1,8 +1,5 @@
-//! These exercise the pure routing/decision logic of `dispatch_command` and
-//! the individual `handle_*` helpers using an in-memory `DispatchCtx` backed by
-//! a stub provider and a `tokio::io::sink()` writer. No real socket is opened;
-//! events are written to the sink (or dropped). The socket accept loop itself
-//! is covered by BDD tests, not here.
+//! Exercises `dispatch_command`/`handle_*` routing with an in-memory
+//! `DispatchCtx` and sink writer. Socket accept loops are covered by BDD.
 use std::sync::Arc;
 
 use super::{
@@ -218,6 +215,7 @@ impl Fixture {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
+            last_persisted_message_index: 0,
         }
     }
 }

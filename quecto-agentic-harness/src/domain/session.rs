@@ -78,6 +78,22 @@ pub trait SessionStore: Send + Sync {
         session: &Session,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>>;
 
+    /// Save a session when the caller knows how many messages are already durable.
+    fn save_delta<'a>(
+        &'a self,
+        key: &'a str,
+        messages: &'a [Message],
+        _previously_persisted: usize,
+        workflow_run: Option<super::workflow::WorkflowRunPersisted>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        let session = Session {
+            key: key.to_string(),
+            messages: messages.to_vec(),
+            workflow_run,
+        };
+        Box::pin(async move { self.save(&session).await })
+    }
+
     /// Check if a session exists.
     fn exists(
         &self,

@@ -332,9 +332,7 @@ fn then_session_contains_user_msg(world: &mut QuectoWorld, expected: String) {
 
     // Find any session file and check
     let session_file = find_repl_session_file(&sessions_dir);
-    let session: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&session_file).unwrap()).unwrap();
-    let messages = session["messages"].as_array().unwrap();
+    let messages = session_messages_from_file(&session_file);
     let found = messages
         .iter()
         .any(|m| m["role"].as_str() == Some("user") && m["content"].as_str() == Some(&expected));
@@ -353,9 +351,7 @@ fn then_session_contains_assistant_msg(world: &mut QuectoWorld, expected: String
     let sessions_dir = base.join("sessions");
 
     let session_file = find_repl_session_file(&sessions_dir);
-    let session: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&session_file).unwrap()).unwrap();
-    let messages = session["messages"].as_array().unwrap();
+    let messages = session_messages_from_file(&session_file);
     let found = messages.iter().any(|m| {
         m["role"].as_str() == Some("assistant")
             && m["content"].as_str().is_some_and(|c| c.contains(&expected))
@@ -375,9 +371,7 @@ fn then_session_user_message_count(world: &mut QuectoWorld, expected: usize) {
     let sessions_dir = base.join("sessions");
 
     let session_file = find_repl_session_file(&sessions_dir);
-    let session: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&session_file).unwrap()).unwrap();
-    let messages = session["messages"].as_array().unwrap();
+    let messages = session_messages_from_file(&session_file);
     let count = messages
         .iter()
         .filter(|m| m["role"].as_str() == Some("user"))
@@ -387,6 +381,39 @@ fn then_session_user_message_count(world: &mut QuectoWorld, expected: usize) {
         "expected {} user message(s) in session, found {}. messages: {:?}",
         expected, count, messages
     );
+}
+
+fn session_messages_from_file(path: &Path) -> Vec<serde_json::Value> {
+    let data = std::fs::read_to_string(path).unwrap();
+    if let Ok(session) = serde_json::from_str::<serde_json::Value>(&data) {
+        return session["messages"].as_array().cloned().unwrap_or_default();
+    }
+
+    let mut messages = Vec::new();
+    let mut parsed_any = false;
+    for line in data.lines().filter(|line| !line.trim().is_empty()) {
+        let record: serde_json::Value = match serde_json::from_str(line) {
+            Ok(record) => record,
+            Err(err) if parsed_any => {
+                tracing::warn!(error = %err, "ignoring incomplete trailing session record in REPL test helper");
+                break;
+            }
+            Err(err) => panic!("failed to parse session '{}': {}", path.display(), err),
+        };
+        parsed_any = true;
+        match record["type"].as_str() {
+            Some("snapshot") => {
+                messages = record["messages"].as_array().cloned().unwrap_or_default();
+            }
+            Some("append") => {
+                if let Some(added) = record["messages"].as_array() {
+                    messages.extend(added.iter().cloned());
+                }
+            }
+            _ => {}
+        }
+    }
+    messages
 }
 
 /// Helper: find the REPL session file in the sessions directory.

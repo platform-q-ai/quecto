@@ -1463,18 +1463,60 @@ fn load_session_from_disk(world: &QuectoWorld, key: &str) -> SessionOnDisk {
             e
         )
     });
-    let json: serde_json::Value = serde_json::from_str(&data)
+    let messages = session_messages_from_json(&data)
         .unwrap_or_else(|e| panic!("failed to parse session '{}': {}", key, e));
-    let messages = json["messages"]
-        .as_array()
-        .expect("session should have messages array")
-        .iter()
-        .map(|m| MessageOnDisk {
-            role: m["role"].as_str().unwrap_or("").to_string(),
-            content: m["content"].as_str().unwrap_or("").to_string(),
-        })
-        .collect();
     SessionOnDisk { messages }
+}
+
+fn session_messages_from_json(data: &str) -> Result<Vec<MessageOnDisk>, serde_json::Error> {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+        return Ok(messages_from_session_value(&json));
+    }
+    if !data.trim_start().starts_with("{\"type\":") {
+        return Ok(Vec::new());
+    }
+
+    let mut messages = Vec::new();
+    let mut parsed_any = false;
+    for line in data.lines().filter(|line| !line.trim().is_empty()) {
+        let record: serde_json::Value = match serde_json::from_str(line) {
+            Ok(record) => record,
+            Err(err) if parsed_any => {
+                tracing::warn!(error = %err, "ignoring incomplete trailing session record in BDD helper");
+                break;
+            }
+            Err(err) => return Err(err),
+        };
+        parsed_any = true;
+        match record["type"].as_str() {
+            Some("snapshot") => messages = messages_from_session_value(&record),
+            Some("append") => messages.extend(messages_from_session_value(&record)),
+            _ => {}
+        }
+    }
+    Ok(messages)
+}
+
+fn messages_from_session_value(json: &serde_json::Value) -> Vec<MessageOnDisk> {
+    let container = json
+        .get("messages")
+        .and_then(|messages| messages.as_array())
+        .or_else(|| {
+            json.get("snapshot")
+                .and_then(|snapshot| snapshot.get("messages"))
+                .and_then(|messages| messages.as_array())
+        });
+    container
+        .map(|messages| {
+            messages
+                .iter()
+                .map(|m| MessageOnDisk {
+                    role: m["role"].as_str().unwrap_or("").to_string(),
+                    content: m["content"].as_str().unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // ===========================================================================

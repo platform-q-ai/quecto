@@ -76,16 +76,60 @@ fn given_corrupt_session_file(world: &mut QuectoWorld, filename: String) {
 #[given(expr = "a session {string} whose assistant message carries an unrecognised detail field")]
 fn given_session_with_unrecognised_detail(world: &mut QuectoWorld, key: String) {
     ensure_session_workspace(world);
+    let path = session_file_path(world, &key);
+    std::fs::create_dir_all(path.parent().expect("session file should have parent"))
+        .expect("create sessions dir");
+    let json = format!(
+        r#"{{"key":"{key}","messages":[{{"role":"user","content":"what is the answer"}},{{"role":"assistant","content":"42","thinking_blocks":[{{"type":"totally-unknown-variant","x":1}}]}}]}}"#
+    );
+    std::fs::write(path, json).expect("write session");
+}
+
+#[given(expr = "a session {string} with distinct conversation content")]
+fn given_session_with_distinct_conversation_content(world: &mut QuectoWorld, key: String) {
+    ensure_session_workspace(world);
+    let session = Session {
+        key,
+        messages: vec![
+            Message::user("first durable request"),
+            Message::assistant("first durable response", vec![]),
+            Message::user("second durable request"),
+            Message::assistant("second durable response", vec![]),
+        ],
+        workflow_run: None,
+    };
+    world.expected_session_content = session
+        .messages
+        .iter()
+        .map(|message| (message.role.clone(), message.content.clone()))
+        .collect();
+    save_session(world, &session);
+}
+
+fn session_file_path(world: &QuectoWorld, key: &str) -> PathBuf {
     let ws = world
         .session_workspace
         .as_ref()
         .expect("session workspace not set");
-    let sessions_dir = ws.join("sessions");
-    std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
-    let json = format!(
-        r#"{{"key":"{key}","messages":[{{"role":"user","content":"what is the answer"}},{{"role":"assistant","content":"42","thinking_blocks":[{{"type":"totally-unknown-variant","x":1}}]}}]}}"#
-    );
-    std::fs::write(sessions_dir.join(format!("{key}.json")), json).expect("write session");
+    ws.join("sessions")
+        .join(format!("{}.json", key.replace(':', "_")))
+}
+
+fn load_session(world: &QuectoWorld, key: &str) -> Session {
+    let store = world.session_store.as_ref().expect("session store not set");
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(store.load(key))
+        .expect("session load should succeed")
+        .unwrap_or_else(|| panic!("expected session {key:?} to exist"))
+}
+
+fn save_session(world: &QuectoWorld, session: &Session) {
+    let store = world.session_store.as_ref().expect("session store not set");
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(store.save(session))
+        .expect("session save should succeed");
 }
 
 fn session_list_entry(world: &QuectoWorld, key: &str) -> quecto::domain::session::SessionSummary {
@@ -144,6 +188,50 @@ fn when_load_session(world: &mut QuectoWorld, key: String) {
         .block_on(store.load(&key))
         .unwrap();
     world.loaded_session = Some(result);
+}
+
+#[when(expr = "the session {string} records a completed turn")]
+fn when_session_records_completed_turn(world: &mut QuectoWorld, key: String) {
+    let mut session = load_session(world, &key);
+    world.session_storage_before_turn = Some(
+        std::fs::read(session_file_path(world, &key))
+            .expect("previously saved session data should be readable"),
+    );
+    session.messages.push(Message::user("follow-up request"));
+    session
+        .messages
+        .push(Message::assistant("follow-up response", vec![]));
+    world.expected_session_content = session
+        .messages
+        .iter()
+        .map(|message| (message.role.clone(), message.content.clone()))
+        .collect();
+    save_session(world, &session);
+}
+
+#[when(expr = "the session {string} has an interrupted turn")]
+fn when_session_has_interrupted_turn(world: &mut QuectoWorld, key: String) {
+    let path = session_file_path(world, &key);
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .expect("open session file for interrupted write");
+    file.write_all(br#"{"message":{"role":"user","content":"in-flight request"}}"#)
+        .expect("write partial turn");
+    file.flush().expect("flush partial turn");
+}
+
+#[when(expr = "the session {string} keeps only the latest {int} messages")]
+fn when_session_keeps_only_latest_messages(world: &mut QuectoWorld, key: String, count: usize) {
+    let mut session = load_session(world, &key);
+    world.session_storage_before_replace = Some(
+        std::fs::read(session_file_path(world, &key))
+            .expect("previously saved session data should be readable"),
+    );
+    let start = session.messages.len().saturating_sub(count);
+    session.messages = session.messages.split_off(start);
+    save_session(world, &session);
 }
 
 #[when("the session is saved to disk")]
@@ -214,6 +302,56 @@ fn then_session_found(world: &mut QuectoWorld) {
         .as_ref()
         .expect("no load was performed");
     assert!(loaded.is_some(), "expected session to be found");
+}
+
+#[then(expr = "the session {string} should reload with {int} messages")]
+fn then_session_should_reload_with_messages(world: &mut QuectoWorld, key: String, expected: usize) {
+    let loaded = load_session(world, &key);
+    assert_eq!(
+        loaded.messages.len(),
+        expected,
+        "expected {expected} messages in {key:?}, got {}",
+        loaded.messages.len()
+    );
+}
+
+#[then(expr = "the session {string} storage should preserve the previously saved data")]
+fn then_session_storage_preserves_previously_saved_data(world: &mut QuectoWorld, key: String) {
+    let before = world
+        .session_storage_before_turn
+        .as_ref()
+        .expect("previous session storage should have been captured");
+    let after = std::fs::read(session_file_path(world, &key))
+        .expect("updated session storage should be readable");
+    assert!(
+        after.starts_with(before),
+        "expected completed turn to preserve previously saved session data"
+    );
+}
+
+#[then(expr = "the session {string} storage should replace the previous data")]
+fn then_session_storage_replaces_previous_data(world: &mut QuectoWorld, key: String) {
+    let before = world
+        .session_storage_before_replace
+        .as_ref()
+        .expect("previous session storage should have been captured");
+    let after = std::fs::read(session_file_path(world, &key))
+        .expect("updated session storage should be readable");
+    assert!(
+        !after.starts_with(before),
+        "expected replacing history to rewrite compact storage instead of appending obsolete data"
+    );
+}
+
+#[then(expr = "the session {string} should reload with the same conversation content")]
+fn then_session_should_reload_with_same_conversation_content(world: &mut QuectoWorld, key: String) {
+    let loaded = load_session(world, &key);
+    let actual: Vec<_> = loaded
+        .messages
+        .iter()
+        .map(|message| (message.role.clone(), message.content.clone()))
+        .collect();
+    assert_eq!(actual, world.expected_session_content);
 }
 
 #[then(expr = "the conversation history should contain {int} messages")]
