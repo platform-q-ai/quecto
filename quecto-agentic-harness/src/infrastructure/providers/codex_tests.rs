@@ -712,20 +712,20 @@ fn test_codex_provider_accepts_shared_client() {
     assert_eq!(provider.name(), "codex");
 }
 
-/// Regression guard (#996 item 9, PR #999 review): `for_streaming_task` clones
+/// Regression guard (#996 item 9, PR #999 review): the derived `Clone` copies
 /// the provider for a spawned streaming task. Every auth-identity field —
 /// notably `account_id` (sent as the `chatgpt-account-id` header) and
 /// `api_key`/`api_base` — must survive the clone; a silent field-drop would
 /// stream under the wrong ChatGPT account.
 #[test]
-fn codex_for_streaming_task_preserves_all_fields() {
+fn codex_streaming_task_clone_preserves_all_fields() {
     let provider = CodexProvider::with_client(
         "sk-codex-secret".to_string(),
         "acct-xyz".to_string(),
         Some("https://codex.example".to_string()),
         reqwest::Client::new(),
     );
-    let cloned = provider.for_streaming_task();
+    let cloned = provider.clone();
     assert_eq!(cloned.api_key, "sk-codex-secret");
     assert_eq!(cloned.account_id, "acct-xyz");
     assert_eq!(cloned.api_base, "https://codex.example");

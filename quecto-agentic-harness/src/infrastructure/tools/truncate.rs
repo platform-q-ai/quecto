@@ -239,15 +239,13 @@ pub fn truncate_tail(content: &str, max_lines: usize, max_bytes: usize) -> Trunc
 
 /// Truncate a single line to max characters. Used by: grep (500 chars).
 ///
-/// If the line exceeds the limit, truncates and appends `... [truncated]`.
-/// Returns `(truncated_line, was_truncated)`.
+/// If the line exceeds the limit, truncates and appends `... [truncated]`
+/// (the marker does not count toward the budget). Returns
+/// `(truncated_line, was_truncated)`. Bounded-scan core in [`crate::domain::text`].
 pub fn truncate_line(line: &str, max_chars: usize) -> (String, bool) {
-    // Bounded scan: only walk up to `max_chars` characters. `nth(max_chars)`
-    // yields the byte offset of the first character past the limit (or None if
-    // the line fits), so we never count the whole line.
-    match line.char_indices().nth(max_chars) {
-        None => (line.to_string(), false),
-        Some((end, _)) => (format!("{}... [truncated]", &line[..end]), true),
+    match crate::domain::text::truncate_chars(line, max_chars, max_chars, "... [truncated]") {
+        std::borrow::Cow::Borrowed(_) => (line.to_string(), false),
+        std::borrow::Cow::Owned(s) => (s, true),
     }
 }
 

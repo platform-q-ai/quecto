@@ -8,7 +8,7 @@ use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 
 /// OpenAI-compatible LLM provider.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OpenAiProvider {
     provider_name: String,
     api_key: String,
@@ -21,19 +21,6 @@ pub struct OpenAiProvider {
 impl OpenAiProvider {
     pub fn new(api_key: String, api_base: Option<String>) -> Self {
         Self::with_client(api_key, api_base, reqwest::Client::new())
-    }
-
-    /// Clone this provider for a spawned streaming task, preserving every field
-    /// (including `provider_name`). The `reqwest::Client` clone is cheap — it
-    /// shares the underlying connection pool.
-    fn for_streaming_task(&self) -> Self {
-        Self {
-            provider_name: self.provider_name.clone(),
-            api_key: self.api_key.clone(),
-            api_base: self.api_base.clone(),
-            client: self.client.clone(),
-            account_id: self.account_id.clone(),
-        }
     }
 
     /// Create with a shared `reqwest::Client` (avoids duplicate connection pools).
@@ -387,7 +374,7 @@ impl LlmProvider for OpenAiProvider {
         // Request a final usage chunk (see `chat_stream`).
         body["stream_options"] = serde_json::json!({ "include_usage": true });
         let url = format!("{}/chat/completions", self.api_base);
-        let provider = self.for_streaming_task();
+        let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {

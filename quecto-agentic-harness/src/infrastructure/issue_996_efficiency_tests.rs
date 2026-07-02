@@ -134,7 +134,7 @@ fn provider_entry_loads_ignoring_dead_auth_method() {
 //     exercised by `spawn_tests.rs` and `subagent_*` suites; the change is a
 //     syscall swap with no observable output change.
 //   - Item 9 (streaming provider clone / router_name reset bug): pinned by
-//     `anthropic_tests::for_streaming_task_preserves_custom_router_name` — the
+//     `anthropic_tests::streaming_task_clone_preserves_custom_router_name` — the
 //     only behaviour-changing item — plus the existing streaming provider tests.
 //   - Item 7 (denylist single-scan normalization): pinned by the sandbox
 //     command-denylist suites, which assert unchanged block/allow semantics.

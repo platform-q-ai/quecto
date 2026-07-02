@@ -185,29 +185,11 @@ impl AuditEvent {
 
 /// Generate a content preview capped at `max_chars` characters.
 ///
-/// Truncates at a character boundary and appends "..." when truncated.
-/// Uses a byte-length fast path for ASCII-dominated content (the common case
-/// for terminal output, code, and JSON) to avoid O(n) char counting.
+/// Truncates at a character boundary and appends "..." when truncated (the
+/// ellipsis counts toward the budget). Bounded-scan core in [`crate::domain::text`].
 pub fn content_preview(content: &str, max_chars: usize) -> String {
-    // Fast path: if byte length ≤ max_chars, the string is guaranteed to
-    // have ≤ max_chars characters (since each char is ≥ 1 byte).
-    if content.len() <= max_chars {
-        return content.to_string();
-    }
-    // Bounded scan: only walk up to `max_chars` characters. If the string has
-    // at most `max_chars` chars, return it verbatim; otherwise cut on the char
-    // boundary `max_chars - 3` chars in and append the ellipsis.
-    match content.char_indices().nth(max_chars) {
-        None => content.to_string(),
-        Some(_) => {
-            let keep = max_chars.saturating_sub(3);
-            let end = content
-                .char_indices()
-                .nth(keep)
-                .map_or(content.len(), |(idx, _)| idx);
-            format!("{}...", &content[..end])
-        }
-    }
+    crate::domain::text::truncate_chars(content, max_chars, max_chars.saturating_sub(3), "...")
+        .into_owned()
 }
 
 #[cfg(test)]

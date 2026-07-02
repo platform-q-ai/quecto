@@ -16,7 +16,7 @@ use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
 
 /// ChatGPT Codex provider using the Responses API.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CodexProvider {
     api_key: String,
     api_base: String,
@@ -45,17 +45,6 @@ impl CodexProvider {
             api_base: api_base.unwrap_or_else(|| CODEX_BASE_URL.to_string()),
             client,
             account_id,
-        }
-    }
-
-    /// Clone this provider for a spawned streaming task. The `reqwest::Client`
-    /// clone is cheap — it shares the underlying connection pool.
-    fn for_streaming_task(&self) -> Self {
-        Self {
-            api_key: self.api_key.clone(),
-            api_base: self.api_base.clone(),
-            client: self.client.clone(),
-            account_id: self.account_id.clone(),
         }
     }
 
@@ -537,7 +526,7 @@ impl LlmProvider for CodexProvider {
         }
         let body = Self::build_request_body(&request);
         let url = format!("{}/codex/responses", self.api_base);
-        let provider = self.for_streaming_task();
+        let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {

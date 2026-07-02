@@ -18,7 +18,7 @@ mod anthropic_sse;
 mod anthropic_user_msg;
 
 /// Anthropic LLM provider.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AnthropicProvider {
     api_key: String,
     api_base: String,
@@ -55,19 +55,6 @@ impl AnthropicProvider {
             client,
             is_oauth,
             router_name: router_name.into(),
-        }
-    }
-
-    /// Clone this provider for a spawned streaming task, preserving every field
-    /// (crucially the router-facing `router_name`). The `reqwest::Client` clone
-    /// is cheap — it shares the underlying connection pool.
-    fn for_streaming_task(&self) -> Self {
-        Self {
-            api_key: self.api_key.clone(),
-            api_base: self.api_base.clone(),
-            client: self.client.clone(),
-            is_oauth: self.is_oauth,
-            router_name: self.router_name.clone(),
         }
     }
 
@@ -594,12 +581,11 @@ impl LlmProvider for AnthropicProvider {
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
 
-        // Clone the whole provider (all fields, including `router_name`) so the
-        // spawned streaming task carries the same identity. The previous code
-        // reconstructed the struct inline with a hardcoded `"anthropic"`
-        // router_name, resetting registry-built providers (e.g. the
-        // `anthropic-oauth` prefix) back to the default key.
-        let provider = self.for_streaming_task();
+        // Derived Clone carries every field (crucially `router_name`) into the
+        // spawned streaming task. The previous code reconstructed the struct
+        // inline with a hardcoded `"anthropic"` router_name, resetting
+        // registry-built providers (e.g. `anthropic-oauth`) to the default key.
+        let provider = self.clone();
 
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);

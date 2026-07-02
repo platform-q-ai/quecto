@@ -10,5 +10,6 @@ pub mod provider_error;
 pub mod redaction;
 pub mod session;
 pub mod subagent;
+pub mod text;
 pub mod tool;
 pub mod workflow;
