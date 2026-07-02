@@ -156,7 +156,7 @@ pub async fn exchange_anthropic_code(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let _ = discard_error_body_bounded(resp).await;
+        let _ = discard_error_body(resp).await;
         return Err(DomainError::Provider(format!(
             "token exchange failed ({})",
             status
@@ -191,7 +191,7 @@ pub async fn refresh_anthropic_token(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let _ = discard_error_body_bounded(resp).await;
+        let _ = discard_error_body(resp).await;
         return Err(DomainError::Provider(format!(
             "token refresh failed ({})",
             status
@@ -259,7 +259,7 @@ pub async fn exchange_openai_code(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let _ = discard_error_body_bounded(resp).await;
+        let _ = discard_error_body(resp).await;
         return Err(DomainError::Provider(format!(
             "OpenAI token exchange failed ({})",
             status
@@ -291,7 +291,7 @@ pub async fn refresh_openai_token(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let _ = discard_error_body_bounded(resp).await;
+        let _ = discard_error_body(resp).await;
         return Err(DomainError::Provider(format!(
             "OpenAI token refresh failed ({})",
             status
@@ -458,17 +458,13 @@ impl std::fmt::Debug for DeviceCodeResponse {
     }
 }
 
-/// Maximum error body size to read from OAuth server responses (4 KB).
-const MAX_ERROR_BODY_BYTES: usize = 4096;
-
-async fn discard_error_body_bounded(_resp: reqwest::Response) {
-    // Intentionally do not read the response body on OAuth failures. This is the
-    // only strict way to guarantee the CLI does not buffer more than the
-    // documented cap regardless of the server's Content-Length, transfer
-    // encoding, or frame sizes. Error bodies may also contain provider internals
-    // or secrets, so callers report only the HTTP status.
-    let _ = MAX_ERROR_BODY_BYTES;
-}
+/// Drop an OAuth error response without reading its body. Never buffering the
+/// body — regardless of the server's `Content-Length`, transfer encoding, or
+/// frame sizes — is the only strict way to guarantee the CLI does not read an
+/// unbounded amount from a malicious or misbehaving server. Error bodies may
+/// also contain provider internals or secrets, so callers report only the
+/// HTTP status, never response details.
+async fn discard_error_body(_resp: reqwest::Response) {}
 
 /// Initiate a device code flow: POST to the device code endpoint and
 /// return the response containing the user code and verification URI.
@@ -484,10 +480,9 @@ pub async fn request_device_code(config: &OAuthConfig) -> Result<DeviceCodeRespo
 
     let status = resp.status().as_u16();
     if status != 200 {
-        // Read and discard at most a small prefix to avoid retaining a large
-        // error response from a malicious server. Do NOT include server response
-        // details in the error message to avoid leaking internals.
-        let _ = discard_error_body_bounded(resp).await;
+        // Drop the response without reading its body. Do NOT include server
+        // response details in the error message to avoid leaking internals.
+        let _ = discard_error_body(resp).await;
         return Err(DomainError::Provider(format!(
             "device code request failed ({})",
             status

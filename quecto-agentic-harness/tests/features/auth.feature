@@ -38,15 +38,14 @@ Feature: Authentication
     Then the credential for "openai" should exist
     And the credential token should be "sk-test-123"
 
-  Scenario: Existing credentials remain available until an update is complete
+  Scenario: A stray temp file beside the store does not affect current credentials
     Given a credential store
     And a stored credential for "openai" with token "old-token"
-    When a credential update for "anthropic" is interrupted before replacement
+    When an unrelated writer leaves a stray temp file beside the credential store for "anthropic"
     Then the credential file should be unchanged
     And the credential for "openai" should exist
     And the credential token should be "old-token"
     And the credential for "anthropic" should not exist
-
 
   Scenario: Check auth status with no credentials
     Given a credential store with no credentials

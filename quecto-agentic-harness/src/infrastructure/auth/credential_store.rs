@@ -415,6 +415,10 @@ mod tests {
 
     // --- Sandbox hardening: credential file permission tests ---
 
+    /// Exercises the real `store()` → `save_all()` → `atomic_write()` path (not
+    /// a hand-rolled simulation): a second `store()` call must fully replace
+    /// the credentials file's content via the same-directory-temp-file +
+    /// rename it performs internally, and must not leave the temp file behind.
     #[test]
     fn test_atomic_replacement_preserves_existing_credentials_until_rename() {
         let tmp = TempDir::new().unwrap();
@@ -424,26 +428,37 @@ mod tests {
             .unwrap();
         let before = std::fs::read(store.path()).unwrap();
 
-        let tmp_replacement = tmp.path().join(".credentials.json.test-replacement.tmp");
-        let replacement = b"{\n  \"credentials\": {}\n}";
-        std::fs::write(&tmp_replacement, replacement).unwrap();
-
+        // A concurrent atomic_write from an unrelated writer targeting the same
+        // temp-name pattern must not corrupt the store's own credentials file:
+        // it only ever becomes visible via `std::fs::rename`, which this store
+        // never observes unless it performs the rename itself.
+        let stray_tmp = tmp.path().join(".credentials.json.stray-writer.tmp");
+        std::fs::write(&stray_tmp, b"not a credentials file").unwrap();
         assert_eq!(
             std::fs::read(store.path()).unwrap(),
             before,
-            "writing a replacement beside the credential file must not alter current credentials"
+            "an unrelated temp file beside the credential file must not alter current credentials"
         );
+        std::fs::remove_file(&stray_tmp).unwrap();
+
+        // The real replacement path: store() -> save_all() -> atomic_write().
+        store
+            .store(make_credential("openai", "new-token", AuthMethod::OAuth))
+            .unwrap();
+
         assert_eq!(
             store.get("openai").unwrap().unwrap().token,
-            "old-token",
-            "previous credential must remain readable before the replacement is renamed"
+            "new-token",
+            "the second store() call must be visible after atomic_write's rename"
         );
-
-        std::fs::rename(&tmp_replacement, store.path()).unwrap();
+        let entries: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
         assert_eq!(
-            std::fs::read(store.path()).unwrap(),
-            replacement,
-            "the replacement should become visible only after the final rename"
+            entries,
+            vec![std::ffi::OsString::from("credentials.json")],
+            "atomic_write must not leave its temp file behind after a successful rename"
         );
     }
 

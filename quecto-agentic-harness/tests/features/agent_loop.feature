@@ -29,7 +29,6 @@ Feature: Agent Loop
     Then the tool result preview should contain only complete characters
     And the tool result preview should stay within the byte limit
 
-
   Scenario: Message triggers multiple tool calls in sequence
     Given a configured agent with a mock LLM
     And the LLM returns tool calls in sequence: "read", "write"

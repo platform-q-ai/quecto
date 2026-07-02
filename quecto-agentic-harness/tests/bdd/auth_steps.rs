@@ -84,11 +84,17 @@ fn when_store_token(world: &mut QuectoWorld, token: String, provider: String) {
         .unwrap();
 }
 
-#[when(expr = "a credential update for {string} is interrupted before replacement")]
-fn when_credential_update_interrupted_before_replacement(
-    world: &mut QuectoWorld,
-    provider: String,
-) {
+/// Simulates an unrelated writer dropping a temp file beside the credential
+/// store, using the same naming convention `atomic_write` uses, without going
+/// through the store's own `store()`/`save_all()` path. This proves a stray
+/// temp file can't be mistaken for the credentials file before a rename makes
+/// it visible; it does not exercise `atomic_write`'s own crash-safety, which
+/// is covered end-to-end by the `atomic_write` and `credential_store` unit
+/// tests (they call the real write path, not a simulation).
+#[when(
+    expr = "an unrelated writer leaves a stray temp file beside the credential store for {string}"
+)]
+fn when_stray_temp_file_left_beside_store(world: &mut QuectoWorld, provider: String) {
     let store = world
         .credential_store
         .as_ref()
@@ -129,7 +135,7 @@ fn then_credential_file_should_be_unchanged(world: &mut QuectoWorld) {
     assert_eq!(
         &std::fs::read(store.path()).unwrap(),
         before,
-        "interrupted credential update must leave the active credential file unchanged"
+        "a stray temp file beside the store must leave the active credential file unchanged"
     );
 }
 

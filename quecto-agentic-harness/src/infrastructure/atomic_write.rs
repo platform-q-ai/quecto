@@ -4,17 +4,34 @@ use std::path::{Path, PathBuf};
 
 /// Atomically replace `path` with `bytes` by writing a same-directory temporary
 /// file and renaming it into place.
+///
+/// A failure of the trailing directory-metadata sync (see `sync_parent_dir`)
+/// does not fail the call: by that point `rename` has already succeeded, so
+/// `bytes` is the file any reader will see. Only unlink the temp file on a
+/// failure that happens *before* the rename — once renamed, there is no temp
+/// file left to clean up.
 pub fn atomic_write(path: &Path, bytes: &[u8], mode: Option<u32>) -> io::Result<()> {
     let tmp_path = temp_path_for(path)?;
-    let write_result = write_temp_file(&tmp_path, bytes, mode)
-        .and_then(|()| std::fs::rename(&tmp_path, path))
-        .and_then(|()| sync_parent_dir(path));
 
-    if write_result.is_err() {
+    if let Err(e) = write_temp_file(&tmp_path, bytes, mode) {
         let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
     }
 
-    write_result
+    // The rename has landed; `bytes` is now what `path` contains regardless of
+    // whether the directory-metadata sync below succeeds, so a sync failure
+    // (e.g. an unusual filesystem or a transient EIO on the directory) must
+    // not be reported as a failed write — the caller already has the new
+    // content. This only weakens the durability guarantee against a
+    // concurrent crash, not the correctness of any subsequent read.
+    if let Err(e) = sync_parent_dir(path) {
+        tracing::warn!(error = %e, path = %path.display(), "atomic_write: parent directory sync failed after a successful rename");
+    }
+    Ok(())
 }
 
 fn temp_path_for(path: &Path) -> io::Result<PathBuf> {

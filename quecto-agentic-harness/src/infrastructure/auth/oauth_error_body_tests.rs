@@ -1,9 +1,15 @@
 use super::*;
 
+/// A server that announces a large body (and only trickles a fraction of it,
+/// then stalls) proves `discard_error_body` never reads any bytes: if it read
+/// even the announced `Content-Length` worth, this test would hang past the
+/// 1s deadline waiting on the stalled connection.
 #[tokio::test]
-async fn test_discard_error_body_bounded_does_not_wait_for_oversized_response() {
+async fn test_discard_error_body_does_not_wait_for_oversized_response() {
     use std::io::Write;
     use std::net::TcpListener;
+
+    const ANNOUNCED_BODY_LEN: usize = 16 * 1024;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -14,9 +20,11 @@ async fn test_discard_error_body_bounded_does_not_wait_for_oversized_response() 
         write!(
             stream,
             "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n",
-            MAX_ERROR_BODY_BYTES * 4
+            ANNOUNCED_BODY_LEN
         )
         .unwrap();
+        // Send only a few bytes of the announced body, then stall — a reader
+        // that consumes any of the body would block waiting for the rest.
         stream
             .write_all(b"server-secret-detail-before-cap")
             .unwrap();
@@ -30,11 +38,11 @@ async fn test_discard_error_body_bounded_does_not_wait_for_oversized_response() 
         .await
         .unwrap();
     let start = std::time::Instant::now();
-    discard_error_body_bounded(resp).await;
+    discard_error_body(resp).await;
 
     assert!(
         start.elapsed() < std::time::Duration::from_secs(1),
-        "bounded error handling should not wait for or buffer the oversized response body"
+        "discard_error_body must return immediately without reading the response body"
     );
     drop(handle);
 }
@@ -45,7 +53,7 @@ async fn test_device_code_error_message_omits_oversized_response_details() {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let server = MockServer::start().await;
-    let oversized_body = "server-secret-detail".repeat(MAX_ERROR_BODY_BYTES);
+    let oversized_body = "server-secret-detail".repeat(4096);
 
     Mock::given(method("POST"))
         .and(path("/device/code"))
