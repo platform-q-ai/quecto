@@ -484,6 +484,7 @@ async fn reset_session_clears_chat_and_notifies() {
 async fn extract_selection_spans_rows_and_normalizes_order() {
     let mut h = harness().await;
     let a = h.app_mut();
+    a.agent_connected = false;
     a.last_rendered_lines = vec![
         "hello world".to_string(),
         "second line".to_string(),
@@ -503,6 +504,7 @@ async fn extract_selection_spans_rows_and_normalizes_order() {
 async fn extract_selection_handles_out_of_range_rows() {
     let mut h = harness().await;
     let a = h.app_mut();
+    a.agent_connected = false;
     a.last_rendered_lines = vec!["only".to_string()];
     let start = SelectionAnchor { col: 0, row: 0 };
     let end = SelectionAnchor { col: 50, row: 9 };

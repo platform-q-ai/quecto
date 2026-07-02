@@ -16,9 +16,11 @@
 use super::App;
 use super::Focus;
 use super::app_methods::strip_ansi;
+use super::app_selection::{SelectionAnchor, TextSelection};
 use super::keys::Key;
 use crate::infrastructure::client::{Client, Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::infrastructure::terminal::Terminal;
+use crate::interface::components::chat::ChatEntry;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
@@ -274,6 +276,43 @@ impl TuiHarness {
             .map(|l| strip_ansi(l))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Append a user-visible conversation line through the real chat renderer.
+    pub fn add_user_message(&mut self, text: &str) -> &mut Self {
+        self.app.active_chat_mut().add_entry(ChatEntry::User {
+            text: text.to_string(),
+        });
+        self.capture();
+        self
+    }
+
+    /// Copy a visible-frame selection through the production extraction helper.
+    pub fn extract_visible_selection(
+        &mut self,
+        start_col: u16,
+        start_row: u16,
+        end_col: u16,
+        end_row: u16,
+    ) -> String {
+        let start = SelectionAnchor {
+            col: start_col,
+            row: start_row,
+        };
+        let end = SelectionAnchor {
+            col: end_col,
+            row: end_row,
+        };
+        self.app.selection = Some(TextSelection { start, end });
+        self.app.compose_frame();
+        self.app.selection = None;
+        self.app.extract_selection(&start, &end)
+    }
+
+    /// The first visible column belonging to the main conversation body.
+    pub fn body_start_col(&self) -> usize {
+        let (panel_width, divider_width, _) = self.app.frame_split();
+        panel_width + divider_width
     }
 
     /// The full screen frame WITH ANSI styling, joined into one string — for

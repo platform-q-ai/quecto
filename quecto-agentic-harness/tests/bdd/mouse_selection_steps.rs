@@ -1,4 +1,6 @@
 use super::*;
+use quecto_tui::infrastructure::client::Event;
+use quecto_tui::interface::app::tui_harness::TuiHarness;
 use std::io::{self, Write};
 
 struct BddClipboardWriter {
@@ -21,6 +23,10 @@ impl Write for BddClipboardWriter {
         Ok(())
     }
 }
+
+const NAVIGATION_LABEL: &str = "Master";
+const CONVERSATION_TEXT: &str = "Conversation body copy target";
+const DIVIDER: char = '│';
 
 // ─── Mouse selection BDD steps (#528) ────────────────────────────────────────
 //
@@ -149,6 +155,105 @@ fn then_mouse_release(world: &mut QuectoWorld, expected_col: u32, expected_row: 
 #[given(expr = "the text {string} to copy")]
 fn given_text_to_copy(world: &mut QuectoWorld, text: String) {
     world.stdout = text;
+}
+
+#[given("the TUI shows navigation content beside conversation content")]
+fn given_tui_shows_navigation_beside_conversation(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let mut harness = rt.block_on(TuiHarness::new());
+    harness.event(Event::AgentStart);
+    harness.add_user_message(CONVERSATION_TEXT);
+    let frame = harness.full_frame();
+    assert!(
+        frame.contains(NAVIGATION_LABEL),
+        "the rendered frame should include navigation content: {frame:?}"
+    );
+    assert!(
+        frame.lines().any(|line| line.contains(NAVIGATION_LABEL)),
+        "navigation content should be present before copy: {frame:?}"
+    );
+    assert!(
+        frame.contains(DIVIDER),
+        "the rendered frame should include the divider: {frame:?}"
+    );
+    assert!(
+        frame.contains(CONVERSATION_TEXT),
+        "the rendered frame should include conversation content: {frame:?}"
+    );
+    world.stderr = frame;
+    world.tui_parity_rt = Some(rt);
+    world.tui_parity = Some(TuiParityHarness(harness));
+}
+
+#[when("the user copies a mouse selection that begins outside the conversation")]
+fn when_user_copies_selection_beginning_outside_conversation(world: &mut QuectoWorld) {
+    let handle = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("TUI harness runtime")
+        .handle()
+        .clone();
+    let _guard = handle.enter();
+    let harness = &mut world.tui_parity.as_mut().expect("TUI harness").0;
+    let frame = harness.full_frame();
+    let (row, line) = frame
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains(CONVERSATION_TEXT))
+        .expect("conversation content should be visible");
+    let content_start = line
+        .find(CONVERSATION_TEXT)
+        .expect("conversation content column");
+    let end_col =
+        (line[..content_start].chars().count() + CONVERSATION_TEXT.chars().count()) as u16;
+    assert!(
+        line.contains(DIVIDER),
+        "selection fixture should begin on a row with a divider: {line:?}"
+    );
+    world.stdout = harness.extract_visible_selection(0, row as u16, end_col, row as u16);
+}
+
+#[then("the clipboard text should contain only the selected conversation content")]
+fn then_clipboard_contains_only_selected_conversation_content(world: &mut QuectoWorld) {
+    assert!(
+        world.stdout.contains(CONVERSATION_TEXT),
+        "copied text should include conversation content; got {:?}",
+        world.stdout
+    );
+    assert!(
+        world
+            .stdout
+            .lines()
+            .all(|line| !line.trim().is_empty() && line.contains(CONVERSATION_TEXT)),
+        "copied text should contain only the selected conversation line; got {:?}",
+        world.stdout
+    );
+}
+
+#[then("the clipboard text should not contain navigation content")]
+fn then_clipboard_text_should_not_contain_navigation_content(world: &mut QuectoWorld) {
+    assert!(
+        world.stderr.contains(NAVIGATION_LABEL),
+        "fixture should prove navigation content existed before copy"
+    );
+    assert!(
+        !world.stdout.contains(NAVIGATION_LABEL),
+        "copied text should exclude navigation content; got {:?}",
+        world.stdout
+    );
+}
+
+#[then("the clipboard text should not contain the divider")]
+fn then_clipboard_text_should_not_contain_divider(world: &mut QuectoWorld) {
+    assert!(
+        world.stderr.contains(DIVIDER),
+        "fixture should prove the divider existed before copy"
+    );
+    assert!(
+        !world.stdout.contains(DIVIDER),
+        "copied text should exclude the divider; got {:?}",
+        world.stdout
+    );
 }
 
 #[when("it is base64 encoded for OSC 52")]

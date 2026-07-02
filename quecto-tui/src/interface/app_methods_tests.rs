@@ -1,6 +1,7 @@
 //! Tests for pure helper functions in `app_methods.rs` (issue #729).
 
 use super::app_methods;
+use super::app_selection::SelectionAnchor;
 use crate::infrastructure::client::Client;
 use crate::infrastructure::terminal::Terminal;
 use crate::interface::component::Component;
@@ -197,6 +198,49 @@ fn subagent_activity_line_frame_wraps() {
     // Frame index beyond SPINNER_FRAMES.len() should wrap without panic.
     let line = app_methods::subagent_activity_line(1, 1000);
     assert!(!line.is_empty());
+}
+
+#[tokio::test]
+async fn extract_selection_omits_navigation_panel_and_divider_columns() {
+    let mut app = test_app_for_methods().await;
+    app.agent_connected = true;
+
+    for terminal_width in [50, 80] {
+        app.terminal.width = terminal_width;
+        let (panel_width, divider_width, _) = app.frame_split();
+        let body_start = panel_width + divider_width;
+        let line = format!("{:<panel_width$}│ BODY text", "NAVIGATION");
+        assert!(line[..panel_width].contains("NAVIGATION"));
+        assert_eq!(line.chars().nth(panel_width), Some('│'));
+        assert_eq!(line.chars().nth(body_start - 1), Some(' '));
+        assert_eq!(line.chars().nth(body_start), Some('B'));
+        let end_col = line.chars().count() as u16;
+        app.last_rendered_lines = vec![line];
+
+        let cases = [
+            (0, "BODY text"),
+            (body_start.saturating_sub(1) as u16, "BODY text"),
+            (body_start as u16, "BODY text"),
+            (body_start.saturating_add(1) as u16, "ODY text"),
+        ];
+
+        for (start_col, expected) in cases {
+            let copied = app.extract_selection(
+                &SelectionAnchor {
+                    col: start_col,
+                    row: 0,
+                },
+                &SelectionAnchor {
+                    col: end_col,
+                    row: 0,
+                },
+            );
+            assert_eq!(
+                copied, expected,
+                "terminal width {terminal_width}, selection starting at column {start_col}"
+            );
+        }
+    }
 }
 
 // ── strip_ansi ───────────────────────────────────────────────────────────
