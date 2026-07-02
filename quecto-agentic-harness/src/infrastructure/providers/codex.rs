@@ -16,7 +16,7 @@ use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
 
 /// ChatGPT Codex provider using the Responses API.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CodexProvider {
     api_key: String,
     api_base: String,
@@ -275,20 +275,9 @@ impl CodexProvider {
             }
         }
 
-        let usage = body["usage"].as_object().map(|u| UsageInfo {
-            prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
-            completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens: u
-                .get("input_tokens_details")
-                .and_then(|d| d.get("cached_tokens"))
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32),
-            cache_write_tokens: None,
-            // Codex/OpenAI `input_tokens` already counts the full prompt
-            // (cached tokens are a subset), so the gauge uses `prompt_tokens`.
-            context_tokens: None,
-            cost: None,
-        });
+        let usage = body["usage"]
+            .as_object()
+            .map(crate::infrastructure::providers::usage::parse_codex_usage);
 
         Ok(LlmResponse {
             content,
@@ -436,20 +425,9 @@ impl SseAccumulator {
             }
             Some("response.completed") => {
                 if let Some(resp) = event.get("response") {
-                    self.usage = resp["usage"].as_object().map(|u| UsageInfo {
-                        prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
-                        completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
-                        cache_read_tokens: u
-                            .get("input_tokens_details")
-                            .and_then(|d| d.get("cached_tokens"))
-                            .and_then(|v| v.as_u64())
-                            .map(|v| v as u32),
-                        cache_write_tokens: None,
-                        // Codex/OpenAI `input_tokens` already counts the full
-                        // prompt, so the gauge uses `prompt_tokens`.
-                        context_tokens: None,
-                        cost: None,
-                    });
+                    self.usage = resp["usage"]
+                        .as_object()
+                        .map(crate::infrastructure::providers::usage::parse_codex_usage);
                 }
             }
             _ => {}
@@ -548,19 +526,10 @@ impl LlmProvider for CodexProvider {
         }
         let body = Self::build_request_body(&request);
         let url = format!("{}/codex/responses", self.api_base);
-        let api_key = self.api_key.clone();
-        let api_base = self.api_base.clone();
-        let account_id = self.account_id.clone();
-        let client = self.client.clone();
+        let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {
-                let provider = CodexProvider {
-                    api_key,
-                    api_base,
-                    client,
-                    account_id,
-                };
                 provider.pump_codex_sse(&url, body, tx).await;
             });
             rx

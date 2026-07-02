@@ -14,6 +14,9 @@ struct OpenAiSseHandler {
     content: String,
     tool_calls: Vec<ToolCall>,
     usage: Option<UsageInfo>,
+    /// Reused sink for `apply_delta`'s content extraction (which we ignore
+    /// here, since content is accumulated into `content` directly).
+    delta_scratch: String,
 }
 
 impl OpenAiSseHandler {
@@ -22,6 +25,7 @@ impl OpenAiSseHandler {
             content: String::new(),
             tool_calls: Vec::new(),
             usage: None,
+            delta_scratch: String::new(),
         }
     }
 
@@ -58,35 +62,27 @@ impl SseHandler for OpenAiSseHandler {
             // Final usage chunk (requested via stream_options.include_usage).
             // Emitted with an empty `choices` array and a populated `usage`.
             if let Some(usage) = chunk.get("usage").and_then(|u| u.as_object()) {
-                self.usage = Some(UsageInfo {
-                    prompt_tokens: usage
-                        .get("prompt_tokens")
-                        .and_then(|v| v.as_u64())
-                        .and_then(|n| u32::try_from(n).ok())
-                        .unwrap_or(0),
-                    completion_tokens: usage
-                        .get("completion_tokens")
-                        .and_then(|v| v.as_u64())
-                        .and_then(|n| u32::try_from(n).ok())
-                        .unwrap_or(0),
-                    cache_read_tokens: None,
-                    cache_write_tokens: None,
-                    context_tokens: usage
-                        .get("total_tokens")
-                        .and_then(|v| v.as_u64())
-                        .and_then(|n| u32::try_from(n).ok()),
-                    cost: None,
-                });
+                self.usage = Some(crate::infrastructure::providers::usage::parse_openai_usage(
+                    usage,
+                ));
             }
             if let Some(choices) = chunk.get("choices").and_then(|v| v.as_array()) {
+                // Content is accumulated directly into `self.content` above, so
+                // `apply_delta` only needs a throwaway sink for its own content
+                // extraction. Reuse one buffer across choices instead of
+                // allocating a fresh `String` per delta.
                 for choice in choices {
                     let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
                     if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
                         self.content.push_str(text);
                         let _ = tx.send(StreamEvent::TextDelta(text.to_string())).await;
                     }
-                    let mut discard = String::new();
-                    OpenAiProvider::apply_delta(delta, &mut discard, &mut self.tool_calls);
+                    self.delta_scratch.clear();
+                    OpenAiProvider::apply_delta(
+                        delta,
+                        &mut self.delta_scratch,
+                        &mut self.tool_calls,
+                    );
                 }
             }
         }

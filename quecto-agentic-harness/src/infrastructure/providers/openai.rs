@@ -8,7 +8,7 @@ use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 
 /// OpenAI-compatible LLM provider.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OpenAiProvider {
     provider_name: String,
     api_key: String,
@@ -194,16 +194,17 @@ impl OpenAiProvider {
             }
         }
 
-        let usage = body["usage"].as_object().map(|u| UsageInfo {
-            prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-            completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens: None,
-            cache_write_tokens: None,
-            // OpenAI `prompt_tokens` already counts the full prompt (cached
-            // tokens are a subset), so the gauge falls back to `prompt_tokens`.
-            context_tokens: None,
-            cost: None,
-        });
+        // Non-streaming chat historically reports `context_tokens: None` and lets
+        // the gauge fall back to `prompt_tokens` (which already counts the full
+        // prompt); only the streaming/SSE paths surface `total_tokens`. Preserve
+        // that per-path behaviour after consolidating onto the shared parser.
+        let usage = body["usage"]
+            .as_object()
+            .map(crate::infrastructure::providers::usage::parse_openai_usage)
+            .map(|u| UsageInfo {
+                context_tokens: None,
+                ..u
+            });
 
         Ok(LlmResponse {
             content,
@@ -373,21 +374,10 @@ impl LlmProvider for OpenAiProvider {
         // Request a final usage chunk (see `chat_stream`).
         body["stream_options"] = serde_json::json!({ "include_usage": true });
         let url = format!("{}/chat/completions", self.api_base);
-        let provider_name = self.provider_name.clone();
-        let api_key = self.api_key.clone();
-        let api_base = self.api_base.clone();
-        let account_id = self.account_id.clone();
-        let client = self.client.clone();
+        let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {
-                let provider = OpenAiProvider {
-                    provider_name,
-                    api_key,
-                    api_base,
-                    client,
-                    account_id,
-                };
                 provider.pump_sse_incremental(body, &url, tx).await;
             });
             rx
@@ -494,6 +484,10 @@ mod tests {
         let usage = response.usage.unwrap();
         assert_eq!(usage.prompt_tokens, 10);
         assert_eq!(usage.completion_tokens, 5);
+        // Non-streaming chat reports `context_tokens: None` (gauge falls back to
+        // `prompt_tokens`) even though `total_tokens` is present — only the SSE
+        // paths surface `total_tokens`. Locks the #996/PR-999 behaviour parity.
+        assert_eq!(usage.context_tokens, None);
     }
 
     #[tokio::test]

@@ -112,11 +112,19 @@ impl AgentCmdTool {
         &self.active_awaits
     }
 
-    /// Parse arguments and build the JSON command to send.
+    /// Parse arguments and build the JSON command to send. Test-only wrapper
+    /// over [`build_command`]; the dispatch path parses once and calls
+    /// `build_command` directly.
+    #[cfg(test)]
     fn parse_and_build(&self, arguments: &str) -> Result<(String, String, String), String> {
         let args: serde_json::Value =
             serde_json::from_str(arguments).map_err(|e| format!("invalid JSON: {e}"))?;
+        self.build_command(&args)
+    }
 
+    /// Validate the already-parsed arguments and build the JSON command to send.
+    /// Used by the dispatch path, which parses the arguments once per call.
+    fn build_command(&self, args: &serde_json::Value) -> Result<(String, String, String), String> {
         let agent_id = args
             .get("agent_id")
             .and_then(|v| v.as_str())
@@ -222,8 +230,7 @@ impl AgentCmdTool {
     /// `None` to fall through to UDS dispatch.
     /// For async local commands (await), returns `None` but sets a flag —
     /// the caller must check `is_await_command` separately.
-    fn try_local_command(&self, arguments: &str) -> Option<ToolResult> {
-        let args: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    fn try_local_command(&self, args: &serde_json::Value) -> Option<ToolResult> {
         let command = args.get("command").and_then(|v| v.as_str())?;
         if command != "kill" {
             return None;
@@ -265,16 +272,19 @@ impl AgentCmdTool {
         )
     }
 
-    /// Check if the arguments specify an `await` command.
+    /// Check if the arguments specify an `await` command. Test-only wrapper over
+    /// [`is_await_value`]; the dispatch path parses once and calls it directly.
+    #[cfg(test)]
     fn is_await_command(arguments: &str) -> bool {
         serde_json::from_str::<serde_json::Value>(arguments)
             .ok()
-            .and_then(|v| {
-                v.get("command")
-                    .and_then(|c| c.as_str())
-                    .map(|s| s == "await")
-            })
-            .unwrap_or(false)
+            .as_ref()
+            .is_some_and(Self::is_await_value)
+    }
+
+    /// Check if the already-parsed arguments specify an `await` command.
+    fn is_await_value(args: &serde_json::Value) -> bool {
+        args.get("command").and_then(|c| c.as_str()) == Some("await")
     }
 
     /// Kill a specific subagent by ID: SIGTERM + cascade-remove its sub-tree from
@@ -395,22 +405,36 @@ impl Tool for AgentCmdTool {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let args = arguments.to_string();
         Box::pin(async move {
-            // Check for async local commands first (#612).
-            if Self::is_await_command(&args) {
-                return self.execute_await(&args).await;
+            // Parse the argument JSON exactly once and thread the parsed value
+            // through every dispatch predicate (#996 item 4).
+            let parsed = serde_json::from_str::<serde_json::Value>(&args);
+
+            if let Ok(ref value) = parsed {
+                // Check for async local commands first (#612).
+                if Self::is_await_value(value) {
+                    return self.execute_await(&args).await;
+                }
+                // Check for sync locally-handled commands (#559).
+                if let Some(result) = self.try_local_command(value) {
+                    return Ok(result);
+                }
             }
 
-            // Check for sync locally-handled commands (#559).
-            if let Some(result) = self.try_local_command(&args) {
-                return Ok(result);
-            }
-
-            // Parse and validate arguments.
-            let (agent_id, json_cmd, command) = match self.parse_and_build(&args) {
-                Ok(pair) => pair,
+            // Validate arguments and build the command.
+            let (agent_id, json_cmd, command) = match &parsed {
+                Ok(value) => match self.build_command(value) {
+                    Ok(built) => built,
+                    Err(e) => {
+                        return Ok(ToolResult {
+                            content: format!("agent_cmd error: {e}"),
+                            is_error: true,
+                            image_blocks: vec![],
+                        });
+                    }
+                },
                 Err(e) => {
                     return Ok(ToolResult {
-                        content: format!("agent_cmd error: {e}"),
+                        content: format!("agent_cmd error: invalid JSON: {e}"),
                         is_error: true,
                         image_blocks: vec![],
                     });

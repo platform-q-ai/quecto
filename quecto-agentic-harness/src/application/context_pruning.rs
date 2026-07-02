@@ -51,15 +51,10 @@ pub fn estimate_message_tokens(msg: &Message) -> usize {
 /// Truncate a string to at most `max_chars` characters, appending "..."
 /// if truncated. Safe for multi-byte UTF-8 — never splits a character.
 ///
-/// Returns `Cow::Borrowed` when the string fits (no allocation).
+/// Returns `Cow::Borrowed` when the string fits (no allocation). The ellipsis
+/// counts toward the budget. Bounded-scan core in [`crate::domain::text`].
 pub fn truncate_utf8_safe(s: &str, max_chars: usize) -> std::borrow::Cow<'_, str> {
-    let char_count = s.chars().count();
-    if char_count <= max_chars {
-        std::borrow::Cow::Borrowed(s)
-    } else {
-        let truncated: String = s.chars().take(max_chars.saturating_sub(3)).collect();
-        std::borrow::Cow::Owned(format!("{truncated}..."))
-    }
+    crate::domain::text::truncate_chars(s, max_chars, max_chars.saturating_sub(3), "...")
 }
 
 /// Format the one-liner stub for a collapsed tool result.

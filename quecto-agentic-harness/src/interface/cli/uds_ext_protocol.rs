@@ -52,16 +52,56 @@ impl ForwarderHandle {
     }
 }
 
+/// A parked tool-result sender together with the instant past which the entry
+/// is considered stale and may be swept.
+#[derive(Debug)]
+pub struct PendingResult {
+    pub reply: tokio::sync::oneshot::Sender<ToolResult>,
+    pub deadline: std::time::Instant,
+}
+
+impl ClientToolState {
+    /// Park a pending result sender under `tool_call_id` with an expiry
+    /// `timeout` from now, first sweeping any entries whose deadline has already
+    /// passed. Sweeping lazily on insert replaces the previous per-call spawned
+    /// timer task (#996): the caller's `UdsTool::execute` timeout already
+    /// unblocks it, so dropping stale senders here only reclaims map slots.
+    pub fn insert_pending(
+        &mut self,
+        tool_call_id: String,
+        reply: tokio::sync::oneshot::Sender<ToolResult>,
+        timeout: std::time::Duration,
+    ) {
+        let deadline = std::time::Instant::now() + timeout;
+        self.sweep_expired_pending();
+        self.pending_results
+            .insert(tool_call_id, PendingResult { reply, deadline });
+    }
+
+    /// Drop pending entries whose deadline has passed. Called from every path
+    /// that already touches the map (`insert_pending`, `handle_tool_result`) so
+    /// a timed-out call on an otherwise idle client is reclaimed by the
+    /// client's own late `tool_result`, not only by the next insert.
+    pub fn sweep_expired_pending(&mut self) {
+        let now = std::time::Instant::now();
+        self.pending_results
+            .retain(|_, pending| pending.deadline > now);
+    }
+}
+
 /// Per-client tool state.
 #[derive(Debug, Default)]
 pub struct ClientToolState {
     /// Tool names registered by this client.
     pub tool_names: HashSet<String>,
-    /// Pending tool execution results: tool_call_id → result sender. The
-    /// forwarder task below populates this when it dispatches an
+    /// Pending tool execution results: tool_call_id → result sender + deadline.
+    /// The forwarder task below populates this when it dispatches an
     /// `execute_tool`; `handle_tool_result` drains it when the client's
-    /// `tool_result` arrives.
-    pub pending_results: HashMap<String, tokio::sync::oneshot::Sender<ToolResult>>,
+    /// `tool_result` arrives. Expired entries are swept lazily on the next
+    /// insert (see `insert_pending`) — the caller's own `UdsTool::execute`
+    /// timeout already unblocks it, so this only reclaims the map slot, without
+    /// a spawned 30s timer task per tool call (#996).
+    pub pending_results: HashMap<String, PendingResult>,
     /// Receivers for incoming execution requests (one per tool). Staged
     /// here by `handle_register_tools` until `dispatch_register_tools`
     /// takes ownership and spawns a forwarder task for each — at which
@@ -266,13 +306,17 @@ pub fn handle_tool_result(args: ToolResultArgs<'_>) {
     } = args;
     let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(state) = reg.get_mut(&client_id) {
-        if let Some(tx) = state.pending_results.remove(tool_call_id) {
-            let _ = tx.send(ToolResult {
+        if let Some(pending) = state.pending_results.remove(tool_call_id) {
+            let _ = pending.reply.send(ToolResult {
                 content: content.to_string(),
                 is_error,
                 image_blocks: vec![],
             });
         }
+        // Reclaim any other entries whose caller has already timed out — e.g.
+        // this very result arriving late for a call `UdsTool::execute` gave up
+        // on — so an idle client doesn't hold stale slots until its next call.
+        state.sweep_expired_pending();
     }
 }
 
@@ -317,8 +361,8 @@ pub fn handle_client_disconnect(client_id: u64, registry: &ClientToolRegistry) -
     };
 
     // Cancel all pending tool executions.
-    for (_, tx) in state.pending_results {
-        let _ = tx.send(ToolResult {
+    for (_, pending) in state.pending_results {
+        let _ = pending.reply.send(ToolResult {
             content: "Extension disconnected".to_string(),
             is_error: true,
             image_blocks: vec![],
@@ -538,11 +582,9 @@ async fn handle_one_request(
         let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
         match reg.get_mut(&client_id) {
             Some(state) => {
-                state.pending_results.insert(tool_call_id.clone(), reply);
-                spawn_pending_timeout_cleanup(
-                    client_id,
+                state.insert_pending(
                     tool_call_id.clone(),
-                    registry.clone(),
+                    reply,
                     std::time::Duration::from_secs(DEFAULT_TOOL_TIMEOUT_SECS),
                 );
             }
@@ -582,21 +624,6 @@ async fn handle_one_request(
             state.pending_results.remove(&tool_call_id);
         }
     }
-}
-
-fn spawn_pending_timeout_cleanup(
-    client_id: u64,
-    tool_call_id: String,
-    registry: ClientToolRegistry,
-    timeout: std::time::Duration,
-) {
-    tokio::spawn(async move {
-        tokio::time::sleep(timeout).await;
-        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = reg.get_mut(&client_id) {
-            state.pending_results.remove(&tool_call_id);
-        }
-    });
 }
 
 /// Handle `unregister_tools` command in dispatch context.

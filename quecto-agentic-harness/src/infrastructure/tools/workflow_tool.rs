@@ -312,6 +312,11 @@ impl Tool for WorkflowTool {
 #[derive(Debug)]
 pub struct WorkflowGuard {
     engine: WorkflowEngineHandle,
+    /// Cache of guard rules with their command patterns parsed once, keyed by
+    /// the active template id. Honours the parse-once contract documented in
+    /// `command_match.rs` — without it, every bash call re-cloned the template
+    /// guards and re-parsed every pattern (#996 item 3).
+    rule_cache: std::sync::Mutex<Option<(String, std::sync::Arc<Vec<ParsedGuardRule>>)>>,
 }
 
 #[derive(Debug)]
@@ -323,7 +328,39 @@ struct ParsedGuardRule {
 
 impl WorkflowGuard {
     pub fn new(engine: WorkflowEngineHandle) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            rule_cache: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Return the parsed guard rules for `template`, building (and caching) them
+    /// the first time each template id is seen. Template definitions are
+    /// immutable once loaded, so the id fully identifies the parsed rule set.
+    fn parsed_rules_for(
+        &self,
+        template: &crate::domain::workflow::WorkflowTemplate,
+    ) -> std::sync::Arc<Vec<ParsedGuardRule>> {
+        let mut cache = self.rule_cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((id, rules)) = cache.as_ref() {
+            if id == &template.id {
+                return rules.clone();
+            }
+        }
+        let rules: std::sync::Arc<Vec<ParsedGuardRule>> = std::sync::Arc::new(
+            template
+                .guards
+                .iter()
+                .cloned()
+                .map(|r: WorkflowGuardRule| ParsedGuardRule {
+                    parsed_commands: parse_patterns(&r.commands),
+                    before_step_key: r.before_step_key,
+                    message: r.message,
+                })
+                .collect(),
+        );
+        *cache = Some((template.id.clone(), rules.clone()));
+        rules
     }
 }
 
@@ -363,21 +400,12 @@ impl ToolGuard for WorkflowGuard {
                 );
             }
         };
-        let rules: Vec<ParsedGuardRule> = template
-            .guards
-            .iter()
-            .cloned()
-            .map(|r: WorkflowGuardRule| ParsedGuardRule {
-                parsed_commands: parse_patterns(&r.commands),
-                before_step_key: r.before_step_key,
-                message: r.message,
-            })
-            .collect();
+        let rules = self.parsed_rules_for(template);
         if rules.is_empty() {
             return Ok(());
         }
         let done = engine.snapshot(true).steps;
-        for rule in &rules {
+        for rule in rules.iter() {
             if !command_matches_parsed(&command, &rule.parsed_commands) {
                 continue;
             }
@@ -491,5 +519,57 @@ mod tests {
             event["mode"],
             serde_json::json!(WorkflowMode::SelectingTemplate)
         );
+    }
+
+    fn guard_template(id: &str) -> crate::domain::workflow::WorkflowTemplate {
+        use crate::domain::workflow::{WorkflowGuardRule, WorkflowTemplate, WorkflowTemplateStep};
+        WorkflowTemplate {
+            id: id.to_string(),
+            label: id.to_string(),
+            description: String::new(),
+            when_to_use: None,
+            steps: vec![WorkflowTemplateStep {
+                key: "s1".to_string(),
+                label: "S1".to_string(),
+                phase: "p".to_string(),
+                guidance: None,
+            }],
+            guards: vec![WorkflowGuardRule {
+                commands: vec!["git push".to_string()],
+                before_step_key: "s1".to_string(),
+                message: "do s1 first".to_string(),
+            }],
+        }
+    }
+
+    /// #996 item 3 (PR #999 review): `parsed_rules_for` must parse a template's
+    /// guards once and reuse the `Arc` on subsequent calls for the SAME id, and
+    /// must rebuild when the active template id changes (no stale-cache bleed).
+    #[test]
+    fn parsed_rules_cache_reuses_by_id_and_invalidates_on_change() {
+        let engine = Arc::new(Mutex::new(
+            WorkflowEngine::new(WorkflowConfig::default(), true).unwrap(),
+        ));
+        let guard = WorkflowGuard::new(engine);
+
+        let a = guard_template("alpha");
+        let first = guard.parsed_rules_for(&a);
+        let second = guard.parsed_rules_for(&a);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "same template id must return the cached Arc, not re-parse"
+        );
+
+        let b = guard_template("beta");
+        let third = guard.parsed_rules_for(&b);
+        assert!(
+            !Arc::ptr_eq(&second, &third),
+            "a different template id must rebuild the parsed rules"
+        );
+        assert_eq!(third[0].before_step_key, "s1");
+
+        // Switching back re-parses (cache holds a single active entry).
+        let fourth = guard.parsed_rules_for(&a);
+        assert!(!Arc::ptr_eq(&first, &fourth));
     }
 }

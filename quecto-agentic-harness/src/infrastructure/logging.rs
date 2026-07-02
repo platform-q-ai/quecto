@@ -21,13 +21,20 @@ const CANDIDATE_STARTS: &[u8] = b"sg0123456789";
 /// loop advances directly to the next byte that *could* start a secret, copying
 /// the clean run in one `push_str` rather than char-by-char.
 pub fn redact_api_keys(input: &str) -> String {
+    redact_api_keys_cow(input).into_owned()
+}
+
+/// Like [`redact_api_keys`] but returns `Cow::Borrowed` when nothing needs
+/// redacting, so the common (no-secret) log line is forwarded without an
+/// allocation.
+pub fn redact_api_keys_cow(input: &str) -> std::borrow::Cow<'_, str> {
     // Fast path: skip entirely if none of the triggering prefixes are present.
     if !input.contains("sk-")
         && !input.contains("gsk_")
         && !input.contains("gsk-")
         && !contains_telegram_candidate(input)
     {
-        return input.to_string();
+        return std::borrow::Cow::Borrowed(input);
     }
 
     let bytes = input.as_bytes();
@@ -77,7 +84,7 @@ pub fn redact_api_keys(input: &str) -> String {
         }
     }
 
-    result
+    std::borrow::Cow::Owned(result)
 }
 
 fn detect_secret(s: &str) -> Option<(usize, &'static str)> {
@@ -174,7 +181,12 @@ struct RedactingWriter<W: Write> {
 
 impl<W: Write> Write for RedactingWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let redacted = redact_api_keys(&String::from_utf8_lossy(buf));
+        // `from_utf8_lossy` already returns `Borrowed` for valid UTF-8 (the
+        // common case), and `redact_api_keys_cow` returns `Borrowed` when the
+        // line carries no secret — so a clean ASCII log line is forwarded with
+        // no intermediate allocation.
+        let lossy = String::from_utf8_lossy(buf);
+        let redacted = redact_api_keys_cow(&lossy);
         self.inner.write_all(redacted.as_bytes())?;
         Ok(buf.len())
     }

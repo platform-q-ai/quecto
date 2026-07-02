@@ -239,16 +239,14 @@ pub fn truncate_tail(content: &str, max_lines: usize, max_bytes: usize) -> Trunc
 
 /// Truncate a single line to max characters. Used by: grep (500 chars).
 ///
-/// If the line exceeds the limit, truncates and appends `... [truncated]`.
-/// Returns `(truncated_line, was_truncated)`.
+/// If the line exceeds the limit, truncates and appends `... [truncated]`
+/// (the marker does not count toward the budget). Returns
+/// `(truncated_line, was_truncated)`. Bounded-scan core in [`crate::domain::text`].
 pub fn truncate_line(line: &str, max_chars: usize) -> (String, bool) {
-    let char_count = line.chars().count();
-    if char_count <= max_chars {
-        return (line.to_string(), false);
+    match crate::domain::text::truncate_chars(line, max_chars, max_chars, "... [truncated]") {
+        std::borrow::Cow::Borrowed(_) => (line.to_string(), false),
+        std::borrow::Cow::Owned(s) => (s, true),
     }
-
-    let truncated: String = line.chars().take(max_chars).collect();
-    (format!("{}... [truncated]", truncated), true)
 }
 
 /// Human-readable size formatting: "1.2KB", "3.5MB", "512B".

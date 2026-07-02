@@ -728,13 +728,7 @@ pub fn shutdown_all(registry: &SubagentRegistry) {
             tracing::info!(agent = %name, "aborted monitor task");
         }
         if entry.pid != 0 {
-            // Use kill(1) rather than libc::kill to avoid adding libc as a dependency.
-            let _ = std::process::Command::new("kill")
-                .arg("-TERM")
-                .arg(entry.pid.to_string())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+            crate::infrastructure::tools::subagent_cascade::sigterm_pid(entry.pid);
             tracing::info!(agent = %name, pid = entry.pid, "sent SIGTERM to subagent");
         }
     }

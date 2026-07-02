@@ -85,14 +85,29 @@ pub fn terminate_removed_entry(entry: &SubagentEntry) {
         handle.abort();
     }
     if entry.pid != 0 {
-        // Use kill(1) rather than libc::kill to avoid adding libc as a dependency.
-        let _ = std::process::Command::new("kill")
-            .arg("-TERM")
-            .arg(entry.pid.to_string())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        sigterm_pid(entry.pid);
     }
+}
+
+/// Best-effort SIGTERM a pid via a direct syscall. Avoids fork+exec of `kill(1)`
+/// and its blocking `.status()` wait, which would stall a tokio worker for every
+/// subagent in the tree. A stale/dead pid simply yields ESRCH, which we ignore.
+///
+/// `libc` is a unix-only dependency (see Cargo.toml + bash/mod.rs), so this is a
+/// no-op on non-unix hosts, where subagents are not spawned. `i32::try_from`
+/// guards the `u32 -> pid_t` narrowing so an out-of-range pid can never wrap
+/// negative and turn into a process-group signal (Linux pid_max keeps this
+/// unreachable, but the cast is a footgun worth closing).
+pub(crate) fn sigterm_pid(pid: u32) {
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(pid) {
+        // SAFETY: FFI call to `libc::kill` with an owned pid and a constant signal.
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
 }
 
 /// Cascade-remove `agent_id`'s dead sub-tree from the registry and, if anything

@@ -103,7 +103,17 @@ impl std::fmt::Display for ModelRegistryError {
 impl std::error::Error for ModelRegistryError {}
 
 impl ModelRegistry {
+    /// The built-in model table, constructed once and shared. The ~30 records
+    /// are identical on every call, so we build them a single time behind a
+    /// `OnceLock` and hand out cheap clones instead of rebuilding at each of
+    /// the several call sites.
     pub fn builtin() -> Self {
+        use std::sync::OnceLock;
+        static BUILTIN: OnceLock<ModelRegistry> = OnceLock::new();
+        BUILTIN.get_or_init(Self::build_builtin).clone()
+    }
+
+    fn build_builtin() -> Self {
         let mut r = Self { models: Vec::new() };
         for (provider, id, name, api, auth, oauth_provider) in [
             (

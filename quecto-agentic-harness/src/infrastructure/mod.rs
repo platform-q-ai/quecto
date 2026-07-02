@@ -9,3 +9,6 @@ pub mod reload;
 pub mod security;
 pub mod time;
 pub mod tools;
+
+#[cfg(test)]
+mod issue_996_efficiency_tests;

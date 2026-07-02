@@ -18,7 +18,7 @@ mod anthropic_sse;
 mod anthropic_user_msg;
 
 /// Anthropic LLM provider.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AnthropicProvider {
     api_key: String,
     api_base: String,
@@ -581,9 +581,11 @@ impl LlmProvider for AnthropicProvider {
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
 
-        let api_key = self.api_key.clone();
-        let api_base = self.api_base.clone();
-        let client = self.client.clone();
+        // Derived Clone carries every field (crucially `router_name`) into the
+        // spawned streaming task. The previous code reconstructed the struct
+        // inline with a hardcoded `"anthropic"` router_name, resetting
+        // registry-built providers (e.g. `anthropic-oauth`) to the default key.
+        let provider = self.clone();
 
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
@@ -594,13 +596,6 @@ impl LlmProvider for AnthropicProvider {
                 return rx;
             }
             tokio::spawn(async move {
-                let provider = AnthropicProvider {
-                    api_key,
-                    api_base,
-                    client,
-                    is_oauth,
-                    router_name: "anthropic".to_string(),
-                };
                 provider
                     .stream_chat_incremental_with_body(anthropic_sse::IncrementalStreamParams {
                         base: anthropic_sse::StreamParams {
