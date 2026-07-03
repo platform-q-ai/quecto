@@ -58,3 +58,83 @@ fn input_or_resize_render_resets_stream_frame_deadline() {
         "tokens after an immediate render should be limited from that render time"
     );
 }
+
+// ── Event-loop render-path integration (through the real App) ──────────
+//
+// These drive `App::render_stream_event` / `App::render_and_note` — the exact
+// helpers every event-loop select arm calls — and count frames the App
+// actually painted, so the coalescing WIRING (not just the state machine) is
+// covered (#1011 review).
+
+#[tokio::test]
+async fn token_burst_through_event_loop_helpers_coalesces_paints() {
+    let mut h = tui_harness::TuiHarness::new().await;
+    h.stream_event(Event::AgentStart);
+    let start = h.rendered_frames();
+    for _ in 0..40 {
+        h.stream_event(Event::Token { token: "x".into() });
+    }
+    let painted = h.rendered_frames() - start;
+    assert!(
+        painted < 40,
+        "a synchronous 40-token burst must paint fewer than 40 frames; got {painted}"
+    );
+    // The burst leaves a deferred tail paint, which the deadline arm flushes.
+    assert!(
+        h.pending_stream_paint(),
+        "burst should leave a deferred paint"
+    );
+    assert!(
+        h.fire_deferred_stream_paint(),
+        "the deferred-paint arm must flush the tail of the burst"
+    );
+    assert!(
+        !h.pending_stream_paint(),
+        "deadline consumed after one paint"
+    );
+}
+
+#[tokio::test]
+async fn keypress_render_paints_immediately_and_consumes_deferred_paint() {
+    let mut h = tui_harness::TuiHarness::new().await;
+    h.stream_event(Event::AgentStart);
+    for _ in 0..10 {
+        h.stream_event(Event::Token { token: "x".into() });
+    }
+    assert!(h.pending_stream_paint(), "burst should defer a paint");
+
+    // A keypress-driven render (stdin select arm) paints NOW…
+    let before = h.rendered_frames();
+    h.press(super::keys::Key::Char('k'));
+    h.immediate_render();
+    assert_eq!(
+        h.rendered_frames(),
+        before + 1,
+        "input must paint immediately"
+    );
+    // …and consumes the deferred token paint (the frame includes the tokens).
+    assert!(
+        !h.fire_deferred_stream_paint(),
+        "an immediate render consumes the pending deferred paint"
+    );
+}
+
+#[tokio::test]
+async fn non_token_event_renders_immediately_mid_burst() {
+    let mut h = tui_harness::TuiHarness::new().await;
+    h.stream_event(Event::AgentStart);
+    for _ in 0..10 {
+        h.stream_event(Event::Token { token: "x".into() });
+    }
+    let before = h.rendered_frames();
+    h.stream_event(Event::AgentEnd);
+    assert_eq!(
+        h.rendered_frames(),
+        before + 1,
+        "a non-token event (AgentEnd) must flush and paint immediately"
+    );
+    assert!(
+        !h.fire_deferred_stream_paint(),
+        "the final flush consumes any deferred token paint"
+    );
+}

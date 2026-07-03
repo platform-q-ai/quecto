@@ -1046,6 +1046,21 @@ fn then_show_help_and_dispatch_derive(world: &mut QuectoWorld) {
             "help should list builtin command /{command}: {help:?}"
         );
     }
+    // Dispatch must derive from builtin_commands(): every registered command
+    // submitted through the real submit path is accepted (never rejected as
+    // an unknown slash command).
+    for command in &commands {
+        let mut h = rt.block_on(async { TuiHarness::new().await });
+        // submit() needs a reactor for the UDS client write.
+        let guard = rt.enter();
+        h.submit(&format!("/{command}"));
+        drop(guard);
+        let frame = h.full_frame();
+        assert!(
+            !frame.contains("Unknown slash command"),
+            "builtin command /{command} must dispatch, not be rejected: {frame:?}"
+        );
+    }
 }
 
 fn assert_no_tui_patterns(layer: &str, forbidden: &[&str]) {

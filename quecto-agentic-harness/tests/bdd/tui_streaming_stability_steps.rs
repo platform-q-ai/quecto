@@ -25,9 +25,9 @@ fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R
 #[given("the TUI is receiving a sustained high-throughput assistant response")]
 fn given_sustained_high_throughput_response(world: &mut QuectoWorld) {
     with_harness(world, |h| {
-        h.event(Event::AgentStart);
+        h.stream_event(Event::AgentStart);
         for _ in 0..160 {
-            h.event(Event::Token { token: "x".into() });
+            h.stream_event(Event::Token { token: "x".into() });
         }
     });
 }
@@ -36,8 +36,10 @@ fn given_sustained_high_throughput_response(world: &mut QuectoWorld) {
 fn when_response_continues(world: &mut QuectoWorld) {
     with_harness(world, |h| {
         for _ in 0..160 {
-            h.event(Event::Token { token: "y".into() });
+            h.stream_event(Event::Token { token: "y".into() });
         }
+        // Any deferred tail paint fires exactly as the event loop would.
+        h.fire_deferred_stream_paint();
     });
 }
 
@@ -45,13 +47,21 @@ fn when_response_continues(world: &mut QuectoWorld) {
 fn then_stable_frame_without_stray_cursor_blocks(world: &mut QuectoWorld) {
     with_harness(world, |h| {
         let frame = h.full_frame();
-        assert!(
-            frame.contains('▌'),
-            "streaming assistant indicator should remain visible: {frame:?}"
+        // Exactly ONE streaming indicator in the chat body: zero means the
+        // intentional cursor was lost; more than one is precisely the
+        // stray-cursor artifact class reported in #972. (The sub-agent panel's
+        // selection marker also uses ▌, so count only right of the divider.)
+        let indicators: usize = frame
+            .lines()
+            .map(|l| l.rsplit('│').next().unwrap_or(l).matches('▌').count())
+            .sum();
+        assert_eq!(
+            indicators, 1,
+            "exactly one streaming indicator should be visible in the chat body, found {indicators}: {frame:?}"
         );
         assert!(
-            !frame.contains('\u{2588}'),
-            "streaming should not introduce stray full-block cursor artifacts: {frame:?}"
+            frame.contains("yy"),
+            "the tail of the sustained stream should be present in the frame: {frame:?}"
         );
     });
 }
@@ -59,9 +69,9 @@ fn then_stable_frame_without_stray_cursor_blocks(world: &mut QuectoWorld) {
 #[given("the TUI is receiving a burst of assistant tokens")]
 fn given_burst_of_assistant_tokens(world: &mut QuectoWorld) {
     with_harness(world, |h| {
-        h.event(Event::AgentStart);
+        h.stream_event(Event::AgentStart);
         for _ in 0..40 {
-            h.event(Event::Token { token: "z".into() });
+            h.stream_event(Event::Token { token: "z".into() });
         }
     });
 }
@@ -69,9 +79,19 @@ fn given_burst_of_assistant_tokens(world: &mut QuectoWorld) {
 #[when("the user provides input during the burst")]
 fn when_user_input_during_burst(world: &mut QuectoWorld) {
     with_harness(world, |h| {
+        // Keys route through the stdin select arm, which paints IMMEDIATELY
+        // (bypassing the coalescer) — assert that wiring, not just the frame.
+        let before = h.rendered_frames();
         h.press(Key::Char('o'));
+        h.immediate_render();
         h.press(Key::Char('k'));
-        h.event(Event::Token { token: "!".into() });
+        h.immediate_render();
+        assert_eq!(
+            h.rendered_frames(),
+            before + 2,
+            "each keypress must paint immediately even mid-burst"
+        );
+        h.stream_event(Event::Token { token: "!".into() });
     });
 }
 
@@ -92,11 +112,20 @@ fn then_user_input_reflected_promptly(world: &mut QuectoWorld) {
 
 #[when("the burst is presented to the user")]
 fn when_burst_presented(world: &mut QuectoWorld) {
-    // The event loop's coalescer is deterministic: a 40-token burst arriving
-    // faster than the frame interval should produce far fewer renders than
-    // token updates.
-    let offsets: Vec<u64> = (0..40).collect();
-    world.tui_idle_spinner_frame = Some(TuiHarness::coalesced_stream_render_count(&offsets));
+    // Drive 40 tokens through the REAL event-loop render decision
+    // (`App::render_stream_event`) and count frames the App actually painted.
+    let renders = with_harness(world, |h| {
+        let before = h.rendered_frames();
+        h.stream_event(Event::AgentStart);
+        let start = h.rendered_frames();
+        for _ in 0..40 {
+            h.stream_event(Event::Token { token: "z".into() });
+        }
+        h.fire_deferred_stream_paint();
+        let _ = before;
+        h.rendered_frames() - start
+    });
+    world.tui_idle_spinner_frame = Some(renders);
 }
 
 #[then("the streaming response remains visually smooth without distracting flicker")]
@@ -106,7 +135,11 @@ fn then_streaming_response_smooth(world: &mut QuectoWorld) {
         .expect("render count captured by When step");
     assert!(
         renders < 40,
-        "a token burst should be coalesced into fewer renders than token updates; got {renders}"
+        "a 40-token burst should coalesce to fewer painted frames; got {renders}"
+    );
+    assert!(
+        renders >= 1,
+        "the burst must still paint at least one frame; got {renders}"
     );
 }
 
@@ -137,7 +170,15 @@ fn then_indicator_inside_chat_frame(world: &mut QuectoWorld) {
 }
 
 #[given("the terminal cursor is hidden while an assistant response streams")]
-fn given_terminal_cursor_hidden(_world: &mut QuectoWorld) {}
+fn given_terminal_cursor_hidden(world: &mut QuectoWorld) {
+    // Streaming is in progress in the app before the display recovery below.
+    with_harness(world, |h| {
+        h.stream_event(Event::AgentStart);
+        h.stream_event(Event::Token {
+            token: "streaming".into(),
+        });
+    });
+}
 
 #[when("the display recovers during the streaming response")]
 fn when_display_recovers(world: &mut QuectoWorld) {
@@ -173,9 +214,11 @@ fn given_assistant_response_streaming(world: &mut QuectoWorld) {
 
 #[when("the TUI presents the streaming response")]
 fn when_tui_presents_streaming_response(world: &mut QuectoWorld) {
+    // Capture the RAW frame (ANSI intact) so the editor's reverse-video
+    // cursor escape is observable.
     let frame = with_harness(world, |h| {
         h.press(Key::Char('q'));
-        h.full_frame()
+        h.full_frame_raw()
     });
     world.stdout = frame;
 }
@@ -183,8 +226,13 @@ fn when_tui_presents_streaming_response(world: &mut QuectoWorld) {
 #[then("the editor cursor and assistant streaming indicator remain visible")]
 fn then_intentional_cursors_remain_visible(world: &mut QuectoWorld) {
     assert!(
-        world.stdout.contains("\x1b[7m") || world.stdout.contains('q'),
-        "editor cursor/input should remain visible: {:?}",
+        world.stdout.contains("\x1b[7m"),
+        "editor reverse-video cursor should remain visible in the raw frame: {:?}",
+        world.stdout
+    );
+    assert!(
+        world.stdout.contains('q'),
+        "typed editor input should remain visible: {:?}",
         world.stdout
     );
     assert!(

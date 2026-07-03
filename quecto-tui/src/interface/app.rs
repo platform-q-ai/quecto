@@ -140,6 +140,16 @@ pub struct App {
     /// Diagnostic: when `QUECTO_TUI_RENDER_LOG` is set, every frame is appended
     /// (ANSI-stripped) to this file for frame-by-frame replay.
     render_log_path: Option<String>,
+    /// Test-only count of frames actually painted through [`App::render`],
+    /// so harness tests can assert the event-loop render helpers coalesce
+    /// bursty token paints (#972 review).
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(super) rendered_frames: usize,
+    /// Test-only switch: when set by the harness, [`App::render`] counts the
+    /// frame but skips writing to the real stdout so headless tests don't
+    /// garble the test runner's terminal.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(super) suppress_paint: bool,
     /// Active mouse text selection (#528).
     selection: Option<TextSelection>,
     /// Mirror of core workflow auto-continue state, toggled through UDS.
@@ -287,6 +297,10 @@ impl App {
             subagent_frame: 0,
             awaited_agent_id: None,
             render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
+            #[cfg(any(test, feature = "test-harness"))]
+            rendered_frames: 0,
+            #[cfg(any(test, feature = "test-harness"))]
+            suppress_paint: false,
             selection: None,
             workflow_auto_continue: false,
             workflow_completion_nudge: false,

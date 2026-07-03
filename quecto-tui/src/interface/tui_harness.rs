@@ -69,6 +69,8 @@ pub struct TuiHarness {
     /// chat-area transients (e.g. a tool result that flashes in and out).
     fulls: Vec<Vec<String>>,
     cmd_rx: mpsc::Receiver<String>,
+    /// Stream render coalescer driven by the event-loop-path helpers (#972).
+    stream_coalescer: super::app_event_loop::StreamRenderCoalescer,
 }
 
 impl TuiHarness {
@@ -84,6 +86,7 @@ impl TuiHarness {
             bottoms: Vec::new(),
             fulls: Vec::new(),
             cmd_rx,
+            stream_coalescer: super::app_event_loop::StreamRenderCoalescer::default(),
         }
     }
 
@@ -338,41 +341,61 @@ impl TuiHarness {
             .collect()
     }
 
+    // ── Event-loop render-path driving (#972) ─────────────────────────
+    // These drive the REAL event-loop render helpers (`render_stream_event`,
+    // `render_and_note`) against the App's own paint counter, so coalescing
+    // is tested through production wiring rather than a re-simulation.
+
+    /// Frames actually painted through `App::render` so far.
+    pub fn rendered_frames(&self) -> usize {
+        self.app.rendered_frames
+    }
+
+    /// Whether a deferred token paint is pending on the stream coalescer.
+    pub fn pending_stream_paint(&self) -> bool {
+        self.stream_coalescer.pending_deadline().is_some()
+    }
+
+    /// Deliver one agent event through the real event handler and the real
+    /// event-loop render decision (token events coalesce; others paint now).
+    pub fn stream_event(&mut self, ev: Event) -> &mut Self {
+        self.app.suppress_paint = true;
+        let is_token = matches!(ev, Event::Token { .. });
+        self.app.handle_event(ev);
+        let mut coalescer = std::mem::take(&mut self.stream_coalescer);
+        self.app.render_stream_event(&mut coalescer, is_token);
+        self.stream_coalescer = coalescer;
+        self
+    }
+
+    /// Paint for a non-stream wakeup (stdin input, resize, tick) through the
+    /// same helper the event loop's other select arms use.
+    pub fn immediate_render(&mut self) -> &mut Self {
+        self.app.suppress_paint = true;
+        let mut coalescer = std::mem::take(&mut self.stream_coalescer);
+        self.app.render_and_note(&mut coalescer);
+        self.stream_coalescer = coalescer;
+        self
+    }
+
+    /// Fire the deferred-paint select arm: paint if the coalescer's pending
+    /// frame deadline has elapsed. Returns whether a frame was painted.
+    pub fn fire_deferred_stream_paint(&mut self) -> bool {
+        let Some(deadline) = self.stream_coalescer.pending_deadline() else {
+            return false;
+        };
+        if self.stream_coalescer.render_due(deadline) {
+            self.app.suppress_paint = true;
+            self.app.render();
+            return true;
+        }
+        false
+    }
+
     /// Open help through the production handler and return the rendered frame.
     pub fn show_help_frame(&mut self) -> String {
         self.app.show_help();
         self.full_frame()
-    }
-
-    /// Count frames that would be rendered for token arrivals at the supplied
-    /// millisecond offsets under the production stream coalescer.
-    pub fn coalesced_stream_render_count(offsets_ms: &[u64]) -> usize {
-        let start = tokio::time::Instant::now();
-        let mut coalescer = super::app_event_loop::StreamRenderCoalescer::default();
-        let mut renders = 0;
-        let mut pending_deadline = None;
-        for offset in offsets_ms {
-            let now = start + std::time::Duration::from_millis(*offset);
-            if pending_deadline.is_some_and(|deadline| now >= deadline) && coalescer.render_due(now)
-            {
-                renders += 1;
-            }
-            match coalescer.record_token_update(now) {
-                super::app_event_loop::StreamRenderDecision::RenderNow => {
-                    renders += 1;
-                    pending_deadline = None;
-                }
-                super::app_event_loop::StreamRenderDecision::DeferUntil(deadline) => {
-                    pending_deadline = Some(deadline);
-                }
-            }
-        }
-        if let Some(deadline) = pending_deadline
-            && coalescer.render_due(deadline)
-        {
-            renders += 1;
-        }
-        renders
     }
 
     /// Abort through the real abort path (targets the active session).

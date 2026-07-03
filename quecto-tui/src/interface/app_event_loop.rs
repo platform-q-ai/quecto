@@ -13,15 +13,14 @@ pub(super) struct StreamRenderCoalescer {
     pending_deadline: Option<tokio::time::Instant>,
 }
 
-fn mark_stream_render_complete(
-    coalescer: &mut StreamRenderCoalescer,
-    next_deadline: &mut Option<tokio::time::Instant>,
-) {
-    coalescer.note_immediate_render(tokio::time::Instant::now());
-    *next_deadline = None;
-}
-
 impl StreamRenderCoalescer {
+    /// Deadline of a deferred token paint, if one is pending. The event loop's
+    /// deadline select arm derives from this single source of truth so loop
+    /// state can never drift from the coalescer (#1011 review).
+    pub(super) fn pending_deadline(&self) -> Option<tokio::time::Instant> {
+        self.pending_deadline
+    }
+
     pub(super) fn record_token_update(
         &mut self,
         now: tokio::time::Instant,
@@ -61,6 +60,32 @@ impl StreamRenderCoalescer {
 }
 
 impl App {
+    /// Render immediately and note it on the coalescer so a pending deferred
+    /// token paint is consumed by this render (it paints all accumulated
+    /// state, including any deferred tokens).
+    pub(super) fn render_and_note(&mut self, coalescer: &mut StreamRenderCoalescer) {
+        self.render();
+        coalescer.note_immediate_render(tokio::time::Instant::now());
+    }
+
+    /// Render for an incoming agent event: token events are coalesced to the
+    /// stream frame interval; everything else renders immediately.
+    pub(super) fn render_stream_event(
+        &mut self,
+        coalescer: &mut StreamRenderCoalescer,
+        is_token: bool,
+    ) {
+        if !is_token {
+            self.render_and_note(coalescer);
+            return;
+        }
+        if let StreamRenderDecision::RenderNow =
+            coalescer.record_token_update(tokio::time::Instant::now())
+        {
+            self.render();
+        }
+    }
+
     pub async fn run(&mut self) -> i32 {
         self.terminal.enter_raw_mode();
         self.terminal.hide_cursor();
@@ -105,14 +130,9 @@ impl App {
         let mut kitty_fallback_done = false;
 
         let mut stream_render_coalescer = StreamRenderCoalescer::default();
-        let mut next_stream_render_deadline: Option<tokio::time::Instant> = None;
 
         // Initial render.
-        self.render();
-        mark_stream_render_complete(
-            &mut stream_render_coalescer,
-            &mut next_stream_render_deadline,
-        );
+        self.render_and_note(&mut stream_render_coalescer);
 
         let mut next_animation_tick = tokio::time::Instant::now() + SPINNER_TICK;
 
@@ -153,11 +173,7 @@ impl App {
                             &mut files_autocomplete_load_in_flight,
                         );
                     }
-                    self.render();
-                    mark_stream_render_complete(
-                        &mut stream_render_coalescer,
-                        &mut next_stream_render_deadline,
-                    );
+                    self.render_and_note(&mut stream_render_coalescer);
                 }
                 // Agent events.
                 event = self.client.recv(), if self.agent_connected => {
@@ -165,23 +181,7 @@ impl App {
                         Some(ev) => {
                             let is_token = matches!(ev, Event::Token { .. });
                             self.handle_event(ev);
-                            if is_token {
-                                match stream_render_coalescer.record_token_update(tokio::time::Instant::now()) {
-                                    StreamRenderDecision::RenderNow => {
-                                        self.render();
-                                        next_stream_render_deadline = None;
-                                    }
-                                    StreamRenderDecision::DeferUntil(deadline) => {
-                                        next_stream_render_deadline = Some(deadline);
-                                    }
-                                }
-                            } else {
-                                self.render();
-                                mark_stream_render_complete(
-                                    &mut stream_render_coalescer,
-                                    &mut next_stream_render_deadline,
-                                );
-                            }
+                            self.render_stream_event(&mut stream_render_coalescer, is_token);
                         }
                         None => {
                             // Agent disconnected — stop polling.
@@ -191,11 +191,7 @@ impl App {
                             self.spinner = None;
                             self.master_session.chat.finalize_assistant();
                             self.notify("Agent disconnected", NotifyLevel::Error);
-                            self.render();
-                            mark_stream_render_complete(
-                                &mut stream_render_coalescer,
-                                &mut next_stream_render_deadline,
-                            );
+                            self.render_and_note(&mut stream_render_coalescer);
                         }
                     }
                 }
@@ -203,21 +199,14 @@ impl App {
                 Some(()) = resize_rx.recv() => {
                     self.terminal.refresh_size();
                     self.render_full();
-                    mark_stream_render_complete(
-                        &mut stream_render_coalescer,
-                        &mut next_stream_render_deadline,
-                    );
+                    stream_render_coalescer.note_immediate_render(tokio::time::Instant::now());
                 }
                 // Animation / fallback tick.
                 _ = tokio::time::sleep_until(next_animation_tick), if self.needs_animation_tick(!kitty_fallback_done) => {
                     let needs_render = self.service_animation_tick(&mut kitty_fallback_done, kitty_deadline);
                     next_animation_tick = tokio::time::Instant::now() + SPINNER_TICK;
                     if needs_render {
-                        self.render();
-                        mark_stream_render_complete(
-                            &mut stream_render_coalescer,
-                            &mut next_stream_render_deadline,
-                        );
+                        self.render_and_note(&mut stream_render_coalescer);
                     }
                 }
                 // One-shot idle service deadline for static notification expiry and exited-subagent GC.
@@ -228,73 +217,42 @@ impl App {
                 }, if next_idle_service_tick.is_some() && !self.needs_animation_tick(!kitty_fallback_done) => {
                     let needs_render = self.service_animation_tick(&mut kitty_fallback_done, kitty_deadline);
                     if needs_render {
-                        self.render();
-                        mark_stream_render_complete(
-                            &mut stream_render_coalescer,
-                            &mut next_stream_render_deadline,
-                        );
+                        self.render_and_note(&mut stream_render_coalescer);
                     }
                 }
                 Some(branch) = git_branch_rx.recv() => {
                     git_branch_refresh_in_flight = false;
                     if self.apply_git_branch(branch) {
-                        self.render();
-                        mark_stream_render_complete(
-                            &mut stream_render_coalescer,
-                            &mut next_stream_render_deadline,
-                        );
+                        self.render_and_note(&mut stream_render_coalescer);
                     }
                 }
                 Some(failure) = self.command_send_failure_rx.recv() => {
                     self.handle_command_send_failure(failure);
-                    self.render();
-                    mark_stream_render_complete(
-                        &mut stream_render_coalescer,
-                        &mut next_stream_render_deadline,
-                    );
+                    self.render_and_note(&mut stream_render_coalescer);
                 }
                 // Events fanned in from the active sub-agent's direct
                 // connect-on-select connection (#800).
                 Some((agent_id, ev)) = self.subagent_event_rx.recv() => {
                     let is_token = matches!(ev, Event::Token { .. });
                     self.route_subagent_event(&agent_id, ev);
-                    if is_token {
-                        match stream_render_coalescer.record_token_update(tokio::time::Instant::now()) {
-                            StreamRenderDecision::RenderNow => {
-                                self.render();
-                                next_stream_render_deadline = None;
-                            }
-                            StreamRenderDecision::DeferUntil(deadline) => {
-                                next_stream_render_deadline = Some(deadline);
-                            }
-                        }
-                    } else {
-                        self.render();
-                        mark_stream_render_complete(
-                            &mut stream_render_coalescer,
-                            &mut next_stream_render_deadline,
-                        );
-                    }
+                    self.render_stream_event(&mut stream_render_coalescer, is_token);
                 }
                 Some(files) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;
                     self.files_autocomplete.apply_loaded_files(files);
                     self.refresh_files_autocomplete_from_editor();
-                    self.render();
-                    mark_stream_render_complete(
-                        &mut stream_render_coalescer,
-                        &mut next_stream_render_deadline,
-                    );
+                    self.render_and_note(&mut stream_render_coalescer);
                 }
+                // Deferred stream paint: fires at the coalescer's pending frame
+                // deadline so a stalled burst still gets its final paint.
                 _ = async {
-                    if let Some(deadline) = next_stream_render_deadline {
+                    if let Some(deadline) = stream_render_coalescer.pending_deadline() {
                         tokio::time::sleep_until(deadline).await;
                     }
-                }, if next_stream_render_deadline.is_some() => {
+                }, if stream_render_coalescer.pending_deadline().is_some() => {
                     if stream_render_coalescer.render_due(tokio::time::Instant::now()) {
                         self.render();
                     }
-                    next_stream_render_deadline = None;
                 }
                 // Git branch footer refresh tick.
                 _ = git_branch_interval.tick() => {
