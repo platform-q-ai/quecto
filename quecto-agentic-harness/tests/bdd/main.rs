@@ -111,6 +111,7 @@ impl LlmProvider for MockLlmProvider {
 struct MockBddTool {
     def: ToolDefinition,
     response: Mutex<String>,
+    calls: Arc<Mutex<Vec<String>>>,
 }
 
 impl MockBddTool {
@@ -122,7 +123,13 @@ impl MockBddTool {
                 parameters_schema: r#"{"type":"object","properties":{}}"#.into(),
             },
             response: Mutex::new(response.to_string()),
+            calls: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    fn with_calls(mut self, calls: Arc<Mutex<Vec<String>>>) -> Self {
+        self.calls = calls;
+        self
     }
 
     #[allow(dead_code)]
@@ -148,6 +155,7 @@ impl quecto::domain::tool::Tool for MockBddTool {
         &self,
         _arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+        self.calls.lock().unwrap().push(self.def.name.to_string());
         let content = self.response.lock().unwrap().clone();
         Box::pin(async move {
             Ok(ToolResult {
@@ -279,6 +287,8 @@ pub struct QuectoWorld {
     pub mock_tools: HashMap<String, Arc<MockBddTool>>,
     /// Tool execution order tracking
     pub executed_tools: Arc<Mutex<Vec<String>>>,
+    /// Roles captured from the last completed agent turn
+    pub completed_turn_roles: Vec<Role>,
     /// Session workspace path (for session scenarios)
     pub session_workspace: Option<PathBuf>,
     /// Session store for session scenarios
@@ -510,6 +520,10 @@ pub struct QuectoWorld {
     pub efficiency_edit_result: Option<ToolResult>,
     /// Captured tool-result preview from agent progress events
     pub tool_result_preview: Option<String>,
+    /// Tool-result preview build count after the last agent-loop run
+    pub tool_result_preview_build_count: Option<usize>,
+    /// Retained conversation from repeated-instructions agent-loop scenarios
+    pub repeated_instruction_messages: Vec<Message>,
     // --- Grep BDD fields ---
     /// Temp dir for grep workspace (kept alive)
     pub _grep_temp_dir: Option<TempDir>,

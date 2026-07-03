@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_forward_progress_event_emits_tool_started_with_tool_call_id() {
@@ -71,10 +72,10 @@ async fn test_forward_progress_event_emits_subagent_messages_appended() {
 
     let mut buf = Vec::new();
     let ev = AgentProgressEvent::TurnCompleted {
-        messages: vec![
+        messages: Arc::from([
             Message::assistant("turn output", vec![]),
             Message::tool("call-1", "tool result body"),
-        ],
+        ]),
     };
     forward_progress_event(ev, &mut buf).await;
 

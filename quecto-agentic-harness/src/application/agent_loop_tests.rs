@@ -44,7 +44,7 @@ impl MockProvider {
         self.seen_max_tokens.lock().unwrap().clone()
     }
 
-    fn request_count(&self) -> usize {
+    pub(super) fn request_count(&self) -> usize {
         *self.request_count.lock().unwrap()
     }
 

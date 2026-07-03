@@ -1,4 +1,6 @@
 use std::sync::OnceLock;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Token estimate for a single message. The estimate is cached because the
 // text/image/tool-call content is conceptually immutable once emitted, and
@@ -7,11 +9,19 @@ use std::sync::OnceLock;
 // cleared when the message is cloned so that the copy re-computes lazily on
 // its first use; this is safe because the estimate is pure and cheap.
 #[derive(Debug, Default)]
-pub struct TokenCache(OnceLock<usize>);
+pub struct TokenCache {
+    tokens: OnceLock<usize>,
+    #[cfg(any(test, feature = "test-support"))]
+    build_count: AtomicUsize,
+}
 
 impl Clone for TokenCache {
     fn clone(&self) -> Self {
-        Self(OnceLock::new())
+        Self {
+            tokens: OnceLock::new(),
+            #[cfg(any(test, feature = "test-support"))]
+            build_count: AtomicUsize::new(0),
+        }
     }
 }
 /// A single message in a conversation.
@@ -188,14 +198,19 @@ impl Message {
     /// automatically cleared on `Clone`, but the fields are public so any
     /// direct mutation must invalidate the cache to keep estimates correct.
     pub fn invalidate_token_cache(&mut self) {
-        self.cached_tokens.0.take();
+        self.cached_tokens.tokens.take();
     }
 
     /// Return the cached token estimate for this message, computing it once
     /// on first access. This avoids the per-turn O(total_history_chars) scans
     /// that occur when context pruning repeatedly re-estimates every message.
     pub fn estimated_tokens(&self) -> usize {
-        *self.cached_tokens.0.get_or_init(|| {
+        *self.cached_tokens.tokens.get_or_init(|| {
+            #[cfg(any(test, feature = "test-support"))]
+            self.cached_tokens
+                .build_count
+                .fetch_add(1, Ordering::Relaxed);
+
             let text_tokens = Self::estimate_tokens(&self.content);
             let tool_call_tokens: usize = self
                 .tool_calls
@@ -219,6 +234,11 @@ impl Message {
                 .sum();
             text_tokens + tool_call_tokens + tool_call_id_tokens + image_tokens + user_image_tokens
         })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn cached_token_build_count_for_tests(&self) -> usize {
+        self.cached_tokens.build_count.load(Ordering::Relaxed)
     }
 }
 

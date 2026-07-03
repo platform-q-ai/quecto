@@ -1,4 +1,5 @@
 use super::*;
+use quecto::application::agent_loop_test_support;
 use quecto::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 // Agent Loop Steps
@@ -22,6 +23,15 @@ fn build_agent_loop_with_callback(
     world: &QuectoWorld,
     max_iterations: Option<u32>,
     progress_callback: Option<Arc<dyn Fn(quecto::domain::agent::AgentProgressEvent) + Send + Sync>>,
+) -> AgentLoopImpl {
+    build_agent_loop_with_config(world, max_iterations, progress_callback, None)
+}
+
+fn build_agent_loop_with_config(
+    world: &QuectoWorld,
+    max_iterations: Option<u32>,
+    progress_callback: Option<Arc<dyn Fn(quecto::domain::agent::AgentProgressEvent) + Send + Sync>>,
+    system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
 ) -> AgentLoopImpl {
     let provider = world.mock_llm.clone().expect("mock LLM not configured") as Arc<dyn LlmProvider>;
 
@@ -54,7 +64,7 @@ fn build_agent_loop_with_callback(
         progress_callback,
         streaming: false,
         effort: None,
-        system_prompt_provider: None,
+        system_prompt_provider,
         audit_log: None,
     });
 
@@ -106,13 +116,43 @@ fn given_tool_returns(world: &mut QuectoWorld, tool_name: String, response: Stri
     world.mock_tools.insert(tool_name, tool);
 }
 
-#[given(
-    expr = "the tool {string} returns output whose byte limit falls inside a multibyte character"
-)]
+#[given(expr = "the tool {string} returns long Unicode output")]
 fn given_tool_returns_mid_codepoint_output(world: &mut QuectoWorld, tool_name: String) {
     let output = "€".repeat(DEFAULT_OUTPUT_CAP_BYTES / "€".len() + 1);
     let tool = Arc::new(MockBddTool::new(&tool_name, &output));
     world.mock_tools.insert(tool_name, tool);
+}
+
+#[given(expr = "the tool {string} returns output {word} the allowed display length")]
+fn given_tool_returns_output_at_display_boundary(
+    world: &mut QuectoWorld,
+    tool_name: String,
+    position: String,
+) {
+    let length = match position.as_str() {
+        "below" => DEFAULT_OUTPUT_CAP_BYTES - 1,
+        "above" => DEFAULT_OUTPUT_CAP_BYTES + 1,
+        other => panic!("unsupported boundary position: {other}"),
+    };
+    let output = "a".repeat(length);
+    let tool = Arc::new(MockBddTool::new(&tool_name, &output));
+    world.mock_tools.insert(tool_name, tool);
+}
+
+#[given(expr = "the tool {string} returns output exactly at the allowed display length")]
+fn given_tool_returns_output_exactly_at_display_boundary(
+    world: &mut QuectoWorld,
+    tool_name: String,
+) {
+    let output = "a".repeat(DEFAULT_OUTPUT_CAP_BYTES);
+    let tool = Arc::new(MockBddTool::new(&tool_name, &output));
+    world.mock_tools.insert(tool_name, tool);
+}
+
+#[given("an agent with stable dynamic instructions")]
+fn given_configured_agent_with_repeated_dynamic_instructions(world: &mut QuectoWorld) {
+    ensure_mock_llm(world);
+    world.repeated_instruction_messages.clear();
 }
 
 #[given(expr = "the LLM then returns {string}")]
@@ -127,55 +167,39 @@ fn given_llm_then_returns(world: &mut QuectoWorld, text: String) {
     });
 }
 
-#[given(expr = "the LLM returns tool calls in sequence: {string}, {string}")]
-fn given_llm_returns_tool_calls_in_sequence(world: &mut QuectoWorld, tool1: String, tool2: String) {
+#[given(expr = "the LLM returns simultaneous tool calls for {string} and {string}")]
+fn given_llm_returns_simultaneous_tool_calls(
+    world: &mut QuectoWorld,
+    tool1: String,
+    tool2: String,
+) {
     let mock = ensure_mock_llm(world);
-
-    // First call returns tool1
+    world.executed_tools.lock().unwrap().clear();
     mock.push_response(LlmResponse {
         content: None,
-        tool_calls: vec![ToolCall {
-            id: format!("call_{}", tool1),
-            name: tool1.clone(),
-            arguments: "{}".to_string(),
-        }],
+        tool_calls: vec![
+            ToolCall {
+                id: format!("call_{}", tool1),
+                name: tool1.clone(),
+                arguments: r#"{"path":"notes.txt"}"#.to_string(),
+            },
+            ToolCall {
+                id: format!("call_{}", tool2),
+                name: tool2.clone(),
+                arguments: r#"{"path":"out.txt","content":"copied"}"#.to_string(),
+            },
+        ],
         usage: None,
         stop_reason: None,
         thinking_blocks: vec![],
     });
 
-    // Second call returns tool2
-    mock.push_response(LlmResponse {
-        content: None,
-        tool_calls: vec![ToolCall {
-            id: format!("call_{}", tool2),
-            name: tool2.clone(),
-            arguments: "{}".to_string(),
-        }],
-        usage: None,
-        stop_reason: None,
-        thinking_blocks: vec![],
-    });
-
-    // Third call returns final text
-    mock.push_response(LlmResponse {
-        content: Some("Done".to_string()),
-        tool_calls: vec![],
-        usage: None,
-        stop_reason: None,
-        thinking_blocks: vec![],
-    });
-
-    // Register mock tools if not already present
-    if !world.mock_tools.contains_key(&tool1) {
-        world
-            .mock_tools
-            .insert(tool1.clone(), Arc::new(MockBddTool::new(&tool1, "ok")));
-    }
-    if !world.mock_tools.contains_key(&tool2) {
-        world
-            .mock_tools
-            .insert(tool2.clone(), Arc::new(MockBddTool::new(&tool2, "ok")));
+    for tool_name in [&tool1, &tool2] {
+        if !world.mock_tools.contains_key(tool_name) {
+            let tool =
+                MockBddTool::new(tool_name, "ok").with_calls(Arc::clone(&world.executed_tools));
+            world.mock_tools.insert(tool_name.clone(), Arc::new(tool));
+        }
     }
 }
 
@@ -250,23 +274,33 @@ fn when_agent_processes_message(world: &mut QuectoWorld, message: String) {
 
     let mut messages = vec![Message::user(message)];
 
+    agent_loop_test_support::reset_built_tool_result_preview_count_for_tests();
     let result = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(agent.process(&mut messages));
 
     world.agent_result = Some(result.expect("agent process failed"));
+    world.tool_result_preview_build_count =
+        Some(agent_loop_test_support::built_tool_result_preview_count_for_tests());
 }
 
 #[when(expr = "the agent reports progress while processing message {string}")]
 fn when_agent_processes_message_with_progress(world: &mut QuectoWorld, message: String) {
     let preview = Arc::new(std::sync::Mutex::new(None));
     let preview_for_callback = Arc::clone(&preview);
-    let callback = Arc::new(move |event| {
-        if let quecto::domain::agent::AgentProgressEvent::ToolFinished { result_content, .. } =
-            event
-        {
+    let completed_roles = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let completed_roles_for_callback = Arc::clone(&completed_roles);
+    let callback = Arc::new(move |event| match event {
+        quecto::domain::agent::AgentProgressEvent::ToolFinished { result_content, .. } => {
             *preview_for_callback.lock().unwrap() = Some(result_content);
         }
+        quecto::domain::agent::AgentProgressEvent::TurnCompleted { messages } => {
+            *completed_roles_for_callback.lock().unwrap() = messages
+                .iter()
+                .map(|message| message.role.clone())
+                .collect();
+        }
+        _ => {}
     });
     let max_iter = world
         .env_overrides
@@ -281,6 +315,30 @@ fn when_agent_processes_message_with_progress(world: &mut QuectoWorld, message: 
 
     world.agent_result = Some(result.expect("agent process failed"));
     world.tool_result_preview = preview.lock().unwrap().clone();
+    world.completed_turn_roles = completed_roles.lock().unwrap().clone();
+}
+
+#[when("the agent processes two messages while the instructions stay the same")]
+fn when_agent_processes_two_messages_with_same_dynamic_instructions(world: &mut QuectoWorld) {
+    let agent = build_agent_loop_with_config(
+        world,
+        None,
+        None,
+        Some(Arc::new(|| "stable instructions".to_string())),
+    );
+    let mut messages = vec![Message::user("first request")];
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime
+        .block_on(agent.process(&mut messages))
+        .expect("first agent process failed");
+    messages.push(Message::user("second request"));
+    let result = runtime
+        .block_on(agent.process(&mut messages))
+        .expect("second agent process failed");
+
+    world.agent_result = Some(result);
+    world.repeated_instruction_messages = messages;
 }
 
 #[when("the agent sends a request to the LLM")]
@@ -325,9 +383,14 @@ fn then_response_should_be(world: &mut QuectoWorld, expected: String) {
 fn then_both_tools_executed(world: &mut QuectoWorld) {
     let result = world.agent_result.as_ref().expect("no agent result");
     assert_eq!(
-        result.tool_iterations, 2,
-        "expected 2 tool iterations, got {}",
+        result.tool_iterations, 1,
+        "expected one LLM tool turn, got {}",
         result.tool_iterations
+    );
+    assert_eq!(
+        world.executed_tools.lock().unwrap().as_slice(),
+        &["read".to_string(), "write".to_string()],
+        "tool calls should execute in assistant-request order"
     );
 }
 
@@ -347,7 +410,7 @@ fn then_tool_result_preview_contains_complete_characters(world: &mut QuectoWorld
     );
 }
 
-#[then("the tool result preview should stay within the byte limit")]
+#[then("the tool result preview should stay within the allowed display length")]
 fn then_tool_result_preview_stays_within_byte_limit(world: &mut QuectoWorld) {
     let preview = world
         .tool_result_preview
@@ -358,6 +421,61 @@ fn then_tool_result_preview_stays_within_byte_limit(world: &mut QuectoWorld) {
         preview,
         &"€".repeat(expected_chars),
         "preview should keep the maximal valid UTF-8 prefix within the byte limit"
+    );
+}
+
+#[then(expr = "the tool result preview should match output {word} the allowed display length")]
+fn then_preview_matches_output_at_display_boundary(world: &mut QuectoWorld, position: String) {
+    let preview = world
+        .tool_result_preview
+        .as_ref()
+        .expect("tool result preview not captured");
+    let expected_length = match position.as_str() {
+        "below" => DEFAULT_OUTPUT_CAP_BYTES - 1,
+        "above" => DEFAULT_OUTPUT_CAP_BYTES,
+        other => panic!("unsupported boundary position: {other}"),
+    };
+    assert_eq!(preview, &"a".repeat(expected_length));
+}
+
+#[then("the tool result preview should match output exactly at the allowed display length")]
+fn then_preview_matches_output_exactly_at_display_boundary(world: &mut QuectoWorld) {
+    let preview = world
+        .tool_result_preview
+        .as_ref()
+        .expect("tool result preview not captured");
+    assert_eq!(preview, &"a".repeat(DEFAULT_OUTPUT_CAP_BYTES));
+}
+
+#[then("no progress preview should be reported")]
+fn then_no_tool_result_preview_should_be_captured(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.tool_result_preview_build_count,
+        Some(0),
+        "headless processing should not build tool result previews"
+    );
+}
+
+#[then("the agent should reuse the unchanged instructions")]
+fn then_unchanged_dynamic_instructions_should_be_estimated_once(world: &mut QuectoWorld) {
+    let system_message = world
+        .repeated_instruction_messages
+        .iter()
+        .find(|message| message.role == Role::System)
+        .expect("dynamic instructions were not retained");
+    assert_eq!(
+        system_message.cached_token_build_count_for_tests(),
+        1,
+        "the unchanged dynamic instructions should not be re-estimated on the second turn"
+    );
+}
+
+#[then("the completed turn should include both tool results in order")]
+fn then_completed_turn_should_include_both_tool_results_in_order(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.completed_turn_roles,
+        vec![Role::Assistant, Role::Tool, Role::Tool],
+        "completed turn should include assistant request followed by both tool results"
     );
 }
 
