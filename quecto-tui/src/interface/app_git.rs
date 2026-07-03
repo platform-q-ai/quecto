@@ -4,8 +4,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// How often to poll `.git/HEAD` for footer branch changes.
-pub(super) const GIT_BRANCH_POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// How soon the footer should notice a changed `.git/HEAD` while otherwise idle.
+pub(super) const GIT_BRANCH_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Maximum bytes read from `.git/HEAD`; git refs are tiny, so this bounds bad files.
 pub(super) const GIT_HEAD_READ_LIMIT: u64 = 4096;

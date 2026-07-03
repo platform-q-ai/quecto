@@ -21,6 +21,8 @@ use super::keys::Key;
 use crate::infrastructure::client::{Client, Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::infrastructure::terminal::Terminal;
 use crate::interface::components::chat::ChatEntry;
+use crate::interface::components::notification::NotifyLevel;
+use crate::interface::components::spinner::Spinner;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
@@ -205,6 +207,77 @@ impl TuiHarness {
     /// Escape hatch for driving fields the event API doesn't cover.
     pub fn app_mut(&mut self) -> &mut App {
         &mut self.app
+    }
+
+    /// Whether the event loop would currently arm its sub-second animation timer.
+    pub fn needs_animation_tick(&self, kitty_fallback_pending: bool) -> bool {
+        self.app.needs_animation_tick(kitty_fallback_pending)
+    }
+
+    /// Drive one animation/fallback service tick.
+    pub fn service_animation_tick(
+        &mut self,
+        kitty_fallback_done: &mut bool,
+        kitty_deadline: tokio::time::Instant,
+    ) -> bool {
+        self.app
+            .service_animation_tick(kitty_fallback_done, kitty_deadline)
+    }
+
+    /// Capture the current spinner frame index, when a spinner is visible.
+    pub fn spinner_frame_index(&self) -> Option<usize> {
+        self.app.spinner.as_ref().map(Spinner::frame_index)
+    }
+
+    /// Mark the main session's streaming indicator.
+    pub fn set_streaming(&mut self, streaming: bool) {
+        self.app.master_session.footer.set_streaming(streaming);
+    }
+
+    /// Mark the main agent as not running.
+    pub fn end_agent_run(&mut self) {
+        self.app.agent_state.end();
+    }
+
+    /// Show a visible activity spinner in the main session.
+    pub fn show_activity_spinner(&mut self, message: &str) {
+        self.app.spinner = Some(Spinner::new(message));
+    }
+
+    /// Show a visible notification.
+    pub fn notify(&mut self, message: &str) {
+        self.app.notify(message, NotifyLevel::Info);
+    }
+
+    /// Whether any notification is still visible.
+    pub fn has_notification(&self) -> bool {
+        !self.app.notifications.is_empty()
+    }
+
+    /// Apply a branch change through the production footer update path.
+    pub fn apply_branch(&mut self, branch: Option<String>) -> bool {
+        self.app.apply_git_branch(branch)
+    }
+
+    /// Feed printable input through the real key handler.
+    pub fn type_char(&mut self, ch: char) {
+        self.app.handle_key(Key::Char(ch));
+    }
+
+    /// Current editor text.
+    pub fn editor_text(&self) -> String {
+        self.app.editor.text().to_string()
+    }
+
+    /// Mark Kitty protocol support as absent for fallback assertions.
+    pub fn clear_kitty_support(&mut self) {
+        self.app.kitty.active = false;
+        self.app.kitty.modify_other_keys = false;
+    }
+
+    /// Whether modifyOtherKeys fallback is enabled.
+    pub fn modify_other_keys_enabled(&self) -> bool {
+        self.app.kitty.modify_other_keys
     }
 
     // ── High-level driving surface for the workspace `bdd` target (#805) ──
