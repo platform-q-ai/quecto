@@ -7,7 +7,7 @@ Feature: Repository documentation
   @docs
   Scenario: README documents current release metadata and private license
     When I read the repository file "README.md"
-    Then the output should contain "Current version: **0.81.25**"
+    Then the output should contain "Current version: **0.81.26**"
     And the output should contain "## License"
     And the output should contain "LicenseRef-Proprietary"
     And the output should contain "private repository"
@@ -33,3 +33,8 @@ Feature: Repository documentation
   Scenario: Obsolete planning artifacts are removed from product docs
     When I inspect obsolete repository planning artifact paths
     Then the obsolete planning documents should be absent
+
+  @docs
+  Scenario: Workflow docs keep pure-move refactors reviewable
+    When I read the repository file "README.md"
+    Then the workflow docs should describe pure-move refactors as separate PRs before or after motivating behavior
