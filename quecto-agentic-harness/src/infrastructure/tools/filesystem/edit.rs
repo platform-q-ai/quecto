@@ -2,6 +2,7 @@
 // Two-stage exact→fuzzy matching, CRLF/BOM preservation, no-op detection,
 // LCS-based unified diff via the `similar` crate.
 
+use std::borrow::Cow;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -133,7 +134,7 @@ impl Tool for EditTool {
                 let fuzzy_content = normalize_for_fuzzy_match(&content);
                 let fuzzy_old = normalize_for_fuzzy_match(old_text);
                 let (fc, fo) = count_occurrences_capped(&fuzzy_content, &fuzzy_old, 2);
-                (fuzzy_old, fo, fc)
+                (Cow::Owned(fuzzy_old), fo, fc)
             } else {
                 (base_old, match_offset, count)
             };
@@ -220,24 +221,24 @@ fn detect_line_ending(s: &str) -> LineEnding {
 }
 
 /// Restore original line endings and re-prepend BOM if present.
-fn restore_file_format(lf_content: &str, ending: LineEnding, has_bom: bool) -> String {
+fn restore_file_format(lf_content: &str, ending: LineEnding, has_bom: bool) -> Cow<'_, str> {
     let body = if ending == LineEnding::Crlf {
-        lf_content.replace('\n', "\r\n")
+        Cow::Owned(lf_content.replace('\n', "\r\n"))
     } else {
-        lf_content.to_string()
+        Cow::Borrowed(lf_content)
     };
     if has_bom {
-        format!("\u{FEFF}{}", body)
+        Cow::Owned(format!("\u{FEFF}{}", body))
     } else {
         body
     }
 }
 
 /// Strip UTF-8 BOM and normalise CRLF → LF in a single pass.
-fn base_normalise(s: &str) -> String {
+fn base_normalise(s: &str) -> Cow<'_, str> {
     let s = s.strip_prefix('\u{FEFF}').unwrap_or(s);
     if !s.contains('\r') {
-        return s.to_string();
+        return Cow::Borrowed(s);
     }
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -251,7 +252,7 @@ fn base_normalise(s: &str) -> String {
             out.push(c);
         }
     }
-    out
+    Cow::Owned(out)
 }
 
 /// Normalise text for fuzzy matching — mirrors Quecto's `normalizeForFuzzyMatch`.

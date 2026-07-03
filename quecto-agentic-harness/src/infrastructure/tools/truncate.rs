@@ -162,31 +162,30 @@ pub fn truncate_tail(content: &str, max_lines: usize, max_bytes: usize) -> Trunc
         };
     }
 
-    // Collect all lines with their byte positions
-    let lines: Vec<&str> = content.lines().collect();
-    let line_count = lines.len();
-
-    let mut selected_start = line_count; // exclusive start index (we go backwards)
+    let mut selected_start = content.len();
     let mut output_bytes = 0;
+    let mut output_lines = 0;
     let mut truncated = false;
     let mut truncated_by = None;
     let last_line_partial = false;
+    let mut line_end = content.strip_suffix('\n').map_or(content.len(), str::len);
 
-    // Walk backwards
-    for i in (0..line_count).rev() {
-        let line = lines[i];
-        let line_bytes = line.len();
-        let separator_bytes = if selected_start < line_count { 1 } else { 0 };
-        let would_be = output_bytes + separator_bytes + line_bytes;
+    loop {
+        let line_start = content[..line_end].rfind('\n').map_or(0, |idx| idx + 1);
+        // `str::lines()` treats "\r\n" as one terminator, so a '\r' preceding
+        // a '\n' terminator is not part of the line; mirror that here. A lone
+        // trailing '\r' with no '\n' after it is literal content and is kept.
+        let mut line = &content[line_start..line_end];
+        if content.as_bytes().get(line_end) == Some(&b'\n') {
+            line = line.strip_suffix('\r').unwrap_or(line);
+        }
+        let separator_bytes = usize::from(output_lines > 0);
+        let would_be = output_bytes + separator_bytes + line.len();
 
         if would_be > max_bytes {
-            // This line would push us over the byte limit
             truncated = true;
-            if selected_start == line_count {
-                // This is the very last line and it alone exceeds the limit.
-                // Take the tail of this line, respecting UTF-8 boundaries.
+            if output_lines == 0 {
                 let tail_start = line.len().saturating_sub(max_bytes);
-                // Find a valid UTF-8 boundary at or after tail_start
                 let safe_start = (tail_start..line.len())
                     .find(|&pos| line.is_char_boundary(pos))
                     .unwrap_or(line.len());
@@ -207,21 +206,23 @@ pub fn truncate_tail(content: &str, max_lines: usize, max_bytes: usize) -> Trunc
             break;
         }
 
-        // Check line limit
-        let lines_selected = line_count - i;
-        if lines_selected > max_lines {
+        if output_lines >= max_lines {
             truncated = true;
             truncated_by = Some(TruncatedBy::Lines);
             break;
         }
 
         output_bytes = would_be;
-        selected_start = i;
+        output_lines += 1;
+        selected_start = line_start;
+
+        if line_start == 0 {
+            break;
+        }
+        line_end = line_start - 1;
     }
 
-    // Build result from selected_start to end
-    let selected_lines = &lines[selected_start..];
-    let result_content = selected_lines.join("\n");
+    let result_content = build_tail_content(content, selected_start, output_lines, output_bytes);
     let result_bytes = result_content.len();
 
     TruncationResult {
@@ -230,11 +231,30 @@ pub fn truncate_tail(content: &str, max_lines: usize, max_bytes: usize) -> Trunc
         truncated_by,
         total_lines,
         total_bytes,
-        output_lines: selected_lines.len(),
+        output_lines,
         output_bytes: result_bytes,
         last_line_partial,
         first_line_exceeds_limit: false,
     }
+}
+
+fn build_tail_content(
+    content: &str,
+    selected_start: usize,
+    output_lines: usize,
+    output_bytes: usize,
+) -> String {
+    let mut result = String::with_capacity(output_bytes);
+    for (idx, line) in content[selected_start..].lines().enumerate() {
+        if idx >= output_lines {
+            break;
+        }
+        if idx > 0 {
+            result.push('\n');
+        }
+        result.push_str(line);
+    }
+    result
 }
 
 /// Truncate a single line to max characters. Used by: grep (500 chars).
@@ -301,10 +321,13 @@ mod tests {
 
     #[test]
     fn head_truncates_by_line_limit() {
-        let input: String = (0..3000)
-            .map(|i| format!("line{}", i))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut input = String::new();
+        for i in 0..3000 {
+            if i > 0 {
+                input.push('\n');
+            }
+            input.push_str(&format!("line{i}"));
+        }
         let r = truncate_head(&input, 2000, 50 * 1024 * 1024); // large byte limit
         assert!(r.truncated);
         assert_eq!(r.truncated_by, Some(TruncatedBy::Lines));
@@ -363,17 +386,29 @@ mod tests {
     }
 
     #[test]
-    fn head_multibyte_utf8() {
-        let mut input = String::new();
-        for i in 0..20 {
-            input.push_str("héllo 世界 🦀");
-            if i < 19 {
-                input.push('\n');
-            }
-        }
+    fn head_multibyte_utf8_keeps_whole_characters() {
+        let input = "éé\nline2";
+        let r = truncate_head(input, 2000, 5);
+        assert_eq!(r.content, "éé");
+        assert_eq!(r.output_bytes, 4);
+        assert_eq!(r.truncated_by, Some(TruncatedBy::Bytes));
+    }
+
+    #[test]
+    fn head_multibyte_utf8_large_input_never_splits_codepoints() {
+        // Wide-input stress case: mixed 2/3/4-byte characters where the byte
+        // cap lands mid-codepoint on many candidate cut points.
+        let input: String = (0..20)
+            .map(|_| "héllo 世界 🦀")
+            .collect::<Vec<_>>()
+            .join("\n");
         let r = truncate_head(&input, 10, 100);
-        assert!(std::str::from_utf8(r.content.as_bytes()).is_ok());
-        // Should not contain partial characters
+        assert!(r.truncated);
+        assert!(r.output_bytes <= 100);
+        // The kept prefix must cut the input at a character boundary and be
+        // byte-identical to the original up to that point.
+        assert!(input.is_char_boundary(r.content.len()));
+        assert_eq!(r.content, input[..r.content.len()]);
     }
 
     #[test]
@@ -408,10 +443,13 @@ mod tests {
 
     #[test]
     fn tail_truncates_by_line_limit_keeps_last() {
-        let input: String = (0..3000)
-            .map(|i| format!("line{}", i))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut input = String::new();
+        for i in 0..3000 {
+            if i > 0 {
+                input.push('\n');
+            }
+            input.push_str(&format!("line{i}"));
+        }
         let r = truncate_tail(&input, 2000, 50 * 1024 * 1024);
         assert!(r.truncated);
         assert_eq!(r.truncated_by, Some(TruncatedBy::Lines));
@@ -436,6 +474,18 @@ mod tests {
     }
 
     #[test]
+    fn tail_truncation_keeps_requested_last_lines_for_large_content() {
+        let mut input = String::new();
+        for i in 1..=5000 {
+            input.push_str(&format!("line{i}\n"));
+        }
+        let r = truncate_tail(&input, 3, 1024);
+        assert_eq!(r.content, "line4998\nline4999\nline5000");
+        assert_eq!(r.output_lines, 3);
+        assert_eq!(r.truncated_by, Some(TruncatedBy::Lines));
+    }
+
+    #[test]
     fn tail_single_huge_line_partial() {
         let input = "z".repeat(60000);
         let r = truncate_tail(&input, 2000, 50 * 1024);
@@ -447,11 +497,45 @@ mod tests {
     }
 
     #[test]
-    fn tail_utf8_safe() {
-        // Create a string with multi-byte characters
-        let input = "🦀".repeat(20000); // 80KB of 4-byte chars
+    fn tail_strips_carriage_return_before_newline_like_lines() {
+        // "\r\n"-terminated lines must not count the '\r' toward the byte
+        // budget — `str::lines()` treats "\r\n" as one terminator.
+        let r = truncate_tail("aa\r\nbb\r\ncc", 2000, 8);
+        assert_eq!(r.content, "aa\nbb\ncc");
+        assert!(!r.truncated);
+    }
+
+    #[test]
+    fn tail_counts_trailing_carriage_return_toward_byte_limit() {
+        let input = format!("{}\r", "z".repeat(50 * 1024));
         let r = truncate_tail(&input, 2000, 50 * 1024);
-        assert!(std::str::from_utf8(r.content.as_bytes()).is_ok());
+        assert!(r.truncated);
+        assert!(r.last_line_partial);
+        assert!(r.output_bytes <= 50 * 1024);
+        assert_eq!(r.content.len(), 50 * 1024);
+    }
+
+    #[test]
+    fn tail_utf8_safe_keeps_whole_characters() {
+        let input = "a\nééé";
+        let r = truncate_tail(input, 2000, 5);
+        assert_eq!(r.content, "éé");
+        assert_eq!(r.output_bytes, 4);
+        assert!(r.last_line_partial);
+    }
+
+    #[test]
+    fn tail_utf8_safe_large_multibyte_input() {
+        // Wide-input stress case: 80KB of 4-byte chars on a single line, so
+        // the byte cap falls mid-codepoint unless the boundary is adjusted.
+        let input = "🦀".repeat(20000);
+        let r = truncate_tail(&input, 2000, 50 * 1024);
+        assert!(r.truncated);
+        assert!(r.last_line_partial);
+        assert!(r.output_bytes <= 50 * 1024);
+        // The kept suffix must be whole characters and match the input tail.
+        assert!(r.content.chars().all(|c| c == '🦀'));
+        assert!(input.ends_with(&r.content));
     }
 
     // -----------------------------------------------------------------------

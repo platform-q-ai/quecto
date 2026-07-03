@@ -494,6 +494,18 @@ pub struct QuectoWorld {
     pub efficiency_usage: Option<quecto::domain::message::UsageInfo>,
     /// Provider entry loaded from a legacy config blob
     pub efficiency_provider_entry: Option<quecto::infrastructure::config::ProviderEntry>,
+    /// Temp dir for harness efficiency tool scenarios
+    pub _efficiency_temp_dir: Option<TempDir>,
+    /// Workspace path for harness efficiency tool scenarios
+    pub efficiency_workspace: Option<PathBuf>,
+    /// Last read-tool result for harness efficiency scenarios
+    pub efficiency_read_result: Option<ToolResult>,
+    /// Displayed command output for harness efficiency scenarios
+    pub efficiency_command_output: Option<String>,
+    /// Readable text produced from fetched HTML
+    pub efficiency_fetched_text: Option<String>,
+    /// Last edit-tool result for harness efficiency scenarios
+    pub efficiency_edit_result: Option<ToolResult>,
     /// Captured tool-result preview from agent progress events
     pub tool_result_preview: Option<String>,
     // --- Grep BDD fields ---

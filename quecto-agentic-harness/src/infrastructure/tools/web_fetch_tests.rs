@@ -35,6 +35,15 @@ fn test_strip_html_removes_style() {
 }
 
 #[test]
+fn test_strip_html_removes_noscript() {
+    let html = "<p>Before</p><noscript>Hidden</noscript><p>After</p>";
+    let text = strip_html(html);
+    assert!(text.contains("Before"));
+    assert!(text.contains("After"));
+    assert!(!text.contains("Hidden"));
+}
+
+#[test]
 fn test_strip_html_removes_nav_footer_header() {
     let html = "<nav>Menu</nav><main>Content</main><footer>Copyright</footer>";
     let text = strip_html(html);
@@ -97,17 +106,24 @@ fn test_strip_html_plain_text_passthrough() {
 }
 
 #[test]
-fn test_remove_tag_blocks_case_insensitive() {
+fn test_strip_html_removes_configured_tags_case_insensitively() {
+    let html = "<HEADER>Top</HEADER><p>Keep</p><NoScript>Hidden</NoScript><NAV>Menu</NAV>";
+    let text = strip_html(html);
+    assert_eq!(text, "Keep");
+}
+
+#[test]
+fn test_strip_html_removes_script_case_insensitive() {
     let html = "<SCRIPT>bad</SCRIPT>good";
-    let result = remove_tag_blocks(html, "script");
+    let result = strip_html(html);
     assert!(!result.contains("bad"));
     assert!(result.contains("good"));
 }
 
 #[test]
-fn test_remove_tag_blocks_with_attributes() {
+fn test_strip_html_removes_script_with_attributes() {
     let html = r#"<script type="text/javascript">bad</script>good"#;
-    let result = remove_tag_blocks(html, "script");
+    let result = strip_html(html);
     assert!(!result.contains("bad"));
     assert!(result.contains("good"));
 }

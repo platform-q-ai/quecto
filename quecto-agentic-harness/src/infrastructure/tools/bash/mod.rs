@@ -146,21 +146,19 @@ impl ExecTool {
             .validate_command(&command)
             .map_err(|e| DomainError::Security(e.to_string()))?;
 
-        let source_env = build_source_env(env_overrides);
-
         let full_command = match &self.command_prefix {
             Some(prefix) => format!("{}\n{}", prefix, command),
             None => command,
         };
 
-        self.spawn_and_wait(&full_command, &source_env, effective_timeout)
+        self.spawn_and_wait(&full_command, env_overrides, effective_timeout)
             .await
     }
 
     async fn spawn_and_wait(
         &self,
         command: &str,
-        source_env: &HashMap<String, String>,
+        source_env: Option<&HashMap<String, String>>,
         timeout_dur: Duration,
     ) -> Result<ToolResult, DomainError> {
         let mut cmd = build_shell_command(&self.workspace, command, source_env);
@@ -259,14 +257,6 @@ fn parse_timeout(args: &serde_json::Value) -> Option<Duration> {
     })
 }
 
-fn build_source_env(env_overrides: Option<&HashMap<String, String>>) -> HashMap<String, String> {
-    let source: Box<dyn Iterator<Item = (String, String)>> = match env_overrides {
-        Some(overrides) => Box::new(overrides.clone().into_iter()),
-        None => Box::new(std::env::vars()),
-    };
-    source.collect()
-}
-
 /// Shells that may be selected via the \`SHELL\` environment variable.
 ///
 /// Restricted to well-known system shells to prevent arbitrary binary execution
@@ -285,21 +275,21 @@ const ALLOWED_SHELLS: &[&str] = &[
 fn build_shell_command(
     workspace: &PathBuf,
     command: &str,
-    source_env: &HashMap<String, String>,
+    source_env: Option<&HashMap<String, String>>,
 ) -> tokio::process::Command {
-    // Detect the user's shell from $SHELL in the filtered source environment.
+    // Detect the user's shell from explicit environment overrides when present.
     // Validated against an allowlist to prevent arbitrary binary execution.
+    let parent_shell = (source_env.is_none())
+        .then(|| std::env::var("SHELL").ok())
+        .flatten();
     let shell = source_env
-        .get("SHELL")
-        .map(String::as_str)
+        .and_then(|env| env.get("SHELL").map(String::as_str))
+        .or(parent_shell.as_deref())
         .filter(|s| ALLOWED_SHELLS.contains(s))
         .unwrap_or("/bin/sh");
 
     let mut cmd = tokio::process::Command::new(shell);
-    cmd.arg("-c")
-        .arg(command)
-        .current_dir(workspace)
-        .env_clear();
+    cmd.arg("-c").arg(command).current_dir(workspace);
 
     // Put the child in its own process group (pgid == child pid) so a cancel can
     // kill the WHOLE tree — the shell plus any grandchildren — not just the shell
@@ -310,13 +300,16 @@ fn build_shell_command(
     cmd.process_group(0);
     cmd.kill_on_drop(true);
 
-    for (k, v) in source_env {
-        cmd.env(k, v);
-    }
+    if let Some(source_env) = source_env {
+        cmd.env_clear();
+        for (k, v) in source_env {
+            cmd.env(k, v);
+        }
 
-    if !source_env.contains_key("PATH") {
-        if let Ok(path) = std::env::var("PATH") {
-            cmd.env("PATH", path);
+        if !source_env.contains_key("PATH") {
+            if let Ok(path) = std::env::var("PATH") {
+                cmd.env("PATH", path);
+            }
         }
     }
 
@@ -467,7 +460,11 @@ where
         }
     }
 
-    (String::from_utf8_lossy(&collected).into_owned(), truncated)
+    let output = match String::from_utf8(collected) {
+        Ok(valid) => valid,
+        Err(err) => String::from_utf8_lossy(err.as_bytes()).into_owned(),
+    };
+    (output, truncated)
 }
 
 async fn await_stream_output(

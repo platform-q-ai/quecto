@@ -381,6 +381,47 @@ fn test_fuzzy_normalise_strips_bom_and_crlf() {
     assert_eq!(result, "line1\nline2\n");
 }
 
+#[test]
+fn test_plain_lf_without_bom_normalise_and_restore_are_identity() {
+    let plain = "first\nsecond\n";
+    assert_eq!(&*base_normalise(plain), plain);
+    assert_eq!(&*restore_file_format(plain, LineEnding::Lf, false), plain);
+}
+
+#[test]
+fn test_crlf_and_bom_paths_preserve_observable_format() {
+    assert_eq!(&*base_normalise("first\r\nsecond\r\n"), "first\nsecond\n");
+    assert_eq!(
+        &*restore_file_format("first\nsecond\n", LineEnding::Crlf, false),
+        "first\r\nsecond\r\n"
+    );
+    assert_eq!(
+        &*restore_file_format("first\nsecond\n", LineEnding::Lf, true),
+        "\u{FEFF}first\nsecond\n"
+    );
+}
+
+#[tokio::test]
+async fn test_edit_allows_file_at_size_limit() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = EditTool::new(ws, sb);
+    let mut content = String::from("TOKEN");
+    content.push_str(&"a".repeat(1_048_576 - content.len()));
+    std::fs::write(tmp.path().join("max-edit.txt"), content).unwrap();
+    let result = tool
+        .execute(r#"{"path": "max-edit.txt", "oldText": "TOKEN", "newText": "VALUE"}"#)
+        .await
+        .unwrap();
+    assert!(
+        !result.is_error,
+        "file at size limit should edit: {}",
+        result.content
+    );
+    let edited = std::fs::read_to_string(tmp.path().join("max-edit.txt")).unwrap();
+    assert!(edited.starts_with("VALUE"));
+    assert_eq!(edited.len(), 1_048_576);
+}
+
 #[tokio::test]
 async fn test_edit_rejects_oversized_file() {
     let (ws, sb, tmp) = test_tools();

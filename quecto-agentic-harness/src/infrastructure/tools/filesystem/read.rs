@@ -11,7 +11,7 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::path_utils::resolve_read_path;
 use crate::infrastructure::tools::truncate::{
-    DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncatedBy, format_size, truncate_head,
+    DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncatedBy, format_size,
 };
 
 pub struct ReadTool {
@@ -176,20 +176,6 @@ fn detect_mime_by_magic(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
-/// Detect supported image MIME type by file extension (case-insensitive).
-/// Production path uses magic-byte detection only; this helper is test-only.
-#[cfg(test)]
-fn detect_image_mime_by_ext(path: &std::path::Path) -> Option<&'static str> {
-    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-    match ext.as_str() {
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "png" => Some("image/png"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        _ => None,
-    }
-}
-
 /// Apply offset/limit pagination and head-truncation to text file content.
 ///
 /// # Offset semantics
@@ -205,6 +191,11 @@ fn apply_read_truncation(
     if offset == Some(0) {
         return Err(DomainError::Tool(
             "offset is 1-indexed; 0 is not valid. Use offset=1 for the first line.".to_string(),
+        ));
+    }
+    if limit == Some(0) {
+        return Err(DomainError::Tool(
+            "limit must be at least 1 when provided.".to_string(),
         ));
     }
 
@@ -225,26 +216,12 @@ fn apply_read_truncation(
 
     let max_lines = limit.unwrap_or(DEFAULT_MAX_LINES);
 
-    let sliced: String = {
-        let mut lines = content.lines().skip(start_line);
-        let mut buf = String::new();
-        let mut first = true;
-        for ln in lines.by_ref() {
-            if !first {
-                buf.push('\n');
-            }
-            buf.push_str(ln);
-            first = false;
-        }
-        buf
-    };
-
-    let tr = truncate_head(&sliced, max_lines, DEFAULT_MAX_BYTES);
+    let tr = truncate_head_from_offset(content, start_line, max_lines, DEFAULT_MAX_BYTES);
 
     let mut output = String::new();
 
     if tr.first_line_exceeds_limit {
-        let line_size = format_size(sliced.lines().next().map_or(0, str::len));
+        let line_size = format_size(tr.first_line_bytes);
         let limit_size = format_size(DEFAULT_MAX_BYTES);
         let escaped = shell_escape_single(path);
         output.push_str(&format!(
@@ -289,11 +266,67 @@ fn apply_read_truncation(
     Ok(output)
 }
 
+struct OffsetHeadTruncation {
+    content: String,
+    truncated: bool,
+    truncated_by: Option<TruncatedBy>,
+    output_lines: usize,
+    first_line_exceeds_limit: bool,
+    first_line_bytes: usize,
+}
+
+fn truncate_head_from_offset(
+    content: &str,
+    start_line: usize,
+    max_lines: usize,
+    max_bytes: usize,
+) -> OffsetHeadTruncation {
+    let mut output = String::new();
+    let mut output_lines = 0usize;
+    let mut output_bytes = 0usize;
+    let mut first_line_bytes = 0usize;
+    let mut truncated_by = None;
+    let mut first_line_exceeds_limit = false;
+
+    for line in content.lines().skip(start_line) {
+        if output_lines == 0 {
+            first_line_bytes = line.len();
+        }
+        if output_lines >= max_lines {
+            truncated_by = Some(TruncatedBy::Lines);
+            break;
+        }
+
+        let separator_bytes = usize::from(output_lines > 0);
+        let would_be = output_bytes + separator_bytes + line.len();
+        if would_be > max_bytes {
+            truncated_by = Some(TruncatedBy::Bytes);
+            first_line_exceeds_limit = output_lines == 0;
+            break;
+        }
+
+        if separator_bytes == 1 {
+            output.push('\n');
+        }
+        output.push_str(line);
+        output_bytes = would_be;
+        output_lines += 1;
+    }
+
+    OffsetHeadTruncation {
+        content: output,
+        truncated: truncated_by.is_some(),
+        truncated_by,
+        output_lines,
+        first_line_exceeds_limit,
+        first_line_bytes,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::infrastructure::security::sandbox::Sandbox;
-    use std::path::Path;
     use tempfile::TempDir;
 
     fn test_tools() -> (Arc<PathBuf>, Arc<Sandbox>, TempDir) {
@@ -366,63 +399,6 @@ mod tests {
         let result = tool.execute(r#"{"path": "f.txt", "offset": 0}"#).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("1-indexed"));
-    }
-
-    // --- detect_image_mime unit tests ---
-
-    #[test]
-    fn test_detect_image_mime_png() {
-        assert_eq!(
-            detect_image_mime_by_ext(Path::new("screenshot.png")),
-            Some("image/png")
-        );
-    }
-
-    #[test]
-    fn test_detect_image_mime_jpg() {
-        assert_eq!(
-            detect_image_mime_by_ext(Path::new("photo.jpg")),
-            Some("image/jpeg")
-        );
-        assert_eq!(
-            detect_image_mime_by_ext(Path::new("photo.jpeg")),
-            Some("image/jpeg")
-        );
-    }
-
-    #[test]
-    fn test_detect_image_mime_gif() {
-        assert_eq!(
-            detect_image_mime_by_ext(Path::new("anim.gif")),
-            Some("image/gif")
-        );
-    }
-
-    #[test]
-    fn test_detect_image_mime_webp() {
-        assert_eq!(
-            detect_image_mime_by_ext(Path::new("icon.webp")),
-            Some("image/webp")
-        );
-    }
-
-    #[test]
-    fn test_detect_image_mime_text_file() {
-        assert_eq!(detect_image_mime_by_ext(Path::new("notes.txt")), None);
-        assert_eq!(detect_image_mime_by_ext(Path::new("main.rs")), None);
-        assert_eq!(detect_image_mime_by_ext(Path::new("no_extension")), None);
-    }
-
-    #[test]
-    fn test_detect_image_mime_uppercase_ext() {
-        assert_eq!(
-            detect_image_mime_by_ext(Path::new("IMAGE.PNG")),
-            Some("image/png")
-        );
-        assert_eq!(
-            detect_image_mime_by_ext(Path::new("Photo.JPG")),
-            Some("image/jpeg")
-        );
     }
 
     #[tokio::test]
@@ -577,6 +553,106 @@ mod tests {
             "user-limit notice should say 'more lines in file', got: {}",
             &result[result.len().saturating_sub(200)..]
         );
+    }
+
+    #[test]
+    fn test_offset_read_returns_requested_window_from_large_file() {
+        let content: String = (1..=20_000).map(|i| format!("line{i}\n")).collect();
+        let result = apply_read_truncation(&content, "large.txt", Some(19_000), Some(5)).unwrap();
+        assert!(result.starts_with("line19000\nline19001\nline19002\nline19003\nline19004"));
+        assert!(!result.contains("line18999"));
+        assert!(!result.contains("line19005\n"));
+        assert!(result.contains("996 more lines in file. Use offset=19005 to continue."));
+    }
+
+    #[test]
+    fn test_read_limit_zero_is_rejected() {
+        let err = apply_read_truncation("line1\nline2\n", "f.txt", None, Some(0)).unwrap_err();
+        assert!(err.to_string().contains("limit must be at least 1"));
+    }
+
+    #[test]
+    fn test_offset_read_allows_exact_50kb_window() {
+        let content = format!("skip\n{}", "a".repeat(DEFAULT_MAX_BYTES));
+        let result = apply_read_truncation(&content, "large.txt", Some(2), None).unwrap();
+        assert_eq!(result.len(), DEFAULT_MAX_BYTES);
+        assert!(!result.contains("50KB limit"));
+    }
+
+    #[test]
+    fn test_offset_read_truncates_just_over_50kb_window() {
+        let content = format!("skip\n{}\nnext\n", "a".repeat(DEFAULT_MAX_BYTES + 1));
+        let result = apply_read_truncation(&content, "large.txt", Some(2), None).unwrap();
+        assert!(result.contains("exceeds 50.0KB limit"));
+        assert!(result.contains("sed -n '2p'"));
+    }
+
+    #[test]
+    fn test_offset_read_allows_exact_default_line_limit() {
+        let content: String = (1..=2_001).map(|i| format!("line{i}\n")).collect();
+        let result = apply_read_truncation(&content, "large.txt", Some(2), None).unwrap();
+        assert!(result.starts_with("line2\n"));
+        assert!(result.contains("line2001"));
+        assert!(!result.contains("Use offset="));
+    }
+
+    #[test]
+    fn test_offset_read_truncates_one_line_over_default_line_limit() {
+        let content: String = (1..=2_002).map(|i| format!("line{i}\n")).collect();
+        let result = apply_read_truncation(&content, "large.txt", Some(2), None).unwrap();
+        assert!(result.contains("line2001"));
+        assert!(result.contains("Showing lines 2-2001 of 2002. Use offset=2002 to continue."));
+        assert!(!result.contains("line2002\n"));
+    }
+
+    #[tokio::test]
+    async fn test_read_allows_file_at_10mib_limit() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        std::fs::write(tmp.path().join("max.txt"), vec![b'a'; 10 * 1024 * 1024]).unwrap();
+        let result = tool.execute(r#"{"path":"max.txt"}"#).await.unwrap();
+        assert!(!result.is_error, "file at the limit should be readable");
+    }
+
+    #[tokio::test]
+    async fn test_read_rejects_file_over_10mib_limit() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        std::fs::write(
+            tmp.path().join("too-large.txt"),
+            vec![b'a'; 10 * 1024 * 1024 + 1],
+        )
+        .unwrap();
+        let result = tool.execute(r#"{"path":"too-large.txt"}"#).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("too large to read directly"));
+    }
+
+    #[tokio::test]
+    async fn test_read_allows_image_at_5mib_limit() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        let mut bytes = vec![0_u8; 5 * 1024 * 1024];
+        bytes[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        std::fs::write(tmp.path().join("max-image.bin"), bytes).unwrap();
+        let result = tool.execute(r#"{"path":"max-image.bin"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.image_blocks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_read_rejects_image_over_5mib_limit() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        let mut bytes = vec![0_u8; 5 * 1024 * 1024 + 1];
+        bytes[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        std::fs::write(tmp.path().join("too-large-image.bin"), bytes).unwrap();
+        let result = tool
+            .execute(r#"{"path":"too-large-image.bin"}"#)
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("too large to send inline"));
     }
 
     #[tokio::test]

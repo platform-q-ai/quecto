@@ -264,30 +264,6 @@ fn test_parse_timeout_string_ignored() {
     assert_eq!(super::parse_timeout(&args), None);
 }
 
-// --- build_source_env tests ---
-
-#[test]
-fn test_build_source_env_with_overrides_inherits_all_vars() {
-    let mut overrides = HashMap::new();
-    overrides.insert("HOME".to_string(), "/tmp".to_string());
-    overrides.insert("SECRET_VAR".to_string(), "yes".to_string());
-    overrides.insert("QUECTO_SECRET_KEY".to_string(), "hunter2".to_string());
-    let env = super::build_source_env(Some(&overrides));
-    assert_eq!(env.get("HOME").map(|s| s.as_str()), Some("/tmp"));
-    assert_eq!(env.get("SECRET_VAR").map(|s| s.as_str()), Some("yes"));
-    assert_eq!(
-        env.get("QUECTO_SECRET_KEY").map(|s| s.as_str()),
-        Some("hunter2")
-    );
-}
-
-#[test]
-fn test_build_source_env_without_overrides() {
-    let env = super::build_source_env(None);
-    // Should contain at least HOME or PATH from the process env
-    assert!(env.contains_key("HOME") || env.contains_key("PATH"));
-}
-
 // --- ALLOWED_SHELLS tests ---
 
 #[test]
@@ -300,8 +276,17 @@ fn test_allowed_shells_contains_common() {
 
 fn shell_program(env: &HashMap<String, String>) -> String {
     let ws = PathBuf::from("/tmp");
-    let cmd = super::build_shell_command(&ws, "echo hi", env);
+    let cmd = super::build_shell_command(&ws, "echo hi", Some(env));
     cmd.as_std().get_program().to_string_lossy().into_owned()
+}
+
+#[test]
+fn test_build_shell_command_inherits_environment_when_no_overrides() {
+    let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", None);
+    assert!(
+        cmd.as_std().get_envs().next().is_none(),
+        "empty env source should inherit the parent environment without clear+rebuild"
+    );
 }
 
 #[test]
@@ -329,7 +314,7 @@ fn test_build_shell_command_defaults_to_sh_without_shell_env() {
 fn test_build_shell_command_sets_args_and_cwd() {
     let ws = PathBuf::from("/tmp/some-workspace");
     let env = HashMap::new();
-    let cmd = super::build_shell_command(&ws, "echo hello", &env);
+    let cmd = super::build_shell_command(&ws, "echo hello", Some(&env));
     let std_cmd = cmd.as_std();
     let args: Vec<String> = std_cmd
         .get_args()
@@ -344,7 +329,7 @@ fn test_build_shell_command_passes_through_source_env() {
     let mut env = HashMap::new();
     env.insert("MY_VAR".to_string(), "my_value".to_string());
     env.insert("PATH".to_string(), "/custom/bin".to_string());
-    let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", &env);
+    let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", Some(&env));
     let std_cmd = cmd.as_std();
     let envs: HashMap<String, String> = std_cmd
         .get_envs()
@@ -361,11 +346,12 @@ fn test_build_shell_command_passes_through_source_env() {
 }
 
 #[test]
-fn test_build_shell_command_inherits_path_when_absent() {
-    // When source env has no PATH, the process PATH is injected so the shell
-    // can find binaries.
-    let env = HashMap::new();
-    let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", &env);
+fn test_build_shell_command_injects_path_when_overrides_omit_it() {
+    // When an explicit source env has no PATH, the process PATH is injected so
+    // the shell can find binaries.
+    let mut env = HashMap::new();
+    env.insert("MY_VAR".to_string(), "value".to_string());
+    let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", Some(&env));
     let std_cmd = cmd.as_std();
     let has_path = std_cmd.get_envs().any(|(k, v)| k == "PATH" && v.is_some());
     // Only asserts when the test process itself has PATH (true in practice).
@@ -424,7 +410,7 @@ fn test_make_exit_result_killed_by_signal_uses_minus_one() {
 // --- read_stream_limited (in-memory AsyncRead, no real pipes) ---
 
 #[tokio::test]
-async fn test_read_stream_limited_under_cap() {
+async fn test_read_stream_limited_keeps_valid_utf8_under_cap() {
     let data = b"hello world".to_vec();
     let (content, truncated) = super::read_stream_limited(&data[..], 1024).await;
     assert_eq!(content, "hello world");
@@ -432,8 +418,24 @@ async fn test_read_stream_limited_under_cap() {
 }
 
 #[tokio::test]
+async fn test_read_stream_limited_replaces_invalid_utf8_under_cap() {
+    let data = [b'o', b'k', 0xFF, b'!'];
+    let (content, truncated) = super::read_stream_limited(&data[..], 1024).await;
+    assert_eq!(content, "ok�!");
+    assert!(!truncated);
+}
+
+#[tokio::test]
+async fn test_read_stream_limited_allows_exact_cap() {
+    let data = [b'x'; 100];
+    let (content, truncated) = super::read_stream_limited(&data[..], 100).await;
+    assert_eq!(content.len(), 100);
+    assert!(!truncated, "exactly at the cap should not truncate");
+}
+
+#[tokio::test]
 async fn test_read_stream_limited_truncates_over_cap() {
-    let data = vec![b'x'; 10_000];
+    let data = [b'x'; 101];
     let (content, truncated) = super::read_stream_limited(&data[..], 100).await;
     assert_eq!(content.len(), 100, "should keep only the cap");
     assert!(truncated, "exceeding the cap should set truncated=true");
@@ -535,9 +537,17 @@ async fn test_collect_output_combines_stdout_and_stderr() {
 }
 
 #[tokio::test]
+async fn test_collect_output_allows_exact_50kb() {
+    let exact = "x".repeat(50 * 1024);
+    let mut tasks = stream_tasks_from(Some((exact.clone(), false)), None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, exact);
+    assert!(!out.contains("Full output"));
+}
+
+#[tokio::test]
 async fn test_collect_output_byte_truncation_includes_50kb_hint() {
-    // Few lines but well over 50KB => byte truncation => "(50KB limit)" note.
-    let big = "x".repeat(60 * 1024);
+    let big = "x".repeat(50 * 1024 + 1);
     let mut tasks = stream_tasks_from(Some((big, false)), None);
     let out = super::collect_and_truncate_output(&mut tasks).await;
     assert!(
@@ -550,17 +560,35 @@ async fn test_collect_output_byte_truncation_includes_50kb_hint() {
 }
 
 #[tokio::test]
+async fn test_collect_output_allows_exact_2000_lines() {
+    let many: String = (1..=2000).map(|i| format!("l{}\n", i)).collect();
+    let mut tasks = stream_tasks_from(Some((many.clone(), false)), None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, many.trim_end_matches('\n'));
+    assert!(!out.contains("Full output"));
+}
+
+#[tokio::test]
 async fn test_collect_output_line_truncation_hint_without_kb_note() {
-    // Many short lines => line truncation => no "(50KB limit)" note.
-    let many: String = (1..=3000).map(|i| format!("l{}\n", i)).collect();
+    let many: String = (1..=2001).map(|i| format!("l{}\n", i)).collect();
     let mut tasks = stream_tasks_from(Some((many, false)), None);
     let out = super::collect_and_truncate_output(&mut tasks).await;
-    assert!(out.contains("Showing lines"));
+    assert!(out.contains("Showing lines 2-2001 of 2001"));
     assert!(
         !out.contains("(50KB limit)"),
         "line truncation must omit KB note"
     );
-    assert!(out.contains("l3000"), "tail must keep the last line");
+    assert!(out.contains("l2001"), "tail must keep the last line");
+    assert!(!out.contains("l1\n"), "tail should omit the first line");
+}
+
+#[tokio::test]
+async fn test_collect_output_combined_streams_preserve_separator_at_boundary() {
+    let stdout = "x".repeat(50 * 1024 - 2);
+    let stderr = "y".to_string();
+    let mut tasks = stream_tasks_from(Some((stdout.clone(), false)), Some((stderr, false)));
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, format!("{}\ny", stdout));
 }
 
 // --- run_command malformed-JSON arm (LLM-addressable error result) ---
