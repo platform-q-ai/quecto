@@ -372,17 +372,16 @@ mod tests {
     use super::*;
     use crate::domain::agent::AgentProgressEvent;
     use crate::domain::message::Message;
-    use std::sync::Arc;
 
     #[test]
     fn turn_completed_broadcasts_subagent_messages_appended() {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
         forward_progress_event_broadcast(
             AgentProgressEvent::TurnCompleted {
-                messages: Arc::from([
+                messages: vec![
                     Message::assistant("hello from turn", vec![]),
                     Message::tool("call-1", "tool body"),
-                ]),
+                ],
             },
             &tx,
         );

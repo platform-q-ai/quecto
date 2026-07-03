@@ -274,14 +274,21 @@ fn when_agent_processes_message(world: &mut QuectoWorld, message: String) {
 
     let mut messages = vec![Message::user(message)];
 
-    agent_loop_test_support::reset_built_tool_result_preview_count_for_tests();
+    let preview_sentinel = "€".repeat(DEFAULT_OUTPUT_CAP_BYTES / "€".len() + 1);
+    agent_loop_test_support::reset_built_tool_result_preview_count_for_tests(&preview_sentinel);
+    agent_loop_test_support::reset_tool_call_clone_count_for_tests("call_read");
+    agent_loop_test_support::reset_tool_call_clone_count_for_tests("call_write");
     let result = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(agent.process(&mut messages));
 
     world.agent_result = Some(result.expect("agent process failed"));
     world.tool_result_preview_build_count =
-        Some(agent_loop_test_support::built_tool_result_preview_count_for_tests());
+        Some(agent_loop_test_support::built_tool_result_preview_count_for_tests(&preview_sentinel));
+    world.headless_tool_call_clone_count = Some(
+        agent_loop_test_support::tool_call_clone_count_for_tests("call_read")
+            + agent_loop_test_support::tool_call_clone_count_for_tests("call_write"),
+    );
 }
 
 #[when(expr = "the agent reports progress while processing message {string}")]
@@ -453,6 +460,15 @@ fn then_no_tool_result_preview_should_be_captured(world: &mut QuectoWorld) {
         world.tool_result_preview_build_count,
         Some(0),
         "headless processing should not build tool result previews"
+    );
+}
+
+#[then("the assistant tool requests should be reused for execution")]
+fn then_assistant_tool_requests_should_be_reused_for_execution(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.headless_tool_call_clone_count,
+        Some(0),
+        "tool-call arguments should move into the assistant message and be borrowed for execution"
     );
 }
 

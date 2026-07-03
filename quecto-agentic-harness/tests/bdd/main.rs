@@ -522,6 +522,8 @@ pub struct QuectoWorld {
     pub tool_result_preview: Option<String>,
     /// Tool-result preview build count after the last agent-loop run
     pub tool_result_preview_build_count: Option<usize>,
+    /// Tool-call clone count from a headless multi-tool turn
+    pub headless_tool_call_clone_count: Option<usize>,
     /// Retained conversation from repeated-instructions agent-loop scenarios
     pub repeated_instruction_messages: Vec<Message>,
     // --- Grep BDD fields ---

@@ -53,6 +53,13 @@ Feature: Agent Loop
     When the agent processes [message] "Read my notes"
     Then no progress preview should be reported
 
+  Scenario: Headless multi-tool turns reuse the assistant tool requests
+    Given a configured agent with a mock LLM
+    And the LLM returns simultaneous tool calls for "read" and "write"
+    And the LLM then returns "Done"
+    When the agent processes [message] "Copy my notes to output.txt"
+    Then the assistant tool requests should be reused for execution
+
   Scenario: Unchanged instructions are reused across turns
     Given an agent with stable dynamic instructions
     And the LLM returns a plain text response "First done"

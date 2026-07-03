@@ -1,7 +1,10 @@
 use super::tests::{MockProvider, MockRegistry, MockTool, text_response, tool_call_response};
 use super::*;
 use crate::domain::agent::AgentProgressEvent;
-use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
+use crate::domain::message::{
+    LlmResponse, Message, Role, StopReason, ThinkingBlock, ToolCall,
+    reset_tool_call_clone_count_for_tests, tool_call_clone_count_for_tests,
+};
 use std::sync::{Arc, Mutex};
 
 fn agent_config(
@@ -35,14 +38,18 @@ async fn tool_result_preview_is_only_built_when_progress_is_observed() {
         text_response("done"),
     ]));
     let mut registry = MockRegistry::new();
-    registry.register(Arc::new(MockTool::new("read", "€")));
+    let content = "headless-preview-sentinel-993";
+    registry.register(Arc::new(MockTool::new("read", content)));
     let agent = AgentLoopImpl::new(agent_config(provider, registry, None, None));
     let mut messages = vec![Message::user("read")];
 
-    agent_loop_preview::reset_built_preview_count_for_tests();
+    agent_loop_preview::reset_built_preview_count_for_tests(content);
     agent.run_loop(&mut messages).await.unwrap();
 
-    assert_eq!(agent_loop_preview::built_preview_count_for_tests(), 0);
+    assert_eq!(
+        agent_loop_preview::built_preview_count_for_tests(content),
+        0
+    );
 }
 
 #[tokio::test]
@@ -52,7 +59,8 @@ async fn tool_result_preview_is_built_once_for_observed_tool_finish() {
         text_response("done"),
     ]));
     let mut registry = MockRegistry::new();
-    registry.register(Arc::new(MockTool::new("read", "€")));
+    let content = "observed-preview-sentinel-993";
+    registry.register(Arc::new(MockTool::new("read", content)));
     let events = Arc::new(Mutex::new(Vec::new()));
     let events_for_callback = Arc::clone(&events);
     let callback: crate::domain::agent::ProgressCallback = Arc::new(move |event| {
@@ -61,12 +69,15 @@ async fn tool_result_preview_is_built_once_for_observed_tool_finish() {
     let agent = AgentLoopImpl::new(agent_config(provider, registry, Some(callback), None));
     let mut messages = vec![Message::user("read")];
 
-    agent_loop_preview::reset_built_preview_count_for_tests();
+    agent_loop_preview::reset_built_preview_count_for_tests(content);
     agent.run_loop(&mut messages).await.unwrap();
 
-    assert_eq!(agent_loop_preview::built_preview_count_for_tests(), 1);
+    assert_eq!(
+        agent_loop_preview::built_preview_count_for_tests(content),
+        1
+    );
     assert!(events.lock().unwrap().iter().any(|event| {
-        matches!(event, AgentProgressEvent::ToolFinished { result_content, .. } if result_content == "€")
+        matches!(event, AgentProgressEvent::ToolFinished { result_content, .. } if result_content == content)
     }));
 }
 
@@ -111,70 +122,45 @@ async fn tool_turn_preserves_message_order_and_tool_arguments() {
             content: None,
             tool_calls: vec![
                 ToolCall {
-                    id: "call_read".to_string(),
+                    id: "call_993_read".to_string(),
                     name: "read".to_string(),
                     arguments: first_arguments.clone(),
                 },
                 ToolCall {
-                    id: "call_write".to_string(),
+                    id: "call_993_write".to_string(),
                     name: "write".to_string(),
                     arguments: second_arguments.clone(),
                 },
             ],
             usage: None,
-            stop_reason: None,
-            thinking_blocks: vec![],
+            stop_reason: Some(StopReason::ToolUse),
+            thinking_blocks: vec![ThinkingBlock::Normal {
+                thinking: "use both tools".to_string(),
+                signature: "sig-1".to_string(),
+            }],
         },
         text_response("done"),
     ]));
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(MockTool::new("read", "notes")));
     registry.register(Arc::new(MockTool::new("write", "ok")));
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let events_for_callback = Arc::clone(&events);
-    let callback: crate::domain::agent::ProgressCallback = Arc::new(move |event| {
-        events_for_callback.lock().unwrap().push(event);
-    });
-    let agent = AgentLoopImpl::new(agent_config(provider, registry, Some(callback), None));
+    let agent = AgentLoopImpl::new(agent_config(provider, registry, None, None));
     let mut messages = vec![Message::user("copy")];
 
+    reset_tool_call_clone_count_for_tests("call_993_read");
+    reset_tool_call_clone_count_for_tests("call_993_write");
     agent.run_loop(&mut messages).await.unwrap();
 
     assert_eq!(messages[1].role, Role::Assistant);
     assert_eq!(messages[1].tool_calls[0].arguments, first_arguments);
     assert_eq!(messages[1].tool_calls[1].arguments, second_arguments);
+    assert_eq!(messages[1].stop_reason, Some(StopReason::ToolUse));
+    assert_eq!(messages[1].thinking_blocks.len(), 1);
+    assert_eq!(tool_call_clone_count_for_tests("call_993_read"), 0);
+    assert_eq!(tool_call_clone_count_for_tests("call_993_write"), 0);
     assert_eq!(messages[2].role, Role::Tool);
-    assert_eq!(messages[2].tool_call_id.as_deref(), Some("call_read"));
+    assert_eq!(messages[2].tool_call_id.as_deref(), Some("call_993_read"));
     assert_eq!(messages[3].role, Role::Tool);
-    assert_eq!(messages[3].tool_call_id.as_deref(), Some("call_write"));
+    assert_eq!(messages[3].tool_call_id.as_deref(), Some("call_993_write"));
     assert_eq!(messages[4].role, Role::Assistant);
-    let completed_messages = events
-        .lock()
-        .unwrap()
-        .iter()
-        .find_map(|event| match event {
-            AgentProgressEvent::TurnCompleted { messages } => Some(messages.clone()),
-            _ => None,
-        })
-        .expect("turn-completed event emitted");
-    assert_eq!(completed_messages.len(), 3);
-    assert_eq!(completed_messages[0].role, Role::Assistant);
-    assert_eq!(
-        completed_messages[0].tool_calls[0].arguments,
-        first_arguments
-    );
-    assert_eq!(
-        completed_messages[0].tool_calls[1].arguments,
-        second_arguments
-    );
-    assert_eq!(completed_messages[1].role, Role::Tool);
-    assert_eq!(
-        completed_messages[1].tool_call_id.as_deref(),
-        Some("call_read")
-    );
-    assert_eq!(completed_messages[2].role, Role::Tool);
-    assert_eq!(
-        completed_messages[2].tool_call_id.as_deref(),
-        Some("call_write")
-    );
 }

@@ -298,11 +298,11 @@ impl AgentLoopImpl {
         current_turn: u32,
         response: LlmResponse,
     ) {
-        // Move content/tool calls into the assistant message, then execute by
-        // borrowing that appended message so tool-call argument JSON is not
-        // deep-cloned just to satisfy later mutable appends.
-        let content = response.content.unwrap_or_default();
-        messages.push(Message::assistant(content, response.tool_calls));
+        let mut assistant =
+            Message::assistant(response.content.unwrap_or_default(), response.tool_calls);
+        assistant.stop_reason = response.stop_reason;
+        assistant.thinking_blocks = response.thinking_blocks;
+        messages.push(assistant);
         let assistant_index = messages.len() - 1;
         let tool_call_count = messages[assistant_index].tool_calls.len();
 
@@ -688,7 +688,7 @@ impl AgentLoopImpl {
             // not only at completion (#797). The clone is only paid when a
             // progress callback is registered (UDS mode), via `notify`'s guard.
             self.notify(|| AgentProgressEvent::TurnCompleted {
-                messages: Arc::from(messages[appended_from..].to_vec()),
+                messages: messages[appended_from..].to_vec(),
             });
             // Tool calls were executed and spilled — mark dirty for next iteration
             spills_dirty = self.spill_store.is_some();

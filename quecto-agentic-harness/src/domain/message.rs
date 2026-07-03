@@ -1,6 +1,10 @@
+#[cfg(any(test, feature = "test-support"))]
+use std::collections::HashMap;
 use std::sync::OnceLock;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::{LazyLock, Mutex};
 
 // Token estimate for a single message. The estimate is cached because the
 // text/image/tool-call content is conceptually immutable once emitted, and
@@ -253,12 +257,52 @@ pub enum Role {
 }
 
 /// A tool invocation requested by the LLM.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     /// JSON-encoded arguments string.
     pub arguments: String,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+static TOOL_CALL_CLONE_COUNTS_FOR_TESTS: LazyLock<Mutex<HashMap<String, usize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+impl Clone for ToolCall {
+    fn clone(&self) -> Self {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(count) = TOOL_CALL_CLONE_COUNTS_FOR_TESTS
+            .lock()
+            .unwrap()
+            .get_mut(&self.id)
+        {
+            *count += 1;
+        }
+
+        Self {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            arguments: self.arguments.clone(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn tool_call_clone_count_for_tests(id: &str) -> usize {
+    *TOOL_CALL_CLONE_COUNTS_FOR_TESTS
+        .lock()
+        .unwrap()
+        .get(id)
+        .unwrap_or(&0)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn reset_tool_call_clone_count_for_tests(id: &str) {
+    TOOL_CALL_CLONE_COUNTS_FOR_TESTS
+        .lock()
+        .unwrap()
+        .insert(id.to_string(), 0);
 }
 
 /// A complete response from an LLM provider.

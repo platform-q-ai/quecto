@@ -58,7 +58,7 @@ pub enum AgentProgressEvent {
     /// turn-by-turn, rather than only at completion (#797).
     TurnCompleted {
         /// Messages appended to the conversation during the just-completed turn.
-        messages: Arc<[crate::domain::message::Message]>,
+        messages: Vec<crate::domain::message::Message>,
     },
     /// The agent loop has produced a final text response and is done.
     Done,
