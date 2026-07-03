@@ -256,12 +256,25 @@ impl App {
                 // Events fanned in from the active sub-agent's direct
                 // connect-on-select connection (#800).
                 Some((agent_id, ev)) = self.subagent_event_rx.recv() => {
+                    let is_token = matches!(ev, Event::Token { .. });
                     self.route_subagent_event(&agent_id, ev);
-                    self.render();
-                    mark_stream_render_complete(
-                        &mut stream_render_coalescer,
-                        &mut next_stream_render_deadline,
-                    );
+                    if is_token {
+                        match stream_render_coalescer.record_token_update(tokio::time::Instant::now()) {
+                            StreamRenderDecision::RenderNow => {
+                                self.render();
+                                next_stream_render_deadline = None;
+                            }
+                            StreamRenderDecision::DeferUntil(deadline) => {
+                                next_stream_render_deadline = Some(deadline);
+                            }
+                        }
+                    } else {
+                        self.render();
+                        mark_stream_render_complete(
+                            &mut stream_render_coalescer,
+                            &mut next_stream_render_deadline,
+                        );
+                    }
                 }
                 Some(files) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;

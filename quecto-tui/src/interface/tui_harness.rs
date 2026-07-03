@@ -330,6 +330,51 @@ impl TuiHarness {
         self
     }
 
+    /// Built-in slash command names from the production command registry.
+    pub fn slash_command_names() -> Vec<String> {
+        super::builtin_commands()
+            .into_iter()
+            .map(|c| c.name)
+            .collect()
+    }
+
+    /// Open help through the production handler and return the rendered frame.
+    pub fn show_help_frame(&mut self) -> String {
+        self.app.show_help();
+        self.full_frame()
+    }
+
+    /// Count frames that would be rendered for token arrivals at the supplied
+    /// millisecond offsets under the production stream coalescer.
+    pub fn coalesced_stream_render_count(offsets_ms: &[u64]) -> usize {
+        let start = tokio::time::Instant::now();
+        let mut coalescer = super::app_event_loop::StreamRenderCoalescer::default();
+        let mut renders = 0;
+        let mut pending_deadline = None;
+        for offset in offsets_ms {
+            let now = start + std::time::Duration::from_millis(*offset);
+            if pending_deadline.is_some_and(|deadline| now >= deadline) && coalescer.render_due(now)
+            {
+                renders += 1;
+            }
+            match coalescer.record_token_update(now) {
+                super::app_event_loop::StreamRenderDecision::RenderNow => {
+                    renders += 1;
+                    pending_deadline = None;
+                }
+                super::app_event_loop::StreamRenderDecision::DeferUntil(deadline) => {
+                    pending_deadline = Some(deadline);
+                }
+            }
+        }
+        if let Some(deadline) = pending_deadline
+            && coalescer.render_due(deadline)
+        {
+            renders += 1;
+        }
+        renders
+    }
+
     /// Abort through the real abort path (targets the active session).
     pub fn abort(&mut self) -> &mut Self {
         self.app.handle_abort();

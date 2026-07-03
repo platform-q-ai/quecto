@@ -1092,6 +1092,7 @@ mod tui_architecture_steps;
 mod tui_cold_start_steps;
 mod tui_file_mention_steps;
 mod tui_idle_efficiency_steps;
+mod tui_streaming_stability_steps;
 mod tui_subagent_first_layout_steps;
 mod tui_subagent_parity_steps;
 mod tui_subagent_readonly_marker_steps;

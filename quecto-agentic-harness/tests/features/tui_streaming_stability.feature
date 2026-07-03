@@ -1,4 +1,4 @@
-@tui @issue-972
+@done @tui @issue-972
 Feature: TUI remains stable during high-throughput streaming
   As a TUI user receiving a very fast assistant response
   I want the interface to remain visually stable and responsive
