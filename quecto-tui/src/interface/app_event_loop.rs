@@ -68,6 +68,13 @@ impl App {
         coalescer.note_immediate_render(tokio::time::Instant::now());
     }
 
+    /// Whether an agent event is a streaming token (the only event class the
+    /// coalescer defers). Single source of truth for the event-loop arms and
+    /// the test harness so classification cannot drift between them.
+    pub(super) fn is_token_event(ev: &Event) -> bool {
+        matches!(ev, Event::Token { .. })
+    }
+
     /// Render for an incoming agent event: token events are coalesced to the
     /// stream frame interval; everything else renders immediately.
     pub(super) fn render_stream_event(
@@ -179,7 +186,7 @@ impl App {
                 event = self.client.recv(), if self.agent_connected => {
                     match event {
                         Some(ev) => {
-                            let is_token = matches!(ev, Event::Token { .. });
+                            let is_token = Self::is_token_event(&ev);
                             self.handle_event(ev);
                             self.render_stream_event(&mut stream_render_coalescer, is_token);
                         }
@@ -233,7 +240,7 @@ impl App {
                 // Events fanned in from the active sub-agent's direct
                 // connect-on-select connection (#800).
                 Some((agent_id, ev)) = self.subagent_event_rx.recv() => {
-                    let is_token = matches!(ev, Event::Token { .. });
+                    let is_token = Self::is_token_event(&ev);
                     self.route_subagent_event(&agent_id, ev);
                     self.render_stream_event(&mut stream_render_coalescer, is_token);
                 }
@@ -245,6 +252,13 @@ impl App {
                 }
                 // Deferred stream paint: fires at the coalescer's pending frame
                 // deadline so a stalled burst still gets its final paint.
+                //
+                // Subtlety: `select!` re-creates this `async {}` future on every
+                // loop iteration, so `pending_deadline()` is re-read each time —
+                // if a token/immediate render moves or clears the deadline, the
+                // next iteration arms the sleep against the NEW deadline (or
+                // disarms via the `if` guard). Correct, but only because the
+                // deadline is re-read on re-poll; do not hoist the sleep out.
                 _ = async {
                     if let Some(deadline) = stream_render_coalescer.pending_deadline() {
                         tokio::time::sleep_until(deadline).await;

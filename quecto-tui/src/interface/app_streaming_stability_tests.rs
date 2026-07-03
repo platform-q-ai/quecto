@@ -78,9 +78,16 @@ async fn token_burst_through_event_loop_helpers_coalesces_paints() {
         h.stream_event(Event::Token { token: "x".into() });
     }
     let painted = h.rendered_frames() - start;
-    assert!(
-        painted < 40,
-        "a synchronous 40-token burst must paint fewer than 40 frames; got {painted}"
+    // With the tokio clock paused, all 40 tokens land at the same instant as
+    // the `AgentStart` immediate render, so the coalescer rate-limits every
+    // one of them (limited from that render time) and paints ZERO extra
+    // frames, deferring the whole burst to the deadline arm. An exact bound
+    // catches a partially broken coalescer that a loose `< 40` would let pass
+    // (#1011 review).
+    assert_eq!(
+        painted, 0,
+        "a same-instant 40-token burst after an immediate render must defer \
+         all paints to the deadline arm; got {painted}"
     );
     // The burst leaves a deferred tail paint, which the deadline arm flushes.
     assert!(
@@ -139,5 +146,65 @@ async fn non_token_event_renders_immediately_mid_burst() {
     assert!(
         !h.fire_deferred_stream_paint(),
         "the final flush consumes any deferred token paint"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn resize_mid_burst_paints_full_frame_and_consumes_deferred_paint() {
+    let mut h = tui_harness::TuiHarness::new().await;
+    h.stream_event(Event::AgentStart);
+    for _ in 0..10 {
+        h.stream_event(Event::Token { token: "x".into() });
+    }
+    assert!(h.pending_stream_paint(), "burst should defer a paint");
+
+    // The resize select arm does a full redraw NOW…
+    let before = h.rendered_frames();
+    h.resize_render();
+    assert_eq!(
+        h.rendered_frames(),
+        before + 1,
+        "a resize must repaint immediately"
+    );
+    // …and consumes the deferred token paint (the full frame includes the
+    // accumulated tokens).
+    assert!(
+        !h.pending_stream_paint(),
+        "a resize render consumes the pending deferred paint"
+    );
+    assert!(
+        !h.fire_deferred_stream_paint(),
+        "no deferred paint left to fire after a resize render"
+    );
+}
+
+// Advance the (paused) tokio clock past the frame interval and verify the
+// deadline arm's `render_due` semantics through elapsed time — i.e. the 33ms
+// constant actually gates the deferred paint (#1011 review).
+#[tokio::test(start_paused = true)]
+async fn deferred_paint_fires_only_once_frame_interval_elapses() {
+    let mut h = tui_harness::TuiHarness::new().await;
+    h.stream_event(Event::AgentStart);
+    h.stream_event(Event::Token { token: "x".into() }); // deferred (same instant)
+    assert!(h.pending_stream_paint(), "token should defer a paint");
+
+    // Before the frame deadline the arm must not paint.
+    tokio::time::advance(super::STREAM_RENDER_INTERVAL / 2).await;
+    assert!(
+        !h.poll_deferred_stream_paint(),
+        "the deferred paint must not fire before the frame interval elapses"
+    );
+
+    // At/after the deadline it fires exactly once.
+    tokio::time::advance(super::STREAM_RENDER_INTERVAL).await;
+    let before = h.rendered_frames();
+    assert!(
+        h.poll_deferred_stream_paint(),
+        "the deferred paint fires once the frame interval has elapsed"
+    );
+    assert_eq!(h.rendered_frames(), before + 1);
+    assert!(
+        !h.pending_stream_paint(),
+        "deadline consumed after one paint"
     );
 }

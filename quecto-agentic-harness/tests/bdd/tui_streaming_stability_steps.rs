@@ -137,9 +137,13 @@ fn then_streaming_response_smooth(world: &mut QuectoWorld) {
     let renders = world
         .tui_render_count
         .expect("render count captured by When step");
+    // 1 immediate paint + the flushed deferred tail, with slack for real-time
+    // frame boundaries the synchronous loop may straddle on a loaded machine.
+    // Far tighter than the old `< 40` bound, which a broken coalescer painting
+    // 39 frames would still have passed (#1011 review).
     assert!(
-        renders < 40,
-        "a 40-token burst should coalesce to fewer painted frames; got {renders}"
+        renders <= 4,
+        "a 40-token burst should coalesce to a handful of painted frames; got {renders}"
     );
     assert!(
         renders >= 1,

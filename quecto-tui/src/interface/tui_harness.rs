@@ -360,7 +360,7 @@ impl TuiHarness {
     /// event-loop render decision (token events coalesce; others paint now).
     pub fn stream_event(&mut self, ev: Event) -> &mut Self {
         self.app.suppress_paint = true;
-        let is_token = matches!(ev, Event::Token { .. });
+        let is_token = App::is_token_event(&ev);
         self.app.handle_event(ev);
         let mut coalescer = std::mem::take(&mut self.stream_coalescer);
         self.app.render_stream_event(&mut coalescer, is_token);
@@ -378,6 +378,17 @@ impl TuiHarness {
         self
     }
 
+    /// Paint for a terminal-resize wakeup exactly like the event loop's resize
+    /// select arm: full redraw, then re-base the coalescer so a pending
+    /// deferred token paint is consumed by this render.
+    pub fn resize_render(&mut self) -> &mut Self {
+        self.app.suppress_paint = true;
+        self.app.render_full();
+        self.stream_coalescer
+            .note_immediate_render(tokio::time::Instant::now());
+        self
+    }
+
     /// Fire the deferred-paint select arm: paint if the coalescer's pending
     /// frame deadline has elapsed. Returns whether a frame was painted.
     pub fn fire_deferred_stream_paint(&mut self) -> bool {
@@ -385,6 +396,25 @@ impl TuiHarness {
             return false;
         };
         if self.stream_coalescer.render_due(deadline) {
+            self.app.suppress_paint = true;
+            self.app.render();
+            return true;
+        }
+        false
+    }
+
+    /// Like `fire_deferred_stream_paint`, but evaluates the deadline against
+    /// the REAL current instant (virtual time under a paused tokio clock)
+    /// instead of forcing the deadline instant — for tests that advance the
+    /// clock and assert the frame interval actually gates the paint.
+    pub fn poll_deferred_stream_paint(&mut self) -> bool {
+        if self.stream_coalescer.pending_deadline().is_none() {
+            return false;
+        }
+        if self
+            .stream_coalescer
+            .render_due(tokio::time::Instant::now())
+        {
             self.app.suppress_paint = true;
             self.app.render();
             return true;

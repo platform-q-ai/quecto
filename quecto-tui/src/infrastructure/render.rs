@@ -75,6 +75,11 @@ impl<W: Write> DiffRenderer<W> {
     fn full_render(&mut self, lines: &[String], clear: bool) -> io::Result<()> {
         let mut buf = String::new();
         buf.push_str(SYNC_START);
+        // Re-assert cursor hiding on EVERY frame (a few bytes) rather than
+        // tracking hide state: emulators, suspend/resume, and crash recovery
+        // can re-show the cursor behind our back, and per-frame re-assertion
+        // heals all of those on the next paint. Intentional belt-and-braces
+        // for the #972 cursor-artifact class.
         buf.push_str(HIDE_CURSOR);
         // Establish a known origin for the renderer's cursor cache. The first
         // render can occur after terminal setup/query escape writes, so do not
@@ -133,6 +138,8 @@ impl<W: Write> DiffRenderer<W> {
 
         let mut buf = String::new();
         buf.push_str(SYNC_START);
+        // Per-frame cursor re-hide — same intentional belt-and-braces as in
+        // `full_render`; see the comment there (#972).
         buf.push_str(HIDE_CURSOR);
         // Reset SGR up front so every ERASE_LINE below — and any line that
         // scrolls into view — paints on the default background, never a stale
