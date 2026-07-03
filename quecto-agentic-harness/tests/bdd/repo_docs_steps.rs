@@ -58,6 +58,8 @@ fn then_obsolete_planning_documents_absent(world: &mut QuectoWorld) {
     "the workflow docs should describe pure-move refactors as separate PRs before or after motivating behavior"
 )]
 fn then_workflow_docs_describe_pure_move_refactors(world: &mut QuectoWorld) {
+    // The in-step assertion satisfies the BDD quality gate (Then steps must
+    // assert); the shared helper carries the detailed content checks.
     assert!(
         world.stdout.contains("Pure-move refactors"),
         "workflow docs should include pure-move refactor guidance"

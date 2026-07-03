@@ -134,7 +134,7 @@ pub fn assert_pure_move_refactor_guidance(content: &str) {
         "pure-move refactor guidance should require a separate PR; paragraph was: {paragraph}"
     );
     assert!(
-        lower.contains("before") && lower.contains("after") && lower.contains("behavioral change"),
+        lower.contains("before or after") && lower.contains("behavioral change"),
         "pure-move refactor guidance should allow ordering before or after the motivating behavioral change; paragraph was: {paragraph}"
     );
 }
