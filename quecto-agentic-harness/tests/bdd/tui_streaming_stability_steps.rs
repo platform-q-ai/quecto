@@ -63,6 +63,12 @@ fn then_stable_frame_without_stray_cursor_blocks(world: &mut QuectoWorld) {
             frame.contains("yy"),
             "the tail of the sustained stream should be present in the frame: {frame:?}"
         );
+        // Belt-and-braces: the original artifact class also included stray
+        // full-block characters leaking into the frame.
+        assert!(
+            !frame.contains('\u{2588}'),
+            "no stray full-block cursor artifacts should appear: {frame:?}"
+        );
     });
 }
 
