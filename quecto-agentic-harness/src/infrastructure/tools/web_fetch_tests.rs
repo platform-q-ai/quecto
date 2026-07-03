@@ -35,6 +35,15 @@ fn test_strip_html_removes_style() {
 }
 
 #[test]
+fn test_strip_html_removes_noscript() {
+    let html = "<p>Before</p><noscript>Hidden</noscript><p>After</p>";
+    let text = strip_html(html);
+    assert!(text.contains("Before"));
+    assert!(text.contains("After"));
+    assert!(!text.contains("Hidden"));
+}
+
+#[test]
 fn test_strip_html_removes_nav_footer_header() {
     let html = "<nav>Menu</nav><main>Content</main><footer>Copyright</footer>";
     let text = strip_html(html);
@@ -94,6 +103,13 @@ fn test_strip_html_headings() {
 fn test_strip_html_plain_text_passthrough() {
     let text = strip_html("Just plain text, no HTML.");
     assert_eq!(text, "Just plain text, no HTML.");
+}
+
+#[test]
+fn test_strip_html_removes_configured_tags_case_insensitively() {
+    let html = "<HEADER>Top</HEADER><p>Keep</p><NoScript>Hidden</NoScript><NAV>Menu</NAV>";
+    let text = strip_html(html);
+    assert_eq!(text, "Keep");
 }
 
 #[test]

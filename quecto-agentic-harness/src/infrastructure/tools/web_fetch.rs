@@ -303,60 +303,122 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
 /// 3. Strip remaining tags
 /// 4. Decode common HTML entities
 /// 5. Collapse whitespace
-///
-/// Note: `remove_tag_blocks` is called 6 times, each doing a
-/// `to_ascii_lowercase()` of the remaining text. For the 5 MB cap this is
-/// ~60 MB of transient allocations. Acceptable for a cold-path tool call;
-/// a single-pass state machine would be more efficient if profiling shows
-/// this matters.
 pub fn strip_html(html: &str) -> String {
-    let stripped = remove_tag_blocks(html, "script");
-    let stripped = remove_tag_blocks(&stripped, "style");
-    let stripped = remove_tag_blocks(&stripped, "nav");
-    let stripped = remove_tag_blocks(&stripped, "footer");
-    let stripped = remove_tag_blocks(&stripped, "header");
-    let stripped = remove_tag_blocks(&stripped, "noscript");
-
+    let stripped = remove_configured_tag_blocks(html);
     let text = tags_to_text(&stripped);
     let text = decode_entities(&text);
     collapse_whitespace(&text)
 }
 
-/// Remove all occurrences of `<tag ...>...</tag>` (case-insensitive).
+const STRIPPED_BLOCK_TAGS: &[&str] = &["script", "style", "nav", "footer", "header", "noscript"];
+
+/// Remove all occurrences of configured `<tag ...>...</tag>` blocks (case-insensitive).
 ///
 /// Note: nested same-name tags (e.g. `<nav><nav>inner</nav>leak</nav>`)
 /// will leave content after the first closing tag. This is acceptable for
 /// readability stripping (not security sanitisation).
+fn remove_configured_tag_blocks(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut pos = 0;
+
+    while pos < html.len() {
+        let Some(tag_start_rel) = html[pos..].find('<') else {
+            result.push_str(&html[pos..]);
+            break;
+        };
+        let tag_start = pos + tag_start_rel;
+        let Some(tag) = configured_open_tag_at(html, tag_start) else {
+            result.push_str(&html[pos..=tag_start]);
+            pos = tag_start + 1;
+            continue;
+        };
+
+        result.push_str(&html[pos..tag_start]);
+        if let Some(close_start) = find_configured_close_tag(html, tag_start + 1, tag) {
+            let close_end = html[close_start..]
+                .find('>')
+                .map(|idx| close_start + idx + 1)
+                .unwrap_or(html.len());
+            pos = close_end;
+        } else {
+            break;
+        }
+    }
+
+    result
+}
+
+#[cfg(test)]
 fn remove_tag_blocks(html: &str, tag: &str) -> String {
     let mut result = String::with_capacity(html.len());
-    let lower = html.to_ascii_lowercase();
-    let open = format!("<{}", tag);
-    let close = format!("</{}>", tag);
-
     let mut pos = 0;
     while pos < html.len() {
-        if let Some(start) = lower[pos..].find(&open) {
-            let abs_start = pos + start;
-            let after_tag = abs_start + open.len();
-            if after_tag < lower.len() {
-                let next = lower.as_bytes()[after_tag];
-                if next == b' ' || next == b'>' || next == b'/' || next == b'\t' || next == b'\n' {
-                    result.push_str(&html[pos..abs_start]);
-                    if let Some(end) = lower[abs_start..].find(&close) {
-                        pos = abs_start + end + close.len();
-                        continue;
-                    }
-                    return result;
-                }
-            }
-            result.push_str(&html[pos..after_tag]);
-            pos = after_tag;
-        } else {
+        let Some(tag_start_rel) = html[pos..].find('<') else {
             result.push_str(&html[pos..]);
+            break;
+        };
+        let tag_start = pos + tag_start_rel;
+        if !specific_open_tag_at(html, tag_start, tag) {
+            result.push_str(&html[pos..=tag_start]);
+            pos = tag_start + 1;
+            continue;
+        }
+        result.push_str(&html[pos..tag_start]);
+        if let Some(close_start) = find_specific_close_tag(html, tag_start + 1, tag) {
+            let close_end = html[close_start..]
+                .find('>')
+                .map(|idx| close_start + idx + 1)
+                .unwrap_or(html.len());
+            pos = close_end;
+        } else {
             break;
         }
     }
     result
+}
+
+fn configured_open_tag_at(html: &str, tag_start: usize) -> Option<&'static str> {
+    STRIPPED_BLOCK_TAGS
+        .iter()
+        .copied()
+        .find(|tag| specific_open_tag_at(html, tag_start, tag))
+}
+
+fn specific_open_tag_at(html: &str, tag_start: usize, tag: &str) -> bool {
+    let after_lt = tag_start + 1;
+    let after_name = after_lt + tag.len();
+    html.get(after_lt..after_name)
+        .is_some_and(|name| name.eq_ignore_ascii_case(tag))
+        && html
+            .as_bytes()
+            .get(after_name)
+            .is_some_and(|next| matches!(*next, b' ' | b'>' | b'/' | b'\t' | b'\n'))
+}
+
+fn find_configured_close_tag(html: &str, mut pos: usize, tag: &str) -> Option<usize> {
+    while let Some(tag_start_rel) = html[pos..].find('<') {
+        let tag_start = pos + tag_start_rel;
+        if specific_close_tag_at(html, tag_start, tag) {
+            return Some(tag_start);
+        }
+        pos = tag_start + 1;
+    }
+    None
+}
+
+#[cfg(test)]
+fn find_specific_close_tag(html: &str, pos: usize, tag: &str) -> Option<usize> {
+    find_configured_close_tag(html, pos, tag)
+}
+
+fn specific_close_tag_at(html: &str, tag_start: usize, tag: &str) -> bool {
+    let after_slash = tag_start + 2;
+    let after_name = after_slash + tag.len();
+    html.as_bytes().get(tag_start..after_slash) == Some(b"</")
+        && html
+            .get(after_slash..after_name)
+            .is_some_and(|name| name.eq_ignore_ascii_case(tag))
+        && html.as_bytes().get(after_name) == Some(&b'>')
 }
 
 /// Convert HTML tags to text: block tags become newlines, others are stripped.
