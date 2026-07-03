@@ -172,7 +172,13 @@ pub fn truncate_tail(content: &str, max_lines: usize, max_bytes: usize) -> Trunc
 
     loop {
         let line_start = content[..line_end].rfind('\n').map_or(0, |idx| idx + 1);
-        let line = &content[line_start..line_end];
+        // `str::lines()` treats "\r\n" as one terminator, so a '\r' preceding
+        // a '\n' terminator is not part of the line; mirror that here. A lone
+        // trailing '\r' with no '\n' after it is literal content and is kept.
+        let mut line = &content[line_start..line_end];
+        if content.as_bytes().get(line_end) == Some(&b'\n') {
+            line = line.strip_suffix('\r').unwrap_or(line);
+        }
         let separator_bytes = usize::from(output_lines > 0);
         let would_be = output_bytes + separator_bytes + line.len();
 
@@ -389,6 +395,23 @@ mod tests {
     }
 
     #[test]
+    fn head_multibyte_utf8_large_input_never_splits_codepoints() {
+        // Wide-input stress case: mixed 2/3/4-byte characters where the byte
+        // cap lands mid-codepoint on many candidate cut points.
+        let input: String = (0..20)
+            .map(|_| "héllo 世界 🦀")
+            .collect::<Vec<_>>()
+            .join("\n");
+        let r = truncate_head(&input, 10, 100);
+        assert!(r.truncated);
+        assert!(r.output_bytes <= 100);
+        // The kept prefix must cut the input at a character boundary and be
+        // byte-identical to the original up to that point.
+        assert!(input.is_char_boundary(r.content.len()));
+        assert_eq!(r.content, input[..r.content.len()]);
+    }
+
+    #[test]
     fn head_no_partial_lines() {
         let line = "x".repeat(999);
         let input: String = (0..100)
@@ -474,6 +497,15 @@ mod tests {
     }
 
     #[test]
+    fn tail_strips_carriage_return_before_newline_like_lines() {
+        // "\r\n"-terminated lines must not count the '\r' toward the byte
+        // budget — `str::lines()` treats "\r\n" as one terminator.
+        let r = truncate_tail("aa\r\nbb\r\ncc", 2000, 8);
+        assert_eq!(r.content, "aa\nbb\ncc");
+        assert!(!r.truncated);
+    }
+
+    #[test]
     fn tail_counts_trailing_carriage_return_toward_byte_limit() {
         let input = format!("{}\r", "z".repeat(50 * 1024));
         let r = truncate_tail(&input, 2000, 50 * 1024);
@@ -490,6 +522,20 @@ mod tests {
         assert_eq!(r.content, "éé");
         assert_eq!(r.output_bytes, 4);
         assert!(r.last_line_partial);
+    }
+
+    #[test]
+    fn tail_utf8_safe_large_multibyte_input() {
+        // Wide-input stress case: 80KB of 4-byte chars on a single line, so
+        // the byte cap falls mid-codepoint unless the boundary is adjusted.
+        let input = "🦀".repeat(20000);
+        let r = truncate_tail(&input, 2000, 50 * 1024);
+        assert!(r.truncated);
+        assert!(r.last_line_partial);
+        assert!(r.output_bytes <= 50 * 1024);
+        // The kept suffix must be whole characters and match the input tail.
+        assert!(r.content.chars().all(|c| c == '🦀'));
+        assert!(input.ends_with(&r.content));
     }
 
     // -----------------------------------------------------------------------

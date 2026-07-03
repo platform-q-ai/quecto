@@ -1,4 +1,5 @@
-//! Step definitions for `harness_efficiency.feature`.
+//! Step definitions for `harness_efficiency.feature` (issue #996) and
+//! `harness_hot_paths.feature` (issue #991).
 //!
 //! Each scenario is self-contained: state lives on the shared World fields
 //! declared for these scenarios, so no new World wiring is required.
@@ -31,7 +32,7 @@ fn then_preview_bounded(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the preview does not contain a broken character")]
+#[then("every previewed character is a whole codepoint")]
 fn then_preview_utf8(world: &mut QuectoWorld) {
     let out = world.efficiency_preview.as_ref().expect("preview computed");
     // The only real UTF-8-safety proof: the kept prefix must be exactly 97
@@ -90,22 +91,23 @@ fn when_load_legacy_config(world: &mut QuectoWorld) {
     world.efficiency_provider_entry = Some(entry);
 }
 
-#[then("the provider config loads successfully")]
+#[then("the config loads and its api_key and api_base are read back")]
 fn then_config_loaded(world: &mut QuectoWorld) {
-    assert!(
-        world.efficiency_provider_entry.is_some(),
-        "legacy provider config should deserialize successfully"
-    );
-}
-
-#[then("the saved credentials and endpoint are preserved")]
-fn then_config_values_preserved(world: &mut QuectoWorld) {
+    use quecto::infrastructure::config::ProviderEntry;
     let entry = world
         .efficiency_provider_entry
         .as_ref()
         .expect("config loaded");
     assert_eq!(entry.api_key, "sk-x");
     assert_eq!(entry.api_base, "https://example.test");
+    // The absence of any `auth_method` field is enforced at compile time by
+    // this exhaustive struct literal — if the field were reintroduced this
+    // would fail to build.
+    let _explicit = ProviderEntry {
+        api_key: "k".into(),
+        api_base: "b".into(),
+        disable_codex_routing: false,
+    };
 }
 
 #[given("a large text file is available to the harness")]
@@ -165,14 +167,14 @@ fn then_next_page_guidance(world: &mut QuectoWorld) {
     );
 }
 
-#[given("a command result contains many log lines")]
+#[given("a workspace for running commands")]
 fn given_many_command_lines(world: &mut QuectoWorld) {
     let tmp = TempDir::new().unwrap();
     world.efficiency_workspace = Some(tmp.path().to_path_buf());
     world._efficiency_temp_dir = Some(tmp);
 }
 
-#[when("the command result is prepared for display")]
+#[when("a command producing more log lines than the display limit is executed")]
 fn when_command_result_prepared(world: &mut QuectoWorld) {
     let workspace = world
         .efficiency_workspace

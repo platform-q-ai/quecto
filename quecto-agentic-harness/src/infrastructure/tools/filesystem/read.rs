@@ -287,7 +287,6 @@ fn truncate_head_from_offset(
     let mut first_line_bytes = 0usize;
     let mut truncated_by = None;
     let mut first_line_exceeds_limit = false;
-    let mut has_more = false;
 
     for line in content.lines().skip(start_line) {
         if output_lines == 0 {
@@ -295,7 +294,6 @@ fn truncate_head_from_offset(
         }
         if output_lines >= max_lines {
             truncated_by = Some(TruncatedBy::Lines);
-            has_more = true;
             break;
         }
 
@@ -304,7 +302,6 @@ fn truncate_head_from_offset(
         if would_be > max_bytes {
             truncated_by = Some(TruncatedBy::Bytes);
             first_line_exceeds_limit = output_lines == 0;
-            has_more = true;
             break;
         }
 
@@ -318,7 +315,7 @@ fn truncate_head_from_offset(
 
     OffsetHeadTruncation {
         content: output,
-        truncated: truncated_by.is_some() || has_more,
+        truncated: truncated_by.is_some(),
         truncated_by,
         output_lines,
         first_line_exceeds_limit,

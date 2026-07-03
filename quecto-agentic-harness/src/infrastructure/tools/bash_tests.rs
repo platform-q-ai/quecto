@@ -264,31 +264,6 @@ fn test_parse_timeout_string_ignored() {
     assert_eq!(super::parse_timeout(&args), None);
 }
 
-// --- build_source_env tests ---
-
-#[test]
-fn test_build_source_env_with_overrides_borrows_all_vars() {
-    let mut overrides = HashMap::new();
-    overrides.insert("HOME".to_string(), "/tmp".to_string());
-    overrides.insert("SECRET_VAR".to_string(), "yes".to_string());
-    overrides.insert("QUECTO_SECRET_KEY".to_string(), "hunter2".to_string());
-    let env = super::build_source_env(Some(&overrides)).expect("overrides are passed through");
-    assert_eq!(env.get("HOME").map(|s| s.as_str()), Some("/tmp"));
-    assert_eq!(env.get("SECRET_VAR").map(|s| s.as_str()), Some("yes"));
-    assert_eq!(
-        env.get("QUECTO_SECRET_KEY").map(|s| s.as_str()),
-        Some("hunter2")
-    );
-}
-
-#[test]
-fn test_build_source_env_without_overrides_inherits_parent() {
-    assert!(
-        super::build_source_env(None).is_none(),
-        "absence of explicit overrides should let Command inherit the process environment"
-    );
-}
-
 // --- ALLOWED_SHELLS tests ---
 
 #[test]

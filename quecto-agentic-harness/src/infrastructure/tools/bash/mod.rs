@@ -146,14 +146,12 @@ impl ExecTool {
             .validate_command(&command)
             .map_err(|e| DomainError::Security(e.to_string()))?;
 
-        let source_env = build_source_env(env_overrides);
-
         let full_command = match &self.command_prefix {
             Some(prefix) => format!("{}\n{}", prefix, command),
             None => command,
         };
 
-        self.spawn_and_wait(&full_command, source_env, effective_timeout)
+        self.spawn_and_wait(&full_command, env_overrides, effective_timeout)
             .await
     }
 
@@ -257,12 +255,6 @@ fn parse_timeout(args: &serde_json::Value) -> Option<Duration> {
             None // timeout=0 → use default
         }
     })
-}
-
-fn build_source_env(
-    env_overrides: Option<&HashMap<String, String>>,
-) -> Option<&HashMap<String, String>> {
-    env_overrides
 }
 
 /// Shells that may be selected via the \`SHELL\` environment variable.

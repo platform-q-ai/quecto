@@ -113,17 +113,17 @@ fn test_strip_html_removes_configured_tags_case_insensitively() {
 }
 
 #[test]
-fn test_remove_tag_blocks_case_insensitive() {
+fn test_strip_html_removes_script_case_insensitive() {
     let html = "<SCRIPT>bad</SCRIPT>good";
-    let result = remove_tag_blocks(html, "script");
+    let result = strip_html(html);
     assert!(!result.contains("bad"));
     assert!(result.contains("good"));
 }
 
 #[test]
-fn test_remove_tag_blocks_with_attributes() {
+fn test_strip_html_removes_script_with_attributes() {
     let html = r#"<script type="text/javascript">bad</script>good"#;
-    let result = remove_tag_blocks(html, "script");
+    let result = strip_html(html);
     assert!(!result.contains("bad"));
     assert!(result.contains("good"));
 }

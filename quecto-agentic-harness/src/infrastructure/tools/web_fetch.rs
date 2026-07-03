@@ -348,35 +348,6 @@ fn remove_configured_tag_blocks(html: &str) -> String {
     result
 }
 
-#[cfg(test)]
-fn remove_tag_blocks(html: &str, tag: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut pos = 0;
-    while pos < html.len() {
-        let Some(tag_start_rel) = html[pos..].find('<') else {
-            result.push_str(&html[pos..]);
-            break;
-        };
-        let tag_start = pos + tag_start_rel;
-        if !specific_open_tag_at(html, tag_start, tag) {
-            result.push_str(&html[pos..=tag_start]);
-            pos = tag_start + 1;
-            continue;
-        }
-        result.push_str(&html[pos..tag_start]);
-        if let Some(close_start) = find_specific_close_tag(html, tag_start + 1, tag) {
-            let close_end = html[close_start..]
-                .find('>')
-                .map(|idx| close_start + idx + 1)
-                .unwrap_or(html.len());
-            pos = close_end;
-        } else {
-            break;
-        }
-    }
-    result
-}
-
 fn configured_open_tag_at(html: &str, tag_start: usize) -> Option<&'static str> {
     STRIPPED_BLOCK_TAGS
         .iter()
@@ -404,11 +375,6 @@ fn find_configured_close_tag(html: &str, mut pos: usize, tag: &str) -> Option<us
         pos = tag_start + 1;
     }
     None
-}
-
-#[cfg(test)]
-fn find_specific_close_tag(html: &str, pos: usize, tag: &str) -> Option<usize> {
-    find_configured_close_tag(html, pos, tag)
 }
 
 fn specific_close_tag_at(html: &str, tag_start: usize, tag: &str) -> bool {
