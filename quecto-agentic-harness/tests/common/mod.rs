@@ -114,3 +114,27 @@ pub fn read_repository_file(base: &Path, relative_path: &str) -> Result<String, 
     }
     fs::read_to_string(&resolved).map_err(|e| format!("failed to read {:?}: {}", resolved, e))
 }
+
+pub fn assert_pure_move_refactor_guidance(content: &str) {
+    let paragraph = content
+        .split("\n\n")
+        .find(|paragraph| paragraph.contains("Pure-move refactors"))
+        .expect("workflow docs should include pure-move refactor guidance");
+    let lower = paragraph.to_lowercase();
+
+    for token in ["file extractions", "renames", "byte-identical moves"] {
+        assert!(
+            lower.contains(token),
+            "pure-move refactor guidance should include example `{token}`; paragraph was: {paragraph}"
+        );
+    }
+
+    assert!(
+        lower.contains("own pr") || lower.contains("separate pr"),
+        "pure-move refactor guidance should require a separate PR; paragraph was: {paragraph}"
+    );
+    assert!(
+        lower.contains("before") && lower.contains("after") && lower.contains("behavioral change"),
+        "pure-move refactor guidance should allow ordering before or after the motivating behavioral change; paragraph was: {paragraph}"
+    );
+}

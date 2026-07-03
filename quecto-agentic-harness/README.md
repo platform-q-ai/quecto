@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.81.25**.
+Current version: **0.81.26**.
 
 ## Quick Start
 
@@ -655,6 +655,8 @@ API key resolution order: credential store (`quecto auth login`) > environment v
 ## Development workflow
 
 Quecto development uses the repository-local Quecto workflow checklist:
+
+Pure-move refactors (for example file extractions, renames, or byte-identical moves) should ship in their own PR so reviewers can distinguish structural movement from behavior changes. That standalone refactor PR may land before or after the behavioral change that motivates it.
 
 1 - Install/check local quality hooks
 2 - Update Scenarios / Add new features

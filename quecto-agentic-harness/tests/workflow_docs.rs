@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_reviewer_finder_waves, read_repo_file};
+use common::{assert_pure_move_refactor_guidance, assert_reviewer_finder_waves, read_repo_file};
 use serde_json::Value;
 
 fn read_workflow_config() -> Value {
@@ -76,6 +76,13 @@ fn readme_workflow_config_uses_guards_not_deprecated_fields() {
     assert!(readme.contains("\"templates\": []"));
     assert!(!readme.contains("\"guard_commit\": true"));
     assert!(!readme.contains("\"enforce_commit_after_step\": 6"));
+}
+
+#[test]
+fn readme_documents_pure_move_refactor_pr_boundary() {
+    let readme = read_repo_file("README.md");
+
+    assert_pure_move_refactor_guidance(&readme);
 }
 
 #[test]
