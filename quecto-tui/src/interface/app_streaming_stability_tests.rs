@@ -66,7 +66,10 @@ fn input_or_resize_render_resets_stream_frame_deadline() {
 // actually painted, so the coalescing WIRING (not just the state machine) is
 // covered (#1011 review).
 
-#[tokio::test]
+// `start_paused` freezes the tokio clock so the coalescing assertions are
+// deterministic even on a loaded CI machine (a slow 40-iteration loop could
+// otherwise straddle real 33ms frame boundaries).
+#[tokio::test(start_paused = true)]
 async fn token_burst_through_event_loop_helpers_coalesces_paints() {
     let mut h = tui_harness::TuiHarness::new().await;
     h.stream_event(Event::AgentStart);
@@ -94,7 +97,7 @@ async fn token_burst_through_event_loop_helpers_coalesces_paints() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn keypress_render_paints_immediately_and_consumes_deferred_paint() {
     let mut h = tui_harness::TuiHarness::new().await;
     h.stream_event(Event::AgentStart);
@@ -119,7 +122,7 @@ async fn keypress_render_paints_immediately_and_consumes_deferred_paint() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn non_token_event_renders_immediately_mid_burst() {
     let mut h = tui_harness::TuiHarness::new().await;
     h.stream_event(Event::AgentStart);

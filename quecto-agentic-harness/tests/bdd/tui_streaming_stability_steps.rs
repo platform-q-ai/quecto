@@ -121,23 +121,21 @@ fn when_burst_presented(world: &mut QuectoWorld) {
     // Drive 40 tokens through the REAL event-loop render decision
     // (`App::render_stream_event`) and count frames the App actually painted.
     let renders = with_harness(world, |h| {
-        let before = h.rendered_frames();
         h.stream_event(Event::AgentStart);
         let start = h.rendered_frames();
         for _ in 0..40 {
             h.stream_event(Event::Token { token: "z".into() });
         }
         h.fire_deferred_stream_paint();
-        let _ = before;
         h.rendered_frames() - start
     });
-    world.tui_idle_spinner_frame = Some(renders);
+    world.tui_render_count = Some(renders);
 }
 
 #[then("the streaming response remains visually smooth without distracting flicker")]
 fn then_streaming_response_smooth(world: &mut QuectoWorld) {
     let renders = world
-        .tui_idle_spinner_frame
+        .tui_render_count
         .expect("render count captured by When step");
     assert!(
         renders < 40,

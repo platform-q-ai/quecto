@@ -362,6 +362,8 @@ pub struct QuectoWorld {
     pub tui_expected_subagents: Vec<(String, bool)>,
     /// TUI idle-efficiency BDD (#978): spinner frame captured before the idle tick.
     pub tui_idle_spinner_frame: Option<usize>,
+    /// TUI streaming-stability BDD (#972): frames painted during a token burst.
+    pub tui_render_count: Option<usize>,
     /// TUI idle-efficiency BDD (#978): branch name expected after a switch.
     pub tui_idle_expected_branch: Option<String>,
     /// TUI idle-efficiency BDD (#978): whether kitty fallback detection completed.
