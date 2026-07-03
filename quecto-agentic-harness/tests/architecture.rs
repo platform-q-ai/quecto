@@ -607,3 +607,68 @@ fn runtime_manager_domain_is_pure() {
         );
     }
 }
+
+#[test]
+fn normal_build_excludes_removed_tool_installer_archive_dependencies() {
+    let manifest = fs::read_to_string("Cargo.toml").expect("read Cargo.toml");
+    let normal_dependencies = cargo_toml_section(&manifest, "dependencies");
+
+    for dependency in ["flate2", "tar"] {
+        assert!(
+            !cargo_toml_section_contains_dependency(normal_dependencies, dependency),
+            "normal [dependencies] must not include `{dependency}` after removing the unused tool installer"
+        );
+    }
+
+    assert!(
+        !Path::new("src/infrastructure/tools/ensure_tool.rs").exists(),
+        "removed tool installer source should not remain compiled into the harness"
+    );
+
+    let tools_mod = fs::read_to_string("src/infrastructure/tools/mod.rs")
+        .expect("read tools module declarations");
+    assert!(
+        !tools_mod
+            .lines()
+            .any(|line| line.trim() == "pub mod ensure_tool;"),
+        "removed tool installer should not be declared by the tools module"
+    );
+}
+
+#[test]
+fn macos_only_text_normalization_dependency_is_not_unconditional() {
+    let manifest = fs::read_to_string("Cargo.toml").expect("read Cargo.toml");
+    let normal_dependencies = cargo_toml_section(&manifest, "dependencies");
+    assert!(
+        !cargo_toml_section_contains_dependency(normal_dependencies, "unicode-normalization"),
+        "unicode-normalization should not be pulled into non-macOS normal builds"
+    );
+
+    let macos_dependencies = cargo_toml_section(
+        &manifest,
+        "target.'cfg(target_os = \"macos\")'.dependencies",
+    );
+    assert!(
+        cargo_toml_section_contains_dependency(macos_dependencies, "unicode-normalization"),
+        "macOS path normalization should retain its unicode-normalization dependency"
+    );
+}
+
+fn cargo_toml_section<'a>(manifest: &'a str, section: &str) -> &'a str {
+    let header = format!("[{section}]");
+    let Some(start) = manifest.find(&header) else {
+        return "";
+    };
+    let after_header = &manifest[start + header.len()..];
+    let end = after_header.find("\n[").unwrap_or(after_header.len());
+    &after_header[..end]
+}
+
+fn cargo_toml_section_contains_dependency(section: &str, dependency: &str) -> bool {
+    section.lines().any(|line| {
+        let trimmed = line.trim_start();
+        !trimmed.starts_with('#')
+            && (trimmed.starts_with(&format!("{dependency} ="))
+                || trimmed.starts_with(&format!("{dependency}=")))
+    })
+}
