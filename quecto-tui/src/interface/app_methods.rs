@@ -581,6 +581,13 @@ impl App {
 
     /// Compose the current frame and write it to the terminal.
     pub(super) fn render(&mut self) {
+        #[cfg(any(test, feature = "test-harness"))]
+        {
+            self.rendered_frames += 1;
+            if self.suppress_paint {
+                return;
+            }
+        }
         let mut lines = self.compose_frame();
         // Diagnostic: dump the WHOLE frame (chat + below-chat) so a transient
         // line (too fast to see) can be replayed from the log.

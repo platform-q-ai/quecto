@@ -1,7 +1,98 @@
 use super::app_selection::{SelectionAnchor, TextSelection};
 use super::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StreamRenderDecision {
+    RenderNow,
+    DeferUntil(tokio::time::Instant),
+}
+
+#[derive(Debug, Default)]
+pub(super) struct StreamRenderCoalescer {
+    last_render_at: Option<tokio::time::Instant>,
+    pending_deadline: Option<tokio::time::Instant>,
+}
+
+impl StreamRenderCoalescer {
+    /// Deadline of a deferred token paint, if one is pending. The event loop's
+    /// deadline select arm derives from this single source of truth so loop
+    /// state can never drift from the coalescer (#1011 review).
+    pub(super) fn pending_deadline(&self) -> Option<tokio::time::Instant> {
+        self.pending_deadline
+    }
+
+    pub(super) fn record_token_update(
+        &mut self,
+        now: tokio::time::Instant,
+    ) -> StreamRenderDecision {
+        let Some(last_render_at) = self.last_render_at else {
+            self.last_render_at = Some(now);
+            return StreamRenderDecision::RenderNow;
+        };
+
+        let next_frame = last_render_at + STREAM_RENDER_INTERVAL;
+        if now >= next_frame {
+            self.last_render_at = Some(now);
+            self.pending_deadline = None;
+            StreamRenderDecision::RenderNow
+        } else {
+            self.pending_deadline = Some(next_frame);
+            StreamRenderDecision::DeferUntil(next_frame)
+        }
+    }
+
+    pub(super) fn render_due(&mut self, now: tokio::time::Instant) -> bool {
+        let Some(deadline) = self.pending_deadline else {
+            return false;
+        };
+        if now < deadline {
+            return false;
+        }
+        self.pending_deadline = None;
+        self.last_render_at = Some(now);
+        true
+    }
+
+    pub(super) fn note_immediate_render(&mut self, now: tokio::time::Instant) {
+        self.pending_deadline = None;
+        self.last_render_at = Some(now);
+    }
+}
+
 impl App {
+    /// Render immediately and note it on the coalescer so a pending deferred
+    /// token paint is consumed by this render (it paints all accumulated
+    /// state, including any deferred tokens).
+    pub(super) fn render_and_note(&mut self, coalescer: &mut StreamRenderCoalescer) {
+        self.render();
+        coalescer.note_immediate_render(tokio::time::Instant::now());
+    }
+
+    /// Whether an agent event is a streaming token (the only event class the
+    /// coalescer defers). Single source of truth for the event-loop arms and
+    /// the test harness so classification cannot drift between them.
+    pub(super) fn is_token_event(ev: &Event) -> bool {
+        matches!(ev, Event::Token { .. })
+    }
+
+    /// Render for an incoming agent event: token events are coalesced to the
+    /// stream frame interval; everything else renders immediately.
+    pub(super) fn render_stream_event(
+        &mut self,
+        coalescer: &mut StreamRenderCoalescer,
+        is_token: bool,
+    ) {
+        if !is_token {
+            self.render_and_note(coalescer);
+            return;
+        }
+        if let StreamRenderDecision::RenderNow =
+            coalescer.record_token_update(tokio::time::Instant::now())
+        {
+            self.render();
+        }
+    }
+
     pub async fn run(&mut self) -> i32 {
         self.terminal.enter_raw_mode();
         self.terminal.hide_cursor();
@@ -45,8 +136,10 @@ impl App {
         let kitty_deadline = tokio::time::Instant::now() + Duration::from_millis(150);
         let mut kitty_fallback_done = false;
 
+        let mut stream_render_coalescer = StreamRenderCoalescer::default();
+
         // Initial render.
-        self.render();
+        self.render_and_note(&mut stream_render_coalescer);
 
         let mut next_animation_tick = tokio::time::Instant::now() + SPINNER_TICK;
 
@@ -87,14 +180,15 @@ impl App {
                             &mut files_autocomplete_load_in_flight,
                         );
                     }
-                    self.render();
+                    self.render_and_note(&mut stream_render_coalescer);
                 }
                 // Agent events.
                 event = self.client.recv(), if self.agent_connected => {
                     match event {
                         Some(ev) => {
+                            let is_token = Self::is_token_event(&ev);
                             self.handle_event(ev);
-                            self.render();
+                            self.render_stream_event(&mut stream_render_coalescer, is_token);
                         }
                         None => {
                             // Agent disconnected — stop polling.
@@ -104,7 +198,7 @@ impl App {
                             self.spinner = None;
                             self.master_session.chat.finalize_assistant();
                             self.notify("Agent disconnected", NotifyLevel::Error);
-                            self.render();
+                            self.render_and_note(&mut stream_render_coalescer);
                         }
                     }
                 }
@@ -112,13 +206,14 @@ impl App {
                 Some(()) = resize_rx.recv() => {
                     self.terminal.refresh_size();
                     self.render_full();
+                    stream_render_coalescer.note_immediate_render(tokio::time::Instant::now());
                 }
                 // Animation / fallback tick.
                 _ = tokio::time::sleep_until(next_animation_tick), if self.needs_animation_tick(!kitty_fallback_done) => {
                     let needs_render = self.service_animation_tick(&mut kitty_fallback_done, kitty_deadline);
                     next_animation_tick = tokio::time::Instant::now() + SPINNER_TICK;
                     if needs_render {
-                        self.render();
+                        self.render_and_note(&mut stream_render_coalescer);
                     }
                 }
                 // One-shot idle service deadline for static notification expiry and exited-subagent GC.
@@ -129,30 +224,49 @@ impl App {
                 }, if next_idle_service_tick.is_some() && !self.needs_animation_tick(!kitty_fallback_done) => {
                     let needs_render = self.service_animation_tick(&mut kitty_fallback_done, kitty_deadline);
                     if needs_render {
-                        self.render();
+                        self.render_and_note(&mut stream_render_coalescer);
                     }
                 }
                 Some(branch) = git_branch_rx.recv() => {
                     git_branch_refresh_in_flight = false;
                     if self.apply_git_branch(branch) {
-                        self.render();
+                        self.render_and_note(&mut stream_render_coalescer);
                     }
                 }
                 Some(failure) = self.command_send_failure_rx.recv() => {
                     self.handle_command_send_failure(failure);
-                    self.render();
+                    self.render_and_note(&mut stream_render_coalescer);
                 }
                 // Events fanned in from the active sub-agent's direct
                 // connect-on-select connection (#800).
                 Some((agent_id, ev)) = self.subagent_event_rx.recv() => {
+                    let is_token = Self::is_token_event(&ev);
                     self.route_subagent_event(&agent_id, ev);
-                    self.render();
+                    self.render_stream_event(&mut stream_render_coalescer, is_token);
                 }
                 Some(files) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;
                     self.files_autocomplete.apply_loaded_files(files);
                     self.refresh_files_autocomplete_from_editor();
-                    self.render();
+                    self.render_and_note(&mut stream_render_coalescer);
+                }
+                // Deferred stream paint: fires at the coalescer's pending frame
+                // deadline so a stalled burst still gets its final paint.
+                //
+                // Subtlety: `select!` re-creates this `async {}` future on every
+                // loop iteration, so `pending_deadline()` is re-read each time —
+                // if a token/immediate render moves or clears the deadline, the
+                // next iteration arms the sleep against the NEW deadline (or
+                // disarms via the `if` guard). Correct, but only because the
+                // deadline is re-read on re-poll; do not hoist the sleep out.
+                _ = async {
+                    if let Some(deadline) = stream_render_coalescer.pending_deadline() {
+                        tokio::time::sleep_until(deadline).await;
+                    }
+                }, if stream_render_coalescer.pending_deadline().is_some() => {
+                    if stream_render_coalescer.render_due(tokio::time::Instant::now()) {
+                        self.render();
+                    }
                 }
                 // Git branch footer refresh tick.
                 _ = git_branch_interval.tick() => {
@@ -578,160 +692,5 @@ impl App {
                 .replace_before_cursor(start, &format!("@{path} "));
         }
         self.files_autocomplete.dismiss();
-    }
-
-    pub(super) fn handle_submit(&mut self, text: &str) {
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-
-        // Slash commands. Validate the command name against the single source
-        // of truth (`builtin_commands`) before dispatching, so the set of valid
-        // commands is not re-enumerated here.
-        if trimmed.starts_with('/') {
-            let name = trimmed
-                .split_whitespace()
-                .next()
-                .unwrap_or(trimmed)
-                .trim_start_matches('/');
-            if !builtin_commands().iter().any(|c| c.name == name) {
-                self.reject_unknown_slash_command(trimmed);
-                return;
-            }
-            match trimmed {
-                "/quit" | "/exit" => {
-                    self.should_exit = true;
-                    return;
-                }
-                "/clear" => {
-                    self.reset_session("Conversation cleared");
-                    return;
-                }
-                "/new" => {
-                    self.reset_session("New session started");
-                    return;
-                }
-                "/help" | "/hotkeys" => {
-                    self.show_help();
-                    return;
-                }
-                "/session" => {
-                    self.send_session_stats();
-                    return;
-                }
-                "/workflow" => {
-                    self.show_workflow_status();
-                    return;
-                }
-                "/resume" => {
-                    self.send_list_sessions();
-                    return;
-                }
-                _ if trimmed.starts_with("/resume ") => {
-                    let session = trimmed["/resume".len()..].trim();
-                    self.send_resume_session(session);
-                    return;
-                }
-                _ if trimmed.starts_with("/model") => {
-                    let model_name = trimmed["/model".len()..].trim();
-                    if !model_name.is_empty() {
-                        self.send_set_model(model_name);
-                    } else {
-                        // No model name — open the model selector overlay.
-                        self.open_model_selector();
-                    }
-                    return;
-                }
-                "/workflow-auto" => {
-                    self.toggle_workflow_auto_continue();
-                    return;
-                }
-                "/workflow-nudge" => {
-                    self.toggle_workflow_completion_nudge();
-                    return;
-                }
-                _ => {
-                    self.reject_unknown_slash_command(trimmed);
-                    return;
-                }
-            }
-        }
-
-        // Route to the ACTIVE session (#802). A selected sub-agent's prompt
-        // steers THAT agent over its own connection (its dispatch loop queues
-        // the prompt until its turn ends) and lands in its session, not master's.
-        if self.active_agent_id.is_some() {
-            let steer = self.active_subagent_running();
-            let cmd = Command::Prompt {
-                id: None,
-                message: text.to_string(),
-                streaming_behavior: steer.then(|| "steer".to_string()),
-            };
-            // Append to the sub-agent transcript ONLY when the route actually
-            // enqueued it (#804 review): a failed route (no live sender / full
-            // channel) never delivered the prompt, so a User entry would diverge
-            // UI from state.
-            if self.send_to_active_subagent(cmd) {
-                self.active_chat_mut().add_entry(ChatEntry::User {
-                    text: text.to_string(),
-                });
-            }
-            return;
-        }
-
-        // Master session: add user message to chat and send to the primary agent.
-        self.master_session.chat.add_entry(ChatEntry::User {
-            text: text.to_string(),
-        });
-        let cmd = Command::Prompt {
-            id: None,
-            message: text.to_string(),
-            streaming_behavior: if self.agent_state.is_running() {
-                Some("steer".to_string())
-            } else {
-                None
-            },
-        };
-        self.send_command(cmd);
-    }
-
-    // ── Abort handling (bug fix) ──────────────────────────────────────
-
-    pub(super) fn handle_abort(&mut self) {
-        // Abort targets the ACTIVE session (#802): a selected sub-agent's abort is
-        // routed over its own connection and finalizes its transcript.
-        if self.active_agent_id.is_some() {
-            self.send_to_active_subagent(Command::Abort { id: None });
-            self.active_chat_mut().finalize_assistant();
-            if let Some(id) = self.active_agent_id.clone() {
-                if let Some(session) = self.sessions.get_mut(&id) {
-                    session.running = false;
-                    // Just cancelled: mark run-state observed so the lagging tracked
-                    // status can't keep it "running" and re-abort on a 2nd Esc (#834).
-                    session.observed_run_state = true;
-                }
-            }
-            return;
-        }
-
-        self.send_command(Command::Abort { id: None });
-
-        // Abort the state machine — does NOT set running false; the matched
-        // AgentEnd arrives and guards against stale events corrupting state (#502).
-        self.agent_state.abort();
-        self.master_session.footer.set_streaming(false);
-
-        // Stop spinner / working indicator; `agent_state` stays aborting (#828).
-        self.master_session.running = false;
-        self.spinner = None;
-
-        // Finalize any streaming assistant message.
-        self.master_session.chat.finalize_assistant();
-
-        // Show abort status.
-        self.master_session.chat.add_entry(ChatEntry::Status {
-            text: "Operation aborted".to_string(),
-        });
     }
 }

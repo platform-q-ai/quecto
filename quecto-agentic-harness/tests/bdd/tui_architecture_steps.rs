@@ -1,4 +1,5 @@
 use super::*;
+use quecto_tui::interface::app::tui_harness::TuiHarness;
 use quecto_tui::interface::component::Component;
 use quecto_tui::interface::components::chat::{Chat, ChatEntry};
 
@@ -337,13 +338,17 @@ fn then_tui_slash_autocomplete_includes_command(_world: &mut QuectoWorld, comman
 }
 
 #[then("quecto-tui should reject unknown slash commands before sending a prompt")]
-fn then_tui_rejects_unknown_slash_commands(_world: &mut QuectoWorld) {
-    // Submit handling lives in the app_event_loop module.
-    let content = std::fs::read_to_string("../quecto-tui/src/interface/app_event_loop.rs")
-        .expect("read quecto-tui app_event_loop source");
+fn then_tui_rejects_unknown_slash_commands(world: &mut QuectoWorld) {
+    if world.tui_parity_rt.is_none() {
+        world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
+    }
+    let rt = world.tui_parity_rt.as_ref().expect("runtime");
+    let mut h = rt.block_on(async { TuiHarness::new().await });
+    h.submit("/bogus");
+    let cmds = rt.block_on(h.drain_commands());
     assert!(
-        content.contains("reject_unknown_slash_command"),
-        "quecto-tui should route unknown slash commands to a local rejection helper instead of sending them as prompts"
+        !cmds.iter().any(|c| c.contains("\"type\":\"prompt\"")),
+        "unknown slash command must be rejected locally, not sent as a prompt: {cmds:?}"
     );
 }
 
@@ -1027,17 +1032,35 @@ fn then_builtin_commands_single_source(_world: &mut QuectoWorld) {
 }
 
 #[then("quecto-tui show_help and command dispatch should derive from builtin_commands")]
-fn then_show_help_and_dispatch_derive(_world: &mut QuectoWorld) {
-    let methods = tui_read("interface/app_methods.rs");
-    assert!(
-        methods.contains("builtin_commands("),
-        "show_help should derive its listing from builtin_commands() rather than a hand-kept copy"
-    );
-    let event_loop = tui_read("interface/app_event_loop.rs");
-    assert!(
-        event_loop.contains("builtin_commands("),
-        "the slash-command dispatch should derive from builtin_commands() rather than a hand-kept match"
-    );
+fn then_show_help_and_dispatch_derive(world: &mut QuectoWorld) {
+    if world.tui_parity_rt.is_none() {
+        world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
+    }
+    let commands = TuiHarness::slash_command_names();
+    let rt = world.tui_parity_rt.as_ref().expect("runtime");
+    let mut h = rt.block_on(async { TuiHarness::new().await });
+    let help = h.show_help_frame();
+    for command in &commands {
+        assert!(
+            help.contains(&format!("/{command}")),
+            "help should list builtin command /{command}: {help:?}"
+        );
+    }
+    // Dispatch must derive from builtin_commands(): every registered command
+    // submitted through the real submit path is accepted (never rejected as
+    // an unknown slash command).
+    for command in &commands {
+        let mut h = rt.block_on(async { TuiHarness::new().await });
+        // submit() needs a reactor for the UDS client write.
+        let guard = rt.enter();
+        h.submit(&format!("/{command}"));
+        drop(guard);
+        let frame = h.full_frame();
+        assert!(
+            !frame.contains("Unknown slash command"),
+            "builtin command /{command} must dispatch, not be rejected: {frame:?}"
+        );
+    }
 }
 
 fn assert_no_tui_patterns(layer: &str, forbidden: &[&str]) {
