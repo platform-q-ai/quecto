@@ -27,3 +27,22 @@ Feature: Architecture boundaries and ports
 
   Scenario: Provider smoke scenarios stay out of automocked lanes
     Then provider smoke scenarios should not be tagged as mocked or manual real LLM
+
+  @dependency-hygiene
+  Scenario: Retired tool-installer support stays out of normal harness builds
+    Given the harness normal build configuration is inspected
+    When retired installer support is classified
+    Then normal builds should exclude the retired installer
+    And normal builds should exclude its archive dependencies
+
+  @dependency-hygiene
+  Scenario: Search tools explain how to install missing binaries
+    Given the harness search tools are inspected
+    When their missing-binary handling is checked
+    Then each search tool should keep direct install guidance
+
+  @dependency-hygiene
+  Scenario: Text normalization is scoped to macOS builds
+    Given the harness dependency manifest is inspected
+    When platform-specific dependencies are classified
+    Then text normalization should be scoped to macOS builds

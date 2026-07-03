@@ -1,6 +1,6 @@
 [package]
 name = "quecto"
-version = "0.81.21"
+version = "0.81.22"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -10,7 +10,7 @@ license = "LicenseRef-Proprietary"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-std", "sync"] }
 
 # HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -24,14 +24,11 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 dirs = "6"
 tempfile = "3"
 thiserror = "2"
-unicode-normalization = "0.1"
 similar = "2"
 base64 = "0.22"
 sha2 = "0.10"
 rand = "0.8"
 urlencoding = "2"
-flate2 = "1"
-tar = "0.4"
 # Secret redaction in surfaced subagent error causes (#752). Already present
 # transitively via tracing-subscriber's env-filter.
 regex = "1"
@@ -42,6 +39,9 @@ regex = "1"
 # `kill` (dash and bash parse `kill -- -<pgid>` differently).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+unicode-normalization = "0.1"
 
 [features]
 default = []

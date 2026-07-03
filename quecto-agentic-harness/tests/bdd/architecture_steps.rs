@@ -366,3 +366,129 @@ fn then_provider_smoke_is_not_automocked(_world: &mut QuectoWorld) {
         "provider smoke scenarios must stay out of @mock-llm/@manual-real-llm automock lanes: {bad_tag_lines:?}"
     );
 }
+
+#[given("the harness normal build configuration is inspected")]
+fn given_harness_normal_build_configuration_inspected(_world: &mut QuectoWorld) {}
+
+#[when("retired installer support is classified")]
+fn when_retired_installer_support_classified(_world: &mut QuectoWorld) {}
+
+#[then("normal builds should exclude the retired installer")]
+fn then_normal_builds_exclude_retired_installer(_world: &mut QuectoWorld) {
+    assert!(
+        !Path::new("src/infrastructure/tools/ensure_tool.rs").exists(),
+        "retired tool installer source should not remain in normal builds"
+    );
+
+    let tools_mod = std::fs::read_to_string("src/infrastructure/tools/mod.rs")
+        .expect("read tools module declarations");
+    assert!(
+        !tools_mod
+            .lines()
+            .any(|line| line.trim() == "pub mod ensure_tool;"),
+        "normal builds should not declare the retired tool installer module"
+    );
+}
+
+#[then("normal builds should exclude its archive dependencies")]
+fn then_normal_builds_exclude_retired_installer_archive_dependencies(_world: &mut QuectoWorld) {
+    let manifest = std::fs::read_to_string("Cargo.toml").expect("read harness Cargo.toml");
+    let normal_dependencies = manifest_section(&manifest, "dependencies");
+    for package in ["flate2", "tar"] {
+        assert!(
+            !manifest_section_contains_dependency(normal_dependencies, package),
+            "normal builds must not include the retired installer archive dependency `{package}`"
+        );
+    }
+}
+
+#[given("the harness search tools are inspected")]
+fn given_harness_search_tools_inspected(_world: &mut QuectoWorld) {}
+
+#[when("their missing-binary handling is checked")]
+fn when_missing_binary_handling_checked(_world: &mut QuectoWorld) {}
+
+#[given("the harness dependency manifest is inspected")]
+fn given_harness_dependency_manifest_inspected(_world: &mut QuectoWorld) {}
+
+#[when("platform-specific dependencies are classified")]
+fn when_platform_specific_dependencies_classified(_world: &mut QuectoWorld) {}
+
+#[then("each search tool should keep direct install guidance")]
+fn then_each_search_tool_keeps_direct_install_guidance(_world: &mut QuectoWorld) {
+    let tmp = TempDir::new().expect("create search-tool workspace");
+    let workspace = Arc::new(tmp.path().to_path_buf());
+    let sandbox = Arc::new(Sandbox::new(Some(workspace.as_ref().clone()), true));
+
+    let grep_tool = quecto::infrastructure::tools::grep::GrepTool::with_rg_binary(
+        workspace.clone(),
+        sandbox.clone(),
+        "definitely-missing-rg-for-dependency-hygiene".to_string(),
+    );
+    let grep_error = tokio::runtime::Runtime::new()
+        .expect("create runtime")
+        .block_on(grep_tool.execute(r#"{"pattern":"needle"}"#))
+        .expect_err("missing rg should surface as a domain tool error");
+    let grep_message = grep_error.to_string();
+    assert!(
+        grep_message.contains("rg not found on PATH")
+            && grep_message.contains("github.com/BurntSushi/ripgrep#installation"),
+        "grep should keep user-facing ripgrep installation guidance when rg is missing, got: {}",
+        grep_message
+    );
+
+    let find_tool = quecto::infrastructure::tools::find::FindTool::with_fd_binary(
+        workspace,
+        sandbox,
+        "definitely-missing-fd-for-dependency-hygiene".to_string(),
+    );
+    let find_error = tokio::runtime::Runtime::new()
+        .expect("create runtime")
+        .block_on(find_tool.execute(r#"{"pattern":"*.rs"}"#))
+        .expect_err("missing fd should surface as a domain tool error");
+    let find_message = find_error.to_string();
+    assert!(
+        find_message.contains("fd not found on PATH")
+            && find_message.contains("github.com/sharkdp/fd#installation"),
+        "find should keep user-facing fd installation guidance when fd is missing, got: {}",
+        find_message
+    );
+}
+
+#[then("text normalization should be scoped to macOS builds")]
+fn then_text_normalization_scoped_to_macos_builds(_world: &mut QuectoWorld) {
+    let manifest = std::fs::read_to_string("Cargo.toml").expect("read harness Cargo.toml");
+    let normal_dependencies = manifest_section(&manifest, "dependencies");
+    assert!(
+        !manifest_section_contains_dependency(normal_dependencies, "unicode-normalization"),
+        "unicode-normalization should not be an unconditional normal-build dependency"
+    );
+
+    let macos_dependencies = manifest_section(
+        &manifest,
+        "target.'cfg(target_os = \"macos\")'.dependencies",
+    );
+    assert!(
+        manifest_section_contains_dependency(macos_dependencies, "unicode-normalization"),
+        "unicode-normalization should remain available for macOS-only path normalization"
+    );
+}
+
+fn manifest_section<'a>(manifest: &'a str, section: &str) -> &'a str {
+    let header = format!("[{section}]");
+    let Some(start) = manifest.find(&header) else {
+        return "";
+    };
+    let after_header = &manifest[start + header.len()..];
+    let end = after_header.find("\n[").unwrap_or(after_header.len());
+    &after_header[..end]
+}
+
+fn manifest_section_contains_dependency(section: &str, dependency: &str) -> bool {
+    section.lines().any(|line| {
+        let trimmed = line.trim_start();
+        !trimmed.starts_with('#')
+            && (trimmed.starts_with(&format!("{dependency} ="))
+                || trimmed.starts_with(&format!("{dependency}=")))
+    })
+}
