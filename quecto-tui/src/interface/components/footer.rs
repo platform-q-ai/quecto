@@ -85,6 +85,10 @@ impl Footer {
         self.is_streaming = streaming;
     }
 
+    pub fn is_streaming(&self) -> bool {
+        self.is_streaming
+    }
+
     /// Record cumulative session cost (USD). `None` hides the indicator.
     pub fn set_cost(&mut self, cost: Option<f64>) {
         self.session_cost = cost;

@@ -48,9 +48,7 @@ impl App {
         // Initial render.
         self.render();
 
-        // Spinner tick timer.
-        let mut spinner_interval = tokio::time::interval(SPINNER_TICK);
-        spinner_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut next_animation_tick = tokio::time::Instant::now() + SPINNER_TICK;
 
         // Git branch footer refresh timer.
         let mut git_branch_interval = tokio::time::interval(app_git::GIT_BRANCH_POLL_INTERVAL);
@@ -71,6 +69,7 @@ impl App {
             if self.should_exit {
                 break;
             }
+            let next_idle_service_tick = self.next_idle_service_deadline();
 
             tokio::select! {
                 // Stdin input.
@@ -114,33 +113,21 @@ impl App {
                     self.terminal.refresh_size();
                     self.render_full();
                 }
-                // Spinner tick.
-                _ = spinner_interval.tick() => {
-                    let mut needs_render = false;
-                    if let Some(spinner) = &mut self.spinner {
-                        if spinner.tick() {
-                            needs_render = true;
-                        }
+                // Animation / fallback tick.
+                _ = tokio::time::sleep_until(next_animation_tick), if self.needs_animation_tick(!kitty_fallback_done) => {
+                    let needs_render = self.service_animation_tick(&mut kitty_fallback_done, kitty_deadline);
+                    next_animation_tick = tokio::time::Instant::now() + SPINNER_TICK;
+                    if needs_render {
+                        self.render();
                     }
-                    // GC expired notifications.
-                    if self.notifications.gc() {
-                        needs_render = true;
+                }
+                // One-shot idle service deadline for static notification expiry and exited-subagent GC.
+                _ = async {
+                    if let Some(deadline) = next_idle_service_tick {
+                        tokio::time::sleep_until(deadline).await;
                     }
-                    // GC exited subagent bars (#540).
-                    if self.gc_exited_subagents() {
-                        needs_render = true;
-                    }
-                    // Animate the subagent spinner / advance elapsed-time clocks.
-                    if self.tick_subagent_animation() {
-                        needs_render = true;
-                    }
-                    // Kitty fallback — enable modifyOtherKeys if no response.
-                    if !kitty_fallback_done && tokio::time::Instant::now() >= kitty_deadline {
-                        if !self.kitty.active {
-                            self.kitty.enable_modify_other_keys();
-                        }
-                        kitty_fallback_done = true;
-                    }
+                }, if next_idle_service_tick.is_some() && !self.needs_animation_tick(!kitty_fallback_done) => {
+                    let needs_render = self.service_animation_tick(&mut kitty_fallback_done, kitty_deadline);
                     if needs_render {
                         self.render();
                     }
@@ -187,7 +174,7 @@ impl App {
 
     // ── Input handling ────────────────────────────────────────────────
 
-    async fn process_stdin_bytes(
+    pub(super) async fn process_stdin_bytes(
         &mut self,
         bytes: Vec<u8>,
         stdin_rx: &mut mpsc::Receiver<Vec<u8>>,

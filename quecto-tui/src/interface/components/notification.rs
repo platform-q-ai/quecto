@@ -41,6 +41,10 @@ impl Notification {
     pub fn is_expired(&self) -> bool {
         self.created.elapsed() >= self.duration
     }
+
+    pub fn expires_at(&self) -> Instant {
+        self.created + self.duration
+    }
 }
 
 impl Component for Notification {
@@ -102,6 +106,13 @@ impl NotificationStack {
 
     pub fn is_empty(&self) -> bool {
         self.notifications.is_empty()
+    }
+
+    pub fn next_expiry(&self) -> Option<Instant> {
+        self.notifications
+            .iter()
+            .map(Notification::expires_at)
+            .min()
     }
 }
 
