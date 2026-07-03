@@ -22,6 +22,8 @@ const SGR_RESET: &str = "\x1b[0m";
 const AUTOWRAP_OFF: &str = "\x1b[?7l";
 /// ANSI escape: re-enable terminal auto-wrap.
 const AUTOWRAP_ON: &str = "\x1b[?7h";
+/// ANSI escape: hide the real terminal cursor during TUI paints.
+const HIDE_CURSOR: &str = "\x1b[?25l";
 
 /// A differential renderer that tracks previously rendered lines and only
 /// writes changes to the output.
@@ -73,6 +75,7 @@ impl<W: Write> DiffRenderer<W> {
     fn full_render(&mut self, lines: &[String], clear: bool) -> io::Result<()> {
         let mut buf = String::new();
         buf.push_str(SYNC_START);
+        buf.push_str(HIDE_CURSOR);
         // Establish a known origin for the renderer's cursor cache. The first
         // render can occur after terminal setup/query escape writes, so do not
         // assume the real cursor already starts at row 0/column 0.
@@ -130,6 +133,7 @@ impl<W: Write> DiffRenderer<W> {
 
         let mut buf = String::new();
         buf.push_str(SYNC_START);
+        buf.push_str(HIDE_CURSOR);
         // Reset SGR up front so every ERASE_LINE below — and any line that
         // scrolls into view — paints on the default background, never a stale
         // tool-box color (kills the green bleed across panels). #884
@@ -227,6 +231,29 @@ mod tests {
             output
         );
         assert!(output.contains("beta"), "should contain 'beta': {}", output);
+    }
+
+    #[test]
+    fn full_render_reasserts_hidden_cursor() {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut r = DiffRenderer::new(&mut buf as &mut dyn Write);
+            r.render(&lines(&["alpha"]), 80).unwrap();
+        }
+        let output = String::from_utf8_lossy(&buf);
+        assert!(
+            output.contains(HIDE_CURSOR),
+            "full render should keep the real terminal cursor hidden: {output:?}"
+        );
+    }
+
+    #[test]
+    fn diff_render_reasserts_hidden_cursor() {
+        let output = captured_render(&["alpha"], &["beta"]);
+        assert!(
+            output.contains(HIDE_CURSOR),
+            "diff render should keep the real terminal cursor hidden: {output:?}"
+        );
     }
 
     #[test]

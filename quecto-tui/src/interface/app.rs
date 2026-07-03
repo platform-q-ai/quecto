@@ -26,6 +26,7 @@ use app_selection::TextSelection;
 use tokio::sync::mpsc;
 
 const SPINNER_TICK: Duration = Duration::from_millis(80);
+pub(super) const STREAM_RENDER_INTERVAL: Duration = Duration::from_millis(33);
 const MOUSE_SCROLL_LINES: usize = 3;
 
 /// Maximum retry iterations for reassembling multi-fragment escape sequences.
@@ -379,6 +380,8 @@ mod app_selection;
 mod app_subagent_panel;
 #[path = "app_subagent_state.rs"]
 mod app_subagent_state;
+#[path = "app_submit.rs"]
+mod app_submit;
 use app_subagent_state::{
     TrackedSubagent, gc_exited_subagents, next_exited_subagent_gc_deadline,
     subagent_status_is_active,
@@ -622,6 +625,9 @@ mod app_rewind_response_tests;
 #[cfg(test)]
 #[path = "app_selection_tests.rs"]
 mod app_selection_tests;
+#[cfg(test)]
+#[path = "app_streaming_stability_tests.rs"]
+mod app_streaming_stability_tests;
 #[cfg(test)]
 #[path = "app_subagent_first_tests.rs"]
 mod app_subagent_first_tests;

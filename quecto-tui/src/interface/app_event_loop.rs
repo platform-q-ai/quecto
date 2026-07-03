@@ -1,6 +1,65 @@
 use super::app_selection::{SelectionAnchor, TextSelection};
 use super::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StreamRenderDecision {
+    RenderNow,
+    DeferUntil(tokio::time::Instant),
+}
+
+#[derive(Debug, Default)]
+pub(super) struct StreamRenderCoalescer {
+    last_render_at: Option<tokio::time::Instant>,
+    pending_deadline: Option<tokio::time::Instant>,
+}
+
+fn mark_stream_render_complete(
+    coalescer: &mut StreamRenderCoalescer,
+    next_deadline: &mut Option<tokio::time::Instant>,
+) {
+    coalescer.note_immediate_render(tokio::time::Instant::now());
+    *next_deadline = None;
+}
+
+impl StreamRenderCoalescer {
+    pub(super) fn record_token_update(
+        &mut self,
+        now: tokio::time::Instant,
+    ) -> StreamRenderDecision {
+        let Some(last_render_at) = self.last_render_at else {
+            self.last_render_at = Some(now);
+            return StreamRenderDecision::RenderNow;
+        };
+
+        let next_frame = last_render_at + STREAM_RENDER_INTERVAL;
+        if now >= next_frame {
+            self.last_render_at = Some(now);
+            self.pending_deadline = None;
+            StreamRenderDecision::RenderNow
+        } else {
+            self.pending_deadline = Some(next_frame);
+            StreamRenderDecision::DeferUntil(next_frame)
+        }
+    }
+
+    pub(super) fn render_due(&mut self, now: tokio::time::Instant) -> bool {
+        let Some(deadline) = self.pending_deadline else {
+            return false;
+        };
+        if now < deadline {
+            return false;
+        }
+        self.pending_deadline = None;
+        self.last_render_at = Some(now);
+        true
+    }
+
+    pub(super) fn note_immediate_render(&mut self, now: tokio::time::Instant) {
+        self.pending_deadline = None;
+        self.last_render_at = Some(now);
+    }
+}
+
 impl App {
     pub async fn run(&mut self) -> i32 {
         self.terminal.enter_raw_mode();
@@ -45,8 +104,15 @@ impl App {
         let kitty_deadline = tokio::time::Instant::now() + Duration::from_millis(150);
         let mut kitty_fallback_done = false;
 
+        let mut stream_render_coalescer = StreamRenderCoalescer::default();
+        let mut next_stream_render_deadline: Option<tokio::time::Instant> = None;
+
         // Initial render.
         self.render();
+        mark_stream_render_complete(
+            &mut stream_render_coalescer,
+            &mut next_stream_render_deadline,
+        );
 
         let mut next_animation_tick = tokio::time::Instant::now() + SPINNER_TICK;
 
@@ -88,13 +154,34 @@ impl App {
                         );
                     }
                     self.render();
+                    mark_stream_render_complete(
+                        &mut stream_render_coalescer,
+                        &mut next_stream_render_deadline,
+                    );
                 }
                 // Agent events.
                 event = self.client.recv(), if self.agent_connected => {
                     match event {
                         Some(ev) => {
+                            let is_token = matches!(ev, Event::Token { .. });
                             self.handle_event(ev);
-                            self.render();
+                            if is_token {
+                                match stream_render_coalescer.record_token_update(tokio::time::Instant::now()) {
+                                    StreamRenderDecision::RenderNow => {
+                                        self.render();
+                                        next_stream_render_deadline = None;
+                                    }
+                                    StreamRenderDecision::DeferUntil(deadline) => {
+                                        next_stream_render_deadline = Some(deadline);
+                                    }
+                                }
+                            } else {
+                                self.render();
+                                mark_stream_render_complete(
+                                    &mut stream_render_coalescer,
+                                    &mut next_stream_render_deadline,
+                                );
+                            }
                         }
                         None => {
                             // Agent disconnected — stop polling.
@@ -105,6 +192,10 @@ impl App {
                             self.master_session.chat.finalize_assistant();
                             self.notify("Agent disconnected", NotifyLevel::Error);
                             self.render();
+                            mark_stream_render_complete(
+                                &mut stream_render_coalescer,
+                                &mut next_stream_render_deadline,
+                            );
                         }
                     }
                 }
@@ -112,6 +203,10 @@ impl App {
                 Some(()) = resize_rx.recv() => {
                     self.terminal.refresh_size();
                     self.render_full();
+                    mark_stream_render_complete(
+                        &mut stream_render_coalescer,
+                        &mut next_stream_render_deadline,
+                    );
                 }
                 // Animation / fallback tick.
                 _ = tokio::time::sleep_until(next_animation_tick), if self.needs_animation_tick(!kitty_fallback_done) => {
@@ -119,6 +214,10 @@ impl App {
                     next_animation_tick = tokio::time::Instant::now() + SPINNER_TICK;
                     if needs_render {
                         self.render();
+                        mark_stream_render_complete(
+                            &mut stream_render_coalescer,
+                            &mut next_stream_render_deadline,
+                        );
                     }
                 }
                 // One-shot idle service deadline for static notification expiry and exited-subagent GC.
@@ -130,29 +229,59 @@ impl App {
                     let needs_render = self.service_animation_tick(&mut kitty_fallback_done, kitty_deadline);
                     if needs_render {
                         self.render();
+                        mark_stream_render_complete(
+                            &mut stream_render_coalescer,
+                            &mut next_stream_render_deadline,
+                        );
                     }
                 }
                 Some(branch) = git_branch_rx.recv() => {
                     git_branch_refresh_in_flight = false;
                     if self.apply_git_branch(branch) {
                         self.render();
+                        mark_stream_render_complete(
+                            &mut stream_render_coalescer,
+                            &mut next_stream_render_deadline,
+                        );
                     }
                 }
                 Some(failure) = self.command_send_failure_rx.recv() => {
                     self.handle_command_send_failure(failure);
                     self.render();
+                    mark_stream_render_complete(
+                        &mut stream_render_coalescer,
+                        &mut next_stream_render_deadline,
+                    );
                 }
                 // Events fanned in from the active sub-agent's direct
                 // connect-on-select connection (#800).
                 Some((agent_id, ev)) = self.subagent_event_rx.recv() => {
                     self.route_subagent_event(&agent_id, ev);
                     self.render();
+                    mark_stream_render_complete(
+                        &mut stream_render_coalescer,
+                        &mut next_stream_render_deadline,
+                    );
                 }
                 Some(files) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;
                     self.files_autocomplete.apply_loaded_files(files);
                     self.refresh_files_autocomplete_from_editor();
                     self.render();
+                    mark_stream_render_complete(
+                        &mut stream_render_coalescer,
+                        &mut next_stream_render_deadline,
+                    );
+                }
+                _ = async {
+                    if let Some(deadline) = next_stream_render_deadline {
+                        tokio::time::sleep_until(deadline).await;
+                    }
+                }, if next_stream_render_deadline.is_some() => {
+                    if stream_render_coalescer.render_due(tokio::time::Instant::now()) {
+                        self.render();
+                    }
+                    next_stream_render_deadline = None;
                 }
                 // Git branch footer refresh tick.
                 _ = git_branch_interval.tick() => {
@@ -578,160 +707,5 @@ impl App {
                 .replace_before_cursor(start, &format!("@{path} "));
         }
         self.files_autocomplete.dismiss();
-    }
-
-    pub(super) fn handle_submit(&mut self, text: &str) {
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-
-        // Slash commands. Validate the command name against the single source
-        // of truth (`builtin_commands`) before dispatching, so the set of valid
-        // commands is not re-enumerated here.
-        if trimmed.starts_with('/') {
-            let name = trimmed
-                .split_whitespace()
-                .next()
-                .unwrap_or(trimmed)
-                .trim_start_matches('/');
-            if !builtin_commands().iter().any(|c| c.name == name) {
-                self.reject_unknown_slash_command(trimmed);
-                return;
-            }
-            match trimmed {
-                "/quit" | "/exit" => {
-                    self.should_exit = true;
-                    return;
-                }
-                "/clear" => {
-                    self.reset_session("Conversation cleared");
-                    return;
-                }
-                "/new" => {
-                    self.reset_session("New session started");
-                    return;
-                }
-                "/help" | "/hotkeys" => {
-                    self.show_help();
-                    return;
-                }
-                "/session" => {
-                    self.send_session_stats();
-                    return;
-                }
-                "/workflow" => {
-                    self.show_workflow_status();
-                    return;
-                }
-                "/resume" => {
-                    self.send_list_sessions();
-                    return;
-                }
-                _ if trimmed.starts_with("/resume ") => {
-                    let session = trimmed["/resume".len()..].trim();
-                    self.send_resume_session(session);
-                    return;
-                }
-                _ if trimmed.starts_with("/model") => {
-                    let model_name = trimmed["/model".len()..].trim();
-                    if !model_name.is_empty() {
-                        self.send_set_model(model_name);
-                    } else {
-                        // No model name — open the model selector overlay.
-                        self.open_model_selector();
-                    }
-                    return;
-                }
-                "/workflow-auto" => {
-                    self.toggle_workflow_auto_continue();
-                    return;
-                }
-                "/workflow-nudge" => {
-                    self.toggle_workflow_completion_nudge();
-                    return;
-                }
-                _ => {
-                    self.reject_unknown_slash_command(trimmed);
-                    return;
-                }
-            }
-        }
-
-        // Route to the ACTIVE session (#802). A selected sub-agent's prompt
-        // steers THAT agent over its own connection (its dispatch loop queues
-        // the prompt until its turn ends) and lands in its session, not master's.
-        if self.active_agent_id.is_some() {
-            let steer = self.active_subagent_running();
-            let cmd = Command::Prompt {
-                id: None,
-                message: text.to_string(),
-                streaming_behavior: steer.then(|| "steer".to_string()),
-            };
-            // Append to the sub-agent transcript ONLY when the route actually
-            // enqueued it (#804 review): a failed route (no live sender / full
-            // channel) never delivered the prompt, so a User entry would diverge
-            // UI from state.
-            if self.send_to_active_subagent(cmd) {
-                self.active_chat_mut().add_entry(ChatEntry::User {
-                    text: text.to_string(),
-                });
-            }
-            return;
-        }
-
-        // Master session: add user message to chat and send to the primary agent.
-        self.master_session.chat.add_entry(ChatEntry::User {
-            text: text.to_string(),
-        });
-        let cmd = Command::Prompt {
-            id: None,
-            message: text.to_string(),
-            streaming_behavior: if self.agent_state.is_running() {
-                Some("steer".to_string())
-            } else {
-                None
-            },
-        };
-        self.send_command(cmd);
-    }
-
-    // ── Abort handling (bug fix) ──────────────────────────────────────
-
-    pub(super) fn handle_abort(&mut self) {
-        // Abort targets the ACTIVE session (#802): a selected sub-agent's abort is
-        // routed over its own connection and finalizes its transcript.
-        if self.active_agent_id.is_some() {
-            self.send_to_active_subagent(Command::Abort { id: None });
-            self.active_chat_mut().finalize_assistant();
-            if let Some(id) = self.active_agent_id.clone() {
-                if let Some(session) = self.sessions.get_mut(&id) {
-                    session.running = false;
-                    // Just cancelled: mark run-state observed so the lagging tracked
-                    // status can't keep it "running" and re-abort on a 2nd Esc (#834).
-                    session.observed_run_state = true;
-                }
-            }
-            return;
-        }
-
-        self.send_command(Command::Abort { id: None });
-
-        // Abort the state machine — does NOT set running false; the matched
-        // AgentEnd arrives and guards against stale events corrupting state (#502).
-        self.agent_state.abort();
-        self.master_session.footer.set_streaming(false);
-
-        // Stop spinner / working indicator; `agent_state` stays aborting (#828).
-        self.master_session.running = false;
-        self.spinner = None;
-
-        // Finalize any streaming assistant message.
-        self.master_session.chat.finalize_assistant();
-
-        // Show abort status.
-        self.master_session.chat.add_entry(ChatEntry::Status {
-            text: "Operation aborted".to_string(),
-        });
     }
 }

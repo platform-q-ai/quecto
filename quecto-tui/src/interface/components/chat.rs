@@ -10,9 +10,7 @@
 use crate::interface::component::Component;
 use crate::interface::components::markdown::Markdown;
 use crate::interface::theme;
-#[cfg(test)]
-use crate::interface::utils::visible_width;
-use crate::interface::utils::{truncate_to_width, wrap_text};
+use crate::interface::utils::{truncate_to_width, visible_width, wrap_text};
 
 /// Number of output lines shown for bash in collapsed mode (tail).
 const BASH_PREVIEW_LINES: usize = 5;
@@ -297,7 +295,11 @@ impl Chat {
                 }
                 if *streaming {
                     if let Some(l) = lines.last_mut() {
-                        l.push_str(&theme::dim("▌"));
+                        let indicator = theme::dim("▌");
+                        let indicator_width = visible_width(&indicator);
+                        let text_width = width.saturating_sub(indicator_width);
+                        *l = truncate_to_width(l, text_width, None);
+                        l.push_str(&indicator);
                     }
                 }
             }

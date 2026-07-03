@@ -26,8 +26,6 @@ fn render_plain(chat: &mut Chat, width: usize) -> String {
         .join("\n")
 }
 
-// ── Basic rendering ──────────────────────────────────────────────
-
 #[test]
 fn empty_chat_renders_empty() {
     let mut chat = Chat::new();
@@ -43,8 +41,7 @@ fn user_message_rendered() {
     let plain = render_plain(&mut chat, 80);
     assert!(
         plain.contains("Hello"),
-        "should contain user message: {}",
-        plain
+        "should contain user message: {plain}"
     );
 }
 
@@ -56,8 +53,7 @@ fn streaming_tokens() {
     let plain = render_plain(&mut chat, 80);
     assert!(
         plain.contains("Hello world"),
-        "should contain streamed text: {}",
-        plain
+        "should contain streamed text: {plain}"
     );
 }
 
@@ -66,12 +62,17 @@ fn finalize_assistant_stops_cursor() {
     let mut chat = Chat::new();
     chat.append_token("Done");
     chat.finalize_assistant();
-    let lines = chat.render(80);
-    let joined = lines.join("");
-    assert!(
-        !joined.contains('▌'),
-        "finalized message should not have cursor"
-    );
+    let joined = chat.render(80).join("");
+    assert!(!joined.contains('▌'), "should not have cursor");
+}
+
+#[test]
+fn streaming_indicator_does_not_exceed_render_width() {
+    let mut chat = Chat::new();
+    chat.append_token("1234567890");
+    let line = chat.render(10).join("");
+
+    assert!(visible_width(&line) <= 10, "line should fit: {line:?}");
 }
 
 #[test]

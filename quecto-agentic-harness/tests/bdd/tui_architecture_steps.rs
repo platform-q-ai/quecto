@@ -338,9 +338,9 @@ fn then_tui_slash_autocomplete_includes_command(_world: &mut QuectoWorld, comman
 
 #[then("quecto-tui should reject unknown slash commands before sending a prompt")]
 fn then_tui_rejects_unknown_slash_commands(_world: &mut QuectoWorld) {
-    // Submit handling lives in the app_event_loop module.
-    let content = std::fs::read_to_string("../quecto-tui/src/interface/app_event_loop.rs")
-        .expect("read quecto-tui app_event_loop source");
+    // Submit handling lives in the app_submit module.
+    let content = std::fs::read_to_string("../quecto-tui/src/interface/app_submit.rs")
+        .expect("read quecto-tui app_submit source");
     assert!(
         content.contains("reject_unknown_slash_command"),
         "quecto-tui should route unknown slash commands to a local rejection helper instead of sending them as prompts"
@@ -1033,9 +1033,9 @@ fn then_show_help_and_dispatch_derive(_world: &mut QuectoWorld) {
         methods.contains("builtin_commands("),
         "show_help should derive its listing from builtin_commands() rather than a hand-kept copy"
     );
-    let event_loop = tui_read("interface/app_event_loop.rs");
+    let submit = tui_read("interface/app_submit.rs");
     assert!(
-        event_loop.contains("builtin_commands("),
+        submit.contains("builtin_commands("),
         "the slash-command dispatch should derive from builtin_commands() rather than a hand-kept match"
     );
 }
