@@ -203,16 +203,28 @@ pub(super) async fn persist_current_session(
         return Ok(());
     }
     remove_injected_system_prompt(ctx.messages, ctx.system_prompt);
-    let session = Session {
-        key: ctx.session_key.clone(),
-        messages: ctx.messages.clone(),
-        workflow_run: ctx
-            .workflow_state
-            .as_ref()
-            .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
-    };
+    if ctx.messages.len() < ctx.last_persisted_message_index {
+        ctx.last_persisted_message_index = 0;
+    }
+    let workflow_run = ctx
+        .workflow_state
+        .as_ref()
+        .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run()));
+    let result = ctx
+        .session_store
+        .save_delta(
+            ctx.session_key,
+            ctx.messages,
+            ctx.last_persisted_message_index,
+            workflow_run,
+        )
+        .await;
+    let persisted_len = ctx.messages.len();
     inject_system_prompt(ctx.messages, ctx.system_prompt);
-    ctx.session_store.save(&session).await
+    if result.is_ok() {
+        ctx.last_persisted_message_index = persisted_len;
+    }
+    result
 }
 
 pub(super) async fn handle_new_session(
@@ -239,6 +251,7 @@ pub(super) async fn handle_new_session(
         return false;
     }
     clear_conversation(ctx.messages);
+    ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.drain_pending();
     let key = crate::interface::shared::generate_chat_key();
@@ -328,6 +341,7 @@ pub(super) async fn handle_resume_session(
     ctx.session.drain_pending();
     let workflow_run = loaded.workflow_run;
     *ctx.messages = loaded.messages;
+    ctx.last_persisted_message_index = ctx.messages.len();
     set_workflow_run(ctx, workflow_run);
     inject_system_prompt(ctx.messages, ctx.system_prompt);
     let ev = AgentEvent::ok(
@@ -451,6 +465,7 @@ pub(super) async fn handle_clear_history(
         return false;
     }
     clear_conversation(ctx.messages);
+    ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.drain_pending();
     // Also clear spill store so stale context isn't re-injected (#412).
@@ -458,6 +473,11 @@ pub(super) async fn handle_clear_history(
         if let Err(e) = spill.clear(ctx.session_key).await {
             tracing::warn!("clear_history: failed to clear spill store: {e}");
         }
+    }
+    if let Err(err) = persist_current_session(ctx).await {
+        let ev = AgentEvent::err(id, tn, format!("failed to save cleared session: {err}"));
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
     }
     let ev = AgentEvent::ok(id, tn, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
@@ -482,6 +502,7 @@ pub(super) async fn handle_rewind_to(
         return false;
     }
 
+    ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.drain_pending();
     // Clear spill store and remove retained spill references so stale truncated

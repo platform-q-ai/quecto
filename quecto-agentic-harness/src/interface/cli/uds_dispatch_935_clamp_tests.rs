@@ -88,6 +88,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
+            last_persisted_message_index: 0,
         };
         assert!(!dispatch_command(cmd, &mut ctx).await);
     }

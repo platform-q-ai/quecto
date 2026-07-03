@@ -287,6 +287,12 @@ pub struct QuectoWorld {
     pub loaded_session: Option<Option<Session>>,
     /// Session keys created during routing scenarios
     pub session_keys: HashMap<String, String>,
+    /// Previously durable session storage captured for append-only persistence scenarios.
+    pub session_storage_before_turn: Option<Vec<u8>>,
+    /// Previous durable storage captured before a replacing persistence operation.
+    pub session_storage_before_replace: Option<Vec<u8>>,
+    /// Expected role/content pairs for session content round-trip scenarios.
+    pub expected_session_content: Vec<(Role, String)>,
     /// Credential store for auth scenarios
     pub credential_store: Option<CredentialStore>,
     /// Auth status summary from the last check
