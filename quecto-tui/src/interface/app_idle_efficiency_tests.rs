@@ -29,7 +29,7 @@ async fn pending_kitty_fallback_keeps_animation_tick_armed() {
 }
 
 #[tokio::test]
-async fn visible_animation_keeps_animation_tick_armed() {
+async fn visible_spinner_keeps_animation_tick_armed() {
     let mut h = harness().await;
     let app = h.app_mut();
 
@@ -38,8 +38,13 @@ async fn visible_animation_keeps_animation_tick_armed() {
         app.needs_animation_tick(false),
         "a visible spinner must continue advancing while the TUI is otherwise idle"
     );
+}
 
-    app.spinner = None;
+#[tokio::test]
+async fn static_notification_uses_one_shot_deadline_not_animation_tick() {
+    let mut h = harness().await;
+    let app = h.app_mut();
+
     app.notify("saved", NotifyLevel::Info);
     assert!(
         !app.needs_animation_tick(false),
@@ -49,19 +54,54 @@ async fn visible_animation_keeps_animation_tick_armed() {
         app.next_idle_service_deadline().is_some(),
         "active notifications must still schedule an expiry service deadline"
     );
+}
 
-    app.notifications.gc();
+#[tokio::test]
+async fn running_master_work_keeps_animation_tick_armed() {
+    let mut h = harness().await;
+    let app = h.app_mut();
+
     app.agent_state.start();
     assert!(
         app.needs_animation_tick(false),
         "running master work must continue advancing the activity indicator"
     );
+}
 
-    app.agent_state.end();
+#[tokio::test]
+async fn streaming_status_keeps_animation_tick_armed() {
+    let mut h = harness().await;
+    let app = h.app_mut();
+
     app.master_session.footer.set_streaming(true);
     assert!(
         app.needs_animation_tick(false),
         "streaming status must continue advancing the activity indicator"
+    );
+}
+
+/// Regression guard for the event-loop wiring itself (#978): the predicates
+/// above only prove `needs_animation_tick` is correct — they would all still
+/// pass if `App::run` regressed to an unconditional `interval(SPINNER_TICK)`.
+/// A live-TTY loop harness is impractical here, so pin the scheduling source:
+/// the animation arm must be a `sleep_until` guarded by `needs_animation_tick`,
+/// and no unconditional sub-second interval may reappear.
+#[test]
+fn event_loop_gates_animation_timer_on_needs_animation_tick() {
+    let src = include_str!("app_event_loop.rs");
+
+    let sleep_arm = src
+        .lines()
+        .find(|l| l.contains("sleep_until(next_animation_tick)"))
+        .expect("event loop should arm the animation tick via sleep_until(next_animation_tick)");
+    assert!(
+        sleep_arm.contains("if self.needs_animation_tick("),
+        "the animation sleep arm must be guarded by needs_animation_tick, got: {sleep_arm}"
+    );
+
+    assert!(
+        !src.contains("interval(SPINNER_TICK"),
+        "the event loop must not reintroduce an unconditional sub-second SPINNER_TICK interval"
     );
 }
 

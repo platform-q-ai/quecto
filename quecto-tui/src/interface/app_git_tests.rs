@@ -21,10 +21,14 @@ async fn git_branch_refresh_task_reflects_branch_switches_promptly() {
         h.bottom_stack().contains("feature/footer"),
         "production branch refresh path should update the footer after a branch switch"
     );
-    assert_eq!(
-        super::app_git::GIT_BRANCH_POLL_INTERVAL,
-        std::time::Duration::from_secs(2),
-        "branch indicator should avoid per-second polling while still noticing branch switches within a few seconds"
+    let interval = super::app_git::GIT_BRANCH_POLL_INTERVAL;
+    assert!(
+        interval >= std::time::Duration::from_secs(1),
+        "branch polling must not perform sub-second periodic work while idle (#978), got {interval:?}"
+    );
+    assert!(
+        interval <= std::time::Duration::from_secs(5),
+        "branch switches must still surface within a few seconds, got {interval:?}"
     );
 
     let _ = std::fs::remove_dir_all(&repo);

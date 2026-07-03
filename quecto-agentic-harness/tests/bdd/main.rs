@@ -360,6 +360,12 @@ pub struct QuectoWorld {
     /// TUI observer-marker BDD (#966): currently tracked sub-agents and whether
     /// each is read-only, used to exercise selective departure.
     pub tui_expected_subagents: Vec<(String, bool)>,
+    /// TUI idle-efficiency BDD (#978): spinner frame captured before the idle tick.
+    pub tui_idle_spinner_frame: Option<usize>,
+    /// TUI idle-efficiency BDD (#978): branch name expected after a switch.
+    pub tui_idle_expected_branch: Option<String>,
+    /// TUI idle-efficiency BDD (#978): whether kitty fallback detection completed.
+    pub tui_idle_fallback_done: Option<bool>,
     /// TUI UDS client defensive-bounds BDD (#982): socket/client state.
     pub tui_defence_stream: Option<tui_uds_client_defence_steps::TuiDefenceStream>,
     /// The sub-agent id currently being viewed (#828): captured on select so

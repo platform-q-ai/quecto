@@ -7,7 +7,6 @@
 use crate::QuectoWorld;
 use cucumber::{given, then, when};
 use quecto_tui::interface::app::tui_harness::{TuiHarness, subagents_changed};
-use std::time::Duration;
 use tempfile::TempDir;
 
 fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
@@ -24,12 +23,19 @@ fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R
 
 #[given("the TUI has no visible animation")]
 fn given_no_visible_animation(world: &mut QuectoWorld) {
-    with_harness(world, |_| {});
+    with_harness(world, |h| {
+        assert!(
+            h.spinner_frame_index().is_none(),
+            "no activity spinner should be visible"
+        );
+    });
 }
 
 #[given("no notification is active")]
 fn given_no_notification(world: &mut QuectoWorld) {
-    with_harness(world, |_| {});
+    with_harness(world, |h| {
+        assert!(!h.has_notification(), "no notification should be visible");
+    });
 }
 
 #[given("no subagent is active")]
@@ -49,7 +55,12 @@ fn given_no_streaming(world: &mut QuectoWorld) {
 
 #[when("the session is left idle")]
 fn when_left_idle(world: &mut QuectoWorld) {
-    with_harness(world, |_| {});
+    // Being "left idle" means the loop only performs its periodic servicing
+    // pass, with no user input or agent events — drive exactly that pass.
+    with_harness(world, |h| {
+        let mut fallback_done = true;
+        h.service_animation_tick(&mut fallback_done, tokio::time::Instant::now());
+    });
 }
 
 #[then("the TUI performs no sub-second periodic work")]
@@ -68,15 +79,15 @@ fn given_activity_spinner_visible(world: &mut QuectoWorld) {
         h.show_activity_spinner("working");
         h.spinner_frame_index().expect("visible spinner")
     });
-    world.stdout = frame.to_string();
+    world.tui_idle_spinner_frame = Some(frame);
 }
 
 #[then("the activity spinner progresses")]
 fn then_spinner_progresses(world: &mut QuectoWorld) {
-    let before = world.stdout.parse::<usize>().expect("spinner frame");
+    let before = world
+        .tui_idle_spinner_frame
+        .expect("spinner frame captured by the Given step");
     with_harness(world, |h| {
-        let mut fallback_done = true;
-        h.service_animation_tick(&mut fallback_done, tokio::time::Instant::now());
         assert_ne!(
             h.spinner_frame_index().expect("visible spinner"),
             before,
@@ -102,7 +113,7 @@ fn then_notification_is_serviced(world: &mut QuectoWorld) {
         );
         assert!(
             h.has_notification(),
-            "fresh notification should remain visible"
+            "unexpired notification should remain visible after the idle pass"
         );
     });
 }
@@ -119,7 +130,6 @@ fn given_branch_indicator_current(world: &mut QuectoWorld) {
         assert!(h.bottom_stack().contains("main"));
     });
     world._extra_temp_dirs.push(tmp);
-    world.stdout = "main".to_string();
 }
 
 #[when("the repository switches to another branch")]
@@ -132,12 +142,17 @@ fn when_repository_switches_branch(world: &mut QuectoWorld) {
         .to_path_buf();
     std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/feature/branch\n")
         .expect("HEAD switch");
-    world.stderr = "feature/branch".to_string();
+    world.tui_idle_expected_branch = Some("feature/branch".to_string());
 }
 
 #[then("the branch indicator shows the new branch within a few seconds")]
 fn then_branch_updates_promptly(world: &mut QuectoWorld) {
-    let branch = world.stderr.clone();
+    let branch = world
+        .tui_idle_expected_branch
+        .clone()
+        .expect("expected branch recorded by the When step");
+    // The next periodic poll (bounded to a few seconds by unit tests on
+    // GIT_BRANCH_POLL_INTERVAL) runs this same production refresh task.
     let changed = world
         .tui_parity_rt
         .as_ref()
@@ -158,11 +173,6 @@ fn then_branch_updates_promptly(world: &mut QuectoWorld) {
             "branch indicator should show the switched branch"
         );
     });
-    assert_eq!(
-        quecto_tui::interface::app::GIT_BRANCH_POLL_INTERVAL,
-        Duration::from_secs(2),
-        "branch refresh should avoid per-second polling but remain within a few seconds"
-    );
 }
 
 #[given("the terminal does not confirm Kitty keyboard protocol support")]
@@ -170,20 +180,31 @@ fn given_terminal_without_kitty(world: &mut QuectoWorld) {
     with_harness(world, |h| {
         h.clear_kitty_support();
     });
+    world.tui_idle_fallback_done = Some(false);
 }
 
 #[when("the fallback detection deadline passes")]
 fn when_fallback_deadline_passes(world: &mut QuectoWorld) {
-    with_harness(world, |_| {});
+    let mut fallback_done = world
+        .tui_idle_fallback_done
+        .expect("fallback state initialised by the Given step");
+    with_harness(world, |h| {
+        // An already-elapsed deadline is exactly "the deadline has passed";
+        // the service pass is what the event loop runs when it fires.
+        let deadline = tokio::time::Instant::now();
+        h.service_animation_tick(&mut fallback_done, deadline);
+    });
+    world.tui_idle_fallback_done = Some(fallback_done);
 }
 
 #[then("the TUI enables keyboard fallback mode")]
 fn then_keyboard_fallback_enabled(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.tui_idle_fallback_done,
+        Some(true),
+        "fallback detection should complete once the deadline passes"
+    );
     with_harness(world, |h| {
-        let mut fallback_done = false;
-        let deadline = tokio::time::Instant::now();
-        h.service_animation_tick(&mut fallback_done, deadline);
-        assert!(fallback_done, "fallback detection should complete");
         assert!(
             h.modify_other_keys_enabled(),
             "unsupported terminals should receive modifyOtherKeys fallback"
