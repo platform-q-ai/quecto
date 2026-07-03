@@ -416,20 +416,42 @@ fn when_platform_specific_dependencies_classified(_world: &mut QuectoWorld) {}
 
 #[then("each search tool should keep direct install guidance")]
 fn then_each_search_tool_keeps_direct_install_guidance(_world: &mut QuectoWorld) {
-    let grep_source =
-        std::fs::read_to_string("src/infrastructure/tools/grep.rs").expect("read grep tool source");
+    let tmp = TempDir::new().expect("create search-tool workspace");
+    let workspace = Arc::new(tmp.path().to_path_buf());
+    let sandbox = Arc::new(Sandbox::new(Some(workspace.as_ref().clone()), true));
+
+    let grep_tool = quecto::infrastructure::tools::grep::GrepTool::with_rg_binary(
+        workspace.clone(),
+        sandbox.clone(),
+        "definitely-missing-rg-for-dependency-hygiene".to_string(),
+    );
+    let grep_error = tokio::runtime::Runtime::new()
+        .expect("create runtime")
+        .block_on(grep_tool.execute(r#"{"pattern":"needle"}"#))
+        .expect_err("missing rg should surface as a domain tool error");
+    let grep_message = grep_error.to_string();
     assert!(
-        grep_source.contains("rg not found on PATH")
-            && grep_source.contains("github.com/BurntSushi/ripgrep#installation"),
-        "grep should keep user-facing ripgrep installation guidance when rg is missing"
+        grep_message.contains("rg not found on PATH")
+            && grep_message.contains("github.com/BurntSushi/ripgrep#installation"),
+        "grep should keep user-facing ripgrep installation guidance when rg is missing, got: {}",
+        grep_message
     );
 
-    let find_source =
-        std::fs::read_to_string("src/infrastructure/tools/find.rs").expect("read find tool source");
+    let find_tool = quecto::infrastructure::tools::find::FindTool::with_fd_binary(
+        workspace,
+        sandbox,
+        "definitely-missing-fd-for-dependency-hygiene".to_string(),
+    );
+    let find_error = tokio::runtime::Runtime::new()
+        .expect("create runtime")
+        .block_on(find_tool.execute(r#"{"pattern":"*.rs"}"#))
+        .expect_err("missing fd should surface as a domain tool error");
+    let find_message = find_error.to_string();
     assert!(
-        find_source.contains("fd not found on PATH")
-            && find_source.contains("github.com/sharkdp/fd#installation"),
-        "find should keep user-facing fd installation guidance when fd is missing"
+        find_message.contains("fd not found on PATH")
+            && find_message.contains("github.com/sharkdp/fd#installation"),
+        "find should keep user-facing fd installation guidance when fd is missing, got: {}",
+        find_message
     );
 }
 

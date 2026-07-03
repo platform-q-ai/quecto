@@ -59,7 +59,6 @@ non_behavioral_features = [
   "tests/features/grep.feature",
   "tests/features/ls.feature",
   "tests/features/spawn_tool.feature",
-  "tests/features/ensure_tool.feature",
   "tests/features/nsjail_exec.feature",
   "tests/features/truncate.feature",
   "tests/features/path_utils.feature",
