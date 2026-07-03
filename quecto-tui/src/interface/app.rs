@@ -317,7 +317,11 @@ impl App {
         true
     }
 
-    fn start_git_branch_refresh(&self, tx: &mpsc::Sender<Option<String>>, in_flight: &mut bool) {
+    pub(super) fn start_git_branch_refresh(
+        &self,
+        tx: &mpsc::Sender<Option<String>>,
+        in_flight: &mut bool,
+    ) {
         if *in_flight {
             return;
         }
@@ -375,7 +379,10 @@ mod app_selection;
 mod app_subagent_panel;
 #[path = "app_subagent_state.rs"]
 mod app_subagent_state;
-use app_subagent_state::{TrackedSubagent, gc_exited_subagents, subagent_status_is_active};
+use app_subagent_state::{
+    TrackedSubagent, gc_exited_subagents, next_exited_subagent_gc_deadline,
+    subagent_status_is_active,
+};
 #[path = "app_subagent_stream.rs"]
 mod app_subagent_stream;
 #[path = "app_subagents.rs"]

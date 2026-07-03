@@ -8,6 +8,7 @@ use crate::QuectoWorld;
 use cucumber::{given, then, when};
 use quecto_tui::interface::app::tui_harness::{TuiHarness, subagents_changed};
 use std::time::Duration;
+use tempfile::TempDir;
 
 fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {
@@ -95,9 +96,10 @@ fn given_notification_visible(world: &mut QuectoWorld) {
 #[then("the notification remains serviced until it is no longer visible")]
 fn then_notification_is_serviced(world: &mut QuectoWorld) {
     with_harness(world, |h| {
-        let mut fallback_done = true;
-        assert!(h.needs_animation_tick(false));
-        h.service_animation_tick(&mut fallback_done, tokio::time::Instant::now());
+        assert!(
+            !h.needs_animation_tick(false),
+            "static notifications should not require the sub-second animation timer"
+        );
         assert!(
             h.has_notification(),
             "fresh notification should remain visible"
@@ -107,24 +109,49 @@ fn then_notification_is_serviced(world: &mut QuectoWorld) {
 
 #[given("the branch indicator shows the current branch")]
 fn given_branch_indicator_current(world: &mut QuectoWorld) {
+    let tmp = TempDir::new().expect("branch test temp dir");
+    let repo = tmp.path().to_path_buf();
+    std::fs::create_dir_all(repo.join(".git")).expect("git dir");
+    std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").expect("HEAD");
     with_harness(world, |h| {
+        h.set_git_repo(repo);
         assert!(h.apply_branch(Some("main".to_string())));
         assert!(h.bottom_stack().contains("main"));
     });
+    world._extra_temp_dirs.push(tmp);
     world.stdout = "main".to_string();
 }
 
 #[when("the repository switches to another branch")]
 fn when_repository_switches_branch(world: &mut QuectoWorld) {
-    with_harness(world, |h| {
-        assert!(h.apply_branch(Some("feature/branch".to_string())));
-    });
+    let repo = world
+        ._extra_temp_dirs
+        .last()
+        .expect("branch repo temp dir")
+        .path()
+        .to_path_buf();
+    std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/feature/branch\n")
+        .expect("HEAD switch");
     world.stderr = "feature/branch".to_string();
 }
 
 #[then("the branch indicator shows the new branch within a few seconds")]
 fn then_branch_updates_promptly(world: &mut QuectoWorld) {
     let branch = world.stderr.clone();
+    let changed = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("runtime")
+        .block_on(async {
+            world
+                .tui_parity
+                .as_mut()
+                .expect("TUI harness")
+                .0
+                .refresh_branch_from_repo()
+                .await
+        });
+    assert!(changed, "branch refresh should observe the switched branch");
     with_harness(world, |h| {
         assert!(
             h.bottom_stack().contains(&branch),

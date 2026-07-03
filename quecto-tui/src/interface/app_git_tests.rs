@@ -1,12 +1,33 @@
 //! Tests for git branch footer discovery and polling policy.
 
-#[test]
-fn git_branch_poll_interval_keeps_branch_switches_prompt() {
+#[tokio::test]
+async fn git_branch_refresh_task_reflects_branch_switches_promptly() {
+    let repo = std::env::temp_dir().join(format!(
+        "quecto-tui-branch-refresh-test-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("unnamed")
+    ));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    h.set_git_repo(repo.clone());
+    assert!(h.apply_branch(Some("main".to_string())));
+
+    std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/feature/footer\n").unwrap();
+    assert!(h.refresh_branch_from_repo().await);
+    assert!(
+        h.bottom_stack().contains("feature/footer"),
+        "production branch refresh path should update the footer after a branch switch"
+    );
     assert_eq!(
         super::app_git::GIT_BRANCH_POLL_INTERVAL,
         std::time::Duration::from_secs(2),
         "branch indicator should avoid per-second polling while still noticing branch switches within a few seconds"
     );
+
+    let _ = std::fs::remove_dir_all(&repo);
 }
 
 #[test]

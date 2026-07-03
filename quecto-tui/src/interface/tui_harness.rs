@@ -254,9 +254,27 @@ impl TuiHarness {
         !self.app.notifications.is_empty()
     }
 
-    /// Apply a branch change through the production footer update path.
+    /// Force the footer branch value through the production apply helper.
     pub fn apply_branch(&mut self, branch: Option<String>) -> bool {
         self.app.apply_git_branch(branch)
+    }
+
+    /// Override the repository root used by git branch refresh tests.
+    pub fn set_git_repo(&mut self, repo: std::path::PathBuf) {
+        self.app.git_repo = Some(repo);
+    }
+
+    /// Drive the same branch refresh task used by the event-loop interval.
+    pub async fn refresh_branch_from_repo(&mut self) -> bool {
+        let (tx, mut rx) = mpsc::channel(1);
+        let mut in_flight = false;
+        self.app.start_git_branch_refresh(&tx, &mut in_flight);
+        drop(tx);
+        if let Some(branch) = rx.recv().await {
+            self.app.apply_git_branch(branch)
+        } else {
+            false
+        }
     }
 
     /// Feed printable input through the real key handler.

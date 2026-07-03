@@ -1,16 +1,30 @@
 use super::*;
 
 impl App {
+    pub(super) fn next_idle_service_deadline(&self) -> Option<tokio::time::Instant> {
+        let notification_deadline = self
+            .notifications
+            .next_expiry()
+            .map(tokio::time::Instant::from_std);
+        let subagent_gc_deadline =
+            next_exited_subagent_gc_deadline(&self.subagent_local, EXITED_SUBAGENT_GRACE);
+        match (notification_deadline, subagent_gc_deadline) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        }
+    }
+
     pub(super) fn needs_animation_tick(&self, kitty_fallback_pending: bool) -> bool {
         kitty_fallback_pending
             || self.spinner.is_some()
-            || !self.notifications.is_empty()
             || self.agent_state.is_running()
             || self.active_session().footer.is_streaming()
             || self.active_subagent_running()
-            || self.subagent_local.values().any(|entry| {
-                subagent_status_is_active(&entry.info.status) || entry.exited_at.is_some()
-            })
+            || self
+                .subagent_local
+                .values()
+                .any(|entry| subagent_status_is_active(&entry.info.status))
     }
 
     pub(super) fn service_animation_tick(

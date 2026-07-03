@@ -42,8 +42,12 @@ async fn visible_animation_keeps_animation_tick_armed() {
     app.spinner = None;
     app.notify("saved", NotifyLevel::Info);
     assert!(
-        app.needs_animation_tick(false),
-        "active notifications must keep their expiry animation deadline serviced"
+        !app.needs_animation_tick(false),
+        "static notifications should use a one-shot expiry deadline, not the sub-second animation timer"
+    );
+    assert!(
+        app.next_idle_service_deadline().is_some(),
+        "active notifications must still schedule an expiry service deadline"
     );
 
     app.notifications.gc();
@@ -79,17 +83,25 @@ async fn spinner_animation_tick_advances_visible_frame() {
 }
 
 #[tokio::test]
-async fn notification_animation_tick_keeps_visible_notification_serviced() {
+async fn notification_deadline_removes_expired_notification_without_animation_tick() {
     let mut h = harness().await;
     let app = h.app_mut();
-    app.notify("saved", NotifyLevel::Info);
+    app.notifications
+        .push(Notification::new("saved", NotifyLevel::Info).with_duration(Duration::ZERO));
     let mut fallback_done = true;
 
-    assert!(app.needs_animation_tick(false));
-    assert!(!app.service_animation_tick(&mut fallback_done, tokio::time::Instant::now()));
     assert!(
-        !app.notifications.is_empty(),
-        "fresh notification should remain visible after being serviced"
+        !app.needs_animation_tick(false),
+        "static notification expiry should not require the sub-second animation timer"
+    );
+    assert!(
+        app.next_idle_service_deadline().is_some(),
+        "expired notification should arm a one-shot service deadline"
+    );
+    assert!(app.service_animation_tick(&mut fallback_done, tokio::time::Instant::now()));
+    assert!(
+        app.notifications.is_empty(),
+        "service tick should collect expired notifications at their deadline"
     );
 }
 
@@ -104,6 +116,24 @@ async fn active_subagent_keeps_animation_tick_armed() {
     assert!(
         app.needs_animation_tick(false),
         "an active subagent must keep its elapsed-time and spinner animation ticking"
+    );
+}
+
+#[tokio::test]
+async fn exited_subagent_gc_uses_one_shot_deadline_not_animation_tick() {
+    let mut h = harness().await;
+    h.event(super::tui_harness::subagents_changed(vec![
+        super::tui_harness::subagent("worker", "exited", None),
+    ]));
+    let app = h.app_mut();
+
+    assert!(
+        !app.needs_animation_tick(false),
+        "exited subagents should not keep the sub-second animation timer armed during the GC grace period"
+    );
+    assert!(
+        app.next_idle_service_deadline().is_some(),
+        "exited subagents should still schedule one-shot GC"
     );
 }
 

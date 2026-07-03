@@ -24,6 +24,21 @@ pub(super) fn subagent_status_is_active(status: &str) -> bool {
     matches!(status, "starting" | "running")
 }
 
+pub(super) fn next_exited_subagent_gc_deadline(
+    map: &std::collections::BTreeMap<String, TrackedSubagent>,
+    grace: Duration,
+) -> Option<tokio::time::Instant> {
+    if map
+        .values()
+        .any(|entry| subagent_status_is_active(&entry.info.status))
+    {
+        return None;
+    }
+    map.values()
+        .filter_map(|entry| entry.exited_at.map(|exited_at| exited_at + grace))
+        .min()
+}
+
 impl TrackedSubagent {
     pub(super) fn new(info: crate::infrastructure::client::SubagentInfoEvent) -> Self {
         let now = tokio::time::Instant::now();

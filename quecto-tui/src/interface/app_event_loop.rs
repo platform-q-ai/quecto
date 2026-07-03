@@ -69,6 +69,7 @@ impl App {
             if self.should_exit {
                 break;
             }
+            let next_idle_service_tick = self.next_idle_service_deadline();
 
             tokio::select! {
                 // Stdin input.
@@ -116,6 +117,17 @@ impl App {
                 _ = tokio::time::sleep_until(next_animation_tick), if self.needs_animation_tick(!kitty_fallback_done) => {
                     let needs_render = self.service_animation_tick(&mut kitty_fallback_done, kitty_deadline);
                     next_animation_tick = tokio::time::Instant::now() + SPINNER_TICK;
+                    if needs_render {
+                        self.render();
+                    }
+                }
+                // One-shot idle service deadline for static notification expiry and exited-subagent GC.
+                _ = async {
+                    if let Some(deadline) = next_idle_service_tick {
+                        tokio::time::sleep_until(deadline).await;
+                    }
+                }, if next_idle_service_tick.is_some() && !self.needs_animation_tick(!kitty_fallback_done) => {
+                    let needs_render = self.service_animation_tick(&mut kitty_fallback_done, kitty_deadline);
                     if needs_render {
                         self.render();
                     }
