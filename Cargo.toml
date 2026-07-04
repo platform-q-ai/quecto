@@ -6,6 +6,7 @@ members = [
     "quecto-api",
     "quecto-mcp",
     "quecto-runtime-manager",
+    "quecto-line-io",
 ]
 
 [profile.release]

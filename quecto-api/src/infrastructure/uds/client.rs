@@ -9,9 +9,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, mpsc};
+
+use quecto_line_io::read_bounded_line;
 
 use crate::application::ports::agent_gateway::{AgentCommand, AgentGateway, EventSubscriber};
 use crate::domain::error::ApiError;
@@ -81,17 +83,15 @@ impl UdsGateway {
         let reader_connected = connected.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
-            let mut line = String::new();
             loop {
-                line.clear();
-                match reader.read_line(&mut line).await {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        if line.len() > MAX_LINE_BYTES {
-                            tracing::warn!("dropping oversized line ({} bytes)", line.len());
+                match read_bounded_line(&mut reader, MAX_LINE_BYTES).await {
+                    Ok(None) => break,
+                    Ok(Some(bounded)) => {
+                        if bounded.truncated {
+                            tracing::warn!("dropping oversized line (>{} bytes)", MAX_LINE_BYTES);
                             continue;
                         }
-                        let trimmed = line.trim();
+                        let trimmed = bounded.content.trim();
                         if trimmed.is_empty() {
                             continue;
                         }
@@ -113,10 +113,6 @@ impl UdsGateway {
                         tracing::error!("UDS read error: {e}");
                         break;
                     }
-                }
-                // Reclaim memory if a large line inflated the buffer.
-                if line.capacity() > 64 * 1024 {
-                    line.shrink_to(8 * 1024);
                 }
             }
             reader_connected.store(false, Ordering::Relaxed);
