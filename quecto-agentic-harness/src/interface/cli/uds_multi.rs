@@ -432,14 +432,12 @@ async fn handle_client_msg(
             ctx.current_client_id = cmd.client_id;
             match parse_line(&cmd.line) {
                 LineResult::ParseError(e) if e.is_empty() => {}
-                LineResult::ParseError(_) => {
-                    let ev = AgentEvent::Response {
-                        id: None,
-                        command: "parse_error".to_string(),
-                        success: false,
-                        data: None,
-                        error: Some("invalid JSON command".to_string()),
-                    };
+                LineResult::ParseError(e) => {
+                    // #994 criterion 2: preserve the detailed serde parse-error
+                    // text, consistent with the single-client loop
+                    // (`uds::run_command_loop`), rather than substituting a
+                    // generic placeholder string.
+                    let ev = AgentEvent::err(None, "parse_error", e);
                     emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 }
                 LineResult::Command(parsed) => {
@@ -662,6 +660,9 @@ mod interception_tests;
 #[cfg(test)]
 #[path = "uds_multi_926_wake_tests.rs"]
 mod issue_926_wake_tests;
+#[cfg(test)]
+#[path = "uds_994_tests.rs"]
+mod issue_994_tests;
 #[cfg(test)]
 #[path = "uds_snapshot_tests.rs"]
 mod snapshot_tests;
