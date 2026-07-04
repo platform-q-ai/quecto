@@ -1,11 +1,17 @@
 //! Shared bounded line reader for quecto's JSON-lines UDS protocol.
 //!
-//! Several crates (`quecto-api`, `quecto-agentic-harness`, `quecto-tui`) read
+//! Several crates (`quecto-api`, `quecto-agentic-harness`) read
 //! `\n`-terminated JSON lines off a `UnixStream`/pipe from a peer that must be
 //! treated as untrusted (a UDS client, a spawned sub-agent, or a parent
 //! process). Reading with `AsyncBufReadExt::lines()`/`read_line` buffers the
 //! *entire* line before any length check can run, so one giant unterminated
 //! line can grow the buffer without bound before it's dropped.
+//!
+//! `quecto-tui` implements the same guarantee separately: its reader reuses a
+//! caller-owned buffer (with `shrink_to` reclaim) to avoid per-line allocation
+//! on the hot render path, which this allocate-per-call API does not yet offer.
+//! Migrating it here is deferred until this crate grows a
+//! `read_bounded_line_into(&mut Vec<u8>, ..)` variant.
 //!
 //! [`read_bounded_line`] instead caps memory growth *while* reading: once the
 //! accumulated line reaches `max_bytes`, any further bytes up to the next
@@ -28,6 +34,18 @@ pub struct BoundedLine {
     pub truncated: bool,
 }
 
+const INITIAL_CAPACITY: usize = 8 * 1024;
+
+/// Convert the accumulated line bytes into a `String`, reusing the existing
+/// `Vec` allocation on the common valid-UTF-8 path and only paying a lossy
+/// re-allocation when the bytes are not valid UTF-8.
+fn finish(buf: Vec<u8>) -> String {
+    match String::from_utf8(buf) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    }
+}
+
 /// Read one line from `reader`, capping buffered content to `max_bytes`.
 ///
 /// Returns `Ok(None)` at EOF with no trailing partial data. Returns
@@ -44,14 +62,17 @@ pub async fn read_bounded_line<R>(
 where
     R: AsyncBufRead + Unpin,
 {
-    let mut buf: Vec<u8> = Vec::new();
+    // Reserve a modest amount up front to avoid repeated small reallocs on the
+    // common short-line path, but never eagerly allocate the full `max_bytes`
+    // (which can be 1 MiB) for what is usually a tiny line.
+    let mut buf: Vec<u8> = Vec::with_capacity(max_bytes.min(INITIAL_CAPACITY));
     let mut truncated = false;
     loop {
         let available = reader.fill_buf().await?;
         if available.is_empty() {
             // EOF: surface any trailing partial line, else signal closed stream.
             return Ok((!buf.is_empty() || truncated).then(|| BoundedLine {
-                content: String::from_utf8_lossy(&buf).into_owned(),
+                content: finish(buf),
                 truncated,
             }));
         }
@@ -69,7 +90,7 @@ where
         reader.consume(take);
         if newline_pos.is_some() {
             return Ok(Some(BoundedLine {
-                content: String::from_utf8_lossy(&buf).into_owned(),
+                content: finish(buf),
                 truncated,
             }));
         }
@@ -169,5 +190,19 @@ mod tests {
         let second = read_bounded_line(&mut r, 10).await.unwrap().unwrap();
         assert_eq!(second.content, "next");
         assert!(!second.truncated);
+    }
+
+    /// Invalid UTF-8 must not panic or error — `finish` falls back to a lossy
+    /// conversion (U+FFFD replacement) rather than reusing the buffer. This
+    /// pins the fallback arm added alongside the zero-copy `String::from_utf8`
+    /// fast path; reverting `finish` to `from_utf8().unwrap()` breaks this.
+    #[tokio::test]
+    async fn invalid_utf8_falls_back_to_lossy() {
+        // 0xFF is never valid UTF-8.
+        let input = [b'a', 0xFF, b'b', b'\n'];
+        let mut r = BufReader::new(&input[..]);
+        let line = read_bounded_line(&mut r, 1024).await.unwrap().unwrap();
+        assert_eq!(line.content, "a\u{FFFD}b");
+        assert!(!line.truncated);
     }
 }

@@ -1,7 +1,7 @@
 use super::protocol::{AgentCommand, AgentEvent, StreamingBehavior};
 use super::uds_cancel::{
     CancelHandle, CancelSlot, PromptArgs, PromptMessageArgs, PromptOutcome, TurnControl,
-    TurnControlHandle, arm_cancel, disarm_cancel, fire_cancel, run_agent_message, run_agent_prompt,
+    TurnControlHandle, arm_cancel, disarm_cancel, run_agent_message, run_agent_prompt,
 };
 use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_broadcast};
 use super::uds_query::query_response_data;
@@ -324,45 +324,21 @@ async fn run_command_loop(
     reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ctx: &mut DispatchCtx<'_>,
 ) {
-    use tokio::io::{AsyncBufReadExt, BufReader};
+    use super::uds_reader::{RawLine, spawn_reader_task};
 
     let cancel_for_reader = std::sync::Arc::clone(&ctx.cancel_handle);
     let control_for_reader = std::sync::Arc::clone(&ctx.turn_control);
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<String>>(64);
-
-    let reader_task = tokio::spawn(async move {
-        let mut lines = BufReader::new(reader).lines();
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
-                    let trimmed = line.trim();
-                    if line.len() <= MAX_LINE_BYTES && is_cancel_command(trimmed) {
-                        // Record operator intent BEFORE firing the cancel so the
-                        // post-cancel idle drain cannot observe the cancel and
-                        // run a nudge before the abort/steer flag lands (#895/#896).
-                        if is_abort_command(trimmed) {
-                            control_for_reader.mark_abort();
-                        } else if is_steer_command(trimmed) {
-                            control_for_reader.mark_steer();
-                        }
-                        fire_cancel(&cancel_for_reader);
-                    }
-                    if tx.send(Some(line)).await.is_err() {
-                        break;
-                    }
-                }
-                _ => {
-                    let _ = tx.send(None).await;
-                    break;
-                }
-            }
-        }
-    });
+    let (reader_task, mut rx) = spawn_reader_task(reader, cancel_for_reader, control_for_reader);
 
     loop {
         let raw = match rx.recv().await {
-            Some(Some(l)) => l,
+            Some(Some(RawLine::Line(l))) => l,
+            Some(Some(RawLine::TooLong)) => {
+                let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                continue;
+            }
             _ => break,
         };
 
@@ -735,6 +711,9 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
 #[cfg(test)]
 #[path = "uds_abort_steer_tests.rs"]
 mod abort_steer_tests;
+#[cfg(test)]
+#[path = "uds_bounded_read_tests.rs"]
+mod bounded_read_tests;
 #[cfg(test)]
 #[path = "uds_926_act_tests.rs"]
 mod issue_926_act_tests;

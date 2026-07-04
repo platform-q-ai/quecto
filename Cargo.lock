@@ -1624,7 +1624,7 @@ dependencies = [
 
 [[package]]
 name = "quecto"
-version = "0.81.28"
+version = "0.81.30"
 dependencies = [
  "base64",
  "cucumber",
@@ -1655,7 +1655,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-api"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "axum 0.8.8",
  "cucumber",
@@ -1674,7 +1674,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-line-io"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "tokio",
 ]
