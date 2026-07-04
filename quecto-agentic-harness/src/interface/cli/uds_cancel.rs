@@ -152,9 +152,71 @@ pub fn disarm_cancel(handle: &CancelHandle) {
     }
 }
 
+// ─── Event sink ───────────────────────────────────────────────────────────────
+
+use crate::infrastructure::tools::subagent_registry::{
+    NotificationRx, SequencedSubagentNotification, SubagentRegistry,
+};
+
+/// Where a prompt's streaming events are delivered (#994).
+///
+/// Unifies the two historical pipelines — a direct async writer (single-client
+/// / test path) and the multi-client broadcast channel — so there is ONE prompt
+/// implementation parameterized by this sink. Production takes `Broadcast`; the
+/// `Writer` variant is the trivial single-client/test case.
+pub(crate) enum EventSink<'a> {
+    /// Write JSON lines directly to an async writer (single client).
+    Writer(&'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)),
+    /// Fan JSON lines out to every connected client (multi-client server).
+    Broadcast(tokio::sync::broadcast::Sender<String>),
+}
+
+impl<'a> EventSink<'a> {
+    /// Build a writer sink from a borrowed async writer.
+    pub(crate) fn writer(w: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)) -> Self {
+        EventSink::Writer(w)
+    }
+
+    /// Serialize an event to a JSON line and deliver it via this sink.
+    pub(crate) async fn emit(&mut self, event: &AgentEvent) {
+        let mut line = event.to_json_line();
+        line.push('\n');
+        match self {
+            EventSink::Writer(w) => {
+                use tokio::io::AsyncWriteExt;
+                let _ = w.write_all(line.as_bytes()).await;
+            }
+            EventSink::Broadcast(tx) => {
+                let _ = tx.send(line);
+            }
+        }
+    }
+
+    /// The broadcast sender, when this is a broadcast sink. Subagent
+    /// notifications are a multi-client concern and only ever fire on this
+    /// variant.
+    fn broadcast_sender(&self) -> Option<&tokio::sync::broadcast::Sender<String>> {
+        match self {
+            EventSink::Broadcast(tx) => Some(tx),
+            EventSink::Writer(_) => None,
+        }
+    }
+}
+
+/// Write an event as a JSON line followed by a newline.
+///
+/// Thin `Writer`-sink adapter retained for the single-client dispatch loop and
+/// unit tests that assert on raw writer bytes.
+pub async fn emit_event(
+    writer: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    event: &AgentEvent,
+) {
+    EventSink::Writer(writer).emit(event).await;
+}
+
 // ─── Prompt execution ─────────────────────────────────────────────────────────
 
-/// Return code from [`run_agent_prompt`].
+/// Return code from [`run_agent_message`].
 pub enum PromptOutcome {
     /// Agent completed successfully.
     Success,
@@ -164,66 +226,49 @@ pub enum PromptOutcome {
     Cancelled,
 }
 
-/// Arguments for [`run_agent_prompt`] — avoids the clippy too-many-arguments lint.
-pub struct PromptArgs<'a> {
+/// Arguments for [`run_agent_message`] — the single, sink-parameterized prompt
+/// pipeline. Avoids the clippy too-many-arguments lint.
+pub(crate) struct PromptRun<'a, 's> {
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
     pub session: &'a mut AgentSession,
-    pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-    pub message: String,
+    /// Sink the streamed events are delivered to (writer XOR broadcast).
+    pub sink: &'a mut EventSink<'s>,
+    pub message: Message,
     /// Oneshot cancellation receiver.  Resolves when the concurrent reader task
     /// (or `dispatch_command`) fires the cancel handle for this run.
     pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    /// Subagent notification receiver — drained during prompt execution (#534).
+    /// `&mut None` on the single-client / writer path (no subagents).
+    pub notification_rx: &'a mut Option<NotificationRx>,
+    /// Subagent registry for building state-changed events (#534). `&None` on
+    /// the single-client path.
+    pub subagent_registry: &'a Option<SubagentRegistry>,
 }
 
-/// Run a single agent prompt, emitting UDS events including streamed tokens.
+/// Run a single agent prompt, emitting UDS events (including streamed tokens)
+/// to `sink`.
 ///
-/// Installs a progress callback that forwards `AgentProgressEvent::Token`
-/// events through an unbounded channel.  `agent.process()` is raced against
-/// both the cancellation oneshot and the token-forwarding drain loop so that
-/// tokens are emitted in real time (not buffered until completion).
-pub async fn run_agent_prompt(args: PromptArgs<'_>) -> PromptOutcome {
-    let PromptArgs {
-        agent,
-        messages,
-        session,
-        stdout,
-        message,
-        cancel_rx,
-    } = args;
-    run_agent_message(PromptMessageArgs {
-        agent,
-        messages,
-        session,
-        stdout,
-        message: Message::user(message),
-        cancel_rx,
-    })
-    .await
-}
-
-pub(crate) struct PromptMessageArgs<'a> {
-    pub agent: &'a mut AgentLoopImpl,
-    pub messages: &'a mut Vec<Message>,
-    pub session: &'a mut AgentSession,
-    pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-    pub message: Message,
-    pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
-}
-
-pub(crate) async fn run_agent_message(args: PromptMessageArgs<'_>) -> PromptOutcome {
-    let PromptMessageArgs {
+/// Installs a progress callback that forwards `AgentProgressEvent`s through a
+/// bounded channel. `agent.process()` is raced against the cancellation
+/// oneshot, the token-forwarding drain loop, and (on a broadcast sink) subagent
+/// notifications, so tokens/notes are emitted in real time — not buffered until
+/// completion.
+pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome {
+    let PromptRun {
         agent,
         messages,
         session: agent_session,
-        stdout,
+        sink,
         message,
         cancel_rx,
+        notification_rx,
+        subagent_registry,
     } = args;
 
     agent_session.set_streaming(true);
-    emit_event(stdout, &AgentEvent::AgentStart).await;
-    emit_event(stdout, &AgentEvent::TurnStart).await;
+    sink.emit(&AgentEvent::AgentStart).await;
+    sink.emit(&AgentEvent::TurnStart).await;
 
     let user_msg_idx = messages.len();
     messages.push(message);
@@ -241,18 +286,33 @@ pub(crate) async fn run_agent_message(args: PromptMessageArgs<'_>) -> PromptOutc
     })));
 
     // Run process() + token drain concurrently, with cancel support.
-    let result = run_with_token_drain(TokenDrainArgs {
+    let (result, notifications) = run_with_token_drain(TokenDrainArgs {
         agent,
         messages,
         progress_rx: &mut progress_rx,
-        stdout,
+        sink,
         cancel_rx,
+        notification_rx,
+        subagent_registry,
     })
     .await;
 
     // Clear the callback so it doesn't hold the closed sender.
     agent.set_progress_callback(None);
     agent_session.set_streaming(false);
+
+    // Auto-await (#816): completions that arrived mid-turn are buffered here as
+    // pending notes — NOT injected into the turn that just ran. They surface at
+    // the parent's NEXT idle boundary. Empty on the writer path.
+    for notif in notifications {
+        let (agent_id, sequence) = notif.dedupe_key();
+        agent_session.enqueue_subagent_notification(
+            agent_id,
+            sequence,
+            notif.to_message(),
+            notif.is_completion(),
+        );
+    }
 
     match result {
         None => {
@@ -261,8 +321,9 @@ pub(crate) async fn run_agent_message(args: PromptMessageArgs<'_>) -> PromptOutc
         }
         Some(Ok(agent_result)) => {
             agent_session.record_agent_result(&agent_result);
-            // Tool events are now forwarded in real-time via
-            // forward_progress_event — no post-hoc emit needed.
+            // Tool events are forwarded in real-time via forward_progress_event
+            // — emitting them again here would duplicate events with conflicting
+            // IDs.
             let total = agent_result.turn_tokens();
             let usage = if total > 0 {
                 Some(TurnUsage {
@@ -284,80 +345,163 @@ pub(crate) async fn run_agent_message(args: PromptMessageArgs<'_>) -> PromptOutc
                 },
                 tool_results: vec![],
             };
-            emit_event(stdout, &turn_end).await;
+            sink.emit(&turn_end).await;
             let run_msgs: Vec<serde_json::Value> =
                 messages[before_len..].iter().map(message_to_json).collect();
-            emit_event(stdout, &AgentEvent::AgentEnd { messages: run_msgs }).await;
+            sink.emit(&AgentEvent::AgentEnd { messages: run_msgs })
+                .await;
             PromptOutcome::Success
         }
         Some(Err(e)) => {
-            emit_event(
-                stdout,
-                &AgentEvent::err(None, "agent_error", format!("{e}")),
-            )
-            .await;
+            sink.emit(&AgentEvent::err(None, "agent_error", format!("{e}")))
+                .await;
             PromptOutcome::Error
         }
     }
 }
 
 /// Arguments for [`run_with_token_drain`].
-struct TokenDrainArgs<'a> {
+struct TokenDrainArgs<'a, 's> {
     agent: &'a mut AgentLoopImpl,
     messages: &'a mut Vec<Message>,
     progress_rx: &'a mut tokio::sync::mpsc::Receiver<AgentProgressEvent>,
-    stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    sink: &'a mut EventSink<'s>,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    notification_rx: &'a mut Option<NotificationRx>,
+    subagent_registry: &'a Option<SubagentRegistry>,
 }
 
 /// Run `agent.process()` while draining progress events (especially tokens)
-/// to the UDS writer in real time.  Races against a cancellation oneshot.
+/// to `sink` in real time, and (on a broadcast sink) forwarding subagent
+/// notifications. Races against a cancellation oneshot.
+///
+/// Returns the process result (`None` when cancelled) plus any subagent
+/// notifications collected mid-turn that should be enqueued as pending notes.
 async fn run_with_token_drain(
-    args: TokenDrainArgs<'_>,
-) -> Option<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>> {
+    args: TokenDrainArgs<'_, '_>,
+) -> (
+    Option<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>>,
+    Vec<SequencedSubagentNotification>,
+) {
     let TokenDrainArgs {
         agent,
         messages,
         progress_rx,
-        stdout,
+        sink,
         cancel_rx,
+        notification_rx,
+        subagent_registry,
     } = args;
     // We can't run process() and drain the channel truly concurrently because
     // process() takes &mut messages (exclusive borrow).  Instead we poll
-    // both futures in a select! loop.
+    // the futures in a select! loop.
     tokio::pin!(cancel_rx);
     let mut process_fut = agent.process(messages);
+    let mut notifications = Vec::new();
 
-    loop {
+    let result = loop {
+        // Drain notification_rx if present (#534) so SubagentStateChanged events
+        // reach clients in real-time during prompt execution. `pending()` when
+        // absent (single-client / writer path) so this arm never fires.
+        let notif_recv = async {
+            if let Some(rx) = notification_rx.as_mut() {
+                rx.recv().await
+            } else {
+                std::future::pending().await
+            }
+        };
+
         tokio::select! {
             biased;  // prioritise cancel and progress over process completion
-            _ = &mut cancel_rx => return None,
+            _ = &mut cancel_rx => break None,
             Some(ev) = progress_rx.recv() => {
-                forward_progress_event(ev, stdout).await;
+                forward_progress_event_sink(ev, sink).await;
+            }
+            Some(notif) = notif_recv => {
+                if let Some(tx) = sink.broadcast_sender() {
+                    if forward_notification_broadcast(notif.clone(), tx, subagent_registry) {
+                        notifications.push(notif);
+                    }
+                }
             }
             result = &mut process_fut => {
                 // Drain any remaining events that arrived between last poll
                 // and process completion.
                 while let Ok(ev) = progress_rx.try_recv() {
-                    forward_progress_event(ev, stdout).await;
+                    forward_progress_event_sink(ev, sink).await;
                 }
-                return Some(result);
+                if let Some(rx) = notification_rx.as_mut() {
+                    while let Ok(notif) = rx.try_recv() {
+                        if let Some(tx) = sink.broadcast_sender() {
+                            if forward_notification_broadcast(
+                                notif.clone(),
+                                tx,
+                                subagent_registry,
+                            ) {
+                                notifications.push(notif);
+                            }
+                        }
+                    }
+                }
+                break Some(result);
             }
         }
-    }
+    };
+
+    (result, notifications)
 }
 
-/// Forward a single progress event to the UDS writer.
+/// Forward a subagent notification as broadcast events (#534).
 ///
-/// Forwards `Token`, `ToolStarted`, and `ToolFinished` events in real time.
-/// `Thinking` and `Done` are not forwarded (they have no UDS event mapping).
-pub(crate) async fn forward_progress_event(
-    ev: AgentProgressEvent,
-    stdout: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-) {
+/// Returns `true` when the passive completion note was delivered (so the caller
+/// should also collect it for LLM injection), or `false` when it was SUPPRESSED
+/// because a manual `await` already consumed this terminal completion
+/// (auto-await dedupe). The `SubagentStateChanged` panel update is always
+/// emitted regardless. Race-free because the dispatch/drain loop is
+/// single-threaded: the await tool set the flag before this notification is
+/// processed.
+pub(in crate::interface::cli) fn forward_notification_broadcast(
+    notif: SequencedSubagentNotification,
+    broadcast_tx: &tokio::sync::broadcast::Sender<String>,
+    subagent_registry: &Option<SubagentRegistry>,
+) -> bool {
+    let (agent_id, sequence) = notif.dedupe_key();
+    let suppress = crate::infrastructure::tools::subagent_registry::consume_await_dedupe(
+        subagent_registry,
+        &agent_id,
+    );
+    if !suppress {
+        tracing::info!(
+            %agent_id,
+            sequence,
+            "broadcasting passive subagent notification during prompt"
+        );
+        let ev = AgentEvent::SubagentNotification {
+            agent_id,
+            sequence,
+            message: notif.to_message(),
+        };
+        let mut line = ev.to_json_line();
+        line.push('\n');
+        let _ = broadcast_tx.send(line);
+    }
+    // Build full subagent info list from registry for the state-changed event.
+    let list = crate::interface::cli::protocol::build_subagent_info_list(subagent_registry);
+    let ev = AgentEvent::SubagentStateChanged { subagents: list };
+    let mut line = ev.to_json_line();
+    line.push('\n');
+    let _ = broadcast_tx.send(line);
+    !suppress
+}
+
+/// Forward a single progress event to `sink`.
+///
+/// Forwards `Token`, `ToolStarted`, `ToolFinished`, and `TurnCompleted` events
+/// in real time. `Thinking` and `Done` are not forwarded (no UDS mapping).
+pub(crate) async fn forward_progress_event_sink(ev: AgentProgressEvent, sink: &mut EventSink<'_>) {
     match ev {
         AgentProgressEvent::Token(t) => {
-            emit_event(stdout, &AgentEvent::Token { token: t }).await;
+            sink.emit(&AgentEvent::Token { token: t }).await;
         }
         AgentProgressEvent::ToolStarted {
             tool_call_id,
@@ -365,14 +509,11 @@ pub(crate) async fn forward_progress_event(
             arguments,
         } => {
             let args: serde_json::Value = serde_json::from_str(&arguments).unwrap_or_default();
-            emit_event(
-                stdout,
-                &AgentEvent::ToolExecutionStart {
-                    tool_call_id,
-                    tool_name: name,
-                    args,
-                },
-            )
+            sink.emit(&AgentEvent::ToolExecutionStart {
+                tool_call_id,
+                tool_name: name,
+                args,
+            })
             .await;
         }
         AgentProgressEvent::ToolFinished {
@@ -382,44 +523,38 @@ pub(crate) async fn forward_progress_event(
             is_error,
             ..
         } => {
-            emit_event(
-                stdout,
-                &AgentEvent::ToolExecutionEnd {
-                    tool_call_id,
-                    tool_name: name,
-                    result: ToolResultContent {
-                        content: vec![serde_json::json!({"type":"text","text": result_content})],
-                    },
-                    is_error,
+            sink.emit(&AgentEvent::ToolExecutionEnd {
+                tool_call_id,
+                tool_name: name,
+                result: ToolResultContent {
+                    content: vec![serde_json::json!({"type":"text","text": result_content})],
                 },
-            )
+                is_error,
+            })
             .await;
         }
         AgentProgressEvent::TurnCompleted { messages } => {
             // Stream this turn's output (assistant + tool results) on the agent's
             // own stream; a parent monitor re-stamps it with the child id (#797).
             let json: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
-            emit_event(
-                stdout,
-                &AgentEvent::SubagentMessagesAppended {
-                    agent_id: String::new(),
-                    messages: json,
-                },
-            )
+            sink.emit(&AgentEvent::SubagentMessagesAppended {
+                agent_id: String::new(),
+                messages: json,
+            })
             .await;
         }
         _ => {}
     }
 }
 
-/// Write an event as a JSON line followed by a newline.
-pub async fn emit_event(
-    writer: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-    event: &AgentEvent,
+/// Thin `Writer`-sink adapter for progress events, retained for unit tests that
+/// assert on raw writer bytes.
+#[cfg(test)]
+pub(crate) async fn forward_progress_event(
+    ev: AgentProgressEvent,
+    stdout: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
 ) {
-    use tokio::io::AsyncWriteExt;
-    let line = event.to_json_line() + "\n";
-    let _ = writer.write_all(line.as_bytes()).await;
+    forward_progress_event_sink(ev, &mut EventSink::Writer(stdout)).await;
 }
 
 #[cfg(test)]

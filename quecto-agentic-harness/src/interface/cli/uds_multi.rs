@@ -15,9 +15,9 @@ use super::uds::{
     DispatchCtx, LineResult, MAX_LINE_BYTES, dispatch_command, emit_event_to_broadcast_or_writer,
     inject_system_prompt, is_cancel_command, parse_line, remove_injected_system_prompt,
 };
-use super::uds_cancel::{CancelHandle, CancelSlot, PromptOutcome, fire_cancel};
+use super::uds_cancel::{CancelHandle, CancelSlot, fire_cancel};
 pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
-use super::uds_session::{AgentSession, message_to_json};
+use super::uds_session::AgentSession;
 pub(crate) use super::uds_snapshots::{ConversationSnapshot, StateSnapshot};
 #[cfg(test)]
 pub(crate) use super::uds_snapshots::{
@@ -252,8 +252,6 @@ pub(super) async fn multi_client_loop(
     // it runs — the `!persist` guard in `run_dispatch_loop` controls shutdown.
     drop(cmd_tx);
 
-    let mut null_writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> =
-        Box::new(tokio::io::sink());
     let mut ctx = DispatchCtx {
         base_dir,
         agent: &mut agent,
@@ -264,7 +262,7 @@ pub(super) async fn multi_client_loop(
         extension_snapshot: extension_snapshot.clone(),
         busy: busy.clone(),
         session: &mut agent_session,
-        stdout: &mut *null_writer,
+        stdout: None,
         session_key: &mut session_key,
         session_store,
         ephemeral,
@@ -643,14 +641,12 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
 
 // ─── Broadcast prompt execution ───────────────────────────────────────────────
 
-/// Arguments for [`run_agent_prompt_broadcast`].
 #[path = "uds_multi_prompt.rs"]
 mod uds_multi_prompt;
 use uds_multi_prompt::try_intercept_tool_result;
-pub(crate) use uds_multi_prompt::{PromptArgsBroadcast, run_agent_prompt_broadcast};
 // Re-exported for the auto-await dedupe unit tests (uds_subagent_notify_tests).
 #[cfg(test)]
-pub(in crate::interface::cli) use uds_multi_prompt::forward_notification_broadcast;
+pub(in crate::interface::cli) use super::uds_cancel::forward_notification_broadcast;
 #[cfg(test)]
 #[path = "uds_multi_accept_loop_tests.rs"]
 mod accept_loop_tests;

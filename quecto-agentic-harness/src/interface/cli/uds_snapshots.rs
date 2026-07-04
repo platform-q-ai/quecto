@@ -1,8 +1,10 @@
 use crate::domain::message::Message;
 
+use serde_json::value::RawValue;
+
 use super::protocol::{AgentEvent, SessionState};
 use super::uds::DispatchCtx;
-use super::uds_session::{compute_session_stats_with_usage, message_to_json};
+use super::uds_session::{MessageView, compute_session_stats_with_usage};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 pub(crate) type ConversationSnapshot = std::sync::Arc<tokio::sync::RwLock<Vec<Message>>>;
@@ -83,14 +85,24 @@ const SNAPSHOT_MESSAGES_BUDGET_BYTES: usize = 1024 * 1024 - 4096;
 /// the budget cannot be returned under the parent's read cap, so it is dropped
 /// too (yielding an empty `trimmed` snapshot rather than erroring the call).
 pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
-    let values: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
+    // Serialize each message EXACTLY ONCE into an owned `RawValue`; its `.get()`
+    // length is used for byte-budgeting and the same bytes are re-emitted
+    // verbatim in the final line (no second serialization, no Value tree) (#994).
+    let mut raws: Vec<Box<RawValue>> = messages
+        .iter()
+        .map(|m| {
+            serde_json::value::to_raw_value(&MessageView(m)).unwrap_or_else(|_| {
+                RawValue::from_string("null".to_string()).expect("null literal")
+            })
+        })
+        .collect();
 
     // Accumulate from the newest message backwards until the next (older) one
     // would breach the budget; `start` is the index of the oldest kept message.
     let mut total = 0usize;
-    let mut start = values.len();
-    for (i, v) in values.iter().enumerate().rev() {
-        let sz = v.to_string().len() + 1; // +1 for the array separator
+    let mut start = raws.len();
+    for (i, rv) in raws.iter().enumerate().rev() {
+        let sz = rv.get().len() + 1; // +1 for the array separator
         if total + sz > SNAPSHOT_MESSAGES_BUDGET_BYTES {
             break;
         }
@@ -98,16 +110,44 @@ pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
         start = i;
     }
     let trimmed = start > 0;
-    let msgs: Vec<serde_json::Value> = values[start..].to_vec();
+    // `split_off` moves the kept tail out in place — no slice clone (#994).
+    let kept = raws.split_off(start);
 
-    let mut data = serde_json::json!({ "messages": msgs, "snapshot": true });
-    if trimmed {
-        data["trimmed"] = serde_json::json!(true);
-    }
-    let ev = AgentEvent::ok(None, "get_messages", Some(data));
-    let mut line = ev.to_json_line();
+    let line_body = GetMessagesSnapshot::Response {
+        command: "get_messages",
+        success: true,
+        data: GetMessagesData {
+            messages: &kept,
+            snapshot: true,
+            trimmed,
+        },
+    };
+    let mut line =
+        serde_json::to_string(&line_body).expect("get_messages snapshot is always serializable");
     line.push('\n');
     line
+}
+
+/// Serializes byte-identically (modulo key order) to
+/// `AgentEvent::ok(None, "get_messages", Some(data))`, but embeds the
+/// pre-serialized message `RawValue`s directly so each message is serialized at
+/// most once (#994).
+#[derive(serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum GetMessagesSnapshot<'a> {
+    Response {
+        command: &'a str,
+        success: bool,
+        data: GetMessagesData<'a>,
+    },
+}
+
+#[derive(serde::Serialize)]
+struct GetMessagesData<'a> {
+    messages: &'a [Box<RawValue>],
+    snapshot: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    trimmed: bool,
 }
 
 /// Build the connect-time `get_subagents` snapshot line a BUSY child pushes.

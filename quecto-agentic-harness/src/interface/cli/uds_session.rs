@@ -442,19 +442,60 @@ pub fn messages_tail_json(messages: &[Message], count: usize) -> serde_json::Val
     serde_json::json!({ "messages": msgs_json })
 }
 
+/// Static wire name for a role — no per-message throwaway `String` allocation
+/// (previously `format!("{:?}", role).to_lowercase()`, two heap allocs) (#994).
+pub(crate) fn role_wire_name(role: &Role) -> &'static str {
+    match role {
+        Role::System => "system",
+        Role::User => "user",
+        Role::Assistant => "assistant",
+        Role::Tool => "tool",
+    }
+}
+
+/// A borrowed, zero-copy `Serialize` view of a [`Message`] in the UDS protocol
+/// shape. Serializes straight from the typed message into the output (writer,
+/// string, or `serde_json::Value`) without building an intermediate `json!`
+/// tree or allocating a role string per message (#994).
+pub(crate) struct MessageView<'a>(pub &'a Message);
+
+#[derive(serde::Serialize)]
+struct ToolCallView<'a> {
+    id: &'a str,
+    name: &'a str,
+    arguments: &'a str,
+}
+
+impl serde::Serialize for MessageView<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let msg = self.0;
+        let mut s = serializer.serialize_struct("Message", 5)?;
+        s.serialize_field("role", role_wire_name(&msg.role))?;
+        s.serialize_field("content", &msg.content)?;
+        let tool_calls: Vec<ToolCallView<'_>> = msg
+            .tool_calls
+            .iter()
+            .map(|tc| ToolCallView {
+                id: &tc.id,
+                name: &tc.name,
+                arguments: &tc.arguments,
+            })
+            .collect();
+        s.serialize_field("toolCalls", &tool_calls)?;
+        s.serialize_field("toolCallId", &msg.tool_call_id)?;
+        s.serialize_field("toolName", &msg.tool_name)?;
+        s.end()
+    }
+}
+
 /// Serialize a `Message` to a JSON value for protocol emission.
+///
+/// Prefer serializing [`MessageView`] directly to a writer/string where a
+/// `Value` is not actually needed (see `build_get_messages_line`); this helper
+/// exists for the query paths whose event `data` field is a `serde_json::Value`.
 pub fn message_to_json(msg: &Message) -> serde_json::Value {
-    serde_json::json!({
-        "role": format!("{:?}", msg.role).to_lowercase(),
-        "content": msg.content,
-        "toolCalls": msg.tool_calls.iter().map(|tc| serde_json::json!({
-            "id": tc.id,
-            "name": tc.name,
-            "arguments": tc.arguments,
-        })).collect::<Vec<_>>(),
-        "toolCallId": msg.tool_call_id,
-        "toolName": msg.tool_name,
-    })
+    serde_json::to_value(MessageView(msg)).unwrap_or_default()
 }
 
 /// Clear conversation history, preserving only the injected system prompt (non-manifest).
