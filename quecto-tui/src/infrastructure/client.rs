@@ -4,9 +4,10 @@
 //! is async (tokio) and designed to run in a background task, feeding
 //! events to the TUI's main render loop.
 
+use quecto_line_io::read_bounded_line_into;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
@@ -351,39 +352,6 @@ fn serialize_command(cmd: &Command) -> Result<String, ClientError> {
     Ok(json)
 }
 
-async fn read_bounded_line<R>(reader: &mut R, line: &mut Vec<u8>) -> std::io::Result<usize>
-where
-    R: AsyncBufRead + Unpin,
-{
-    line.clear();
-    // Reclaim memory here rather than in the caller's loop so the reclaim
-    // runs on every iteration, including ones that drop the previous line
-    // (oversized, invalid UTF-8, empty) and skip the caller's loop tail.
-    if line.capacity() > 64 * 1024 {
-        line.shrink_to(8 * 1024);
-    }
-    let mut total = 0;
-    loop {
-        let available = reader.fill_buf().await?;
-        if available.is_empty() {
-            return Ok(total);
-        }
-
-        let newline_pos = available.iter().position(|byte| *byte == b'\n');
-        let take = newline_pos.map_or(available.len(), |pos| pos + 1);
-        // Once the line reaches MAX_LINE_BYTES, remaining_capacity stays 0 and
-        // the rest of the oversized line is consumed without being copied.
-        let copy_len = MAX_LINE_BYTES.saturating_sub(line.len()).min(take);
-        line.extend_from_slice(&available[..copy_len]);
-        total += take;
-        reader.consume(take);
-
-        if newline_pos.is_some() {
-            return Ok(total);
-        }
-    }
-}
-
 impl CommandSender {
     /// Send a command to the agent.
     pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {
@@ -435,12 +403,14 @@ impl Client {
             let mut reader = BufReader::new(read_half);
             let mut line = Vec::new();
             loop {
-                match read_bounded_line(&mut reader, &mut line).await {
-                    Ok(0) => break, // EOF — agent closed the connection
-                    Ok(_) => {
+                match read_bounded_line_into(&mut reader, &mut line, MAX_LINE_BYTES).await {
+                    Ok(None) => break, // EOF — agent closed the connection
+                    Ok(Some(read)) => {
                         // Enforce max line size while framing so malicious/buggy agents
                         // cannot inflate this buffer beyond the protocol cap.
-                        if line.len() >= MAX_LINE_BYTES && !line.ends_with(b"\n") {
+                        if read.truncated
+                            || (line.len() >= MAX_LINE_BYTES && !line.ends_with(b"\n"))
+                        {
                             // Drop oversized lines silently. The TUI owns the
                             // terminal, so printing to stderr here would smear
                             // diagnostics over the UI (same policy as the

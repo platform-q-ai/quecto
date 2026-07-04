@@ -1624,7 +1624,7 @@ dependencies = [
 
 [[package]]
 name = "quecto"
-version = "0.83.0"
+version = "0.83.1"
 dependencies = [
  "base64",
  "cucumber",
@@ -1674,7 +1674,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-line-io"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "tokio",
 ]
@@ -1720,10 +1720,11 @@ dependencies = [
 
 [[package]]
 name = "quecto-tui"
-version = "0.10.7"
+version = "0.10.8"
 dependencies = [
  "libc",
  "pulldown-cmark",
+ "quecto-line-io",
  "serde",
  "serde_json",
  "tokio",
