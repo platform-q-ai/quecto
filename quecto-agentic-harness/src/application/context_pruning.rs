@@ -1,9 +1,11 @@
-// Context pruning: sliding-window enforcement with spill-to-disk.
+// Context pruning: tool-call collapse + sliding-window enforcement with spill-to-disk.
 //
-// Tool results are no longer collapsed after N turns. Instead, they age
-// naturally and are dropped by `enforce_context_ceiling()` when the
-// conversation exceeds the token budget. Spill-to-disk still happens at
-// creation time so `recall()` can retrieve dropped outputs.
+// Once the number of tool-result messages in the session exceeds
+// `context_collapse_after_tool_calls` (default 50), the oldest tool results are
+// collapsed to compact `recall(spill_id)` stubs. Independently, messages age out
+// and are dropped by `enforce_context_ceiling()` when the conversation exceeds
+// the token budget. Spill-to-disk happens at creation time so `recall()` can
+// retrieve collapsed or dropped outputs.
 //
 // Depends on: domain::message, domain::session (ContextSpillStore).
 // Never imports infrastructure.
@@ -14,9 +16,9 @@ use crate::domain::message::{Message, Role};
 use crate::domain::session::{ContextSpillStore, SpillIndex};
 
 /// Sentinel value indicating that tool-result collapse is disabled.
-/// Used as the default for `context_collapse_after_turns`. Safe because
-/// `max_tool_iterations` (999_999) is far below `u32::MAX`, so
-/// `current_turn.saturating_sub(turn)` can never reach this threshold.
+/// When `context_collapse_after_tool_calls` is set to this value, collapse is
+/// short-circuited: a session would need `u32::MAX` tool-result messages before
+/// the count-based trigger could fire, which is unreachable in practice.
 pub const COLLAPSE_DISABLED: u32 = u32::MAX;
 
 /// Estimate token count from text content (#305).
@@ -63,37 +65,59 @@ pub fn collapse_stub(tool: &str, input_preview: &str, tokens: usize, spill_id: &
     format!("[{tool}: {preview} ({tokens} tokens) — recall(\"{spill_id}\")]")
 }
 
-/// Collapse tool results older than `collapse_after` turns.
-/// Returns the number of tool results collapsed.
+/// Replace a tool-result message's content with its compact `recall()` stub,
+/// releasing the (spilled) full content and any image data. No-op if the
+/// message is not an un-collapsed tool result.
+fn collapse_message(msg: &mut Message) {
+    if msg.role != Role::Tool || msg.is_collapsed {
+        return;
+    }
+    let tool_name = msg.tool_name.as_deref().unwrap_or("tool");
+    let input_preview = msg.input_preview.as_deref().unwrap_or("");
+    let spill_id = msg.spill_id.as_deref().unwrap_or("unknown");
+    let tokens = estimate_tokens(&msg.content);
+    msg.content = collapse_stub(tool_name, input_preview, tokens, spill_id);
+    msg.invalidate_token_cache();
+    msg.is_collapsed = true;
+    // Release image data — no longer needed after collapse (spilled to disk).
+    msg.image_blocks.clear();
+}
+
+/// Collapse the oldest tool results once the number of tool calls in the
+/// session exceeds `max_tool_calls`, keeping only the most recent
+/// `max_tool_calls` tool results in full context (#1017).
 ///
-/// With the default `collapse_after = COLLAPSE_DISABLED` (u32::MAX), this
-/// function is never called — the agent loop short-circuits it. It remains
-/// available for users who explicitly set a lower `context_collapse_after_turns`
-/// value in their config.
-pub fn collapse_old_tool_results(
-    messages: &mut [Message],
-    current_turn: u32,
-    collapse_after: u32,
-) -> usize {
+/// The trigger is the cumulative **number of un-collapsed tool-result messages**
+/// in the conversation, so it accumulates across prompts within a session
+/// (message history persists) rather than resetting each `run_loop` invocation.
+/// Already-collapsed results are not counted (they no longer weigh on context),
+/// so the collapse front advances monotonically as new tool calls arrive.
+///
+/// `max_tool_calls == COLLAPSE_DISABLED` (`u32::MAX`) disables collapse.
+/// Returns the number of tool results collapsed.
+pub fn collapse_tool_results_over_limit(messages: &mut [Message], max_tool_calls: u32) -> usize {
+    if max_tool_calls == COLLAPSE_DISABLED {
+        return 0;
+    }
+    let live_tool_calls = messages
+        .iter()
+        .filter(|m| m.role == Role::Tool && !m.is_collapsed)
+        .count();
+    let mut to_collapse = live_tool_calls.saturating_sub(max_tool_calls as usize);
+    if to_collapse == 0 {
+        return 0;
+    }
     let mut collapsed = 0;
     for msg in messages.iter_mut() {
+        if to_collapse == 0 {
+            break;
+        }
         if msg.role != Role::Tool || msg.is_collapsed {
             continue;
         }
-        if let Some(turn) = msg.turn {
-            if current_turn.saturating_sub(turn) >= collapse_after {
-                let tool_name = msg.tool_name.as_deref().unwrap_or("tool");
-                let input_preview = msg.input_preview.as_deref().unwrap_or("");
-                let spill_id = msg.spill_id.as_deref().unwrap_or("unknown");
-                let tokens = estimate_tokens(&msg.content);
-                msg.content = collapse_stub(tool_name, input_preview, tokens, spill_id);
-                msg.invalidate_token_cache();
-                msg.is_collapsed = true;
-                // Release image data — no longer needed after collapse (spilled to disk).
-                msg.image_blocks.clear();
-                collapsed += 1;
-            }
-        }
+        collapse_message(msg);
+        collapsed += 1;
+        to_collapse -= 1;
     }
     collapsed
 }
@@ -261,68 +285,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_results_never_collapsed_regardless_of_age() {
-        let mut messages = vec![Message::user("test"), {
-            let mut m = Message::tool("call_1", "big output here");
-            m.turn = Some(1);
-            m.tool_name = Some("bash".to_string());
-            m.spill_id = Some("turn1:bash:0".to_string());
-            m
-        }];
-        // Even at turn 100, tool results should NOT be collapsed
-        // collapse_after = u32::MAX effectively disables collapse
-        let collapsed = collapse_old_tool_results(&mut messages, 100, u32::MAX);
-        assert_eq!(collapsed, 0);
-        assert!(!messages[1].is_collapsed);
-        assert_eq!(messages[1].content, "big output here");
-    }
-
-    #[test]
-    fn test_tool_results_stay_full_across_many_turns() {
-        let mut messages = vec![];
-        // Create tool results on turns 1-10
-        for turn in 1..=10u32 {
-            let mut m = Message::tool(format!("call_{turn}"), format!("output for turn {turn}"));
-            m.turn = Some(turn);
-            m.tool_name = Some("bash".to_string());
-            m.spill_id = Some(format!("turn{turn}:bash:0"));
-            messages.push(m);
-        }
-        // Run collapse with u32::MAX (disabled) at turn 20
-        let collapsed = collapse_old_tool_results(&mut messages, 20, u32::MAX);
-        assert_eq!(collapsed, 0);
-        // All messages should still have their original content
-        for (i, msg) in messages.iter().enumerate() {
-            let turn = i as u32 + 1;
-            assert!(!msg.is_collapsed);
-            assert_eq!(msg.content, format!("output for turn {turn}"));
-        }
-    }
-
-    #[test]
-    fn test_user_assistant_system_never_collapsed() {
-        let mut messages = vec![
-            {
-                let mut m = Message::system("system prompt");
-                m.turn = Some(0);
-                m
-            },
-            {
-                let mut m = Message::user("user input");
-                m.turn = Some(0);
-                m
-            },
-            {
-                let mut m = Message::assistant("assistant response", vec![]);
-                m.turn = Some(0);
-                m
-            },
-        ];
-        let collapsed = collapse_old_tool_results(&mut messages, 100, u32::MAX);
-        assert_eq!(collapsed, 0);
-    }
-
-    #[test]
     fn test_enforce_context_ceiling_under_budget() {
         let mut messages = vec![Message::user("short")];
         let dropped = enforce_context_ceiling(&mut messages, 1000);
@@ -424,6 +386,128 @@ mod tests {
     #[test]
     fn test_collapse_disabled_constant() {
         assert_eq!(COLLAPSE_DISABLED, u32::MAX);
+    }
+
+    // --- #1017: collapse triggers on number of tool calls, default 50 ---
+
+    fn tool_call_msg(i: u32) -> Message {
+        let mut m = Message::tool(format!("call_{i}"), format!("output {i}"));
+        m.turn = Some(i);
+        m.tool_name = Some("bash".to_string());
+        m.spill_id = Some(format!("turn{i}:bash:0"));
+        m
+    }
+
+    #[test]
+    fn collapse_over_limit_keeps_most_recent_n_tool_calls() {
+        // 60 tool calls, keep the most recent 50 → collapse the oldest 10.
+        let mut messages: Vec<Message> = (1..=60).map(tool_call_msg).collect();
+        let collapsed = collapse_tool_results_over_limit(&mut messages, 50);
+        assert_eq!(collapsed, 10);
+        for msg in &messages[..10] {
+            assert!(msg.is_collapsed, "oldest 10 tool results must be collapsed");
+        }
+        for msg in &messages[10..] {
+            assert!(
+                !msg.is_collapsed,
+                "the 50 most recent tool results must stay full"
+            );
+        }
+    }
+
+    #[test]
+    fn collapse_over_limit_triggers_at_one_past_the_threshold() {
+        // Exactly threshold+1 tool calls → the single oldest is collapsed.
+        let mut messages: Vec<Message> = (1..=51).map(tool_call_msg).collect();
+        let collapsed = collapse_tool_results_over_limit(&mut messages, 50);
+        assert_eq!(collapsed, 1);
+        assert!(messages[0].is_collapsed);
+    }
+
+    #[test]
+    fn collapse_over_limit_no_collapse_at_or_under_threshold() {
+        // Exactly the threshold count → nothing collapses.
+        let mut messages: Vec<Message> = (1..=50).map(tool_call_msg).collect();
+        let collapsed = collapse_tool_results_over_limit(&mut messages, 50);
+        assert_eq!(collapsed, 0);
+        assert!(messages.iter().all(|m| !m.is_collapsed));
+
+        // Positive control: the SAME message set with one more tool call must
+        // collapse exactly one, so this test can distinguish the real trigger
+        // from a no-op implementation.
+        messages.push(tool_call_msg(51));
+        let collapsed = collapse_tool_results_over_limit(&mut messages, 50);
+        assert_eq!(collapsed, 1);
+        assert!(messages[0].is_collapsed);
+    }
+
+    #[test]
+    fn collapse_over_limit_honors_non_default_threshold() {
+        // The threshold is configurable, not hard-coded to 50: at limit 10,
+        // 10 tool calls collapse nothing but 11 collapse exactly one.
+        let mut at_limit: Vec<Message> = (1..=10).map(tool_call_msg).collect();
+        assert_eq!(collapse_tool_results_over_limit(&mut at_limit, 10), 0);
+        assert!(at_limit.iter().all(|m| !m.is_collapsed));
+
+        let mut over_limit: Vec<Message> = (1..=11).map(tool_call_msg).collect();
+        assert_eq!(collapse_tool_results_over_limit(&mut over_limit, 10), 1);
+        assert!(over_limit[0].is_collapsed);
+        assert!(over_limit[1..].iter().all(|m| !m.is_collapsed));
+    }
+
+    #[test]
+    fn collapse_over_limit_is_cumulative_across_prompts() {
+        // Two separate prompts (turn numbers reset to a small range each time,
+        // mirroring a fresh run_loop). The trigger must count tool-result
+        // messages across the whole session, not per-prompt turns.
+        let mut messages: Vec<Message> = Vec::new();
+        for i in 1..=30u32 {
+            messages.push(Message::user("prompt"));
+            messages.push(tool_call_msg((i % 3) + 1)); // small, repeating turns
+        }
+        for i in 1..=25u32 {
+            messages.push(Message::user("prompt"));
+            messages.push(tool_call_msg((i % 3) + 1)); // turns reset again
+        }
+        // 55 tool calls total, threshold 50 → oldest 5 collapse.
+        let collapsed = collapse_tool_results_over_limit(&mut messages, 50);
+        assert_eq!(collapsed, 5);
+    }
+
+    #[test]
+    fn collapse_over_limit_disabled_by_sentinel() {
+        // The sentinel disables collapse even when the live tool-call count
+        // (100) would collapse under any finite threshold.
+        let mut messages: Vec<Message> = (1..=100).map(tool_call_msg).collect();
+        let collapsed = collapse_tool_results_over_limit(&mut messages, COLLAPSE_DISABLED);
+        assert_eq!(collapsed, 0);
+        assert!(messages.iter().all(|m| !m.is_collapsed));
+
+        // Control: the identical message set DOES collapse at a finite limit,
+        // so only the sentinel short-circuit can explain the 0 above (a pure
+        // count check would have collapsed 50 here too).
+        let collapsed = collapse_tool_results_over_limit(&mut messages, 50);
+        assert_eq!(collapsed, 50);
+    }
+
+    #[test]
+    fn collapse_over_limit_uses_recall_stub_and_clears_images() {
+        use crate::domain::tool::ImageBlock;
+        let mut messages: Vec<Message> = (1..=51).map(tool_call_msg).collect();
+        messages[0].image_blocks = vec![ImageBlock {
+            mime_type: "image/png",
+            data: "x".repeat(40),
+        }];
+        collapse_tool_results_over_limit(&mut messages, 50);
+        assert!(messages[0].is_collapsed);
+        assert!(
+            messages[0].content.contains("recall(\"turn1:bash:0\")"),
+            "collapsed output must be replaced by the recall() stub"
+        );
+        assert!(
+            messages[0].image_blocks.is_empty(),
+            "collapsed tool result must release image data"
+        );
     }
 
     // --- #305: Improved token estimation heuristic ---

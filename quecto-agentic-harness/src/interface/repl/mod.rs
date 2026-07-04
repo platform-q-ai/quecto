@@ -329,7 +329,11 @@ pub fn run_repl<R: BufRead, W: Write>(
         temperature: ctx.config.agents.defaults.temperature,
         spill_store: Some(spill_store),
         session_key: session_key.clone(),
-        context_collapse_after_turns: ctx.config.agents.defaults.context_collapse_after_turns,
+        context_collapse_after_tool_calls: ctx
+            .config
+            .agents
+            .defaults
+            .context_collapse_after_tool_calls,
         max_context_tokens: ctx.config.agents.defaults.max_context_tokens,
         progress_callback,
         streaming: false,

@@ -374,7 +374,7 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
         temperature: 0.0,
         spill_store: None,
         session_key: "bdd".into(),
-        context_collapse_after_turns: 100,
+        context_collapse_after_tool_calls: 100,
         max_context_tokens: 100_000,
         progress_callback: None,
         streaming: false,

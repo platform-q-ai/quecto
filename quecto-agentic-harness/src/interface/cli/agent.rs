@@ -391,7 +391,7 @@ pub(crate) fn build_agent_from_config(
         temperature: config.agents.defaults.temperature,
         spill_store: Some(spill_store),
         session_key,
-        context_collapse_after_turns: config.agents.defaults.context_collapse_after_turns,
+        context_collapse_after_tool_calls: config.agents.defaults.context_collapse_after_tool_calls,
         max_context_tokens: config.agents.defaults.max_context_tokens,
         progress_callback: None,
         streaming: false,

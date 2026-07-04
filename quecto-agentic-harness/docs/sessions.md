@@ -91,10 +91,12 @@ default `300000`), the agent applies context pruning:
    preserved)
 2. **Spilling**: Tool outputs are written to a spill file when they are created,
    so dropped outputs can still be recovered with the `recall` tool
-3. **Optional tool output collapsing**: Tool outputs older than
-   `context_collapse_after_turns` turns are replaced with compact recall stubs
-   before the sliding window drops them. Current config default: `50`. Set it
-   to `4294967295` (`u32::MAX`) to disable collapse.
+3. **Tool output collapsing**: Once the session accumulates more than
+   `context_collapse_after_tool_calls` tool calls, the oldest tool outputs are
+   replaced with compact recall stubs before the sliding window drops them. The
+   trigger counts tool calls cumulatively across prompts within a session.
+   Current config default: `50`. Set it to `4294967295` (`u32::MAX`) to disable
+   collapse.
 
 ### Spill and recall
 
@@ -156,7 +158,7 @@ Session behavior is configured in `config.json` under `agents.defaults`:
   "agents": {
     "defaults": {
       "max_context_tokens": 100000,
-      "context_collapse_after_turns": 3
+      "context_collapse_after_tool_calls": 3
     }
   }
 }
@@ -165,7 +167,7 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `max_context_tokens` | `300000` | Application-level token budget before context pruning |
-| `context_collapse_after_turns` | `50` | Collapse tool outputs older than N turns. Set to `4294967295` (`u32::MAX`) to disable |
+| `context_collapse_after_tool_calls` | `50` | Collapse the oldest tool outputs once the session exceeds N tool calls. Set to `4294967295` (`u32::MAX`) to disable |
 
 ## See also
 

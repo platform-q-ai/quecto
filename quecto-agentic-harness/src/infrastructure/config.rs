@@ -39,8 +39,13 @@ pub struct AgentDefaults {
     pub exec_max_capture_bytes: usize,
     #[serde(default = "default_max_session_messages")]
     pub max_session_messages: usize,
-    #[serde(default = "default_context_collapse_after_turns")]
-    pub context_collapse_after_turns: u32,
+    // `context_collapse_after_turns` is the pre-#1017 name; kept as a serde
+    // alias so existing config files continue to deserialize.
+    #[serde(
+        default = "default_context_collapse_after_tool_calls",
+        alias = "context_collapse_after_turns"
+    )]
+    pub context_collapse_after_tool_calls: u32,
     #[serde(default = "default_max_context_tokens")]
     pub max_context_tokens: usize,
     /// Effort level for 4.6 models (`low`/`medium`/`high`/`max`).
@@ -65,7 +70,7 @@ impl Default for AgentDefaults {
             restrict_to_workspace: true,
             exec_max_capture_bytes: default_exec_max_capture_bytes(),
             max_session_messages: default_max_session_messages(),
-            context_collapse_after_turns: default_context_collapse_after_turns(),
+            context_collapse_after_tool_calls: default_context_collapse_after_tool_calls(),
             max_context_tokens: default_max_context_tokens(),
             effort: None,
             command_allowlist: None,
@@ -229,11 +234,11 @@ fn default_exec_max_capture_bytes() -> usize {
 fn default_max_session_messages() -> usize {
     200
 }
-fn default_context_collapse_after_turns() -> u32 {
-    // Tool results older than this many turns get collapsed to a
-    // `recall(spill_id)` stub and their full content spilled to disk.
-    // Keeps the hot context small on long sessions; the agent can
-    // retrieve spilled content via the `recall` tool when needed.
+fn default_context_collapse_after_tool_calls() -> u32 {
+    // Once the session accumulates more than this many tool calls, the oldest
+    // tool results get collapsed to a `recall(spill_id)` stub and their full
+    // content spilled to disk. Keeps the hot context small on long sessions;
+    // the agent can retrieve spilled content via the `recall` tool when needed.
     50
 }
 fn default_max_context_tokens() -> usize {
@@ -241,7 +246,7 @@ fn default_max_context_tokens() -> usize {
     // ~1M token window on purpose: a smaller hot-context target
     // keeps latency and cost predictable on long sessions, with
     // older tool output already spilled (see
-    // `default_context_collapse_after_turns`) and the hard-drop
+    // `default_context_collapse_after_tool_calls`) and the hard-drop
     // window dropping oldest non-pinned messages once we breach it.
     200_000
 }
@@ -630,6 +635,30 @@ mod tests {
     fn test_default_max_context_tokens() {
         let config: Config = serde_json::from_str("{}").unwrap();
         assert_eq!(config.agents.defaults.max_context_tokens, 200_000);
+    }
+
+    #[test]
+    fn test_default_context_collapse_after_tool_calls_is_50() {
+        // #1017: collapse triggers after a configurable number of tool calls,
+        // default 50 — pin the default in code, not only in docs.
+        assert_eq!(default_context_collapse_after_tool_calls(), 50);
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.agents.defaults.context_collapse_after_tool_calls, 50);
+        assert_eq!(
+            AgentDefaults::default().context_collapse_after_tool_calls,
+            50
+        );
+    }
+
+    #[test]
+    fn test_context_collapse_legacy_turns_alias_deserializes() {
+        // Pre-#1017 config files used `context_collapse_after_turns`; the serde
+        // alias keeps them working.
+        let json = r#"{
+            "agents": { "defaults": { "context_collapse_after_turns": 12 } }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.agents.defaults.context_collapse_after_tool_calls, 12);
     }
 
     #[test]
