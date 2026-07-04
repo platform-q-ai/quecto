@@ -269,6 +269,10 @@ pub struct ToolCall {
 static TOOL_CALL_CLONE_COUNTS_FOR_TESTS: LazyLock<Mutex<HashMap<String, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+// Manual `Clone` (rather than `#[derive]`) solely so test/test-support builds
+// can count clones of registered call ids and prove the agent loop's hot path
+// moves tool calls instead of deep-cloning their argument JSON (#993). In
+// release builds this is semantically identical to the derived impl.
 impl Clone for ToolCall {
     fn clone(&self) -> Self {
         #[cfg(any(test, feature = "test-support"))]

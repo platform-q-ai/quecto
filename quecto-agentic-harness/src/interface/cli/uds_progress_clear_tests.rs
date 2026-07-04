@@ -74,7 +74,8 @@ async fn test_forward_progress_event_emits_subagent_messages_appended() {
         messages: vec![
             Message::assistant("turn output", vec![]),
             Message::tool("call-1", "tool result body"),
-        ],
+        ]
+        .into(),
     };
     forward_progress_event(ev, &mut buf).await;
 

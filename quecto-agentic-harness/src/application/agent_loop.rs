@@ -686,9 +686,10 @@ impl AgentLoopImpl {
             // Stream this turn's output (assistant message + tool results) over
             // the live progress path so a parent/inspector sees it turn-by-turn,
             // not only at completion (#797). The clone is only paid when a
-            // progress callback is registered (UDS mode), via `notify`'s guard.
+            // progress callback is registered (via `notify`'s guard), and the
+            // Arc<[Message]> payload makes further event clones refcount bumps (#993).
             self.notify(|| AgentProgressEvent::TurnCompleted {
-                messages: messages[appended_from..].to_vec(),
+                messages: messages[appended_from..].into(),
             });
             // Tool calls were executed and spilled — mark dirty for next iteration
             spills_dirty = self.spill_store.is_some();

@@ -203,6 +203,30 @@ fn given_llm_returns_simultaneous_tool_calls(
     }
 }
 
+#[given(expr = "the LLM returns sequential tool calls for {string} then {string}")]
+fn given_llm_returns_sequential_tool_calls(world: &mut QuectoWorld, tool1: String, tool2: String) {
+    let mock = ensure_mock_llm(world);
+    world.executed_tools.lock().unwrap().clear();
+    for tool_name in [&tool1, &tool2] {
+        mock.push_response(LlmResponse {
+            content: None,
+            tool_calls: vec![ToolCall {
+                id: format!("call_{}", tool_name),
+                name: tool_name.to_string(),
+                arguments: "{}".to_string(),
+            }],
+            usage: None,
+            stop_reason: None,
+            thinking_blocks: vec![],
+        });
+        if !world.mock_tools.contains_key(tool_name.as_str()) {
+            let tool =
+                MockBddTool::new(tool_name, "ok").with_calls(Arc::clone(&world.executed_tools));
+            world.mock_tools.insert(tool_name.clone(), Arc::new(tool));
+        }
+    }
+}
+
 #[given(expr = "a configured agent with max_tool_iterations {int}")]
 fn given_agent_with_max_iterations(world: &mut QuectoWorld, max: u32) {
     ensure_mock_llm(world);
@@ -398,6 +422,21 @@ fn then_both_tools_executed(world: &mut QuectoWorld) {
         world.executed_tools.lock().unwrap().as_slice(),
         &["read".to_string(), "write".to_string()],
         "tool calls should execute in assistant-request order"
+    );
+}
+
+#[then("both tools should be executed across two turns in order")]
+fn then_both_tools_executed_sequentially(world: &mut QuectoWorld) {
+    let result = world.agent_result.as_ref().expect("no agent result");
+    assert_eq!(
+        result.tool_iterations, 2,
+        "expected two sequential LLM tool turns, got {}",
+        result.tool_iterations
+    );
+    assert_eq!(
+        world.executed_tools.lock().unwrap().as_slice(),
+        &["read".to_string(), "write".to_string()],
+        "tool calls should execute in turn order"
     );
 }
 

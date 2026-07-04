@@ -108,6 +108,46 @@ async fn unchanged_dynamic_system_prompt_reuses_message_token_cache() {
 }
 
 #[tokio::test]
+async fn changed_dynamic_system_prompt_invalidates_message_token_cache() {
+    let provider = Arc::new(MockProvider::new(vec![
+        text_response("first"),
+        text_response("second"),
+    ]));
+    let prompts = Arc::new(Mutex::new(
+        vec![
+            "first instructions".to_string(),
+            "second instructions".to_string(),
+        ]
+        .into_iter(),
+    ));
+    let agent = AgentLoopImpl::new(agent_config(
+        Arc::clone(&provider),
+        MockRegistry::new(),
+        None,
+        Some(Arc::new(move || {
+            prompts.lock().unwrap().next().expect("prompt available")
+        })),
+    ));
+    let mut messages = vec![Message::user("first")];
+
+    agent.run_loop(&mut messages).await.unwrap();
+    messages.push(Message::user("second"));
+    agent.run_loop(&mut messages).await.unwrap();
+
+    let system_message = messages
+        .iter()
+        .find(|message| message.role == Role::System)
+        .expect("system prompt retained");
+    assert_eq!(provider.request_count(), 2);
+    assert_eq!(system_message.content, "second instructions");
+    assert_eq!(
+        system_message.cached_token_build_count_for_tests(),
+        2,
+        "a changed dynamic prompt must invalidate and rebuild the token cache"
+    );
+}
+
+#[tokio::test]
 async fn tool_turn_preserves_message_order_and_tool_arguments() {
     let first_arguments = format!(
         r#"{{"path":"notes.txt","content":"{}"}}"#,

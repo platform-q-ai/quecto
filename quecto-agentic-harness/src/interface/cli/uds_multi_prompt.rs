@@ -381,7 +381,8 @@ mod tests {
                 messages: vec![
                     Message::assistant("hello from turn", vec![]),
                     Message::tool("call-1", "tool body"),
-                ],
+                ]
+                .into(),
             },
             &tx,
         );

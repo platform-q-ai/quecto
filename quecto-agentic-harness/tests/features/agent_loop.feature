@@ -76,6 +76,14 @@ Feature: Agent Loop
     And the completed turn should include both tool results in order
     And the final response should confirm completion
 
+  Scenario: Message triggers tool calls across sequential turns
+    Given a configured agent with a mock LLM
+    And the LLM returns sequential tool calls for "read" then "write"
+    And the LLM then returns "Done"
+    When the agent processes [message] "Copy my notes to output.txt"
+    Then both tools should be executed across two turns in order
+    And the final response should confirm completion
+
   Scenario: Tool iteration limit prevents infinite loops
     Given a configured agent with max_tool_iterations 3
     And the LLM always returns a tool call
