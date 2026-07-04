@@ -203,17 +203,6 @@ impl<'a> EventSink<'a> {
     }
 }
 
-/// Write an event as a JSON line followed by a newline.
-///
-/// Thin `Writer`-sink adapter retained for the single-client dispatch loop and
-/// unit tests that assert on raw writer bytes.
-pub async fn emit_event(
-    writer: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-    event: &AgentEvent,
-) {
-    EventSink::Writer(writer).emit(event).await;
-}
-
 // ─── Prompt execution ─────────────────────────────────────────────────────────
 
 /// Return code from [`run_agent_message`].
@@ -418,11 +407,7 @@ async fn run_with_token_drain(
                 forward_progress_event_sink(ev, sink).await;
             }
             Some(notif) = notif_recv => {
-                if let Some(tx) = sink.broadcast_sender() {
-                    if forward_notification_broadcast(notif.clone(), tx, subagent_registry) {
-                        notifications.push(notif);
-                    }
-                }
+                collect_notification(notif, sink, subagent_registry, &mut notifications);
             }
             result = &mut process_fut => {
                 // Drain any remaining events that arrived between last poll
@@ -432,15 +417,7 @@ async fn run_with_token_drain(
                 }
                 if let Some(rx) = notification_rx.as_mut() {
                     while let Ok(notif) = rx.try_recv() {
-                        if let Some(tx) = sink.broadcast_sender() {
-                            if forward_notification_broadcast(
-                                notif.clone(),
-                                tx,
-                                subagent_registry,
-                            ) {
-                                notifications.push(notif);
-                            }
-                        }
+                        collect_notification(notif, sink, subagent_registry, &mut notifications);
                     }
                 }
                 break Some(result);
@@ -449,6 +426,29 @@ async fn run_with_token_drain(
     };
 
     (result, notifications)
+}
+
+/// Handle one subagent notification received mid-turn: broadcast it to clients
+/// when the sink is `Broadcast`, and collect it for LLM injection unless the
+/// auto-await dedupe suppresses it. On a `Writer` sink the notification is
+/// still collected (never silently dropped) — only the client fan-out is a
+/// broadcast-only concern (#994).
+fn collect_notification(
+    notif: SequencedSubagentNotification,
+    sink: &EventSink<'_>,
+    subagent_registry: &Option<SubagentRegistry>,
+    notifications: &mut Vec<SequencedSubagentNotification>,
+) {
+    let delivered = match sink.broadcast_sender() {
+        Some(tx) => forward_notification_broadcast(notif.clone(), tx, subagent_registry),
+        None => !crate::infrastructure::tools::subagent_registry::consume_await_dedupe(
+            subagent_registry,
+            &notif.dedupe_key().0,
+        ),
+    };
+    if delivered {
+        notifications.push(notif);
+    }
 }
 
 /// Forward a subagent notification as broadcast events (#534).

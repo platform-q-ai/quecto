@@ -403,15 +403,26 @@ impl<'a> DispatchCtx<'a> {
     /// The [`EventSink`] this context streams to: the broadcast channel on the
     /// multi-client server, otherwise the direct writer (#994).
     fn event_sink(&mut self) -> EventSink<'_> {
-        if let Some(tx) = &self.broadcast_tx {
-            EventSink::Broadcast(tx.clone())
-        } else {
-            EventSink::writer(
-                self.stdout
-                    .as_deref_mut()
-                    .expect("dispatch context has neither broadcast_tx nor stdout"),
-            )
-        }
+        make_event_sink(&self.broadcast_tx, &mut self.stdout)
+    }
+}
+
+/// Build an [`EventSink`] from a dispatch context's sink fields. Free function
+/// (rather than only a `DispatchCtx` method) so callers that also need
+/// disjoint borrows of other `DispatchCtx` fields (e.g. `run_agent_message`)
+/// can split the borrow (#994).
+fn make_event_sink<'s>(
+    broadcast_tx: &Option<tokio::sync::broadcast::Sender<String>>,
+    stdout: &'s mut Option<&mut (dyn tokio::io::AsyncWrite + Send + Unpin)>,
+) -> EventSink<'s> {
+    if let Some(tx) = broadcast_tx {
+        EventSink::Broadcast(tx.clone())
+    } else {
+        EventSink::writer(
+            stdout
+                .as_deref_mut()
+                .expect("dispatch context has neither broadcast_tx nor stdout"),
+        )
     }
 }
 
@@ -643,11 +654,7 @@ async fn run_prompt_dispatch(
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> PromptOutcome {
     let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828: gates connect-time snapshot
-    let mut sink = if let Some(tx) = &ctx.broadcast_tx {
-        EventSink::Broadcast(tx.clone())
-    } else {
-        EventSink::writer(ctx.stdout.as_deref_mut().expect("writer or broadcast sink"))
-    };
+    let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout);
     run_agent_message(PromptRun {
         agent: ctx.agent,
         messages: ctx.messages,
@@ -681,11 +688,7 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 emit_pre_cancelled(ctx).await; // Stale abort (#483).
                 continue; // Don't drop remaining messages — Fired consumed, next arm succeeds.
             };
-            let mut sink = if let Some(tx) = &ctx.broadcast_tx {
-                EventSink::Broadcast(tx.clone())
-            } else {
-                EventSink::writer(ctx.stdout.as_deref_mut().expect("writer or broadcast sink"))
-            };
+            let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout);
             run_agent_message(PromptRun {
                 agent: ctx.agent,
                 messages: ctx.messages,

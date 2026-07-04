@@ -1,12 +1,12 @@
-//! RED tests for #994: unify the duplicated UDS streaming pipeline and cut
-//! per-message serialization churn.
+//! Regression tests for #994: unify the duplicated UDS streaming pipeline and
+//! cut per-message serialization churn.
 //!
 //! The behavioural acceptance criterion exercised here is #2 — parse-error
 //! handling must be *consistent* across the two command loops. The single
-//! client loop (`uds::run_command_loop`) already surfaces the detailed serde
-//! error text via `AgentEvent::err(None, "parse_error", e)`, but the multi
-//! client dispatch loop (`uds_multi::handle_client_msg`) throws that text away
-//! and substitutes a generic `"invalid JSON command"` string. This test drives
+//! client loop (`uds::run_command_loop`) surfaces the detailed serde error
+//! text via `AgentEvent::err(None, "parse_error", e)`; historically the multi
+//! client dispatch loop (`uds_multi::handle_client_msg`) threw that text away
+//! and substituted a generic `"invalid JSON command"` string. This test drives
 //! the multi-client path and asserts the *detailed* text is preserved.
 
 use std::sync::Arc;
@@ -146,5 +146,101 @@ async fn multi_client_parse_error_preserves_detailed_text() {
     assert_ne!(
         err, "invalid JSON command",
         "the generic placeholder text must not be emitted (#994 criterion 2)"
+    );
+}
+
+/// Golden-JSON test for criterion 3 (#994): the borrowed `MessageView`
+/// serializer must produce the exact wire shape the old `json!` tree did, for
+/// every role and for fully-populated tool-call fields.
+#[test]
+fn message_to_json_matches_golden_wire_shape_for_all_roles() {
+    use crate::domain::message::ToolCall;
+    use crate::interface::cli::uds_session::message_to_json;
+
+    // A fully-populated assistant message with a tool call.
+    let assistant = Message::assistant(
+        "calling a tool",
+        vec![ToolCall {
+            id: "tc-1".to_string(),
+            name: "read".to_string(),
+            arguments: "{\"path\":\"x\"}".to_string(),
+        }],
+    );
+    assert_eq!(
+        message_to_json(&assistant),
+        serde_json::json!({
+            "role": "assistant",
+            "content": "calling a tool",
+            "toolCalls": [{"id": "tc-1", "name": "read", "arguments": "{\"path\":\"x\"}"}],
+            "toolCallId": null,
+            "toolName": null,
+        })
+    );
+
+    // A tool-result message carrying toolCallId/toolName.
+    let mut tool = Message::tool("tc-1", "result body");
+    tool.tool_name = Some("read".to_string());
+    assert_eq!(
+        message_to_json(&tool),
+        serde_json::json!({
+            "role": "tool",
+            "content": "result body",
+            "toolCalls": [],
+            "toolCallId": "tc-1",
+            "toolName": "read",
+        })
+    );
+
+    // Every role maps to its static wire name.
+    for (msg, want) in [
+        (Message::system("s"), "system"),
+        (Message::user("u"), "user"),
+        (Message::assistant("a", vec![]), "assistant"),
+        (Message::tool("id", "t"), "tool"),
+    ] {
+        assert_eq!(message_to_json(&msg)["role"], want, "role {:?}", msg.role);
+    }
+}
+
+/// Envelope-equivalence test for criterion 4 (#994): the hand-rolled
+/// `GetMessagesSnapshot` serializer in `build_get_messages_line` must stay
+/// value-identical (modulo key order) to the canonical
+/// `AgentEvent::ok(None, "get_messages", …)` envelope, so the two cannot
+/// silently drift if `AgentEvent::Response` changes.
+#[test]
+fn get_messages_snapshot_line_matches_agent_event_envelope() {
+    use crate::domain::message::ToolCall;
+    use crate::interface::cli::protocol::AgentEvent;
+    use crate::interface::cli::uds_session::message_to_json;
+    use crate::interface::cli::uds_snapshots::build_get_messages_line;
+
+    let messages = vec![
+        Message::user("hello"),
+        Message::assistant(
+            "hi",
+            vec![ToolCall {
+                id: "tc-9".to_string(),
+                name: "bash".to_string(),
+                arguments: "{}".to_string(),
+            }],
+        ),
+        Message::tool("tc-9", "output"),
+    ];
+
+    let line = build_get_messages_line(&messages);
+    let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
+
+    let msgs_json: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
+    let canonical = AgentEvent::ok(
+        None,
+        "get_messages",
+        Some(serde_json::json!({ "messages": msgs_json, "snapshot": true })),
+    );
+    let want: serde_json::Value =
+        serde_json::from_str(&canonical.to_json_line()).expect("canonical event is JSON");
+
+    assert_eq!(
+        got, want,
+        "build_get_messages_line must serialize value-identically to AgentEvent::ok"
     );
 }
