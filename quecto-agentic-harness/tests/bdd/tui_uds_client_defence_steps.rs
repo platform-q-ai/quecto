@@ -1,4 +1,4 @@
-//! Step definitions for `tui_uds_client_defence.feature` (#982).
+//! Step definitions for `tui_uds_client_defence.feature` (#982, #1016).
 //!
 //! These exercise the TUI UDS client's defensive wire-contract in terms of the
 //! events the TUI receives and the resource allowance it gives an untrusted
@@ -25,6 +25,7 @@ pub struct TuiDefenceStream {
     completion_agent_end: Option<Event>,
     completion_turn_end: Option<Event>,
     expected_under_cap_token_len: Option<usize>,
+    expected_under_cap_token: Option<String>,
     _temp_dir: TempDir,
 }
 
@@ -45,6 +46,7 @@ fn tui_connected_to_agent_event_stream(world: &mut QuectoWorld) {
         completion_agent_end: None,
         completion_turn_end: None,
         expected_under_cap_token_len: None,
+        expected_under_cap_token: None,
         _temp_dir: temp_dir,
     });
 }
@@ -109,9 +111,12 @@ fn agent_sends_event_just_below_limit(world: &mut QuectoWorld) {
     let token_prefix = r#"{"type":"token","token":""#;
     let token_suffix = r#""}"#;
     let token_len = MAX_LINE_BYTES - token_prefix.len() - token_suffix.len() - 1;
+    let token: String = (0..token_len)
+        .map(|idx| char::from(b'a' + (idx % 26) as u8))
+        .collect();
     let mut frame = String::with_capacity(MAX_LINE_BYTES);
     frame.push_str(token_prefix);
-    frame.push_str(&"a".repeat(token_len));
+    frame.push_str(&token);
     frame.push_str(token_suffix);
     assert_eq!(frame.len(), MAX_LINE_BYTES - 1);
     frame.push('\n');
@@ -119,6 +124,29 @@ fn agent_sends_event_just_below_limit(world: &mut QuectoWorld) {
     let stream = world.tui_defence_stream.as_mut().expect("stream");
     stream.latest_event = events.into_iter().next();
     stream.expected_under_cap_token_len = Some(token_len);
+    stream.expected_under_cap_token = Some(token);
+}
+
+#[when("the agent sends repeated oversized events followed by a valid token event")]
+fn agent_sends_repeated_oversized_events_then_valid(world: &mut QuectoWorld) {
+    let frames = (0..3)
+        .map(|idx| {
+            let mut oversized = String::with_capacity(MAX_LINE_BYTES + 131_072);
+            oversized.push_str(r#"{"type":"token","token":""#);
+            oversized.push_str(OVERSIZED_MARKER);
+            oversized.push_str(&idx.to_string());
+            oversized.push_str(&"x".repeat(MAX_LINE_BYTES + 65_536));
+            oversized.push_str("\"}\n");
+            oversized.into_bytes()
+        })
+        .chain(std::iter::once(
+            b"{\"type\":\"token\",\"token\":\"later\"}\n".to_vec(),
+        ))
+        .collect();
+    let events = send_frames_and_receive(world, frames);
+    let stream = world.tui_defence_stream.as_mut().expect("stream");
+    stream.latest_event = events.first().cloned();
+    stream.received_events = events;
 }
 
 #[when("the agent reports completion with details the TUI does not display")]
@@ -145,6 +173,7 @@ fn agent_reports_completion_with_undisplayed_details(world: &mut QuectoWorld) {
 }
 
 #[then("the TUI should ignore the oversized event")]
+#[then("the TUI should ignore the oversized events")]
 fn tui_ignores_oversized_event(world: &mut QuectoWorld) {
     let stream = world.tui_defence_stream.as_ref().expect("stream");
     assert!(
@@ -169,11 +198,18 @@ fn tui_receives_later_token_event(world: &mut QuectoWorld) {
 fn tui_receives_event(world: &mut QuectoWorld) {
     let stream = world.tui_defence_stream.as_ref().expect("stream");
     match &stream.latest_event {
-        Some(Event::Token { token }) => assert_eq!(
-            Some(token.len()),
-            stream.expected_under_cap_token_len,
-            "just-below-limit token should be delivered intact"
-        ),
+        Some(Event::Token { token }) => {
+            assert_eq!(
+                Some(token.len()),
+                stream.expected_under_cap_token_len,
+                "just-below-limit token should be delivered intact"
+            );
+            assert_eq!(
+                Some(token),
+                stream.expected_under_cap_token.as_ref(),
+                "just-below-limit token content should be delivered intact"
+            );
+        }
         other => panic!("expected token event, got {other:?}"),
     }
 }

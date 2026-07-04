@@ -24,16 +24,19 @@ fn bind_test_socket(name: &str) -> (tokio::net::UnixListener, std::path::PathBuf
 
 /// Build a well-formed token event frame (without trailing newline) whose
 /// total length is exactly `frame_len` bytes.
-fn token_frame_of_len(frame_len: usize) -> (String, usize) {
+fn token_frame_of_len(frame_len: usize) -> (String, String) {
     let token_prefix = r#"{"type":"token","token":""#;
     let token_suffix = r#""}"#;
     let token_len = frame_len - token_prefix.len() - token_suffix.len();
+    let token: String = (0..token_len)
+        .map(|idx| char::from(b'a' + (idx % 26) as u8))
+        .collect();
     let mut frame = String::with_capacity(frame_len);
     frame.push_str(token_prefix);
-    frame.push_str(&"a".repeat(token_len));
+    frame.push_str(&token);
     frame.push_str(token_suffix);
     assert_eq!(frame.len(), frame_len);
-    (frame, token_len)
+    (frame, token)
 }
 
 #[tokio::test]
@@ -47,9 +50,12 @@ async fn oversized_line_read_keeps_buffer_bounded_and_resumes_at_next_line() {
     let mut reader = tokio::io::BufReader::new(input.as_slice());
     let mut line = Vec::new();
 
-    let bytes_read = read_bounded_line(&mut reader, &mut line).await.unwrap();
+    let read = quecto_line_io::read_bounded_line_into(&mut reader, &mut line, MAX_LINE_BYTES)
+        .await
+        .unwrap()
+        .expect("oversized line");
     assert!(
-        bytes_read > MAX_LINE_BYTES,
+        read.bytes_read > MAX_LINE_BYTES,
         "oversized frame should be consumed"
     );
     let capacity_after_oversized = line.capacity();
@@ -59,9 +65,12 @@ async fn oversized_line_read_keeps_buffer_bounded_and_resumes_at_next_line() {
         "oversized frame must not inflate the line buffer beyond the protocol cap plus a small constant; capacity was {capacity_after_oversized}"
     );
 
-    let bytes_read = read_bounded_line(&mut reader, &mut line).await.unwrap();
+    let read = quecto_line_io::read_bounded_line_into(&mut reader, &mut line, MAX_LINE_BYTES)
+        .await
+        .unwrap()
+        .expect("next line");
     assert!(
-        bytes_read > 0,
+        read.bytes_read > 0,
         "reader should resume at the next framed event"
     );
     assert!(
@@ -113,7 +122,7 @@ async fn client_connect_handles_line_just_under_cap() {
 
     // Content of MAX-1 bytes; with the newline the line is exactly MAX bytes —
     // the largest frame the client accepts.
-    let (frame, token_len) = token_frame_of_len(MAX_LINE_BYTES - 1);
+    let (frame, expected_token) = token_frame_of_len(MAX_LINE_BYTES - 1);
 
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
@@ -127,7 +136,7 @@ async fn client_connect_handles_line_just_under_cap() {
         .await
         .unwrap()
     {
-        Some(Event::Token { token }) => assert_eq!(token.len(), token_len),
+        Some(Event::Token { token }) => assert_eq!(token, expected_token),
         other => panic!("line just under cap should be handled normally, got {other:?}"),
     }
 
@@ -140,7 +149,7 @@ async fn client_connect_drops_line_exactly_at_cap() {
 
     // Content of exactly MAX bytes: with the newline the line is one byte over
     // the cap — the first frame that must be dropped. Pins the flip point so
-    // an off-by-one in read_bounded_line's capacity/newline handling cannot
+    // an off-by-one in read_bounded_line_into's capacity/newline handling cannot
     // land silently between the accepted MAX-1 case and the +64KiB case.
     let (frame, _) = token_frame_of_len(MAX_LINE_BYTES);
 

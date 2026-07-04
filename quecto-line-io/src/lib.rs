@@ -7,14 +7,11 @@
 //! *entire* line before any length check can run, so one giant unterminated
 //! line can grow the buffer without bound before it's dropped.
 //!
-//! `quecto-tui` implements the same guarantee separately: its reader reuses a
-//! caller-owned buffer (with `shrink_to` reclaim) to avoid per-line allocation
-//! on the hot render path, which this allocate-per-call API does not yet offer.
-//! Migrating it here is deferred until this crate grows a
-//! `read_bounded_line_into(&mut Vec<u8>, ..)` variant — tracked as
-//! follow-up issue #1016.
+//! `quecto-tui` uses [`read_bounded_line_into`] so its hot event-reader path
+//! can reuse a caller-owned buffer (with `shrink_to` reclaim) without keeping a
+//! separate copy of the same capped framing logic.
 //!
-//! [`read_bounded_line`] instead caps memory growth *while* reading: once the
+//! [`read_bounded_line`] caps memory growth *while* reading: once the
 //! accumulated line reaches `max_bytes`, any further bytes up to the next
 //! `\n` are read from the socket (so the stream stays framed) but discarded
 //! rather than appended, so the buffer never exceeds `max_bytes`. Callers
@@ -40,7 +37,20 @@ pub struct BoundedLine {
     pub truncated: bool,
 }
 
+/// Metadata for a line read into a caller-owned byte buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundedLineRead {
+    /// Number of bytes consumed from the underlying reader, including a
+    /// terminating `\n` when one was present and including bytes discarded after
+    /// `max_bytes` for oversized lines.
+    pub bytes_read: usize,
+    /// `true` if the wire line exceeded `max_bytes` bytes and the tail was
+    /// consumed but not appended to the caller's buffer.
+    pub truncated: bool,
+}
+
 const INITIAL_CAPACITY: usize = 8 * 1024;
+const RECLAIM_THRESHOLD: usize = 64 * 1024;
 
 /// Convert the accumulated line bytes into a `String`, reusing the existing
 /// `Vec` allocation on the common valid-UTF-8 path and only paying a lossy
@@ -58,6 +68,10 @@ fn finish(buf: Vec<u8>) -> String {
 /// `Ok(Some(BoundedLine { truncated: true, .. }))` when the line on the wire
 /// exceeded `max_bytes` — the stream is still fully drained up to (and
 /// including) the next `\n`, so framing is preserved for the next call.
+///
+/// This allocate-per-call convenience wrapper is implemented on top of
+/// [`read_bounded_line_into`]. Use that lower-level API when a hot loop should
+/// reuse a caller-owned `Vec<u8>` or distinguish invalid UTF-8 from valid text.
 ///
 /// # Caveats
 /// - **Not cancellation-safe.** If the returned future is dropped before
@@ -85,41 +99,103 @@ where
     // common short-line path, but never eagerly allocate the full `max_bytes`
     // (which can be 1 MiB) for what is usually a tiny line.
     let mut buf: Vec<u8> = Vec::with_capacity(max_bytes.min(INITIAL_CAPACITY));
+    // `read_bounded_line`'s historical contract excludes the trailing newline
+    // from `max_bytes`, while `read_bounded_line_into` caps the raw framed
+    // bytes it keeps. Permit one extra byte here so a content-exact line can
+    // still keep and strip its newline without being reported as truncated.
+    let framed_cap = max_bytes.saturating_add(1);
+    let Some(read) = read_bounded_line_into(reader, &mut buf, framed_cap).await? else {
+        return Ok(None);
+    };
+    if buf.ends_with(b"\n") {
+        buf.pop();
+    }
+    if buf.len() > max_bytes {
+        buf.truncate(max_bytes);
+        buf.shrink_to(max_bytes);
+    }
+    Ok(Some(BoundedLine {
+        content: finish(buf),
+        truncated: read.truncated,
+    }))
+}
+
+/// Read one line from `reader` into a reusable caller-owned byte buffer.
+///
+/// `line` is cleared before reading. If its capacity is above 64 KiB, the
+/// allocation is shrunk toward 8 KiB before reading so a previous oversized
+/// frame does not keep memory pinned on the hot path. The function then appends
+/// bytes from the next wire line until either `max_bytes` buffered bytes have
+/// been kept or the line ends. Any bytes beyond `max_bytes` are still consumed
+/// up to the next `\n` (or EOF) but are not appended, preserving stream
+/// framing without unbounded buffering.
+///
+/// Unlike [`read_bounded_line`], this API leaves the bytes exactly as read:
+/// the terminating `\n` is included when it fits under `max_bytes`, trailing
+/// `\r` is preserved, and invalid UTF-8 remains available for the caller to
+/// reject instead of being lossily normalized.
+///
+/// Returns `Ok(None)` at EOF with no trailing partial data. Returns
+/// `Ok(Some(BoundedLineRead { truncated: true, .. }))` when the line on the
+/// wire exceeded `max_bytes`; `bytes_read` is the number of bytes consumed from
+/// the reader, including discarded bytes and the newline when present.
+///
+/// # Caveats
+/// - **Not cancellation-safe.** If the returned future is dropped before
+///   completion (e.g. losing a `select!` race), bytes already consumed from
+///   `reader` for the partially-read line are lost; the next call starts
+///   mid-line.
+/// - Truncation is byte-wise. Callers converting the kept bytes to UTF-8 decide
+///   whether to reject or perform lossy replacement.
+///
+/// # Errors
+/// Propagates the underlying reader's I/O errors.
+pub async fn read_bounded_line_into<R>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+    max_bytes: usize,
+) -> std::io::Result<Option<BoundedLineRead>>
+where
+    R: AsyncBufRead + Unpin,
+{
+    line.clear();
+    // Reclaim memory before reading so the shrink happens even when the caller
+    // will later skip its loop tail for oversized, invalid, or empty frames.
+    if line.capacity() > RECLAIM_THRESHOLD {
+        line.shrink_to(INITIAL_CAPACITY.min(max_bytes));
+    }
+
+    let mut bytes_read = 0;
     let mut truncated = false;
     loop {
         let available = reader.fill_buf().await?;
         if available.is_empty() {
-            // EOF: surface any trailing partial line, else signal closed stream.
-            return Ok((!buf.is_empty() || truncated).then(|| BoundedLine {
-                content: finish(buf),
+            return Ok((bytes_read > 0 || truncated).then_some(BoundedLineRead {
+                bytes_read,
                 truncated,
             }));
         }
-        let newline_pos = available.iter().position(|&b| b == b'\n');
+
+        let newline_pos = available.iter().position(|&byte| byte == b'\n');
         let take = newline_pos.map_or(available.len(), |pos| pos + 1);
-        // Only copy up to the amount of room remaining under the cap; any
-        // bytes beyond that within this chunk are consumed (so the stream
-        // stays framed) but never appended to `buf`.
-        let usable = newline_pos.unwrap_or(available.len());
-        let copy_len = max_bytes.saturating_sub(buf.len()).min(usable);
-        if copy_len < usable {
+        let copy_len = max_bytes.saturating_sub(line.len()).min(take);
+        if copy_len < take {
             truncated = true;
         }
-        // Grow by doubling for amortized O(1) appends, but never past
-        // `max_bytes`: unchecked `extend_from_slice` doubling could otherwise
-        // overshoot the cap (e.g. 600 KiB → 1.2 MiB), breaking the "buffer
-        // never exceeds max_bytes" invariant the tests pin via `capacity()`.
-        if buf.len() + copy_len > buf.capacity() {
-            let target = (buf.capacity() * 2)
-                .max(buf.len() + copy_len)
+
+        if line.len() + copy_len > line.capacity() {
+            let target = (line.capacity() * 2)
+                .max(line.len() + copy_len)
                 .min(max_bytes);
-            buf.reserve_exact(target - buf.len());
+            line.reserve_exact(target - line.len());
         }
-        buf.extend_from_slice(&available[..copy_len]);
+        line.extend_from_slice(&available[..copy_len]);
+        bytes_read += take;
         reader.consume(take);
+
         if newline_pos.is_some() {
-            return Ok(Some(BoundedLine {
-                content: finish(buf),
+            return Ok(Some(BoundedLineRead {
+                bytes_read,
                 truncated,
             }));
         }
@@ -286,5 +362,158 @@ mod tests {
         let line = read_bounded_line(&mut r, 4).await.unwrap().unwrap();
         assert!(line.truncated);
         assert_eq!(line.content, "aaa\u{FFFD}");
+    }
+
+    #[tokio::test]
+    async fn into_reuses_caller_buffer_and_preserves_framed_bytes() {
+        let mut r = reader(b"one\ntwo\n");
+        let mut buf = Vec::with_capacity(128);
+        let original_ptr = buf.as_ptr();
+
+        let first = read_bounded_line_into(&mut r, &mut buf, 1024)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.bytes_read, 4);
+        assert!(!first.truncated);
+        assert_eq!(buf, b"one\n");
+        assert_eq!(buf.as_ptr(), original_ptr);
+
+        let second = read_bounded_line_into(&mut r, &mut buf, 1024)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.bytes_read, 4);
+        assert!(!second.truncated);
+        assert_eq!(buf, b"two\n");
+        assert_eq!(buf.as_ptr(), original_ptr);
+    }
+
+    #[tokio::test]
+    async fn into_reclaims_large_capacity_before_reading_next_line() {
+        let mut input = vec![b'x'; 100_000];
+        input.push(b'\n');
+        input.extend_from_slice(b"ok\n");
+        let mut r = tokio::io::BufReader::with_capacity(16, &input[..]);
+        let mut buf = Vec::new();
+
+        let oversized = read_bounded_line_into(&mut r, &mut buf, 70_000)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(oversized.truncated);
+        assert_eq!(buf.len(), 70_000);
+        assert!(
+            buf.capacity() > 64 * 1024,
+            "test setup must force the reusable buffer above the reclaim threshold; capacity was {}",
+            buf.capacity()
+        );
+
+        let next = read_bounded_line_into(&mut r, &mut buf, 70_000)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.bytes_read, 3);
+        assert!(!next.truncated);
+        assert_eq!(buf, b"ok\n");
+        assert!(
+            buf.capacity() <= 8 * 1024,
+            "the reusable buffer should be reclaimed before the next read; capacity was {}",
+            buf.capacity()
+        );
+    }
+
+    #[tokio::test]
+    async fn into_reclaims_only_above_threshold() {
+        let mut r = reader(b"ok\n");
+        let mut buf = Vec::with_capacity(64 * 1024);
+        let original_capacity = buf.capacity();
+
+        let read = read_bounded_line_into(&mut r, &mut buf, 70_000)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(read.bytes_read, 3);
+        assert_eq!(buf, b"ok\n");
+        assert_eq!(buf.capacity(), original_capacity);
+    }
+
+    #[tokio::test]
+    async fn into_exact_cap_and_one_byte_over_boundaries() {
+        let mut input = b"abc\n".to_vec();
+        input.extend_from_slice(b"abcd\n");
+        let mut r = BufReader::new(&input[..]);
+        let mut buf = Vec::new();
+
+        let exact = read_bounded_line_into(&mut r, &mut buf, 4)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(exact.bytes_read, 4);
+        assert!(!exact.truncated);
+        assert_eq!(buf, b"abc\n");
+
+        let over = read_bounded_line_into(&mut r, &mut buf, 4)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(over.bytes_read, 5);
+        assert!(over.truncated);
+        assert_eq!(buf, b"abcd");
+    }
+
+    #[tokio::test]
+    async fn into_preserves_invalid_utf8_bytes_for_callers_to_reject() {
+        let input = [b'a', 0xFF, b'b', b'\n'];
+        let mut r = BufReader::new(&input[..]);
+        let mut buf = Vec::new();
+
+        let read = read_bounded_line_into(&mut r, &mut buf, 1024)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(read.bytes_read, 4);
+        assert!(!read.truncated);
+        assert_eq!(buf, input);
+        assert!(std::str::from_utf8(&buf).is_err());
+    }
+
+    #[tokio::test]
+    async fn into_discards_oversized_tail_and_resumes_at_next_line() {
+        let mut input = vec![b'x'; 50];
+        input.push(b'\n');
+        input.extend_from_slice(b"next\n");
+        let mut r = BufReader::new(&input[..]);
+        let mut buf = Vec::new();
+
+        let first = read_bounded_line_into(&mut r, &mut buf, 10)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.bytes_read, 51);
+        assert!(first.truncated);
+        assert_eq!(buf.len(), 10);
+        assert!(!buf.ends_with(b"\n"));
+
+        let second = read_bounded_line_into(&mut r, &mut buf, 10)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.bytes_read, 5);
+        assert!(!second.truncated);
+        assert_eq!(buf, b"next\n");
+    }
+
+    #[tokio::test]
+    async fn into_returns_none_at_clean_eof() {
+        let mut r = reader(b"");
+        let mut buf = b"stale".to_vec();
+        assert!(
+            read_bounded_line_into(&mut r, &mut buf, 1024)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(buf.is_empty());
     }
 }
