@@ -1,15 +1,9 @@
 #[test]
-fn parse_line_rejects_empty_and_oversized_lines() {
+fn parse_line_rejects_empty_lines() {
     match super::parse_line("   ") {
         super::LineResult::ParseError(err) => assert!(err.is_empty()),
         _ => panic!("expected empty parse error"),
     }
-
-    let too_long = "x".repeat(super::MAX_LINE_BYTES + 1);
-    assert!(matches!(
-        super::parse_line(&too_long),
-        super::LineResult::LineTooLong
-    ));
 }
 
 #[test]

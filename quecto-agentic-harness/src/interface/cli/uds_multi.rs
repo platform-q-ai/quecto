@@ -431,10 +431,6 @@ async fn handle_client_msg(
         ClientMessage::Command(cmd) => {
             ctx.current_client_id = cmd.client_id;
             match parse_line(&cmd.line) {
-                LineResult::LineTooLong => {
-                    let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
-                    emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                }
                 LineResult::ParseError(e) if e.is_empty() => {}
                 LineResult::ParseError(_) => {
                     let ev = AgentEvent::Response {
@@ -565,12 +561,19 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
     loop {
         let bounded = match quecto_line_io::read_bounded_line(&mut reader, MAX_LINE_BYTES).await {
             Ok(Some(bounded)) => bounded,
-            Ok(None) | Err(_) => break,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!(client_id, error = %e, "client reader loop exiting on I/O error");
+                break;
+            }
         };
         if bounded.truncated {
+            // `bounded.content.len()` is the *capped* length, not the wire
+            // length (the tail was discarded during the read), so report the
+            // cap it exceeded rather than a misleading exact size.
             tracing::warn!(
-                len = bounded.content.len(),
-                "dropping oversized line from client"
+                "dropping oversized line from client (over {} bytes)",
+                MAX_LINE_BYTES
             );
             continue;
         }

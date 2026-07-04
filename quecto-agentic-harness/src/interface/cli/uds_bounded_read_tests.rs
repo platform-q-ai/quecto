@@ -151,4 +151,13 @@ async fn read_bounded_line_never_buffers_an_oversized_command_past_the_cap() {
         .expect("line present");
     assert!(bounded.truncated);
     assert_eq!(bounded.content.len(), MAX_LINE_BYTES);
+    // Duplicate of the quecto-line-io crate test, kept here to pin the
+    // helper's invariant at this call site: the valid-UTF-8 path reuses the
+    // accumulation buffer's allocation, so capacity() observes the internal
+    // buffer — it must never grow past the cap.
+    assert!(
+        bounded.content.capacity() <= MAX_LINE_BYTES,
+        "buffer capacity {} exceeded MAX_LINE_BYTES",
+        bounded.content.capacity()
+    );
 }

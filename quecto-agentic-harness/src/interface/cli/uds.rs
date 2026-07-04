@@ -303,13 +303,14 @@ pub(super) fn is_steer_command(trimmed: &str) -> bool {
 pub(super) enum LineResult {
     Command(AgentCommand),
     ParseError(String),
-    LineTooLong,
 }
 
+// NOTE: a `LineTooLong` variant used to live here, produced by a post-hoc
+// `line.len() > MAX_LINE_BYTES` check. Since #1003 both reader loops enforce
+// the cap *while reading* (`quecto_line_io::read_bounded_line`) and surface
+// oversized lines before `parse_line` is ever called, so the variant was
+// unreachable and has been removed.
 pub(super) fn parse_line(line: &str) -> LineResult {
-    if line.len() > MAX_LINE_BYTES {
-        return LineResult::LineTooLong;
-    }
     let line = line.trim();
     if line.is_empty() {
         return LineResult::ParseError(String::new());
@@ -343,10 +344,6 @@ async fn run_command_loop(
         };
 
         match parse_line(&raw) {
-            LineResult::LineTooLong => {
-                let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
-                emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            }
             LineResult::ParseError(e) if e.is_empty() => {}
             LineResult::ParseError(e) => {
                 let ev = AgentEvent::err(None, "parse_error", e);

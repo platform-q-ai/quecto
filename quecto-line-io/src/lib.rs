@@ -11,7 +11,8 @@
 //! caller-owned buffer (with `shrink_to` reclaim) to avoid per-line allocation
 //! on the hot render path, which this allocate-per-call API does not yet offer.
 //! Migrating it here is deferred until this crate grows a
-//! `read_bounded_line_into(&mut Vec<u8>, ..)` variant.
+//! `read_bounded_line_into(&mut Vec<u8>, ..)` variant — tracked as
+//! follow-up issue #1016.
 //!
 //! [`read_bounded_line`] instead caps memory growth *while* reading: once the
 //! accumulated line reaches `max_bytes`, any further bytes up to the next
@@ -28,6 +29,11 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundedLine {
     /// The line's content, excluding the trailing `\n`, capped to `max_bytes`.
+    ///
+    /// Truncation is *byte-wise* and may split a multi-byte UTF-8 codepoint;
+    /// in that case the lossy conversion replaces the dangling prefix with
+    /// U+FFFD (3 bytes), so on that path `content.len()` may slightly exceed
+    /// `max_bytes`.
     pub content: String,
     /// `true` if the source line on the wire was longer than `max_bytes` and
     /// bytes beyond the cap were discarded (rather than buffered).
@@ -52,6 +58,19 @@ fn finish(buf: Vec<u8>) -> String {
 /// `Ok(Some(BoundedLine { truncated: true, .. }))` when the line on the wire
 /// exceeded `max_bytes` — the stream is still fully drained up to (and
 /// including) the next `\n`, so framing is preserved for the next call.
+///
+/// # Caveats
+/// - **Not cancellation-safe.** If the returned future is dropped before
+///   completion (e.g. losing a `select!` race), bytes already consumed from
+///   `reader` for the partially-read line are lost; the next call starts
+///   mid-line.
+/// - A trailing `\r` is **preserved** (unlike `AsyncBufReadExt::lines`, which
+///   strips `\r\n`). Callers speaking a `\r\n`-tolerant protocol must trim it
+///   themselves.
+/// - Truncation is byte-wise and may split a multi-byte UTF-8 codepoint; the
+///   lossy conversion then yields U+FFFD, so a truncated `content.len()` may
+///   slightly exceed `max_bytes`. The *buffered bytes* never exceed
+///   `max_bytes`.
 ///
 /// # Errors
 /// Propagates the underlying reader's I/O errors.
@@ -85,6 +104,16 @@ where
         let copy_len = max_bytes.saturating_sub(buf.len()).min(usable);
         if copy_len < usable {
             truncated = true;
+        }
+        // Grow by doubling for amortized O(1) appends, but never past
+        // `max_bytes`: unchecked `extend_from_slice` doubling could otherwise
+        // overshoot the cap (e.g. 600 KiB → 1.2 MiB), breaking the "buffer
+        // never exceeds max_bytes" invariant the tests pin via `capacity()`.
+        if buf.len() + copy_len > buf.capacity() {
+            let target = (buf.capacity() * 2)
+                .max(buf.len() + copy_len)
+                .min(max_bytes);
+            buf.reserve_exact(target - buf.len());
         }
         buf.extend_from_slice(&available[..copy_len]);
         reader.consume(take);
@@ -175,6 +204,16 @@ mod tests {
         let line = read_bounded_line(&mut r, 100).await.unwrap().unwrap();
         assert_eq!(line.content.len(), 100);
         assert!(line.truncated);
+        // The valid-UTF-8 path in `finish` reuses the accumulation buffer's
+        // allocation verbatim, so this observes the internal buffer's real
+        // capacity: growth is capped at `max_bytes`, and a regression to
+        // "buffer everything, truncate post-hoc" (or unchecked doubling past
+        // the cap) fails here.
+        assert!(
+            line.content.capacity() <= 100,
+            "buffer capacity {} exceeded max_bytes",
+            line.content.capacity()
+        );
     }
 
     /// After an oversized line, the framing must still be intact so the next
@@ -204,5 +243,48 @@ mod tests {
         let line = read_bounded_line(&mut r, 1024).await.unwrap().unwrap();
         assert_eq!(line.content, "a\u{FFFD}b");
         assert!(!line.truncated);
+    }
+
+    /// An oversized line that ends at EOF *without* a terminating `\n` must
+    /// still be surfaced (with `truncated: true`) via the `|| truncated` arm
+    /// of the EOF branch, and the following call must report clean EOF.
+    #[tokio::test]
+    async fn oversized_unterminated_line_at_eof_is_surfaced_as_truncated() {
+        let payload = vec![b'x'; 500]; // no trailing '\n'
+        let mut r = tokio::io::BufReader::with_capacity(16, &payload[..]);
+        let line = read_bounded_line(&mut r, 100).await.unwrap().unwrap();
+        assert!(line.truncated);
+        assert_eq!(line.content.len(), 100);
+        assert!(
+            read_bounded_line(&mut r, 100).await.unwrap().is_none(),
+            "the call after the truncated EOF line must return None"
+        );
+    }
+
+    /// Pins that a trailing `\r` is preserved — unlike
+    /// `AsyncBufReadExt::lines()`, which strips `\r\n`. Documented in the
+    /// `read_bounded_line` caveats; callers must trim it themselves.
+    #[tokio::test]
+    async fn trailing_carriage_return_is_preserved() {
+        let mut r = reader(b"hello\r\n");
+        let line = read_bounded_line(&mut r, 1024).await.unwrap().unwrap();
+        assert_eq!(line.content, "hello\r");
+        assert!(!line.truncated);
+    }
+
+    /// Byte-wise truncation may split a multi-byte UTF-8 codepoint; the lossy
+    /// conversion must yield U+FFFD for the dangling prefix without panicking.
+    /// Note `content.len()` may exceed `max_bytes` on this path (U+FFFD is 3
+    /// bytes), which the docs call out.
+    #[tokio::test]
+    async fn truncation_mid_codepoint_yields_replacement_character() {
+        // "é" is 2 bytes (0xC3 0xA9); cap at 4 bytes so truncation lands
+        // after the first byte of the second "é".
+        let mut input = "aaaéé".as_bytes().to_vec(); // 3 + 2 + 2 = 7 bytes
+        input.push(b'\n');
+        let mut r = BufReader::new(&input[..]);
+        let line = read_bounded_line(&mut r, 4).await.unwrap().unwrap();
+        assert!(line.truncated);
+        assert_eq!(line.content, "aaa\u{FFFD}");
     }
 }

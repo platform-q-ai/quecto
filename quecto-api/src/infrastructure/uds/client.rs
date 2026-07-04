@@ -331,8 +331,14 @@ mod tests {
         let socket_path = dir.path().join("agent.sock");
         let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind test socket");
 
+        // Gate the server writes on the subscription existing: broadcast
+        // sends before `subscribe()` are dropped (see the reader loop in
+        // `connect`), so writing immediately after accept races the
+        // subscription and flakes.
+        let (subscribed_tx, subscribed_rx) = tokio::sync::oneshot::channel::<()>();
         let accept_task = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.expect("accept");
+            subscribed_rx.await.expect("subscribed signal");
             // One giant unterminated-then-terminated line, well over
             // MAX_LINE_BYTES, followed by a normal, valid event.
             let oversized = format!(
@@ -353,6 +359,7 @@ mod tests {
             .await
             .expect("connect to agent socket");
         let mut sub = gateway.subscribe().await.expect("subscribe");
+        subscribed_tx.send(()).expect("signal subscribed");
 
         let event = tokio::time::timeout(std::time::Duration::from_secs(3), sub.recv())
             .await

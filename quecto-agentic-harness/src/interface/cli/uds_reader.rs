@@ -1,6 +1,6 @@
 //! Bounded line reader task for the UDS command loop.
 //!
-//! Extracted from `uds.rs` (pure move, #1003) to keep that module under the
+//! Extracted from `uds.rs` (#1003) to keep that module under the
 //! per-file line-count gate. The reader enforces the 1 MiB line cap *while
 //! reading* via `quecto_line_io::read_bounded_line`, surfacing oversized lines
 //! as [`RawLine::TooLong`] instead of buffering them in full.
