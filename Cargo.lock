@@ -1624,7 +1624,7 @@ dependencies = [
 
 [[package]]
 name = "quecto"
-version = "0.81.27"
+version = "0.81.30"
 dependencies = [
  "base64",
  "cucumber",
@@ -1632,6 +1632,7 @@ dependencies = [
  "filetime",
  "futures",
  "libc",
+ "quecto-line-io",
  "quecto-tui",
  "rand 0.8.5",
  "regex",
@@ -1654,19 +1655,28 @@ dependencies = [
 
 [[package]]
 name = "quecto-api"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "axum 0.8.8",
  "cucumber",
+ "quecto-line-io",
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tower-http",
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "quecto-line-io"
+version = "0.1.1"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]

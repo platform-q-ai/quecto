@@ -355,6 +355,12 @@ fn stamp_request_id(command: &str) -> (String, Option<String>) {
 /// this caps each line so a sub-agent cannot OOM the parent with one giant line,
 /// while still allowing an unbounded number of normal-sized lines to be skipped
 /// before the `response` event arrives.
+///
+/// Delegates the bounded-read framing itself to the shared
+/// [`quecto_line_io::read_bounded_line`] helper (#1003) so every JSON-lines
+/// reader in the workspace shares one cap/consume implementation; this
+/// function only adds the crate-local error type and the "reject oversized
+/// lines" policy on top.
 async fn read_line_capped<R>(
     reader: &mut R,
     max_bytes: usize,
@@ -363,36 +369,16 @@ where
     R: tokio::io::AsyncBufRead + Unpin,
 {
     use crate::domain::error::DomainError;
-    use tokio::io::AsyncBufReadExt;
 
-    let mut buf: Vec<u8> = Vec::new();
-    loop {
-        let available = reader
-            .fill_buf()
-            .await
-            .map_err(|e| DomainError::Tool(format!("read from subagent failed: {e}")))?;
-        if available.is_empty() {
-            // EOF: surface any trailing partial line, else signal closed stream.
-            return Ok((!buf.is_empty()).then(|| String::from_utf8_lossy(&buf).into_owned()));
-        }
-        if let Some(pos) = available.iter().position(|&b| b == b'\n') {
-            buf.extend_from_slice(&available[..pos]);
-            reader.consume(pos + 1);
-            if buf.len() > max_bytes {
-                return Err(DomainError::Tool(
-                    "subagent response line exceeded size limit".into(),
-                ));
-            }
-            return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
-        }
-        let consumed = available.len();
-        buf.extend_from_slice(available);
-        reader.consume(consumed);
-        if buf.len() > max_bytes {
-            return Err(DomainError::Tool(
-                "subagent response line exceeded size limit".into(),
-            ));
-        }
+    let bounded = quecto_line_io::read_bounded_line(reader, max_bytes)
+        .await
+        .map_err(|e| DomainError::Tool(format!("read from subagent failed: {e}")))?;
+    match bounded {
+        None => Ok(None),
+        Some(line) if line.truncated => Err(DomainError::Tool(
+            "subagent response line exceeded size limit".into(),
+        )),
+        Some(line) => Ok(Some(line.content)),
     }
 }
 

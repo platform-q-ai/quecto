@@ -1,6 +1,6 @@
 [package]
 name = "quecto-api"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2024"
 description = "HTTP/WebSocket gateway to a quecto agent over UDS"
 license = "LicenseRef-Proprietary"
@@ -8,6 +8,9 @@ license = "LicenseRef-Proprietary"
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "net", "sync", "io-util"] }
+
+# Shared bounded JSON-lines reader (#1003)
+quecto-line-io = { version = "0.1.1", path = "../quecto-line-io" }
 
 # HTTP server
 axum = { version = "0.8", features = ["ws"] }
@@ -30,6 +33,7 @@ uuid = { version = "1", features = ["v4"] }
 [dev-dependencies]
 cucumber = { version = "0.21", features = ["macros"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tempfile = "3"
 
 [[test]]
 name = "bdd"

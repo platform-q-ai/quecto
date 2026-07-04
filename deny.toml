@@ -14,6 +14,7 @@ exceptions = [
     { allow = ["LicenseRef-Proprietary"], crate = "quecto-api" },
     { allow = ["LicenseRef-Proprietary"], crate = "quecto-mcp" },
     { allow = ["LicenseRef-Proprietary"], crate = "quecto-runtime-manager" },
+    { allow = ["LicenseRef-Proprietary"], crate = "quecto-line-io" },
 ]
 allow = [
     "MIT",

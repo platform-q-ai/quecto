@@ -431,10 +431,6 @@ async fn handle_client_msg(
         ClientMessage::Command(cmd) => {
             ctx.current_client_id = cmd.client_id;
             match parse_line(&cmd.line) {
-                LineResult::LineTooLong => {
-                    let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
-                    emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                }
                 LineResult::ParseError(e) if e.is_empty() => {}
                 LineResult::ParseError(_) => {
                     let ev = AgentEvent::Response {
@@ -512,10 +508,10 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
         client_tool_registry,
         _guard,
     } = args;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncWriteExt, BufReader};
 
     let (reader, mut writer) = tokio::io::split(stream);
-    let mut lines = BufReader::new(reader).lines();
+    let mut reader = BufReader::new(reader);
 
     // Writer task: multiplex shared broadcast events AND per-client
     // targeted events (currently just `execute_tool` from forwarder
@@ -558,17 +554,32 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
     });
 
     // Reader loop: commands → dispatch mpsc.
-    // Guard oversized lines — `next_line()` allocates the full line before
-    // returning, but we drop it immediately if it exceeds MAX_LINE_BYTES
-    // to prevent queuing oversized payloads in the mpsc channel.
-    while let Ok(Some(line)) = lines.next_line().await {
-        if line.len() > MAX_LINE_BYTES {
-            // Already allocated unfortunately (AsyncBufReadExt limitation),
-            // but at least we don't queue it in the mpsc channel.
-            tracing::warn!(len = line.len(), "dropping oversized line from client");
+    // Guard oversized lines at read time via the shared bounded reader
+    // (#1003) — oversized lines are truncated during the read itself rather
+    // than allocated in full and dropped afterward, so they never queue an
+    // oversized payload in the mpsc channel either way.
+    loop {
+        let bounded = match quecto_line_io::read_bounded_line(&mut reader, MAX_LINE_BYTES).await {
+            Ok(Some(bounded)) => bounded,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!(client_id, error = %e, "client reader loop exiting on I/O error");
+                break;
+            }
+        };
+        if bounded.truncated {
+            // `bounded.content.len()` is the *capped* length, not the wire
+            // length (the tail was discarded during the read), so report the
+            // cap it exceeded rather than a misleading exact size.
+            tracing::warn!(
+                "dropping oversized line from client (over {} bytes)",
+                MAX_LINE_BYTES
+            );
             continue;
         }
+        let line = bounded.content;
         let trimmed = line.trim();
+
         if is_cancel_command(trimmed) {
             // Record operator intent BEFORE firing the cancel so the post-cancel
             // idle drain cannot observe the cancel and run a nudge before the

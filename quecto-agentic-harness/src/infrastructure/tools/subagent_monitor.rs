@@ -195,7 +195,7 @@ async fn monitor_loop(
     broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
     parent_id: Option<&str>,
 ) {
-    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::io::BufReader;
 
     // Retry connection with increasing backoff — the socket should already be
     // ready because spawn waits for it, but there's a tiny race window.
@@ -219,13 +219,17 @@ async fn monitor_loop(
 
     // Use a smaller BufReader capacity (1 KiB) since JSON-lines events are
     // typically well under 1 KiB. Default 8 KiB is wasteful per child.
-    let mut lines = BufReader::with_capacity(1024, stream).lines();
+    let mut reader = BufReader::with_capacity(1024, stream);
 
     loop {
-        match lines.next_line().await {
-            Ok(Some(line)) => {
+        match quecto_line_io::read_bounded_line(&mut reader, MAX_LINE_BYTES).await {
+            Ok(Some(bounded)) => {
+                if bounded.truncated {
+                    tracing::warn!(agent = %agent_id, "monitor: dropping oversized line");
+                    continue;
+                }
                 handle_monitor_line(
-                    &line,
+                    &bounded.content,
                     agent_id,
                     registry,
                     notify_tx,
@@ -679,3 +683,7 @@ mod forward_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_completion_tests.rs"]
 mod completion_tests;
+
+#[cfg(test)]
+#[path = "subagent_monitor_bounded_read_tests.rs"]
+mod bounded_read_tests;

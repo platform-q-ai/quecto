@@ -14,6 +14,7 @@ mod uds_models;
 mod uds_multi;
 mod uds_multi_accept;
 mod uds_query;
+mod uds_reader;
 mod uds_reload;
 pub mod uds_session;
 mod uds_snapshots;

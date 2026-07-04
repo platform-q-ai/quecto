@@ -9,9 +9,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, mpsc};
+
+use quecto_line_io::read_bounded_line;
 
 use crate::application::ports::agent_gateway::{AgentCommand, AgentGateway, EventSubscriber};
 use crate::domain::error::ApiError;
@@ -81,17 +83,15 @@ impl UdsGateway {
         let reader_connected = connected.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
-            let mut line = String::new();
             loop {
-                line.clear();
-                match reader.read_line(&mut line).await {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        if line.len() > MAX_LINE_BYTES {
-                            tracing::warn!("dropping oversized line ({} bytes)", line.len());
+                match read_bounded_line(&mut reader, MAX_LINE_BYTES).await {
+                    Ok(None) => break,
+                    Ok(Some(bounded)) => {
+                        if bounded.truncated {
+                            tracing::warn!("dropping oversized line (>{} bytes)", MAX_LINE_BYTES);
                             continue;
                         }
-                        let trimmed = line.trim();
+                        let trimmed = bounded.content.trim();
                         if trimmed.is_empty() {
                             continue;
                         }
@@ -113,10 +113,6 @@ impl UdsGateway {
                         tracing::error!("UDS read error: {e}");
                         break;
                     }
-                }
-                // Reclaim memory if a large line inflated the buffer.
-                if line.capacity() > 64 * 1024 {
-                    line.shrink_to(8 * 1024);
                 }
             }
             reader_connected.store(false, Ordering::Relaxed);
@@ -312,5 +308,77 @@ impl AgentGateway for UdsGateway {
 
     fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
+    }
+}
+
+// ─── Unit tests ──────────────────────────────────────────────────────────────
+//
+// #1003: the event reader now reads lines through the shared
+// `quecto_line_io::read_bounded_line` helper instead of `read_line` +
+// post-hoc length check, so an oversized, unterminated line from the agent
+// is capped *while being read* rather than fully buffered and only checked
+// afterward. These tests drive `UdsGateway::connect` over a real socket and
+// assert on the one observable effect: which events actually reach a
+// subscriber.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn oversized_event_line_is_dropped_but_later_valid_events_still_arrive() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket_path = dir.path().join("agent.sock");
+        let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind test socket");
+
+        // Gate the server writes on the subscription existing: broadcast
+        // sends before `subscribe()` are dropped (see the reader loop in
+        // `connect`), so writing immediately after accept races the
+        // subscription and flakes.
+        let (subscribed_tx, subscribed_rx) = tokio::sync::oneshot::channel::<()>();
+        let accept_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            subscribed_rx.await.expect("subscribed signal");
+            // One giant unterminated-then-terminated line, well over
+            // MAX_LINE_BYTES, followed by a normal, valid event.
+            let oversized = format!(
+                "{{\"type\":\"token\",\"token\":\"{}\"}}\n",
+                "x".repeat(MAX_LINE_BYTES + 65_536)
+            );
+            stream
+                .write_all(oversized.as_bytes())
+                .await
+                .expect("write oversized line");
+            stream
+                .write_all(b"{\"type\":\"token\",\"token\":\"hi\"}\n")
+                .await
+                .expect("write valid line");
+        });
+
+        let gateway = UdsGateway::connect(&socket_path)
+            .await
+            .expect("connect to agent socket");
+        let mut sub = gateway.subscribe().await.expect("subscribe");
+        subscribed_tx.send(()).expect("signal subscribed");
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(3), sub.recv())
+            .await
+            .expect("subscriber should still receive an event after an oversized line within 3s")
+            .expect("event present");
+
+        match event {
+            AgentEvent::Token { token } => assert_eq!(
+                token, "hi",
+                "the oversized line must not be delivered as a parsed event, only the valid one that follows it"
+            ),
+            other => panic!("expected a Token event, got: {other:?}"),
+        }
+
+        accept_task.await.expect("accept task completed");
+    }
+
+    #[test]
+    fn max_line_bytes_matches_documented_protocol_limit() {
+        assert_eq!(MAX_LINE_BYTES, 1_048_576);
     }
 }

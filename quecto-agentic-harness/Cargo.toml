@@ -1,6 +1,6 @@
 [package]
 name = "quecto"
-version = "0.81.27"
+version = "0.81.30"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -8,6 +8,9 @@ license = "LicenseRef-Proprietary"
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-std", "sync"] }
+
+# Shared bounded JSON-lines reader (#1003)
+quecto-line-io = { version = "0.1.1", path = "../quecto-line-io" }
 
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
