@@ -44,7 +44,7 @@ pub struct AgentLoopConfig {
     pub temperature: f32,
     pub spill_store: Option<Arc<dyn ContextSpillStore>>,
     pub session_key: String,
-    pub context_collapse_after_turns: u32,
+    pub context_collapse_after_tool_calls: u32,
     pub max_context_tokens: usize,
     /// Optional callback to receive live progress events during agent processing.
     /// Used by the REPL progress renderer to display tool activity to the user.
@@ -77,7 +77,7 @@ pub struct AgentLoopImpl {
     max_tool_iterations: u32,
     spill_store: Option<Arc<dyn ContextSpillStore>>,
     session_key: String,
-    context_collapse_after_turns: u32,
+    context_collapse_after_tool_calls: u32,
     max_context_tokens: usize,
     /// When true, use incremental streaming for LLM calls.
     streaming: bool,
@@ -127,7 +127,7 @@ impl AgentLoopImpl {
             max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
             spill_store: config.spill_store,
             session_key: config.session_key,
-            context_collapse_after_turns: config.context_collapse_after_turns,
+            context_collapse_after_tool_calls: config.context_collapse_after_tool_calls,
             max_context_tokens: config.max_context_tokens,
             progress_callback: config.progress_callback,
             streaming: config.streaming,

@@ -140,7 +140,7 @@ fn when_agent_builds_request_for_model(world: &mut QuectoWorld) {
         temperature: 0.7,
         spill_store: None,
         session_key: String::new(),
-        context_collapse_after_turns: u32::MAX,
+        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,

@@ -1,16 +1,40 @@
 @wip
-Feature: Context pruning via sliding window (no tool-result collapse)
+Feature: Context pruning via sliding window and tool-call collapse
 
-  Tool outputs remain in full context until dropped by the sliding window
-  when the conversation exceeds the token budget. The old 3-turn collapse
-  behaviour is disabled by default — tool results age naturally alongside
-  all other messages. Users can re-enable collapse by setting
-  context_collapse_after_turns to a lower value. Spill-to-disk still
-  occurs at creation time so recall() can retrieve outputs that have been
-  dropped by the sliding window.
+  Tool outputs remain in full context until either (a) the number of tool
+  calls in the session exceeds context_collapse_after_tool_calls (default
+  50), at which point the oldest tool results are collapsed to compact
+  recall() stubs, or (b) they are dropped by the sliding window when the
+  conversation exceeds the token budget. The collapse trigger counts tool
+  calls cumulatively across prompts within a session rather than turns
+  elapsed. Collapse can be disabled entirely. Spill-to-disk still occurs at
+  creation time so recall() can retrieve collapsed or dropped outputs.
 
   Background:
     Given a configured agent with context pruning enabled
+
+  # --- Tool-result collapse triggers on tool-call count (#1017) ---
+
+  Scenario: Tool outputs collapse after the configured number of tool calls
+    Given context_collapse_after_tool_calls is set to 50
+    When the agent has executed 51 tool calls in the session
+    Then the oldest tool result is collapsed to a recall() stub
+    And the 50 most recent tool results remain in full context
+
+  Scenario: Collapse count is cumulative across prompts within a session
+    Given context_collapse_after_tool_calls is set to 50
+    And the agent has already executed 30 tool calls in an earlier prompt
+    When the agent executes 25 more tool calls in a later prompt
+    Then 5 tool results are collapsed to recall() stubs
+
+  Scenario: Collapse can be disabled
+    Given context collapse is disabled
+    When the agent has executed 100 tool calls in the session
+    Then no tool results are collapsed
+
+  Scenario: Default collapse threshold is 50 tool calls
+    Given a default agent configuration
+    Then the context_collapse_after_tool_calls default is 50
 
   # --- Tool results stay in full context ---
 

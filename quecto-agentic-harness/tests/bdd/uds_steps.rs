@@ -132,7 +132,7 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         temperature: config.agents.defaults.temperature,
         spill_store: None,
         session_key: session_key.clone(),
-        context_collapse_after_turns: u32::MAX,
+        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: config.agents.defaults.max_context_tokens,
         progress_callback: None,
         streaming: false,

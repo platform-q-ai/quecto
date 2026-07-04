@@ -10,17 +10,14 @@ impl AgentLoopImpl {
         // Snapshot token count before pruning for accurate audit logging.
         let tokens_before = context_pruning::estimate_total_tokens(messages);
 
-        // Collapse is disabled by default (COLLAPSE_DISABLED = u32::MAX).
-        // Still available for users who explicitly lower the config value.
-        let collapsed = if self.context_collapse_after_turns < context_pruning::COLLAPSE_DISABLED {
-            context_pruning::collapse_old_tool_results(
-                messages,
-                current_turn,
-                self.context_collapse_after_turns,
-            )
-        } else {
-            0
-        };
+        // Collapse the oldest tool results once the session exceeds
+        // `context_collapse_after_tool_calls` tool calls (default 50). The
+        // sentinel COLLAPSE_DISABLED (u32::MAX) disables collapse; the callee
+        // short-circuits on it, so no guard is needed here.
+        let collapsed = context_pruning::collapse_tool_results_over_limit(
+            messages,
+            self.context_collapse_after_tool_calls,
+        );
         let dropped = context_pruning::enforce_context_ceiling(messages, self.max_context_tokens);
         // Only rebuild manifest when spills have changed (new tool results spilled)
         if spills_dirty {

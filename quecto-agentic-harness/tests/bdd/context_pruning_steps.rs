@@ -93,6 +93,138 @@ fn given_context_pruning_enabled(world: &mut QuectoWorld) {
     world.context_current_turn = Some(0);
 }
 
+// --- Tool-call collapse (#1017) ---
+
+/// Append `n` un-collapsed bash tool-result messages to the session under test.
+/// Turn numbers deliberately cycle over a small range so the trigger cannot be
+/// mistaken for a turns-elapsed check — collapse must count tool calls.
+fn append_tool_calls(world: &mut QuectoWorld, n: u32) {
+    let messages = world.context_messages.as_mut().unwrap();
+    for i in 0..n {
+        let seq = messages.iter().filter(|m| m.role == Role::Tool).count();
+        let mut msg = Message::tool(format!("call_{seq}"), format!("output {seq}"));
+        msg.turn = Some((i % 3) + 1);
+        msg.tool_name = Some("bash".to_string());
+        msg.input_preview = Some(format!("cmd {seq}"));
+        msg.spill_id = Some(format!("turn{seq}:bash:0"));
+        messages.push(msg);
+    }
+}
+
+/// Run the tool-call collapse trigger and record how many were collapsed.
+fn run_collapse(world: &mut QuectoWorld) {
+    let max = world
+        .context_collapse_after_tool_calls
+        .expect("collapse threshold should be set");
+    let messages = world.context_messages.as_mut().unwrap();
+    let collapsed = context_pruning::collapse_tool_results_over_limit(messages, max);
+    world.context_collapsed_count = Some(collapsed);
+}
+
+#[given(expr = "context_collapse_after_tool_calls is set to {int}")]
+fn given_collapse_threshold(world: &mut QuectoWorld, max: u32) {
+    world.context_collapse_after_tool_calls = Some(max);
+}
+
+#[given("context collapse is disabled")]
+fn given_collapse_disabled(world: &mut QuectoWorld) {
+    world.context_collapse_after_tool_calls = Some(context_pruning::COLLAPSE_DISABLED);
+}
+
+#[given(expr = "the agent has already executed {int} tool calls in an earlier prompt")]
+fn given_already_executed_tool_calls(world: &mut QuectoWorld, n: u32) {
+    append_tool_calls(world, n);
+}
+
+#[when(expr = "the agent has executed {int} tool calls in the session")]
+fn when_executed_tool_calls_in_session(world: &mut QuectoWorld, n: u32) {
+    append_tool_calls(world, n);
+    run_collapse(world);
+}
+
+#[when(expr = "the agent executes {int} more tool calls in a later prompt")]
+fn when_executes_more_tool_calls(world: &mut QuectoWorld, n: u32) {
+    append_tool_calls(world, n);
+    run_collapse(world);
+}
+
+#[then("the oldest tool result is collapsed to a recall() stub")]
+fn then_oldest_collapsed(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.context_collapsed_count,
+        Some(1),
+        "exactly one (the oldest) tool result should collapse"
+    );
+    let messages = world.context_messages.as_ref().unwrap();
+    let oldest = messages
+        .iter()
+        .find(|m| m.role == Role::Tool)
+        .expect("should have a tool result");
+    assert!(
+        oldest.is_collapsed,
+        "oldest tool result should be collapsed"
+    );
+    assert!(
+        oldest.content.contains("recall(\""),
+        "collapsed content should be a recall() stub, got: {}",
+        oldest.content
+    );
+}
+
+#[then(expr = "the {int} most recent tool results remain in full context")]
+fn then_most_recent_remain(world: &mut QuectoWorld, n: usize) {
+    let messages = world.context_messages.as_ref().unwrap();
+    let recent: Vec<&Message> = messages
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .rev()
+        .take(n)
+        .collect();
+    assert_eq!(recent.len(), n, "should have at least {n} tool results");
+    for msg in recent {
+        assert!(
+            !msg.is_collapsed,
+            "the {n} most recent tool results must stay in full context"
+        );
+    }
+}
+
+#[then(expr = "{int} tool results are collapsed to recall\\(\\) stubs")]
+fn then_n_collapsed(world: &mut QuectoWorld, expected: usize) {
+    assert_eq!(
+        world.context_collapsed_count,
+        Some(expected),
+        "expected {expected} tool results to collapse"
+    );
+}
+
+#[then("no tool results are collapsed")]
+fn then_no_tool_results_collapsed(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.context_collapsed_count,
+        Some(0),
+        "no tool results should collapse"
+    );
+    let messages = world.context_messages.as_ref().unwrap();
+    assert!(
+        messages
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .all(|m| !m.is_collapsed),
+        "no tool result should be collapsed"
+    );
+}
+
+#[then(expr = "the context_collapse_after_tool_calls default is {int}")]
+fn then_collapse_default_is(world: &mut QuectoWorld, expected: u32) {
+    let config = quecto::infrastructure::config::Config::default();
+    assert_eq!(
+        config.agents.defaults.context_collapse_after_tool_calls, expected,
+        "default context_collapse_after_tool_calls should be {expected}"
+    );
+    let _ = world;
+}
+
 // --- When steps ---
 
 #[when("the agent executes a bash tool on turn 1")]

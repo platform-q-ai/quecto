@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.81.30**.
+Current version: **0.82.0**.
 
 ## Quick Start
 
@@ -130,7 +130,7 @@ Depends only on `domain/`. Orchestration logic, no I/O.
 | File | Purpose |
 |---|---|
 | `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for REPL spinner. Supports incremental streaming via `chat_stream_incremental()`. Passes configured `effort` level through to every `ChatRequest` |
-| `context_pruning.rs` | Token estimation, sliding-window pruning, pinned spill manifest, and optional tool-result collapse. Current config defaults: `max_context_tokens = 200000`, `context_collapse_after_turns = 50`; set `context_collapse_after_turns` to `4294967295` (`u32::MAX`) to disable collapse |
+| `context_pruning.rs` | Token estimation, sliding-window pruning, pinned spill manifest, and tool-call-count tool-result collapse. Current config defaults: `max_context_tokens = 200000`, `context_collapse_after_tool_calls = 50`; set `context_collapse_after_tool_calls` to `4294967295` (`u32::MAX`) to disable collapse |
 | `reload.rs` | `/reload` use case: strips stale tool history via `strip_tool_history()`, clears spill index, coordinates `SessionStore` + `ContextSpillStore` |
 | `subagent.rs` | `SubagentContext` — child agent contexts with inherited sandbox |
 
@@ -412,7 +412,7 @@ Config file: `~/.quecto/config.json`
       "max_tokens": 8192,
       "max_tool_iterations": 999999,
       "max_session_messages": 200,
-      "context_collapse_after_turns": 50,
+      "context_collapse_after_tool_calls": 50,
       "max_context_tokens": 300000,
       "restrict_to_workspace": true,
       "effort": "low"

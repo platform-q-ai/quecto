@@ -85,7 +85,7 @@ async fn test_spill_preserves_message_content_after_spill() {
         temperature: 0.7,
         spill_store: Some(spill_store.clone()),
         session_key: "test-session".to_string(),
-        context_collapse_after_turns: u32::MAX,
+        context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,

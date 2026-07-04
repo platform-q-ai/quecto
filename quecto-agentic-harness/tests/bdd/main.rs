@@ -487,6 +487,10 @@ pub struct QuectoWorld {
     pub context_recall_count: Option<u32>,
     /// Context pruning: max context token budget for tests
     pub context_max_tokens: Option<usize>,
+    /// Context pruning: tool-call collapse threshold under test (#1017)
+    pub context_collapse_after_tool_calls: Option<u32>,
+    /// Context pruning: number of tool results collapsed by the last trigger
+    pub context_collapsed_count: Option<usize>,
     /// Context pruning: temp dir for session persistence round-trip tests
     pub context_temp_dir: Option<TempDir>,
     // --- Path utils BDD fields ---

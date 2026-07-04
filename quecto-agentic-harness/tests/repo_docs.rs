@@ -41,8 +41,8 @@ fn readme_runtime_details_match_current_code() {
         "README config example should use the current default max_context_tokens"
     );
     assert!(
-        readme.contains("\"context_collapse_after_turns\": 50"),
-        "README config example should document the current collapse threshold"
+        readme.contains("\"context_collapse_after_tool_calls\": 50"),
+        "README config example should document the current tool-call collapse threshold (#1017)"
     );
     assert!(
         !readme.contains("\"max_context_tokens\": 1000000"),
