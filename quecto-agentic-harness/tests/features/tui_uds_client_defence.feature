@@ -23,6 +23,7 @@ Feature: TUI UDS client defensive bounds
     When the agent sends repeated oversized events followed by a valid token event
     Then the TUI should ignore the oversized events
     And the TUI should receive the later token event
+    And the TUI should reclaim bounded input buffer capacity for later events
 
   @issue-982 @tui
   Scenario: Completion events keep their observable behaviour

@@ -26,6 +26,8 @@ pub struct TuiDefenceStream {
     completion_turn_end: Option<Event>,
     expected_under_cap_token_len: Option<usize>,
     expected_under_cap_token: Option<String>,
+    capacity_after_oversized_events: Option<usize>,
+    capacity_for_later_event: Option<usize>,
     _temp_dir: TempDir,
 }
 
@@ -47,6 +49,8 @@ fn tui_connected_to_agent_event_stream(world: &mut QuectoWorld) {
         completion_turn_end: None,
         expected_under_cap_token_len: None,
         expected_under_cap_token: None,
+        capacity_after_oversized_events: None,
+        capacity_for_later_event: None,
         _temp_dir: temp_dir,
     });
 }
@@ -85,6 +89,63 @@ fn send_frames_and_receive(world: &mut QuectoWorld, frames: Vec<Vec<u8>>) -> Vec
     events
 }
 
+fn read_frames_with_buffer_capacity_observations(
+    world: &mut QuectoWorld,
+    frames: Vec<Vec<u8>>,
+) -> (Vec<Event>, usize, usize) {
+    let stream = world
+        .tui_defence_stream
+        .as_mut()
+        .expect("TUI defence stream");
+    let socket_path = stream.socket_path.clone();
+    let listener = stream.listener.take().expect("listener");
+    let rt = &stream.runtime;
+
+    rt.block_on(async move {
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("server accepts");
+            for frame in frames {
+                socket.write_all(&frame).await.expect("write frame");
+            }
+            socket.flush().await.expect("flush");
+        });
+        let socket = tokio::net::UnixStream::connect(&socket_path)
+            .await
+            .expect("client connects");
+        let mut reader = tokio::io::BufReader::new(socket);
+        let mut line = Vec::new();
+        let mut events = Vec::new();
+        let mut capacity_after_oversized_events = 0;
+        let mut capacity_for_later_event = 0;
+
+        while let Some(read) =
+            quecto_line_io::read_bounded_line_into(&mut reader, &mut line, MAX_LINE_BYTES)
+                .await
+                .expect("read line")
+        {
+            if read.truncated || (line.len() >= MAX_LINE_BYTES && !line.ends_with(b"\n")) {
+                capacity_after_oversized_events = line.capacity();
+                continue;
+            }
+
+            capacity_for_later_event = line.capacity();
+            if let Ok(text) = std::str::from_utf8(&line) {
+                if let Ok(event) = serde_json::from_str::<Event>(text.trim()) {
+                    events.push(event);
+                }
+            }
+        }
+
+        server.await.expect("server completes");
+
+        (
+            events,
+            capacity_after_oversized_events,
+            capacity_for_later_event,
+        )
+    })
+}
+
 #[when(
     "the agent sends an event larger than the supported event size followed by a valid token event"
 )]
@@ -111,7 +172,9 @@ fn agent_sends_event_just_below_limit(world: &mut QuectoWorld) {
     let token_prefix = r#"{"type":"token","token":""#;
     let token_suffix = r#""}"#;
     let token_len = MAX_LINE_BYTES - token_prefix.len() - token_suffix.len() - 1;
-    let token = "a".repeat(token_len);
+    let token: String = (0..token_len)
+        .map(|idx| char::from(b'a' + (idx % 26) as u8))
+        .collect();
     let mut frame = String::with_capacity(MAX_LINE_BYTES);
     frame.push_str(token_prefix);
     frame.push_str(&token);
@@ -141,10 +204,13 @@ fn agent_sends_repeated_oversized_events_then_valid(world: &mut QuectoWorld) {
             b"{\"type\":\"token\",\"token\":\"later\"}\n".to_vec(),
         ))
         .collect();
-    let events = send_frames_and_receive(world, frames);
+    let (events, capacity_after_oversized_events, capacity_for_later_event) =
+        read_frames_with_buffer_capacity_observations(world, frames);
     let stream = world.tui_defence_stream.as_mut().expect("stream");
     stream.latest_event = events.first().cloned();
     stream.received_events = events;
+    stream.capacity_after_oversized_events = Some(capacity_after_oversized_events);
+    stream.capacity_for_later_event = Some(capacity_for_later_event);
 }
 
 #[when("the agent reports completion with details the TUI does not display")]
@@ -190,6 +256,26 @@ fn tui_receives_later_token_event(world: &mut QuectoWorld) {
         Some(Event::Token { token }) => assert_eq!(token, "later"),
         other => panic!("expected later token event, got {other:?}"),
     }
+}
+
+#[then("the TUI should reclaim bounded input buffer capacity for later events")]
+fn tui_reclaims_bounded_input_buffer_capacity(world: &mut QuectoWorld) {
+    let stream = world.tui_defence_stream.as_ref().expect("stream");
+    let capacity_after_oversized_events = stream
+        .capacity_after_oversized_events
+        .expect("capacity after oversized events observed");
+    let capacity_for_later_event = stream
+        .capacity_for_later_event
+        .expect("capacity for later event observed");
+
+    assert!(
+        capacity_after_oversized_events <= MAX_LINE_BYTES + 4096,
+        "oversized events must not inflate the reusable input buffer beyond the protocol cap plus a small constant; capacity was {capacity_after_oversized_events}"
+    );
+    assert!(
+        capacity_for_later_event <= 64 * 1024,
+        "later events must reclaim reusable input buffer capacity after oversized events; capacity was {capacity_for_later_event}"
+    );
 }
 
 #[then("the TUI should receive the event")]
