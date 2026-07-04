@@ -239,7 +239,7 @@ fn execute_uds(world: &mut QuectoWorld) {
     }
     e2e_steps::mount_auto_mock_responses_for_messages(world, &prompts);
     if world.auto_mock_manual_llm && world._workflow_enabled {
-        execute_mock_workflow_uds_with_real_socket(world);
+        drive_single_client_over_real_socket(world);
         return;
     }
 
@@ -399,7 +399,11 @@ fn execute_uds(world: &mut QuectoWorld) {
     world._uds_socket_path = Some(socket_path);
 }
 
-fn execute_mock_workflow_uds_with_real_socket(world: &mut QuectoWorld) {
+/// Drive a single client end-to-end over a *real* Unix socket, so the request
+/// actually flows through the multi-client dispatch loop
+/// (`uds_multi::handle_client_msg`) rather than the `socket_override`
+/// single-client shortcut. Collected events land in `world.agent_events`.
+fn drive_single_client_over_real_socket(world: &mut QuectoWorld) {
     world.mc_mode = true;
     world.mc_connected_clients = vec![1];
     world.mc_disconnected_clients.clear();
@@ -784,6 +788,15 @@ fn when_close_uds_connection(world: &mut QuectoWorld) {
     execute_uds(world);
 }
 
+/// Close the connection after driving the queued commands over a *real* socket,
+/// so they flow through the multi-client dispatch loop
+/// (`uds_multi::handle_client_msg`) instead of the single-client
+/// `socket_override` shortcut (#994 criterion 2).
+#[when("I close the UDS connection through the multi-client dispatch loop")]
+fn when_close_uds_connection_multi_client(world: &mut QuectoWorld) {
+    drive_single_client_over_real_socket(world);
+}
+
 /// Run quecto agent with an invalid --mode value (uses existing CLI runner).
 #[when(expr = "I run quecto agent --mode {word} -m {string}")]
 fn when_run_agent_with_invalid_mode(world: &mut QuectoWorld, mode: String, message: String) {
@@ -1002,6 +1015,39 @@ fn then_agent_output_parse_error(world: &mut QuectoWorld) {
         found,
         "expected a parse error response\nlines: {:#?}",
         world.agent_events,
+    );
+}
+
+/// #994 criterion 2: the multi-client dispatch loop must preserve the detailed
+/// serde parse-error text (`parse error: …`), consistent with the single-client
+/// loop, rather than substituting a generic `"invalid JSON command"` string.
+#[then("the parse error response should preserve the detailed error text")]
+fn then_parse_error_preserves_detail(world: &mut QuectoWorld) {
+    let err = world.agent_events.iter().find_map(|l| {
+        serde_json::from_str::<serde_json::Value>(l)
+            .ok()
+            .and_then(|v| {
+                if v["type"] == "response" && v["command"] == "parse_error" {
+                    v["error"].as_str().map(str::to_owned)
+                } else {
+                    None
+                }
+            })
+    });
+    let err = err.unwrap_or_else(|| {
+        panic!(
+            "expected a parse_error response\nlines: {:#?}",
+            world.agent_events
+        )
+    });
+    assert!(
+        err.contains("parse error:"),
+        "parse_error must preserve the detailed serde text, got: {err:?}\nlines: {:#?}",
+        world.agent_events,
+    );
+    assert_ne!(
+        err, "invalid JSON command",
+        "the generic placeholder text must not be emitted (#994 criterion 2)"
     );
 }
 

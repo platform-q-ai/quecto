@@ -198,7 +198,7 @@ impl Fixture {
             extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
-            stdout: &mut self.writer,
+            stdout: Some(&mut self.writer),
             session_key: &mut self.session_key,
             session_store: &self.store,
             ephemeral: self.ephemeral,

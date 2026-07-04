@@ -316,6 +316,18 @@ Feature: UDS mode for headless agent operation
     And I close the UDS connection
     Then the agent output should contain a parse error response
     And the agent output should contain a response command "parse_error" with success false
+    And the parse error response should preserve the detailed error text
+
+  # ─── parse_error preserves detailed error text (#994) ─────────────────────────
+
+  @done
+  Scenario: parse error response preserves the detailed error text
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send raw line "{not valid json"
+    And I close the UDS connection through the multi-client dispatch loop
+    Then the parse error response should preserve the detailed error text
 
   # ─── get_messages count parameter ────────────────────────────────────────────
 

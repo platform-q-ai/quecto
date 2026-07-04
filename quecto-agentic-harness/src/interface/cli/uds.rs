@@ -1,9 +1,9 @@
 use super::protocol::{AgentCommand, AgentEvent, StreamingBehavior};
 use super::uds_cancel::{
-    CancelHandle, CancelSlot, PromptArgs, PromptMessageArgs, PromptOutcome, TurnControl,
-    TurnControlHandle, arm_cancel, disarm_cancel, run_agent_message, run_agent_prompt,
+    CancelHandle, CancelSlot, EventSink, PromptOutcome, PromptRun, TurnControl, TurnControlHandle,
+    arm_cancel, disarm_cancel, run_agent_message,
 };
-use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_broadcast};
+use super::uds_multi::MultiClientArgs;
 use super::uds_query::query_response_data;
 use super::uds_session::{AgentSession, clear_conversation, rewind_to_message_index};
 #[cfg(test)]
@@ -222,7 +222,7 @@ async fn single_client_loop(
             extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut agent_session,
-            stdout: &mut *writer,
+            stdout: Some(&mut *writer),
             session_key: &mut session_key,
             session_store,
             ephemeral,
@@ -373,7 +373,10 @@ pub(crate) struct DispatchCtx<'a> {
     pub extension_snapshot: super::uds_extensions::ExtensionSnapshot,  // #880
     pub busy: super::uds_multi::BusyFlag,                              // #828
     pub session: &'a mut AgentSession,
-    pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    /// Direct writer for the single-client / test path. `None` on the
+    /// multi-client server, which streams via `broadcast_tx` instead — so the
+    /// server allocates no throwaway writer (#994).
+    pub stdout: Option<&'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)>,
     pub session_key: &'a mut String,
     pub session_store: &'a dyn SessionStore,
     pub ephemeral: bool,
@@ -396,17 +399,38 @@ pub(crate) struct DispatchCtx<'a> {
     pub last_persisted_message_index: usize,
 }
 
+impl<'a> DispatchCtx<'a> {
+    /// The [`EventSink`] this context streams to: the broadcast channel on the
+    /// multi-client server, otherwise the direct writer (#994).
+    fn event_sink(&mut self) -> EventSink<'_> {
+        make_event_sink(&self.broadcast_tx, &mut self.stdout)
+    }
+}
+
+/// Build an [`EventSink`] from a dispatch context's sink fields. Free function
+/// (rather than only a `DispatchCtx` method) so callers that also need
+/// disjoint borrows of other `DispatchCtx` fields (e.g. `run_agent_message`)
+/// can split the borrow (#994).
+fn make_event_sink<'s>(
+    broadcast_tx: &Option<tokio::sync::broadcast::Sender<String>>,
+    stdout: &'s mut Option<&mut (dyn tokio::io::AsyncWrite + Send + Unpin)>,
+) -> EventSink<'s> {
+    if let Some(tx) = broadcast_tx {
+        EventSink::Broadcast(tx.clone())
+    } else {
+        EventSink::writer(
+            stdout
+                .as_deref_mut()
+                .expect("dispatch context has neither broadcast_tx nor stdout"),
+        )
+    }
+}
+
 pub(super) async fn emit_event_to_broadcast_or_writer(
     ctx: &mut DispatchCtx<'_>,
     event: &AgentEvent,
 ) {
-    if let Some(ref tx) = ctx.broadcast_tx {
-        let mut line = event.to_json_line();
-        line.push('\n');
-        let _ = tx.send(line);
-    } else {
-        super::uds_cancel::emit_event(ctx.stdout, event).await;
-    }
+    ctx.event_sink().emit(event).await;
 }
 
 fn resolve_set_model_target(
@@ -630,29 +654,18 @@ async fn run_prompt_dispatch(
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> PromptOutcome {
     let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828: gates connect-time snapshot
-    if let Some(ref tx) = ctx.broadcast_tx {
-        run_agent_prompt_broadcast(PromptArgsBroadcast {
-            agent: ctx.agent,
-            messages: ctx.messages,
-            session: ctx.session,
-            broadcast_tx: tx.clone(),
-            message: Message::user(message),
-            cancel_rx,
-            notification_rx: &mut ctx.notification_rx,
-            subagent_registry: &ctx.subagent_registry,
-        })
-        .await
-    } else {
-        run_agent_prompt(PromptArgs {
-            agent: ctx.agent,
-            messages: ctx.messages,
-            session: ctx.session,
-            stdout: ctx.stdout,
-            message,
-            cancel_rx,
-        })
-        .await
-    }
+    let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout);
+    run_agent_message(PromptRun {
+        agent: ctx.agent,
+        messages: ctx.messages,
+        session: ctx.session,
+        sink: &mut sink,
+        message: Message::user(message),
+        cancel_rx,
+        notification_rx: &mut ctx.notification_rx,
+        subagent_registry: &ctx.subagent_registry,
+    })
+    .await
 }
 async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
     emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentStart).await;
@@ -675,29 +688,18 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 emit_pre_cancelled(ctx).await; // Stale abort (#483).
                 continue; // Don't drop remaining messages — Fired consumed, next arm succeeds.
             };
-            if let Some(ref tx) = ctx.broadcast_tx {
-                let args = PromptArgsBroadcast {
-                    agent: ctx.agent,
-                    messages: ctx.messages,
-                    session: ctx.session,
-                    broadcast_tx: tx.clone(),
-                    message: msg,
-                    cancel_rx: rx,
-                    notification_rx: &mut ctx.notification_rx,
-                    subagent_registry: &ctx.subagent_registry,
-                };
-                run_agent_prompt_broadcast(args).await;
-            } else {
-                let args = PromptMessageArgs {
-                    agent: ctx.agent,
-                    messages: ctx.messages,
-                    session: ctx.session,
-                    stdout: ctx.stdout,
-                    message: msg,
-                    cancel_rx: rx,
-                };
-                run_agent_message(args).await;
-            }
+            let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout);
+            run_agent_message(PromptRun {
+                agent: ctx.agent,
+                messages: ctx.messages,
+                session: ctx.session,
+                sink: &mut sink,
+                message: msg,
+                cancel_rx: rx,
+                notification_rx: &mut ctx.notification_rx,
+                subagent_registry: &ctx.subagent_registry,
+            })
+            .await;
             disarm_cancel(&ctx.cancel_handle);
             // #899: keep busy-child snapshots fresh across auto-continue nudges
             // instead of frozen at the pre-turn snapshot until dispatch returns.

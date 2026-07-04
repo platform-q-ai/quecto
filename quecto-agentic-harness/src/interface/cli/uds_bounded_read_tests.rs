@@ -62,7 +62,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
         extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
-        stdout: &mut tokio::io::sink(),
+        stdout: Some(&mut tokio::io::sink()),
         session_key: &mut session_key,
         session_store: &store,
         ephemeral: false,

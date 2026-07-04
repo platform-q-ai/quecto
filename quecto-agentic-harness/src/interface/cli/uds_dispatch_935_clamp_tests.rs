@@ -71,7 +71,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut session,
-            stdout: &mut writer,
+            stdout: Some(&mut writer),
             session_key: &mut session_key,
             session_store: &store,
             ephemeral: false,

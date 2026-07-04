@@ -15,9 +15,9 @@ use super::uds::{
     DispatchCtx, LineResult, MAX_LINE_BYTES, dispatch_command, emit_event_to_broadcast_or_writer,
     inject_system_prompt, is_cancel_command, parse_line, remove_injected_system_prompt,
 };
-use super::uds_cancel::{CancelHandle, CancelSlot, PromptOutcome, fire_cancel};
+use super::uds_cancel::{CancelHandle, CancelSlot, fire_cancel};
 pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
-use super::uds_session::{AgentSession, message_to_json};
+use super::uds_session::AgentSession;
 pub(crate) use super::uds_snapshots::{ConversationSnapshot, StateSnapshot};
 #[cfg(test)]
 pub(crate) use super::uds_snapshots::{
@@ -252,8 +252,6 @@ pub(super) async fn multi_client_loop(
     // it runs — the `!persist` guard in `run_dispatch_loop` controls shutdown.
     drop(cmd_tx);
 
-    let mut null_writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> =
-        Box::new(tokio::io::sink());
     let mut ctx = DispatchCtx {
         base_dir,
         agent: &mut agent,
@@ -264,7 +262,7 @@ pub(super) async fn multi_client_loop(
         extension_snapshot: extension_snapshot.clone(),
         busy: busy.clone(),
         session: &mut agent_session,
-        stdout: &mut *null_writer,
+        stdout: None,
         session_key: &mut session_key,
         session_store,
         ephemeral,
@@ -432,14 +430,12 @@ async fn handle_client_msg(
             ctx.current_client_id = cmd.client_id;
             match parse_line(&cmd.line) {
                 LineResult::ParseError(e) if e.is_empty() => {}
-                LineResult::ParseError(_) => {
-                    let ev = AgentEvent::Response {
-                        id: None,
-                        command: "parse_error".to_string(),
-                        success: false,
-                        data: None,
-                        error: Some("invalid JSON command".to_string()),
-                    };
+                LineResult::ParseError(e) => {
+                    // #994 criterion 2: preserve the detailed serde parse-error
+                    // text, consistent with the single-client loop
+                    // (`uds::run_command_loop`), rather than substituting a
+                    // generic placeholder string.
+                    let ev = AgentEvent::err(None, "parse_error", e);
                     emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 }
                 LineResult::Command(parsed) => {
@@ -645,14 +641,12 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
 
 // ─── Broadcast prompt execution ───────────────────────────────────────────────
 
-/// Arguments for [`run_agent_prompt_broadcast`].
 #[path = "uds_multi_prompt.rs"]
 mod uds_multi_prompt;
 use uds_multi_prompt::try_intercept_tool_result;
-pub(crate) use uds_multi_prompt::{PromptArgsBroadcast, run_agent_prompt_broadcast};
 // Re-exported for the auto-await dedupe unit tests (uds_subagent_notify_tests).
 #[cfg(test)]
-pub(in crate::interface::cli) use uds_multi_prompt::forward_notification_broadcast;
+pub(in crate::interface::cli) use super::uds_cancel::forward_notification_broadcast;
 #[cfg(test)]
 #[path = "uds_multi_accept_loop_tests.rs"]
 mod accept_loop_tests;
@@ -662,6 +656,9 @@ mod interception_tests;
 #[cfg(test)]
 #[path = "uds_multi_926_wake_tests.rs"]
 mod issue_926_wake_tests;
+#[cfg(test)]
+#[path = "uds_994_tests.rs"]
+mod issue_994_tests;
 #[cfg(test)]
 #[path = "uds_snapshot_tests.rs"]
 mod snapshot_tests;

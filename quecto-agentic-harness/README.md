@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.82.0**.
+Current version: **0.83.0**.
 
 ## Quick Start
 
