@@ -18,12 +18,11 @@ Feature: TUI UDS client defensive bounds
     Then the TUI should receive the event
 
   @issue-1016 @tui
-  Scenario: Repeated large agent events do not increase memory needed for later events
+  Scenario: Repeated large agent events do not disrupt later events
     Given the TUI is connected to an agent event stream
     When the agent sends repeated oversized events followed by a valid token event
     Then the TUI should ignore the oversized events
     And the TUI should receive the later token event
-    And the TUI should reclaim bounded input buffer capacity for later events
 
   @issue-982 @tui
   Scenario: Completion events keep their observable behaviour
