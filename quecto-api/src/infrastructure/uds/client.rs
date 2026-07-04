@@ -310,3 +310,68 @@ impl AgentGateway for UdsGateway {
         self.connected.load(Ordering::Relaxed)
     }
 }
+
+// ─── Unit tests ──────────────────────────────────────────────────────────────
+//
+// #1003: the event reader now reads lines through the shared
+// `quecto_line_io::read_bounded_line` helper instead of `read_line` +
+// post-hoc length check, so an oversized, unterminated line from the agent
+// is capped *while being read* rather than fully buffered and only checked
+// afterward. These tests drive `UdsGateway::connect` over a real socket and
+// assert on the one observable effect: which events actually reach a
+// subscriber.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn oversized_event_line_is_dropped_but_later_valid_events_still_arrive() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket_path = dir.path().join("agent.sock");
+        let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind test socket");
+
+        let accept_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            // One giant unterminated-then-terminated line, well over
+            // MAX_LINE_BYTES, followed by a normal, valid event.
+            let oversized = format!(
+                "{{\"type\":\"token\",\"token\":\"{}\"}}\n",
+                "x".repeat(MAX_LINE_BYTES + 65_536)
+            );
+            stream
+                .write_all(oversized.as_bytes())
+                .await
+                .expect("write oversized line");
+            stream
+                .write_all(b"{\"type\":\"token\",\"token\":\"hi\"}\n")
+                .await
+                .expect("write valid line");
+        });
+
+        let gateway = UdsGateway::connect(&socket_path)
+            .await
+            .expect("connect to agent socket");
+        let mut sub = gateway.subscribe().await.expect("subscribe");
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(3), sub.recv())
+            .await
+            .expect("subscriber should still receive an event after an oversized line within 3s")
+            .expect("event present");
+
+        match event {
+            AgentEvent::Token { token } => assert_eq!(
+                token, "hi",
+                "the oversized line must not be delivered as a parsed event, only the valid one that follows it"
+            ),
+            other => panic!("expected a Token event, got: {other:?}"),
+        }
+
+        accept_task.await.expect("accept task completed");
+    }
+
+    #[test]
+    fn max_line_bytes_matches_documented_protocol_limit() {
+        assert_eq!(MAX_LINE_BYTES, 1_048_576);
+    }
+}

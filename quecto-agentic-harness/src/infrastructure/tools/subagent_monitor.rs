@@ -683,3 +683,7 @@ mod forward_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_completion_tests.rs"]
 mod completion_tests;
+
+#[cfg(test)]
+#[path = "subagent_monitor_bounded_read_tests.rs"]
+mod bounded_read_tests;

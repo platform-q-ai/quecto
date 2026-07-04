@@ -216,3 +216,62 @@ async fn idle_accept_loop_pushes_nothing() {
         "idle client must receive no unsolicited snapshot bytes, got: {received}"
     );
 }
+
+// --- bounded read at read time (#1003) ---
+//
+// The client reader loop in `multi_client_loop` now reads lines through the
+// shared `quecto_line_io::read_bounded_line` helper rather than
+// `AsyncBufReadExt::lines()`/`next_line()`, so a client sending one giant
+// unterminated line is capped *while being read* rather than fully buffered
+// and only checked/dropped afterward. This exercises the real reader loop
+// over a live socket and asserts on the one thing an external observer can
+// see: which commands actually reach the dispatch mpsc.
+#[tokio::test]
+async fn multi_client_loop_drops_oversized_command_but_dispatches_the_next_valid_one() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket_path = dir.path().join("oversized.sock");
+
+    let (args, _bcast, _cmd_tx, mut cmd_rx) = make_args(&socket_path, /* busy */ false, None);
+    let handle = spawn_accept_loop(args);
+
+    let mut client = tokio::net::UnixStream::connect(&socket_path)
+        .await
+        .expect("connect to idle accept loop");
+
+    // MAX_LINE_BYTES for the CLI reader loop (kept in sync with
+    // `uds_multi::MAX_LINE_BYTES`); rather than reach into a private const
+    // from an integration-style test, use a payload comfortably above any
+    // plausible cap.
+    let oversized = format!(
+        "{{\"command\":\"prompt\",\"task\":\"{}\"}}\n",
+        "x".repeat(2 * 1024 * 1024)
+    );
+    let valid = "{\"command\":\"get_state\"}\n";
+    client
+        .write_all(oversized.as_bytes())
+        .await
+        .expect("write oversized line");
+    client
+        .write_all(valid.as_bytes())
+        .await
+        .expect("write valid line");
+    client.flush().await.expect("flush");
+
+    let received = tokio::time::timeout(std::time::Duration::from_secs(2), cmd_rx.recv())
+        .await
+        .expect("dispatch loop should still receive the valid command within 2s")
+        .expect("cmd channel open");
+
+    handle.abort();
+
+    match received {
+        ClientMessage::Command(cmd) => {
+            assert_eq!(
+                cmd.line.trim(),
+                valid.trim(),
+                "the oversized line must never reach dispatch, only the valid command that follows it"
+            );
+        }
+        _other => panic!("expected a Command message, got something else"),
+    }
+}
