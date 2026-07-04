@@ -48,7 +48,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     let mut session_key = "cli:test".to_string();
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
-    let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
+    let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(1024);
 
     let mut ctx = DispatchCtx {
         base_dir: tmp.path(),
@@ -85,35 +85,42 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     let (mut client, server) = tokio::net::UnixStream::pair().expect("socketpair");
     let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(server);
 
-    let oversized = format!(
-        "{{\"type\":\"prompt\",\"task\":\"{}\"}}\n",
-        "x".repeat(MAX_LINE_BYTES + 65_536)
-    );
-    client
-        .write_all(oversized.as_bytes())
-        .await
-        .expect("write oversized line");
-    client
-        .write_all(b"{\"type\":\"get_state\"}\n")
-        .await
-        .expect("write valid line");
-    drop(client);
+    // Write from a concurrent task: the oversized line is far larger than the
+    // socket buffer, so a sequential `write_all` before `run_command_loop`
+    // starts reading would deadlock (writer waits for a reader that never
+    // comes, reader is never started).
+    let writer = tokio::spawn(async move {
+        let oversized = format!(
+            "{{\"type\":\"prompt\",\"task\":\"{}\"}}\n",
+            "x".repeat(MAX_LINE_BYTES + 65_536)
+        );
+        client
+            .write_all(oversized.as_bytes())
+            .await
+            .expect("write oversized line");
+        client
+            .write_all(b"{\"type\":\"get_state\"}\n")
+            .await
+            .expect("write valid line");
+        drop(client);
+    });
 
     run_command_loop(reader, &mut ctx).await;
+    writer.await.expect("writer task");
 
     let mut saw_parse_error = false;
     let mut saw_state = false;
     while let Ok(line) = broadcast_rx.try_recv() {
         let v: serde_json::Value = serde_json::from_str(&line).expect("valid JSON event");
-        match v["type"].as_str() {
-            Some("parse_error") => {
+        match (v["type"].as_str(), v["command"].as_str()) {
+            (Some("response"), Some("parse_error")) => {
                 saw_parse_error = true;
                 assert_eq!(
-                    v["message"], "line exceeds 1 MiB limit",
+                    v["error"], "line exceeds 1 MiB limit",
                     "the too-long event must report the same message as before #1003"
                 );
             }
-            Some("state") => saw_state = true,
+            (Some("response"), Some("get_state")) => saw_state = true,
             _ => {}
         }
     }
