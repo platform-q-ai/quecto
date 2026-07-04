@@ -58,7 +58,10 @@ pub enum AgentProgressEvent {
     /// turn-by-turn, rather than only at completion (#797).
     TurnCompleted {
         /// Messages appended to the conversation during the just-completed turn.
-        messages: Vec<crate::domain::message::Message>,
+        ///
+        /// Shared slice so cloning the event (e.g. for broadcast fan-out) is a
+        /// cheap refcount bump rather than a deep copy of the turn (#993).
+        messages: Arc<[crate::domain::message::Message]>,
     },
     /// The agent loop has produced a final text response and is done.
     Done,

@@ -19,7 +19,7 @@ mod agent_loop_clamp;
 #[path = "agent_loop_errors.rs"]
 mod agent_loop_errors;
 #[path = "agent_loop_preview.rs"]
-mod agent_loop_preview;
+pub(crate) mod agent_loop_preview;
 #[path = "agent_loop_pruning.rs"]
 mod agent_loop_pruning;
 mod agent_loop_session;
@@ -256,8 +256,10 @@ impl AgentLoopImpl {
             && first.role == crate::domain::message::Role::System
             && !first.is_manifest
         {
-            first.content = prompt;
-            first.invalidate_token_cache();
+            if first.content != prompt {
+                first.content = prompt;
+                first.invalidate_token_cache();
+            }
         } else {
             messages.insert(0, Message::system(prompt));
         }
@@ -296,14 +298,16 @@ impl AgentLoopImpl {
         current_turn: u32,
         response: LlmResponse,
     ) {
-        // Move content out (no clone). Clone tool_calls once — needed because
-        // Message::assistant takes ownership but we push tool results to messages
-        // below, requiring mutable access that conflicts with borrowing back.
-        let content = response.content.unwrap_or_default();
-        let tool_calls = response.tool_calls;
-        messages.push(Message::assistant(content, tool_calls.clone()));
+        let mut assistant =
+            Message::assistant(response.content.unwrap_or_default(), response.tool_calls);
+        assistant.stop_reason = response.stop_reason;
+        assistant.thinking_blocks = response.thinking_blocks;
+        messages.push(assistant);
+        let assistant_index = messages.len() - 1;
+        let tool_call_count = messages[assistant_index].tool_calls.len();
 
-        for (idx, tc) in tool_calls.iter().enumerate() {
+        for idx in 0..tool_call_count {
+            let tc = &messages[assistant_index].tool_calls[idx];
             // Audit: ToolCall (guarded — avoid clones when audit is disabled)
             if self.audit_log.is_some() {
                 self.audit(
@@ -375,14 +379,12 @@ impl AgentLoopImpl {
         };
 
         // Emit ToolFinished so the REPL can replace the spinner line.
-        // Cap result_content for the progress event to avoid cloning huge strings.
-        // The TUI only previews the first ~10 lines anyway.
-        let result_preview = agent_loop_preview::tool_result_preview(&content);
+        // Build the bounded preview inside notify so headless runs allocate none.
         self.notify(|| AgentProgressEvent::ToolFinished {
             tool_call_id: tc.id.clone(),
             name: tc.name.clone(),
             arguments: tc.arguments.clone(),
-            result_content: result_preview.clone(),
+            result_content: agent_loop_preview::tool_result_preview(&content),
             duration_ms,
             is_error: is_err,
         });
@@ -684,9 +686,10 @@ impl AgentLoopImpl {
             // Stream this turn's output (assistant message + tool results) over
             // the live progress path so a parent/inspector sees it turn-by-turn,
             // not only at completion (#797). The clone is only paid when a
-            // progress callback is registered (UDS mode), via `notify`'s guard.
+            // progress callback is registered (via `notify`'s guard), and the
+            // Arc<[Message]> payload makes further event clones refcount bumps (#993).
             self.notify(|| AgentProgressEvent::TurnCompleted {
-                messages: messages[appended_from..].to_vec(),
+                messages: messages[appended_from..].into(),
             });
             // Tool calls were executed and spilled — mark dirty for next iteration
             spills_dirty = self.spill_store.is_some();
@@ -733,6 +736,9 @@ impl AgentLoop for AgentLoopImpl {
     }
 }
 
+#[cfg(test)]
+#[path = "agent_loop_993_tests.rs"]
+mod issue_993_tests;
 #[cfg(test)]
 #[path = "agent_loop_spill_tests.rs"]
 mod spill_tests;

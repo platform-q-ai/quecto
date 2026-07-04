@@ -19,21 +19,69 @@ Feature: Agent Loop
     When the agent processes [message] "What are my notes?"
     Then the response should be "Your notes say: Buy groceries"
 
-  Scenario: Tool result preview handles multibyte output at the byte limit
+  Scenario: Long Unicode tool output has a safe progress preview
     Given a configured agent with a mock LLM
     And the LLM returns a tool call for "read" with args:
       | path | notes.txt |
-    And the tool "read" returns output whose byte limit falls inside a multibyte character
+    And the tool "read" returns long Unicode output
     And the LLM then returns "Done"
     When the agent reports progress while processing [message] "Read my notes"
     Then the tool result preview should contain only complete characters
-    And the tool result preview should stay within the byte limit
+    And the tool result preview should stay within the allowed display length
 
-  Scenario: Message triggers multiple tool calls in sequence
+  Scenario Outline: Tool result preview respects display length boundaries
     Given a configured agent with a mock LLM
-    And the LLM returns tool calls in sequence: "read", "write"
+    And the LLM returns a tool call for "read" with args:
+      | path | notes.txt |
+    And the tool "read" returns output <position> the allowed display length
+    And the LLM then returns "Done"
+    When the agent reports progress while processing [message] "Read my notes"
+    Then the tool result preview should match output <position> the allowed display length
+
+    Examples:
+      | position   |
+      | below      |
+      | exactly at |
+      | above      |
+
+  Scenario: Headless tool execution does not prepare a progress preview
+    Given a configured agent with a mock LLM
+    And the LLM returns a tool call for "read" with args:
+      | path | notes.txt |
+    And the tool "read" returns long Unicode output
+    And the LLM then returns "Done"
+    When the agent processes [message] "Read my notes"
+    Then no progress preview should be reported
+
+  Scenario: Headless multi-tool turns reuse the assistant tool requests
+    Given a configured agent with a mock LLM
+    And the LLM returns simultaneous tool calls for "read" and "write"
+    And the LLM then returns "Done"
     When the agent processes [message] "Copy my notes to output.txt"
+    Then the assistant tool requests should be reused for execution
+
+  Scenario: Unchanged instructions are reused across turns
+    Given an agent with stable dynamic instructions
+    And the LLM returns a plain text response "First done"
+    And the LLM then returns "Second done"
+    When the agent processes two messages while the instructions stay the same
+    Then the agent should reuse the unchanged instructions
+
+  Scenario: Message triggers multiple tool calls in one turn
+    Given a configured agent with a mock LLM
+    And the LLM returns simultaneous tool calls for "read" and "write"
+    And the LLM then returns "Done"
+    When the agent reports progress while processing [message] "Copy my notes to output.txt"
     Then both tools should be executed in order
+    And the completed turn should include both tool results in order
+    And the final response should confirm completion
+
+  Scenario: Message triggers tool calls across sequential turns
+    Given a configured agent with a mock LLM
+    And the LLM returns sequential tool calls for "read" then "write"
+    And the LLM then returns "Done"
+    When the agent processes [message] "Copy my notes to output.txt"
+    Then both tools should be executed across two turns in order
     And the final response should confirm completion
 
   Scenario: Tool iteration limit prevents infinite loops
