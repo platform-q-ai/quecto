@@ -365,3 +365,21 @@ Feature: SpawnTool — child agent process spawning
   Scenario: Tool definition schema includes read_only field
     Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
     Then the spawn tool schema should include property "read_only"
+
+  # --- wave 4 response/registry behavior ---
+
+  @wave4 @spawn-response
+  Scenario: Stub spawn broadcasts immediate visibility with parent identity
+    Given a SpawnTool with empty allowlist, parent id "parent-agent", and a broadcast listener
+    When I execute the SpawnTool with '{"task":"observe","agent_id":"child-agent"}'
+    Then the spawn result should not be an error
+    And the subagent registry entry "child-agent" should have parent_id "parent-agent"
+    And the spawn broadcast should list "child-agent" with parent_id "parent-agent"
+
+  @wave4 @spawn-response
+  Scenario: Stub spawn records read-only observer status in registry and broadcast
+    Given a SpawnTool with empty allowlist, parent id "parent-agent", and a broadcast listener
+    When I execute the SpawnTool with '{"task":"observe","agent_id":"observer","read_only":true}'
+    Then the spawn result should not be an error
+    And the subagent registry entry "observer" should be read-only
+    And the spawn broadcast should list "observer" as read-only

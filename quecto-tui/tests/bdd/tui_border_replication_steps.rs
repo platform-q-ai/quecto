@@ -15,6 +15,25 @@ use quecto_tui::interface::components::editor::Editor;
 use quecto_tui::interface::components::sanitize::strip_terminal_control;
 use quecto_tui::interface::keys::Key;
 
+fn drain_commands(world: &mut TuiWorld) -> Vec<String> {
+    if let Some(rt) = &world.tui_parity_rt {
+        if let Some(h) = world.tui_parity.as_mut() {
+            return rt.block_on(h.0.drain_commands());
+        }
+    }
+    Vec::new()
+}
+
+fn command_of_type<'a>(commands: &'a [String], expected_type: &str) -> Option<&'a str> {
+    commands.iter().map(String::as_str).find(|line| {
+        serde_json::from_str::<serde_json::Value>(line)
+            .ok()
+            .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_string))
+            .as_deref()
+            == Some(expected_type)
+    })
+}
+
 /// Count (top, bottom) editor borders in a rendered block. The editor's top
 /// border carries the ` > ` (or ` ! `) prompt indicator between horizontal
 /// rules; its bottom border is a full run of `─`.
@@ -158,6 +177,43 @@ fn rendered_output_contains(world: &mut TuiWorld, needle: String) {
     assert!(
         joined.contains(&needle),
         "pasted content {needle:?} should appear in the rendered editor: {joined:?}"
+    );
+}
+
+#[when(expr = "I type the prompt keys {string}")]
+fn type_prompt_keys(world: &mut TuiWorld, text: String) {
+    with_harness(world, |h| {
+        for ch in text.chars() {
+            h.press(Key::Char(ch));
+        }
+    });
+}
+
+#[when("I press Shift Enter in the editor")]
+fn press_shift_enter(world: &mut TuiWorld) {
+    with_harness(world, |h| {
+        h.press(Key::ShiftEnter);
+    });
+}
+
+#[when("I press Enter in the editor")]
+fn press_enter_in_editor(world: &mut TuiWorld) {
+    with_harness(world, |h| {
+        h.press(Key::Enter);
+    });
+    world.tui_last_commands = drain_commands(world);
+}
+
+#[then(expr = "the master prompt command message is {string}")]
+fn master_prompt_command_message_is(world: &mut TuiWorld, expected: String) {
+    let expected = expected.replace("\\n", "\n");
+    let prompt = command_of_type(&world.tui_last_commands, "prompt")
+        .unwrap_or_else(|| panic!("expected prompt command, got {:?}", world.tui_last_commands));
+    let value: serde_json::Value = serde_json::from_str(prompt).expect("prompt command json");
+    assert_eq!(
+        value.get("message").and_then(|v| v.as_str()),
+        Some(expected.as_str()),
+        "submitted prompt should preserve editor newlines: {prompt}"
     );
 }
 

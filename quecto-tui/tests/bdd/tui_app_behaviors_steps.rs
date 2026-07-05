@@ -110,6 +110,58 @@ fn when_quiet_stats_arrives(world: &mut TuiWorld, cost_label: String, context_la
     });
 }
 
+#[when(
+    expr = "an interactive session stats response arrives for {string} with cost {string} and tokens {int} input {int} output"
+)]
+fn when_interactive_stats_arrives(
+    world: &mut TuiWorld,
+    session_key: String,
+    cost_label: String,
+    input_tokens: u64,
+    output_tokens: u64,
+) {
+    let cost = cost_label
+        .trim_start_matches('$')
+        .parse::<f64>()
+        .unwrap_or_else(|e| panic!("invalid cost label {cost_label:?}: {e}"));
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("stats-chat".into()),
+            command: "get_session_stats".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "sessionKey": session_key,
+                "totalMessages": 9,
+                "tokens": { "input": input_tokens, "output": output_tokens },
+                "cost": cost,
+                "contextTokens": 8_000,
+                "maxContextTokens": 100_000,
+            })),
+            error: None,
+        });
+    });
+}
+
+#[given(expr = "the master chat already contains {string}")]
+fn given_master_chat_already_contains(world: &mut TuiWorld, text: String) {
+    drive(world, |h| {
+        h.add_user_message(&text);
+    });
+}
+
+#[when("a resumed messages response arrives with a non-array messages field")]
+fn when_resumed_messages_non_array(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("resume-messages".into()),
+            command: "get_messages".into(),
+            success: true,
+            data: Some(serde_json::json!({ "messages": "bad" })),
+            error: None,
+        });
+    });
+}
+
 #[when(expr = "a model switch response fails with {string}")]
 fn when_model_switch_fails(world: &mut TuiWorld, error: String) {
     drive(world, |h| {
@@ -121,6 +173,76 @@ fn when_model_switch_fails(world: &mut TuiWorld, error: String) {
             error: Some(error),
         });
     });
+}
+
+#[when("I request the model selector")]
+fn when_request_model_selector(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Ctrl('l'));
+    });
+    world.tui_last_commands = drain_commands(world);
+}
+
+#[when(expr = "the model list response contains {string} and {string}")]
+fn when_model_list_response_contains(world: &mut TuiWorld, first: String, second: String) {
+    let request = command_of_type(&world.tui_last_commands, "list_models").unwrap_or_else(|| {
+        panic!(
+            "model selector should request list_models, got {:?}",
+            world.tui_last_commands
+        )
+    });
+    let id = json_field(request, "id");
+    drive(world, |h| {
+        h.event(Event::Response {
+            id,
+            command: "list_models".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "models": [
+                    { "id": first, "provider": "OpenAI API", "auth": "api" },
+                    { "id": second, "provider": "Anthropic API", "auth": "api" }
+                ]
+            })),
+            error: None,
+        });
+    });
+}
+
+#[when(expr = "the model list response fails with {string}")]
+fn when_model_list_response_fails(world: &mut TuiWorld, error: String) {
+    let request = command_of_type(&world.tui_last_commands, "list_models").unwrap_or_else(|| {
+        panic!(
+            "model selector should request list_models, got {:?}",
+            world.tui_last_commands
+        )
+    });
+    let id = json_field(request, "id");
+    drive(world, |h| {
+        h.event(Event::Response {
+            id,
+            command: "list_models".into(),
+            success: false,
+            data: None,
+            error: Some(error),
+        });
+    });
+}
+
+#[when(expr = "I filter the model selector with {string}")]
+fn when_filter_model_selector(world: &mut TuiWorld, query: String) {
+    drive(world, |h| {
+        for ch in query.chars() {
+            h.press(Key::Char(ch));
+        }
+    });
+}
+
+#[when("I accept the selected model")]
+fn when_accept_selected_model(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Enter);
+    });
+    world.tui_last_commands = drain_commands(world);
 }
 
 #[when("I request rewind history with two prior user turns")]
@@ -321,6 +443,15 @@ fn then_selected_subagent_session_shows(world: &mut TuiWorld, expected: String) 
     );
 }
 
+#[then(expr = "the app master session shows {string}")]
+fn then_app_master_session_shows(world: &mut TuiWorld, expected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&expected),
+        "master session should show {expected:?}, got:\n{frame}"
+    );
+}
+
 #[then(expr = "the app master session does not show {string}")]
 fn then_master_session_does_not_show(world: &mut TuiWorld, unexpected: String) {
     let frame = drive(world, |h| h.full_frame());
@@ -340,6 +471,41 @@ fn then_footer_shows_subagent_model_and_context(
     assert!(
         frame.contains(&model) && frame.contains(&context),
         "selected sub-agent footer should show model {model:?} and context {context:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "a set model command is sent for {string}")]
+fn then_set_model_command_sent_for(world: &mut TuiWorld, expected: String) {
+    let cmd = command_of_type(&world.tui_last_commands, "set_model").unwrap_or_else(|| {
+        panic!(
+            "expected set_model command, got {:?}",
+            world.tui_last_commands
+        )
+    });
+    let value: serde_json::Value = serde_json::from_str(cmd).expect("set_model command json");
+    assert_eq!(
+        value.get("model").and_then(|v| v.as_str()),
+        Some(expected.as_str()),
+        "selected model should be sent in set_model command: {cmd}"
+    );
+}
+
+#[then(expr = "the footer shows the master model {string}")]
+fn then_footer_shows_master_model(world: &mut TuiWorld, expected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&expected),
+        "master footer should show selected model {expected:?}, got:\n{frame}"
+    );
+}
+
+#[then("the model selector is visible")]
+fn then_model_selector_visible(world: &mut TuiWorld) {
+    let is_open = drive(world, |h| h.model_selector_open());
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        is_open && frame.contains("Select Model"),
+        "model selector should be open and visible, open={is_open}, frame:\n{frame}"
     );
 }
 

@@ -10,10 +10,45 @@ Feature: TUI app event routing and command behaviours
     Then the footer shows cost "$0.1234" and context "42k"
     And the chat transcript does not show a session stats notification
 
+  @app-response @session-payloads
+  Scenario: Interactive session stats response adds a chat summary and footer values
+    Given a fresh TUI app harness
+    When an interactive session stats response arrives for "cli:demo" with cost "$0.5000" and tokens 123 input 456 output
+    Then the footer shows cost "$0.5000" and context "8.0k"
+    And the app master session shows "Session: cli:demo"
+    And the app master session shows "Tokens: ↑123 ↓456"
+
+  @app-response @session-payloads
+  Scenario: Malformed resumed messages payload preserves existing chat and reports the error
+    Given a fresh TUI app harness
+    And the master chat already contains "keep this visible"
+    When a resumed messages response arrives with a non-array messages field
+    Then the app master session shows "keep this visible"
+    And the app master session shows "Invalid resume payload: messages field is not an array"
+    And the app notification includes "Invalid resume payload: messages field is not an array"
+
   Scenario: Failed model switch response is shown as an error notification
     Given a fresh TUI app harness
     When a model switch response fails with "model not found"
     Then the app notification includes "Model switch failed: model not found"
+
+  @model-selector
+  Scenario: Model selector opens from a fresh list and submits the filtered choice
+    Given a fresh TUI app harness
+    When I request the model selector
+    And the model list response contains "openai-api/gpt-5.5" and "anthropic-api/claude-fable-5"
+    And I filter the model selector with "fable"
+    And I accept the selected model
+    Then a set model command is sent for "anthropic-api/claude-fable-5"
+    And the footer shows the master model "anthropic-api/claude-fable-5"
+
+  @model-selector
+  Scenario: Failed model list still opens the selector with cached models
+    Given a fresh TUI app harness
+    When I request the model selector
+    And the model list response fails with "registry unavailable"
+    Then the app notification includes "Could not list models: registry unavailable"
+    And the model selector is visible
 
   Scenario: Rewind selector opens from history and applies the selected turn
     Given a fresh TUI app harness

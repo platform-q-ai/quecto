@@ -18,6 +18,21 @@ fn given_spawn_tool_empty_allowlist(world: &mut QuectoWorld, restrict: String) {
     world.spawn_tool = Some(SpawnTool::new(vec![], restrict));
 }
 
+#[given(expr = "a SpawnTool with empty allowlist, parent id {string}, and a broadcast listener")]
+fn given_spawn_tool_empty_allowlist_parent_and_broadcast(
+    world: &mut QuectoWorld,
+    parent_id: String,
+) {
+    let (tx, rx) = tokio::sync::broadcast::channel::<String>(8);
+    world.spawn_tool =
+        Some(SpawnTool::new(vec![], true).with_event_forwarding(Some(tx), Some(parent_id)));
+    // Keep assertions deterministic without keeping a runtime alive across steps:
+    // execute() sends the immediate-visibility event synchronously enough that it
+    // is queued for this receiver before execute() returns.
+    world.cascade_broadcast = Some(None);
+    world.spawn_broadcast_rx = Some(rx);
+}
+
 #[given(expr = "a SpawnTool created with base_dir {string}")]
 fn given_spawn_tool_with_base_dir(world: &mut QuectoWorld, base_dir: String) {
     world.spawn_tool = Some(SpawnTool::with_base_dir(
@@ -247,6 +262,43 @@ fn then_registry_contains(world: &mut QuectoWorld, agent_id: String) {
     );
 }
 
+#[then(expr = "the subagent registry entry {string} should have parent_id {string}")]
+fn then_registry_entry_has_parent_id(world: &mut QuectoWorld, agent_id: String, parent_id: String) {
+    let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
+    let registry = tool.registry();
+    let entries = registry.lock().unwrap();
+    let entry = entries.get(&agent_id).unwrap_or_else(|| {
+        panic!(
+            "expected registry entry '{}', got keys {:?}",
+            agent_id,
+            entries.keys()
+        )
+    });
+    assert_eq!(
+        entry.parent_id.as_deref(),
+        Some(parent_id.as_str()),
+        "spawn should stamp the child with the spawning parent's id"
+    );
+}
+
+#[then(expr = "the subagent registry entry {string} should be read-only")]
+fn then_registry_entry_read_only(world: &mut QuectoWorld, agent_id: String) {
+    let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
+    let registry = tool.registry();
+    let entries = registry.lock().unwrap();
+    let entry = entries.get(&agent_id).unwrap_or_else(|| {
+        panic!(
+            "expected registry entry '{}', got keys {:?}",
+            agent_id,
+            entries.keys()
+        )
+    });
+    assert!(
+        entry.read_only,
+        "spawn should persist read_only observer status on the registry entry"
+    );
+}
+
 #[then("the spawn result should not be an error")]
 fn then_spawn_result_ok(world: &mut QuectoWorld) {
     let result = world.spawn_result.as_ref().expect("no spawn result");
@@ -275,6 +327,73 @@ fn then_spawn_result_contains(world: &mut QuectoWorld, expected: String) {
         "expected content to contain '{}', got: {}",
         expected,
         result.content
+    );
+}
+
+fn take_spawn_broadcast_event(world: &mut QuectoWorld) -> serde_json::Value {
+    if world
+        .cascade_broadcast
+        .as_ref()
+        .and_then(|v| v.as_ref())
+        .is_none()
+    {
+        let rx = world
+            .spawn_broadcast_rx
+            .as_mut()
+            .expect("spawn broadcast receiver not set");
+        let raw = rx
+            .try_recv()
+            .unwrap_or_else(|e| panic!("expected immediate spawn broadcast, got {e}"));
+        world.cascade_broadcast =
+            Some(Some(serde_json::from_str(&raw).unwrap_or_else(|e| {
+                panic!("broadcast should be valid JSON: {e}; raw={raw}")
+            })));
+    }
+    world
+        .cascade_broadcast
+        .as_ref()
+        .and_then(|v| v.as_ref())
+        .cloned()
+        .expect("spawn broadcast event not recorded")
+}
+
+#[then(expr = "the spawn broadcast should list {string} with parent_id {string}")]
+fn then_spawn_broadcast_lists_parent_id(
+    world: &mut QuectoWorld,
+    agent_id: String,
+    parent_id: String,
+) {
+    let event = take_spawn_broadcast_event(world);
+    assert_eq!(event["type"].as_str(), Some("subagent_state_changed"));
+    let subagents = event["subagents"]
+        .as_array()
+        .expect("subagents should be an array");
+    let entry = subagents
+        .iter()
+        .find(|s| s["agentId"].as_str() == Some(agent_id.as_str()))
+        .unwrap_or_else(|| panic!("expected broadcast to list {agent_id}, got {subagents:?}"));
+    assert_eq!(
+        entry["parentId"].as_str(),
+        Some(parent_id.as_str()),
+        "broadcast should preserve the spawning parent id"
+    );
+}
+
+#[then(expr = "the spawn broadcast should list {string} as read-only")]
+fn then_spawn_broadcast_lists_read_only(world: &mut QuectoWorld, agent_id: String) {
+    let event = take_spawn_broadcast_event(world);
+    assert_eq!(event["type"].as_str(), Some("subagent_state_changed"));
+    let subagents = event["subagents"]
+        .as_array()
+        .expect("subagents should be an array");
+    let entry = subagents
+        .iter()
+        .find(|s| s["agentId"].as_str() == Some(agent_id.as_str()))
+        .unwrap_or_else(|| panic!("expected broadcast to list {agent_id}, got {subagents:?}"));
+    assert_eq!(
+        entry["readOnly"].as_bool(),
+        Some(true),
+        "broadcast should surface read_only observer status"
     );
 }
 

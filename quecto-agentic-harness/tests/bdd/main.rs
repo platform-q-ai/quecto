@@ -732,6 +732,8 @@ pub struct QuectoWorld {
         Option<quecto::infrastructure::tools::subagent_registry::SubagentRegistry>,
     /// Result of a cascade-remove broadcast: Some(event) or None (#831)
     pub cascade_broadcast: Option<Option<serde_json::Value>>,
+    /// Broadcast receiver for SpawnTool immediate-visibility scenarios (#1028 wave 4)
+    pub spawn_broadcast_rx: Option<tokio::sync::broadcast::Receiver<String>>,
     /// Monitor abort handle for cancellation test
     pub monitor_abort_handle: Option<tokio::task::JoinHandle<()>>,
     /// Tokio runtime for abort handle test (keeps spawned task alive)
