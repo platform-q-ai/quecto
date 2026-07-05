@@ -119,6 +119,25 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     And SuggestionList should own suggestions_match and set_suggestions
     And slash autocomplete and files autocomplete should use SuggestionList
 
+  @issue-997
+  Scenario: TUI popups present rows and frames consistently
+    Given the TUI has command, file, model, selection, resume, and rewind popups
+    When those popups render selectable rows and overlay frames
+    Then TUI list popups should present rows through a consistent row contract
+    And TUI overlays should present frames through a consistent overlay contract
+
+  @issue-997
+  Scenario: TUI model selection follows shared list behaviour
+    Given the model selector contains more models than fit in its visible popup
+    When the user filters the model list and moves the selection
+    Then the visible model window and selected model should update consistently with other TUI list popups
+
+  @issue-997
+  Scenario: TUI stateful interactions remain independent
+    Given the user has sub-agent, rewind, and model-selection state in the TUI
+    When the user switches between those interactions
+    Then sub-agent, rewind, and model-selection state should remain independently owned
+
   @issue-759
   Scenario: TUI chat renderers share preview and header helpers
     Then the quecto-tui chat_render should expose push_preview and push_header helpers

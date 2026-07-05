@@ -5,12 +5,13 @@
 //! Selecting a model sends a `set_model` command to the agent.
 
 use crate::interface::component::Component;
-use crate::interface::components::list_navigator::ListNavigator;
+use crate::interface::components::list_rows::{ListRow, render_list_rows, row_label_width};
 use crate::interface::components::sanitize::strip_terminal_control;
+use crate::interface::components::suggestion_list::SuggestionList;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
 use crate::interface::theme;
-use crate::interface::utils::{truncate_to_width, visible_width};
+use crate::interface::utils::truncate_to_width;
 
 /// Well-known model identifiers, used as fallback when the caller
 /// doesn't supply a model list.
@@ -83,18 +84,12 @@ pub enum ModelSelectorResult {
 pub struct ModelSelector {
     /// All available models (unfiltered).
     all_models: Vec<ModelEntry>,
-    /// Filtered models based on query.
-    filtered: Vec<usize>,
-    /// Current selection index into `filtered`.
-    navigator: ListNavigator,
+    /// Filtered model indexes based on query, stored in shared list state.
+    list: SuggestionList,
     /// Fuzzy search query.
     query: String,
-    /// Maximum visible items.
-    max_visible: usize,
     /// Interaction result.
     result: ModelSelectorResult,
-    /// Cached max label width (recalculated only when filter changes).
-    cached_max_label_width: usize,
 }
 
 impl ModelSelector {
@@ -144,17 +139,15 @@ impl ModelSelector {
             }
         }
 
-        let filtered: Vec<usize> = (0..models.len()).collect();
-        let cached_width = compute_max_label_width(&models, &filtered);
+        let max_visible = 12;
+        let mut list = SuggestionList::new(max_visible);
+        list.set_suggestions(model_suggestions((0..models.len()).collect()));
 
         Self {
             all_models: models,
-            filtered,
-            navigator: ListNavigator::new(),
+            list,
             query: String::new(),
-            max_visible: 12,
             result: ModelSelectorResult::Pending,
-            cached_max_label_width: cached_width,
         }
     }
 
@@ -165,8 +158,8 @@ impl ModelSelector {
 
     /// Update the filtered list based on the current query.
     fn update_filter(&mut self) {
-        if self.query.is_empty() {
-            self.filtered = (0..self.all_models.len()).collect();
+        let filtered = if self.query.is_empty() {
+            (0..self.all_models.len()).collect()
         } else {
             // Build indexed pairs without cloning model IDs.
             // `all_models` and `query` are separate fields, so no borrow conflict.
@@ -176,35 +169,54 @@ impl ModelSelector {
                 .enumerate()
                 .map(|(i, m)| (i, m.id.as_str()))
                 .collect();
-            let matching = fuzzy_filter(&indexed, &self.query, |item| item.1);
-            self.filtered = matching.into_iter().map(|item| item.0).collect();
-        }
-        self.navigator.clamp(self.filtered.len());
-        // Recache label width.
-        self.cached_max_label_width = compute_max_label_width(&self.all_models, &self.filtered);
+            fuzzy_filter(&indexed, &self.query, |item| item.1)
+                .into_iter()
+                .map(|item| item.0)
+                .collect()
+        };
+        self.list.set_suggestions(model_suggestions(filtered));
     }
 
     /// Get the currently selected model entry, if any.
     pub fn selected_model(&self) -> Option<&ModelEntry> {
-        self.filtered
-            .get(self.navigator.selected())
-            .map(|&idx| &self.all_models[idx])
+        self.list
+            .selected_suggestion()
+            .and_then(|s| s.index)
+            .and_then(|idx| self.all_models.get(idx))
     }
 
     /// Get the number of visible (filtered) models.
     pub fn visible_count(&self) -> usize {
-        self.filtered.len()
+        self.list.len()
+    }
+
+    fn filtered_label_width(&self) -> usize {
+        self.list
+            .suggestions()
+            .iter()
+            .filter_map(|s| s.index)
+            .filter_map(|idx| self.all_models.get(idx))
+            .map(|model| crate::interface::utils::visible_width(&model.id))
+            .max()
+            .unwrap_or(10)
+            .min(40)
     }
 }
 
-/// Compute the max label width across filtered entries.
-fn compute_max_label_width(models: &[ModelEntry], filtered: &[usize]) -> usize {
-    filtered
-        .iter()
-        .map(|&idx| visible_width(&models[idx].id))
-        .max()
-        .unwrap_or(10)
-        .min(40)
+fn model_suggestions(
+    indexes: Vec<usize>,
+) -> Vec<crate::interface::components::autocomplete::Suggestion> {
+    indexes
+        .into_iter()
+        .map(
+            |idx| crate::interface::components::autocomplete::Suggestion {
+                value: String::new(),
+                label: String::new(),
+                description: String::new(),
+                index: Some(idx),
+            },
+        )
+        .collect()
 }
 
 impl Component for ModelSelector {
@@ -232,7 +244,7 @@ impl Component for ModelSelector {
         lines.push(String::new()); // spacer
 
         // Filtered list.
-        if self.filtered.is_empty() {
+        if self.list.is_empty() {
             lines.push(truncate_to_width(
                 &format!("  {}", theme::dim("No matching models")),
                 width,
@@ -242,50 +254,42 @@ impl Component for ModelSelector {
         }
 
         // Calculate visible window.
-        let total = self.filtered.len();
-        let range = self.navigator.visible_range(total, self.max_visible);
+        let total = self.list.len();
+        let range = self.list.visible_range();
         let start = range.start;
         let end = range.end;
-
-        // Use cached label width for alignment.
-        let max_label_width = self.cached_max_label_width;
-
-        for i in start..end {
-            let idx = self.filtered[i];
-            let model = &self.all_models[idx];
-            let is_sel = i == self.navigator.selected();
-
-            let prefix = if is_sel { "→ " } else { "  " };
-            let current_marker = if model.is_current { " ●" } else { "" };
-
-            let label = if is_sel {
-                theme::accent(&model.id)
-            } else {
-                model.id.clone()
-            };
-
-            let label_vis = visible_width(&model.id);
-            let gap = max_label_width.saturating_sub(label_vis) + 2;
-            let spacing = " ".repeat(gap);
-            let provider_label = match model.auth.as_deref() {
-                Some(auth) if !auth.is_empty() => format!("{} [{}]", model.provider, auth),
-                _ => model.provider.clone(),
-            };
-            let provider_str = theme::dim(&provider_label);
-
-            let line = format!(
-                "  {}{}{}{}{}",
-                prefix, label, current_marker, spacing, provider_str
-            );
-            lines.push(truncate_to_width(&line, width, None));
-        }
+        let rows: Vec<ListRow> = self.list.suggestions()[start..end]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, suggestion)| {
+                let idx = suggestion.index?;
+                let model = self.all_models.get(idx)?;
+                let provider_label = match model.auth.as_deref() {
+                    Some(auth) if !auth.is_empty() => format!("{} [{}]", model.provider, auth),
+                    _ => model.provider.clone(),
+                };
+                let i = start + offset;
+                let mut row = ListRow::new(model.id.clone())
+                    .description(provider_label)
+                    .selected(i == self.list.selected());
+                if model.is_current {
+                    row = row.marker(" ●");
+                }
+                Some(row)
+            })
+            .collect();
+        lines.extend(render_list_rows(
+            &rows,
+            width,
+            self.filtered_label_width().max(row_label_width(&rows, 40)),
+        ));
 
         // Scroll indicator.
         if start > 0 || end < total {
             lines.push(truncate_to_width(
                 &format!(
                     "  {}",
-                    theme::dim(&format!("({}/{})", self.navigator.selected() + 1, total))
+                    theme::dim(&format!("({}/{})", self.list.selected() + 1, total))
                 ),
                 width,
                 None,
@@ -298,11 +302,11 @@ impl Component for ModelSelector {
     fn handle_input(&mut self, key: &Key) -> bool {
         match key {
             Key::Up => {
-                self.navigator.move_previous(self.filtered.len());
+                self.list.move_previous();
                 true
             }
             Key::Down => {
-                self.navigator.move_next(self.filtered.len());
+                self.list.move_next();
                 true
             }
             Key::Enter => {
@@ -340,6 +344,7 @@ impl Component for ModelSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interface::utils::visible_width;
 
     fn strip_ansi(s: &str) -> String {
         let mut result = String::new();
@@ -487,9 +492,11 @@ mod tests {
             KNOWN_MODELS.len()
         );
         let visible_ids: Vec<&str> = sel
-            .filtered
+            .list
+            .suggestions()
             .iter()
-            .map(|&idx| sel.all_models[idx].id.as_str())
+            .filter_map(|s| s.index)
+            .filter_map(|idx| sel.all_models.get(idx).map(|m| m.id.as_str()))
             .collect();
         assert!(
             visible_ids.iter().any(|id| id.contains("sonnet")),

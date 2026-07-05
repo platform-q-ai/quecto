@@ -9,14 +9,14 @@ async fn spawn_start_tracks_read_only_observer_args() {
         tool_name: "spawn".into(),
         args: serde_json::json!({"agent_id":"reviewer","read_only":true}),
     });
-    assert!(app.subagent_local["reviewer"].info.read_only);
+    assert!(app.subagents.local["reviewer"].info.read_only);
 
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "spawn-disabled".into(),
         tool_name: "spawn".into(),
         args: serde_json::json!({"agent_id":"observer","disable_tools":["edit","write"]}),
     });
-    assert!(app.subagent_local["observer"].info.read_only);
+    assert!(app.subagents.local["observer"].info.read_only);
 }
 
 #[tokio::test]
@@ -27,5 +27,5 @@ async fn spawn_start_does_not_mark_partial_disable_as_observer() {
         tool_name: "spawn".into(),
         args: serde_json::json!({"agent_id":"writer","disable_tools":["write"]}),
     });
-    assert!(!app.subagent_local["writer"].info.read_only);
+    assert!(!app.subagents.local["writer"].info.read_only);
 }

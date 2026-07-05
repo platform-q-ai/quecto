@@ -64,8 +64,8 @@ async fn idle_escape_first_press_arms_notification() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.handle_idle_escape_for_rewind();
-    assert!(a.last_idle_escape.is_some());
-    assert!(a.pending_rewind_open_id.is_none());
+    assert!(a.rewind.last_idle_escape.is_some());
+    assert!(a.rewind.pending_open_id.is_none());
     assert!(!a.notifications.is_empty());
 }
 
@@ -75,8 +75,8 @@ async fn idle_escape_double_press_requests_messages() {
     let a = h.app_mut();
     a.handle_idle_escape_for_rewind();
     a.handle_idle_escape_for_rewind();
-    assert!(a.last_idle_escape.is_none());
-    assert!(a.pending_rewind_open_id.is_some());
+    assert!(a.rewind.last_idle_escape.is_none());
+    assert!(a.rewind.pending_open_id.is_some());
 }
 
 #[tokio::test]
@@ -84,7 +84,7 @@ async fn open_rewind_selector_no_messages_key_notifies() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.open_rewind_selector(&serde_json::json!({}));
-    assert!(a.rewind_selector.is_none());
+    assert!(a.rewind.selector.is_none());
     assert!(!a.notifications.is_empty());
 }
 
@@ -100,7 +100,7 @@ async fn open_rewind_selector_builds_turns_in_reverse() {
     });
     let a = h.app_mut();
     a.open_rewind_selector(&data);
-    assert_eq!(a.rewind_selector.as_ref().unwrap().item_count(), 2);
+    assert_eq!(a.rewind.selector.as_ref().unwrap().item_count(), 2);
 }
 
 #[tokio::test]
@@ -109,7 +109,7 @@ async fn open_rewind_selector_no_user_turns_notifies() {
     let data = serde_json::json!({"messages": [{"role": "assistant", "content": "x"}]});
     let a = h.app_mut();
     a.open_rewind_selector(&data);
-    assert!(a.rewind_selector.is_none());
+    assert!(a.rewind.selector.is_none());
     assert!(!a.notifications.is_empty());
 }
 
@@ -120,8 +120,8 @@ async fn rewind_selector_enter_requests_rewind() {
     let a = h.app_mut();
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Enter);
-    assert!(a.rewind_selector.is_none());
-    assert!(a.pending_rewind_apply_id.is_some());
+    assert!(a.rewind.selector.is_none());
+    assert!(a.rewind.pending_apply_id.is_some());
 }
 
 #[tokio::test]
@@ -131,15 +131,15 @@ async fn rewind_selector_escape_cancels() {
     let a = h.app_mut();
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Escape);
-    assert!(a.rewind_selector.is_none());
-    assert!(a.pending_rewind_apply_id.is_none());
+    assert!(a.rewind.selector.is_none());
+    assert!(a.rewind.pending_apply_id.is_none());
 }
 
 #[tokio::test]
 async fn rewind_selector_invalid_value_notifies_error() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.rewind_selector = Some(SelectList::new(
+    a.rewind.selector = Some(SelectList::new(
         vec![SelectItem {
             value: "not-a-number".into(),
             label: "bad".into(),
@@ -148,8 +148,8 @@ async fn rewind_selector_invalid_value_notifies_error() {
         10,
     ));
     a.handle_rewind_selector_key(&Key::Enter);
-    assert!(a.rewind_selector.is_none());
-    assert!(a.pending_rewind_apply_id.is_none());
+    assert!(a.rewind.selector.is_none());
+    assert!(a.rewind.pending_apply_id.is_none());
     assert!(!a.notifications.is_empty());
 }
 
@@ -165,29 +165,29 @@ async fn rewind_selector_pending_keeps_open() {
     let a = h.app_mut();
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Down);
-    assert!(a.rewind_selector.is_some());
+    assert!(a.rewind.selector.is_some());
 }
 
 #[tokio::test]
 async fn rewind_request_ids_are_monotonically_increasing() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let seq_before = a.rewind_request_seq;
+    let seq_before = a.rewind.request_seq;
     // First double-escape generates an open request.
     a.handle_idle_escape_for_rewind();
     a.handle_idle_escape_for_rewind();
-    let open_id = a.pending_rewind_open_id.as_ref().unwrap().clone();
+    let open_id = a.rewind.pending_open_id.as_ref().unwrap().clone();
     assert!(open_id.contains("rewind-open-"));
-    let seq_after_open = a.rewind_request_seq;
+    let seq_after_open = a.rewind.request_seq;
     assert_eq!(seq_after_open, seq_before.wrapping_add(1));
     // Now simulate a rewind apply (open selector, press Enter).
     let data = serde_json::json!({"messages": [{"role": "user", "content": "turn"}]});
-    a.pending_rewind_open_id = None; // simulate response clearing it
+    a.rewind.pending_open_id = None; // simulate response clearing it
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Enter);
-    let apply_id = a.pending_rewind_apply_id.as_ref().unwrap().clone();
+    let apply_id = a.rewind.pending_apply_id.as_ref().unwrap().clone();
     assert!(apply_id.contains("rewind-to-"));
-    let seq_after_apply = a.rewind_request_seq;
+    let seq_after_apply = a.rewind.request_seq;
     assert_eq!(seq_after_apply, seq_before.wrapping_add(2));
 }
 
@@ -197,17 +197,17 @@ async fn double_escape_outside_window_does_not_open_selector() {
     let a = h.app_mut();
     // First Escape arms.
     a.handle_idle_escape_for_rewind();
-    assert!(a.last_idle_escape.is_some());
+    assert!(a.rewind.last_idle_escape.is_some());
     // Simulate passage of time beyond the window by clearing last_idle_escape.
-    a.last_idle_escape = None;
+    a.rewind.last_idle_escape = None;
     // Second Escape should arm again (not open selector).
     a.handle_idle_escape_for_rewind();
     assert!(
-        a.last_idle_escape.is_some(),
+        a.rewind.last_idle_escape.is_some(),
         "should arm again after window expired"
     );
     assert!(
-        a.pending_rewind_open_id.is_none(),
+        a.rewind.pending_open_id.is_none(),
         "should not open selector"
     );
 }
@@ -334,11 +334,11 @@ async fn response_resume_session_success_and_failure() {
 async fn response_get_messages_opens_rewind_when_id_matches() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.pending_rewind_open_id = Some("rid".into());
+    a.rewind.pending_open_id = Some("rid".into());
     let data = serde_json::json!({"messages": [{"role": "user", "content": "turn"}]});
     respond(a, Some("rid"), "get_messages", true, Some(data), None);
-    assert!(a.rewind_selector.is_some());
-    assert!(a.pending_rewind_open_id.is_none());
+    assert!(a.rewind.selector.is_some());
+    assert!(a.rewind.pending_open_id.is_none());
 }
 
 #[tokio::test]
@@ -354,9 +354,9 @@ async fn response_get_messages_replaces_chat_when_no_match() {
 async fn response_rewind_to_success_clears_pending_and_notifies() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.pending_rewind_apply_id = Some("rt".into());
+    a.rewind.pending_apply_id = Some("rt".into());
     respond(a, Some("rt"), "rewind_to", true, None, None);
-    assert!(a.pending_rewind_apply_id.is_none());
+    assert!(a.rewind.pending_apply_id.is_none());
     assert!(!a.notifications.is_empty());
 }
 
@@ -364,9 +364,9 @@ async fn response_rewind_to_success_clears_pending_and_notifies() {
 async fn response_rewind_to_failure_clears_pending_and_notifies_error() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.pending_rewind_apply_id = Some("rt".into());
+    a.rewind.pending_apply_id = Some("rt".into());
     respond(a, Some("rt"), "rewind_to", false, None, Some("bad"));
-    assert!(a.pending_rewind_apply_id.is_none());
+    assert!(a.rewind.pending_apply_id.is_none());
     assert!(!a.notifications.is_empty());
 }
 
@@ -437,7 +437,7 @@ async fn response_get_subagents_updates_bar() {
         ]
     });
     respond(a, None, "get_subagents", true, Some(data), None);
-    assert!(!a.subagent_local.is_empty());
+    assert!(!a.subagents.local.is_empty());
 }
 
 #[tokio::test]

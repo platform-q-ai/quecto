@@ -56,7 +56,7 @@ impl App {
         let mut new_map = std::collections::BTreeMap::new();
         for s in subagents {
             let id = sanitize_agent_id(&s.agent_id);
-            if let Some(mut existing) = self.subagent_local.remove(&id) {
+            if let Some(mut existing) = self.subagents.local.remove(&id) {
                 // The kernel reported this agent — it is now confirmed, so it is
                 // no longer an unconfirmed local guess and reverts to normal
                 // full-replace reconciliation thereafter (#866).
@@ -70,7 +70,7 @@ impl App {
         // The remaining (un-pushed) entries from the previous roster. Kept by
         // reference so we can both grace-preserve exited ones AND pull in any
         // that are still referenced as ancestors of a surviving entry.
-        let leftover = std::mem::take(&mut self.subagent_local);
+        let leftover = std::mem::take(&mut self.subagents.local);
 
         // Ancestor preservation (grandchild-nesting bug): a `subagent_state_changed`
         // is treated as a FULL replace, but a forwarded child's-eye-view push
@@ -116,7 +116,7 @@ impl App {
                 new_map.entry(id).or_insert(entry);
             }
         }
-        self.subagent_local = new_map;
+        self.subagents.local = new_map;
         // Keep the panel cursor in bounds after the list changes (#800).
         self.clamp_panel_selection();
     }
@@ -131,13 +131,14 @@ impl App {
         // master's `subagent_local` status may still read idle for it.
         let any_active = self.active_subagent_running()
             || self
-                .subagent_local
+                .subagents
+                .local
                 .values()
                 .any(|t| subagent_status_is_active(&t.info.status));
         if !any_active {
             return false;
         }
-        self.subagent_frame = self.subagent_frame.wrapping_add(1);
+        self.subagents.frame = self.subagents.frame.wrapping_add(1);
         // The sub-agent-first panel reads live state directly, so the only
         // consumer of `subagent_frame` is the "N working" activity line (#820
         // review). The frame bump above is all this tick needs.
@@ -147,11 +148,11 @@ impl App {
     /// GC exited subagent bars whose grace period has elapsed (#540).
     /// Returns `true` if the bar was modified.
     pub(super) fn gc_exited_subagents(&mut self) -> bool {
-        if self.subagent_local.is_empty() {
+        if self.subagents.local.is_empty() {
             return false;
         }
         gc_exited_subagents(
-            &mut self.subagent_local,
+            &mut self.subagents.local,
             tokio::time::Instant::now(),
             EXITED_SUBAGENT_GRACE,
         )

@@ -111,6 +111,7 @@ mod tests {
             value: value.to_string(),
             label: value.to_string(),
             description: String::new(),
+            index: None,
         }
     }
 

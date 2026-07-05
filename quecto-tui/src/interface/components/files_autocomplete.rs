@@ -11,11 +11,11 @@ use std::time::{Duration, Instant};
 
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{AutocompleteResult, Suggestion};
+use crate::interface::components::list_rows::{ListRow, render_list_rows, row_label_width};
 use crate::interface::components::suggestion_list::SuggestionList;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
 use crate::interface::theme;
-use crate::interface::utils::truncate_to_width;
 
 /// How long a loaded file list stays fresh before the next activation reloads
 /// it — so files the agent creates mid-session eventually appear.
@@ -102,6 +102,7 @@ impl FilesAutocomplete {
                 value: f.clone(),
                 label: f.clone(),
                 description: String::new(),
+                index: None,
             })
             .collect();
         self.list.set_suggestions(new);
@@ -180,6 +181,7 @@ fn loading_suggestion() -> Suggestion {
         value: String::new(),
         label: "loading files…".to_string(),
         description: String::new(),
+        index: None,
     }
 }
 
@@ -230,20 +232,21 @@ impl Component for FilesAutocomplete {
         let range = self.list.visible_range();
         let start = range.start;
         let end = range.end;
-
-        for i in start..end {
-            let s = &self.list.suggestions()[i];
-            let is_sel = i == self.list.selected();
-            let prefix = if is_sel { "→ " } else { "  " };
-            let name = if self.loading && self.files.is_empty() {
-                theme::dim(&s.label)
-            } else if is_sel {
-                theme::accent(&format!("@{}", s.label))
-            } else {
-                format!("@{}", s.label)
-            };
-            lines.push(truncate_to_width(&format!("{prefix}{name}"), width, None));
-        }
+        let rows: Vec<ListRow> = self.list.suggestions()[start..end]
+            .iter()
+            .enumerate()
+            .map(|(offset, s)| {
+                let i = start + offset;
+                ListRow::new(if self.loading && self.files.is_empty() {
+                    s.label.clone()
+                } else {
+                    format!("@{}", s.label)
+                })
+                .dim(self.loading && self.files.is_empty())
+                .selected(i == self.list.selected() && !self.loading)
+            })
+            .collect();
+        lines.extend(render_list_rows(&rows, width, row_label_width(&rows, 32)));
 
         if start > 0 || end < total {
             lines.push(theme::dim(&format!(

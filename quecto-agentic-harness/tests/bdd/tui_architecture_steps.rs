@@ -1,7 +1,17 @@
 use super::*;
-use quecto_tui::interface::app::tui_harness::TuiHarness;
+use quecto_tui::interface::ansi::strip_ansi;
+use quecto_tui::interface::app::tui_harness::{TuiHarness, subagent, subagents_changed};
 use quecto_tui::interface::component::Component;
+use quecto_tui::interface::components::autocomplete::{Autocomplete, SlashCommand};
 use quecto_tui::interface::components::chat::{Chat, ChatEntry};
+use quecto_tui::interface::components::files_autocomplete::FilesAutocomplete;
+use quecto_tui::interface::components::list_rows::{ListRow, render_list_rows, row_label_width};
+use quecto_tui::interface::components::model_selector::{ModelEntry, ModelSelector};
+use quecto_tui::interface::components::select_list::{SelectItem, SelectList};
+use quecto_tui::interface::keys::Key;
+use quecto_tui::interface::select_overlay::{
+    build_model_selector_overlay, build_resume_selector_overlay, build_rewind_selector_overlay,
+};
 
 const TUI_ROOT: &str = "../quecto-tui/src";
 const TUI_SCROLLBACK_WIDTH: usize = 80;
@@ -770,7 +780,7 @@ fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
     };
 
-    for file in ["model_selector.rs", "select_list.rs", "suggestion_list.rs"] {
+    for file in ["select_list.rs", "suggestion_list.rs"] {
         let content = read(file);
         assert!(
             content.contains("navigator: ListNavigator"),
@@ -784,9 +794,13 @@ fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
         );
     }
 
-    // The autocomplete components share navigation via SuggestionList rather
-    // than re-implementing it, so they must not hold their own navigator.
-    for file in ["autocomplete.rs", "files_autocomplete.rs"] {
+    // The popup components share navigation via SuggestionList rather than
+    // re-implementing it, so they must not hold their own navigator.
+    for file in [
+        "autocomplete.rs",
+        "files_autocomplete.rs",
+        "model_selector.rs",
+    ] {
         let content = read(file);
         assert!(
             content.contains("list: SuggestionList"),
@@ -942,6 +956,275 @@ fn then_autocompletes_use_suggestion_list(_world: &mut QuectoWorld) {
             "{file} should delegate to the shared SuggestionList component"
         );
     }
+}
+
+#[given("the TUI has command, file, model, selection, resume, and rewind popups")]
+fn given_tui_has_issue_997_popups(_world: &mut QuectoWorld) {
+    for file in [
+        "interface/components/autocomplete.rs",
+        "interface/components/files_autocomplete.rs",
+        "interface/components/model_selector.rs",
+        "interface/components/select_list.rs",
+        "interface/select_overlay.rs",
+    ] {
+        assert!(
+            Path::new(TUI_ROOT).join(file).is_file(),
+            "TUI popup source should exist: {file}"
+        );
+    }
+}
+
+#[when("those popups render selectable rows and overlay frames")]
+fn when_issue_997_popups_render(_world: &mut QuectoWorld) {
+    let exact_rows = [ListRow::new("alpha").description("desc")];
+    let exact = strip_ansi(&render_list_rows(&exact_rows, 30, row_label_width(&exact_rows, 32))[0]);
+    assert_eq!(exact, "  alpha  desc");
+
+    let narrow_rows = [ListRow::new("alpha").description("description is long")];
+    let narrow =
+        strip_ansi(&render_list_rows(&narrow_rows, 22, row_label_width(&narrow_rows, 32))[0]);
+    assert!(
+        narrow.ends_with('…'),
+        "narrow row should show overflow: {narrow:?}"
+    );
+
+    let selected = render_list_rows(
+        &[ListRow::new("alpha").selected(true)],
+        20,
+        row_label_width(&[ListRow::new("alpha")], 32),
+    )[0]
+    .clone();
+    assert!(selected.contains("→ ") && selected.contains("\u{1b}["));
+}
+
+#[then("TUI list popups should present rows through a consistent row contract")]
+fn then_issue_997_list_popups_present_consistent_rows(_world: &mut QuectoWorld) {
+    let mut slash = Autocomplete::new(
+        vec![SlashCommand {
+            name: "model".into(),
+            description: "Switch model".into(),
+        }],
+        8,
+    );
+    slash.update("/m");
+    let slash_frame = strip_ansi(&slash.render(40).join("\n"));
+
+    let mut files = FilesAutocomplete::with_files(vec!["src/main.rs".into()], 8);
+    files.update("open @src", 9);
+    let file_frame = strip_ansi(&files.render(40).join("\n"));
+
+    let mut models = ModelSelector::with_models(
+        vec![ModelEntry {
+            id: "provider/model-a".into(),
+            provider: "provider".into(),
+            auth: None,
+            is_current: false,
+        }],
+        None,
+    );
+    let model_frame = strip_ansi(&models.render(60).join("\n"));
+
+    let mut select = SelectList::new(
+        vec![SelectItem {
+            value: "one".into(),
+            label: "one".into(),
+            description: Some("first".into()),
+        }],
+        8,
+    );
+    let select_frame = strip_ansi(&select.render(40).join("\n"));
+
+    for (name, frame, expected) in [
+        ("slash", slash_frame, "/model"),
+        ("files", file_frame, "@src/main.rs"),
+        ("model", model_frame, "provider/model-a"),
+        ("select", select_frame, "one"),
+    ] {
+        assert!(
+            frame.contains("→ "),
+            "{name} row should expose selected marker: {frame}"
+        );
+        assert!(
+            frame.contains(expected),
+            "{name} row should render expected content: {frame}"
+        );
+    }
+}
+
+#[then("TUI overlays should present frames through a consistent overlay contract")]
+fn then_issue_997_overlays_present_consistent_frames(_world: &mut QuectoWorld) {
+    let mut resume = SelectList::new(
+        vec![SelectItem {
+            value: "session-1".into(),
+            label: "Session 1".into(),
+            description: Some("today".into()),
+        }],
+        8,
+    );
+    let (resume_lines, resume_width) = build_resume_selector_overlay(&mut resume, 80, 20);
+
+    let mut model = ModelSelector::with_models(
+        vec![ModelEntry {
+            id: "provider/model-a".into(),
+            provider: "provider".into(),
+            auth: None,
+            is_current: false,
+        }],
+        None,
+    );
+    let (model_lines, model_width) = build_model_selector_overlay(&mut model, 80, 20);
+
+    let mut rewind = SelectList::new(
+        vec![SelectItem {
+            value: "2".into(),
+            label: "Previous turn: hello".into(),
+            description: None,
+        }],
+        8,
+    );
+    let (rewind_lines, rewind_width) = build_rewind_selector_overlay(&mut rewind, 80, 20);
+
+    for (name, lines, width, title) in [
+        ("resume", resume_lines, resume_width, "Resume session"),
+        ("model", model_lines, model_width, "Select Model"),
+        ("rewind", rewind_lines, rewind_width, "Go back to…"),
+    ] {
+        let frame = strip_ansi(&lines.join("\n"));
+        assert!(
+            frame.contains('┌') && frame.contains('└'),
+            "{name} overlay should draw a frame: {frame}"
+        );
+        assert!(
+            frame.contains(title),
+            "{name} overlay should render title {title}: {frame}"
+        );
+        assert!(
+            lines.len() <= 16,
+            "{name} overlay should respect terminal height: {frame}"
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| quecto_tui::interface::utils::visible_width(line) == width),
+            "{name} overlay lines should all span computed width {width}: {frame}"
+        );
+    }
+}
+
+#[given("the model selector contains more models than fit in its visible popup")]
+fn given_model_selector_overflows_visible_popup(world: &mut QuectoWorld) {
+    let models: Vec<ModelEntry> = (0..15)
+        .map(|i| ModelEntry {
+            id: format!("provider/model-{i:02}"),
+            provider: "provider".into(),
+            auth: None,
+            is_current: i == 0,
+        })
+        .collect();
+    let mut selector = ModelSelector::with_models(models, Some("provider/model-00"));
+    assert!(selector.visible_count() > 12);
+    world.tui_viewport_before_stream = selector.render(60);
+}
+
+#[when("the user filters the model list and moves the selection")]
+fn when_user_filters_and_moves_model_selection(world: &mut QuectoWorld) {
+    let models: Vec<ModelEntry> = (0..15)
+        .map(|i| ModelEntry {
+            id: format!("provider/model-{i:02}"),
+            provider: "provider".into(),
+            auth: None,
+            is_current: i == 0,
+        })
+        .collect();
+    let mut selector = ModelSelector::with_models(models, Some("provider/model-00"));
+    selector.handle_input(&Key::Char('1'));
+    assert!(
+        selector.visible_count() < 15,
+        "typed filter should narrow the model list"
+    );
+    selector.handle_input(&Key::Down);
+    world.tui_viewport_after_stream = selector.render(60);
+}
+
+#[then(
+    "the visible model window and selected model should update consistently with other TUI list popups"
+)]
+fn then_model_window_and_selection_follow_shared_list_behaviour(world: &mut QuectoWorld) {
+    let before = world.tui_viewport_before_stream.join("\n");
+    let after = world.tui_viewport_after_stream.join("\n");
+    assert!(
+        after.contains("→ "),
+        "selected model row should be indicated: {after}"
+    );
+    assert!(
+        after.contains("model-1"),
+        "filter should narrow visible models to matching rows: {after}"
+    );
+    assert!(
+        !after.contains("model-00"),
+        "filtered frame should drop non-matching rows from the initial frame. before={before}; after={after}"
+    );
+    assert_ne!(
+        before, after,
+        "filtering and moving selection should change the rendered model window"
+    );
+}
+
+#[given("the user has sub-agent, rewind, and model-selection state in the TUI")]
+fn given_tui_has_stateful_issue_997_interactions(world: &mut QuectoWorld) {
+    if world.tui_parity_rt.is_none() {
+        world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
+    }
+    let rt = world.tui_parity_rt.as_ref().expect("runtime");
+    let mut h = rt.block_on(async { TuiHarness::new().await });
+    h.event(subagents_changed(vec![subagent("child-a", "idle", None)]));
+    h.open_overlay();
+    assert!(
+        h.model_selector_open(),
+        "model selector should open independently"
+    );
+    world.tui_viewport_before_stream = h.last().lines().map(str::to_string).collect();
+    world.tui_parity = Some(TuiParityHarness(h));
+}
+
+#[when("the user switches between those interactions")]
+fn when_user_switches_between_stateful_interactions(world: &mut QuectoWorld) {
+    let h = &mut world.tui_parity.as_mut().expect("TUI harness").0;
+    h.press(Key::Escape)
+        .press(Key::Ctrl('g'))
+        .press(Key::Down)
+        .select(Some("child-a"))
+        .open_overlay();
+    assert!(
+        h.model_selector_open(),
+        "model selector should reopen after panel interaction"
+    );
+    world.tui_viewport_after_stream = h.left_panel().lines().map(str::to_string).collect();
+}
+
+#[then("sub-agent, rewind, and model-selection state should remain independently owned")]
+fn then_issue_997_state_remains_independently_owned(world: &mut QuectoWorld) {
+    let h = &mut world.tui_parity.as_mut().expect("TUI harness").0;
+    let after = world.tui_viewport_after_stream.join("\n");
+    assert!(
+        after.contains("child-a"),
+        "sub-agent selection should survive model overlay: {after}"
+    );
+    assert!(
+        h.model_selector_open(),
+        "model-selection state should remain open after switching through panel state"
+    );
+    h.press(Key::Escape);
+    assert!(
+        !h.model_selector_open(),
+        "Escape should close only the model selector without clearing sub-agent state"
+    );
+    h.select(Some("child-a"));
+    let selected_child = h.left_panel();
+    assert!(
+        selected_child.contains("child-a"),
+        "sub-agent state should still be selectable after closing model overlay: {selected_child}"
+    );
 }
 
 #[then("the quecto-tui chat_render should expose push_preview and push_header helpers")]

@@ -166,7 +166,7 @@ async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
         tool_name: "spawn".into(),
         args: serde_json::json!({"agent_id":"worker-1"}),
     });
-    assert!(app.subagent_local.contains_key("worker-1"));
+    assert!(app.subagents.local.contains_key("worker-1"));
 
     app.handle_event(Event::ToolExecutionEnd {
             tool_call_id: "spawn-1".into(),
@@ -174,7 +174,7 @@ async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
             result: serde_json::json!({"content":[{"type":"text","text":"Subagent 'worker-1' is running"}]}),
             is_error: false,
         });
-    assert_eq!(app.subagent_local["worker-1"].info.status, "running");
+    assert_eq!(app.subagents.local["worker-1"].info.status, "running");
 
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "read-1".into(),
@@ -480,7 +480,7 @@ async fn track_starting_subagent_without_agent_id_is_noop() {
     });
     // No subagent should be tracked.
     assert!(
-        app.subagent_local.is_empty(),
+        app.subagents.local.is_empty(),
         "spawn without agent_id should not track a subagent"
     );
 }
@@ -496,11 +496,11 @@ async fn track_starting_subagent_strips_control_chars_from_id() {
     });
     // The sanitized id should be stored, not the raw one.
     assert!(
-        app.subagent_local.contains_key("ab"),
+        app.subagents.local.contains_key("ab"),
         "control chars should be stripped from agent_id"
     );
     assert!(
-        !app.subagent_local.contains_key("a\u{0007}b"),
+        !app.subagents.local.contains_key("a\u{0007}b"),
         "raw (unsanitized) id should not be a key"
     );
 }
@@ -515,8 +515,8 @@ async fn mark_spawned_subagent_running_with_no_quotes_is_noop() {
         tool_name: "spawn".into(),
         args: serde_json::json!({"agent_id": "worker-1"}),
     });
-    assert!(app.subagent_local.contains_key("worker-1"));
-    assert_eq!(app.subagent_local["worker-1"].info.status, "starting");
+    assert!(app.subagents.local.contains_key("worker-1"));
+    assert_eq!(app.subagents.local["worker-1"].info.status, "starting");
 
     // Tool end with result text that has NO single quotes.
     app.handle_event(Event::ToolExecutionEnd {
@@ -529,7 +529,7 @@ async fn mark_spawned_subagent_running_with_no_quotes_is_noop() {
     });
     // Status should remain "starting" (not updated to "running").
     assert_eq!(
-        app.subagent_local["worker-1"].info.status, "starting",
+        app.subagents.local["worker-1"].info.status, "starting",
         "malformed result (no quotes) should not update status"
     );
 }
@@ -554,7 +554,7 @@ async fn mark_spawned_subagent_running_with_one_quote_is_noop() {
         is_error: false,
     });
     assert_eq!(
-        app.subagent_local["worker-1"].info.status, "starting",
+        app.subagents.local["worker-1"].info.status, "starting",
         "result with only one quote should not update status"
     );
 }
@@ -579,7 +579,7 @@ async fn handle_tool_end_spawn_error_does_not_mark_running() {
         is_error: true,
     });
     assert_eq!(
-        app.subagent_local["worker-1"].info.status, "starting",
+        app.subagents.local["worker-1"].info.status, "starting",
         "error result should not mark subagent as running"
     );
 }
@@ -604,8 +604,8 @@ async fn mark_spawned_subagent_running_with_unknown_id_is_noop() {
         is_error: false,
     });
     // worker-1 should remain "starting"; unknown-agent was never tracked.
-    assert_eq!(app.subagent_local["worker-1"].info.status, "starting");
-    assert!(!app.subagent_local.contains_key("unknown-agent"));
+    assert_eq!(app.subagents.local["worker-1"].info.status, "starting");
+    assert!(!app.subagents.local.contains_key("unknown-agent"));
 }
 
 #[tokio::test]

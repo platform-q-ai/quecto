@@ -3,11 +3,11 @@
 //! Provides fuzzy-matched suggestions for slash commands and model names.
 
 use crate::interface::component::Component;
+use crate::interface::components::list_rows::{ListRow, render_list_rows, row_label_width};
 use crate::interface::components::suggestion_list::SuggestionList;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
 use crate::interface::theme;
-use crate::interface::utils::truncate_to_width;
 
 /// A slash command definition.
 #[derive(Debug, Clone)]
@@ -22,6 +22,9 @@ pub struct Suggestion {
     pub value: String,
     pub label: String,
     pub description: String,
+    /// Optional stable index for callers that already keep row data elsewhere.
+    /// Avoids allocating stringified indexes for large model lists.
+    pub index: Option<usize>,
 }
 
 /// Result of an autocomplete interaction.
@@ -77,6 +80,7 @@ impl Autocomplete {
                         value: format!("/{}", c.name),
                         label: c.name.clone(),
                         description: c.description.clone(),
+                        index: None,
                     })
                     .collect();
                 self.list.set_suggestions(new);
@@ -102,6 +106,7 @@ impl Autocomplete {
                 value: format!("/{}", c.name),
                 label: c.name.clone(),
                 description: c.description.clone(),
+                index: None,
             })
             .collect();
         self.list.set_suggestions(new);
@@ -154,20 +159,17 @@ impl Component for Autocomplete {
         let range = self.list.visible_range();
         let start = range.start;
         let end = range.end;
-
-        for i in start..end {
-            let s = &self.list.suggestions()[i];
-            let is_sel = i == self.list.selected();
-            let prefix = if is_sel { "→ " } else { "  " };
-            let name = if is_sel {
-                theme::accent(&format!("/{}", s.label))
-            } else {
-                format!("/{}", s.label)
-            };
-            let desc = theme::dim(&s.description);
-            let line = format!("{}{}  {}", prefix, name, desc);
-            lines.push(truncate_to_width(&line, width, None));
-        }
+        let rows: Vec<ListRow> = self.list.suggestions()[start..end]
+            .iter()
+            .enumerate()
+            .map(|(offset, s)| {
+                let i = start + offset;
+                ListRow::new(format!("/{}", s.label))
+                    .description(s.description.clone())
+                    .selected(i == self.list.selected())
+            })
+            .collect();
+        lines.extend(render_list_rows(&rows, width, row_label_width(&rows, 32)));
 
         if start > 0 || end < total {
             lines.push(theme::dim(&format!(

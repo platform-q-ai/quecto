@@ -22,6 +22,19 @@ use crate::interface::ansi::strip_ansi;
 /// Panel-row status glyphs that the sub-agent-first design removes entirely.
 const GLYPHS: &[&str] = &["●", "✓", "✗", "○", "•"];
 
+fn session_issue(app: &super::App, id: &str) -> Option<u32> {
+    app.subagents
+        .sessions
+        .get(id)
+        .unwrap()
+        .workflow_bar
+        .issue_number
+}
+
+fn session_total(app: &super::App, id: &str) -> u32 {
+    app.subagents.sessions.get(id).unwrap().workflow_bar.total
+}
+
 /// A `SubagentInfoEvent` with an explicit status and parent (no socket).
 fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
     SubagentInfoEvent {
@@ -525,16 +538,12 @@ async fn forwarded_grandchild_workflow_routes_by_event_agent_id_not_connection()
         .route_subagent_event("C", forwarded_workflow("G", 2, 4));
     let app = h.app_mut();
     assert_eq!(
-        app.sessions.get("C").unwrap().workflow_bar.issue_number,
+        session_issue(app, "C"),
         Some(820),
         "child C's bar must keep C's own workflow, not the grandchild's"
     );
     assert_eq!(
-        app.sessions
-            .get("G")
-            .expect("grandchild G must get its own session")
-            .workflow_bar
-            .issue_number,
+        session_issue(app, "G"),
         Some(7),
         "grandchild G's forwarded workflow must land on G's own session bar"
     );
@@ -566,12 +575,7 @@ async fn connected_agent_own_workflow_with_matching_inner_id_routes_to_self() {
         },
     );
     assert_eq!(
-        h.app_mut()
-            .sessions
-            .get("C")
-            .unwrap()
-            .workflow_bar
-            .issue_number,
+        session_issue(h.app_mut(), "C"),
         Some(820),
         "C's own workflow_state (inner id == connection id) must land on C's bar"
     );
@@ -609,11 +613,11 @@ async fn forwarded_workflow_for_untracked_agent_is_dropped() {
         .route_subagent_event("C", forwarded_workflow("X", 2, 4));
     let app = h.app_mut();
     assert!(
-        !app.sessions.contains_key("X"),
+        !app.subagents.sessions.contains_key("X"),
         "an untracked forwarded id must not create a phantom session"
     );
     assert_eq!(
-        app.sessions.get("C").unwrap().workflow_bar.issue_number,
+        session_issue(app, "C"),
         Some(820),
         "an untracked forwarded workflow must not touch the connected child's bar"
     );
@@ -652,7 +656,8 @@ async fn subagent_get_state_response_populates_workflow_bar() {
     h.app_mut().select_agent(Some("C"));
     h.app_mut()
         .route_subagent_event("C", get_state_with_workflow(3, 20, 869));
-    let bar = &h.app_mut().sessions.get("C").unwrap().workflow_bar;
+    let app = h.app_mut();
+    let bar = &app.subagents.sessions.get("C").unwrap().workflow_bar;
     assert_eq!(bar.done, 3, "get_state workflow `done` must reach the bar");
     assert_eq!(
         bar.total, 20,
@@ -681,7 +686,7 @@ async fn subagent_get_state_routes_by_inner_agent_id_not_connection() {
     h.app_mut()
         .route_subagent_event("C", get_state_with_workflow(2, 9, 100));
     assert_eq!(
-        h.app_mut().sessions.get("C").unwrap().workflow_bar.total,
+        session_total(h.app_mut(), "C"),
         9,
         "the connected child's get_state must populate ITS bar"
     );

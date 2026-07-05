@@ -67,7 +67,7 @@ async fn panel_movement_moves_highlight_without_committing() {
     let mut h = harness_with_subagents(2).await;
     h.app_mut().handle_key(Key::Tab);
     assert_eq!(
-        h.app_mut().focus_region(),
+        h.app_mut().subagents.focus_region(),
         super::Focus::Panel,
         "Tab with no popup must move focus to the panel"
     );
@@ -79,12 +79,12 @@ async fn panel_movement_moves_highlight_without_committing() {
         "Down must advance the panel highlight"
     );
     assert_eq!(
-        h.app_mut().active_agent_id(),
+        h.app_mut().subagents.active_agent_id(),
         None,
         "highlight movement must not switch the active session"
     );
     assert_eq!(
-        h.app_mut().focus_region(),
+        h.app_mut().subagents.focus_region(),
         super::Focus::Panel,
         "focus must remain on the panel during movement"
     );
@@ -98,7 +98,7 @@ async fn tab_completes_while_autocomplete_open() {
     h.app_mut().handle_key(Key::Char('/'));
     h.app_mut().handle_key(Key::Tab);
     assert_eq!(
-        h.app_mut().focus_region(),
+        h.app_mut().subagents.focus_region(),
         super::Focus::Input,
         "Tab must complete (not toggle focus) while a popup is open"
     );
@@ -111,9 +111,9 @@ async fn enter_commit_returns_focus_to_input() {
     h.app_mut().handle_key(Key::Tab);
     h.app_mut().handle_key(Key::Down);
     h.app_mut().handle_key(Key::Enter);
-    assert_eq!(h.app_mut().active_agent_id(), Some("a1"));
+    assert_eq!(h.app_mut().subagents.active_agent_id(), Some("a1"));
     assert_eq!(
-        h.app_mut().focus_region(),
+        h.app_mut().subagents.focus_region(),
         super::Focus::Input,
         "commit must return focus to the input"
     );
@@ -130,7 +130,7 @@ async fn digit_jump_then_enter_commits_that_row() {
     h.app_mut().handle_key(Key::Char('2'));
     h.app_mut().handle_key(Key::Enter);
     assert_eq!(
-        h.app_mut().active_agent_id(),
+        h.app_mut().subagents.active_agent_id(),
         Some("a1"),
         "digit-jump + Enter must commit the numbered agent row"
     );
@@ -154,12 +154,12 @@ async fn esc_in_panel_focus_keeps_active_selection() {
     h.app_mut().handle_key(Key::Down);
     h.app_mut().handle_key(Key::Escape);
     assert_eq!(
-        h.app_mut().active_agent_id(),
+        h.app_mut().subagents.active_agent_id(),
         Some("a1"),
         "Esc in panel focus must not change the active session"
     );
     assert_eq!(
-        h.app_mut().focus_region(),
+        h.app_mut().subagents.focus_region(),
         super::Focus::Input,
         "Esc in panel focus must return focus to the input"
     );

@@ -2,9 +2,9 @@
 
 use crate::interface::component::Component;
 use crate::interface::components::list_navigator::ListNavigator;
+use crate::interface::components::list_rows::{ListRow, render_list_rows, row_label_width};
 use crate::interface::keys::Key;
 use crate::interface::theme;
-use crate::interface::utils::{truncate_to_width, visible_width};
 
 /// An item in a select list.
 #[derive(Debug, Clone)]
@@ -91,59 +91,20 @@ impl Component for SelectList {
         let start = range.start;
         let end = range.end;
 
-        // Calculate primary column width for alignment over the visible window
-        // only — the off-screen items are never drawn, so widening the column
-        // for them would just waste a full-list scan every frame (#757).
-        let primary_width = self.items[start..end]
+        let rows: Vec<ListRow> = self.items[start..end]
             .iter()
-            .map(|i| visible_width(&i.label))
-            .max()
-            .unwrap_or(10)
-            .min(32);
-
-        for i in start..end {
-            let item = &self.items[i];
-            let is_sel = i == self.navigator.selected();
-            let prefix = if is_sel { "→ " } else { "  " };
-            let prefix_width = 2;
-
-            let label = if is_sel {
-                theme::accent(&item.label)
-            } else {
-                item.label.clone()
-            };
-
-            if let Some(desc) = &item.description {
-                let label_vis = visible_width(&item.label);
-                let gap = primary_width.saturating_sub(label_vis) + 2;
-                let desc_start = prefix_width + label_vis + gap;
-                let desc_width = width.saturating_sub(desc_start + 1);
-                if desc_width > 10 {
-                    let truncated_desc = truncate_to_width(desc, desc_width, Some(""));
-                    let spacing = " ".repeat(gap);
-                    let line = format!(
-                        "{}{}{}{}",
-                        prefix,
-                        label,
-                        spacing,
-                        theme::dim(&truncated_desc)
-                    );
-                    lines.push(truncate_to_width(&line, width, None));
-                } else {
-                    lines.push(truncate_to_width(
-                        &format!("{}{}", prefix, label),
-                        width,
-                        None,
-                    ));
+            .enumerate()
+            .map(|(offset, item)| {
+                let i = start + offset;
+                let mut row =
+                    ListRow::new(item.label.clone()).selected(i == self.navigator.selected());
+                if let Some(desc) = &item.description {
+                    row = row.description(desc.clone());
                 }
-            } else {
-                lines.push(truncate_to_width(
-                    &format!("{}{}", prefix, label),
-                    width,
-                    None,
-                ));
-            }
-        }
+                row
+            })
+            .collect();
+        lines.extend(render_list_rows(&rows, width, row_label_width(&rows, 32)));
 
         // Scroll indicator.
         if start > 0 || end < total {

@@ -345,7 +345,7 @@ impl App {
         // do many short runs, each creating/dropping the spinner — a toggling
         // 0↔1 line would reflow the chat on every run (the panel-size 6↔7 /
         // 11↔12 judder). A reserved slot keeps the below-chat height stable.
-        if self.active_agent_id.is_none() && self.spinner.is_some() {
+        if self.subagents.active_agent_id.is_none() && self.spinner.is_some() {
             // Master is active and mid-turn: show its richer tool spinner (tool
             // name + elapsed), the only master-local render telemetry layered on
             // top of the shared per-session `running` flag (#828).
@@ -356,19 +356,20 @@ impl App {
             // The active session is mid-turn (a sub-agent processing a queued
             // steer, or the master before its spinner exists); show the working
             // indicator so it never looks dead.
-            bottom.push(subagent_activity_line(1, self.subagent_frame));
-        } else if !self.subagent_local.is_empty() {
+            bottom.push(subagent_activity_line(1, self.subagents.frame));
+        } else if !self.subagents.local.is_empty() {
             // Parent is idle but sub-agents are tracked. Keep the reserved slot
             // meaningful: if any child is still working, show an animated
             // "N working" indicator (so activity stays visible while the parent
             // waits); otherwise a blank keeps the height stable.
             let active = self
-                .subagent_local
+                .subagents
+                .local
                 .values()
                 .filter(|t| subagent_status_is_active(&t.info.status))
                 .count();
             if active > 0 {
-                bottom.push(subagent_activity_line(active, self.subagent_frame));
+                bottom.push(subagent_activity_line(active, self.subagents.frame));
             } else {
                 bottom.push(String::new());
             }
@@ -505,7 +506,7 @@ impl App {
                 build_resume_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
-        if let Some(selector) = &mut self.rewind_selector {
+        if let Some(selector) = &mut self.rewind.selector {
             let (selector_lines, overlay_width) =
                 build_rewind_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
@@ -526,7 +527,7 @@ impl App {
 
         if panel_visible {
             let panel = self.render_subagent_panel(panel_width, height, now);
-            let divider = if matches!(self.focus, Focus::Panel) {
+            let divider = if matches!(self.subagents.focus, Focus::Panel) {
                 theme::accent("│")
             } else {
                 theme::dim("│")

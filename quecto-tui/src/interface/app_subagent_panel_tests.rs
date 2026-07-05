@@ -86,7 +86,7 @@ async fn panel_appears_on_subagent_spawn() {
 async fn master_is_active_by_default() {
     let mut h = with_two_subagents().await;
     assert_eq!(
-        h.app_mut().active_agent_id(),
+        h.app_mut().subagents.active_agent_id(),
         None,
         "master (None) is the active session until the user selects a child"
     );
@@ -97,7 +97,7 @@ async fn selecting_a_subagent_switches_active_session() {
     let mut h = with_two_subagents().await;
     h.app_mut().select_agent(Some("worker"));
     assert_eq!(
-        h.app_mut().active_agent_id(),
+        h.app_mut().subagents.active_agent_id(),
         Some("worker"),
         "selecting a sub-agent makes it the active session"
     );
@@ -112,10 +112,10 @@ async fn esc_returns_to_master_when_subagent_idle() {
         subagent("other", "idle", Some(("active", 2, 3))),
     ]));
     h.app_mut().select_agent(Some("worker"));
-    assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
+    assert_eq!(h.app_mut().subagents.active_agent_id(), Some("worker"));
     h.app_mut().handle_key(Key::Escape);
     assert_eq!(
-        h.app_mut().active_agent_id(),
+        h.app_mut().subagents.active_agent_id(),
         None,
         "Esc on an IDLE sub-agent returns the main view to the master session"
     );
@@ -125,7 +125,7 @@ async fn esc_returns_to_master_when_subagent_idle() {
 async fn esc_cancels_running_subagent_instead_of_returning_to_master() {
     let mut h = with_two_subagents().await; // worker tracked as "running"
     h.app_mut().select_agent(Some("worker"));
-    assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
+    assert_eq!(h.app_mut().subagents.active_agent_id(), Some("worker"));
     // connect-on-select joined mid-turn, so session.running is false — but the
     // master tracks worker as running, so Esc must CANCEL the sub-agent's work
     // (staying on it), not navigate back to master.
@@ -135,7 +135,7 @@ async fn esc_cancels_running_subagent_instead_of_returning_to_master() {
     );
     h.app_mut().handle_key(Key::Escape);
     assert_eq!(
-        h.app_mut().active_agent_id(),
+        h.app_mut().subagents.active_agent_id(),
         Some("worker"),
         "Esc cancels the running sub-agent (stays on it); does not return to master"
     );
@@ -159,7 +159,7 @@ async fn observed_idle_overrides_stale_tracked_running_status() {
     );
     h.app_mut().handle_key(Key::Escape);
     assert_eq!(
-        h.app_mut().active_agent_id(),
+        h.app_mut().subagents.active_agent_id(),
         None,
         "Esc on a (now observed-idle) sub-agent returns to master"
     );
@@ -306,7 +306,7 @@ async fn exited_subagent_session_is_retained_and_selectable() {
     // Reselect it and confirm its history still RENDERS (not just that the id
     // survives): the retained session keeps its content.
     h.app_mut().select_agent(Some("worker"));
-    assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
+    assert_eq!(h.app_mut().subagents.active_agent_id(), Some("worker"));
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
         frame.contains("PERSISTME"),
@@ -406,7 +406,7 @@ async fn active_resets_to_master_when_viewed_agent_leaves_the_list() {
     // the active session falls back to the master.
     let mut h = with_two_subagents().await;
     h.app_mut().select_agent(Some("worker"));
-    assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
+    assert_eq!(h.app_mut().subagents.active_agent_id(), Some("worker"));
     // Only "worker" exits; "other" remains so the panel stays visible.
     h.event(subagents_changed(vec![subagent(
         "other",
@@ -414,7 +414,7 @@ async fn active_resets_to_master_when_viewed_agent_leaves_the_list() {
         Some(("active", 2, 3)),
     )]));
     assert_eq!(
-        h.app_mut().active_agent_id(),
+        h.app_mut().subagents.active_agent_id(),
         None,
         "a viewed agent leaving the live list must reset the body to the master"
     );
@@ -422,12 +422,12 @@ async fn active_resets_to_master_when_viewed_agent_leaves_the_list() {
     // And when the *only* agent leaves (panel vanishes), active must still be
     // the master — never a dangling sub-agent id with no panel.
     h.app_mut().select_agent(Some("other"));
-    assert_eq!(h.app_mut().active_agent_id(), Some("other"));
+    assert_eq!(h.app_mut().subagents.active_agent_id(), Some("other"));
     h.event(subagents_changed(vec![]));
     // Sub-agent-first (#820): the panel stays on (Master row) even with none.
     assert!(h.app_mut().subagent_panel_visible());
     assert_eq!(
-        h.app_mut().active_agent_id(),
+        h.app_mut().subagents.active_agent_id(),
         None,
         "with the panel gone the body must be the master, not a hidden session"
     );
@@ -701,7 +701,7 @@ async fn master_is_modeled_as_active_session_like_subagents() {
 
     // Master active (None): the active chat is the master's, and a started turn
     // drives the unified running flag exactly as a sub-agent's would.
-    assert_eq!(h.app_mut().active_agent_id(), None);
+    assert_eq!(h.app_mut().subagents.active_agent_id(), None);
     h.app_mut().active_chat_mut().add_entry(ChatEntry::User {
         text: "master-msg".to_string(),
     });
@@ -726,7 +726,7 @@ async fn master_is_modeled_as_active_session_like_subagents() {
         subagent("other", "running", Some(("active", 2, 3))),
     ]));
     h.app_mut().select_agent(Some("worker"));
-    assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
+    assert_eq!(h.app_mut().subagents.active_agent_id(), Some("worker"));
     assert!(
         !h.app_mut().active_subagent_running(),
         "the freshly-selected idle sub-agent session is not running"
@@ -734,7 +734,7 @@ async fn master_is_modeled_as_active_session_like_subagents() {
 
     // Esc returns to the master session and its running flag is intact.
     h.press(Key::Escape);
-    assert_eq!(h.app_mut().active_agent_id(), None);
+    assert_eq!(h.app_mut().subagents.active_agent_id(), None);
     assert!(
         h.app_mut().active_subagent_running(),
         "returning to master restores its still-running unified flag"
