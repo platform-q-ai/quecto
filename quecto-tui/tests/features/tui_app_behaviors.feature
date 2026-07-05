@@ -47,3 +47,20 @@ Feature: TUI app event routing and command behaviours
     Given a TUI viewing sub-agent "a1"
     When sub-agent "a1" reports model "child-model" and context "12k"
     Then the footer shows the sub-agent model "child-model" and context "12k"
+
+  @workflow-bar
+  Scenario: Workflow state renders current step context in the main pane
+    Given a fresh TUI app harness at width 120
+    When workflow state reports issue 1028 with step 2 "Add BDD coverage" in phase "red" out of 3
+    Then the workflow bar shows "Step 2/3"
+    And the workflow bar shows "RED"
+    And the workflow bar shows "Add BDD coverage"
+    And the workflow bar shows "#1028"
+    And the bottom stack does not show workflow text "Step 2/3"
+
+  @workflow-bar
+  Scenario: Narrow workflow state stays inside the terminal
+    Given a fresh TUI app harness at width 60
+    When workflow state reports issue 1028 with step 1 "A very long workflow label that must be truncated by the TUI" in phase "green" out of 1
+    Then every workflow frame row fits the terminal width
+    And the workflow bar preserves left padding after the divider

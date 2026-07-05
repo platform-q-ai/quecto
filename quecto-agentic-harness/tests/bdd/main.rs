@@ -21,6 +21,7 @@ use quecto::infrastructure::providers::router::ProviderRouter;
 
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::bash::ExecTool;
+use quecto::infrastructure::tools::recall::RecallTool;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use quecto::infrastructure::tools::spawn::SpawnTool;
 use quecto::infrastructure::tools::web_search::WebSearchTool;
@@ -350,6 +351,12 @@ pub struct QuectoWorld {
     pub credential_file_before_update: Option<Vec<u8>>,
     /// Spawn tool result
     pub spawn_result: Option<ToolResult>,
+    /// Recall tool result for context spill scenarios
+    pub recall_result: Option<ToolResult>,
+    /// Recall tool for context spill scenarios
+    pub recall_tool: Option<RecallTool>,
+    /// In-memory spill store used by recall BDD scenarios
+    pub recall_spill_store: Option<Arc<recall_tool_steps::BddMemorySpillStore>>,
     /// Spawn tool for BDD
     pub spawn_tool: Option<SpawnTool>,
     /// AgentCmdTool for BDD (#421)
@@ -1208,6 +1215,7 @@ mod path_utils_steps;
 mod provider_auth_modes_steps;
 mod provider_steps;
 mod read_tool_steps;
+mod recall_tool_steps;
 mod release_profile_steps;
 mod reload_steps;
 mod repl_steps;

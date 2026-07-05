@@ -8,8 +8,10 @@
 use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
 use quecto_tui::infrastructure::client::Event;
+use quecto_tui::interface::ansi::strip_ansi;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
 use quecto_tui::interface::keys::Key;
+use quecto_tui::interface::utils::visible_width;
 
 async fn build_fresh_harness() -> TuiHarness {
     TuiHarness::new().await
@@ -442,5 +444,119 @@ fn then_raw_tool_frame_has_no_title_escapes(world: &mut TuiWorld) {
     assert!(
         !raw.contains("\u{1b}]") && !raw.contains("\u{9d}"),
         "raw rendered frame must not contain OSC/title controls, got:\n{raw:?}"
+    );
+}
+
+fn workflow_rule_lines(frame: &str) -> Vec<String> {
+    frame
+        .lines()
+        .filter(|line| {
+            strip_ansi(line)
+                .rsplit_once("│ ")
+                .is_some_and(|(_, segment)| {
+                    !segment.is_empty() && segment.chars().all(|c| c == '─')
+                })
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+#[given(expr = "a fresh TUI app harness at width {int}")]
+fn given_fresh_harness_at_width(world: &mut TuiWorld, width: usize) {
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let h = rt.block_on(TuiHarness::sized(width, 30));
+    world.tui_parity_rt = Some(rt);
+    world.tui_parity = Some(TuiParityHarness(h));
+    world.tui_last_commands.clear();
+}
+
+#[when(
+    expr = "workflow state reports issue {int} with step {int} {string} in phase {string} out of {int}"
+)]
+fn when_workflow_state_reports_step(
+    world: &mut TuiWorld,
+    issue: u32,
+    current_step: u32,
+    label: String,
+    phase: String,
+    total: u32,
+) {
+    let steps = (1..=total)
+        .map(|idx| {
+            serde_json::json!({
+                "index": idx,
+                "label": if idx == current_step { label.as_str() } else { "Other step" },
+                "phase": if idx == current_step { phase.as_str() } else { "done" },
+                "done": idx < current_step,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    drive(world, |h| {
+        h.event(Event::WorkflowState {
+            agent_id: None,
+            steps,
+            progress: serde_json::json!({
+                "done": current_step.saturating_sub(1),
+                "total": total,
+                "percent": current_step.saturating_sub(1).saturating_mul(100).checked_div(total).unwrap_or(0),
+            }),
+            active_issue: Some(serde_json::json!({
+                "number": issue,
+                "title": "BDD coverage wave",
+            })),
+            mode: Some("active".to_string()),
+            active_template: None,
+            available_templates: None,
+        });
+    });
+}
+
+#[then(expr = "the workflow bar shows {string}")]
+fn then_workflow_bar_shows(world: &mut TuiWorld, expected: String) {
+    let pane = drive(world, |h| h.main_pane());
+    assert!(
+        pane.contains(&expected),
+        "workflow bar should show {expected:?} in main pane, got:\n{pane}"
+    );
+}
+
+#[then(expr = "the bottom stack does not show workflow text {string}")]
+fn then_bottom_stack_hides_workflow_text(world: &mut TuiWorld, unexpected: String) {
+    let bottom = drive(world, |h| h.bottom_stack());
+    assert!(
+        !bottom.contains(&unexpected),
+        "workflow text {unexpected:?} should render in the main pane, not bottom stack:\n{bottom}"
+    );
+}
+
+#[then("every workflow frame row fits the terminal width")]
+fn then_workflow_rows_fit_terminal_width(world: &mut TuiWorld) {
+    let expected_width = drive(world, |h| h.terminal_width());
+    let frame = drive(world, |h| h.full_frame());
+    let rows = workflow_rule_lines(&frame);
+    assert!(
+        !rows.is_empty(),
+        "workflow rule rows should render:\n{frame}"
+    );
+    for row in rows {
+        let width = visible_width(&row);
+        assert!(
+            width <= expected_width,
+            "workflow row width {width} should fit terminal width {expected_width}:\n{row}\nframe:\n{frame}"
+        );
+    }
+}
+
+#[then("the workflow bar preserves left padding after the divider")]
+fn then_workflow_bar_preserves_left_padding(world: &mut TuiWorld) {
+    let frame = drive(world, |h| h.full_frame());
+    let row = workflow_rule_lines(&frame)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("workflow rule row should render:\n{frame}"));
+    assert!(
+        strip_ansi(&row).contains("│ ─"),
+        "workflow rule should start after the normal gutter/padding, got:\n{row}\nframe:\n{frame}"
     );
 }
