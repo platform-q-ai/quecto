@@ -641,9 +641,9 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
 
 // ─── Broadcast prompt execution ───────────────────────────────────────────────
 
-#[path = "uds_multi_prompt.rs"]
-mod uds_multi_prompt;
-use uds_multi_prompt::try_intercept_tool_result;
+#[path = "uds_tool_intercept.rs"]
+mod uds_tool_intercept;
+use uds_tool_intercept::try_intercept_tool_result;
 // Re-exported for the auto-await dedupe unit tests (uds_subagent_notify_tests).
 #[cfg(test)]
 pub(in crate::interface::cli) use super::uds_cancel::forward_notification_broadcast;

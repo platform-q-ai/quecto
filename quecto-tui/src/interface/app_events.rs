@@ -380,6 +380,9 @@ pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> b
 }
 
 #[cfg(test)]
+#[path = "app_events_test_support.rs"]
+mod app_events_test_support;
+#[cfg(test)]
 #[path = "app_events_cursor_tests.rs"]
 mod cursor_tests;
 #[cfg(test)]

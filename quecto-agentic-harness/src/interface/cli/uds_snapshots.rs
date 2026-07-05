@@ -72,7 +72,7 @@ pub(super) async fn refresh_extension_snapshot(ctx: &DispatchCtx<'_>) {
 /// `subagent_registry`) with headroom for the response envelope, so an oversized
 /// history is tailed to fit rather than making the parent's whole call error
 /// ("line exceeded size limit") on a busy child (#842).
-const SNAPSHOT_MESSAGES_BUDGET_BYTES: usize = 1024 * 1024 - 4096;
+pub(crate) const SNAPSHOT_MESSAGES_BUDGET_BYTES: usize = 1024 * 1024 - 4096;
 
 /// Build the connect-time `get_messages` snapshot line a BUSY child pushes.
 ///

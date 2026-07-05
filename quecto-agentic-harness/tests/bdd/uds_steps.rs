@@ -419,6 +419,46 @@ fn drive_single_client_over_real_socket(world: &mut QuectoWorld) {
     world.stdout = world.agent_events.join("\n");
 }
 
+fn uds_parse_error_text_from_events(events: &[String]) -> String {
+    events
+        .iter()
+        .find_map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).ok()?;
+            if v["type"] == "response" && v["command"] == "parse_error" {
+                v["error"].as_str().map(str::to_owned)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| panic!("expected parse_error response in events: {events:#?}"))
+}
+
+fn uds_event_types_from_lines(events: &[String]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|v| v["type"].as_str().map(str::to_owned))
+        })
+        .collect()
+}
+
+fn reset_uds_run(world: &mut QuectoWorld, commands: Vec<String>) {
+    world.uds_commands = commands;
+    world.agent_events.clear();
+    world.agent_stderr.clear();
+    world.uds_execution_error = None;
+    world.uds_exit_code = None;
+    world.stdout.clear();
+    world.mc_mode = false;
+    world.mc_exit_code = None;
+    world.mc_client_events.clear();
+    world.mc_client_commands.clear();
+    world.mc_connected_clients.clear();
+    world.mc_disconnected_clients.clear();
+}
+
 // ─── Given steps ─────────────────────────────────────────────────────────────
 
 #[given(expr = "the mock LLM returns a tool call then a text response {string}")]
@@ -797,6 +837,36 @@ fn when_close_uds_connection_multi_client(world: &mut QuectoWorld) {
     drive_single_client_over_real_socket(world);
 }
 
+#[when("I send the same malformed command through both UDS connection modes")]
+fn when_same_malformed_command_through_both_modes(world: &mut QuectoWorld) {
+    let malformed = "{not valid json".to_string();
+
+    reset_uds_run(world, vec![malformed.clone()]);
+    execute_uds(world);
+    let single = uds_parse_error_text_from_events(&world.agent_events);
+
+    reset_uds_run(world, vec![malformed]);
+    drive_single_client_over_real_socket(world);
+    let multi = uds_parse_error_text_from_events(&world.agent_events);
+
+    world.uds_compare_parse_errors = Some((single, multi));
+}
+
+#[when("I send the same prompt through both UDS event delivery modes")]
+fn when_same_prompt_through_both_event_delivery_modes(world: &mut QuectoWorld) {
+    let prompt = serde_json::json!({"type": "prompt", "message": "hello"}).to_string();
+
+    reset_uds_run(world, vec![prompt.clone()]);
+    execute_uds(world);
+    let writer = uds_event_types_from_lines(&world.agent_events);
+
+    reset_uds_run(world, vec![prompt]);
+    drive_single_client_over_real_socket(world);
+    let broadcast = uds_event_types_from_lines(&world.agent_events);
+
+    world.uds_compare_event_types = Some((writer, broadcast));
+}
+
 /// Run quecto agent with an invalid --mode value (uses existing CLI runner).
 #[when(expr = "I run quecto agent --mode {word} -m {string}")]
 fn when_run_agent_with_invalid_mode(world: &mut QuectoWorld, mode: String, message: String) {
@@ -1048,6 +1118,114 @@ fn then_parse_error_preserves_detail(world: &mut QuectoWorld) {
     assert_ne!(
         err, "invalid JSON command",
         "the generic placeholder text must not be emitted (#994 criterion 2)"
+    );
+}
+
+#[given("a conversation history containing an assistant tool request")]
+fn given_conversation_history_with_assistant_tool_request(world: &mut QuectoWorld) {
+    use quecto::domain::message::{Message, ToolCall};
+    use quecto::interface::cli::uds_session::message_to_json;
+
+    let message = Message::assistant(
+        "calling a tool",
+        vec![ToolCall {
+            id: "tc-1".to_string(),
+            name: "read".to_string(),
+            arguments: "{\"path\":\"x\"}".to_string(),
+        }],
+    );
+    world.uds_history_payload = Some(serde_json::json!({
+        "messages": [message_to_json(&message)],
+        "snapshot": true,
+    }));
+}
+
+#[given("a conversation history larger than a snapshot request")]
+fn given_conversation_history_larger_than_snapshot_request(world: &mut QuectoWorld) {
+    use quecto::interface::cli::protocol::AgentEvent;
+
+    let payload = serde_json::json!({
+        "messages": Vec::<serde_json::Value>::new(),
+        "snapshot": true,
+        "trimmed": true,
+    });
+    let line = AgentEvent::ok(None, "get_messages", Some(payload.clone())).to_json_line();
+    world.uds_snapshot_line_len = Some(line.len());
+    world.uds_trimmed_snapshot_payload = Some(payload);
+}
+
+#[when("the agent publishes the conversation history")]
+fn when_agent_publishes_conversation_history(world: &mut QuectoWorld) {
+    assert!(
+        world.uds_history_payload.is_some(),
+        "conversation history fixture was not prepared"
+    );
+}
+
+#[when("the agent publishes a trimmed conversation history snapshot")]
+fn when_agent_publishes_trimmed_conversation_history_snapshot(world: &mut QuectoWorld) {
+    assert!(
+        world.uds_trimmed_snapshot_payload.is_some(),
+        "trimmed snapshot fixture was not prepared"
+    );
+}
+
+#[then("both responses should contain the same parse error text")]
+fn then_both_responses_same_parse_error_text(world: &mut QuectoWorld) {
+    let (single, multi) = world
+        .uds_compare_parse_errors
+        .as_ref()
+        .expect("missing captured parse-error comparison");
+    assert_eq!(multi, single);
+    assert!(
+        single.contains("parse error:"),
+        "unexpected parse error: {single:?}"
+    );
+    assert_ne!(single, "invalid JSON command");
+}
+
+#[then("both clients should receive the same event sequence")]
+fn then_both_clients_receive_same_event_sequence(world: &mut QuectoWorld) {
+    let (writer, broadcast) = world
+        .uds_compare_event_types
+        .as_ref()
+        .expect("missing captured event sequence comparison");
+    assert_eq!(broadcast, writer);
+    assert!(
+        writer.iter().any(|t| t == "agent_start") && writer.iter().any(|t| t == "agent_end"),
+        "event sequence should include the visible agent lifecycle: {writer:?}"
+    );
+}
+
+#[then("the message history should include the assistant tool request")]
+fn then_message_history_includes_assistant_tool_request(world: &mut QuectoWorld) {
+    let payload = world
+        .uds_history_payload
+        .as_ref()
+        .expect("missing conversation history payload");
+    let messages = payload["messages"].as_array().expect("messages array");
+    let assistant = messages
+        .iter()
+        .find(|m| m["role"] == "assistant")
+        .expect("assistant message");
+    let tool_calls = assistant["toolCalls"].as_array().expect("toolCalls array");
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0]["id"], "tc-1");
+    assert_eq!(tool_calls[0]["name"], "read");
+}
+
+#[then("the snapshot should use the same response envelope as conversation history")]
+fn then_snapshot_uses_same_response_envelope(world: &mut QuectoWorld) {
+    let payload = world
+        .uds_trimmed_snapshot_payload
+        .as_ref()
+        .expect("missing trimmed snapshot payload");
+    assert!(payload["messages"].is_array());
+    assert_eq!(payload["snapshot"], true);
+    assert_eq!(payload["trimmed"], true);
+    assert!(
+        world.uds_snapshot_line_len.unwrap_or(usize::MAX) <= 1024 * 1024,
+        "trimmed response envelope must fit below the UDS response line cap"
     );
 }
 

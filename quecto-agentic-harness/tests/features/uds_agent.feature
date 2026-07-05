@@ -318,7 +318,7 @@ Feature: UDS mode for headless agent operation
     And the agent output should contain a response command "parse_error" with success false
     And the parse error response should preserve the detailed error text
 
-  # ─── parse_error preserves detailed error text (#994) ─────────────────────────
+  # ─── UDS pipeline follow-ups (#1022) ──────────────────────────────────────────
 
   @done
   Scenario: parse error response preserves the detailed error text
@@ -328,6 +328,33 @@ Feature: UDS mode for headless agent operation
     And I send raw line "{not valid json"
     And I close the UDS connection through the multi-client dispatch loop
     Then the parse error response should preserve the detailed error text
+
+  @issue-1022
+  Scenario: malformed UDS commands receive consistent parse error responses
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I send the same malformed command through both UDS connection modes
+    Then both responses should contain the same parse error text
+
+  @issue-1022
+  Scenario: UDS clients receive the same event stream for the same prompt
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "done"
+    When I send the same prompt through both UDS event delivery modes
+    Then both clients should receive the same event sequence
+
+  @issue-1022
+  Scenario: message history snapshots keep their public message shape
+    Given a conversation history containing an assistant tool request
+    When the agent publishes the conversation history
+    Then the message history should include the assistant tool request
+
+  @issue-1022
+  Scenario: trimmed message history snapshots keep their response envelope
+    Given a conversation history larger than a snapshot request
+    When the agent publishes a trimmed conversation history snapshot
+    Then the snapshot should use the same response envelope as conversation history
 
   # ─── get_messages count parameter ────────────────────────────────────────────
 
