@@ -344,17 +344,6 @@ Feature: UDS mode for headless agent operation
     When I send the same prompt through both UDS event delivery modes
     Then both clients should receive the same event sequence
 
-  @issue-1022
-  Scenario: message history snapshots keep their public message shape
-    Given a conversation history containing an assistant tool request
-    When the agent publishes the conversation history
-    Then the message history should include the assistant tool request
-
-  @issue-1022
-  Scenario: trimmed message history snapshots keep their response envelope
-    Given a conversation history larger than a snapshot request
-    When the agent publishes a trimmed conversation history snapshot
-    Then the snapshot should use the same response envelope as conversation history
 
   # ─── get_messages count parameter ────────────────────────────────────────────
 

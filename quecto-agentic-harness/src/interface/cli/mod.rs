@@ -17,7 +17,7 @@ mod uds_query;
 mod uds_reader;
 mod uds_reload;
 pub mod uds_session;
-pub mod uds_snapshots;
+mod uds_snapshots;
 mod uds_socket;
 mod uds_workflow_nudge;
 

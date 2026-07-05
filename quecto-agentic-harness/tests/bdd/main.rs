@@ -421,14 +421,6 @@ pub struct QuectoWorld {
     pub uds_compare_parse_errors: Option<(String, String)>,
     /// UDS agent: event type sequences captured from two UDS event delivery modes.
     pub uds_compare_event_types: Option<(Vec<String>, Vec<String>)>,
-    /// UDS agent: captured message-history payload for direct BDD assertions.
-    pub uds_history_payload: Option<serde_json::Value>,
-    /// UDS agent: captured trimmed snapshot payload for direct BDD assertions.
-    pub uds_trimmed_snapshot_payload: Option<serde_json::Value>,
-    /// UDS agent: captured untrimmed snapshot payload for direct BDD assertions.
-    pub uds_untrimmed_snapshot_payload: Option<serde_json::Value>,
-    /// UDS agent: captured snapshot line length for boundary assertions.
-    pub uds_snapshot_line_len: Option<usize>,
     /// UDS agent: captured execution stderr from the helper thread
     pub uds_execution_error: Option<String>,
     /// UDS agent: replace config with invalid JSON after building the agent but before the command loop

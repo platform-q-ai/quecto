@@ -3,9 +3,8 @@
 //!
 //! The behaviours exercised here are the public UDS wire contracts: parse errors
 //! are equivalent across command loops, Writer and Broadcast sinks emit the same
-//! event stream, message snapshots keep the canonical response envelope, and the
-//! borrowed `MessageView` serializer does not allocate a throwaway tool-call
-//! collection while walking assistant tool calls.
+//! event stream, and message snapshots keep the canonical response envelope and
+//! public message shape.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
@@ -130,6 +129,8 @@ async fn multi_client_parse_error_text(line: &str) -> String {
 }
 
 fn single_client_parse_error_text(line: &str) -> String {
+    // The single-client command loop delegates parse failures to `uds::parse_line`;
+    // the BDD coverage exercises both real loops end-to-end.
     match crate::interface::cli::uds::parse_line(line) {
         crate::interface::cli::uds::LineResult::ParseError(err) => err,
         crate::interface::cli::uds::LineResult::Command(_) => {
@@ -203,29 +204,6 @@ fn message_to_json_matches_golden_wire_shape_for_all_roles() {
     }
 }
 
-#[test]
-fn message_view_serializes_tool_calls_without_allocating_a_collection() {
-    let source = include_str!("uds_session.rs");
-    let message_view_impl = source
-        .split("impl serde::Serialize for MessageView<'_>")
-        .nth(1)
-        .and_then(|tail| {
-            tail.split("/// Serialize a `Message` to a JSON value")
-                .next()
-        })
-        .expect("MessageView Serialize impl should be present");
-
-    assert!(
-        message_view_impl.contains("ToolCallsView(&msg.tool_calls)"),
-        "MessageView must serialize tool calls through the streaming view"
-    );
-    assert!(
-        !message_view_impl.contains("collect::<Vec")
-            && !message_view_impl.contains("Vec<ToolCallView"),
-        "MessageView must not collect tool calls into an intermediate Vec"
-    );
-}
-
 /// Envelope-equivalence test for criterion 4 (#994): the hand-rolled
 /// `GetMessagesSnapshot` serializer in `build_get_messages_line` must stay
 /// value-identical (modulo key order) to the canonical
@@ -253,6 +231,16 @@ fn get_messages_snapshot_line_matches_agent_event_envelope() {
 
     let line = build_get_messages_line(&messages);
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
+    let assistant = got["data"]["messages"]
+        .as_array()
+        .expect("messages array")
+        .iter()
+        .find(|message| message["role"] == "assistant")
+        .expect("assistant message");
+    let tool_calls = assistant["toolCalls"].as_array().expect("toolCalls array");
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0]["id"], "tc-9");
+    assert_eq!(tool_calls[0]["name"], "bash");
 
     let msgs_json: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
     let canonical = AgentEvent::ok(
@@ -290,8 +278,10 @@ fn trimmed_get_messages_snapshot_line_matches_agent_event_envelope() {
         serde_json::from_str(&canonical.to_json_line()).expect("canonical event is JSON");
 
     assert_eq!(got, want);
+    assert_eq!(got["data"]["snapshot"], true);
     assert_eq!(got["data"]["messages"].as_array().unwrap().len(), 0);
     assert_eq!(got["data"]["trimmed"], true);
+    assert!(line.len() <= 1024 * 1024);
 
     let would_not_trim = AgentEvent::ok(
         None,

@@ -1121,54 +1121,6 @@ fn then_parse_error_preserves_detail(world: &mut QuectoWorld) {
     );
 }
 
-#[given("a conversation history containing an assistant tool request")]
-fn given_conversation_history_with_assistant_tool_request(world: &mut QuectoWorld) {
-    use quecto::domain::message::{Message, ToolCall};
-    use quecto::interface::cli::uds_snapshots::build_get_messages_line;
-
-    let messages = vec![Message::assistant(
-        "calling a tool",
-        vec![ToolCall {
-            id: "tc-1".to_string(),
-            name: "read".to_string(),
-            arguments: "{\"path\":\"x\"}".to_string(),
-        }],
-    )];
-    let line = build_get_messages_line(&messages);
-    let response: serde_json::Value =
-        serde_json::from_str(line.trim()).expect("snapshot response is JSON");
-    world.uds_history_payload = Some(response["data"].clone());
-}
-
-#[given("a conversation history larger than a snapshot request")]
-fn given_conversation_history_larger_than_snapshot_request(world: &mut QuectoWorld) {
-    use quecto::domain::message::Message;
-    use quecto::interface::cli::uds_snapshots::build_get_messages_line;
-
-    let messages = vec![Message::user("x".repeat(2 * 1024 * 1024))];
-    let line = build_get_messages_line(&messages);
-    let response: serde_json::Value =
-        serde_json::from_str(line.trim()).expect("trimmed snapshot response is JSON");
-    world.uds_snapshot_line_len = Some(line.len());
-    world.uds_trimmed_snapshot_payload = Some(response["data"].clone());
-}
-
-#[when("the agent publishes the conversation history")]
-fn when_agent_publishes_conversation_history(world: &mut QuectoWorld) {
-    assert!(
-        world.uds_history_payload.is_some(),
-        "conversation history fixture was not prepared"
-    );
-}
-
-#[when("the agent publishes a trimmed conversation history snapshot")]
-fn when_agent_publishes_trimmed_conversation_history_snapshot(world: &mut QuectoWorld) {
-    assert!(
-        world.uds_trimmed_snapshot_payload.is_some(),
-        "trimmed snapshot fixture was not prepared"
-    );
-}
-
 #[then("both responses should contain the same parse error text")]
 fn then_both_responses_same_parse_error_text(world: &mut QuectoWorld) {
     let (single, multi) = world
@@ -1193,38 +1145,6 @@ fn then_both_clients_receive_same_event_sequence(world: &mut QuectoWorld) {
     assert!(
         writer.iter().any(|t| t == "agent_start") && writer.iter().any(|t| t == "agent_end"),
         "event sequence should include the visible agent lifecycle: {writer:?}"
-    );
-}
-
-#[then("the message history should include the assistant tool request")]
-fn then_message_history_includes_assistant_tool_request(world: &mut QuectoWorld) {
-    let payload = world
-        .uds_history_payload
-        .as_ref()
-        .expect("missing conversation history payload");
-    let messages = payload["messages"].as_array().expect("messages array");
-    let assistant = messages
-        .iter()
-        .find(|m| m["role"] == "assistant")
-        .expect("assistant message");
-    let tool_calls = assistant["toolCalls"].as_array().expect("toolCalls array");
-    assert_eq!(tool_calls.len(), 1);
-    assert_eq!(tool_calls[0]["id"], "tc-1");
-    assert_eq!(tool_calls[0]["name"], "read");
-}
-
-#[then("the snapshot should use the same response envelope as conversation history")]
-fn then_snapshot_uses_same_response_envelope(world: &mut QuectoWorld) {
-    let payload = world
-        .uds_trimmed_snapshot_payload
-        .as_ref()
-        .expect("missing trimmed snapshot payload");
-    assert!(payload["messages"].is_array());
-    assert_eq!(payload["snapshot"], true);
-    assert_eq!(payload["trimmed"], true);
-    assert!(
-        world.uds_snapshot_line_len.unwrap_or(usize::MAX) <= 1024 * 1024,
-        "trimmed response envelope must fit below the UDS response line cap"
     );
 }
 
