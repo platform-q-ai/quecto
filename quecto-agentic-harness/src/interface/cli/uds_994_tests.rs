@@ -315,21 +315,16 @@ fn under_budget_get_messages_snapshot_stays_untrimmed() {
         SNAPSHOT_MESSAGES_BUDGET_BYTES, build_get_messages_line,
     };
 
-    let mut content = "x".repeat(SNAPSHOT_MESSAGES_BUDGET_BYTES / 2);
-    let (line, got) = loop {
-        let messages = vec![Message::user(content.clone())];
-        let line = build_get_messages_line(&messages);
-        let got: serde_json::Value =
-            serde_json::from_str(line.trim()).expect("snapshot line is JSON");
-        if got["data"]["trimmed"].as_bool().unwrap_or(false) {
-            content.truncate(content.len() / 2);
-            continue;
-        }
-        break (line, got);
-    };
+    let content = "x".repeat(SNAPSHOT_MESSAGES_BUDGET_BYTES / 2);
+    let messages = vec![Message::user(content.clone())];
+    let line = build_get_messages_line(&messages);
+    let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
 
     assert!(line.len() <= 1024 * 1024);
-    assert_ne!(got["data"]["trimmed"], true);
+    assert_ne!(
+        got["data"]["trimmed"], true,
+        "a half-budget message must not be trimmed"
+    );
     assert_eq!(got["data"]["messages"].as_array().unwrap().len(), 1);
     assert_eq!(got["data"]["messages"][0]["content"], content);
 }

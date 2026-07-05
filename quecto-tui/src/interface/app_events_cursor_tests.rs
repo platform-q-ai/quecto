@@ -1,38 +1,5 @@
+use super::app_events_test_support::test_app;
 use super::*;
-use crate::infrastructure::terminal::Terminal;
-use tokio::io::AsyncReadExt;
-
-async fn test_app() -> App {
-    let dir = std::env::temp_dir().join(format!(
-        "quecto-tui-app-events-cursor-test-{}-{}",
-        std::process::id(),
-        unique_suffix()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let socket_path = dir.join("agent.sock");
-    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
-    tokio::spawn(async move {
-        if let Ok((mut stream, _)) = listener.accept().await {
-            let mut buf = [0u8; 4096];
-            loop {
-                match stream.read(&mut buf).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {}
-                }
-            }
-        }
-    });
-    let client = Client::connect(&socket_path).await.unwrap();
-    App::new(Terminal::new(), client)
-}
-
-fn unique_suffix() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
-}
 
 fn rendered_chat(app: &mut App) -> String {
     app.master_session

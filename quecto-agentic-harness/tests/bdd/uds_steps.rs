@@ -1124,34 +1124,33 @@ fn then_parse_error_preserves_detail(world: &mut QuectoWorld) {
 #[given("a conversation history containing an assistant tool request")]
 fn given_conversation_history_with_assistant_tool_request(world: &mut QuectoWorld) {
     use quecto::domain::message::{Message, ToolCall};
-    use quecto::interface::cli::uds_session::message_to_json;
+    use quecto::interface::cli::uds_snapshots::build_get_messages_line;
 
-    let message = Message::assistant(
+    let messages = vec![Message::assistant(
         "calling a tool",
         vec![ToolCall {
             id: "tc-1".to_string(),
             name: "read".to_string(),
             arguments: "{\"path\":\"x\"}".to_string(),
         }],
-    );
-    world.uds_history_payload = Some(serde_json::json!({
-        "messages": [message_to_json(&message)],
-        "snapshot": true,
-    }));
+    )];
+    let line = build_get_messages_line(&messages);
+    let response: serde_json::Value =
+        serde_json::from_str(line.trim()).expect("snapshot response is JSON");
+    world.uds_history_payload = Some(response["data"].clone());
 }
 
 #[given("a conversation history larger than a snapshot request")]
 fn given_conversation_history_larger_than_snapshot_request(world: &mut QuectoWorld) {
-    use quecto::interface::cli::protocol::AgentEvent;
+    use quecto::domain::message::Message;
+    use quecto::interface::cli::uds_snapshots::build_get_messages_line;
 
-    let payload = serde_json::json!({
-        "messages": Vec::<serde_json::Value>::new(),
-        "snapshot": true,
-        "trimmed": true,
-    });
-    let line = AgentEvent::ok(None, "get_messages", Some(payload.clone())).to_json_line();
+    let messages = vec![Message::user("x".repeat(2 * 1024 * 1024))];
+    let line = build_get_messages_line(&messages);
+    let response: serde_json::Value =
+        serde_json::from_str(line.trim()).expect("trimmed snapshot response is JSON");
     world.uds_snapshot_line_len = Some(line.len());
-    world.uds_trimmed_snapshot_payload = Some(payload);
+    world.uds_trimmed_snapshot_payload = Some(response["data"].clone());
 }
 
 #[when("the agent publishes the conversation history")]

@@ -84,7 +84,7 @@ pub(crate) const SNAPSHOT_MESSAGES_BUDGET_BYTES: usize = 1024 * 1024 - 4096;
 /// side, so a tail is exactly what they want. A single message that alone exceeds
 /// the budget cannot be returned under the parent's read cap, so it is dropped
 /// too (yielding an empty `trimmed` snapshot rather than erroring the call).
-pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
+pub fn build_get_messages_line(messages: &[Message]) -> String {
     // Serialize each message EXACTLY ONCE into an owned `RawValue`; its `.get()`
     // length is used for byte-budgeting and the same bytes are re-emitted
     // verbatim in the final line (no second serialization, no Value tree) (#994).
