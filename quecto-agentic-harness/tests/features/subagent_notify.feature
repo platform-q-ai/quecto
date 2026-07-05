@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Auto-notify parent LLM when subagents complete or error
   As a parent agent
   I want automatic follow-up messages when child agents finish or fail

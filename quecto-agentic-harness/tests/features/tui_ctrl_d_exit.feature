@@ -1,4 +1,4 @@
-@tui
+@tui @done
 Feature: TUI Ctrl+D exits the app unconditionally
   As a TUI user
   I want Ctrl+D to always exit the app

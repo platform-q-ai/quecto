@@ -1,4 +1,4 @@
-@tui
+@tui @done
 Feature: /new and /clear reset context window display
   As a TUI user
   I want /new to reset the context usage in the footer

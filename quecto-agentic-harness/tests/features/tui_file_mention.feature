@@ -1,4 +1,4 @@
-@tui
+@tui @done
 Feature: TUI @files mention autocomplete
   Typing `@` in the editor opens a popup of workspace files, fuzzy-filtered by
   the text after `@`; selecting one inserts the relative path.

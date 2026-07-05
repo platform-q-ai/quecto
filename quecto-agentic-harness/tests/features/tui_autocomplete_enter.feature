@@ -1,4 +1,4 @@
-@tui
+@tui @done
 Feature: TUI autocomplete Enter sets editor text before submitting
   As a TUI user
   I want Enter on an autocomplete suggestion to update the editor text

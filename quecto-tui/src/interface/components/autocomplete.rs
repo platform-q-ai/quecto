@@ -121,6 +121,26 @@ impl Autocomplete {
     pub fn take_result(&mut self) -> AutocompleteResult {
         std::mem::replace(&mut self.result, AutocompleteResult::Pending)
     }
+
+    /// The 0-based index of the currently highlighted suggestion.
+    ///
+    /// Inspection accessor for tests/harness that assert on navigation state.
+    pub fn selected_index(&self) -> usize {
+        self.list.selected()
+    }
+
+    /// The `value` of the currently highlighted suggestion (e.g. `"/quit"`),
+    /// or `None` when the dropdown holds no suggestions.
+    pub fn selected_value(&self) -> Option<String> {
+        self.list.selected_suggestion().map(|s| s.value.clone())
+    }
+
+    /// The number of suggestions currently held by the dropdown. After a
+    /// Tab/Enter accept the list is `close()`d (hidden) but its suggestions are
+    /// retained, so this stays non-zero — distinct from a `dismiss()`/`clear()`.
+    pub fn suggestion_count(&self) -> usize {
+        self.list.len()
+    }
 }
 
 impl Component for Autocomplete {

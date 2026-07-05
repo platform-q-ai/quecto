@@ -8,7 +8,7 @@ Feature: Subagent status bar fixes (#534)
   # The sub-agent bar (widgets_above) no longer renders in the bottom section;
   # it moved to the always-on left panel, so the bottom keeps only the spinner.
 
-  @wip
+  @done
   Scenario: The sub-agent bar no longer renders in the bottom section
     Given a render bottom section layout
     Then the bottom section no longer renders the sub-agent bar
@@ -16,7 +16,7 @@ Feature: Subagent status bar fixes (#534)
   # ── Fix 2: Notifications drain during prompt execution ─────────────
   # Verified by the notification_rx integration in run_with_token_drain_broadcast.
 
-  @wip
+  @done
   Scenario: SubagentStateChanged event includes correct subagent list
     Given a subagent registry with agent "worker" status "running"
     When I build the subagent info list from the registry
@@ -26,7 +26,7 @@ Feature: Subagent status bar fixes (#534)
 
   # ── Fix 3: Bars clear when subagents are killed ────────────────────
 
-  @wip
+  @done
   Scenario: Exited subagent appears in state_changed event
     Given a subagent registry with agent "worker" status "exited"
     When I build the subagent info list from the registry

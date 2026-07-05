@@ -1,4 +1,4 @@
-@tui
+@tui @done
 Feature: TUI context size and usage percentage display
   As a TUI user
   I want to see context usage percentage in the footer

@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Append-only audit log
 
   An append-only JSONL event log written by the engine at every significant

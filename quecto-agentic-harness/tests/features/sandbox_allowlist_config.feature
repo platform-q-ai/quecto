@@ -1,4 +1,4 @@
-@sandbox
+@sandbox @done
 Feature: Sandbox command allowlist configuration
 
   As a user running Quecto in an untrusted environment

@@ -1,4 +1,4 @@
-@wip @tui
+@done @tui
 Feature: Sub-agent session view + interaction parity, Tab focus model, focus divider (#802)
   As a human operator driving a workflow with sub-agents in the TUI
   I want a selected sub-agent to render its OWN full session (chat + workflow bar +

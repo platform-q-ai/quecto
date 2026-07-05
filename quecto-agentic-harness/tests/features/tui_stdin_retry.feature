@@ -1,4 +1,4 @@
-@tui
+@tui @done
 Feature: TUI stdin buffer retry loop — multi-fragment escape sequences
   As a TUI user on a slow SSH/serial connection
   I want escape sequences split across 3+ reads to be reassembled

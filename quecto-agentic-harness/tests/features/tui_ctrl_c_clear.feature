@@ -1,4 +1,4 @@
-@tui
+@tui @done
 Feature: TUI Ctrl+C clears editor first, only aborts when editor is empty (#536)
   As a TUI user
   I want Ctrl+C to clear the text input first

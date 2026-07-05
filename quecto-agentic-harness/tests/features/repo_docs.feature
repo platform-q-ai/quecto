@@ -1,4 +1,4 @@
-@docs @wip
+@docs @done
 Feature: Repository documentation
   As a maintainer
   I want committed documentation to match the current workspace state

@@ -1,4 +1,4 @@
-@wip @tui
+@done @tui
 Feature: TUI Clean Architecture and executable BDD enforcement
   The quecto-tui crate must be shaped to the same architectural standards as
   the main quecto crate. Its production source is organised into Clean

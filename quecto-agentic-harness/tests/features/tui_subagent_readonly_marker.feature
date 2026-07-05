@@ -1,4 +1,4 @@
-@wip @tui
+@done @tui
 Feature: Read-only sub-agent observer marker in the left panel (#966)
   As a human operator driving workflows in the TUI
   I want read-only sub-agents to show an observer marker in the left panel

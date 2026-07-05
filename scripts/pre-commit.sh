@@ -17,22 +17,25 @@ step() {
     echo -e "\n${BLUE}[$1]${NC} $2"
 }
 
-step "1/5" "Quality gate (work markers, file size, lint bypasses, unsafe, ignored tests)"
+step "1/6" "Quality gate (work markers, file size, lint bypasses, unsafe, ignored tests)"
 "$ROOT/scripts/check-quality.sh"
 
-step "2/5" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
+step "2/6" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
 "$ROOT/scripts/check-bdd-quality.sh"
 
-step "3/5" "cargo fmt --check"
+step "3/6" "BDD status-tag gate (every scenario is @done / @wip / @pending)"
+"$ROOT/scripts/check-bdd-tags.sh"
+
+step "4/6" "cargo fmt --check"
 cargo fmt --all -- --check
 
-step "4/5" "cargo clippy (strict, workspace complexity gates)"
+step "5/6" "cargo clippy (strict, workspace complexity gates)"
 cargo clippy --workspace --all-targets --features quecto/test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
 
-step "5/5" "Fast guard tests (docs, architecture, contracts, config)"
+step "6/6" "Fast guard tests (docs, architecture, contracts, config)"
 # Run the deterministic top-level integration guards at commit time — they are
 # the doc/architecture/contract/config checks that catch drift like a config
 # step reorder breaking quecto-agentic-harness/tests/workflow_docs.rs. They are fast and have no
