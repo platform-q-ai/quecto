@@ -138,14 +138,14 @@ Feature: TUI Foundation
     Then each component should remove terminal control sequences before display
     And normal printable Unicode text should remain visible
 
-  @tui
+  @tui @done
   Scenario: Command send failures are observable
     Given the TUI command channel is disconnected
     When the TUI tries to send a command to the agent
     Then the TUI should show an error notification for the failed command send
     And the send failure should not be handled only through stderr
 
-  @tui
+  @tui @done
   Scenario: DiffRenderer write and flush failures are observable
     Given the TUI renderer output fails while writing or flushing
     When the TUI renders a frame

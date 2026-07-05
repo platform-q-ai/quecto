@@ -1,4 +1,4 @@
-@tui
+@tui @done
 Feature: TUI 3-line spacing between agent response and input border
   As a TUI user
   I want at least 3 blank lines between the chat and the input area

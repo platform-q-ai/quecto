@@ -1,4 +1,4 @@
-@tui
+@tui @done
 Feature: TUI editor borders render without duplication
   As a TUI user
   I want the input area borders to render cleanly during streaming

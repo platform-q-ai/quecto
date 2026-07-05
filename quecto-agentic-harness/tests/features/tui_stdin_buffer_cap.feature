@@ -1,4 +1,4 @@
-@tui @security
+@tui @security @done
 Feature: TUI stdin buffer size cap — prevent unbounded memory growth
   As a TUI user
   I want the stdin buffer capped at a safe maximum size

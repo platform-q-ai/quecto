@@ -227,6 +227,45 @@ impl std::fmt::Debug for TuiParityHarness {
     }
 }
 
+// Opaque Debug wrappers for TUI components that aren't `Debug` themselves, so
+// they can live in the derived-`Debug` `QuectoWorld`. `DerefMut` lets step code
+// call their inherent methods directly.
+pub struct DebugStdinBuffer(pub quecto_tui::interface::stdin_buffer::StdinBuffer);
+impl std::fmt::Debug for DebugStdinBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<StdinBuffer>")
+    }
+}
+impl std::ops::Deref for DebugStdinBuffer {
+    type Target = quecto_tui::interface::stdin_buffer::StdinBuffer;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for DebugStdinBuffer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+pub struct DebugEditor(pub quecto_tui::interface::components::editor::Editor);
+impl std::fmt::Debug for DebugEditor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<Editor>")
+    }
+}
+impl std::ops::Deref for DebugEditor {
+    type Target = quecto_tui::interface::components::editor::Editor;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for DebugEditor {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 #[derive(Debug, Default, World)]
 pub struct QuectoWorld {
     /// Exit code from the last CLI invocation
@@ -397,6 +436,8 @@ pub struct QuectoWorld {
     pub gateway_credential_store: Option<CredentialStore>,
     /// Credential snapshot (loaded once, shared across resolution steps)
     pub gateway_cred_snapshot: Option<std::collections::HashMap<String, Credential>>,
+    /// provider-auth-modes: error captured from a failed `build_agent_provider`
+    pub provider_build_error: Option<String>,
     /// Pending tool call from "the mock LLM first returns a tool call" (paired with "then returns text")
     pub pending_tool_call: Option<(String, String)>,
     /// Pending parallel tool calls (name, args_json) for the parallel-then-text step
@@ -789,6 +830,71 @@ pub struct QuectoWorld {
     pub reload_poll_result: Option<quecto::infrastructure::reload::ReloadResult<String>>,
     /// RuntimeReload BDD: result of the last source probe
     pub reload_source_change: Option<quecto::infrastructure::reload::SourceChange>,
+    // --- TUI markdown table safety BDD ---
+    /// The rendered markdown-table lines (ANSI intact) under test.
+    pub tui_table_rendered: Option<Vec<String>>,
+    /// The raw cell content under test (for display-width / truncation checks).
+    pub tui_table_cell: Option<String>,
+    // --- TUI stdin buffer cap BDD ---
+    /// The `StdinBuffer` under test.
+    pub tui_stdin_buffer: Option<DebugStdinBuffer>,
+    /// Return value of the most recent `feed()` (false = capped/dropped).
+    pub tui_stdin_last_feed_ok: Option<bool>,
+    /// Total bytes fed into the buffer during the scenario (for cap assertions).
+    pub tui_stdin_fed_total: usize,
+    /// Sequences produced by the most recent `drain_complete()`.
+    pub tui_stdin_drained: Option<Vec<Vec<u8>>>,
+    // --- TUI editor border replication BDD ---
+    /// The `Editor` component under test (component-level paste/border checks).
+    pub tui_editor: Option<DebugEditor>,
+    /// Editor render outputs captured across repeated renders.
+    pub tui_editor_renders: Vec<Vec<String>>,
+    /// DiffRenderer full-render output captured for the alt-screen scenario.
+    pub tui_render_full: Option<String>,
+    /// DiffRenderer diff-render output captured for the alt-screen scenario.
+    pub tui_render_diff: Option<String>,
+    /// TUI Esc-abort-recovery BDD: command lines drained from the headless
+    /// harness's socket after a submit, so a Then step can assert the prompt
+    /// was actually dispatched over the wire.
+    pub tui_last_commands: Vec<String>,
+    /// TUI context-usage BDD: AgentResult from a real agent-loop turn, used to
+    /// assert the pruned context estimate is separate from provider input usage.
+    pub tui_ctx_agent_result: Option<AgentResult>,
+    /// TUI context-usage BDD: conversation after the real agent-loop turn, for
+    /// recomputing the active pruned-conversation token estimate.
+    pub tui_ctx_messages: Vec<Message>,
+    /// TUI context-usage BDD: the configured context window for the run.
+    pub tui_ctx_window: Option<usize>,
+    /// TUI context-usage BDD: serialized session-stats wire payload fed to the TUI.
+    pub tui_session_stats_json: Option<serde_json::Value>,
+
+    // ── TUI PID-safety BDD (`tui_pid_safety.feature`) ──────────────────
+    /// Child PID under test before checked conversion.
+    pub tui_pid_input: Option<u32>,
+    /// Result of the real `checked_pid` conversion (`Ok(i32)` or error text).
+    pub tui_pid_result: Option<Result<i32, String>>,
+    /// Process-group signal target (negated checked pid) when conversion succeeds.
+    pub tui_pid_group_target: Option<i32>,
+
+    // ── TUI stdin-retry BDD (`tui_stdin_retry.feature`) ────────────────
+    /// Raw fragments queued by the Given steps for the retry scenarios.
+    pub tui_stdin_fragments: Vec<Vec<u8>>,
+    /// Sequences emitted by the real `StdinBuffer` in the When step.
+    pub tui_stdin_emitted: Vec<Vec<u8>>,
+    /// Whether the buffer still held pending bytes after the When step.
+    pub tui_stdin_pending_after: bool,
+    /// Whether the When step had to force-drain incomplete bytes.
+    pub tui_stdin_force_drained: bool,
+    /// Follow-up fragments the real app retry loop left unconsumed (cap proof).
+    pub tui_stdin_leftover: Option<usize>,
+
+    // ── TUI foundation BDD (`tui_foundation.feature`) ──────────────────
+    /// Whether the foundation command channel was marked disconnected.
+    pub tui_foundation_disconnect: bool,
+    /// Error-notification text surfaced by a real command-send / render failure.
+    pub tui_foundation_notification: String,
+    /// Whether the real `DiffRenderer::render` returned an error.
+    pub tui_foundation_render_was_err: bool,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -1096,6 +1202,7 @@ mod ls_steps;
 mod mouse_selection_steps;
 mod observability_steps;
 mod path_utils_steps;
+mod provider_auth_modes_steps;
 mod provider_steps;
 mod read_tool_steps;
 mod release_profile_steps;
@@ -1115,13 +1222,27 @@ mod subagent_widget_steps;
 mod tool_empty_args_steps;
 mod truncate_steps;
 mod tui_architecture_steps;
+mod tui_autocomplete_steps;
+mod tui_border_replication_steps;
+mod tui_chat_spacing_steps;
 mod tui_cold_start_steps;
+mod tui_context_usage_steps;
+mod tui_ctrl_c_clear_steps;
+mod tui_ctrl_d_exit_steps;
+mod tui_esc_abort_recovery_steps;
 mod tui_file_mention_steps;
+mod tui_foundation_steps;
 mod tui_idle_efficiency_steps;
+mod tui_new_reset_context_steps;
+mod tui_pid_safety_steps;
+mod tui_stdin_buffer_cap_steps;
+mod tui_stdin_retry_steps;
 mod tui_streaming_stability_steps;
 mod tui_subagent_first_layout_steps;
 mod tui_subagent_parity_steps;
 mod tui_subagent_readonly_marker_steps;
+mod tui_table_safety_steps;
+mod tui_terminal_restore_steps;
 mod tui_uds_client_defence_steps;
 mod uds_steps;
 mod web_fetch_steps;

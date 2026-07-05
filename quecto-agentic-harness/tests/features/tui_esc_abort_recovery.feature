@@ -1,4 +1,4 @@
-@tui
+@tui @done
 Feature: TUI ESC abort does not break subsequent prompts
   As a TUI user
   I want to be able to abort with ESC and continue using the TUI

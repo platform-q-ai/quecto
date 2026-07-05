@@ -18,7 +18,7 @@ use super::Focus;
 use super::app_methods::strip_ansi;
 use super::app_selection::{SelectionAnchor, TextSelection};
 use super::keys::Key;
-use crate::infrastructure::client::{Client, Event, SubagentInfoEvent, SubagentWorkflow};
+use crate::infrastructure::client::{Client, Event};
 use crate::infrastructure::terminal::Terminal;
 use crate::interface::components::chat::ChatEntry;
 use crate::interface::components::notification::NotifyLevel;
@@ -26,6 +26,13 @@ use crate::interface::components::spinner::Spinner;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
+
+#[path = "tui_harness_events.rs"]
+mod events;
+// Re-export the scenario event builders so callers keep using
+// `tui_harness::subagent(..)` etc. `normalize` stays module-internal.
+use events::normalize;
+pub use events::*;
 
 const DEFAULT_WIDTH: usize = 120;
 const DEFAULT_HEIGHT: usize = 40;
@@ -301,6 +308,85 @@ impl TuiHarness {
         self.app.kitty.modify_other_keys
     }
 
+    /// Enable the xterm modifyOtherKeys fallback through the real protocol path.
+    pub fn enable_modify_other_keys(&mut self) {
+        self.app.kitty.enable_modify_other_keys();
+    }
+
+    /// Run the real on-exit terminal protocol cleanup the event loop performs
+    /// during teardown (`KittyProtocol::cleanup` — pops Kitty flags and resets
+    /// modifyOtherKeys to mode 0).
+    pub fn run_protocol_cleanup(&mut self) {
+        self.app.kitty.cleanup();
+    }
+
+    /// Whether any notification is currently visible, rendered to text via the
+    /// real notification stack so tests can assert the message content.
+    pub fn notification_text(&mut self) -> String {
+        use crate::interface::component::Component;
+        let w = self.width;
+        self.app.notifications.render(w).join("\n")
+    }
+
+    /// Feed a real `io::Error` through the production render-failure handler
+    /// (`handle_render_failure` — invalidate + error notification) and return
+    /// the resulting notification text.
+    pub fn handle_render_failure(&mut self, error: &std::io::Error) -> String {
+        self.app.handle_render_failure(error);
+        self.notification_text()
+    }
+
+    /// Replace the agent client with a disconnected one and drive the real
+    /// `send_command` path; on the expected send failure, route it through the
+    /// production `handle_command_send_failure` handler and return the
+    /// resulting error-notification text.
+    pub async fn send_command_expecting_failure(
+        &mut self,
+        cmd: crate::infrastructure::client::Command,
+    ) -> String {
+        self.app.client = Client::disconnected_for_tests();
+        self.app.send_command(cmd);
+        let failure = self
+            .app
+            .command_send_failure_rx
+            .recv()
+            .await
+            .expect("command send failure should be routed to the app");
+        self.app.handle_command_send_failure(failure);
+        self.notification_text()
+    }
+
+    /// Whether the real stdin buffer still holds pending (incomplete) bytes.
+    pub fn stdin_has_pending(&self) -> bool {
+        self.app.stdin_buffer.has_pending()
+    }
+
+    /// Drive the REAL multi-fragment escape retry loop (`process_stdin_bytes`)
+    /// with an initial chunk plus pre-queued follow-up fragments, using the
+    /// real 10ms escape timeout and `MAX_ESCAPE_RETRIES` cap. Returns the count
+    /// of follow-up fragments the loop left unconsumed in the channel (a
+    /// non-zero leftover proves the retry cap stopped the loop early).
+    pub async fn drive_stdin_retry_loop(&mut self, first: &[u8], followups: &[&[u8]]) -> usize {
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
+        for f in followups {
+            tx.send(f.to_vec()).await.expect("queue stdin fragment");
+        }
+        let mut kitty_fallback_done = true;
+        self.app
+            .process_stdin_bytes(
+                first.to_vec(),
+                &mut rx,
+                std::time::Duration::from_millis(10),
+                &mut kitty_fallback_done,
+            )
+            .await;
+        let mut leftover = 0;
+        while rx.try_recv().is_ok() {
+            leftover += 1;
+        }
+        leftover
+    }
+
     // ── High-level driving surface for the workspace `bdd` target (#805) ──
     // These wrap crate-internal `App` methods so external integration tests can
     // drive the real render/key path without touching `pub(super)` internals.
@@ -331,6 +417,69 @@ impl TuiHarness {
         self.app.handle_submit(text);
         self.capture();
         self
+    }
+
+    /// Whether the slash-command autocomplete dropdown is currently active.
+    pub fn autocomplete_active(&self) -> bool {
+        self.app.autocomplete.is_active()
+    }
+
+    /// The 0-based highlighted index in the slash-command autocomplete.
+    pub fn autocomplete_selected_index(&self) -> usize {
+        self.app.autocomplete.selected_index()
+    }
+
+    /// The `value` of the highlighted slash-command suggestion (e.g. `"/quit"`).
+    pub fn autocomplete_selected_value(&self) -> Option<String> {
+        self.app.autocomplete.selected_value()
+    }
+
+    /// The number of suggestions the slash-command autocomplete currently holds.
+    pub fn autocomplete_suggestion_count(&self) -> usize {
+        self.app.autocomplete.suggestion_count()
+    }
+
+    /// Re-run the slash-command autocomplete `update` against the current editor
+    /// text — the exact call `handle_key` makes after every editor change.
+    pub fn refresh_autocomplete(&mut self) {
+        let text = self.app.editor.text();
+        self.app.autocomplete.update(&text);
+    }
+
+    /// Whether the app has been asked to exit (e.g. after submitting `/quit`).
+    pub fn should_exit(&self) -> bool {
+        self.app.should_exit
+    }
+
+    /// Whether the master agent run-state machine currently reports running.
+    pub fn agent_running(&self) -> bool {
+        self.app.agent_state.is_running()
+    }
+
+    /// Number of aborted runs whose stale `AgentEnd` events have not yet been
+    /// consumed by the abort-aware state machine (#502/#536). Used to assert
+    /// that Ctrl+C / Esc actually drove `handle_abort`.
+    pub fn pending_aborts(&self) -> u32 {
+        self.app.agent_state.pending_aborts
+    }
+
+    /// Set the editor text through the real editor component (the same call the
+    /// production accept path makes), bypassing per-key autocomplete side effects.
+    pub fn set_editor_text(&mut self, text: &str) {
+        self.app.editor.set_text(text);
+    }
+
+    /// Open the model-selector overlay synchronously (production `open_model_
+    /// selector_now`), so overlay-active key routing can be exercised without a
+    /// socket round-trip for the model list.
+    pub fn open_overlay(&mut self) {
+        self.app.open_model_selector_now();
+    }
+
+    /// Whether the model-selector overlay is currently open (e.g. after
+    /// submitting `/model` with no argument).
+    pub fn model_selector_open(&self) -> bool {
+        self.app.model_selector.is_some()
     }
 
     /// Built-in slash command names from the production command registry.
@@ -558,12 +707,18 @@ impl TuiHarness {
     }
 
     pub async fn drain_commands(&mut self) -> Vec<String> {
-        for _ in 0..5 {
-            tokio::task::yield_now().await;
-        }
+        // `send_command` dispatches via a fire-and-forget spawn that may run on
+        // another worker thread under load; poll (bounded) for it so sharded
+        // runs aren't flaky, returning as soon as a command arrives.
         let mut out = Vec::new();
-        while let Ok(line) = self.cmd_rx.try_recv() {
-            out.push(line);
+        for _ in 0..400 {
+            while let Ok(line) = self.cmd_rx.try_recv() {
+                out.push(line);
+            }
+            if !out.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
         out
     }
@@ -590,148 +745,4 @@ pub(super) fn transient_in(frames: &[Vec<String>]) -> Vec<(usize, String)> {
         }
     }
     out
-}
-
-/// Normalize a rendered line for transient detection: drop braille spinner
-/// frames and collapse digit runs (elapsed seconds) so animation ticks don't
-/// register as appearing/disappearing content.
-fn normalize(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut last_was_digit = false;
-    for c in line.chars() {
-        if ('\u{2800}'..='\u{28ff}').contains(&c) {
-            continue; // braille spinner frame
-        }
-        if c.is_ascii_digit() {
-            if !last_was_digit {
-                out.push('#');
-            }
-            last_was_digit = true;
-            continue;
-        }
-        last_was_digit = false;
-        out.push(c);
-    }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-// ── Scenario event builders ───────────────────────────────────────────
-
-/// A `SubagentInfoEvent`, optionally carrying a workflow snapshot `(mode, done, total)`.
-pub fn subagent(id: &str, status: &str, wf: Option<(&str, u32, u32)>) -> SubagentInfoEvent {
-    subagent_with_socket(id, status, wf, None)
-}
-
-/// Bind a real, drained Unix socket for a sub-agent and return its path. The
-/// listener task accepts one connection and drains its lines, so a TUI
-/// `connect-on-select` to this path succeeds and the per-child command channel
-/// stays live (its receiver is NOT dropped) — letting routing tests exercise
-/// the real `try_send` delivery path rather than the older-kernel `None` case.
-pub fn spawn_subagent_socket(id: &str) -> std::path::PathBuf {
-    let n = SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "quecto-tui-harness-sub-{}-{}-{}",
-        std::process::id(),
-        id,
-        n
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let socket_path = dir.join("agent.sock");
-    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
-    tokio::spawn(async move {
-        // Loop accepting so reselecting the same agent (teardown + reconnect)
-        // still finds a live listener.
-        while let Ok((stream, _)) = listener.accept().await {
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(stream).lines();
-                while let Ok(Some(_line)) = lines.next_line().await {}
-            });
-        }
-    });
-    socket_path
-}
-
-/// A `SubagentInfoEvent` carrying an explicit `socket_path` (live connection).
-pub fn subagent_with_socket(
-    id: &str,
-    status: &str,
-    wf: Option<(&str, u32, u32)>,
-    socket_path: Option<std::path::PathBuf>,
-) -> SubagentInfoEvent {
-    SubagentInfoEvent {
-        agent_id: id.to_string(),
-        status: status.to_string(),
-        last_tool: None,
-        last_error: None,
-        pid: 0,
-        socket_path: socket_path.map(|p| p.to_string_lossy().into_owned()),
-        parent_id: None,
-        workflow: wf.map(|(mode, d, t)| SubagentWorkflow {
-            mode: mode.to_string(),
-            steps_completed: d,
-            steps_total: t,
-        }),
-        read_only: false,
-    }
-}
-
-/// A read-only sub-agent event (`read_only: true`) for observer-marker tests
-/// (#966). Otherwise identical to `subagent_with_socket`.
-pub fn subagent_readonly(
-    id: &str,
-    status: &str,
-    wf: Option<(&str, u32, u32)>,
-    socket_path: Option<std::path::PathBuf>,
-) -> SubagentInfoEvent {
-    let mut ev = subagent_with_socket(id, status, wf, socket_path);
-    ev.read_only = true;
-    ev
-}
-
-/// `get_subagents`-style push of the full sub-agent list.
-pub fn subagents_changed(list: Vec<SubagentInfoEvent>) -> Event {
-    Event::SubagentStateChanged { subagents: list }
-}
-
-/// A `spawn` tool starting (registers the child locally as "starting").
-pub fn spawn_start(id: &str) -> Event {
-    Event::ToolExecutionStart {
-        tool_call_id: format!("tc-spawn-{id}"),
-        tool_name: "spawn".to_string(),
-        args: serde_json::json!({ "agent_id": id }),
-    }
-}
-
-/// An `agent_cmd await` tool starting on `id` (marks the row "awaiting").
-pub fn await_start(id: &str) -> Event {
-    Event::ToolExecutionStart {
-        tool_call_id: format!("tc-await-{id}"),
-        tool_name: "agent_cmd".to_string(),
-        args: serde_json::json!({ "command": "await", "agent_id": id }),
-    }
-}
-
-/// A tool finishing (clears the awaiting marker / spinner message).
-pub fn tool_end(call_id: &str, tool: &str) -> Event {
-    Event::ToolExecutionEnd {
-        tool_call_id: call_id.to_string(),
-        tool_name: tool.to_string(),
-        result: serde_json::json!({ "content": [{ "type": "text", "text": "ok" }] }),
-        is_error: false,
-    }
-}
-
-/// A forwarded child `workflow_state` event (carries `agent_id` — must NOT
-/// touch the parent's workflow bar).
-pub fn forwarded_workflow(agent_id: &str, done: u32, total: u32) -> Event {
-    Event::WorkflowState {
-        agent_id: Some(agent_id.to_string()),
-        steps: Vec::new(),
-        progress: serde_json::json!({ "done": done, "total": total, "percent": done * 100 / total.max(1) }),
-        active_issue: Some(serde_json::json!({ "number": 7, "title": "child" })),
-        mode: Some("active".to_string()),
-        active_template: None,
-        available_templates: None,
-    }
 }

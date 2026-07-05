@@ -1,4 +1,4 @@
-@tui @security
+@tui @security @done
 Feature: TUI markdown table safety and correctness
   As a TUI user
   I want markdown table cells sanitized and properly measured

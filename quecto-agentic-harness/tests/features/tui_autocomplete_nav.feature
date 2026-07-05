@@ -1,4 +1,4 @@
-@tui
+@tui @done
 Feature: TUI slash command menu arrow navigation
   As a TUI user
   I want arrow keys to navigate the slash command menu sequentially

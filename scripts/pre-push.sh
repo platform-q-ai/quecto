@@ -52,16 +52,19 @@ step() {
 
 # --- Pre-commit checks (belt-and-suspenders) ---
 
-step "1/10" "Quality gate"
+step "1/11" "Quality gate"
 "$ROOT/scripts/check-quality.sh"
 
-step "2/10" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
+step "2/11" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
 "$ROOT/scripts/check-bdd-quality.sh"
 
-step "3/10" "cargo fmt --check"
+step "3/11" "BDD status-tag gate (every scenario is @done / @wip / @pending)"
+"$ROOT/scripts/check-bdd-tags.sh"
+
+step "4/11" "cargo fmt --check"
 cargo fmt --all -- --check
 
-step "4/10" "cargo clippy (strict, workspace)"
+step "5/11" "cargo clippy (strict, workspace)"
 cargo clippy --workspace --all-targets --features quecto/test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
@@ -69,7 +72,7 @@ cargo clippy --workspace --all-targets --features quecto/test-support -- -D warn
 
 COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-87}"
 
-step "5/10" "Parallel test wave: unit + every integration target + non-real BDD shards"
+step "6/11" "Parallel test wave: unit + every integration target + non-real BDD shards"
 
 # Enumerate EVERY top-level integration test target dynamically rather than a
 # hand-maintained allowlist. A static `--test architecture --test contracts ...`
@@ -116,7 +119,7 @@ if [[ "$FAIL" -ne 0 ]]; then
     exit 1
 fi
 
-step "6/10" "Code coverage (cargo llvm-cov, threshold ${COV_THRESHOLD}%)"
+step "7/11" "Code coverage (cargo llvm-cov, threshold ${COV_THRESHOLD}%)"
 
 # Resolve llvm tools — cargo-llvm-cov needs these when llvm-tools-preview
 # isn't installed via rustup (e.g. system Rust on Arch Linux).
@@ -150,7 +153,7 @@ if [[ "$COV_FAIL" -ne 0 ]]; then
     exit 1
 fi
 
-step "7/10" "cargo machete (unused dependencies)"
+step "8/11" "cargo machete (unused dependencies)"
 if command -v cargo-machete &>/dev/null; then
     cargo machete
 else
@@ -158,7 +161,7 @@ else
     echo "  Install with: cargo install cargo-machete --locked"
 fi
 
-step "8/10" "cargo deny check (licenses, advisories, bans)"
+step "9/11" "cargo deny check (licenses, advisories, bans)"
 if command -v cargo-deny &>/dev/null; then
     cargo deny check
 else
@@ -166,7 +169,7 @@ else
     echo "  Install with: cargo install cargo-deny --locked"
 fi
 
-step "9/10" "Mocked end-to-end tests (@mock-llm, zero-cost, default)"
+step "10/11" "Mocked end-to-end tests (@mock-llm, zero-cost, default)"
 
 # Default e2e lane: deterministic WireMock-backed copy of the @real-llm
 # behaviours. Makes ZERO paid provider calls and needs no API key — .env is
@@ -188,7 +191,7 @@ fi
 # on-demand validation. It runs ONLY when explicitly opted in — a .env key alone
 # never triggers it. Enable with: QUECTO_RUN_REAL_LLM=1 git push
 if [[ "${QUECTO_RUN_REAL_LLM:-0}" == "1" ]]; then
-    echo -e "\n${BLUE}[9b/10]${NC} Live real-LLM end-to-end tests (opt-in)"
+    echo -e "\n${BLUE}[10b/11]${NC} Live real-LLM end-to-end tests (opt-in)"
     # run-bdd-shards.sh --real-llm sources .env (provider credentials) itself.
     # If no key is configured the real-LLM workspace step fails loudly, which is
     # the correct outcome for an explicit opt-in run.
@@ -207,7 +210,7 @@ else
     echo "  Live @manual-real-llm suite skipped (opt in with QUECTO_RUN_REAL_LLM=1)."
 fi
 
-step "10/10" "Pre-push summary"
+step "11/11" "Pre-push summary"
 echo "All local push gates passed."
 echo "BDD shards: ${BDD_SHARDS}, timeout per shard: ${E2E_TIMEOUT}"
 echo "Coverage threshold: ${COV_THRESHOLD}%"

@@ -1,4 +1,4 @@
-@provider-auth-modes
+@provider-auth-modes @done
 Feature: Explicit auth modes for models.json providers
   As a user with both OAuth (monthly plan) and API-key (token billing) access
   I want to declare each provider's auth mode explicitly in models.json

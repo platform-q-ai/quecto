@@ -485,7 +485,7 @@ impl Client {
         self.event_rx.try_recv().ok()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn disconnected_for_tests() -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel::<String>(1);
         drop(cmd_rx);
