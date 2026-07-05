@@ -1,4 +1,4 @@
-@wip @tui
+@done @tui
 Feature: Sub-agent-first default layout (#820)
   As a human operator driving workflows in the TUI
   I want the left sub-agent panel always on (Master included, even solo), agent

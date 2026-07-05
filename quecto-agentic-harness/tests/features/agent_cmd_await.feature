@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: agent_cmd await — block until sub-agent reaches terminal state
   As an AI orchestrator agent
   I want the agent_cmd tool to support an "await" command that blocks until a

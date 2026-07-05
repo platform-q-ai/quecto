@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Context pruning via sliding window and tool-call collapse
 
   Tool outputs remain in full context until either (a) the number of tool

@@ -1,4 +1,4 @@
-@tui @efficiency
+@tui @efficiency @done
 Feature: Idle TUI avoids unnecessary periodic work (#978)
   As a TUI user on a battery-powered machine
   I want the interface to stay quiet when nothing is changing

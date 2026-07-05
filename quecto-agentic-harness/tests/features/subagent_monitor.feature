@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Persistent subagent monitor — live event stream from child agents
   As a parent agent
   I want automatic real-time monitoring of spawned child agents

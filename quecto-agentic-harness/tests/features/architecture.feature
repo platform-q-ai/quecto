@@ -1,4 +1,4 @@
-@wip @architecture
+@done @architecture
 Feature: Architecture boundaries and ports
   As a maintainer
   I want architecture contracts encoded in executable tests

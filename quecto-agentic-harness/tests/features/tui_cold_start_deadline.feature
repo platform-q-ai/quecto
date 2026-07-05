@@ -1,4 +1,4 @@
-@tui @cold-start
+@tui @cold-start @done
 Feature: TUI cold-binary first-launch readiness (#808)
   As a quecto-tui user who just ran `cargo install`
   I want the TUI to tolerate a cold kernel binary on first launch

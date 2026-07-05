@@ -329,14 +329,14 @@ Feature: UDS mode for headless agent operation
     And I close the UDS connection through the multi-client dispatch loop
     Then the parse error response should preserve the detailed error text
 
-  @issue-1022
+  @issue-1022 @done
   Scenario: malformed UDS commands receive consistent parse error responses
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     When I send the same malformed command through both UDS connection modes
     Then both responses should contain the same parse error text
 
-  @issue-1022
+  @issue-1022 @done
   Scenario: UDS clients receive the same event stream for the same prompt
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
