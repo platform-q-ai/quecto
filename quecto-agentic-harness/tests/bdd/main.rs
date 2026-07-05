@@ -21,6 +21,7 @@ use quecto::infrastructure::providers::router::ProviderRouter;
 
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::bash::ExecTool;
+use quecto::infrastructure::tools::recall::RecallTool;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use quecto::infrastructure::tools::spawn::SpawnTool;
 use quecto::infrastructure::tools::web_search::WebSearchTool;
@@ -350,6 +351,12 @@ pub struct QuectoWorld {
     pub credential_file_before_update: Option<Vec<u8>>,
     /// Spawn tool result
     pub spawn_result: Option<ToolResult>,
+    /// Recall tool result for context spill scenarios
+    pub recall_result: Option<ToolResult>,
+    /// Recall tool for context spill scenarios
+    pub recall_tool: Option<RecallTool>,
+    /// In-memory spill store used by recall BDD scenarios
+    pub recall_spill_store: Option<Arc<recall_tool_steps::BddMemorySpillStore>>,
     /// Spawn tool for BDD
     pub spawn_tool: Option<SpawnTool>,
     /// AgentCmdTool for BDD (#421)
@@ -725,6 +732,8 @@ pub struct QuectoWorld {
         Option<quecto::infrastructure::tools::subagent_registry::SubagentRegistry>,
     /// Result of a cascade-remove broadcast: Some(event) or None (#831)
     pub cascade_broadcast: Option<Option<serde_json::Value>>,
+    /// Broadcast receiver for SpawnTool immediate-visibility scenarios (#1028 wave 4)
+    pub spawn_broadcast_rx: Option<tokio::sync::broadcast::Receiver<String>>,
     /// Monitor abort handle for cancellation test
     pub monitor_abort_handle: Option<tokio::task::JoinHandle<()>>,
     /// Tokio runtime for abort handle test (keeps spawned task alive)
@@ -784,6 +793,12 @@ pub struct QuectoWorld {
     pub _real_llm_uds: bool,
     /// Workflow V2: when true, register WorkflowEngine + WorkflowTool + WorkflowGuard
     pub _workflow_enabled: bool,
+    /// Workflow tool BDD: direct tool under test.
+    pub workflow_tool: Option<quecto::infrastructure::tools::workflow_tool::WorkflowTool>,
+    /// Workflow tool BDD: captured workflow_state events emitted by the tool.
+    pub workflow_events: Option<Arc<Mutex<Vec<serde_json::Value>>>>,
+    /// Workflow tool BDD: last direct tool execution result.
+    pub workflow_tool_result: Option<ToolResult>,
     // --- Audit log (#609) ---
     /// Temp dir for audit log tests (kept alive)
     pub tempdir: Option<TempDir>,
@@ -1202,6 +1217,7 @@ mod path_utils_steps;
 mod provider_auth_modes_steps;
 mod provider_steps;
 mod read_tool_steps;
+mod recall_tool_steps;
 mod release_profile_steps;
 mod reload_steps;
 mod repl_steps;
@@ -1223,6 +1239,7 @@ mod tui_context_usage_steps;
 mod uds_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;
+mod workflow_tool_steps;
 
 // Runner
 // ===========================================================================

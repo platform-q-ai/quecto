@@ -101,7 +101,7 @@ if [[ "$COVERAGE" == "1" ]]; then
     # concurrent sharded suites from cleaning or merging each other's profiles.
     eval "$(cargo llvm-cov show-env --sh)"
     echo "Coverage: enabled; target/profiles: ${CARGO_TARGET_DIR}"
-    [[ -n "$COVERAGE_THRESHOLD" ]] && echo "Coverage region threshold: ${COVERAGE_THRESHOLD}%"
+    [[ -n "$COVERAGE_THRESHOLD" ]] && echo "Coverage function threshold: ${COVERAGE_THRESHOLD}%"
 fi
 
 declare -a PIDS=()
@@ -165,7 +165,7 @@ fi
 if [[ "$COVERAGE" == "1" ]]; then
     report_args=(report -p "$PACKAGE")
     if [[ -n "$COVERAGE_THRESHOLD" ]]; then
-        report_args+=(--fail-under-regions "$COVERAGE_THRESHOLD")
+        report_args+=(--fail-under-functions "$COVERAGE_THRESHOLD")
     fi
     echo "Generating merged coverage report..."
     if ! cargo llvm-cov "${report_args[@]}" 2>&1 | tee "$TMP_DIR/coverage.txt"; then

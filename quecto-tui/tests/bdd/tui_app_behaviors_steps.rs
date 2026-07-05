@@ -1,0 +1,728 @@
+//! Step definitions for `tui_app_behaviors.feature`.
+//!
+//! These scenarios exercise the real App routing paths via the public headless
+//! TUI harness exposed under the `test-harness` feature. They intentionally
+//! assert observable frames, notifications, and serialized commands rather than
+//! private fields.
+
+use crate::{TuiParityHarness, TuiWorld};
+use cucumber::{given, then, when};
+use quecto_tui::infrastructure::client::Event;
+use quecto_tui::interface::ansi::strip_ansi;
+use quecto_tui::interface::app::tui_harness::TuiHarness;
+use quecto_tui::interface::keys::Key;
+use quecto_tui::interface::utils::visible_width;
+
+async fn build_fresh_harness() -> TuiHarness {
+    TuiHarness::new().await
+}
+
+fn init_fresh(world: &mut TuiWorld) {
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let h = rt.block_on(build_fresh_harness());
+    world.tui_parity_rt = Some(rt);
+    world.tui_parity = Some(TuiParityHarness(h));
+    world.tui_last_commands.clear();
+}
+
+fn drive<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+    let handle = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("harness runtime")
+        .handle()
+        .clone();
+    let _guard = handle.enter();
+    let h = &mut world.tui_parity.as_mut().expect("harness").0;
+    f(h)
+}
+
+fn drain_commands(world: &mut TuiWorld) -> Vec<String> {
+    let handle = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("harness runtime")
+        .handle()
+        .clone();
+    let h = &mut world.tui_parity.as_mut().expect("harness").0;
+    handle.block_on(h.drain_commands())
+}
+
+fn json_field(line: &str, field: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    value.get(field)?.as_str().map(str::to_string)
+}
+
+fn command_of_type<'a>(commands: &'a [String], ty: &str) -> Option<&'a String> {
+    commands
+        .iter()
+        .find(|line| json_field(line, "type").as_deref() == Some(ty))
+}
+
+fn parse_k_tokens(label: &str) -> u64 {
+    label
+        .strip_suffix('k')
+        .unwrap_or(label)
+        .parse::<u64>()
+        .unwrap_or_else(|e| panic!("invalid context label {label:?}: {e}"))
+        * 1_000
+}
+
+#[given("a fresh TUI app harness")]
+fn given_fresh_harness(world: &mut TuiWorld) {
+    init_fresh(world);
+}
+
+#[given("the master assistant is currently streaming")]
+fn given_master_streaming(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.event(Event::AgentStart);
+        h.event(Event::Token {
+            token: "working".into(),
+        });
+    });
+}
+
+#[when(
+    expr = "a quiet session stats footer response arrives with cost {string} and context {string}"
+)]
+fn when_quiet_stats_arrives(world: &mut TuiWorld, cost_label: String, context_label: String) {
+    let cost = cost_label
+        .trim_start_matches('$')
+        .parse::<f64>()
+        .unwrap_or_else(|e| panic!("invalid cost label {cost_label:?}: {e}"));
+    let context_tokens = parse_k_tokens(&context_label);
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("stats-footer".into()),
+            command: "get_session_stats".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "sessionKey": "cli:default",
+                "totalMessages": 3,
+                "tokens": { "input": 10, "output": 20 },
+                "cost": cost,
+                "contextTokens": context_tokens,
+                "maxContextTokens": 100_000,
+            })),
+            error: None,
+        });
+    });
+}
+
+#[when(
+    expr = "an interactive session stats response arrives for {string} with cost {string} and tokens {int} input {int} output"
+)]
+fn when_interactive_stats_arrives(
+    world: &mut TuiWorld,
+    session_key: String,
+    cost_label: String,
+    input_tokens: u64,
+    output_tokens: u64,
+) {
+    let cost = cost_label
+        .trim_start_matches('$')
+        .parse::<f64>()
+        .unwrap_or_else(|e| panic!("invalid cost label {cost_label:?}: {e}"));
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("stats-chat".into()),
+            command: "get_session_stats".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "sessionKey": session_key,
+                "totalMessages": 9,
+                "tokens": { "input": input_tokens, "output": output_tokens },
+                "cost": cost,
+                "contextTokens": 8_000,
+                "maxContextTokens": 100_000,
+            })),
+            error: None,
+        });
+    });
+}
+
+#[given(expr = "the master chat already contains {string}")]
+fn given_master_chat_already_contains(world: &mut TuiWorld, text: String) {
+    drive(world, |h| {
+        h.add_user_message(&text);
+    });
+}
+
+#[when("a resumed messages response arrives with a non-array messages field")]
+fn when_resumed_messages_non_array(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("resume-messages".into()),
+            command: "get_messages".into(),
+            success: true,
+            data: Some(serde_json::json!({ "messages": "bad" })),
+            error: None,
+        });
+    });
+}
+
+#[when(expr = "a model switch response fails with {string}")]
+fn when_model_switch_fails(world: &mut TuiWorld, error: String) {
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("sm".into()),
+            command: "set_model".into(),
+            success: false,
+            data: None,
+            error: Some(error),
+        });
+    });
+}
+
+#[when("I request the model selector")]
+fn when_request_model_selector(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Ctrl('l'));
+    });
+    world.tui_last_commands = drain_commands(world);
+}
+
+#[when(expr = "the model list response contains {string} and {string}")]
+fn when_model_list_response_contains(world: &mut TuiWorld, first: String, second: String) {
+    let request = command_of_type(&world.tui_last_commands, "list_models").unwrap_or_else(|| {
+        panic!(
+            "model selector should request list_models, got {:?}",
+            world.tui_last_commands
+        )
+    });
+    let id = json_field(request, "id");
+    drive(world, |h| {
+        h.event(Event::Response {
+            id,
+            command: "list_models".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "models": [
+                    { "id": first, "provider": "OpenAI API", "auth": "api" },
+                    { "id": second, "provider": "Anthropic API", "auth": "api" }
+                ]
+            })),
+            error: None,
+        });
+    });
+}
+
+#[when(expr = "the model list response fails with {string}")]
+fn when_model_list_response_fails(world: &mut TuiWorld, error: String) {
+    let request = command_of_type(&world.tui_last_commands, "list_models").unwrap_or_else(|| {
+        panic!(
+            "model selector should request list_models, got {:?}",
+            world.tui_last_commands
+        )
+    });
+    let id = json_field(request, "id");
+    drive(world, |h| {
+        h.event(Event::Response {
+            id,
+            command: "list_models".into(),
+            success: false,
+            data: None,
+            error: Some(error),
+        });
+    });
+}
+
+#[when(expr = "I filter the model selector with {string}")]
+fn when_filter_model_selector(world: &mut TuiWorld, query: String) {
+    drive(world, |h| {
+        for ch in query.chars() {
+            h.press(Key::Char(ch));
+        }
+    });
+}
+
+#[when("I accept the selected model")]
+fn when_accept_selected_model(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Enter);
+    });
+    world.tui_last_commands = drain_commands(world);
+}
+
+#[when("I request rewind history with two prior user turns")]
+fn when_request_rewind_history(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Escape);
+        h.press(Key::Escape);
+    });
+    let commands = drain_commands(world);
+    let get_messages = command_of_type(&commands, "get_messages")
+        .unwrap_or_else(|| panic!("rewind open should send get_messages, got {commands:?}"));
+    let id = json_field(get_messages, "id")
+        .unwrap_or_else(|| panic!("get_messages should carry rewind request id: {get_messages}"));
+
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some(id),
+            command: "get_messages".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "messages": [
+                    { "role": "user", "content": "first prompt" },
+                    { "role": "assistant", "content": "first answer" },
+                    { "role": "user", "content": "most recent prompt" },
+                    { "role": "assistant", "content": "most recent answer" }
+                ]
+            })),
+            error: None,
+        });
+    });
+    world.tui_last_commands = commands;
+}
+
+#[when("I choose the most recent rewind target")]
+fn when_choose_rewind_target(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Enter);
+    });
+    world.tui_last_commands = drain_commands(world);
+}
+
+#[when("the rewind apply response succeeds")]
+fn when_rewind_apply_succeeds(world: &mut TuiWorld) {
+    let rewind = command_of_type(&world.tui_last_commands, "rewind_to").unwrap_or_else(|| {
+        panic!(
+            "expected stored rewind_to command, got {:?}",
+            world.tui_last_commands
+        )
+    });
+    let id = json_field(rewind, "id")
+        .unwrap_or_else(|| panic!("rewind_to should carry an id: {rewind}"));
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some(id),
+            command: "rewind_to".into(),
+            success: true,
+            data: None,
+            error: None,
+        });
+    });
+    let mut commands = world.tui_last_commands.clone();
+    commands.extend(drain_commands(world));
+    world.tui_last_commands = commands;
+}
+
+#[when(expr = "I submit the master prompt {string}")]
+fn when_submit_master_prompt(world: &mut TuiWorld, prompt: String) {
+    drive(world, |h| {
+        h.submit(&prompt);
+    });
+    world.tui_last_commands = drain_commands(world);
+}
+
+#[when(expr = "sub-agent {string} streams token {string}")]
+fn when_subagent_streams_token(world: &mut TuiWorld, id: String, token: String) {
+    drive(world, |h| {
+        h.route(&id, Event::Token { token });
+    });
+}
+
+#[when(expr = "sub-agent {string} reports model {string} and context {string}")]
+fn when_subagent_reports_state(
+    world: &mut TuiWorld,
+    id: String,
+    model: String,
+    context_label: String,
+) {
+    let context_tokens = parse_k_tokens(&context_label);
+    drive(world, |h| {
+        h.route(
+            &id,
+            Event::Response {
+                id: None,
+                command: "get_state".into(),
+                success: true,
+                data: Some(serde_json::json!({
+                    "model": model,
+                    "maxContextTokens": 100_000,
+                })),
+                error: None,
+            },
+        );
+        h.route(
+            &id,
+            Event::TurnEnd {
+                message: serde_json::json!({
+                    "contextTokens": context_tokens,
+                    "maxContextTokens": 100_000,
+                }),
+            },
+        );
+    });
+}
+
+#[then(expr = "the footer shows cost {string} and context {string}")]
+fn then_footer_shows_cost_and_context(world: &mut TuiWorld, cost: String, context: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&cost) && frame.contains(&context),
+        "footer should show cost {cost:?} and context {context:?}, got:\n{frame}"
+    );
+}
+
+#[then("the chat transcript does not show a session stats notification")]
+fn then_no_session_stats_notification(world: &mut TuiWorld) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        !frame.contains("Session: cli:default") && !frame.contains("Tokens: ↑10 ↓20"),
+        "stats-footer response must not add the verbose stats chat line, got:\n{frame}"
+    );
+}
+
+#[then(expr = "the app notification includes {string}")]
+fn then_notification_includes(world: &mut TuiWorld, expected: String) {
+    let notification = drive(world, |h| h.notification_text());
+    assert!(
+        notification.contains(&expected),
+        "notification should include {expected:?}, got:\n{notification}"
+    );
+}
+
+#[then("a rewind command is sent for the most recent user turn")]
+fn then_rewind_command_sent(world: &mut TuiWorld) {
+    let rewind = command_of_type(&world.tui_last_commands, "rewind_to").unwrap_or_else(|| {
+        panic!(
+            "expected rewind_to command, got {:?}",
+            world.tui_last_commands
+        )
+    });
+    let value: serde_json::Value = serde_json::from_str(rewind).expect("rewind command json");
+    assert_eq!(
+        value.get("messageIndex").and_then(|v| v.as_u64()),
+        Some(2),
+        "the default selected target should be the most recent user turn: {rewind}"
+    );
+}
+
+#[then("a rewind refresh command is sent")]
+fn then_rewind_refresh_sent(world: &mut TuiWorld) {
+    let refresh = world.tui_last_commands.iter().any(|line| {
+        json_field(line, "type").as_deref() == Some("get_messages")
+            && json_field(line, "id").as_deref() == Some("rewind-refresh")
+    });
+    assert!(
+        refresh,
+        "successful rewind should request a conversation refresh, got {:?}",
+        world.tui_last_commands
+    );
+}
+
+#[then(expr = "the master prompt command includes streaming behavior {string}")]
+fn then_master_prompt_has_streaming_behavior(world: &mut TuiWorld, behavior: String) {
+    let prompt = command_of_type(&world.tui_last_commands, "prompt")
+        .unwrap_or_else(|| panic!("expected prompt command, got {:?}", world.tui_last_commands));
+    let value: serde_json::Value = serde_json::from_str(prompt).expect("prompt command json");
+    assert_eq!(
+        value.get("streamingBehavior").and_then(|v| v.as_str()),
+        Some(behavior.as_str()),
+        "streaming master submit should steer: {prompt}"
+    );
+}
+
+#[then(expr = "the master chat shows {string}")]
+fn then_master_chat_shows(world: &mut TuiWorld, expected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&expected),
+        "master chat should show {expected:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "the selected sub-agent session shows {string}")]
+fn then_selected_subagent_session_shows(world: &mut TuiWorld, expected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&expected),
+        "selected sub-agent session should show {expected:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "the app master session shows {string}")]
+fn then_app_master_session_shows(world: &mut TuiWorld, expected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&expected),
+        "master session should show {expected:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "the app master session does not show {string}")]
+fn then_master_session_does_not_show(world: &mut TuiWorld, unexpected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        !frame.contains(&unexpected),
+        "master session must not show sub-agent-only content {unexpected:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "the footer shows the sub-agent model {string} and context {string}")]
+fn then_footer_shows_subagent_model_and_context(
+    world: &mut TuiWorld,
+    model: String,
+    context: String,
+) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&model) && frame.contains(&context),
+        "selected sub-agent footer should show model {model:?} and context {context:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "a set model command is sent for {string}")]
+fn then_set_model_command_sent_for(world: &mut TuiWorld, expected: String) {
+    let cmd = command_of_type(&world.tui_last_commands, "set_model").unwrap_or_else(|| {
+        panic!(
+            "expected set_model command, got {:?}",
+            world.tui_last_commands
+        )
+    });
+    let value: serde_json::Value = serde_json::from_str(cmd).expect("set_model command json");
+    assert_eq!(
+        value.get("model").and_then(|v| v.as_str()),
+        Some(expected.as_str()),
+        "selected model should be sent in set_model command: {cmd}"
+    );
+}
+
+#[then(expr = "the footer shows the master model {string}")]
+fn then_footer_shows_master_model(world: &mut TuiWorld, expected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&expected),
+        "master footer should show selected model {expected:?}, got:\n{frame}"
+    );
+}
+
+#[then("the model selector is visible")]
+fn then_model_selector_visible(world: &mut TuiWorld) {
+    let is_open = drive(world, |h| h.model_selector_open());
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        is_open && frame.contains("Select Model"),
+        "model selector should be open and visible, open={is_open}, frame:\n{frame}"
+    );
+}
+
+// ── TUI tool execution rendering (`tui_tool_execution_rendering.feature`) ──
+
+fn tool_start(tool_call_id: &str, tool_name: &str, args: serde_json::Value) -> Event {
+    Event::ToolExecutionStart {
+        tool_call_id: tool_call_id.into(),
+        tool_name: tool_name.into(),
+        args,
+    }
+}
+
+fn tool_success(tool_call_id: &str, tool_name: &str, text: &str) -> Event {
+    Event::ToolExecutionEnd {
+        tool_call_id: tool_call_id.into(),
+        tool_name: tool_name.into(),
+        result: serde_json::json!({ "content": [{ "type": "text", "text": text }] }),
+        is_error: false,
+    }
+}
+
+#[given("a fresh TUI tool rendering harness")]
+fn given_fresh_tool_rendering_harness(world: &mut TuiWorld) {
+    init_fresh(world);
+}
+
+#[when(expr = "a bash tool call runs command {string} with {int} output lines")]
+fn when_bash_tool_call_runs(world: &mut TuiWorld, command: String, line_count: u32) {
+    let output = (1..=line_count)
+        .map(|n| format!("line-{n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    drive(world, |h| {
+        h.event(tool_start(
+            "bdd-bash",
+            "bash",
+            serde_json::json!({ "command": command }),
+        ));
+        h.event(tool_success("bdd-bash", "bash", &output));
+    });
+}
+
+#[when(expr = "a read tool call previews path {string} with controlled content")]
+fn when_read_tool_call_previews_controlled_content(world: &mut TuiWorld, path: String) {
+    let content = "safe\tvalue\n\u{1b}]0;pwned-title\u{7}\nsecond safe line";
+    drive(world, |h| {
+        h.event(tool_start(
+            "bdd-read",
+            "read",
+            serde_json::json!({ "path": path }),
+        ));
+        h.event(tool_success("bdd-read", "read", content));
+    });
+}
+
+#[when(expr = "a workflow tool call checks step {int} with multiline result")]
+fn when_workflow_tool_call_checks_step(world: &mut TuiWorld, step_num: u32) {
+    drive(world, |h| {
+        h.event(Event::ToolExecutionStart {
+            tool_call_id: "bdd-workflow".into(),
+            tool_name: "workflow".into(),
+            args: serde_json::json!({ "action": "check", "step": step_num }),
+        });
+        h.event(Event::ToolExecutionEnd {
+            tool_call_id: "bdd-workflow".into(),
+            tool_name: "workflow".into(),
+            result: serde_json::json!({ "content": [{ "type": "text", "text": "Step 2 checked.\nextra detail" }] }),
+            is_error: false,
+        });
+    });
+}
+
+#[when("I expand tool output in the TUI")]
+fn when_expand_tool_output_in_tui(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Ctrl('o'));
+    });
+}
+
+#[then(expr = "the tool rendering shows {string}")]
+fn then_tool_rendering_shows(world: &mut TuiWorld, expected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&expected),
+        "tool rendering should show {expected:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "the tool rendering hides {string}")]
+fn then_tool_rendering_hides(world: &mut TuiWorld, unexpected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        !frame.contains(&unexpected),
+        "tool rendering should hide {unexpected:?}, got:\n{frame}"
+    );
+}
+
+#[then("the raw tool frame does not contain terminal title escape controls")]
+fn then_raw_tool_frame_has_no_title_escapes(world: &mut TuiWorld) {
+    let raw = drive(world, |h| h.full_frame_raw());
+    assert!(
+        !raw.contains("\u{1b}]") && !raw.contains("\u{9d}"),
+        "raw rendered frame must not contain OSC/title controls, got:\n{raw:?}"
+    );
+}
+
+fn workflow_rule_lines(frame: &str) -> Vec<String> {
+    frame
+        .lines()
+        .filter(|line| {
+            strip_ansi(line)
+                .rsplit_once("│ ")
+                .is_some_and(|(_, segment)| {
+                    !segment.is_empty() && segment.chars().all(|c| c == '─')
+                })
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+#[given(expr = "a fresh TUI app harness at width {int}")]
+fn given_fresh_harness_at_width(world: &mut TuiWorld, width: usize) {
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let h = rt.block_on(TuiHarness::sized(width, 30));
+    world.tui_parity_rt = Some(rt);
+    world.tui_parity = Some(TuiParityHarness(h));
+    world.tui_last_commands.clear();
+}
+
+#[when(
+    expr = "workflow state reports issue {int} with step {int} {string} in phase {string} out of {int}"
+)]
+fn when_workflow_state_reports_step(
+    world: &mut TuiWorld,
+    issue: u32,
+    current_step: u32,
+    label: String,
+    phase: String,
+    total: u32,
+) {
+    let steps = (1..=total)
+        .map(|idx| {
+            serde_json::json!({
+                "index": idx,
+                "label": if idx == current_step { label.as_str() } else { "Other step" },
+                "phase": if idx == current_step { phase.as_str() } else { "done" },
+                "done": idx < current_step,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    drive(world, |h| {
+        h.event(Event::WorkflowState {
+            agent_id: None,
+            steps,
+            progress: serde_json::json!({
+                "done": current_step.saturating_sub(1),
+                "total": total,
+                "percent": current_step.saturating_sub(1).saturating_mul(100).checked_div(total).unwrap_or(0),
+            }),
+            active_issue: Some(serde_json::json!({
+                "number": issue,
+                "title": "BDD coverage wave",
+            })),
+            mode: Some("active".to_string()),
+            active_template: None,
+            available_templates: None,
+        });
+    });
+}
+
+#[then(expr = "the workflow bar shows {string}")]
+fn then_workflow_bar_shows(world: &mut TuiWorld, expected: String) {
+    let pane = drive(world, |h| h.main_pane());
+    assert!(
+        pane.contains(&expected),
+        "workflow bar should show {expected:?} in main pane, got:\n{pane}"
+    );
+}
+
+#[then(expr = "the bottom stack does not show workflow text {string}")]
+fn then_bottom_stack_hides_workflow_text(world: &mut TuiWorld, unexpected: String) {
+    let bottom = drive(world, |h| h.bottom_stack());
+    assert!(
+        !bottom.contains(&unexpected),
+        "workflow text {unexpected:?} should render in the main pane, not bottom stack:\n{bottom}"
+    );
+}
+
+#[then("every workflow frame row fits the terminal width")]
+fn then_workflow_rows_fit_terminal_width(world: &mut TuiWorld) {
+    let expected_width = drive(world, |h| h.terminal_width());
+    let frame = drive(world, |h| h.full_frame());
+    let rows = workflow_rule_lines(&frame);
+    assert!(
+        !rows.is_empty(),
+        "workflow rule rows should render:\n{frame}"
+    );
+    for row in rows {
+        let width = visible_width(&row);
+        assert!(
+            width <= expected_width,
+            "workflow row width {width} should fit terminal width {expected_width}:\n{row}\nframe:\n{frame}"
+        );
+    }
+}
+
+#[then("the workflow bar preserves left padding after the divider")]
+fn then_workflow_bar_preserves_left_padding(world: &mut TuiWorld) {
+    let frame = drive(world, |h| h.full_frame());
+    let row = workflow_rule_lines(&frame)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("workflow rule row should render:\n{frame}"));
+    assert!(
+        strip_ansi(&row).contains("│ ─"),
+        "workflow rule should start after the normal gutter/padding, got:\n{row}\nframe:\n{frame}"
+    );
+}

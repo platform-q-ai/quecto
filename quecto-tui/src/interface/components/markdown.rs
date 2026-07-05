@@ -152,8 +152,18 @@ impl Markdown {
                         style_stack.push(InlineStyle::Strikethrough);
                     }
                     Tag::Link { dest_url, .. } => {
-                        // Sanitize URL to prevent ANSI escape injection.
+                        // Sanitize URL to prevent ANSI/OSC escape injection. If sanitizing
+                        // changes the destination, omit the rendered URL entirely so attacker
+                        // payload text embedded inside a terminal control sequence cannot be
+                        // surfaced as a misleading link target.
                         let safe_url = sanitize_for_display(&dest_url);
+                        let safe_url = if safe_url == dest_url.as_ref()
+                            && is_safe_link_destination(&safe_url)
+                        {
+                            safe_url
+                        } else {
+                            String::new()
+                        };
                         style_stack.push(InlineStyle::Link(safe_url));
                     }
                     _ => {}
@@ -243,7 +253,9 @@ impl Markdown {
                     }
                     TagEnd::Link => {
                         if let Some(InlineStyle::Link(url)) = style_stack.pop() {
-                            current_line.push_str(&theme::dim(&format!(" ({})", url)));
+                            if !url.is_empty() {
+                                current_line.push_str(&theme::dim(&format!(" ({})", url)));
+                            }
                         }
                     }
                     _ => {}
@@ -426,6 +438,14 @@ enum InlineStyle {
     Italic,
     Strikethrough,
     Link(String),
+}
+
+fn is_safe_link_destination(dest: &str) -> bool {
+    dest.starts_with("http://")
+        || dest.starts_with("https://")
+        || dest.starts_with("mailto:")
+        || dest.starts_with('/')
+        || dest.starts_with('#')
 }
 
 fn apply_inline_styles(text: &str, stack: &[InlineStyle]) -> String {

@@ -19,6 +19,17 @@ Feature: TUI editor borders render without duplication
     And the rendered output should contain "beta"
     And the rendered output should contain "gamma"
 
+  @editor-keys
+  Scenario: Shift Enter creates a multi-line prompt that submits as one command
+    Given a fresh TUI app harness
+    When I type the prompt keys "alpha"
+    And I press Shift Enter in the editor
+    And I type the prompt keys "beta"
+    And I press Enter in the editor
+    Then the master prompt command message is "alpha\nbeta"
+    And the master chat shows "alpha"
+    And the master chat shows "beta"
+
   Scenario: Alternate screen buffer prevents scrollback interference
     Given the TUI uses the alternate screen buffer
     When content is rendered via cursor home

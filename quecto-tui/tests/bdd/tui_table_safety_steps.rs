@@ -84,6 +84,14 @@ fn table_cell_cafe(world: &mut TuiWorld) {
     world.tui_table_cell = Some(cell);
 }
 
+#[given("markdown content with a heading, quote, list, unsafe link, and code fence")]
+fn markdown_mixed_content(world: &mut TuiWorld) {
+    world.tui_table_cell = Some(
+        "# Release notes\n\n> quoted warning\n\n- first item\n\n[safe link](javascript:evil-title)\n\n```rs\u{1b}]0;evil-title\u{7}\nfn main() {}\n```\n"
+            .to_string(),
+    );
+}
+
 // ── When ─────────────────────────────────────────────────────────────────────
 
 #[when("the table is rendered")]
@@ -106,6 +114,13 @@ fn truncate_cell(world: &mut TuiWorld) {
     let keep = truncate_to_width(&cell, 4, None);
     let cut = truncate_to_width(&cell, 3, None);
     world.tui_table_rendered = Some(vec![keep, cut]);
+}
+
+#[when(regex = r#"^the markdown is rendered at width (\d+)$"#)]
+fn render_markdown_at_width(world: &mut TuiWorld, width: usize) {
+    let src = world.tui_table_cell.clone().expect("markdown content set");
+    let mut md = Markdown::new(&src, 1);
+    world.tui_table_rendered = Some(md.render(width));
 }
 
 // ── Then ─────────────────────────────────────────────────────────────────────
@@ -167,6 +182,34 @@ fn osc_absent(world: &mut TuiWorld) {
     assert!(
         !raw(world).contains("evil.com"),
         "the OSC hyperlink target must not survive into the render"
+    );
+}
+
+#[then(regex = r#"^the markdown output should contain "([^"]*)"$"#)]
+fn markdown_output_contains(world: &mut TuiWorld, expected: String) {
+    let plain = stripped(world);
+    assert!(
+        plain.contains(&expected),
+        "markdown output should contain {expected:?}, got: {plain:?}"
+    );
+}
+
+#[then(regex = r#"^the markdown output should not contain "([^"]*)"$"#)]
+fn markdown_output_not_contains(world: &mut TuiWorld, unexpected: String) {
+    let raw = raw(world);
+    let plain = stripped(world);
+    assert!(
+        !raw.contains(&unexpected) && !plain.contains(&unexpected),
+        "markdown output should not contain {unexpected:?}; raw={raw:?}, plain={plain:?}"
+    );
+}
+
+#[then("no source OSC control sequences should appear in markdown output")]
+fn no_source_osc_sequences_in_markdown(world: &mut TuiWorld) {
+    let raw = raw(world);
+    assert!(
+        !raw.contains("\u{1b}]") && !raw.contains("\x1b]"),
+        "markdown output should not include source OSC controls: {raw:?}"
     );
 }
 

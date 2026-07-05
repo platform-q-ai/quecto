@@ -43,3 +43,14 @@ Feature: TUI markdown table safety and correctness
     Given a table cell with "café" (5 bytes, 4 display chars)
     When the cell is truncated to fit column width
     Then truncation should use display width not byte length
+
+  @markdown-render
+  Scenario: Markdown blocks keep visible text while stripping unsafe links and code language controls
+    Given markdown content with a heading, quote, list, unsafe link, and code fence
+    When the markdown is rendered at width 80
+    Then the markdown output should contain "Release notes"
+    And the markdown output should contain "quoted warning"
+    And the markdown output should contain "first item"
+    And the markdown output should contain "safe link"
+    And the markdown output should not contain "evil-title"
+    And no source OSC control sequences should appear in markdown output

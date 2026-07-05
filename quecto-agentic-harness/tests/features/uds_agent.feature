@@ -285,6 +285,32 @@ Feature: UDS mode for headless agent operation
     And a [session] file for "uds-test" should exist
 
   @done
+  Scenario: named UDS session loads existing history before processing prompts
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And session "uds-load" already contains user message "previous question" and assistant message "previous answer"
+    And the mock LLM returns a text response "new answer"
+    When I start the UDS agent with [session] "uds-load"
+    And I send prompt "new question"
+    And I send command "get_messages" with id "gm-load"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the get_messages messages count should be exactly 4
+    And the get_messages messages should contain content "previous answer" before "new question"
+    And the session for "uds-load" should contain user message "previous question" and assistant message "new answer"
+
+  @done
+  Scenario: named UDS session preserves workflow progress on save and load
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And session "uds-workflow-load" has workflow "feature" with 2 completed steps
+    And the mock LLM returns a text response "workflow loaded"
+    When I start the UDS agent with [session] "uds-workflow-load"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the session "uds-workflow-load" should retain workflow "feature" with 2 completed steps
+
+  @done
   Scenario: UDS mode with --no-session does not persist session
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server

@@ -72,8 +72,8 @@ cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-su
     -W clippy::too_many_lines
 
 COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-87}"
-HARNESS_BDD_COV_THRESHOLD="${QUECTO_HARNESS_BDD_COV_THRESHOLD:-70}"
-TUI_BDD_COV_THRESHOLD="${QUECTO_TUI_BDD_COV_THRESHOLD:-45}"
+HARNESS_BDD_COV_THRESHOLD="${QUECTO_HARNESS_BDD_COV_THRESHOLD:-72}"
+TUI_BDD_COV_THRESHOLD="${QUECTO_TUI_BDD_COV_THRESHOLD:-62}"
 
 step "6/11" "Parallel test wave: unit + every integration target + coverage-enabled non-real BDD shards"
 
@@ -235,7 +235,7 @@ step "11/11" "Pre-push summary"
 echo "All local push gates passed."
 echo "BDD shards: ${BDD_SHARDS}; TUI BDD shards: ${TUI_BDD_SHARDS}; timeout per shard: ${E2E_TIMEOUT}"
 echo "Coverage threshold: ${COV_THRESHOLD}%"
-echo "BDD coverage thresholds: harness ${HARNESS_BDD_COV_THRESHOLD}%; TUI ${TUI_BDD_COV_THRESHOLD}%"
+echo "BDD function coverage thresholds: harness ${HARNESS_BDD_COV_THRESHOLD}%; TUI ${TUI_BDD_COV_THRESHOLD}%"
 
 echo -e "\n${GREEN}Pre-push passed.${NC}"
 rm -f "$ROOT"/.git/pre-push.passed.*

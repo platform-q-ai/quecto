@@ -469,6 +469,127 @@ fn then_no_broadcast(world: &mut QuectoWorld) {
     assert!(recorded.is_none(), "expected no broadcast event");
 }
 
+#[given(expr = "a root registry with child {string} and sibling {string}")]
+fn given_root_registry_with_child_and_sibling(
+    world: &mut QuectoWorld,
+    child: String,
+    sibling: String,
+) {
+    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    let r = new_registry();
+    {
+        let mut g = r.lock().unwrap();
+        g.insert(child, SubagentEntry::new(std::path::PathBuf::from("/s"), 1));
+        g.insert(
+            sibling,
+            SubagentEntry::new(std::path::PathBuf::from("/s"), 2),
+        );
+    }
+    world.cascade_registry = Some(r);
+}
+
+#[given("an empty root subagent registry")]
+fn given_empty_root_subagent_registry(world: &mut QuectoWorld) {
+    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    world.cascade_registry = Some(new_registry());
+}
+
+#[when(expr = "child {string} forwards grandchild {string} as running")]
+fn when_child_forwards_running_grandchild(
+    world: &mut QuectoWorld,
+    child: String,
+    grandchild: String,
+) {
+    use quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed;
+    let r = world
+        .cascade_registry
+        .as_ref()
+        .expect("no cascade registry");
+    let line = serde_json::json!({
+        "type": "subagent_state_changed",
+        "subagents": [{ "agentId": grandchild, "status": "running", "parentId": child }],
+    })
+    .to_string();
+    let event = forward_child_state_changed(&line, r, &child)
+        .map(|s| serde_json::from_str::<serde_json::Value>(&s).unwrap());
+    world.event_identity_last = event.clone();
+    world.cascade_broadcast = Some(event);
+}
+
+#[when(expr = "child {string} forwards {int} running grandchildren")]
+fn when_child_forwards_n_running_grandchildren(
+    world: &mut QuectoWorld,
+    child: String,
+    count: usize,
+) {
+    use quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed;
+    let r = world
+        .cascade_registry
+        .as_ref()
+        .expect("no cascade registry");
+    let subagents: Vec<serde_json::Value> = (0..count)
+        .map(|i| {
+            serde_json::json!({
+                "agentId": format!("gc-{i}"),
+                "status": "running",
+                "parentId": child,
+            })
+        })
+        .collect();
+    let line = serde_json::json!({
+        "type": "subagent_state_changed",
+        "subagents": subagents,
+    })
+    .to_string();
+    let event = forward_child_state_changed(&line, r, &child)
+        .map(|s| serde_json::from_str::<serde_json::Value>(&s).unwrap());
+    world.cascade_broadcast = Some(event);
+}
+
+#[then(expr = "the forwarded event should list {string}")]
+fn then_forwarded_lists_agent(world: &mut QuectoWorld, id: String) {
+    let ev = world
+        .cascade_broadcast
+        .as_ref()
+        .expect("no forwarded event recorded")
+        .as_ref()
+        .expect("expected a forwarded event");
+    let listed = ev["subagents"]
+        .as_array()
+        .expect("subagents array")
+        .iter()
+        .any(|s| s["agentId"].as_str() == Some(id.as_str()));
+    assert!(listed, "forwarded event must list {id}: {ev}");
+}
+
+#[then(expr = "the registry should contain {int} subagents")]
+fn then_registry_contains_n_subagents(world: &mut QuectoWorld, expected: usize) {
+    let r = world
+        .cascade_registry
+        .as_ref()
+        .expect("no cascade registry");
+    assert_eq!(
+        r.lock().unwrap().len(),
+        expected,
+        "registry should cap merged descendants at {expected}"
+    );
+}
+
+#[then(expr = "the forwarded event should contain {int} subagents")]
+fn then_forwarded_event_contains_n_subagents(world: &mut QuectoWorld, expected: usize) {
+    let ev = world
+        .cascade_broadcast
+        .as_ref()
+        .expect("no forwarded event recorded")
+        .as_ref()
+        .expect("expected a forwarded event");
+    let actual = ev["subagents"].as_array().expect("subagents array").len();
+    assert_eq!(
+        actual, expected,
+        "forwarded union should contain exactly the capped registry set"
+    );
+}
+
 // --- Prompt idle propagation for nested agents (#839) ---
 
 #[given(expr = "a root monitor knows grandchild {string} under {string} is idle")]

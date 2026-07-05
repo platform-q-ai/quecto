@@ -278,6 +278,7 @@ fn build_shard_plan(
 }
 
 mod mouse_selection_steps;
+mod tui_app_behaviors_steps;
 mod tui_autocomplete_steps;
 mod tui_border_replication_steps;
 mod tui_chat_spacing_steps;
