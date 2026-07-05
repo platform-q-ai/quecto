@@ -142,6 +142,19 @@ Feature: Persistent subagent monitor — live event stream from child agents
     And the registry should no longer contain "gc"
     And the registry should still contain "child"
 
+  Scenario: a descendant push preserves root siblings while adding grandchildren
+    Given a root registry with child "child" and sibling "sibling"
+    When child "child" forwards grandchild "gc" as running
+    Then the forwarded event should list "child"
+    And the forwarded event should list "sibling"
+    And the forwarded event should list "gc" with parent_id "child"
+
+  Scenario: a child cannot merge more than the forwarded descendant cap
+    Given an empty root subagent registry
+    When child "child" forwards 300 running grandchildren
+    Then the registry should contain 256 subagents
+    And the forwarded event should contain 256 subagents
+
   # --- Prompt idle propagation for nested agents (#839) ---
 
   Scenario: a nested idle agent stays idle when a descendant update lacks status

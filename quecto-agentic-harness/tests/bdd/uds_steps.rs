@@ -1323,6 +1323,116 @@ fn then_session_has_no_system_message(world: &mut QuectoWorld, session_name: Str
     );
 }
 
+fn uds_session_key(session_name: &str) -> String {
+    Session::build_key("cli", session_name)
+}
+
+fn save_uds_session(world: &QuectoWorld, session: &Session) {
+    let base = world.cli_context.base_dir.clone().expect("no base dir");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let store = FileSessionStore::new(&base);
+    rt.block_on(store.save(session))
+        .expect("failed to save session");
+}
+
+fn load_uds_session(world: &QuectoWorld, session_name: &str) -> Session {
+    let base = world.cli_context.base_dir.clone().expect("no base dir");
+    let key = uds_session_key(session_name);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let store = FileSessionStore::new(&base);
+    rt.block_on(store.load(&key))
+        .expect("failed to load session")
+        .expect("session not found")
+}
+
+#[given(
+    expr = "session {string} already contains user message {string} and assistant message {string}"
+)]
+fn given_session_already_contains_messages(
+    world: &mut QuectoWorld,
+    session_name: String,
+    user: String,
+    assistant: String,
+) {
+    save_uds_session(
+        world,
+        &Session {
+            key: uds_session_key(&session_name),
+            messages: vec![Message::user(user), Message::assistant(assistant, vec![])],
+            workflow_run: None,
+        },
+    );
+}
+
+#[given(expr = "session {string} has workflow {string} with {int} completed steps")]
+fn given_session_has_workflow_progress(
+    world: &mut QuectoWorld,
+    session_name: String,
+    template_id: String,
+    completed: usize,
+) {
+    save_uds_session(
+        world,
+        &Session {
+            key: uds_session_key(&session_name),
+            messages: vec![],
+            workflow_run: Some(quecto::domain::workflow::WorkflowRunPersisted {
+                template_id: Some(template_id),
+                done: (0..7).map(|i| i < completed).collect(),
+                active_issue: None,
+            }),
+        },
+    );
+    world._workflow_enabled = true;
+}
+
+#[then(
+    expr = "the session for {string} should contain user message {string} and assistant message {string}"
+)]
+fn then_session_should_contain_messages(
+    world: &mut QuectoWorld,
+    session_name: String,
+    user: String,
+    assistant: String,
+) {
+    let session = load_uds_session(world, &session_name);
+    assert!(
+        session
+            .messages
+            .iter()
+            .any(|m| m.role == Role::User && m.content == user),
+        "saved session should retain loaded user message {user:?}: {:#?}",
+        session.messages
+    );
+    assert!(
+        session
+            .messages
+            .iter()
+            .any(|m| m.role == Role::Assistant && m.content == assistant),
+        "saved session should include new assistant message {assistant:?}: {:#?}",
+        session.messages
+    );
+}
+
+#[then(expr = "the session {string} should retain workflow {string} with {int} completed steps")]
+fn then_session_should_retain_workflow_progress(
+    world: &mut QuectoWorld,
+    session_name: String,
+    template_id: String,
+    completed: usize,
+) {
+    let session = load_uds_session(world, &session_name);
+    let run = session
+        .workflow_run
+        .expect("workflow_run should be persisted after UDS load/save");
+    assert_eq!(run.template_id.as_deref(), Some(template_id.as_str()));
+    assert_eq!(
+        run.done.iter().filter(|d| **d).count(),
+        completed,
+        "completed workflow steps should survive load/save"
+    );
+}
+
 #[then(expr = "no session file for {string} should exist")]
 fn then_no_session_file_exists(world: &mut QuectoWorld, _session_name: String) {
     let base = world.cli_context.base_dir.clone().expect("no base dir");
