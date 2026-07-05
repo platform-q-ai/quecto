@@ -3,7 +3,7 @@
 //! display-width handling. Width/truncation checks bind to the same production
 //! `visible_width` / `truncate_to_width` utilities the table renderer uses.
 
-use crate::QuectoWorld;
+use crate::TuiWorld;
 use cucumber::{given, then, when};
 use quecto_tui::interface::component::Component;
 use quecto_tui::interface::components::markdown::Markdown;
@@ -49,35 +49,35 @@ fn render_table_with_cell(cell: &str) -> Vec<String> {
     md.render(WIDE)
 }
 
-fn rendered(world: &QuectoWorld) -> &[String] {
+fn rendered(world: &TuiWorld) -> &[String] {
     world
         .tui_table_rendered
         .as_deref()
         .expect("the table must be rendered first")
 }
 
-fn raw(world: &QuectoWorld) -> String {
+fn raw(world: &TuiWorld) -> String {
     rendered(world).join("\n")
 }
 
-fn stripped(world: &QuectoWorld) -> String {
+fn stripped(world: &TuiWorld) -> String {
     strip_terminal_control(&raw(world))
 }
 
 // ── Given ────────────────────────────────────────────────────────────────────
 
 #[given(regex = r#"^a markdown table with cells containing "(.*)"$"#)]
-fn table_with_cells(world: &mut QuectoWorld, cell: String) {
+fn table_with_cells(world: &mut TuiWorld, cell: String) {
     world.tui_table_cell = Some(unescape(&cell));
 }
 
 #[given("a markdown table where every cell is empty")]
-fn table_all_empty(world: &mut QuectoWorld) {
+fn table_all_empty(world: &mut TuiWorld) {
     world.tui_table_cell = Some(String::new());
 }
 
 #[given(regex = r#"^a table cell with "café" \(5 bytes, 4 display chars\)$"#)]
-fn table_cell_cafe(world: &mut QuectoWorld) {
+fn table_cell_cafe(world: &mut TuiWorld) {
     let cell = "café".to_string();
     assert_eq!(cell.len(), 5, "café is 5 UTF-8 bytes");
     assert_eq!(visible_width(&cell), 4, "café is 4 display columns");
@@ -87,19 +87,19 @@ fn table_cell_cafe(world: &mut QuectoWorld) {
 // ── When ─────────────────────────────────────────────────────────────────────
 
 #[when("the table is rendered")]
-fn render_table(world: &mut QuectoWorld) {
+fn render_table(world: &mut TuiWorld) {
     let cell = world.tui_table_cell.clone().expect("cell content set");
     world.tui_table_rendered = Some(render_table_with_cell(&cell));
 }
 
 #[when("the table column widths are calculated")]
-fn calc_column_widths(world: &mut QuectoWorld) {
+fn calc_column_widths(world: &mut TuiWorld) {
     let cell = world.tui_table_cell.clone().expect("cell content set");
     world.tui_table_rendered = Some(render_table_with_cell(&cell));
 }
 
 #[when("the cell is truncated to fit column width")]
-fn truncate_cell(world: &mut QuectoWorld) {
+fn truncate_cell(world: &mut TuiWorld) {
     let cell = world.tui_table_cell.clone().expect("cell content set");
     // Truncate to a width that keeps the whole cell (4) and to one that must
     // drop trailing display columns (3).
@@ -111,7 +111,7 @@ fn truncate_cell(world: &mut QuectoWorld) {
 // ── Then ─────────────────────────────────────────────────────────────────────
 
 #[then(regex = r#"^the displayed cell text should be "([^"]*)" without ANSI escapes$"#)]
-fn cell_text_without_ansi(world: &mut QuectoWorld, expected: String) {
+fn cell_text_without_ansi(world: &mut TuiWorld, expected: String) {
     let plain = stripped(world);
     assert!(
         plain.contains(&expected),
@@ -124,7 +124,7 @@ fn cell_text_without_ansi(world: &mut QuectoWorld, expected: String) {
 }
 
 #[then("no terminal control sequences should appear in output")]
-fn no_control_sequences(world: &mut QuectoWorld) {
+fn no_control_sequences(world: &mut TuiWorld) {
     let raw = raw(world);
     // The injected cell escapes (SGR colour / reset) must not survive into the
     // cell content. (Theme styling on borders is applied by the renderer, but
@@ -136,7 +136,7 @@ fn no_control_sequences(world: &mut QuectoWorld) {
 }
 
 #[then("the clear-screen sequence should not be present")]
-fn clear_screen_absent(world: &mut QuectoWorld) {
+fn clear_screen_absent(world: &mut TuiWorld) {
     assert!(
         !raw(world).contains("\u{1b}[2J") && !raw(world).contains("\u{1b}[H"),
         "the clear-screen / cursor-home sequences must be stripped"
@@ -144,7 +144,7 @@ fn clear_screen_absent(world: &mut QuectoWorld) {
 }
 
 #[then("the cell should render as empty or safe text")]
-fn cell_empty_or_safe(world: &mut QuectoWorld) {
+fn cell_empty_or_safe(world: &mut TuiWorld) {
     // After stripping the injected control bytes the cell carries no escape
     // payload — the table still renders a bounded set of lines.
     let plain = stripped(world);
@@ -159,7 +159,7 @@ fn cell_empty_or_safe(world: &mut QuectoWorld) {
 }
 
 #[then("the OSC sequence should not be present")]
-fn osc_absent(world: &mut QuectoWorld) {
+fn osc_absent(world: &mut TuiWorld) {
     assert!(
         !raw(world).contains("\u{1b}]8"),
         "the OSC 8 hyperlink sequence must be stripped from the render"
@@ -171,7 +171,7 @@ fn osc_absent(world: &mut QuectoWorld) {
 }
 
 #[then(regex = r#"^the cell text should be "([^"]*)" or stripped equivalent$"#)]
-fn cell_text_or_stripped(world: &mut QuectoWorld, expected: String) {
+fn cell_text_or_stripped(world: &mut TuiWorld, expected: String) {
     let plain = stripped(world);
     assert!(
         plain.contains(&expected),
@@ -180,7 +180,7 @@ fn cell_text_or_stripped(world: &mut QuectoWorld, expected: String) {
 }
 
 #[then("the column width should account for double-width CJK characters")]
-fn column_accounts_cjk(world: &mut QuectoWorld) {
+fn column_accounts_cjk(world: &mut TuiWorld) {
     let cell = world.tui_table_cell.clone().unwrap();
     // Production measures with display width: 4 CJK chars = 8 columns, not 4.
     assert_eq!(
@@ -196,7 +196,7 @@ fn column_accounts_cjk(world: &mut QuectoWorld) {
 }
 
 #[then("the column should be at least 8 display columns wide")]
-fn column_at_least_8(world: &mut QuectoWorld) {
+fn column_at_least_8(world: &mut TuiWorld) {
     let cell = world.tui_table_cell.clone().unwrap();
     let row = stripped(world)
         .lines()
@@ -210,7 +210,7 @@ fn column_at_least_8(world: &mut QuectoWorld) {
 }
 
 #[then("the column width should account for double-width emoji")]
-fn column_accounts_emoji(world: &mut QuectoWorld) {
+fn column_accounts_emoji(world: &mut TuiWorld) {
     let cell = world.tui_table_cell.clone().unwrap();
     // Two double-width emoji measure 4 display columns.
     assert_eq!(
@@ -226,7 +226,7 @@ fn column_accounts_emoji(world: &mut QuectoWorld) {
 }
 
 #[then("no panic or division by zero should occur")]
-fn no_panic(world: &mut QuectoWorld) {
+fn no_panic(world: &mut TuiWorld) {
     // Reaching this step means render_markdown returned rather than panicking on
     // the all-empty table (the div-by-zero guard held).
     assert!(
@@ -236,7 +236,7 @@ fn no_panic(world: &mut QuectoWorld) {
 }
 
 #[then("the table should render without errors")]
-fn table_renders_without_errors(world: &mut QuectoWorld) {
+fn table_renders_without_errors(world: &mut TuiWorld) {
     let lines = rendered(world);
     assert!(
         lines
@@ -247,7 +247,7 @@ fn table_renders_without_errors(world: &mut QuectoWorld) {
 }
 
 #[then("truncation should use display width not byte length")]
-fn truncation_uses_display_width(world: &mut QuectoWorld) {
+fn truncation_uses_display_width(world: &mut TuiWorld) {
     let out = rendered(world);
     let keep = &out[0];
     let cut = &out[1];

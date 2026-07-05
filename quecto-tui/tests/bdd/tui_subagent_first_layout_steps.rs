@@ -47,14 +47,14 @@ fn workflow_event(agent: &str) -> Event {
     }
 }
 
-fn init(world: &mut QuectoWorld, with_subagent: bool, subagent_id: &str) {
+fn init(world: &mut TuiWorld, with_subagent: bool, subagent_id: &str) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let h = rt.block_on(build(with_subagent, subagent_id));
     world.tui_parity_rt = Some(rt);
     world.tui_parity = Some(TuiParityHarness(h));
 }
 
-fn drive<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+fn drive<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     let handle = world
         .tui_parity_rt
         .as_ref()
@@ -67,24 +67,24 @@ fn drive<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R 
 }
 
 /// The bottom stack, ANSI-stripped.
-fn bottom(world: &mut QuectoWorld) -> String {
+fn bottom(world: &mut TuiWorld) -> String {
     drive(world, |h| h.bottom_stack())
 }
 
 /// The main-pane (top) region of the frame, ANSI-stripped.
-fn top(world: &mut QuectoWorld) -> String {
+fn top(world: &mut TuiWorld) -> String {
     drive(world, |h| h.main_pane())
 }
 
 // ── Given ────────────────────────────────────────────────────────────────────
 
 #[given("a sub-agent-first TUI with no sub-agents")]
-fn given_no_subagents(world: &mut QuectoWorld) {
+fn given_no_subagents(world: &mut TuiWorld) {
     init(world, false, "");
 }
 
 #[given(expr = "a sub-agent-first TUI tracking sub-agent {string} with its own workflow")]
-fn given_tracking(world: &mut QuectoWorld, id: String) {
+fn given_tracking(world: &mut TuiWorld, id: String) {
     init(world, true, &id);
 }
 
@@ -94,7 +94,7 @@ fn given_tracking(world: &mut QuectoWorld, id: String) {
 // ── Then ──────────────────────────────────────────────────────────────────────
 
 #[then("the left panel shows the master row")]
-fn then_master_row(world: &mut QuectoWorld) {
+fn then_master_row(world: &mut TuiWorld) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
         frame.contains("Master"),
@@ -103,7 +103,7 @@ fn then_master_row(world: &mut QuectoWorld) {
 }
 
 #[then("the main pane shows a boxed workflow bar")]
-fn then_main_pane_boxed(world: &mut QuectoWorld) {
+fn then_main_pane_boxed(world: &mut TuiWorld) {
     let top = top(world);
     assert!(
         (top.contains('┌') || top.contains('╭')) && top.contains("Step 4/5"),
@@ -112,7 +112,7 @@ fn then_main_pane_boxed(world: &mut QuectoWorld) {
 }
 
 #[then("the main pane shows a workflow status bar aligned to the tool/message content column")]
-fn then_main_pane_status_aligned(world: &mut QuectoWorld) {
+fn then_main_pane_status_aligned(world: &mut TuiWorld) {
     drive(world, |h| {
         let frame = h.full_frame();
         let rule = frame
@@ -155,7 +155,7 @@ fn then_main_pane_status_aligned(world: &mut QuectoWorld) {
 }
 
 #[then("the bottom stack no longer shows the workflow bar")]
-fn then_bottom_no_workflow(world: &mut QuectoWorld) {
+fn then_bottom_no_workflow(world: &mut TuiWorld) {
     let bottom = bottom(world);
     assert!(
         !bottom.contains("Workflow")
@@ -166,7 +166,7 @@ fn then_bottom_no_workflow(world: &mut QuectoWorld) {
 }
 
 #[then("the bottom stack no longer shows the sub-agent bar")]
-fn then_bottom_no_subagent_bar(world: &mut QuectoWorld) {
+fn then_bottom_no_subagent_bar(world: &mut TuiWorld) {
     let bottom = bottom(world);
     assert!(
         !bottom.contains("Subagents"),

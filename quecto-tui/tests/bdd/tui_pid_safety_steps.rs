@@ -13,7 +13,7 @@ use quecto_tui::infrastructure::process::checked_pid;
 // ── Background ────────────────────────────────────────────────────────────
 
 #[given("the TUI spawns an agent as a child process")]
-fn given_spawns_child(world: &mut QuectoWorld) {
+fn given_spawns_child(world: &mut TuiWorld) {
     // Fresh conversion state for the scenario.
     world.tui_pid_input = None;
     world.tui_pid_result = None;
@@ -21,7 +21,7 @@ fn given_spawns_child(world: &mut QuectoWorld) {
 }
 
 #[given("the child process runs in its own process group")]
-fn given_own_group(world: &mut QuectoWorld) {
+fn given_own_group(world: &mut TuiWorld) {
     // The child is spawned in its own group (setsid/setpgid in production); the
     // conversion under test turns its PID into the negated group signal target.
     world.tui_pid_group_target = None;
@@ -30,14 +30,14 @@ fn given_own_group(world: &mut QuectoWorld) {
 // ── PID under test ────────────────────────────────────────────────────────
 
 #[given(regex = r"^the child process has PID (\d+)$")]
-fn given_child_pid(world: &mut QuectoWorld, pid: u32) {
+fn given_child_pid(world: &mut TuiWorld, pid: u32) {
     world.tui_pid_input = Some(pid);
 }
 
 // ── Conversion ────────────────────────────────────────────────────────────
 
 #[when("the TUI converts the PID for process group kill")]
-fn when_convert(world: &mut QuectoWorld) {
+fn when_convert(world: &mut TuiWorld) {
     let pid = world.tui_pid_input.expect("PID under test");
     match checked_pid(pid) {
         Ok(checked) => {
@@ -55,7 +55,7 @@ fn when_convert(world: &mut QuectoWorld) {
 // ── Assertions ────────────────────────────────────────────────────────────
 
 #[then(regex = r"^the converted PID should be (\d+)$")]
-fn then_converted_pid(world: &mut QuectoWorld, expected: i32) {
+fn then_converted_pid(world: &mut TuiWorld, expected: i32) {
     let result = world.tui_pid_result.as_ref().expect("conversion result");
     assert_eq!(
         result.as_ref().ok(),
@@ -65,7 +65,7 @@ fn then_converted_pid(world: &mut QuectoWorld, expected: i32) {
 }
 
 #[then(regex = r"^SIGTERM should be sent to process group (-\d+)$")]
-fn then_group_target(world: &mut QuectoWorld, group: i32) {
+fn then_group_target(world: &mut TuiWorld, group: i32) {
     assert_eq!(
         world.tui_pid_group_target,
         Some(group),
@@ -74,7 +74,7 @@ fn then_group_target(world: &mut QuectoWorld, group: i32) {
 }
 
 #[then("the conversion should fail")]
-fn then_conversion_fails(world: &mut QuectoWorld) {
+fn then_conversion_fails(world: &mut TuiWorld) {
     let result = world.tui_pid_result.as_ref().expect("conversion result");
     assert!(
         result.is_err(),
@@ -83,7 +83,7 @@ fn then_conversion_fails(world: &mut QuectoWorld) {
 }
 
 #[then("no signal should be sent")]
-fn then_no_signal(world: &mut QuectoWorld) {
+fn then_no_signal(world: &mut TuiWorld) {
     assert!(
         world.tui_pid_result.as_ref().is_some_and(Result::is_err),
         "a rejected conversion must not yield a signal target"
@@ -95,7 +95,7 @@ fn then_no_signal(world: &mut QuectoWorld) {
 }
 
 #[then("the error should mention the PID value")]
-fn then_error_mentions_pid(world: &mut QuectoWorld) {
+fn then_error_mentions_pid(world: &mut TuiWorld) {
     let pid = world.tui_pid_input.expect("PID under test");
     let msg = match world.tui_pid_result.as_ref().expect("conversion result") {
         Err(e) => e.clone(),
@@ -108,7 +108,7 @@ fn then_error_mentions_pid(world: &mut QuectoWorld) {
 }
 
 #[then("SIGTERM must NOT be sent to PID 1")]
-fn then_not_pid_1(world: &mut QuectoWorld) {
+fn then_not_pid_1(world: &mut TuiWorld) {
     // The naive `u32::MAX as i32` wraps to -1, whose group target `-(-1)` is 1
     // (init). The checked path rejects it instead of ever producing that.
     let pid = world.tui_pid_input.expect("PID under test");

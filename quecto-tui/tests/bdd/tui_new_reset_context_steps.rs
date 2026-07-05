@@ -5,12 +5,12 @@
 //! context gauge, populated by a real `TurnEnd` usage report, resets to the
 //! unknown `?/0` form.
 
-use crate::{QuectoWorld, TuiParityHarness};
+use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
 use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
 
-fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {
         world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
     }
@@ -30,7 +30,7 @@ fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R
 }
 
 /// Populate the footer context gauge via a real TurnEnd usage report.
-fn set_context_usage(world: &mut QuectoWorld, context_tokens: u64, window: u64) {
+fn set_context_usage(world: &mut TuiWorld, context_tokens: u64, window: u64) {
     with_harness(world, |h| {
         h.event(Event::TurnEnd {
             message: serde_json::json!({
@@ -51,7 +51,7 @@ fn set_context_usage(world: &mut QuectoWorld, context_tokens: u64, window: u64) 
 // ── Given ──────────────────────────────────────────────────────────────────
 
 #[given(regex = r#"^the footer shows "45\.2%/200k" context usage$"#)]
-fn footer_shows_specific(world: &mut QuectoWorld) {
+fn footer_shows_specific(world: &mut TuiWorld) {
     // 90,400 / 200,000 = 45.2%.
     set_context_usage(world, 90_400, 200_000);
     let footer = with_harness(world, |h| h.bottom_stack());
@@ -62,21 +62,21 @@ fn footer_shows_specific(world: &mut QuectoWorld) {
 }
 
 #[given("the footer shows context usage data")]
-fn footer_shows_data(world: &mut QuectoWorld) {
+fn footer_shows_data(world: &mut TuiWorld) {
     set_context_usage(world, 60_000, 200_000);
 }
 
 // ── When ───────────────────────────────────────────────────────────────────
 
 #[when("the user executes /new")]
-fn executes_new(world: &mut QuectoWorld) {
+fn executes_new(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.submit("/new");
     });
 }
 
 #[when("the user executes /clear")]
-fn executes_clear(world: &mut QuectoWorld) {
+fn executes_clear(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.submit("/clear");
     });
@@ -85,7 +85,7 @@ fn executes_clear(world: &mut QuectoWorld) {
 // ── Then ───────────────────────────────────────────────────────────────────
 
 #[then(regex = r#"^the footer context should reset to "\?/0"$"#)]
-fn footer_resets_to_zero(world: &mut QuectoWorld) {
+fn footer_resets_to_zero(world: &mut TuiWorld) {
     let footer = with_harness(world, |h| h.bottom_stack());
     assert!(
         footer.contains("?/0"),
@@ -98,7 +98,7 @@ fn footer_resets_to_zero(world: &mut QuectoWorld) {
 }
 
 #[then("the footer context should reset")]
-fn footer_resets(world: &mut QuectoWorld) {
+fn footer_resets(world: &mut TuiWorld) {
     let footer = with_harness(world, |h| h.bottom_stack());
     assert!(
         footer.contains("?/0"),

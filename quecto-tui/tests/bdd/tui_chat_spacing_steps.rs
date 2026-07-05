@@ -5,13 +5,13 @@
 //! a short chat keeps at least `MIN_CHAT_GAP` blank lines above the editor
 //! border, and a chat that overflows auto-scrolls to the latest content.
 
-use crate::{QuectoWorld, TuiParityHarness};
+use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
 use quecto_tui::interface::app::tui_harness::TuiHarness;
 
 const ROWS: usize = 30;
 
-fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {
         world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
     }
@@ -63,7 +63,7 @@ fn blank_lines_above(lines: &[String], idx: usize) -> usize {
 // ── Given ──────────────────────────────────────────────────────────────────
 
 #[given("the chat has 5 lines of content")]
-fn chat_5_lines(world: &mut QuectoWorld) {
+fn chat_5_lines(world: &mut TuiWorld) {
     with_harness(world, |h| {
         for i in 1..=5 {
             h.add_user_message(&format!("line {i}"));
@@ -72,7 +72,7 @@ fn chat_5_lines(world: &mut QuectoWorld) {
 }
 
 #[given("the terminal has 30 rows")]
-fn terminal_30_rows(world: &mut QuectoWorld) {
+fn terminal_30_rows(world: &mut TuiWorld) {
     let frame = with_harness(world, |h| h.full_frame());
     assert_eq!(
         frame.split('\n').count(),
@@ -82,7 +82,7 @@ fn terminal_30_rows(world: &mut QuectoWorld) {
 }
 
 #[given("the chat fills the entire available space")]
-fn chat_fills_space(world: &mut QuectoWorld) {
+fn chat_fills_space(world: &mut TuiWorld) {
     with_harness(world, |h| {
         for i in 0..60 {
             h.add_user_message(&format!("msg-{i}"));
@@ -93,7 +93,7 @@ fn chat_fills_space(world: &mut QuectoWorld) {
 // ── When ───────────────────────────────────────────────────────────────────
 
 #[when("the screen renders")]
-fn screen_renders(world: &mut QuectoWorld) {
+fn screen_renders(world: &mut TuiWorld) {
     // Render once through the real compose path; assertions re-render as needed.
     let _ = with_harness(world, |h| h.full_frame());
 }
@@ -101,7 +101,7 @@ fn screen_renders(world: &mut QuectoWorld) {
 // ── Then ───────────────────────────────────────────────────────────────────
 
 #[then("at least 3 blank lines should appear between chat and editor border")]
-fn at_least_3_blank_lines(world: &mut QuectoWorld) {
+fn at_least_3_blank_lines(world: &mut TuiWorld) {
     let frame = with_harness(world, |h| h.full_frame());
     let lines = body_lines(&frame);
     let border = editor_border_index(&lines);
@@ -113,7 +113,7 @@ fn at_least_3_blank_lines(world: &mut QuectoWorld) {
 }
 
 #[then("chat is scrolled to show the latest content")]
-fn chat_scrolled_to_latest(world: &mut QuectoWorld) {
+fn chat_scrolled_to_latest(world: &mut TuiWorld) {
     let frame = with_harness(world, |h| h.full_frame());
     assert!(
         frame.contains("msg-59"),
@@ -126,7 +126,7 @@ fn chat_scrolled_to_latest(world: &mut QuectoWorld) {
 }
 
 #[then("spacing may be reduced to fit content")]
-fn spacing_reduced(world: &mut QuectoWorld) {
+fn spacing_reduced(world: &mut TuiWorld) {
     let frame = with_harness(world, |h| h.full_frame());
     let lines = body_lines(&frame);
     let border = editor_border_index(&lines);

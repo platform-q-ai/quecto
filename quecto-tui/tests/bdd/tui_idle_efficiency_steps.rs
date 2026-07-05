@@ -4,12 +4,12 @@
 //! helpers through focused assertions. The full async event loop is covered by
 //! quecto-tui unit tests so the BDD scenarios remain behavioural and stable.
 
-use crate::QuectoWorld;
+use crate::TuiWorld;
 use cucumber::{given, then, when};
 use quecto_tui::interface::app::tui_harness::{TuiHarness, subagents_changed};
 use tempfile::TempDir;
 
-fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {
         world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
     }
@@ -22,7 +22,7 @@ fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R
 }
 
 #[given("the TUI has no visible animation")]
-fn given_no_visible_animation(world: &mut QuectoWorld) {
+fn given_no_visible_animation(world: &mut TuiWorld) {
     with_harness(world, |h| {
         assert!(
             h.spinner_frame_index().is_none(),
@@ -32,21 +32,21 @@ fn given_no_visible_animation(world: &mut QuectoWorld) {
 }
 
 #[given("no notification is active")]
-fn given_no_notification(world: &mut QuectoWorld) {
+fn given_no_notification(world: &mut TuiWorld) {
     with_harness(world, |h| {
         assert!(!h.has_notification(), "no notification should be visible");
     });
 }
 
 #[given("no subagent is active")]
-fn given_no_active_subagent(world: &mut QuectoWorld) {
+fn given_no_active_subagent(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.event(subagents_changed(Vec::new()));
     });
 }
 
 #[given("no response is streaming")]
-fn given_no_streaming(world: &mut QuectoWorld) {
+fn given_no_streaming(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.end_agent_run();
         h.set_streaming(false);
@@ -54,7 +54,7 @@ fn given_no_streaming(world: &mut QuectoWorld) {
 }
 
 #[when("the session is left idle")]
-fn when_left_idle(world: &mut QuectoWorld) {
+fn when_left_idle(world: &mut TuiWorld) {
     // Being "left idle" means the loop only performs its periodic servicing
     // pass, with no user input or agent events — drive exactly that pass.
     with_harness(world, |h| {
@@ -64,7 +64,7 @@ fn when_left_idle(world: &mut QuectoWorld) {
 }
 
 #[then("the TUI performs no sub-second periodic work")]
-fn then_no_subsecond_work(world: &mut QuectoWorld) {
+fn then_no_subsecond_work(world: &mut TuiWorld) {
     with_harness(world, |h| {
         assert!(
             !h.needs_animation_tick(false),
@@ -74,7 +74,7 @@ fn then_no_subsecond_work(world: &mut QuectoWorld) {
 }
 
 #[given("the activity spinner is visible")]
-fn given_activity_spinner_visible(world: &mut QuectoWorld) {
+fn given_activity_spinner_visible(world: &mut TuiWorld) {
     let frame = with_harness(world, |h| {
         h.show_activity_spinner("working");
         h.spinner_frame_index().expect("visible spinner")
@@ -83,7 +83,7 @@ fn given_activity_spinner_visible(world: &mut QuectoWorld) {
 }
 
 #[then("the activity spinner progresses")]
-fn then_spinner_progresses(world: &mut QuectoWorld) {
+fn then_spinner_progresses(world: &mut TuiWorld) {
     let before = world
         .tui_idle_spinner_frame
         .expect("spinner frame captured by the Given step");
@@ -97,7 +97,7 @@ fn then_spinner_progresses(world: &mut QuectoWorld) {
 }
 
 #[given("a notification is visible")]
-fn given_notification_visible(world: &mut QuectoWorld) {
+fn given_notification_visible(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.notify("Saved");
         assert!(h.has_notification(), "notification should start visible");
@@ -105,7 +105,7 @@ fn given_notification_visible(world: &mut QuectoWorld) {
 }
 
 #[then("the notification remains serviced until it is no longer visible")]
-fn then_notification_is_serviced(world: &mut QuectoWorld) {
+fn then_notification_is_serviced(world: &mut TuiWorld) {
     with_harness(world, |h| {
         assert!(
             !h.needs_animation_tick(false),
@@ -119,7 +119,7 @@ fn then_notification_is_serviced(world: &mut QuectoWorld) {
 }
 
 #[given("the branch indicator shows the current branch")]
-fn given_branch_indicator_current(world: &mut QuectoWorld) {
+fn given_branch_indicator_current(world: &mut TuiWorld) {
     let tmp = TempDir::new().expect("branch test temp dir");
     let repo = tmp.path().to_path_buf();
     std::fs::create_dir_all(repo.join(".git")).expect("git dir");
@@ -133,7 +133,7 @@ fn given_branch_indicator_current(world: &mut QuectoWorld) {
 }
 
 #[when("the repository switches to another branch")]
-fn when_repository_switches_branch(world: &mut QuectoWorld) {
+fn when_repository_switches_branch(world: &mut TuiWorld) {
     let repo = world
         ._extra_temp_dirs
         .last()
@@ -146,7 +146,7 @@ fn when_repository_switches_branch(world: &mut QuectoWorld) {
 }
 
 #[then("the branch indicator shows the new branch within a few seconds")]
-fn then_branch_updates_promptly(world: &mut QuectoWorld) {
+fn then_branch_updates_promptly(world: &mut TuiWorld) {
     let branch = world
         .tui_idle_expected_branch
         .clone()
@@ -176,7 +176,7 @@ fn then_branch_updates_promptly(world: &mut QuectoWorld) {
 }
 
 #[given("the terminal does not confirm Kitty keyboard protocol support")]
-fn given_terminal_without_kitty(world: &mut QuectoWorld) {
+fn given_terminal_without_kitty(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.clear_kitty_support();
     });
@@ -184,7 +184,7 @@ fn given_terminal_without_kitty(world: &mut QuectoWorld) {
 }
 
 #[when("the fallback detection deadline passes")]
-fn when_fallback_deadline_passes(world: &mut QuectoWorld) {
+fn when_fallback_deadline_passes(world: &mut TuiWorld) {
     let mut fallback_done = world
         .tui_idle_fallback_done
         .expect("fallback state initialised by the Given step");
@@ -198,7 +198,7 @@ fn when_fallback_deadline_passes(world: &mut QuectoWorld) {
 }
 
 #[then("the TUI enables keyboard fallback mode")]
-fn then_keyboard_fallback_enabled(world: &mut QuectoWorld) {
+fn then_keyboard_fallback_enabled(world: &mut TuiWorld) {
     assert_eq!(
         world.tui_idle_fallback_done,
         Some(true),
@@ -213,7 +213,7 @@ fn then_keyboard_fallback_enabled(world: &mut QuectoWorld) {
 }
 
 #[then("normal keyboard input is accepted")]
-fn then_normal_keyboard_input_is_accepted(world: &mut QuectoWorld) {
+fn then_normal_keyboard_input_is_accepted(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.type_char('a');
         assert_eq!(

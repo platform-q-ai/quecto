@@ -60,21 +60,21 @@ fn base64_encode_bdd(data: &[u8]) -> String {
 }
 
 #[given(expr = "an SGR mouse sequence for button {int} press at col {int} row {int}")]
-fn given_sgr_mouse_press(world: &mut QuectoWorld, button: u32, col: u32, row: u32) {
+fn given_sgr_mouse_press(world: &mut TuiWorld, button: u32, col: u32, row: u32) {
     // Build SGR mouse sequence: \x1b[<button;col;rowM
     let seq = format!("\x1b[<{};{};{}M", button, col, row);
     world.stdout = seq;
 }
 
 #[given(expr = "an SGR mouse release sequence at col {int} row {int}")]
-fn given_sgr_mouse_release(world: &mut QuectoWorld, col: u32, row: u32) {
+fn given_sgr_mouse_release(world: &mut TuiWorld, col: u32, row: u32) {
     // Release: lowercase 'm' terminator with button 0
     let seq = format!("\x1b[<0;{};{}m", col, row);
     world.stdout = seq;
 }
 
 #[when("the sequence is parsed")]
-fn when_sequence_parsed(world: &mut QuectoWorld) {
+fn when_sequence_parsed(world: &mut TuiWorld) {
     // Parse the SGR sequence by simulating what the TUI key parser does.
     // We can't import quecto-tui directly in BDD tests, so we verify
     // the protocol format is correct and matches our expectations.
@@ -83,7 +83,7 @@ fn when_sequence_parsed(world: &mut QuectoWorld) {
 }
 
 #[then(expr = "the result should be a MousePress at col {int} row {int}")]
-fn then_mouse_press(world: &mut QuectoWorld, expected_col: u32, expected_row: u32) {
+fn then_mouse_press(world: &mut TuiWorld, expected_col: u32, expected_row: u32) {
     // Verify the SGR sequence encodes the expected coordinates.
     // SGR uses 1-indexed coordinates; TUI converts to 0-indexed.
     let seq = &world.stderr;
@@ -102,7 +102,7 @@ fn then_mouse_press(world: &mut QuectoWorld, expected_col: u32, expected_row: u3
 }
 
 #[then(expr = "the result should be a MouseDrag at col {int} row {int}")]
-fn then_mouse_drag(world: &mut QuectoWorld, expected_col: u32, expected_row: u32) {
+fn then_mouse_drag(world: &mut TuiWorld, expected_col: u32, expected_row: u32) {
     // Verify the SGR sequence encodes the expected 0-indexed coordinates.
     let seq = &world.stderr;
     let inner = seq.strip_prefix("\x1b[<").unwrap();
@@ -126,7 +126,7 @@ fn then_mouse_drag(world: &mut QuectoWorld, expected_col: u32, expected_row: u32
 }
 
 #[then(expr = "the result should be a MouseRelease at col {int} row {int}")]
-fn then_mouse_release(world: &mut QuectoWorld, expected_col: u32, expected_row: u32) {
+fn then_mouse_release(world: &mut TuiWorld, expected_col: u32, expected_row: u32) {
     // Verify the SGR release sequence (lowercase 'm' terminator).
     let seq = &world.stderr;
     assert!(
@@ -153,12 +153,12 @@ fn then_mouse_release(world: &mut QuectoWorld, expected_col: u32, expected_row: 
 }
 
 #[given(expr = "the text {string} to copy")]
-fn given_text_to_copy(world: &mut QuectoWorld, text: String) {
+fn given_text_to_copy(world: &mut TuiWorld, text: String) {
     world.stdout = text;
 }
 
 #[given("the TUI shows navigation content beside conversation content")]
-fn given_tui_shows_navigation_beside_conversation(world: &mut QuectoWorld) {
+fn given_tui_shows_navigation_beside_conversation(world: &mut TuiWorld) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let mut harness = rt.block_on(TuiHarness::new());
     harness.event(Event::AgentStart);
@@ -186,7 +186,7 @@ fn given_tui_shows_navigation_beside_conversation(world: &mut QuectoWorld) {
 }
 
 #[when("the user copies a mouse selection that begins outside the conversation")]
-fn when_user_copies_selection_beginning_outside_conversation(world: &mut QuectoWorld) {
+fn when_user_copies_selection_beginning_outside_conversation(world: &mut TuiWorld) {
     let handle = world
         .tui_parity_rt
         .as_ref()
@@ -214,7 +214,7 @@ fn when_user_copies_selection_beginning_outside_conversation(world: &mut QuectoW
 }
 
 #[then("the clipboard text should contain only the selected conversation content")]
-fn then_clipboard_contains_only_selected_conversation_content(world: &mut QuectoWorld) {
+fn then_clipboard_contains_only_selected_conversation_content(world: &mut TuiWorld) {
     assert!(
         world.stdout.contains(CONVERSATION_TEXT),
         "copied text should include conversation content; got {:?}",
@@ -231,7 +231,7 @@ fn then_clipboard_contains_only_selected_conversation_content(world: &mut Quecto
 }
 
 #[then("the clipboard text should not contain navigation content")]
-fn then_clipboard_text_should_not_contain_navigation_content(world: &mut QuectoWorld) {
+fn then_clipboard_text_should_not_contain_navigation_content(world: &mut TuiWorld) {
     assert!(
         world.stderr.contains(NAVIGATION_LABEL),
         "fixture should prove navigation content existed before copy"
@@ -244,7 +244,7 @@ fn then_clipboard_text_should_not_contain_navigation_content(world: &mut QuectoW
 }
 
 #[then("the clipboard text should not contain the divider")]
-fn then_clipboard_text_should_not_contain_divider(world: &mut QuectoWorld) {
+fn then_clipboard_text_should_not_contain_divider(world: &mut TuiWorld) {
     assert!(
         world.stderr.contains(DIVIDER),
         "fixture should prove the divider existed before copy"
@@ -257,12 +257,12 @@ fn then_clipboard_text_should_not_contain_divider(world: &mut QuectoWorld) {
 }
 
 #[when("it is base64 encoded for OSC 52")]
-fn when_base64_encoded(world: &mut QuectoWorld) {
+fn when_base64_encoded(world: &mut TuiWorld) {
     world.stderr = base64_encode_bdd(world.stdout.as_bytes());
 }
 
 #[then(expr = "the encoded value should be {string}")]
-fn then_encoded_value(world: &mut QuectoWorld, expected: String) {
+fn then_encoded_value(world: &mut TuiWorld, expected: String) {
     assert_eq!(
         world.stderr, expected,
         "base64 mismatch: got {:?}, expected {:?}",
@@ -271,7 +271,7 @@ fn then_encoded_value(world: &mut QuectoWorld, expected: String) {
 }
 
 #[when("the OSC 52 clipboard write fails")]
-fn when_osc52_clipboard_write_fails(world: &mut QuectoWorld) {
+fn when_osc52_clipboard_write_fails(world: &mut TuiWorld) {
     let mut writer = BddClipboardWriter {
         fail_on_write: true,
         fail_on_flush: false,
@@ -283,7 +283,7 @@ fn when_osc52_clipboard_write_fails(world: &mut QuectoWorld) {
 }
 
 #[when("the OSC 52 clipboard flush fails")]
-fn when_osc52_clipboard_flush_fails(world: &mut QuectoWorld) {
+fn when_osc52_clipboard_flush_fails(world: &mut TuiWorld) {
     let mut writer = BddClipboardWriter {
         fail_on_write: false,
         fail_on_flush: true,
@@ -295,7 +295,7 @@ fn when_osc52_clipboard_flush_fails(world: &mut QuectoWorld) {
 }
 
 #[then("the clipboard copy result should be an error")]
-fn then_clipboard_copy_result_should_be_error(world: &mut QuectoWorld) {
+fn then_clipboard_copy_result_should_be_error(world: &mut TuiWorld) {
     assert!(
         world.stderr.contains("write failed") || world.stderr.contains("flush failed"),
         "clipboard writer/flush failure should be returned; got {:?}",
@@ -304,7 +304,7 @@ fn then_clipboard_copy_result_should_be_error(world: &mut QuectoWorld) {
 }
 
 #[then("clipboard failure feedback should not include the copied text")]
-fn then_clipboard_failure_feedback_should_not_include_copied_text(world: &mut QuectoWorld) {
+fn then_clipboard_failure_feedback_should_not_include_copied_text(world: &mut TuiWorld) {
     assert!(
         !world.stderr.contains(&world.stdout),
         "clipboard failure should not include selected text; got {:?}",

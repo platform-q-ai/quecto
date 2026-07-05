@@ -1722,9 +1722,12 @@ dependencies = [
 name = "quecto-tui"
 version = "0.10.9"
 dependencies = [
+ "cucumber",
+ "futures",
  "libc",
  "pulldown-cmark",
  "quecto-line-io",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

@@ -1,6 +1,6 @@
 //! Step definitions for `tui_streaming_stability.feature` (#972).
 
-use crate::{QuectoWorld, TuiParityHarness};
+use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
 use quecto_tui::infrastructure::client::Event;
 use quecto_tui::infrastructure::render::DiffRenderer;
@@ -10,7 +10,7 @@ use quecto_tui::interface::components::chat::Chat;
 use quecto_tui::interface::keys::Key;
 use quecto_tui::interface::utils::visible_width;
 
-fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {
         world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
     }
@@ -23,7 +23,7 @@ fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R
 }
 
 #[given("the TUI is receiving a sustained high-throughput assistant response")]
-fn given_sustained_high_throughput_response(world: &mut QuectoWorld) {
+fn given_sustained_high_throughput_response(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.stream_event(Event::AgentStart);
         for _ in 0..160 {
@@ -33,7 +33,7 @@ fn given_sustained_high_throughput_response(world: &mut QuectoWorld) {
 }
 
 #[when("the response continues for an extended period")]
-fn when_response_continues(world: &mut QuectoWorld) {
+fn when_response_continues(world: &mut TuiWorld) {
     with_harness(world, |h| {
         for _ in 0..160 {
             h.stream_event(Event::Token { token: "y".into() });
@@ -44,7 +44,7 @@ fn when_response_continues(world: &mut QuectoWorld) {
 }
 
 #[then("the TUI presents a stable frame without stray cursor blocks")]
-fn then_stable_frame_without_stray_cursor_blocks(world: &mut QuectoWorld) {
+fn then_stable_frame_without_stray_cursor_blocks(world: &mut TuiWorld) {
     with_harness(world, |h| {
         let frame = h.full_frame();
         // Exactly ONE streaming indicator in the chat body: zero means the
@@ -73,7 +73,7 @@ fn then_stable_frame_without_stray_cursor_blocks(world: &mut QuectoWorld) {
 }
 
 #[given("the TUI is receiving a burst of assistant tokens")]
-fn given_burst_of_assistant_tokens(world: &mut QuectoWorld) {
+fn given_burst_of_assistant_tokens(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.stream_event(Event::AgentStart);
         for _ in 0..40 {
@@ -83,7 +83,7 @@ fn given_burst_of_assistant_tokens(world: &mut QuectoWorld) {
 }
 
 #[when("the user provides input during the burst")]
-fn when_user_input_during_burst(world: &mut QuectoWorld) {
+fn when_user_input_during_burst(world: &mut TuiWorld) {
     with_harness(world, |h| {
         // Keys route through the stdin select arm, which paints IMMEDIATELY
         // (bypassing the coalescer) — assert that wiring, not just the frame.
@@ -102,7 +102,7 @@ fn when_user_input_during_burst(world: &mut QuectoWorld) {
 }
 
 #[then("the user input is reflected promptly while the response continues")]
-fn then_user_input_reflected_promptly(world: &mut QuectoWorld) {
+fn then_user_input_reflected_promptly(world: &mut TuiWorld) {
     with_harness(world, |h| {
         let frame = h.full_frame();
         assert!(
@@ -117,7 +117,7 @@ fn then_user_input_reflected_promptly(world: &mut QuectoWorld) {
 }
 
 #[when("the burst is presented to the user")]
-fn when_burst_presented(world: &mut QuectoWorld) {
+fn when_burst_presented(world: &mut TuiWorld) {
     // Drive 40 tokens through the REAL event-loop render decision
     // (`App::render_stream_event`) and count frames the App actually painted.
     let renders = with_harness(world, |h| {
@@ -133,7 +133,7 @@ fn when_burst_presented(world: &mut QuectoWorld) {
 }
 
 #[then("the streaming response remains visually smooth without distracting flicker")]
-fn then_streaming_response_smooth(world: &mut QuectoWorld) {
+fn then_streaming_response_smooth(world: &mut TuiWorld) {
     let renders = world
         .tui_render_count
         .expect("render count captured by When step");
@@ -152,20 +152,20 @@ fn then_streaming_response_smooth(world: &mut QuectoWorld) {
 }
 
 #[given("an assistant response is streaming near the right edge of the chat frame")]
-fn given_streaming_near_chat_edge(world: &mut QuectoWorld) {
+fn given_streaming_near_chat_edge(world: &mut TuiWorld) {
     let mut chat = Chat::new();
     chat.append_token("1234567890");
     world.tui_chat = Some(chat);
 }
 
 #[when("the TUI presents the streaming response near the chat frame edge")]
-fn when_present_streaming_near_edge(world: &mut QuectoWorld) {
+fn when_present_streaming_near_edge(world: &mut TuiWorld) {
     let chat = world.tui_chat.as_mut().expect("chat from Given step");
     world.tui_viewport_after_stream = chat.render(10);
 }
 
 #[then("the streaming indicator remains inside the chat frame")]
-fn then_indicator_inside_chat_frame(world: &mut QuectoWorld) {
+fn then_indicator_inside_chat_frame(world: &mut TuiWorld) {
     let line = world.tui_viewport_after_stream.join("");
     assert!(
         line.contains('▌'),
@@ -178,7 +178,7 @@ fn then_indicator_inside_chat_frame(world: &mut QuectoWorld) {
 }
 
 #[given("the terminal cursor is hidden while an assistant response streams")]
-fn given_terminal_cursor_hidden(world: &mut QuectoWorld) {
+fn given_terminal_cursor_hidden(world: &mut TuiWorld) {
     // Streaming is in progress in the app before the display recovery below.
     with_harness(world, |h| {
         h.stream_event(Event::AgentStart);
@@ -189,7 +189,7 @@ fn given_terminal_cursor_hidden(world: &mut QuectoWorld) {
 }
 
 #[when("the display recovers during the streaming response")]
-fn when_display_recovers(world: &mut QuectoWorld) {
+fn when_display_recovers(world: &mut TuiWorld) {
     let mut out = Vec::new();
     let mut renderer = DiffRenderer::new(&mut out);
     renderer
@@ -202,7 +202,7 @@ fn when_display_recovers(world: &mut QuectoWorld) {
 }
 
 #[then("the real terminal cursor stays hidden")]
-fn then_real_terminal_cursor_stays_hidden(world: &mut QuectoWorld) {
+fn then_real_terminal_cursor_stays_hidden(world: &mut TuiWorld) {
     assert!(
         world.stdout.matches("\x1b[?25l").count() >= 2,
         "full and diff recovery renders should re-hide the terminal cursor: {:?}",
@@ -211,7 +211,7 @@ fn then_real_terminal_cursor_stays_hidden(world: &mut QuectoWorld) {
 }
 
 #[given("an assistant response is streaming")]
-fn given_assistant_response_streaming(world: &mut QuectoWorld) {
+fn given_assistant_response_streaming(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.event(Event::AgentStart);
         h.event(Event::Token {
@@ -221,7 +221,7 @@ fn given_assistant_response_streaming(world: &mut QuectoWorld) {
 }
 
 #[when("the TUI presents the streaming response")]
-fn when_tui_presents_streaming_response(world: &mut QuectoWorld) {
+fn when_tui_presents_streaming_response(world: &mut TuiWorld) {
     // Capture the RAW frame (ANSI intact) so the editor's reverse-video
     // cursor escape is observable.
     let frame = with_harness(world, |h| {
@@ -232,7 +232,7 @@ fn when_tui_presents_streaming_response(world: &mut QuectoWorld) {
 }
 
 #[then("the editor cursor and assistant streaming indicator remain visible")]
-fn then_intentional_cursors_remain_visible(world: &mut QuectoWorld) {
+fn then_intentional_cursors_remain_visible(world: &mut TuiWorld) {
     assert!(
         world.stdout.contains("\x1b[7m"),
         "editor reverse-video cursor should remain visible in the raw frame: {:?}",

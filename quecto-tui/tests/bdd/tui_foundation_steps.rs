@@ -44,14 +44,14 @@ where
 // ── Command send failures are observable ──────────────────────────────────
 
 #[given("the TUI command channel is disconnected")]
-fn given_channel_disconnected(world: &mut QuectoWorld) {
+fn given_channel_disconnected(world: &mut TuiWorld) {
     // The real disconnect happens in the When via `send_command_expecting_failure`
     // (it swaps in a disconnected client); flag the intent here.
     world.tui_foundation_disconnect = true;
 }
 
 #[when("the TUI tries to send a command to the agent")]
-fn when_send_command(world: &mut QuectoWorld) {
+fn when_send_command(world: &mut TuiWorld) {
     assert!(
         world.tui_foundation_disconnect,
         "the channel should have been marked disconnected"
@@ -71,7 +71,7 @@ fn when_send_command(world: &mut QuectoWorld) {
 }
 
 #[then("the TUI should show an error notification for the failed command send")]
-fn then_command_error_notification(world: &mut QuectoWorld) {
+fn then_command_error_notification(world: &mut TuiWorld) {
     assert!(
         world
             .tui_foundation_notification
@@ -82,7 +82,7 @@ fn then_command_error_notification(world: &mut QuectoWorld) {
 }
 
 #[then("the send failure should not be handled only through stderr")]
-fn then_not_only_stderr(world: &mut QuectoWorld) {
+fn then_not_only_stderr(world: &mut TuiWorld) {
     assert!(
         !world.tui_foundation_notification.trim().is_empty(),
         "the failure must be visible in the UI notification stack, not just stderr"
@@ -92,12 +92,12 @@ fn then_not_only_stderr(world: &mut QuectoWorld) {
 // ── DiffRenderer write and flush failures are observable ───────────────────
 
 #[given("the TUI renderer output fails while writing or flushing")]
-fn given_renderer_fails(world: &mut QuectoWorld) {
+fn given_renderer_fails(world: &mut TuiWorld) {
     world.tui_foundation_render_was_err = false;
 }
 
 #[when("the TUI renders a frame")]
-fn when_render_frame(world: &mut QuectoWorld) {
+fn when_render_frame(world: &mut TuiWorld) {
     // The real DiffRenderer over a failing writer must return the error.
     let mut renderer = DiffRenderer::new(FailingWriter);
     let err = renderer
@@ -110,7 +110,7 @@ fn when_render_frame(world: &mut QuectoWorld) {
 }
 
 #[then("the DiffRenderer should return the render error instead of ignoring it")]
-fn then_render_returns_error(world: &mut QuectoWorld) {
+fn then_render_returns_error(world: &mut TuiWorld) {
     assert!(
         world.tui_foundation_render_was_err,
         "DiffRenderer::render must propagate the write/flush error"
@@ -118,7 +118,7 @@ fn then_render_returns_error(world: &mut QuectoWorld) {
 }
 
 #[then("the TUI should show an error notification for the failed render")]
-fn then_render_error_notification(world: &mut QuectoWorld) {
+fn then_render_error_notification(world: &mut TuiWorld) {
     assert!(
         world
             .tui_foundation_notification

@@ -7,16 +7,16 @@
 //! pre-warm, and the README docs are verified by focused unit/repo-lint tests
 //! (quecto-tui/src/interface/cli.rs and tests/repo_docs.rs), not here.
 
-use crate::QuectoWorld;
+use crate::TuiWorld;
 use cucumber::{then, when};
 
 #[when("the agent does not announce its socket before the deadline")]
-fn when_agent_times_out(world: &mut QuectoWorld) {
+fn when_agent_times_out(world: &mut TuiWorld) {
     world.stdout = quecto_tui::interface::cli::agent_socket_timeout_message();
 }
 
 #[then("the timeout message names the cold-binary first-run cause")]
-fn then_message_names_cause(world: &mut QuectoWorld) {
+fn then_message_names_cause(world: &mut TuiWorld) {
     let lower = world.stdout.to_lowercase();
     assert!(
         lower.contains("cold") || lower.contains("first run") || lower.contains("first launch"),
@@ -26,7 +26,7 @@ fn then_message_names_cause(world: &mut QuectoWorld) {
 }
 
 #[then(regex = r#"^the timeout message suggests running "([^"]+)" to warm the binary$"#)]
-fn then_message_suggests_warm(world: &mut QuectoWorld, cmd: String) {
+fn then_message_suggests_warm(world: &mut TuiWorld, cmd: String) {
     assert!(
         world.stdout.contains(&cmd),
         "the timeout message must suggest running `{cmd}` to warm the binary: {:?}",
@@ -35,7 +35,7 @@ fn then_message_suggests_warm(world: &mut QuectoWorld, cmd: String) {
 }
 
 #[then("the timeout message offers to retry")]
-fn then_message_offers_retry(world: &mut QuectoWorld) {
+fn then_message_offers_retry(world: &mut TuiWorld) {
     let lower = world.stdout.to_lowercase();
     assert!(
         lower.contains("retry") || lower.contains("try again"),
@@ -45,12 +45,12 @@ fn then_message_offers_retry(world: &mut QuectoWorld) {
 }
 
 #[when("the TUI is waiting for the agent socket path")]
-fn when_tui_waiting(world: &mut QuectoWorld) {
+fn when_tui_waiting(world: &mut TuiWorld) {
     world.stdout = quecto_tui::interface::cli::agent_starting_status().to_string();
 }
 
 #[then(regex = r#"^the TUI surfaces a "([^"]+)" status indicator$"#)]
-fn then_status_indicator(world: &mut QuectoWorld, text: String) {
+fn then_status_indicator(world: &mut TuiWorld, text: String) {
     assert!(
         world.stdout.to_lowercase().contains(&text.to_lowercase()),
         "the TUI must surface a {text:?} status while waiting for the agent socket: {:?}",

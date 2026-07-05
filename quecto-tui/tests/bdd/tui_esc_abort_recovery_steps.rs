@@ -8,7 +8,7 @@
 //! (The `the agent is streaming a response` Given is shared and defined in
 //! `tui_ctrl_d_exit_steps`.)
 
-use crate::{QuectoWorld, TuiParityHarness};
+use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
 use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
@@ -16,7 +16,7 @@ use quecto_tui::interface::keys::Key;
 
 const RESPONSE_TEXT: &str = "Here is the continued response";
 
-fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {
         world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
     }
@@ -35,7 +35,7 @@ fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R
     f(&mut world.tui_parity.as_mut().expect("TUI harness").0)
 }
 
-fn drain(world: &mut QuectoWorld) -> Vec<String> {
+fn drain(world: &mut TuiWorld) -> Vec<String> {
     let rt = world.tui_parity_rt.as_ref().expect("runtime");
     let h = &mut world.tui_parity.as_mut().expect("harness").0;
     rt.block_on(h.drain_commands())
@@ -44,7 +44,7 @@ fn drain(world: &mut QuectoWorld) -> Vec<String> {
 /// Submit `prompt` through the real submit path, drain the dispatched socket
 /// command, then feed the agent's streamed response back through the real event
 /// handler so the response is rendered.
-fn submit_and_respond(world: &mut QuectoWorld, prompt: &str) {
+fn submit_and_respond(world: &mut TuiWorld, prompt: &str) {
     // Discard any commands queued by prior steps (e.g. the abort) so we observe
     // only this prompt's dispatch, not leftover abort frames.
     let _ = drain(world);
@@ -77,7 +77,7 @@ fn submit_and_respond(world: &mut QuectoWorld, prompt: &str) {
 // ── Given ──────────────────────────────────────────────────────────────────
 
 #[given("a stale abort fired before the prompt started")]
-fn stale_abort(world: &mut QuectoWorld) {
+fn stale_abort(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.event(Event::AgentStart);
         h.abort();
@@ -90,7 +90,7 @@ fn stale_abort(world: &mut QuectoWorld) {
 }
 
 #[given("the user aborts 3 times in rapid succession")]
-fn aborts_three_times(world: &mut QuectoWorld) {
+fn aborts_three_times(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.event(Event::AgentStart);
         h.abort();
@@ -108,7 +108,7 @@ fn aborts_three_times(world: &mut QuectoWorld) {
 // ── When ───────────────────────────────────────────────────────────────────
 
 #[when("the user presses Escape to abort")]
-fn press_escape(world: &mut QuectoWorld) {
+fn press_escape(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.press(Key::Escape);
     });
@@ -120,12 +120,12 @@ fn press_escape(world: &mut QuectoWorld) {
 }
 
 #[when("then submits a new prompt")]
-fn submits_new_prompt(world: &mut QuectoWorld) {
+fn submits_new_prompt(world: &mut TuiWorld) {
     submit_and_respond(world, "continue the task");
 }
 
 #[when("the TUI sends a prompt")]
-fn tui_sends_prompt(world: &mut QuectoWorld) {
+fn tui_sends_prompt(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.submit("run the next step");
     });
@@ -134,14 +134,14 @@ fn tui_sends_prompt(world: &mut QuectoWorld) {
 }
 
 #[when("the user sends a new prompt")]
-fn user_sends_new_prompt(world: &mut QuectoWorld) {
+fn user_sends_new_prompt(world: &mut TuiWorld) {
     submit_and_respond(world, "start a fresh task");
 }
 
 // ── Then ───────────────────────────────────────────────────────────────────
 
 #[then("the agent should process the new prompt")]
-fn agent_processes_prompt(world: &mut QuectoWorld) {
+fn agent_processes_prompt(world: &mut TuiWorld) {
     assert!(
         world
             .tui_last_commands
@@ -153,7 +153,7 @@ fn agent_processes_prompt(world: &mut QuectoWorld) {
 }
 
 #[then("the user should see a response")]
-fn user_sees_response(world: &mut QuectoWorld) {
+fn user_sees_response(world: &mut TuiWorld) {
     let frame = with_harness(world, |h| h.full_frame());
     assert!(
         frame.contains(RESPONSE_TEXT),
@@ -162,7 +162,7 @@ fn user_sees_response(world: &mut QuectoWorld) {
 }
 
 #[then("the agent should send an agent_end event")]
-fn agent_sends_agent_end(world: &mut QuectoWorld) {
+fn agent_sends_agent_end(world: &mut TuiWorld) {
     // Deliver the stale AgentEnd from the pre-cancelled run. The abort-aware
     // state machine must consume the pending abort rather than corrupt state.
     with_harness(world, |h| {
@@ -176,7 +176,7 @@ fn agent_sends_agent_end(world: &mut QuectoWorld) {
 }
 
 #[then("the TUI should not hang waiting for a response")]
-fn tui_does_not_hang(world: &mut QuectoWorld) {
+fn tui_does_not_hang(world: &mut TuiWorld) {
     // Not hung: the machine is idle (not stuck "running"), and a fresh run
     // streams a response that renders normally.
     assert!(
@@ -198,7 +198,7 @@ fn tui_does_not_hang(world: &mut QuectoWorld) {
 }
 
 #[then("the prompt should be processed normally")]
-fn prompt_processed_normally(world: &mut QuectoWorld) {
+fn prompt_processed_normally(world: &mut TuiWorld) {
     assert!(
         world
             .tui_last_commands

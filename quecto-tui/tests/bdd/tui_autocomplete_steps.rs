@@ -4,12 +4,12 @@
 //! headless render harness: typing routes through `App::handle_key`, which owns
 //! the production autocomplete update / navigation / accept-and-submit wiring.
 
-use crate::{QuectoWorld, TuiParityHarness};
+use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
 use quecto_tui::interface::app::tui_harness::TuiHarness;
 use quecto_tui::interface::keys::Key;
 
-fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {
         world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
     }
@@ -30,7 +30,7 @@ fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R
     f(&mut world.tui_parity.as_mut().expect("TUI harness").0)
 }
 
-fn type_str(world: &mut QuectoWorld, text: &str) {
+fn type_str(world: &mut TuiWorld, text: &str) {
     with_harness(world, |h| {
         // Each character routes through the real `App::handle_key` path.
         text.chars().for_each(|ch| {
@@ -42,7 +42,7 @@ fn type_str(world: &mut QuectoWorld, text: &str) {
 // ── Shared Given ─────────────────────────────────────────────────────────────
 
 #[given(regex = r#"^the editor text is "([^"]*)"$"#)]
-fn editor_text_is(world: &mut QuectoWorld, text: String) {
+fn editor_text_is(world: &mut TuiWorld, text: String) {
     // A fresh scenario starts with an empty editor; typing runs the real
     // per-key autocomplete update path exactly as it would for a live user.
     type_str(world, &text);
@@ -53,7 +53,7 @@ fn editor_text_is(world: &mut QuectoWorld, text: String) {
 // ── Navigation feature ───────────────────────────────────────────────────────
 
 #[given("the autocomplete shows all commands")]
-fn autocomplete_shows_all(world: &mut QuectoWorld) {
+fn autocomplete_shows_all(world: &mut TuiWorld) {
     let expected = TuiHarness::slash_command_names().len();
     let (active, count) = with_harness(world, |h| {
         (h.autocomplete_active(), h.autocomplete_suggestion_count())
@@ -66,7 +66,7 @@ fn autocomplete_shows_all(world: &mut QuectoWorld) {
 }
 
 #[when(regex = r#"^the user presses Down (\d+) times$"#)]
-fn press_down_times(world: &mut QuectoWorld, n: usize) {
+fn press_down_times(world: &mut TuiWorld, n: usize) {
     with_harness(world, |h| {
         for _ in 0..n {
             h.press(Key::Down);
@@ -75,7 +75,7 @@ fn press_down_times(world: &mut QuectoWorld, n: usize) {
 }
 
 #[given(regex = r#"^the selected index is (\d+)$"#)]
-fn given_selected_index(world: &mut QuectoWorld, idx: usize) {
+fn given_selected_index(world: &mut TuiWorld, idx: usize) {
     // Drive the highlight to `idx` by stepping Down from the top of the list.
     with_harness(world, |h| {
         for _ in 0..idx {
@@ -87,14 +87,14 @@ fn given_selected_index(world: &mut QuectoWorld, idx: usize) {
 }
 
 #[when("the user presses Up")]
-fn press_up(world: &mut QuectoWorld) {
+fn press_up(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.press(Key::Up);
     });
 }
 
 #[when(regex = r#"^update is called again with "([^"]*)"$"#)]
-fn update_again(world: &mut QuectoWorld, text: String) {
+fn update_again(world: &mut TuiWorld, text: String) {
     // Re-run the exact update the app performs after every editor change.
     let current = with_harness(world, |h| h.editor_text());
     assert_eq!(
@@ -105,13 +105,13 @@ fn update_again(world: &mut QuectoWorld, text: String) {
 }
 
 #[then(regex = r#"^the selected index should be (\d+)$"#)]
-fn selected_index_should_be(world: &mut QuectoWorld, idx: usize) {
+fn selected_index_should_be(world: &mut TuiWorld, idx: usize) {
     let got = with_harness(world, |h| h.autocomplete_selected_index());
     assert_eq!(got, idx, "selected index should be {idx}, got {got}");
 }
 
 #[then(regex = r#"^the selected index should remain (\d+)$"#)]
-fn selected_index_should_remain(world: &mut QuectoWorld, idx: usize) {
+fn selected_index_should_remain(world: &mut TuiWorld, idx: usize) {
     let got = with_harness(world, |h| h.autocomplete_selected_index());
     assert_eq!(
         got, idx,
@@ -122,7 +122,7 @@ fn selected_index_should_remain(world: &mut QuectoWorld, idx: usize) {
 // ── Enter/Tab feature ────────────────────────────────────────────────────────
 
 #[given(regex = r#"^the autocomplete is showing "([^"]*)" highlighted$"#)]
-fn autocomplete_showing_highlighted(world: &mut QuectoWorld, value: String) {
+fn autocomplete_showing_highlighted(world: &mut TuiWorld, value: String) {
     let (active, highlighted) = with_harness(world, |h| {
         (h.autocomplete_active(), h.autocomplete_selected_value())
     });
@@ -135,21 +135,21 @@ fn autocomplete_showing_highlighted(world: &mut QuectoWorld, value: String) {
 }
 
 #[when("the user presses Enter")]
-fn press_enter(world: &mut QuectoWorld) {
+fn press_enter(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.press(Key::Enter);
     });
 }
 
 #[when("the user presses Tab")]
-fn press_tab(world: &mut QuectoWorld) {
+fn press_tab(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.press(Key::Tab);
     });
 }
 
 /// Drain the commands the app has sent over its socket (drives the runtime).
-fn drain_commands(world: &mut QuectoWorld) -> Vec<String> {
+fn drain_commands(world: &mut TuiWorld) -> Vec<String> {
     let rt = world.tui_parity_rt.as_ref().expect("runtime");
     let h = &mut world.tui_parity.as_mut().expect("harness").0;
     rt.block_on(h.drain_commands())
@@ -157,7 +157,7 @@ fn drain_commands(world: &mut QuectoWorld) -> Vec<String> {
 
 /// Assert the command actually reached `handle_submit` (not rejected as an
 /// unknown partial) and produced its production side effect.
-fn assert_command_effect(world: &mut QuectoWorld, cmd: &str) {
+fn assert_command_effect(world: &mut TuiWorld, cmd: &str) {
     let (rejected, should_exit) = with_harness(world, |h| (h.has_notification(), h.should_exit()));
     assert!(
         !rejected,
@@ -181,7 +181,7 @@ fn assert_command_effect(world: &mut QuectoWorld, cmd: &str) {
 }
 
 #[then(regex = r#"^the editor text should be "([^"]*)" before handle_submit runs$"#)]
-fn editor_text_before_submit(world: &mut QuectoWorld, value: String) {
+fn editor_text_before_submit(world: &mut TuiWorld, value: String) {
     // The accept path sets the editor to the full command BEFORE calling
     // handle_submit, then clears it after submit. The command's side effect
     // (below) only fires if the FULL command — not the stale partial — reached
@@ -195,7 +195,7 @@ fn editor_text_before_submit(world: &mut QuectoWorld, value: String) {
 }
 
 #[then(regex = r#"^the submitted command should be "([^"]*)"$"#)]
-fn submitted_command_should_be(world: &mut QuectoWorld, value: String) {
+fn submitted_command_should_be(world: &mut TuiWorld, value: String) {
     assert_command_effect(world, &value);
     let after = with_harness(world, |h| h.editor_text());
     assert_eq!(
@@ -205,7 +205,7 @@ fn submitted_command_should_be(world: &mut QuectoWorld, value: String) {
 }
 
 #[then(regex = r#"^any code reading editor.text\(\) during submit should see "([^"]*)"$"#)]
-fn code_reading_editor_sees(world: &mut QuectoWorld, value: String) {
+fn code_reading_editor_sees(world: &mut TuiWorld, value: String) {
     // `/model` requests the model list over the socket; a stale `/mo` would have
     // been rejected and sent nothing — so the emitted command proves the full
     // command was the editor text visible during submit.
@@ -218,7 +218,7 @@ fn code_reading_editor_sees(world: &mut QuectoWorld, value: String) {
 }
 
 #[then(regex = r#"^not the stale partial "([^"]*)"$"#)]
-fn not_the_stale_partial(world: &mut QuectoWorld, partial: String) {
+fn not_the_stale_partial(world: &mut TuiWorld, partial: String) {
     let rejected = with_harness(world, |h| h.has_notification());
     assert!(
         !rejected,
@@ -228,13 +228,13 @@ fn not_the_stale_partial(world: &mut QuectoWorld, partial: String) {
 }
 
 #[then(regex = r#"^the editor text should be "([^"]*)"$"#)]
-fn editor_text_should_be(world: &mut QuectoWorld, value: String) {
+fn editor_text_should_be(world: &mut TuiWorld, value: String) {
     let got = with_harness(world, |h| h.editor_text());
     assert_eq!(got, value, "editor text should be {value:?}, got {got:?}");
 }
 
 #[then("the autocomplete should remain active for further editing")]
-fn autocomplete_remains_active(world: &mut QuectoWorld) {
+fn autocomplete_remains_active(world: &mut TuiWorld) {
     // Tab ACCEPTS the highlighted command into the editor without submitting
     // (unlike Enter). The suggestion list is `close()`d, not `clear()`ed, so its
     // entries are retained and the menu stays available as the user keeps

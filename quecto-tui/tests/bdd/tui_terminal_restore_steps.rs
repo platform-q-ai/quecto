@@ -11,7 +11,7 @@
 use super::*;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
 
-fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {
         world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
     }
@@ -31,7 +31,7 @@ fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R
 }
 
 #[given("the TUI enabled modifyOtherKeys mode")]
-fn given_enabled_modify_other_keys(world: &mut QuectoWorld) {
+fn given_enabled_modify_other_keys(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.enable_modify_other_keys();
         assert!(
@@ -42,13 +42,13 @@ fn given_enabled_modify_other_keys(world: &mut QuectoWorld) {
 }
 
 #[when("the TUI exits")]
-fn when_tui_exits(world: &mut QuectoWorld) {
+fn when_tui_exits(world: &mut TuiWorld) {
     // Run the exact protocol cleanup the event loop performs on teardown.
     with_harness(world, |h| h.run_protocol_cleanup());
 }
 
 #[then("modifyOtherKeys should be reset to mode 0")]
-fn then_modify_other_keys_reset(world: &mut QuectoWorld) {
+fn then_modify_other_keys_reset(world: &mut TuiWorld) {
     let enabled = with_harness(world, |h| h.modify_other_keys_enabled());
     assert!(
         !enabled,

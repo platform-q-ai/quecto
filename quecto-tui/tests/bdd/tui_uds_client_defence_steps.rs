@@ -30,7 +30,7 @@ pub struct TuiDefenceStream {
 }
 
 #[given("the TUI is connected to an agent event stream")]
-fn tui_connected_to_agent_event_stream(world: &mut QuectoWorld) {
+fn tui_connected_to_agent_event_stream(world: &mut TuiWorld) {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let socket_path = temp_dir.path().join("agent.sock");
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -51,7 +51,7 @@ fn tui_connected_to_agent_event_stream(world: &mut QuectoWorld) {
     });
 }
 
-fn send_frames_and_receive(world: &mut QuectoWorld, frames: Vec<Vec<u8>>) -> Vec<Event> {
+fn send_frames_and_receive(world: &mut TuiWorld, frames: Vec<Vec<u8>>) -> Vec<Event> {
     let stream = world
         .tui_defence_stream
         .as_mut()
@@ -88,7 +88,7 @@ fn send_frames_and_receive(world: &mut QuectoWorld, frames: Vec<Vec<u8>>) -> Vec
 #[when(
     "the agent sends an event larger than the supported event size followed by a valid token event"
 )]
-fn agent_sends_oversized_then_valid(world: &mut QuectoWorld) {
+fn agent_sends_oversized_then_valid(world: &mut TuiWorld) {
     // A well-formed token event whose total frame size exceeds the cap. Were
     // the client's bound ever removed, this would parse and be delivered as a
     // token carrying OVERSIZED_MARKER, which the ignore step would catch.
@@ -107,7 +107,7 @@ fn agent_sends_oversized_then_valid(world: &mut QuectoWorld) {
 }
 
 #[when("the agent sends an event just below the supported event size limit")]
-fn agent_sends_event_just_below_limit(world: &mut QuectoWorld) {
+fn agent_sends_event_just_below_limit(world: &mut TuiWorld) {
     let token_prefix = r#"{"type":"token","token":""#;
     let token_suffix = r#""}"#;
     let token_len = MAX_LINE_BYTES - token_prefix.len() - token_suffix.len() - 1;
@@ -128,7 +128,7 @@ fn agent_sends_event_just_below_limit(world: &mut QuectoWorld) {
 }
 
 #[when("the agent sends repeated oversized events followed by a valid token event")]
-fn agent_sends_repeated_oversized_events_then_valid(world: &mut QuectoWorld) {
+fn agent_sends_repeated_oversized_events_then_valid(world: &mut TuiWorld) {
     let frames = (0..3)
         .map(|idx| {
             let mut oversized = String::with_capacity(MAX_LINE_BYTES + 131_072);
@@ -150,7 +150,7 @@ fn agent_sends_repeated_oversized_events_then_valid(world: &mut QuectoWorld) {
 }
 
 #[when("the agent reports completion with details the TUI does not display")]
-fn agent_reports_completion_with_undisplayed_details(world: &mut QuectoWorld) {
+fn agent_reports_completion_with_undisplayed_details(world: &mut TuiWorld) {
     let events = send_frames_and_receive(
         world,
         vec![
@@ -174,7 +174,7 @@ fn agent_reports_completion_with_undisplayed_details(world: &mut QuectoWorld) {
 
 #[then("the TUI should ignore the oversized event")]
 #[then("the TUI should ignore the oversized events")]
-fn tui_ignores_oversized_event(world: &mut QuectoWorld) {
+fn tui_ignores_oversized_event(world: &mut TuiWorld) {
     let stream = world.tui_defence_stream.as_ref().expect("stream");
     assert!(
         !stream.received_events.iter().any(|event| matches!(
@@ -186,7 +186,7 @@ fn tui_ignores_oversized_event(world: &mut QuectoWorld) {
 }
 
 #[then("the TUI should receive the later token event")]
-fn tui_receives_later_token_event(world: &mut QuectoWorld) {
+fn tui_receives_later_token_event(world: &mut TuiWorld) {
     let stream = world.tui_defence_stream.as_ref().expect("stream");
     match &stream.latest_event {
         Some(Event::Token { token }) => assert_eq!(token, "later"),
@@ -195,7 +195,7 @@ fn tui_receives_later_token_event(world: &mut QuectoWorld) {
 }
 
 #[then("the TUI should receive the event")]
-fn tui_receives_event(world: &mut QuectoWorld) {
+fn tui_receives_event(world: &mut TuiWorld) {
     let stream = world.tui_defence_stream.as_ref().expect("stream");
     match &stream.latest_event {
         Some(Event::Token { token }) => {
@@ -215,7 +215,7 @@ fn tui_receives_event(world: &mut QuectoWorld) {
 }
 
 #[then("completion is shown as before")]
-fn completion_is_shown_as_before(world: &mut QuectoWorld) {
+fn completion_is_shown_as_before(world: &mut TuiWorld) {
     let stream = world.tui_defence_stream.as_ref().expect("stream");
     assert!(matches!(stream.completion_agent_end, Some(Event::AgentEnd)));
     match &stream.completion_turn_end {
@@ -228,7 +228,7 @@ fn completion_is_shown_as_before(world: &mut QuectoWorld) {
 }
 
 #[then("undisplayed completion details do not remain in the client event")]
-fn undisplayed_completion_details_are_discarded(world: &mut QuectoWorld) {
+fn undisplayed_completion_details_are_discarded(world: &mut TuiWorld) {
     let stream = world.tui_defence_stream.as_ref().expect("stream");
     let debug = format!(
         "{:?}{:?}",

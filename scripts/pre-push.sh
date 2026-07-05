@@ -19,6 +19,7 @@ cd "$ROOT"
 
 E2E_TIMEOUT="${QUECTO_E2E_TIMEOUT:-12m}"
 BDD_SHARDS="${QUECTO_BDD_SHARDS:-24}"
+TUI_BDD_SHARDS="${QUECTO_TUI_BDD_SHARDS:-8}"
 FORCE_RUN="${QUECTO_PREPUSH_FORCE:-0}"
 
 HEAD_SHA="$(git rev-parse HEAD)"
@@ -105,6 +106,16 @@ PID_CORE_GUARDS=$!
 ) &
 PID_BDD=$!
 
+(
+    bash "$ROOT/scripts/run-bdd-shards.sh" \
+        --suite "tui-bdd" \
+        --package "quecto-tui" \
+        --features "test-harness" \
+        --shards "$TUI_BDD_SHARDS" \
+        --timeout "$E2E_TIMEOUT"
+) &
+PID_TUI_BDD=$!
+
 FAIL=0
 if ! wait "$PID_CORE_GUARDS"; then
     echo -e "${RED}FAIL${NC}: cargo test -p quecto-agentic-harness --lib ${TEST_TARGET_ARGS[*]}"
@@ -112,6 +123,10 @@ if ! wait "$PID_CORE_GUARDS"; then
 fi
 if ! wait "$PID_BDD"; then
     echo -e "${RED}FAIL${NC}: non-real BDD shards"
+    FAIL=1
+fi
+if ! wait "$PID_TUI_BDD"; then
+    echo -e "${RED}FAIL${NC}: TUI BDD shards"
     FAIL=1
 fi
 
@@ -212,7 +227,7 @@ fi
 
 step "11/11" "Pre-push summary"
 echo "All local push gates passed."
-echo "BDD shards: ${BDD_SHARDS}, timeout per shard: ${E2E_TIMEOUT}"
+echo "BDD shards: ${BDD_SHARDS}; TUI BDD shards: ${TUI_BDD_SHARDS}; timeout per shard: ${E2E_TIMEOUT}"
 echo "Coverage threshold: ${COV_THRESHOLD}%"
 
 echo -e "\n${GREEN}Pre-push passed.${NC}"

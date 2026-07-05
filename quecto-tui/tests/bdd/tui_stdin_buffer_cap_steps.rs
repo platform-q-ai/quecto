@@ -4,14 +4,14 @@
 //! `MAX_BUFFER_SIZE` is `pub(crate)`, so these tests assert against the literal
 //! 64 KB from the spec rather than importing the constant.
 
-use crate::QuectoWorld;
+use crate::TuiWorld;
 use cucumber::{given, then, when};
 use quecto_tui::interface::stdin_buffer::StdinBuffer;
 
 /// The 64 KB cap the spec pins the buffer to.
 const CAP: usize = 64 * 1024;
 
-fn buffer(world: &mut QuectoWorld) -> &mut StdinBuffer {
+fn buffer(world: &mut TuiWorld) -> &mut StdinBuffer {
     &mut world
         .tui_stdin_buffer
         .as_mut()
@@ -19,14 +19,14 @@ fn buffer(world: &mut QuectoWorld) -> &mut StdinBuffer {
         .0
 }
 
-fn feed(world: &mut QuectoWorld, data: &[u8]) {
+fn feed(world: &mut TuiWorld, data: &[u8]) {
     let accepted_all = buffer(world).feed(data);
     world.tui_stdin_last_feed_ok = Some(accepted_all);
     world.tui_stdin_fed_total += data.len();
 }
 
 #[given("the stdin buffer is empty")]
-fn stdin_buffer_empty(world: &mut QuectoWorld) {
+fn stdin_buffer_empty(world: &mut TuiWorld) {
     world.tui_stdin_buffer = Some(crate::DebugStdinBuffer(StdinBuffer::new()));
     world.tui_stdin_last_feed_ok = None;
     world.tui_stdin_fed_total = 0;
@@ -34,13 +34,13 @@ fn stdin_buffer_empty(world: &mut QuectoWorld) {
 }
 
 #[when("64KB of data is fed into the buffer")]
-fn feed_64kb(world: &mut QuectoWorld) {
+fn feed_64kb(world: &mut TuiWorld) {
     let data = vec![b'a'; CAP];
     feed(world, &data);
 }
 
 #[then("the buffer should accept the data")]
-fn buffer_accepts(world: &mut QuectoWorld) {
+fn buffer_accepts(world: &mut TuiWorld) {
     assert_eq!(
         world.tui_stdin_last_feed_ok,
         Some(true),
@@ -49,12 +49,12 @@ fn buffer_accepts(world: &mut QuectoWorld) {
 }
 
 #[when("1 more byte is fed")]
-fn feed_one_more(world: &mut QuectoWorld) {
+fn feed_one_more(world: &mut TuiWorld) {
     feed(world, b"x");
 }
 
 #[then("the extra byte should be silently dropped")]
-fn extra_byte_dropped(world: &mut QuectoWorld) {
+fn extra_byte_dropped(world: &mut TuiWorld) {
     assert_eq!(
         world.tui_stdin_last_feed_ok,
         Some(false),
@@ -63,7 +63,7 @@ fn extra_byte_dropped(world: &mut QuectoWorld) {
 }
 
 #[then("the buffer size should not exceed 64KB")]
-fn size_within_cap(world: &mut QuectoWorld) {
+fn size_within_cap(world: &mut TuiWorld) {
     // Drain everything the buffer actually holds and sum the byte lengths — the
     // only externally observable measure of the buffer's retained size.
     let drained = buffer(world).drain_all();
@@ -80,7 +80,7 @@ fn size_within_cap(world: &mut QuectoWorld) {
 }
 
 #[when("a 100-byte escape sequence is fed")]
-fn feed_100_byte_sequence(world: &mut QuectoWorld) {
+fn feed_100_byte_sequence(world: &mut TuiWorld) {
     // A CSI sequence: ESC [ <98 param bytes> <final byte>. Complete and well
     // within the cap, so it drains as exactly one sequence.
     let mut seq = Vec::with_capacity(100);
@@ -93,7 +93,7 @@ fn feed_100_byte_sequence(world: &mut QuectoWorld) {
 }
 
 #[then("the buffer should accept all bytes")]
-fn buffer_accepts_all(world: &mut QuectoWorld) {
+fn buffer_accepts_all(world: &mut TuiWorld) {
     assert_eq!(
         world.tui_stdin_last_feed_ok,
         Some(true),
@@ -102,7 +102,7 @@ fn buffer_accepts_all(world: &mut QuectoWorld) {
 }
 
 #[then("drain_complete should return the sequence")]
-fn drain_returns_sequence(world: &mut QuectoWorld) {
+fn drain_returns_sequence(world: &mut TuiWorld) {
     let seqs = buffer(world).drain_complete();
     assert_eq!(
         seqs.len(),
@@ -122,12 +122,12 @@ fn drain_returns_sequence(world: &mut QuectoWorld) {
 }
 
 #[when("a bracketed paste start marker arrives without end marker")]
-fn paste_start_without_end(world: &mut QuectoWorld) {
+fn paste_start_without_end(world: &mut TuiWorld) {
     feed(world, b"\x1b[200~");
 }
 
 #[when("100KB of paste content follows")]
-fn paste_content_follows(world: &mut QuectoWorld) {
+fn paste_content_follows(world: &mut TuiWorld) {
     // Feed 100 KB in chunks; the cap must reject the overflow.
     let chunk = vec![b'p'; 1024];
     for _ in 0..100 {
@@ -136,7 +136,7 @@ fn paste_content_follows(world: &mut QuectoWorld) {
 }
 
 #[then("the buffer should stop accepting data at 64KB")]
-fn buffer_stops_at_cap(world: &mut QuectoWorld) {
+fn buffer_stops_at_cap(world: &mut TuiWorld) {
     // The paste never completes (no end marker), so nothing drains as complete.
     assert!(
         buffer(world).drain_complete().is_empty(),
@@ -150,7 +150,7 @@ fn buffer_stops_at_cap(world: &mut QuectoWorld) {
 }
 
 #[then("memory usage should remain bounded")]
-fn memory_bounded(world: &mut QuectoWorld) {
+fn memory_bounded(world: &mut TuiWorld) {
     let drained = buffer(world).drain_all();
     let held: usize = drained.iter().map(|s| s.len()).sum();
     assert!(
@@ -160,7 +160,7 @@ fn memory_bounded(world: &mut QuectoWorld) {
 }
 
 #[given("a large bracketed paste (60KB) with proper end marker")]
-fn large_paste_with_end(world: &mut QuectoWorld) {
+fn large_paste_with_end(world: &mut TuiWorld) {
     world.tui_stdin_buffer = Some(crate::DebugStdinBuffer(StdinBuffer::new()));
     world.tui_stdin_last_feed_ok = None;
     world.tui_stdin_fed_total = 0;
@@ -172,13 +172,13 @@ fn large_paste_with_end(world: &mut QuectoWorld) {
 }
 
 #[when("drain_complete is called")]
-fn call_drain_complete(world: &mut QuectoWorld) {
+fn call_drain_complete(world: &mut TuiWorld) {
     let seqs = buffer(world).drain_complete();
     world.tui_stdin_drained = Some(seqs);
 }
 
 #[then("the paste should be extracted as one sequence")]
-fn paste_extracted_as_one(world: &mut QuectoWorld) {
+fn paste_extracted_as_one(world: &mut TuiWorld) {
     let seqs = world
         .tui_stdin_drained
         .as_ref()
@@ -195,7 +195,7 @@ fn paste_extracted_as_one(world: &mut QuectoWorld) {
 }
 
 #[then("the scan should not exhibit O(n²) behavior")]
-fn scan_not_quadratic(world: &mut QuectoWorld) {
+fn scan_not_quadratic(world: &mut TuiWorld) {
     // The paste (60 KB) drained in one pass and the buffer is now empty — the
     // production end-marker scan is a single `windows()` sweep, not a rescan per
     // byte. Assert the drain fully consumed the buffer (no pending remainder),

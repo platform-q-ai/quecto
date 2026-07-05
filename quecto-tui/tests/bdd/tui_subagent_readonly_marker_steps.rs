@@ -31,7 +31,7 @@ fn push_agents(h: &mut TuiHarness, agents: &[(String, bool)]) {
     h.event(subagents_changed(events));
 }
 
-fn init(world: &mut QuectoWorld, agents: &[(String, bool)]) {
+fn init(world: &mut TuiWorld, agents: &[(String, bool)]) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let h = rt.block_on(build(agents));
     world.tui_expected_subagents = agents.to_vec();
@@ -39,7 +39,7 @@ fn init(world: &mut QuectoWorld, agents: &[(String, bool)]) {
     world.tui_parity = Some(TuiParityHarness(h));
 }
 
-fn drive<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+fn drive<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     let handle = world
         .tui_parity_rt
         .as_ref()
@@ -51,7 +51,7 @@ fn drive<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R 
     f(h)
 }
 
-fn left_panel(world: &mut QuectoWorld) -> String {
+fn left_panel(world: &mut TuiWorld) -> String {
     drive(world, |h| h.left_panel())
 }
 
@@ -69,32 +69,32 @@ fn observer_rows(panel: &str) -> Vec<&str> {
 // ── Given ────────────────────────────────────────────────────────────────────
 
 #[given(expr = "a sub-agent-first TUI tracking a read-only sub-agent {string}")]
-fn given_readonly(world: &mut QuectoWorld, id: String) {
+fn given_readonly(world: &mut TuiWorld, id: String) {
     init(world, &[(id, true)]);
 }
 
 #[given(expr = "a sub-agent-first TUI tracking a read-write sub-agent {string}")]
-fn given_readwrite(world: &mut QuectoWorld, id: String) {
+fn given_readwrite(world: &mut TuiWorld, id: String) {
     init(world, &[(id, false)]);
 }
 
 #[given(
     expr = "a sub-agent-first TUI tracking a read-only sub-agent {string} and a read-write sub-agent {string}"
 )]
-fn given_mixed(world: &mut QuectoWorld, ro: String, rw: String) {
+fn given_mixed(world: &mut TuiWorld, ro: String, rw: String) {
     init(world, &[(ro, true), (rw, false)]);
 }
 
 // ── When ─────────────────────────────────────────────────────────────────────
 
 #[when("the operator views the left sub-agent panel")]
-fn when_views_panel(world: &mut QuectoWorld) {
+fn when_views_panel(world: &mut TuiWorld) {
     let panel = left_panel(world);
     assert!(!panel.trim().is_empty(), "left panel should render");
 }
 
 #[when(expr = "sub-agent {string} leaves")]
-fn when_leaves(world: &mut QuectoWorld, id: String) {
+fn when_leaves(world: &mut TuiWorld, id: String) {
     world
         .tui_expected_subagents
         .retain(|(agent_id, _)| agent_id != &id);
@@ -105,7 +105,7 @@ fn when_leaves(world: &mut QuectoWorld, id: String) {
 // ── Then ─────────────────────────────────────────────────────────────────────
 
 #[then(expr = "the left panel shows sub-agent {string} as an observer")]
-fn then_agent_is_observer(world: &mut QuectoWorld, id: String) {
+fn then_agent_is_observer(world: &mut TuiWorld, id: String) {
     let panel = left_panel(world);
     let row = row_for(&panel, &id)
         .unwrap_or_else(|| panic!("sub-agent {id} should appear in the left panel:\n{panel}"));
@@ -116,7 +116,7 @@ fn then_agent_is_observer(world: &mut QuectoWorld, id: String) {
 }
 
 #[then(expr = "the left panel shows sub-agent {string} without an observer marker")]
-fn then_agent_is_not_observer(world: &mut QuectoWorld, id: String) {
+fn then_agent_is_not_observer(world: &mut TuiWorld, id: String) {
     let panel = left_panel(world);
     let row = row_for(&panel, &id)
         .unwrap_or_else(|| panic!("sub-agent {id} should appear in the left panel:\n{panel}"));
@@ -127,7 +127,7 @@ fn then_agent_is_not_observer(world: &mut QuectoWorld, id: String) {
 }
 
 #[then(expr = "only sub-agent {string} is shown as an observer")]
-fn then_only_agent_is_observer(world: &mut QuectoWorld, id: String) {
+fn then_only_agent_is_observer(world: &mut TuiWorld, id: String) {
     let panel = left_panel(world);
     let rows = observer_rows(&panel);
     assert_eq!(
@@ -153,7 +153,7 @@ fn then_only_agent_is_observer(world: &mut QuectoWorld, id: String) {
 }
 
 #[then(expr = "the left panel no longer shows sub-agent {string}")]
-fn then_agent_absent(world: &mut QuectoWorld, id: String) {
+fn then_agent_absent(world: &mut TuiWorld, id: String) {
     let panel = left_panel(world);
     assert!(
         row_for(&panel, &id).is_none(),
@@ -162,7 +162,7 @@ fn then_agent_absent(world: &mut QuectoWorld, id: String) {
 }
 
 #[then("the left panel shows no observer sub-agents")]
-fn then_no_observers(world: &mut QuectoWorld) {
+fn then_no_observers(world: &mut TuiWorld) {
     let panel = left_panel(world);
     let rows = observer_rows(&panel);
     assert!(

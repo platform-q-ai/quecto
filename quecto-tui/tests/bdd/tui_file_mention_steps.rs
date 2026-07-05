@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::QuectoWorld;
+use crate::TuiWorld;
 use cucumber::{given, then, when};
 use quecto_tui::interface::component::Component;
 use quecto_tui::interface::components::autocomplete::AutocompleteResult;
@@ -11,20 +11,20 @@ use quecto_tui::interface::components::files_autocomplete::FilesAutocomplete;
 use quecto_tui::interface::keys::Key;
 
 #[given(regex = r#"^a workspace with files "([^"]*)"$"#)]
-fn a_workspace_with_files(world: &mut QuectoWorld, csv: String) {
+fn a_workspace_with_files(world: &mut TuiWorld, csv: String) {
     let files = parse_files(&csv);
     world.tui_files_autocomplete = Some(FilesAutocomplete::with_files(files, 8));
     world.tui_files_load_requested = false;
 }
 
 #[given("workspace file loading is pending")]
-fn workspace_file_loading_is_pending(world: &mut QuectoWorld) {
+fn workspace_file_loading_is_pending(world: &mut TuiWorld) {
     world.tui_files_autocomplete = Some(FilesAutocomplete::new(8));
     world.tui_files_load_requested = false;
 }
 
 #[given("workspace files were loaded more than 30 seconds ago")]
-fn workspace_files_were_loaded_more_than_30_seconds_ago(world: &mut QuectoWorld) {
+fn workspace_files_were_loaded_more_than_30_seconds_ago(world: &mut TuiWorld) {
     let mut fa = FilesAutocomplete::with_files(vec!["src/main.rs".to_string()], 8);
     fa.mark_loaded_at_for_test(Instant::now() - Duration::from_secs(31));
     world.tui_files_autocomplete = Some(fa);
@@ -32,7 +32,7 @@ fn workspace_files_were_loaded_more_than_30_seconds_ago(world: &mut QuectoWorld)
 }
 
 #[when(regex = r#"^the user types "([^"]*)" in the editor$"#)]
-fn the_user_types(world: &mut QuectoWorld, text: String) {
+fn the_user_types(world: &mut TuiWorld, text: String) {
     let fa = world
         .tui_files_autocomplete
         .as_mut()
@@ -43,7 +43,7 @@ fn the_user_types(world: &mut QuectoWorld, text: String) {
 }
 
 #[when(regex = r#"^workspace files finish loading "([^"]*)"$"#)]
-fn workspace_files_finish_loading(world: &mut QuectoWorld, csv: String) {
+fn workspace_files_finish_loading(world: &mut TuiWorld, csv: String) {
     let files = parse_files(&csv);
     let fa = world.tui_files_autocomplete.as_mut().unwrap();
     fa.apply_loaded_files(files);
@@ -54,7 +54,7 @@ fn workspace_files_finish_loading(world: &mut QuectoWorld, csv: String) {
 }
 
 #[then("the file mention popup is active")]
-fn popup_active(world: &mut QuectoWorld) {
+fn popup_active(world: &mut TuiWorld) {
     assert!(
         world.tui_files_autocomplete.as_ref().unwrap().is_active(),
         "expected the file mention popup to be active"
@@ -62,7 +62,7 @@ fn popup_active(world: &mut QuectoWorld) {
 }
 
 #[then("the file mention popup is not active")]
-fn popup_not_active(world: &mut QuectoWorld) {
+fn popup_not_active(world: &mut TuiWorld) {
     assert!(
         !world.tui_files_autocomplete.as_ref().unwrap().is_active(),
         "expected the file mention popup to be inactive"
@@ -70,7 +70,7 @@ fn popup_not_active(world: &mut QuectoWorld) {
 }
 
 #[then(regex = r#"^the file mention popup lists "([^"]*)"$"#)]
-fn popup_lists(world: &mut QuectoWorld, needle: String) {
+fn popup_lists(world: &mut TuiWorld, needle: String) {
     let fa = world.tui_files_autocomplete.as_mut().unwrap();
     let rendered = fa.render(80).join("\n");
     let plain: String = rendered
@@ -81,7 +81,7 @@ fn popup_lists(world: &mut QuectoWorld, needle: String) {
 }
 
 #[when("the user accepts the file mention")]
-fn accept_file_mention(world: &mut QuectoWorld) {
+fn accept_file_mention(world: &mut TuiWorld) {
     world
         .tui_files_autocomplete
         .as_mut()
@@ -90,7 +90,7 @@ fn accept_file_mention(world: &mut QuectoWorld) {
 }
 
 #[then(regex = r#"^the selected file is "([^"]*)"$"#)]
-fn selected_file_is(world: &mut QuectoWorld, expected: String) {
+fn selected_file_is(world: &mut TuiWorld, expected: String) {
     let fa = world.tui_files_autocomplete.as_mut().unwrap();
     match fa.take_result() {
         AutocompleteResult::Selected(v) => assert_eq!(v, expected),
@@ -99,7 +99,7 @@ fn selected_file_is(world: &mut QuectoWorld, expected: String) {
 }
 
 #[then("workspace file loading should be requested")]
-fn workspace_file_loading_should_be_requested(world: &mut QuectoWorld) {
+fn workspace_file_loading_should_be_requested(world: &mut TuiWorld) {
     assert!(
         world.tui_files_load_requested,
         "expected the component to request an async workspace-file load"

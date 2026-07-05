@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::{QuectoWorld, TuiParityHarness};
+use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
 use quecto_tui::infrastructure::client::Event;
 use quecto_tui::infrastructure::render::DiffRenderer;
@@ -36,7 +36,7 @@ fn count_borders(lines: &[String]) -> (usize, usize) {
     (top, bottom)
 }
 
-fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {
         world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
     }
@@ -58,7 +58,7 @@ fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R
 // ── Scenario 1: borders stable during a streaming response (App-level) ────────
 
 #[given("the agent is streaming tokens")]
-fn agent_streaming_tokens(world: &mut QuectoWorld) {
+fn agent_streaming_tokens(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.event(Event::AgentStart);
         for _ in 0..20 {
@@ -69,12 +69,12 @@ fn agent_streaming_tokens(world: &mut QuectoWorld) {
 }
 
 #[given("the spinner is active above the editor")]
-fn spinner_active(world: &mut QuectoWorld) {
+fn spinner_active(world: &mut TuiWorld) {
     with_harness(world, |h| h.show_activity_spinner("Working"));
 }
 
 #[when("the screen re-renders on each token")]
-fn rerender_each_token(world: &mut QuectoWorld) {
+fn rerender_each_token(world: &mut TuiWorld) {
     // Drive several more token renders through the real render path.
     with_harness(world, |h| {
         for _ in 0..10 {
@@ -84,7 +84,7 @@ fn rerender_each_token(world: &mut QuectoWorld) {
 }
 
 #[then("the editor should show exactly one top border and one bottom border")]
-fn editor_one_top_one_bottom(world: &mut QuectoWorld) {
+fn editor_one_top_one_bottom(world: &mut TuiWorld) {
     let stack = with_harness(world, |h| h.bottom_stack());
     let lines: Vec<String> = stack.lines().map(str::to_string).collect();
     let (top, bottom) = count_borders(&lines);
@@ -101,7 +101,7 @@ fn editor_one_top_one_bottom(world: &mut QuectoWorld) {
 // ── Scenario 2: multi-line paste keeps a single clean frame (component-level) ─
 
 #[given(regex = r#"^an editor component with text "([^"]*)"$"#)]
-fn editor_component_with_text(world: &mut QuectoWorld, text: String) {
+fn editor_component_with_text(world: &mut TuiWorld, text: String) {
     let mut editor = Editor::new();
     if !text.is_empty() {
         editor.set_text(&text);
@@ -111,7 +111,7 @@ fn editor_component_with_text(world: &mut QuectoWorld, text: String) {
 }
 
 #[when(regex = r#"^the user pastes "(.*)"$"#)]
-fn user_pastes(world: &mut QuectoWorld, text: String) {
+fn user_pastes(world: &mut TuiWorld, text: String) {
     // The feature encodes newlines as literal \r\n; feed the real bytes through
     // the production bracketed-paste handler (Key::Paste).
     let payload = text.replace("\\r", "\r").replace("\\n", "\n");
@@ -120,7 +120,7 @@ fn user_pastes(world: &mut QuectoWorld, text: String) {
 }
 
 #[when(regex = r#"^the editor renders at width (\d+) three times$"#)]
-fn editor_renders_thrice(world: &mut QuectoWorld, width: usize) {
+fn editor_renders_thrice(world: &mut TuiWorld, width: usize) {
     let editor = world.tui_editor.as_mut().expect("editor component");
     for _ in 0..3 {
         // Force a fresh layout each time so a border-duplication regression in
@@ -131,7 +131,7 @@ fn editor_renders_thrice(world: &mut QuectoWorld, width: usize) {
 }
 
 #[then("each render should show exactly one top border and one bottom border")]
-fn each_render_one_top_one_bottom(world: &mut QuectoWorld) {
+fn each_render_one_top_one_bottom(world: &mut TuiWorld) {
     assert_eq!(world.tui_editor_renders.len(), 3, "expected three renders");
     for (i, render) in world.tui_editor_renders.iter().enumerate() {
         let (top, bottom) = count_borders(render);
@@ -147,7 +147,7 @@ fn each_render_one_top_one_bottom(world: &mut QuectoWorld) {
 }
 
 #[then(regex = r#"^the rendered output should contain "([^"]*)"$"#)]
-fn rendered_output_contains(world: &mut QuectoWorld, needle: String) {
+fn rendered_output_contains(world: &mut TuiWorld, needle: String) {
     let joined: String = world
         .tui_editor_renders
         .iter()
@@ -175,13 +175,13 @@ impl std::io::Write for SharedWriter {
 }
 
 #[given("the TUI uses the alternate screen buffer")]
-fn tui_uses_alt_screen(world: &mut QuectoWorld) {
+fn tui_uses_alt_screen(world: &mut TuiWorld) {
     world.tui_render_full = None;
     world.tui_render_diff = None;
 }
 
 #[when("content is rendered via cursor home")]
-fn content_rendered_via_home(world: &mut QuectoWorld) {
+fn content_rendered_via_home(world: &mut TuiWorld) {
     let buf = Arc::new(Mutex::new(Vec::new()));
     let mut renderer = DiffRenderer::new(SharedWriter(buf.clone()));
 
@@ -201,7 +201,7 @@ fn content_rendered_via_home(world: &mut QuectoWorld) {
 }
 
 #[then("scrollback does not cause position errors")]
-fn scrollback_no_position_errors(world: &mut QuectoWorld) {
+fn scrollback_no_position_errors(world: &mut TuiWorld) {
     let full = world
         .tui_render_full
         .as_ref()

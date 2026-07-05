@@ -37,7 +37,7 @@ async fn build_harness(n: usize) -> TuiHarness {
 }
 
 /// Create the runtime-backed harness in the world with `n` sub-agents.
-fn init_harness(world: &mut QuectoWorld, n: usize) {
+fn init_harness(world: &mut TuiWorld, n: usize) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let h = rt.block_on(build_harness(n));
     world.tui_parity_rt = Some(rt);
@@ -46,7 +46,7 @@ fn init_harness(world: &mut QuectoWorld, n: usize) {
 
 /// Run a closure against the harness within the runtime context (its key/select
 /// paths spawn background tasks, so they need a live runtime).
-fn drive<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+fn drive<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     let handle = world
         .tui_parity_rt
         .as_ref()
@@ -110,12 +110,12 @@ fn seed_master_footer(h: &mut TuiHarness, model: &str, used: u64) {
 // ── Given ───────────────────────────────────────────────────────────────────
 
 #[given(expr = "a TUI tracking sub-agent {string}")]
-fn given_tracking(world: &mut QuectoWorld, _id: String) {
+fn given_tracking(world: &mut TuiWorld, _id: String) {
     init_harness(world, 1);
 }
 
 #[given(expr = "a TUI tracking sub-agent {string} with its own workflow")]
-fn given_tracking_with_workflow(world: &mut QuectoWorld, id: String) {
+fn given_tracking_with_workflow(world: &mut TuiWorld, id: String) {
     init_harness(world, 1);
     drive(world, |h| {
         h.route(&id, tui_harness::forwarded_workflow(&id, 2, 5));
@@ -123,7 +123,7 @@ fn given_tracking_with_workflow(world: &mut QuectoWorld, id: String) {
 }
 
 #[given(expr = "a TUI tracking sub-agent {string} with its own model and context usage")]
-fn given_tracking_with_gauges(world: &mut QuectoWorld, id: String) {
+fn given_tracking_with_gauges(world: &mut TuiWorld, id: String) {
     init_harness(world, 1);
     drive(world, |h| {
         seed_master_footer(h, "mastrmdl", 100_000);
@@ -132,7 +132,7 @@ fn given_tracking_with_gauges(world: &mut QuectoWorld, id: String) {
 }
 
 #[given(expr = "a TUI tracking sub-agent {string} with an open autocomplete popup")]
-fn given_tracking_with_popup(world: &mut QuectoWorld, _id: String) {
+fn given_tracking_with_popup(world: &mut TuiWorld, _id: String) {
     init_harness(world, 1);
     drive(world, |h| {
         h.press(Key::Char('/'));
@@ -140,7 +140,7 @@ fn given_tracking_with_popup(world: &mut QuectoWorld, _id: String) {
 }
 
 #[given(expr = "a TUI tracking sub-agent {string} with focus on the panel")]
-fn given_tracking_focus_panel(world: &mut QuectoWorld, _id: String) {
+fn given_tracking_focus_panel(world: &mut TuiWorld, _id: String) {
     init_harness(world, 1);
     drive(world, |h| {
         h.press(Key::Tab);
@@ -148,7 +148,7 @@ fn given_tracking_focus_panel(world: &mut QuectoWorld, _id: String) {
 }
 
 #[given("a TUI tracking two sub-agents with focus on the panel")]
-fn given_tracking_two_focus_panel(world: &mut QuectoWorld) {
+fn given_tracking_two_focus_panel(world: &mut TuiWorld) {
     init_harness(world, 2);
     drive(world, |h| {
         h.press(Key::Tab);
@@ -156,7 +156,7 @@ fn given_tracking_two_focus_panel(world: &mut QuectoWorld) {
 }
 
 #[given(expr = "a TUI viewing sub-agent {string}")]
-fn given_viewing(world: &mut QuectoWorld, id: String) {
+fn given_viewing(world: &mut TuiWorld, id: String) {
     init_harness(world, 1);
     drive(world, |h| {
         h.select(Some(&id));
@@ -165,7 +165,7 @@ fn given_viewing(world: &mut QuectoWorld, id: String) {
 }
 
 #[given(expr = "a TUI viewing sub-agent {string} with focus on the panel")]
-fn given_viewing_focus_panel(world: &mut QuectoWorld, id: String) {
+fn given_viewing_focus_panel(world: &mut TuiWorld, id: String) {
     init_harness(world, 1);
     drive(world, |h| {
         h.select(Some(&id));
@@ -174,7 +174,7 @@ fn given_viewing_focus_panel(world: &mut QuectoWorld, id: String) {
 }
 
 #[given(expr = "I have selected sub-agent {string}")]
-fn given_have_selected(world: &mut QuectoWorld, id: String) {
+fn given_have_selected(world: &mut TuiWorld, id: String) {
     drive(world, |h| {
         h.select(Some(&id));
     });
@@ -183,42 +183,42 @@ fn given_have_selected(world: &mut QuectoWorld, id: String) {
 // ── When ─────────────────────────────────────────────────────────────────────
 
 #[when(expr = "I select sub-agent {string}")]
-fn when_select(world: &mut QuectoWorld, id: String) {
+fn when_select(world: &mut TuiWorld, id: String) {
     drive(world, |h| {
         h.select(Some(&id));
     });
 }
 
 #[when("I return to the master")]
-fn when_return_master(world: &mut QuectoWorld) {
+fn when_return_master(world: &mut TuiWorld) {
     drive(world, |h| {
         h.select(None);
     });
 }
 
 #[when("I press Tab")]
-fn when_press_tab(world: &mut QuectoWorld) {
+fn when_press_tab(world: &mut TuiWorld) {
     drive(world, |h| {
         h.press(Key::Tab);
     });
 }
 
 #[when("I press Tab again")]
-fn when_press_tab_again(world: &mut QuectoWorld) {
+fn when_press_tab_again(world: &mut TuiWorld) {
     drive(world, |h| {
         h.press(Key::Tab);
     });
 }
 
 #[when("I move the highlight down")]
-fn when_move_down(world: &mut QuectoWorld) {
+fn when_move_down(world: &mut TuiWorld) {
     drive(world, |h| {
         h.press(Key::Down);
     });
 }
 
 #[when(expr = "I press digit {string}")]
-fn when_press_digit(world: &mut QuectoWorld, digit: String) {
+fn when_press_digit(world: &mut TuiWorld, digit: String) {
     let c = digit.chars().next().expect("a digit");
     drive(world, |h| {
         h.press(Key::Char(c));
@@ -226,28 +226,28 @@ fn when_press_digit(world: &mut QuectoWorld, digit: String) {
 }
 
 #[when("I press Enter")]
-fn when_press_enter(world: &mut QuectoWorld) {
+fn when_press_enter(world: &mut TuiWorld) {
     drive(world, |h| {
         h.press(Key::Enter);
     });
 }
 
 #[when("I press Esc")]
-fn when_press_esc(world: &mut QuectoWorld) {
+fn when_press_esc(world: &mut TuiWorld) {
     drive(world, |h| {
         h.press(Key::Escape);
     });
 }
 
 #[when(expr = "I send the prompt {string}")]
-fn when_send_prompt(world: &mut QuectoWorld, prompt: String) {
+fn when_send_prompt(world: &mut TuiWorld, prompt: String) {
     drive(world, |h| {
         h.submit(&prompt);
     });
 }
 
 #[when("I abort")]
-fn when_abort(world: &mut QuectoWorld) {
+fn when_abort(world: &mut TuiWorld) {
     drive(world, |h| {
         h.abort();
     });
@@ -256,7 +256,7 @@ fn when_abort(world: &mut QuectoWorld) {
 // ── Then ─────────────────────────────────────────────────────────────────────
 
 #[then(expr = "the active session is {string}")]
-fn then_active_is(world: &mut QuectoWorld, id: String) {
+fn then_active_is(world: &mut TuiWorld, id: String) {
     let active = drive(world, |h| h.active_agent());
     assert_eq!(
         active.as_deref(),
@@ -266,13 +266,13 @@ fn then_active_is(world: &mut QuectoWorld, id: String) {
 }
 
 #[then("the active session is the master")]
-fn then_active_is_master(world: &mut QuectoWorld) {
+fn then_active_is_master(world: &mut TuiWorld) {
     let active = drive(world, |h| h.active_agent());
     assert_eq!(active, None, "expected the master to be active");
 }
 
 #[then("the active session is unchanged")]
-fn then_active_unchanged(world: &mut QuectoWorld) {
+fn then_active_unchanged(world: &mut TuiWorld) {
     let active = drive(world, |h| h.active_agent());
     assert_eq!(
         active, None,
@@ -281,7 +281,7 @@ fn then_active_unchanged(world: &mut QuectoWorld) {
 }
 
 #[then(expr = "the view shows sub-agent {string}'s own workflow")]
-fn then_view_shows_workflow(world: &mut QuectoWorld, _id: String) {
+fn then_view_shows_workflow(world: &mut TuiWorld, _id: String) {
     let frame = drive(world, |h| h.full_frame());
     // Sub-agent-first (#820): the boxed main-pane bar shows the agent's OWN
     // active issue (`#7`) on its title line — the issue title is dropped.
@@ -292,7 +292,7 @@ fn then_view_shows_workflow(world: &mut QuectoWorld, _id: String) {
 }
 
 #[then("the view no longer shows the sub-agent's workflow")]
-fn then_view_hides_workflow(world: &mut QuectoWorld) {
+fn then_view_hides_workflow(world: &mut TuiWorld) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
         !frame.contains("#7"),
@@ -301,7 +301,7 @@ fn then_view_hides_workflow(world: &mut QuectoWorld) {
 }
 
 #[then("the footer shows the sub-agent's own model and context usage")]
-fn then_footer_subagent(world: &mut QuectoWorld) {
+fn then_footer_subagent(world: &mut TuiWorld) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
         frame.contains("subbymdl") && frame.contains("50k"),
@@ -314,7 +314,7 @@ fn then_footer_subagent(world: &mut QuectoWorld) {
 }
 
 #[then("the footer shows the master's own model and context usage")]
-fn then_footer_master(world: &mut QuectoWorld) {
+fn then_footer_master(world: &mut TuiWorld) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
         frame.contains("mastrmdl") && frame.contains("100k"),
@@ -327,12 +327,12 @@ fn then_footer_master(world: &mut QuectoWorld) {
 }
 
 #[then("focus is on the panel")]
-fn then_focus_panel(world: &mut QuectoWorld) {
+fn then_focus_panel(world: &mut TuiWorld) {
     assert!(drive(world, |h| h.focus_on_panel()), "expected panel focus");
 }
 
 #[then("focus stays on the panel")]
-fn then_focus_stays_panel(world: &mut QuectoWorld) {
+fn then_focus_stays_panel(world: &mut TuiWorld) {
     assert!(
         drive(world, |h| h.focus_on_panel()),
         "focus must stay on the panel"
@@ -340,7 +340,7 @@ fn then_focus_stays_panel(world: &mut QuectoWorld) {
 }
 
 #[then("focus is on the input")]
-fn then_focus_input(world: &mut QuectoWorld) {
+fn then_focus_input(world: &mut TuiWorld) {
     assert!(
         !drive(world, |h| h.focus_on_panel()),
         "expected input focus"
@@ -348,7 +348,7 @@ fn then_focus_input(world: &mut QuectoWorld) {
 }
 
 #[then("focus stays on the input")]
-fn then_focus_stays_input(world: &mut QuectoWorld) {
+fn then_focus_stays_input(world: &mut TuiWorld) {
     assert!(
         !drive(world, |h| h.focus_on_panel()),
         "focus must stay on the input"
@@ -356,7 +356,7 @@ fn then_focus_stays_input(world: &mut QuectoWorld) {
 }
 
 #[then(expr = "the prompt appears in sub-agent {string}'s session")]
-fn then_prompt_in_session(world: &mut QuectoWorld, _id: String) {
+fn then_prompt_in_session(world: &mut TuiWorld, _id: String) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
         frame.contains("steer please"),
@@ -365,7 +365,7 @@ fn then_prompt_in_session(world: &mut QuectoWorld, _id: String) {
 }
 
 #[then("no prompt is sent to the master")]
-fn then_no_master_prompt(world: &mut QuectoWorld) {
+fn then_no_master_prompt(world: &mut TuiWorld) {
     let cmds = drain_master_commands(world);
     assert!(
         !cmds
@@ -376,7 +376,7 @@ fn then_no_master_prompt(world: &mut QuectoWorld) {
 }
 
 #[then("no abort is sent to the master")]
-fn then_no_master_abort(world: &mut QuectoWorld) {
+fn then_no_master_abort(world: &mut TuiWorld) {
     let cmds = drain_master_commands(world);
     assert!(
         !cmds.iter().any(|c| c.contains("\"abort\"")),
@@ -385,7 +385,7 @@ fn then_no_master_abort(world: &mut QuectoWorld) {
 }
 
 #[then("a vertical divider is drawn between the panel and the body")]
-fn then_divider_drawn(world: &mut QuectoWorld) {
+fn then_divider_drawn(world: &mut TuiWorld) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
         frame.contains('│'),
@@ -394,7 +394,7 @@ fn then_divider_drawn(world: &mut QuectoWorld) {
 }
 
 #[then("the divider styling reflects the focused pane")]
-fn then_divider_styling(world: &mut QuectoWorld) {
+fn then_divider_styling(world: &mut TuiWorld) {
     // After Tab focuses the panel, the divider's styling must differ from the
     // input-focused frame. Compare the raw (ANSI-bearing) frame before/after.
     let panel_focus = drive(world, |h| {
@@ -413,14 +413,14 @@ fn then_divider_styling(world: &mut QuectoWorld) {
 // ── #828 Part 1: full conversation backfill on select ───────────────────────
 
 #[given(expr = "sub-agent {string} has streamed the live token {string} since selection")]
-fn given_streamed_live(world: &mut QuectoWorld, id: String, token: String) {
+fn given_streamed_live(world: &mut TuiWorld, id: String, token: String) {
     drive(world, |h| {
         h.route(&id, Event::Token { token });
     });
 }
 
 #[when(expr = "the backfill history {string} then {string} arrives")]
-fn when_backfill_arrives(world: &mut QuectoWorld, user: String, assistant: String) {
+fn when_backfill_arrives(world: &mut TuiWorld, user: String, assistant: String) {
     // Route to the agent captured by the "viewing sub-agent" given, not a
     // literal id, so this step is reusable for any agent (#828 review).
     let id = world
@@ -450,7 +450,7 @@ fn when_backfill_arrives(world: &mut QuectoWorld, user: String, assistant: Strin
 }
 
 #[then(expr = "the sub-agent's session shows {string}")]
-fn then_session_shows(world: &mut QuectoWorld, text: String) {
+fn then_session_shows(world: &mut TuiWorld, text: String) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
         frame.contains(&text),
@@ -459,7 +459,7 @@ fn then_session_shows(world: &mut QuectoWorld, text: String) {
 }
 
 #[then(expr = "the sub-agent's session still shows {string}")]
-fn then_session_still_shows(world: &mut QuectoWorld, text: String) {
+fn then_session_still_shows(world: &mut TuiWorld, text: String) {
     // Same check as `then_session_shows`; the distinct prose ("still") documents
     // that the backfill PRESERVED earlier live content (#828 review). Inlined so
     // the assertion is visible in this step body.
@@ -471,7 +471,7 @@ fn then_session_still_shows(world: &mut QuectoWorld, text: String) {
 }
 
 #[then(expr = "{string} appears above {string} in the session")]
-fn then_appears_above(world: &mut QuectoWorld, upper: String, lower: String) {
+fn then_appears_above(world: &mut TuiWorld, upper: String, lower: String) {
     let frame = drive(world, |h| h.full_frame());
     let up = frame.find(&upper);
     let lo = frame.find(&lower);
@@ -482,7 +482,7 @@ fn then_appears_above(world: &mut QuectoWorld, upper: String, lower: String) {
 }
 
 /// Drain the commands the MASTER client would have emitted (within the runtime).
-fn drain_master_commands(world: &mut QuectoWorld) -> Vec<String> {
+fn drain_master_commands(world: &mut TuiWorld) -> Vec<String> {
     let handle = world
         .tui_parity_rt
         .as_ref()

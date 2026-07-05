@@ -33,6 +33,9 @@ jobs:
       - name: TUI harness and unit tests
         run: cargo test -p quecto-tui --lib
 
+      - name: TUI BDD compile check
+        run: cargo test -p quecto-tui --features test-harness --test bdd --no-run
+
   mock-llm-e2e:
     name: Mock LLM E2E Tests
     runs-on: blacksmith-32vcpu-ubuntu-2404
@@ -49,6 +52,23 @@ jobs:
 
       - name: Mock LLM BDD/e2e tests
         run: bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 5m --tag mock-llm
+
+  tui-bdd:
+    name: TUI BDD Tests
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: TUI BDD tests
+        run: bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --features test-harness --shards 8 --timeout 5m
 
   non-real-bdd:
     name: Non-Real BDD Tests
