@@ -65,7 +65,7 @@ step "4/11" "cargo fmt --check"
 cargo fmt --all -- --check
 
 step "5/11" "cargo clippy (strict, workspace)"
-cargo clippy --workspace --all-targets --features quecto/test-support -- -D warnings \
+cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
@@ -93,7 +93,7 @@ for t in "${TEST_TARGETS[@]}"; do TEST_TARGET_ARGS+=(--test "$t"); done
 echo "  Integration targets: ${TEST_TARGETS[*]}"
 
 (
-    cargo test -p quecto --no-fail-fast --lib "${TEST_TARGET_ARGS[@]}" 2>&1 | "$ROOT/scripts/test-filter.sh"
+    cargo test -p quecto-agentic-harness --no-fail-fast --lib "${TEST_TARGET_ARGS[@]}" 2>&1 | "$ROOT/scripts/test-filter.sh"
 ) &
 PID_CORE_GUARDS=$!
 
@@ -107,7 +107,7 @@ PID_BDD=$!
 
 FAIL=0
 if ! wait "$PID_CORE_GUARDS"; then
-    echo -e "${RED}FAIL${NC}: cargo test -p quecto --lib ${TEST_TARGET_ARGS[*]}"
+    echo -e "${RED}FAIL${NC}: cargo test -p quecto-agentic-harness --lib ${TEST_TARGET_ARGS[*]}"
     FAIL=1
 fi
 if ! wait "$PID_BDD"; then
@@ -133,7 +133,7 @@ fi
 COV_FAIL=0
 
 echo "  quecto (core)..."
-COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto --fail-under-regions "$COV_THRESHOLD" 2>&1) || {
+COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto-agentic-harness --fail-under-regions "$COV_THRESHOLD" 2>&1) || {
     echo -e "  ${RED}FAIL${NC}: quecto region coverage below ${COV_THRESHOLD}%"
     COV_FAIL=1
 }

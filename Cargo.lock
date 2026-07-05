@@ -1623,7 +1623,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "quecto"
+name = "quecto-agentic-harness"
 version = "0.83.2"
 dependencies = [
  "base64",
