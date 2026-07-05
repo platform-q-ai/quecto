@@ -1,6 +1,6 @@
 [package]
 name = "quecto-tui"
-version = "0.10.8"
+version = "0.10.9"
 edition = "2024"
 description = "Lightweight terminal UI client for quecto"
 license = "LicenseRef-Proprietary"
@@ -30,6 +30,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 libc = "0.2"
 
 [dev-dependencies]
+tempfile = "3"
 # `test-util` enables tokio's paused-clock test helpers (`time::pause`/`advance`)
 # so timer tests can drive a deterministic clock instead of wall time (#838).
 tokio = { version = "1", features = ["test-util"] }

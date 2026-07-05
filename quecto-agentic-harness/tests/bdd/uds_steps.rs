@@ -419,6 +419,46 @@ fn drive_single_client_over_real_socket(world: &mut QuectoWorld) {
     world.stdout = world.agent_events.join("\n");
 }
 
+fn uds_parse_error_text_from_events(events: &[String]) -> String {
+    events
+        .iter()
+        .find_map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).ok()?;
+            if v["type"] == "response" && v["command"] == "parse_error" {
+                v["error"].as_str().map(str::to_owned)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| panic!("expected parse_error response in events: {events:#?}"))
+}
+
+fn uds_event_types_from_lines(events: &[String]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|v| v["type"].as_str().map(str::to_owned))
+        })
+        .collect()
+}
+
+fn reset_uds_run(world: &mut QuectoWorld, commands: Vec<String>) {
+    world.uds_commands = commands;
+    world.agent_events.clear();
+    world.agent_stderr.clear();
+    world.uds_execution_error = None;
+    world.uds_exit_code = None;
+    world.stdout.clear();
+    world.mc_mode = false;
+    world.mc_exit_code = None;
+    world.mc_client_events.clear();
+    world.mc_client_commands.clear();
+    world.mc_connected_clients.clear();
+    world.mc_disconnected_clients.clear();
+}
+
 // ─── Given steps ─────────────────────────────────────────────────────────────
 
 #[given(expr = "the mock LLM returns a tool call then a text response {string}")]
@@ -797,6 +837,36 @@ fn when_close_uds_connection_multi_client(world: &mut QuectoWorld) {
     drive_single_client_over_real_socket(world);
 }
 
+#[when("I send the same malformed command through both UDS connection modes")]
+fn when_same_malformed_command_through_both_modes(world: &mut QuectoWorld) {
+    let malformed = "{not valid json".to_string();
+
+    reset_uds_run(world, vec![malformed.clone()]);
+    execute_uds(world);
+    let single = uds_parse_error_text_from_events(&world.agent_events);
+
+    reset_uds_run(world, vec![malformed]);
+    drive_single_client_over_real_socket(world);
+    let multi = uds_parse_error_text_from_events(&world.agent_events);
+
+    world.uds_compare_parse_errors = Some((single, multi));
+}
+
+#[when("I send the same prompt through both UDS event delivery modes")]
+fn when_same_prompt_through_both_event_delivery_modes(world: &mut QuectoWorld) {
+    let prompt = serde_json::json!({"type": "prompt", "message": "hello"}).to_string();
+
+    reset_uds_run(world, vec![prompt.clone()]);
+    execute_uds(world);
+    let writer = uds_event_types_from_lines(&world.agent_events);
+
+    reset_uds_run(world, vec![prompt]);
+    drive_single_client_over_real_socket(world);
+    let broadcast = uds_event_types_from_lines(&world.agent_events);
+
+    world.uds_compare_event_types = Some((writer, broadcast));
+}
+
 /// Run quecto agent with an invalid --mode value (uses existing CLI runner).
 #[when(expr = "I run quecto agent --mode {word} -m {string}")]
 fn when_run_agent_with_invalid_mode(world: &mut QuectoWorld, mode: String, message: String) {
@@ -1048,6 +1118,33 @@ fn then_parse_error_preserves_detail(world: &mut QuectoWorld) {
     assert_ne!(
         err, "invalid JSON command",
         "the generic placeholder text must not be emitted (#994 criterion 2)"
+    );
+}
+
+#[then("both responses should contain the same parse error text")]
+fn then_both_responses_same_parse_error_text(world: &mut QuectoWorld) {
+    let (single, multi) = world
+        .uds_compare_parse_errors
+        .as_ref()
+        .expect("missing captured parse-error comparison");
+    assert_eq!(multi, single);
+    assert!(
+        single.contains("parse error:"),
+        "unexpected parse error: {single:?}"
+    );
+    assert_ne!(single, "invalid JSON command");
+}
+
+#[then("both clients should receive the same event sequence")]
+fn then_both_clients_receive_same_event_sequence(world: &mut QuectoWorld) {
+    let (writer, broadcast) = world
+        .uds_compare_event_types
+        .as_ref()
+        .expect("missing captured event sequence comparison");
+    assert_eq!(broadcast, writer);
+    assert!(
+        writer.iter().any(|t| t == "agent_start") && writer.iter().any(|t| t == "agent_end"),
+        "event sequence should include the visible agent lifecycle: {writer:?}"
     );
 }
 

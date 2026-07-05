@@ -466,6 +466,23 @@ struct ToolCallView<'a> {
     arguments: &'a str,
 }
 
+struct ToolCallsView<'a>(&'a [crate::domain::message::ToolCall]);
+
+impl serde::Serialize for ToolCallsView<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for tc in self.0 {
+            seq.serialize_element(&ToolCallView {
+                id: &tc.id,
+                name: &tc.name,
+                arguments: &tc.arguments,
+            })?;
+        }
+        seq.end()
+    }
+}
+
 impl serde::Serialize for MessageView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
@@ -473,16 +490,7 @@ impl serde::Serialize for MessageView<'_> {
         let mut s = serializer.serialize_struct("Message", 5)?;
         s.serialize_field("role", role_wire_name(&msg.role))?;
         s.serialize_field("content", &msg.content)?;
-        let tool_calls: Vec<ToolCallView<'_>> = msg
-            .tool_calls
-            .iter()
-            .map(|tc| ToolCallView {
-                id: &tc.id,
-                name: &tc.name,
-                arguments: &tc.arguments,
-            })
-            .collect();
-        s.serialize_field("toolCalls", &tool_calls)?;
+        s.serialize_field("toolCalls", &ToolCallsView(&msg.tool_calls))?;
         s.serialize_field("toolCallId", &msg.tool_call_id)?;
         s.serialize_field("toolName", &msg.tool_name)?;
         s.end()

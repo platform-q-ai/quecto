@@ -417,6 +417,10 @@ pub struct QuectoWorld {
     pub uds_commands: Vec<String>,
     /// UDS agent: captured event lines after execution
     pub agent_events: Vec<String>,
+    /// UDS agent: parse-error texts captured from two UDS connection modes.
+    pub uds_compare_parse_errors: Option<(String, String)>,
+    /// UDS agent: event type sequences captured from two UDS event delivery modes.
+    pub uds_compare_event_types: Option<(Vec<String>, Vec<String>)>,
     /// UDS agent: captured execution stderr from the helper thread
     pub uds_execution_error: Option<String>,
     /// UDS agent: replace config with invalid JSON after building the agent but before the command loop

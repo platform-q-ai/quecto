@@ -734,7 +734,7 @@ Sent when a client falls behind on the broadcast channel (buffer overflow). The 
 
 ## Error handling
 
-- **Malformed JSON:** Returns `response` with `command: "parse_error"` and `success: false`
+- **Malformed JSON:** Returns `response` with `command: "parse_error"` and `success: false`. The `error` text preserves the detailed serde parse error in both single-client and multi-client modes; clients that previously string-matched the old generic `"invalid JSON command"` text should switch to the structured `command: "parse_error"` / `success: false` fields.
 - **Unknown command type:** Returns `response` with `success: false`
 - **Line too long:** Returns `response` with `command: "parse_error"` and error `"line exceeds 1 MiB limit"`
 - **Agent error during prompt:** Returns `response` with `command: "agent_error"`. The agent stays alive — subsequent commands are processed normally
