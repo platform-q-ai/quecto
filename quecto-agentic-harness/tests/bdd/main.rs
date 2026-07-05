@@ -784,6 +784,12 @@ pub struct QuectoWorld {
     pub _real_llm_uds: bool,
     /// Workflow V2: when true, register WorkflowEngine + WorkflowTool + WorkflowGuard
     pub _workflow_enabled: bool,
+    /// Workflow tool BDD: direct tool under test.
+    pub workflow_tool: Option<quecto::infrastructure::tools::workflow_tool::WorkflowTool>,
+    /// Workflow tool BDD: captured workflow_state events emitted by the tool.
+    pub workflow_events: Option<Arc<Mutex<Vec<serde_json::Value>>>>,
+    /// Workflow tool BDD: last direct tool execution result.
+    pub workflow_tool_result: Option<ToolResult>,
     // --- Audit log (#609) ---
     /// Temp dir for audit log tests (kept alive)
     pub tempdir: Option<TempDir>,
@@ -1223,6 +1229,7 @@ mod tui_context_usage_steps;
 mod uds_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;
+mod workflow_tool_steps;
 
 // Runner
 // ===========================================================================

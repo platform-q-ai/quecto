@@ -340,3 +340,107 @@ fn then_footer_shows_subagent_model_and_context(
         "selected sub-agent footer should show model {model:?} and context {context:?}, got:\n{frame}"
     );
 }
+
+// ── TUI tool execution rendering (`tui_tool_execution_rendering.feature`) ──
+
+fn tool_start(tool_call_id: &str, tool_name: &str, args: serde_json::Value) -> Event {
+    Event::ToolExecutionStart {
+        tool_call_id: tool_call_id.into(),
+        tool_name: tool_name.into(),
+        args,
+    }
+}
+
+fn tool_success(tool_call_id: &str, tool_name: &str, text: &str) -> Event {
+    Event::ToolExecutionEnd {
+        tool_call_id: tool_call_id.into(),
+        tool_name: tool_name.into(),
+        result: serde_json::json!({ "content": [{ "type": "text", "text": text }] }),
+        is_error: false,
+    }
+}
+
+#[given("a fresh TUI tool rendering harness")]
+fn given_fresh_tool_rendering_harness(world: &mut TuiWorld) {
+    init_fresh(world);
+}
+
+#[when(expr = "a bash tool call runs command {string} with {int} output lines")]
+fn when_bash_tool_call_runs(world: &mut TuiWorld, command: String, line_count: u32) {
+    let output = (1..=line_count)
+        .map(|n| format!("line-{n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    drive(world, |h| {
+        h.event(tool_start(
+            "bdd-bash",
+            "bash",
+            serde_json::json!({ "command": command }),
+        ));
+        h.event(tool_success("bdd-bash", "bash", &output));
+    });
+}
+
+#[when(expr = "a read tool call previews path {string} with controlled content")]
+fn when_read_tool_call_previews_controlled_content(world: &mut TuiWorld, path: String) {
+    let content = "safe\tvalue\n\u{1b}]0;pwned-title\u{7}\nsecond safe line";
+    drive(world, |h| {
+        h.event(tool_start(
+            "bdd-read",
+            "read",
+            serde_json::json!({ "path": path }),
+        ));
+        h.event(tool_success("bdd-read", "read", content));
+    });
+}
+
+#[when(expr = "a workflow tool call checks step {int} with multiline result")]
+fn when_workflow_tool_call_checks_step(world: &mut TuiWorld, step_num: u32) {
+    drive(world, |h| {
+        h.event(Event::ToolExecutionStart {
+            tool_call_id: "bdd-workflow".into(),
+            tool_name: "workflow".into(),
+            args: serde_json::json!({ "action": "check", "step": step_num }),
+        });
+        h.event(Event::ToolExecutionEnd {
+            tool_call_id: "bdd-workflow".into(),
+            tool_name: "workflow".into(),
+            result: serde_json::json!({ "content": [{ "type": "text", "text": "Step 2 checked.\nextra detail" }] }),
+            is_error: false,
+        });
+    });
+}
+
+#[when("I expand tool output in the TUI")]
+fn when_expand_tool_output_in_tui(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Ctrl('o'));
+    });
+}
+
+#[then(expr = "the tool rendering shows {string}")]
+fn then_tool_rendering_shows(world: &mut TuiWorld, expected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&expected),
+        "tool rendering should show {expected:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "the tool rendering hides {string}")]
+fn then_tool_rendering_hides(world: &mut TuiWorld, unexpected: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        !frame.contains(&unexpected),
+        "tool rendering should hide {unexpected:?}, got:\n{frame}"
+    );
+}
+
+#[then("the raw tool frame does not contain terminal title escape controls")]
+fn then_raw_tool_frame_has_no_title_escapes(world: &mut TuiWorld) {
+    let raw = drive(world, |h| h.full_frame_raw());
+    assert!(
+        !raw.contains("\u{1b}]") && !raw.contains("\u{9d}"),
+        "raw rendered frame must not contain OSC/title controls, got:\n{raw:?}"
+    );
+}
