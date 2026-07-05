@@ -374,16 +374,3 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd result should contain "grandchild-worker"
     And the agent_cmd result should not contain "cli:busy-stats"
     And the agent_cmd result should not contain "mock_ext_tool"
-
-  @pending
-  Scenario: UDS connection keeps write half open until response received
-    Given a live UDS subagent
-    When I send get_state via agent_cmd
-    Then the response should contain "isStreaming"
-    And the response should be valid JSON with type "response"
-
-  @pending
-  Scenario: get_messages with count returns conversation tail
-    Given a live UDS subagent with conversation history
-    When I send get_messages with count 2 via agent_cmd
-    Then the response should contain [message] data

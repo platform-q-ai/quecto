@@ -34,17 +34,6 @@ Feature: TUI PID cast safety — u32 to i32 checked conversion
     And no signal should be sent
     And SIGTERM must NOT be sent to PID 1
 
-  # reason: needs a live subprocess; the SIGTERM→grace→SIGKILL sequence is
-  # exercised by in-crate unit tests in process.rs, and kill_process_group is
-  # pub(crate) so it cannot be driven from this external test crate.
-  @pending
-  Scenario: SIGKILL sent to process group after grace period
-    Given the child process has PID 1234
-    And SIGTERM was sent to the process group
-    When the grace period elapses
-    Then SIGKILL should be sent to process group -1234
-    And not just to the direct child PID
-
   Scenario: PID 0 is rejected to prevent killing caller's group
     Given the child process has PID 0
     When the TUI converts the PID for process group kill
