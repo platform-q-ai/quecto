@@ -294,15 +294,24 @@ fn walkdir(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 
 #[tokio::main]
 async fn main() {
+    let tag_filter = std::env::var("QUECTO_TAG").ok();
+
     ApiWorld::cucumber()
         .max_concurrent_scenarios(1) // serial — each scenario starts its own server
-        .filter_run("tests/features", |feat, _, sc| {
+        .filter_run("tests/features", move |feat, _, sc| {
             // Skip websocket tests for now — they need a real agent
             if feat.name.contains("WebSocket") {
                 return false;
             }
-            feat.tags.iter().any(|t| t == "wip" || t == "done")
-                || sc.tags.iter().any(|t| t == "wip" || t == "done")
+            if let Some(ref tag) = tag_filter {
+                let matches_feature = feat.tags.iter().any(|t| t == tag.as_str());
+                let matches_scenario = sc.tags.iter().any(|t| t == tag.as_str());
+                if !matches_feature && !matches_scenario {
+                    return false;
+                }
+                return true;
+            }
+            feat.tags.iter().any(|t| t == "done") || sc.tags.iter().any(|t| t == "done")
         })
         .await;
 }

@@ -1205,11 +1205,9 @@ fn main() {
                     }
                 }
                 // Partition the zero-cost mocked e2e lane from the default wave.
-                // @mock-llm scenarios are also tagged @done, so the untagged
-                // pre-push wave (step 5) would otherwise run them — and the
-                // dedicated mock lane (step 9, QUECTO_TAG=mock-llm) re-runs them,
-                // executing the mock suite twice per push. Only include @mock-llm
-                // when the mock lane explicitly selects it.
+                // The dedicated mock lane (QUECTO_TAG=mock-llm) runs these scenarios;
+                // the untagged default wave should not also run them.
+                // Only include @mock-llm when the mock lane explicitly selects it.
                 let is_mock_llm = feat.tags.iter().any(|t| t == "mock-llm")
                     || sc.tags.iter().any(|t| t == "mock-llm");
                 if is_mock_llm && tag_filter.as_deref() != Some("mock-llm") {
@@ -1239,9 +1237,11 @@ fn main() {
                         return false;
                     }
                 }
-                // Include if feature or scenario is tagged @wip or @done
-                feat.tags.iter().any(|t| t == "wip" || t == "done")
-                    || sc.tags.iter().any(|t| t == "wip" || t == "done")
+                // The default suite runs completed scenarios. @wip is reserved
+                // for explicit authoring filters such as QUECTO_TAG=wip.
+                tag_filter.is_some()
+                    || feat.tags.iter().any(|t| t == "done")
+                    || sc.tags.iter().any(|t| t == "done")
             }),
     );
 }
