@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pre-push.sh — Runs on every git push.
 # Full local quality gate: static checks + parallel test wave (lib + architecture
-# + contracts + repo docs + 24-way non-real BDD) + coverage + machete + deny +
+# + contracts + repo docs + coverage-enabled non-real BDD shards) + coverage + machete + deny +
 # the zero-cost mocked end-to-end suite (@mock-llm). The live, paid
 # @manual-real-llm suite is NOT run by default; opt in on demand with
 # QUECTO_RUN_REAL_LLM=1.
@@ -72,8 +72,10 @@ cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-su
     -W clippy::too_many_lines
 
 COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-87}"
+HARNESS_BDD_COV_THRESHOLD="${QUECTO_HARNESS_BDD_COV_THRESHOLD:-70}"
+TUI_BDD_COV_THRESHOLD="${QUECTO_TUI_BDD_COV_THRESHOLD:-45}"
 
-step "6/11" "Parallel test wave: unit + every integration target + non-real BDD shards"
+step "6/11" "Parallel test wave: unit + every integration target + coverage-enabled non-real BDD shards"
 
 # Enumerate EVERY top-level integration test target dynamically rather than a
 # hand-maintained allowlist. A static `--test architecture --test contracts ...`
@@ -102,7 +104,9 @@ PID_CORE_GUARDS=$!
     bash "$ROOT/scripts/run-bdd-shards.sh" \
         --suite "non-real-bdd" \
         --shards "$BDD_SHARDS" \
-        --timeout "$E2E_TIMEOUT"
+        --timeout "$E2E_TIMEOUT" \
+        --coverage \
+        --coverage-threshold "$HARNESS_BDD_COV_THRESHOLD"
 ) &
 PID_BDD=$!
 
@@ -112,7 +116,9 @@ PID_BDD=$!
         --package "quecto-tui" \
         --features "test-harness" \
         --shards "$TUI_BDD_SHARDS" \
-        --timeout "$E2E_TIMEOUT"
+        --timeout "$E2E_TIMEOUT" \
+        --coverage \
+        --coverage-threshold "$TUI_BDD_COV_THRESHOLD"
 ) &
 PID_TUI_BDD=$!
 
@@ -229,6 +235,7 @@ step "11/11" "Pre-push summary"
 echo "All local push gates passed."
 echo "BDD shards: ${BDD_SHARDS}; TUI BDD shards: ${TUI_BDD_SHARDS}; timeout per shard: ${E2E_TIMEOUT}"
 echo "Coverage threshold: ${COV_THRESHOLD}%"
+echo "BDD coverage thresholds: harness ${HARNESS_BDD_COV_THRESHOLD}%; TUI ${TUI_BDD_COV_THRESHOLD}%"
 
 echo -e "\n${GREEN}Pre-push passed.${NC}"
 rm -f "$ROOT"/.git/pre-push.passed.*
