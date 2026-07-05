@@ -33,8 +33,9 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     And the architecture test target should enforce quecto-tui runtime I/O boundaries
     And the architecture test target should enforce quecto-tui root file placement
 
+  @issue-1020
   Scenario: TUI standards are executable through BDD
-    Then the BDD runner should execute TUI scenarios tagged wip or done
+    Then the BDD runners should not use wip as a default run inclusion gate
     And the TUI architecture feature should not contain pending scenarios
 
   @issue-741

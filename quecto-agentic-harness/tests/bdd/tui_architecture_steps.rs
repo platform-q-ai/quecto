@@ -234,13 +234,15 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
     }
 }
 
-#[then("the BDD runner should execute TUI scenarios tagged wip or done")]
-fn then_bdd_runner_executes_tui_wip_or_done(_world: &mut QuectoWorld) {
-    let content = std::fs::read_to_string("tests/bdd/main.rs").expect("read BDD runner");
-    assert!(
-        content.contains("tag_filter") && content.contains("wip") && content.contains("done"),
-        "BDD runner must support executing selected @tui scenarios when they are tagged @wip or @done"
-    );
+#[then("the BDD runners should not use wip as a default run inclusion gate")]
+fn then_bdd_runners_do_not_use_wip_as_default_gate(_world: &mut QuectoWorld) {
+    for runner in ["tests/bdd/main.rs", "../quecto-api/tests/bdd/main.rs"] {
+        let content = std::fs::read_to_string(runner).expect("read BDD runner");
+        assert!(
+            !content.contains("t == \"wip\" || t == \"done\"") && !content.contains("t == \"wip\""),
+            "{runner} must not gate default BDD execution on @wip"
+        );
+    }
 }
 
 #[given("a quecto-tui chat view is scrolled into history")]
