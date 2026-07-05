@@ -25,17 +25,40 @@ GREEN='\033[0;32m'
 NC='\033[0m'
 
 # Allow override via env var for multi-file repos or testing.
-# Supports both single-file and multi-file BDD layouts.
-BDD_DIR="${BDD_DIR:-quecto-agentic-harness/tests/bdd}"
+# Supports both single-file and multi-file BDD layouts. By default, check both
+# the agentic harness BDD and the TUI-owned BDD split.
+BDD_TMP_FILES=()
+cleanup_bdd_tmp() {
+    rm -f "${BDD_TMP_FILES[@]}"
+}
+trap cleanup_bdd_tmp EXIT
 
-if [ -d "$BDD_DIR" ]; then
-    BDD_FILE=$(mktemp)
-    cat "$BDD_DIR"/*.rs > "$BDD_FILE"
-    trap "rm -f '$BDD_FILE'" EXIT
-elif [ -f "${BDD_FILE:-quecto-agentic-harness/tests/bdd.rs}" ]; then
-    BDD_FILE="${BDD_FILE:-quecto-agentic-harness/tests/bdd.rs}"
+if [[ -n "${BDD_DIR:-}" ]]; then
+    BDD_DIRS=("$BDD_DIR")
 else
-    echo -e "${RED}FAIL${NC}: neither $BDD_DIR/ directory nor quecto-agentic-harness/tests/bdd.rs found"
+    BDD_DIRS=(
+        "quecto-agentic-harness/tests/bdd"
+        "quecto-tui/tests/bdd"
+    )
+fi
+
+if [[ -n "${BDD_FILE:-}" ]]; then
+    :
+elif [[ "${#BDD_DIRS[@]}" -gt 0 ]]; then
+    BDD_FILE=$(mktemp)
+    BDD_TMP_FILES+=("$BDD_FILE")
+    for dir in "${BDD_DIRS[@]}"; do
+        if [ -d "$dir" ]; then
+            cat "$dir"/*.rs >> "$BDD_FILE"
+        else
+            echo -e "${RED}FAIL${NC}: BDD directory not found: $dir"
+            exit 1
+        fi
+    done
+elif [ -f "quecto-agentic-harness/tests/bdd.rs" ]; then
+    BDD_FILE="quecto-agentic-harness/tests/bdd.rs"
+else
+    echo -e "${RED}FAIL${NC}: no BDD step directory/file found"
     exit 1
 fi
 

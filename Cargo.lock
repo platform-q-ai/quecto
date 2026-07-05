@@ -1623,7 +1623,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "quecto"
+name = "quecto-agentic-harness"
 version = "0.83.2"
 dependencies = [
  "base64",
@@ -1722,9 +1722,12 @@ dependencies = [
 name = "quecto-tui"
 version = "0.10.9"
 dependencies = [
+ "cucumber",
+ "futures",
  "libc",
  "pulldown-cmark",
  "quecto-line-io",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

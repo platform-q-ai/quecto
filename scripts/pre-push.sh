@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pre-push.sh — Runs on every git push.
 # Full local quality gate: static checks + parallel test wave (lib + architecture
-# + contracts + repo docs + 24-way non-real BDD) + coverage + machete + deny +
+# + contracts + repo docs + coverage-enabled non-real BDD shards) + coverage + machete + deny +
 # the zero-cost mocked end-to-end suite (@mock-llm). The live, paid
 # @manual-real-llm suite is NOT run by default; opt in on demand with
 # QUECTO_RUN_REAL_LLM=1.
@@ -19,6 +19,7 @@ cd "$ROOT"
 
 E2E_TIMEOUT="${QUECTO_E2E_TIMEOUT:-12m}"
 BDD_SHARDS="${QUECTO_BDD_SHARDS:-24}"
+TUI_BDD_SHARDS="${QUECTO_TUI_BDD_SHARDS:-8}"
 FORCE_RUN="${QUECTO_PREPUSH_FORCE:-0}"
 
 HEAD_SHA="$(git rev-parse HEAD)"
@@ -65,14 +66,16 @@ step "4/11" "cargo fmt --check"
 cargo fmt --all -- --check
 
 step "5/11" "cargo clippy (strict, workspace)"
-cargo clippy --workspace --all-targets --features quecto/test-support -- -D warnings \
+cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
 
 COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-87}"
+HARNESS_BDD_COV_THRESHOLD="${QUECTO_HARNESS_BDD_COV_THRESHOLD:-70}"
+TUI_BDD_COV_THRESHOLD="${QUECTO_TUI_BDD_COV_THRESHOLD:-45}"
 
-step "6/11" "Parallel test wave: unit + every integration target + non-real BDD shards"
+step "6/11" "Parallel test wave: unit + every integration target + coverage-enabled non-real BDD shards"
 
 # Enumerate EVERY top-level integration test target dynamically rather than a
 # hand-maintained allowlist. A static `--test architecture --test contracts ...`
@@ -93,7 +96,7 @@ for t in "${TEST_TARGETS[@]}"; do TEST_TARGET_ARGS+=(--test "$t"); done
 echo "  Integration targets: ${TEST_TARGETS[*]}"
 
 (
-    cargo test -p quecto --no-fail-fast --lib "${TEST_TARGET_ARGS[@]}" 2>&1 | "$ROOT/scripts/test-filter.sh"
+    cargo test -p quecto-agentic-harness --no-fail-fast --lib "${TEST_TARGET_ARGS[@]}" 2>&1 | "$ROOT/scripts/test-filter.sh"
 ) &
 PID_CORE_GUARDS=$!
 
@@ -101,17 +104,35 @@ PID_CORE_GUARDS=$!
     bash "$ROOT/scripts/run-bdd-shards.sh" \
         --suite "non-real-bdd" \
         --shards "$BDD_SHARDS" \
-        --timeout "$E2E_TIMEOUT"
+        --timeout "$E2E_TIMEOUT" \
+        --coverage \
+        --coverage-threshold "$HARNESS_BDD_COV_THRESHOLD"
 ) &
 PID_BDD=$!
 
+(
+    bash "$ROOT/scripts/run-bdd-shards.sh" \
+        --suite "tui-bdd" \
+        --package "quecto-tui" \
+        --features "test-harness" \
+        --shards "$TUI_BDD_SHARDS" \
+        --timeout "$E2E_TIMEOUT" \
+        --coverage \
+        --coverage-threshold "$TUI_BDD_COV_THRESHOLD"
+) &
+PID_TUI_BDD=$!
+
 FAIL=0
 if ! wait "$PID_CORE_GUARDS"; then
-    echo -e "${RED}FAIL${NC}: cargo test -p quecto --lib ${TEST_TARGET_ARGS[*]}"
+    echo -e "${RED}FAIL${NC}: cargo test -p quecto-agentic-harness --lib ${TEST_TARGET_ARGS[*]}"
     FAIL=1
 fi
 if ! wait "$PID_BDD"; then
     echo -e "${RED}FAIL${NC}: non-real BDD shards"
+    FAIL=1
+fi
+if ! wait "$PID_TUI_BDD"; then
+    echo -e "${RED}FAIL${NC}: TUI BDD shards"
     FAIL=1
 fi
 
@@ -133,7 +154,7 @@ fi
 COV_FAIL=0
 
 echo "  quecto (core)..."
-COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto --fail-under-regions "$COV_THRESHOLD" 2>&1) || {
+COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto-agentic-harness --fail-under-regions "$COV_THRESHOLD" 2>&1) || {
     echo -e "  ${RED}FAIL${NC}: quecto region coverage below ${COV_THRESHOLD}%"
     COV_FAIL=1
 }
@@ -212,8 +233,9 @@ fi
 
 step "11/11" "Pre-push summary"
 echo "All local push gates passed."
-echo "BDD shards: ${BDD_SHARDS}, timeout per shard: ${E2E_TIMEOUT}"
+echo "BDD shards: ${BDD_SHARDS}; TUI BDD shards: ${TUI_BDD_SHARDS}; timeout per shard: ${E2E_TIMEOUT}"
 echo "Coverage threshold: ${COV_THRESHOLD}%"
+echo "BDD coverage thresholds: harness ${HARNESS_BDD_COV_THRESHOLD}%; TUI ${TUI_BDD_COV_THRESHOLD}%"
 
 echo -e "\n${GREEN}Pre-push passed.${NC}"
 rm -f "$ROOT"/.git/pre-push.passed.*

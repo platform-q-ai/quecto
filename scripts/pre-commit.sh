@@ -30,7 +30,7 @@ step "4/6" "cargo fmt --check"
 cargo fmt --all -- --check
 
 step "5/6" "cargo clippy (strict, workspace complexity gates)"
-cargo clippy --workspace --all-targets --features quecto/test-support -- -D warnings \
+cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
@@ -53,7 +53,7 @@ fi
 GUARD_TARGET_ARGS=()
 for t in "${GUARD_TARGETS[@]}"; do GUARD_TARGET_ARGS+=(--test "$t"); done
 echo "  Guard targets: ${GUARD_TARGETS[*]}"
-cargo test -p quecto --no-fail-fast "${GUARD_TARGET_ARGS[@]}"
+cargo test -p quecto-agentic-harness --no-fail-fast "${GUARD_TARGET_ARGS[@]}"
 
 # Block direct commits to master/main — force feature branches.
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"

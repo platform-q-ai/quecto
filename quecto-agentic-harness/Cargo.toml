@@ -1,9 +1,17 @@
 [package]
-name = "quecto"
+name = "quecto-agentic-harness"
 version = "0.83.2"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
+
+[lib]
+name = "quecto"
+path = "src/lib.rs"
+
+[[bin]]
+name = "quecto"
+path = "src/main.rs"
 
 [dependencies]
 # Async runtime

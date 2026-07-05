@@ -417,8 +417,6 @@ pub struct QuectoWorld {
     pub tui_idle_expected_branch: Option<String>,
     /// TUI idle-efficiency BDD (#978): whether kitty fallback detection completed.
     pub tui_idle_fallback_done: Option<bool>,
-    /// TUI UDS client defensive-bounds BDD (#982): socket/client state.
-    pub tui_defence_stream: Option<tui_uds_client_defence_steps::TuiDefenceStream>,
     /// The sub-agent id currently being viewed (#828): captured on select so
     /// backfill/assertion steps route to the right session, not a literal id.
     pub tui_viewed_agent: Option<String>,
@@ -1199,7 +1197,6 @@ mod find_steps;
 mod grep_steps;
 mod harness_efficiency_steps;
 mod ls_steps;
-mod mouse_selection_steps;
 mod observability_steps;
 mod path_utils_steps;
 mod provider_auth_modes_steps;
@@ -1222,28 +1219,7 @@ mod subagent_widget_steps;
 mod tool_empty_args_steps;
 mod truncate_steps;
 mod tui_architecture_steps;
-mod tui_autocomplete_steps;
-mod tui_border_replication_steps;
-mod tui_chat_spacing_steps;
-mod tui_cold_start_steps;
 mod tui_context_usage_steps;
-mod tui_ctrl_c_clear_steps;
-mod tui_ctrl_d_exit_steps;
-mod tui_esc_abort_recovery_steps;
-mod tui_file_mention_steps;
-mod tui_foundation_steps;
-mod tui_idle_efficiency_steps;
-mod tui_new_reset_context_steps;
-mod tui_pid_safety_steps;
-mod tui_stdin_buffer_cap_steps;
-mod tui_stdin_retry_steps;
-mod tui_streaming_stability_steps;
-mod tui_subagent_first_layout_steps;
-mod tui_subagent_parity_steps;
-mod tui_subagent_readonly_marker_steps;
-mod tui_table_safety_steps;
-mod tui_terminal_restore_steps;
-mod tui_uds_client_defence_steps;
 mod uds_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;

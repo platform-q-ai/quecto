@@ -518,7 +518,7 @@ fn assert_local_hook_enforces_formatting_and_complexity(hook: &str) {
     );
     assert!(
         content.contains(
-            "cargo clippy --workspace --all-targets --features quecto/test-support -- -D warnings"
+            "cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings"
         ),
         "{hook} hook must run strict workspace clippy locally"
     );
