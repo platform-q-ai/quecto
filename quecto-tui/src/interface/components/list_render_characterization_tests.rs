@@ -218,6 +218,19 @@ fn files_autocomplete_stale_reload_keeps_selection_marker() {
 }
 
 #[test]
+fn files_autocomplete_narrow_truncates_long_path() {
+    let mut f = FilesAutocomplete::with_files(vec!["src/main.rs".to_string()], 5);
+    f.update("@", 1);
+    let lines = f.render(10);
+    assert_eq!(
+        strip_ansi(&lines[0]),
+        "→ @src/mai",
+        "a long path truncates with the line at narrow widths"
+    );
+    assert!(visible_width(&lines[0]) <= 10, "line must fit the width");
+}
+
+#[test]
 fn files_autocomplete_overflow_indicator_pixels() {
     let files: Vec<String> = (0..5).map(|i| format!("f{i}.rs")).collect();
     let mut f = FilesAutocomplete::with_files(files, 3);
