@@ -101,14 +101,100 @@ pub fn render_list_rows(
     width: usize,
     style: &RowStyle,
 ) -> Vec<String> {
-    // The parameters fix the helper's contract; the body lands in GREEN (#997).
-    let _ = (rows, nav, total, max_visible, width, style);
-    let _ = (
-        theme::dim(""),
-        visible_width(""),
-        truncate_to_width("", 0, None),
-    );
-    unimplemented!("issue #997: shared list-row renderer not yet implemented")
+    let range = nav.visible_range(total, max_visible);
+    let selected = nav.selected();
+    let mut lines = Vec::with_capacity(rows.len() + 1);
+
+    // Alignment column for `AlignedWindow`: widest VISIBLE label only, capped
+    // at 32 (#757) — `rows` already holds just the window, so this never scans
+    // the full list.
+    let window_label_width = match style.description {
+        DescriptionMode::AlignedWindow { .. } => rows
+            .iter()
+            .map(|r| visible_width(&r.label))
+            .max()
+            .unwrap_or(10)
+            .min(32),
+        _ => 0,
+    };
+
+    for (offset, row) in rows.iter().enumerate() {
+        let is_sel = range.start + offset == selected;
+        let prefix = if is_sel { "→ " } else { "  " };
+        let label = if row.dim_label {
+            theme::dim(&row.label)
+        } else if is_sel {
+            theme::accent(&row.label)
+        } else {
+            row.label.clone()
+        };
+        let label_vis = visible_width(&row.label);
+
+        let line = match style.description {
+            DescriptionMode::Inline => match &row.description {
+                Some(desc) => format!(
+                    "{}{}{}{}  {}",
+                    style.indent,
+                    prefix,
+                    label,
+                    row.marker,
+                    theme::dim(desc)
+                ),
+                None => format!("{}{}{}{}", style.indent, prefix, label, row.marker),
+            },
+            DescriptionMode::AlignedWindow { min_desc_width } => {
+                let label_only = format!("{}{}{}{}", style.indent, prefix, label, row.marker);
+                match &row.description {
+                    Some(desc) => {
+                        let gap = window_label_width.saturating_sub(label_vis) + 2;
+                        let desc_start = visible_width(style.indent) + 2 + label_vis + gap;
+                        let desc_width = width.saturating_sub(desc_start + 1);
+                        if desc_width > min_desc_width {
+                            let truncated = truncate_to_width(desc, desc_width, Some(""));
+                            format!(
+                                "{}{}{}{}{}{}",
+                                style.indent,
+                                prefix,
+                                label,
+                                row.marker,
+                                " ".repeat(gap),
+                                theme::dim(&truncated)
+                            )
+                        } else {
+                            label_only
+                        }
+                    }
+                    None => label_only,
+                }
+            }
+            DescriptionMode::AlignedCached { label_width } => match &row.description {
+                Some(desc) => {
+                    let gap = label_width.saturating_sub(label_vis) + 2;
+                    format!(
+                        "{}{}{}{}{}{}",
+                        style.indent,
+                        prefix,
+                        label,
+                        row.marker,
+                        " ".repeat(gap),
+                        theme::dim(desc)
+                    )
+                }
+                None => format!("{}{}{}{}", style.indent, prefix, label, row.marker),
+            },
+        };
+        lines.push(truncate_to_width(&line, width, None));
+    }
+
+    // Overflow indicator: always emitted by the helper, two cells from the
+    // left margin regardless of `style.indent` (today's pixels on all four
+    // surfaces).
+    if range.start > 0 || range.end < total {
+        let info = format!("  ({}/{})", selected + 1, total);
+        lines.push(truncate_to_width(&theme::dim(&info), width, None));
+    }
+
+    lines
 }
 
 #[cfg(test)]
@@ -289,6 +375,96 @@ mod tests {
             !lines[0].contains("\x1b[36m"),
             "dim rows must not be accented even when selected: {:?}",
             lines[0]
+        );
+    }
+
+    #[test]
+    fn no_indicator_when_total_equals_max_visible() {
+        // Exact boundary: total == max_visible must NOT show the indicator.
+        let nav = ListNavigator::new();
+        let lines = render_list_rows(
+            &rows(&["a", "b", "c", "d", "e"]),
+            &nav,
+            5,
+            5,
+            40,
+            &plain_style(),
+        );
+        assert_eq!(
+            lines.len(),
+            5,
+            "all 5 rows drawn, no indicator at total==max"
+        );
+        assert!(
+            !strip_ansi(lines.last().unwrap()).contains("(1/5)"),
+            "no overflow indicator when the window covers exactly all rows"
+        );
+    }
+
+    #[test]
+    fn aligned_window_keeps_description_just_above_min_width() {
+        // One cell wider than the drop test: desc_width = 21 - (2+5+2) - 1 = 11
+        // > 10 → the description IS rendered, truncated to 11 cells.
+        let mut a = ListRow::plain("alpha");
+        a.description = Some("a description".into());
+        let nav = ListNavigator::new();
+        let style = RowStyle {
+            indent: "",
+            description: DescriptionMode::AlignedWindow { min_desc_width: 10 },
+        };
+        let lines = render_list_rows(&[a], &nav, 1, 5, 21, &style);
+        assert_eq!(
+            strip_ansi(&lines[0]),
+            "→ alpha  a descripti",
+            "just above the minimum the description is truncated, not dropped"
+        );
+        assert!(visible_width(&lines[0]) <= 21);
+    }
+
+    #[test]
+    fn aligned_window_label_column_caps_at_32_cells() {
+        // #757: the alignment column is capped at 32 cells even when a visible
+        // label is wider; the short row's description starts at 32+gap and the
+        // long row keeps the minimum 2-cell gap.
+        let long_label = "x".repeat(36);
+        let mut long = ListRow::plain(long_label.clone());
+        long.description = Some("LD".into());
+        let mut short = ListRow::plain("short");
+        short.description = Some("SD".into());
+        let nav = ListNavigator::new();
+        let style = RowStyle {
+            indent: "",
+            description: DescriptionMode::AlignedWindow { min_desc_width: 10 },
+        };
+        let lines = render_list_rows(&[short, long], &nav, 2, 5, 80, &style);
+        // Short label (5): gap = 32-5+2 = 29 spaces.
+        assert_eq!(
+            strip_ansi(&lines[0]),
+            format!("→ short{}SD", " ".repeat(29)),
+            "column aligns to the 32-cell cap, not the 36-cell label"
+        );
+        // Long label exceeds the cap: gap saturates to the minimum 2 cells.
+        assert_eq!(strip_ansi(&lines[1]), format!("  {long_label}  LD"));
+    }
+
+    #[test]
+    fn aligned_window_label_column_uses_actual_width_below_cap() {
+        // Companion just-below-cap case: a 30-cell label aligns to 30, not 32.
+        let label30 = "y".repeat(30);
+        let mut wide = ListRow::plain(label30.clone());
+        wide.description = Some("WD".into());
+        let mut short = ListRow::plain("short");
+        short.description = Some("SD".into());
+        let nav = ListNavigator::new();
+        let style = RowStyle {
+            indent: "",
+            description: DescriptionMode::AlignedWindow { min_desc_width: 10 },
+        };
+        let lines = render_list_rows(&[short, wide], &nav, 2, 5, 80, &style);
+        assert_eq!(
+            strip_ansi(&lines[0]),
+            format!("→ short{}SD", " ".repeat(27)),
+            "below the cap the column tracks the widest visible label exactly"
         );
     }
 
