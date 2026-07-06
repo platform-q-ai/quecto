@@ -7,7 +7,6 @@
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::Suggestion;
 use crate::interface::components::list_rows::{DescriptionMode, ListRow};
-use crate::interface::components::sanitize::strip_terminal_control;
 use crate::interface::components::suggestion_list::SuggestionList;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
@@ -115,7 +114,7 @@ impl ModelSelector {
         if let Some(current) = current_model {
             // Strip control characters — prevents terminal escape injection
             // via agent-sourced model names.
-            let safe_current = strip_terminal_control(current);
+            let safe_current = crate::interface::ansi::sanitize_control(current);
             let mut found = false;
             for m in &mut models {
                 if m.id == safe_current {
@@ -636,7 +635,7 @@ mod tests {
     #[test]
     fn sanitize_strips_control_chars() {
         let dirty = "model\x1b[31m-evil\x07name";
-        let clean = strip_terminal_control(dirty);
+        let clean = crate::interface::ansi::sanitize_control(dirty);
         assert!(!clean.contains('\x1b'));
         assert!(!clean.contains('\x07'));
         assert!(clean.contains("model"));
@@ -693,12 +692,12 @@ mod tests {
 
     #[test]
     fn custom_model_with_control_chars_sanitized() {
-        // \x1b is a control character — strip_terminal_control strips it.
+        // \x1b is a control character — sanitize_control strips it.
         // The remaining "[31m" is harmless text (not a valid escape sequence).
         let mut sel = ModelSelector::new(Some("evil\x1b[31mmodel"));
         let lines = sel.render(60);
         let _raw = lines.join("");
-        // The injected \x1b should be stripped by strip_terminal_control.
+        // The injected \x1b should be stripped by sanitize_control.
         // Count \x1b occurrences that are NOT from theme styling.
         // Verify the model ID stored is sanitized.
         let custom_entry = sel

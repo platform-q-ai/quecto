@@ -5,9 +5,9 @@
 
 use crate::TuiWorld;
 use cucumber::{given, then, when};
+use quecto_tui::interface::ansi::sanitize_control;
 use quecto_tui::interface::component::Component;
 use quecto_tui::interface::components::markdown::Markdown;
-use quecto_tui::interface::components::sanitize::strip_terminal_control;
 use quecto_tui::interface::utils::{truncate_to_width, visible_width};
 
 /// Wide render width so single-cell content never truncates for the sanitise
@@ -61,7 +61,7 @@ fn raw(world: &TuiWorld) -> String {
 }
 
 fn stripped(world: &TuiWorld) -> String {
-    strip_terminal_control(&raw(world))
+    sanitize_control(&raw(world))
 }
 
 // ── Given ────────────────────────────────────────────────────────────────────
@@ -311,7 +311,7 @@ fn truncation_uses_display_width(world: &mut TuiWorld) {
     );
     // Production appends a defensive SGR reset after a truncation; compare the
     // visible text only.
-    let cut_plain = strip_terminal_control(cut);
+    let cut_plain = sanitize_control(cut);
     assert!(
         cell.starts_with(cut_plain.as_str()),
         "width-3 truncation must be a valid char-boundary prefix of the cell: {cut_plain:?}"

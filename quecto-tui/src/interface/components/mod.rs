@@ -8,12 +8,9 @@ pub mod list_rows;
 pub mod markdown;
 pub mod model_selector;
 pub mod notification;
-pub mod sanitize;
 pub mod select_list;
 pub mod spinner;
 pub mod suggestion_list;
-pub mod text;
-pub mod widget;
 pub mod workflow_bar;
 
 #[cfg(test)]

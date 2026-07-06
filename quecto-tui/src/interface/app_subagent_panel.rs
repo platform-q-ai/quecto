@@ -729,7 +729,7 @@ fn status_colored_name(status: &str, name: &str) -> String {
 
 /// Strip terminal control sequences from a panel label.
 fn sanitize_panel_label(s: &str) -> String {
-    crate::interface::components::sanitize::strip_terminal_control(s)
+    crate::interface::ansi::sanitize_control(s)
 }
 
 /// Pad (or truncate) a cell to exactly `width` visible columns.

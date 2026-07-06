@@ -281,25 +281,32 @@ fn start_always_clears_pending_aborts() {
 // ── Free function tests ──────────────────────────────────────────
 
 #[test]
-fn builtin_commands_not_empty() {
+fn builtin_commands_have_stable_order_and_names() {
     let cmds = super::builtin_commands();
-    assert!(!cmds.is_empty());
     let names: Vec<_> = cmds.iter().map(|c| c.name.as_str()).collect();
-    assert!(names.contains(&"clear"));
-    assert!(names.contains(&"quit"));
-    assert!(names.contains(&"exit"));
-    assert!(names.contains(&"help"));
-    assert!(names.contains(&"new"));
-    assert!(names.contains(&"session"));
-    assert!(names.contains(&"resume"));
-    assert!(names.contains(&"model"));
-    assert!(names.contains(&"workflow"));
+    assert_eq!(
+        names,
+        vec![
+            "clear",
+            "quit",
+            "exit",
+            "help",
+            "hotkeys",
+            "new",
+            "session",
+            "resume",
+            "model",
+            "workflow",
+            "workflow-auto",
+            "workflow-nudge",
+        ]
+    );
 }
 
 #[test]
 fn builtin_commands_have_descriptions() {
     let cmds = super::builtin_commands();
-    for cmd in &cmds {
+    for cmd in cmds {
         assert!(
             !cmd.description.is_empty(),
             "{} has empty description",

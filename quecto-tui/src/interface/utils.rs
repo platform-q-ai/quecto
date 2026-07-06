@@ -70,6 +70,28 @@ pub fn truncate_to_width(s: &str, max_width: usize, ellipsis: Option<&str>) -> S
     result
 }
 
+/// Truncate by Unicode scalar count, preserving legacy char-count ellipsis semantics.
+pub fn truncate_chars_with_ellipsis(s: &str, max_chars: usize, ellipsis: &str) -> String {
+    let mut iter = s.chars();
+    let out: String = iter.by_ref().take(max_chars).collect();
+    if iter.next().is_some() {
+        format!("{out}{ellipsis}")
+    } else {
+        // `out` already holds all of `s` here; reuse it instead of
+        // allocating a second copy on the common fits path.
+        out
+    }
+}
+
+/// Sanitize, then truncate by Unicode scalar count with an ellipsis on overflow.
+pub fn sanitize_truncate_chars_with_ellipsis(s: &str, max_chars: usize, ellipsis: &str) -> String {
+    let (mut out, truncated) = crate::interface::ansi::sanitize_control_truncated(s, max_chars);
+    if truncated {
+        out.push_str(ellipsis);
+    }
+    out
+}
+
 /// Word-wrap text to fit within `max_width` columns, preserving ANSI escapes.
 ///
 /// Splits on word boundaries when possible. Long words that exceed the width

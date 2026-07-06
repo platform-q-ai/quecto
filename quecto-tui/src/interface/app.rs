@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use crate::infrastructure::client::{Client, Command, Event, SubagentWorkflow};
@@ -35,7 +36,7 @@ const MOUSE_SCROLL_LINES: usize = 3;
 const MAX_ESCAPE_RETRIES: usize = 5;
 
 /// Built-in slash commands.
-fn builtin_commands() -> Vec<SlashCommand> {
+static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
     vec![
         SlashCommand {
             name: "clear".into(),
@@ -86,6 +87,10 @@ fn builtin_commands() -> Vec<SlashCommand> {
             description: "Toggle workflow completion nudge".into(),
         },
     ]
+});
+
+fn builtin_commands() -> &'static [SlashCommand] {
+    &BUILTIN_COMMANDS
 }
 
 /// Application state.
@@ -330,7 +335,7 @@ impl App {
             editor: Editor::new(),
             master_session: SessionView::with_footer(footer),
             spinner: None,
-            autocomplete: Autocomplete::new(builtin_commands(), 8),
+            autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
             files_autocomplete: FilesAutocomplete::new(8),
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
@@ -504,13 +509,11 @@ fn strip_ansi_for_selection(s: &str) -> String {
 
 /// Truncate tool arguments for spinner display.
 fn truncate_args(args: &str) -> String {
-    let clean: String = args
-        .chars()
-        .filter(|&c| c >= ' ' && c != '\u{007F}')
-        .collect();
+    // sanitize_control (rather than a printable-range filter) so CSI bodies —
+    // whose bytes are all printable — don't leak into the spinner line.
+    let clean = crate::interface::ansi::sanitize_control(args);
     if clean.chars().count() > 40 {
-        let s: String = clean.chars().take(37).collect();
-        format!("{}...", s)
+        crate::interface::utils::truncate_chars_with_ellipsis(&clean, 37, "...")
     } else {
         clean
     }
@@ -643,12 +646,7 @@ const EXITED_SUBAGENT_GRACE: Duration = Duration::from_secs(5);
 
 /// Strip control characters from an agent_id for safe use as a map key.
 fn sanitize_workflow_status_text(text: &str, max_chars: usize) -> String {
-    let (clean, truncated) = crate::interface::ansi::sanitize_control_truncated(text, max_chars);
-    if truncated {
-        format!("{clean}…")
-    } else {
-        clean
-    }
+    crate::interface::utils::sanitize_truncate_chars_with_ellipsis(text, max_chars, "…")
 }
 
 fn sanitize_agent_id(id: &str) -> String {

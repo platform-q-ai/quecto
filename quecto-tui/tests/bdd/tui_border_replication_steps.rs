@@ -9,10 +9,10 @@ use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
 use quecto_tui::infrastructure::client::Event;
 use quecto_tui::infrastructure::render::DiffRenderer;
+use quecto_tui::interface::ansi::sanitize_control;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
 use quecto_tui::interface::component::Component;
 use quecto_tui::interface::components::editor::Editor;
-use quecto_tui::interface::components::sanitize::strip_terminal_control;
 use quecto_tui::interface::keys::Key;
 
 fn drain_commands(world: &mut TuiWorld) -> Vec<String> {
@@ -41,7 +41,7 @@ fn count_borders(lines: &[String]) -> (usize, usize) {
     let mut top = 0;
     let mut bottom = 0;
     for line in lines {
-        let s = strip_terminal_control(line);
+        let s = sanitize_control(line);
         let t = s.trim();
         if t.is_empty() || !t.contains('─') {
             continue;
@@ -171,7 +171,7 @@ fn rendered_output_contains(world: &mut TuiWorld, needle: String) {
         .tui_editor_renders
         .iter()
         .flat_map(|r| r.iter())
-        .map(|l| strip_terminal_control(l))
+        .map(|l| sanitize_control(l))
         .collect::<Vec<_>>()
         .join("\n");
     assert!(

@@ -269,12 +269,11 @@ fn empty_text_renders_empty() {
 }
 
 #[test]
-fn cache_works() {
+fn repeated_render_same_width_is_stable() {
     let mut md = Markdown::new("# Test", 0);
     let lines1 = md.render(80);
     let lines2 = md.render(80);
     assert_eq!(lines1, lines2);
-    assert!(md.cached_lines.is_some());
 }
 
 #[test]

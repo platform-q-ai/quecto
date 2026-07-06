@@ -180,6 +180,12 @@ fn expand_tabs_preserves_ansi_escapes() {
 }
 
 #[test]
+fn expand_tabs_treats_csi_at_final_byte_as_escape() {
+    let result = expand_tabs("\x1b[1@x\tY");
+    assert_eq!(result, "\x1b[1@x        Y");
+}
+
+#[test]
 fn expand_tabs_cjk_width_aware() {
     // '日' is width 2, so "日\t" → col 2, tab advances 6 to col 8
     let result = expand_tabs("日\thello");

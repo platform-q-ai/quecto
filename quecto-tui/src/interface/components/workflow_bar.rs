@@ -362,7 +362,7 @@ fn phase_display(phase: &str) -> String {
         // Unknown phases come from wire data (forwarded sub-agent events) and
         // must be sanitized to prevent terminal control-sequence injection into
         // the always-visible main pane.
-        other => sanitize_text(&other.to_uppercase()),
+        other => crate::interface::ansi::sanitize_control(&other.to_uppercase()),
     }
 }
 
@@ -414,17 +414,8 @@ fn truncate_line(text: &str, width: usize) -> String {
     crate::interface::utils::truncate_to_width(text, width, Some("…"))
 }
 
-fn sanitize_text(text: &str) -> String {
-    crate::interface::ansi::sanitize_control(text)
-}
-
 fn ellipsize_clean(text: &str, max_chars: usize) -> String {
-    let clean = sanitize_text(text);
-    let mut out: String = clean.chars().take(max_chars).collect();
-    if clean.chars().count() > max_chars {
-        out.push('…');
-    }
-    out
+    crate::interface::utils::sanitize_truncate_chars_with_ellipsis(text, max_chars, "…")
 }
 
 /// Parse a `workflow_state` JSON event into `WorkflowBarState`.

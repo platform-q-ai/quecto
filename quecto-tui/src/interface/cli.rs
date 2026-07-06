@@ -376,13 +376,7 @@ fn remember_stderr_line(lines: &mut Vec<String>, line: &str) {
 }
 
 fn truncate_stderr_line(line: &str) -> String {
-    let mut truncated: String = line.chars().take(MAX_STARTUP_STDERR_LINE_CHARS).collect();
-    // Short-circuit: stop scanning at the (MAX+1)th char rather than counting
-    // the whole line (and re-counting the truncated copy) just to detect overflow.
-    if line.chars().nth(MAX_STARTUP_STDERR_LINE_CHARS).is_some() {
-        truncated.push('…');
-    }
-    truncated
+    crate::interface::utils::truncate_chars_with_ellipsis(line, MAX_STARTUP_STDERR_LINE_CHARS, "…")
 }
 
 fn redact_stderr_line(line: &str) -> String {

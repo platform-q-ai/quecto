@@ -38,6 +38,61 @@ pub struct AnsiSegments<'a> {
     rest: &'a str,
 }
 
+/// Like [`ansi_segments`], but reproduces the legacy scanner quirk used by tab
+/// expansion: a CSI sequence whose final byte is neither an ASCII letter nor
+/// `~` (e.g. `\x1b[1@`, ICH) keeps consuming the following characters — up to
+/// and including the first ASCII letter or `~` — as part of the `Escape`
+/// segment. The tail scan stops early at the next `ESC` or end-of-string.
+///
+/// This exists so the quirk lives next to the canonical terminator rules
+/// instead of being re-implemented with caller-side state (#984).
+pub fn ansi_segments_legacy_csi(s: &str) -> AnsiSegmentsLegacyCsi<'_> {
+    AnsiSegmentsLegacyCsi { rest: s }
+}
+
+/// Iterator returned by [`ansi_segments_legacy_csi`].
+pub struct AnsiSegmentsLegacyCsi<'a> {
+    rest: &'a str,
+}
+
+impl<'a> Iterator for AnsiSegmentsLegacyCsi<'a> {
+    type Item = AnsiSegment<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.rest.is_empty() {
+            return None;
+        }
+        if self.rest.starts_with('\x1b') {
+            let mut len = escape_len(self.rest);
+            let esc = &self.rest[..len];
+            if esc.starts_with("\x1b[")
+                && esc
+                    .chars()
+                    .last()
+                    .is_some_and(|c| !c.is_ascii_alphabetic() && c != '~')
+            {
+                for ch in self.rest[len..].chars() {
+                    if ch == '\x1b' {
+                        break;
+                    }
+                    len += ch.len_utf8();
+                    if ch.is_ascii_alphabetic() || ch == '~' {
+                        break;
+                    }
+                }
+            }
+            let (escape, rest) = self.rest.split_at(len);
+            self.rest = rest;
+            Some(AnsiSegment::Escape(escape))
+        } else {
+            let end = self.rest.find('\x1b').unwrap_or(self.rest.len());
+            let (text, rest) = self.rest.split_at(end);
+            self.rest = rest;
+            Some(AnsiSegment::Text(text))
+        }
+    }
+}
+
 impl<'a> Iterator for AnsiSegments<'a> {
     type Item = AnsiSegment<'a>;
 
