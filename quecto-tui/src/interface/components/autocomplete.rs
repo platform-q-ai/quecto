@@ -3,11 +3,12 @@
 //! Provides fuzzy-matched suggestions for slash commands and model names.
 
 use crate::interface::component::Component;
+use crate::interface::components::list_rows::{
+    DescriptionMode, ListRow, RowStyle, render_list_rows,
+};
 use crate::interface::components::suggestion_list::SuggestionList;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
-use crate::interface::theme;
-use crate::interface::utils::truncate_to_width;
 
 /// A slash command definition.
 #[derive(Debug, Clone)]
@@ -149,35 +150,30 @@ impl Component for Autocomplete {
             return vec![];
         }
 
-        let mut lines = Vec::new();
-        let total = self.list.len();
-        let range = self.list.visible_range();
-        let start = range.start;
-        let end = range.end;
-
-        for i in start..end {
-            let s = &self.list.suggestions()[i];
-            let is_sel = i == self.list.selected();
-            let prefix = if is_sel { "→ " } else { "  " };
-            let name = if is_sel {
-                theme::accent(&format!("/{}", s.label))
-            } else {
-                format!("/{}", s.label)
-            };
-            let desc = theme::dim(&s.description);
-            let line = format!("{}{}  {}", prefix, name, desc);
-            lines.push(truncate_to_width(&line, width, None));
-        }
-
-        if start > 0 || end < total {
-            lines.push(theme::dim(&format!(
-                "  ({}/{})",
-                self.list.selected() + 1,
-                total
-            )));
-        }
-
-        lines
+        // Shared row renderer (#997): inline description with a fixed
+        // two-space gap; windowing and the overflow indicator live in the
+        // helper.
+        let rows: Vec<ListRow> = self.list.suggestions()[self.list.visible_range()]
+            .iter()
+            .map(|s| ListRow {
+                label: format!("/{}", s.label),
+                description: Some(s.description.clone()),
+                marker: "",
+                dim_label: false,
+            })
+            .collect();
+        let style = RowStyle {
+            indent: "",
+            description: DescriptionMode::Inline,
+        };
+        render_list_rows(
+            &rows,
+            self.list.navigator(),
+            self.list.len(),
+            self.list.max_visible(),
+            width,
+            &style,
+        )
     }
 
     fn handle_input(&mut self, key: &Key) -> bool {

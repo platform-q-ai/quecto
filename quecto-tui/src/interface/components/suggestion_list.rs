@@ -90,6 +90,12 @@ impl SuggestionList {
         self.navigator.move_previous(self.suggestions.len());
     }
 
+    /// The navigator backing this list — lent to the shared row renderer
+    /// (`list_rows::render_list_rows`) so it can compute selection and window.
+    pub fn navigator(&self) -> &ListNavigator {
+        &self.navigator
+    }
+
     /// The visible window over the suggestion list for the current selection.
     pub fn visible_range(&self) -> Range<usize> {
         self.navigator
