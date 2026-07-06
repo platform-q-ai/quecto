@@ -22,22 +22,7 @@ use quecto_tui::interface::keys::Key;
 const ACCENT: &str = "\x1b[36m";
 const DIM: &str = "\x1b[2m";
 
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::new();
-    let mut esc = false;
-    for ch in s.chars() {
-        if esc {
-            if ch.is_ascii_alphabetic() || ch == '~' {
-                esc = false;
-            }
-        } else if ch == '\x1b' {
-            esc = true;
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
+use quecto_tui::interface::ansi::strip_ansi;
 
 fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {

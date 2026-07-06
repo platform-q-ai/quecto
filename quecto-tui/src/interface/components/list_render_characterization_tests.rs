@@ -22,22 +22,7 @@ use crate::interface::utils::visible_width;
 const ACCENT: &str = "\x1b[36m";
 const DIM: &str = "\x1b[2m";
 
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::new();
-    let mut esc = false;
-    for ch in s.chars() {
-        if esc {
-            if ch.is_ascii_alphabetic() || ch == '~' {
-                esc = false;
-            }
-        } else if ch == '\x1b' {
-            esc = true;
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
+use crate::interface::ansi::strip_ansi;
 
 fn stripped(lines: &[String]) -> Vec<String> {
     lines.iter().map(|l| strip_ansi(l)).collect()

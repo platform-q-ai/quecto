@@ -177,23 +177,7 @@ pub fn render_list_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn strip_ansi(s: &str) -> String {
-        let mut out = String::new();
-        let mut esc = false;
-        for ch in s.chars() {
-            if esc {
-                if ch.is_ascii_alphabetic() || ch == '~' {
-                    esc = false;
-                }
-            } else if ch == '\x1b' {
-                esc = true;
-            } else {
-                out.push(ch);
-            }
-        }
-        out
-    }
+    use crate::interface::ansi::strip_ansi;
 
     fn rows(labels: &[&str]) -> Vec<ListRow> {
         labels.iter().map(|l| ListRow::plain(*l)).collect()
