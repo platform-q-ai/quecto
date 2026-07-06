@@ -126,8 +126,9 @@ fn bound_engine_completion_nudge_does_not_instruct_reselect() {
 fn default_config_uses_builtins_when_templates_empty() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     let templates = engine.list_templates();
-    assert_eq!(templates.len(), 1);
+    assert_eq!(templates.len(), 2);
     assert_eq!(templates[0].id, "feature");
+    assert_eq!(templates[1].id, "refactor");
 }
 
 #[test]

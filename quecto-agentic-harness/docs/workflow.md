@@ -98,13 +98,13 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
   "workflow": {
     "auto_continue": true,
     "completion_nudge": true,
-    "selector_prompt": "Select the single Quecto repository workflow template, 'feature', before checking steps.",
+    "selector_prompt": "Classify the issue by its SHAPE before selecting a template, then select exactly one: if the issue mandates zero behaviour change to code the project ships (refactor, consolidation, extraction, dedup, moving state, renames — acceptance criteria are structural/parity-only), select 'refactor'; for all other work — adding or altering observable behaviour, and maintenance work such as docs, CI, tooling or dependency changes — select 'feature'; if it mixes a behaviour change with a zero-behaviour-change refactor, STOP and report that the issue must be split — do not proceed on a mixed issue. Record which discriminator drove your classification.",
     "templates": [
       {
         "id": "feature",
         "label": "Feature",
         "description": "New capability with local hook verification, BDD/TDD, code review, then hand off the PR for human review (no auto-merge).",
-        "when_to_use": "Use for all Quecto development work in this repository.",
+        "when_to_use": "Use for behaviour-adding or behaviour-changing Quecto work (the issue's acceptance criteria describe new or altered observable behaviour) and for maintenance work such as docs, CI, tooling or dependency changes. Do NOT use for zero-behaviour-change code restructures — use 'refactor' for those.",
         "steps": [
           {
             "key": "hooks",
@@ -122,13 +122,13 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "tests",
             "label": "Write/update unit tests (run a quick smoke check; full suite runs on push)",
             "phase": "red",
-            "guidance": "Write or update unit tests for the change. Use these crate names: kernel `cargo test -p quecto --lib <name_substring>`; TUI `cargo test -p quecto-tui --lib <name_substring>`; never `-p quecto-agentic-harness`. Plain lib tests need no `--features`; render-harness-driven TUI BDD uses the integration `bdd` target with `--features test-harness`. Run a quick targeted smoke check to confirm tests compile; the full suite and coverage run on push. Write step tests and unit tests to the same discipline: assertions are BEHAVIOURAL (verify observable outcomes/contracts, not internal or private state), well-named, focused, DETERMINISTIC and ISOLATED (no cross-scenario state leakage or ambient/global mutation), and never HOLLOW/always-pass \u2014 each test must be able to fail, and must fail before the implementation exists (RED). Done when the new/modified tests compile and target the new behaviour."
+            "guidance": "Write or update unit tests for the change. Use these crate names: kernel `cargo test -p quecto-agentic-harness --lib <name_substring>` (the package is `quecto-agentic-harness`; its lib target is named `quecto`, but `-p` takes the PACKAGE name); TUI `cargo test -p quecto-tui --lib <name_substring>`. Plain lib tests need no `--features`; render-harness-driven TUI BDD uses the integration `bdd` target with `--features test-harness`. Run a quick targeted smoke check to confirm tests compile; the full suite and coverage run on push. Write step tests and unit tests to the same discipline: assertions are BEHAVIOURAL (verify observable outcomes/contracts, not internal or private state), well-named, focused, DETERMINISTIC and ISOLATED (no cross-scenario state leakage or ambient/global mutation), and never HOLLOW/always-pass \u2014 each test must be able to fail, and must fail before the implementation exists (RED). Done when the new/modified tests compile and target the new behaviour."
           },
           {
             "key": "red",
             "label": "Ensure new/modified tests FAIL (RED) \u2014 quick targeted run only, not full suite",
             "phase": "red",
-            "guidance": "Run a quick targeted check: only the new/modified targeted test to confirm it fails before implementation: `cargo test -p quecto --lib <name_substring>` or `cargo test -p quecto-tui --lib <name_substring>`. Do not run the whole suite here. RED evidence is required per new Then step and per new test assertion, not per test target: every new assertion must individually be shown to fail before implementation \u2014 a tautology cannot produce that evidence, so it is rejected by construction. Done when the new tests fail for the expected reason. If it fails to fail \u2014 i.e. a new test passes before implementation \u2014 it is not exercising the new behaviour, so fix the test."
+            "guidance": "Run a quick targeted check: only the new/modified targeted test to confirm it fails before implementation: `cargo test -p quecto-agentic-harness --lib <name_substring>` or `cargo test -p quecto-tui --lib <name_substring>`. Do not run the whole suite here. RED evidence is required per new Then step and per new test assertion, not per test target: every new assertion must individually be shown to fail before implementation \u2014 a tautology cannot produce that evidence, so it is rejected by construction. Done when the new tests fail for the expected reason. If it fails to fail \u2014 i.e. a new test passes before implementation \u2014 it is not exercising the new behaviour, so fix the test."
           },
           {
             "key": "bdd_review",
@@ -471,8 +471,10 @@ When workflow is disabled with `--no-workflow`, no `workflow_state` events are e
 quecto agent --mode uds --workflow --workflow-guards -s my-session
 ```
 
-This uses the single built-in feature template with its
-default guard rules. The empty `workflow: {}` uses all defaults.
+This uses the built-in templates — 'feature' for behavioural and
+maintenance work, 'refactor' for zero-behaviour-change restructures —
+routed by the classifier selector prompt, with their default guard
+rules. The empty `workflow: {}` uses all defaults.
 
 ### Example 2: Custom deployment workflow
 

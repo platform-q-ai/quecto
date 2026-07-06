@@ -19,7 +19,7 @@ Feature: E2E Real LLM Workflow V2 UDS Tests
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the get_state response "gs-sel" should have workflow mode "selecting_template"
-    And the get_state response "gs-sel" should have 1 available templates
+    And the get_state response "gs-sel" should have 2 available templates
 
   @done @manual-real-llm @mock-llm
   Scenario: LLM selects a workflow template
@@ -34,7 +34,7 @@ Feature: E2E Real LLM Workflow V2 UDS Tests
   @done @manual-real-llm @mock-llm
   Scenario: LLM lists available templates
     When I start the real LLM UDS workflow agent
-    And I send prompt "Call the workflow tool with action list_templates. If you see exactly the feature template with a description, reply TEMPLATE_LISTED. Otherwise reply TEMPLATE_FAIL."
+    And I send prompt "Call the workflow tool with action list_templates. If you see the feature and refactor templates, each with a description, reply TEMPLATE_LISTED. Otherwise reply TEMPLATE_FAIL."
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the agent_end messages should contain "TEMPLATE_LISTED"
