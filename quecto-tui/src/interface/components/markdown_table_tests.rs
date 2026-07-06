@@ -34,15 +34,6 @@ fn render_plain(text: &str, width: usize) -> String {
         .join("\n")
 }
 
-fn render_plain_nonempty(text: &str, width: usize) -> Vec<String> {
-    render_md(text, width)
-        .into_iter()
-        .map(|line| strip_ansi(&line))
-        .filter(|line| !line.is_empty())
-        .map(|line| line.trim_end().to_string())
-        .collect()
-}
-
 #[test]
 fn table_long_cell_wraps_to_viewport_without_losing_text() {
     let md = "| Name | Value |\n| --- | --- |\n| key | alpha-beta-gamma-delta-epsilon-zeta |";
@@ -174,12 +165,78 @@ fn table_row_cap_preserves_other_columns() {
     for line in rendered.lines() {
         assert!(visible_width(line) <= 32, "line exceeds width 32: {line:?}");
     }
-    // No orphaned blank/reset-only rows: every emitted table row after the
-    // separator carries visible content.
-    for line in render_plain_nonempty(&md, 32) {
+    // No orphaned blank/reset-only rows inside the table: check the RAW
+    // render line by line (a reset-only line must FAIL this check, so no
+    // pre-filtering of empty lines before asserting).
+    let raw_lines = render_md(&md, 32);
+    let content_idx: Vec<usize> = raw_lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| !strip_ansi(l).trim().is_empty())
+        .map(|(i, _)| i)
+        .collect();
+    let (first, last) = (content_idx[0], *content_idx.last().unwrap());
+    for line in &raw_lines[first..=last] {
         assert!(
-            !line.trim().is_empty(),
-            "table must not emit content-free rows: {rendered:?}"
+            !strip_ansi(line).trim().is_empty(),
+            "table must not emit content-free rows: {raw_lines:?}"
+        );
+    }
+}
+
+/// Degenerate width: a 3-column table rendered far below its natural width
+/// must not panic and must keep every line within the viewport.
+#[test]
+fn table_degenerate_narrow_width_stays_within_viewport() {
+    let md = "| Alpha | Beta | Gamma |\n| --- | --- | --- |\n| one | two | three |";
+    let rendered = render_plain(md, 8);
+    assert!(!rendered.is_empty(), "table should still render at width 8");
+    for line in rendered.lines() {
+        assert!(
+            visible_width(line) <= 8,
+            "line exceeds width 8, got {}: {line:?}\n{rendered}",
+            visible_width(line)
+        );
+    }
+}
+
+/// Double-width CJK content in a long cell must wrap within the viewport —
+/// display columns, not chars or bytes.
+#[test]
+fn table_long_cjk_cell_wraps_within_viewport() {
+    let long: String = "世界".repeat(10);
+    let md = format!("| Name | Value |\n| --- | --- |\n| key | {long} |");
+    let rendered = render_plain(&md, 30);
+    assert!(
+        rendered.contains("世界"),
+        "CJK cell content should render: {rendered:?}"
+    );
+    for line in rendered.lines() {
+        assert!(
+            visible_width(line) <= 30,
+            "line exceeds width 30, got {}: {line:?}\n{rendered}",
+            visible_width(line)
+        );
+    }
+}
+
+/// A ragged data row must not panic or overflow the viewport. Note:
+/// pulldown-cmark normalises rows to the header's column count, dropping
+/// extra cells before they reach the renderer — this pins that policy plus
+/// graceful layout of the row that has FEWER cells than the header.
+#[test]
+fn table_ragged_rows_stay_within_viewport() {
+    let md = "| A | B |\n| --- | --- |\n| one | two | three |\n| only |";
+    let rendered = render_plain(md, 32);
+    assert!(
+        rendered.contains("one") && rendered.contains("only"),
+        "ragged rows should still render their kept cells: {rendered:?}"
+    );
+    for line in rendered.lines() {
+        assert!(
+            visible_width(line) <= 32,
+            "line exceeds width 32, got {}: {line:?}\n{rendered}",
+            visible_width(line)
         );
     }
 }

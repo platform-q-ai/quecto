@@ -606,12 +606,21 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
                     let tail = wrapped.pop().unwrap_or_default();
                     // Re-truncate the final row to make room for the ellipsis
                     // without exceeding the column width. Columns too narrow
-                    // for "..." just cut at the width instead.
+                    // for "..." just cut at the width instead. Cell text is
+                    // already control-stripped, so drop the SGR reset that
+                    // truncate_to_width appends — mid-line it would cancel the
+                    // header's bold styling.
+                    let strip_reset = |mut s: String| {
+                        if let Some(stripped) = s.strip_suffix("\x1b[0m") {
+                            s.truncate(stripped.len());
+                        }
+                        s
+                    };
                     wrapped.push(if w >= 3 {
-                        let head = truncate_to_width(&tail, w.saturating_sub(3), None);
+                        let head = strip_reset(truncate_to_width(&tail, w.saturating_sub(3), None));
                         format!("{head}...")
                     } else {
-                        truncate_to_width(&tail, w, None)
+                        strip_reset(truncate_to_width(&tail, w, None))
                     });
                 }
                 wrapped
@@ -639,8 +648,9 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
             }
         }
         if row_idx == 0 {
-            // Separator.
-            let sep_parts: Vec<String> = col_widths.iter().map(|&w| "─".repeat(w)).collect();
+            // Separator. Match the `.max(1)` floor used for cell layout so a
+            // fully-empty column does not shift later separator segments.
+            let sep_parts: Vec<String> = col_widths.iter().map(|&w| "─".repeat(w.max(1))).collect();
             lines.push(theme::dim(&sep_parts.join(&" ".repeat(gap))));
         }
     }

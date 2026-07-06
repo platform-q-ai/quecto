@@ -179,10 +179,7 @@ pub(super) fn render_bash(
 
         if expanded {
             // Show all lines.
-            for line in &output_lines {
-                let sanitized = sanitize(line);
-                push_wrapped_output(lines, &sanitized, color_fn, width);
-            }
+            push_full_output(lines, &output_lines, color_fn, width);
         } else {
             // Show tail (last N source lines) with a bounded number of wrapped
             // rows, so one huge logical line cannot flood the collapsed tool
@@ -192,9 +189,7 @@ pub(super) fn render_bash(
             let hidden = total.saturating_sub(shown);
             if hidden > 0 {
                 let hint = format!("... ({} earlier lines, Ctrl+O to expand)", hidden);
-                for segment in crate::interface::utils::wrap_text(&hint, width) {
-                    lines.push(theme::dim(&segment));
-                }
+                push_dim_wrapped(lines, &hint, width);
             }
             push_preview(
                 lines,
@@ -319,12 +314,17 @@ pub(super) fn render_edit(
                     !l.starts_with("Successfully edited") && !l.starts_with("```") && !l.is_empty()
                 })
                 .collect();
-            let max = if expanded {
-                diff_lines.len()
+            if expanded {
+                push_full_output(lines, &diff_lines, style_diff_line, width);
             } else {
-                FILE_PREVIEW_LINES
-            };
-            push_preview(lines, &diff_lines, max, style_diff_line, width);
+                push_preview(
+                    lines,
+                    &diff_lines,
+                    FILE_PREVIEW_LINES,
+                    style_diff_line,
+                    width,
+                );
+            }
         }
     }
 }
@@ -531,6 +531,17 @@ pub(super) fn push_header(
     lines.push(truncate_to_width(&header, width, None));
 }
 
+/// Wrapped rows a single over-long source line may occupy in a collapsed
+/// preview before being cut, so one huge logical line cannot flood the card.
+const PREVIEW_ROWS_PER_LINE: usize = 4;
+
+/// Push a dimmed hint, wrapped so it stays readable at narrow widths.
+fn push_dim_wrapped(lines: &mut Vec<String>, hint: &str, width: usize) {
+    for segment in crate::interface::utils::wrap_text(hint, width) {
+        lines.push(theme::dim(&segment));
+    }
+}
+
 fn push_wrapped_output(
     lines: &mut Vec<String>,
     text: &str,
@@ -539,6 +550,20 @@ fn push_wrapped_output(
 ) {
     for segment in crate::interface::utils::wrap_text(text, width) {
         lines.push(color_fn(&segment));
+    }
+}
+
+/// Push ALL of `content_lines`, sanitized and wrapped to `width` with no row
+/// budget — the expanded-view counterpart of [`push_preview`].
+pub(super) fn push_full_output(
+    lines: &mut Vec<String>,
+    content_lines: &[&str],
+    color_fn: fn(&str) -> String,
+    width: usize,
+) {
+    for line in content_lines {
+        let sanitized = crate::interface::ansi::sanitize_control(line);
+        push_wrapped_output(lines, &sanitized, color_fn, width);
     }
 }
 
@@ -553,7 +578,13 @@ fn push_wrapped_output_limited(
         return (0, true);
     }
     let max_width = width.saturating_mul(max_rows).max(width);
-    let bounded = truncate_to_width(text, max_width, Some("..."));
+    let mut bounded = truncate_to_width(text, max_width, Some("..."));
+    // truncate_to_width appends an SGR reset on truncation, but this text is
+    // already control-stripped and wrap_text would split the escape across
+    // rows, leaking a bare ESC into the rendered line — drop it.
+    if let Some(stripped) = bounded.strip_suffix("\x1b[0m") {
+        bounded.truncate(stripped.len());
+    }
     let mut truncated = bounded != text;
     let mut pushed = 0;
     for segment in crate::interface::utils::wrap_text(&bounded, width) {
@@ -569,10 +600,12 @@ fn push_wrapped_output_limited(
     (pushed, truncated)
 }
 
-/// Push a head preview of `content_lines`: the first `max` lines styled by
-/// `color_fn`, followed by a dimmed "… (N more lines, Ctrl+O to expand)" hint
-/// when the content was truncated. Centralises the preview idiom repeated
-/// across the file/diff/subagent/generic renderers.
+/// Push a head preview of `content_lines`: the first `max` lines, wrapped to
+/// `width` and styled by `color_fn`, under a shared row budget of
+/// [`PREVIEW_ROWS_PER_LINE`] rows per shown line. When lines were hidden or
+/// the budget cut wrapped rows, a dimmed "… (N more lines, Ctrl+O to expand)"
+/// (or "… (output truncated, …)") hint follows. Centralises the preview idiom
+/// repeated across the file/diff/subagent/generic renderers.
 pub(super) fn push_preview(
     lines: &mut Vec<String>,
     content_lines: &[&str],
@@ -582,7 +615,7 @@ pub(super) fn push_preview(
 ) {
     let total = content_lines.len();
     let shown = max.min(total);
-    let mut rows_left = shown.saturating_mul(4);
+    let mut rows_left = shown.saturating_mul(PREVIEW_ROWS_PER_LINE);
     let mut truncated = total > shown;
     for line in &content_lines[..shown] {
         if rows_left == 0 {
@@ -608,9 +641,7 @@ pub(super) fn push_preview(
         } else {
             format!("... ({} more lines, Ctrl+O to expand)", hidden)
         };
-        for segment in crate::interface::utils::wrap_text(&hint, width) {
-            lines.push(theme::dim(&segment));
-        }
+        push_dim_wrapped(lines, &hint, width);
     }
 }
 
@@ -623,14 +654,16 @@ pub(super) fn render_file_preview(
     is_error: bool,
 ) {
     let content_lines: Vec<&str> = content.lines().collect();
-    let total = content_lines.len();
     let color_fn: fn(&str) -> String = if is_error {
         theme::error
     } else {
         theme::tool_output
     };
-    let max = if expanded { total } else { FILE_PREVIEW_LINES };
-    push_preview(lines, &content_lines, max, color_fn, width);
+    if expanded {
+        push_full_output(lines, &content_lines, color_fn, width);
+    } else {
+        push_preview(lines, &content_lines, FILE_PREVIEW_LINES, color_fn, width);
+    }
 }
 
 /// Extract the file path from tool args (tries "path", "file_path").
