@@ -746,3 +746,5 @@ pub(super) fn transient_in(frames: &[Vec<String>]) -> Vec<(usize, String)> {
     }
     out
 }
+#[path = "tui_harness_probes.rs"]
+mod probes;

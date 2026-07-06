@@ -1,9 +1,8 @@
 use super::app_selection::{SelectionAnchor, apply_selection_highlight};
 use super::*;
 use crate::application::session_payloads::{self, ResumedChatMessage};
-use crate::interface::select_overlay::{
-    build_resume_selector_overlay, build_rewind_selector_overlay,
-};
+use crate::interface::components::select_list::route_overlay_key;
+use crate::interface::select_overlay::{build_select_list_overlay, build_select_overlay};
 use crate::interface::theme;
 
 /// Format a Unix timestamp as `YYYY-MM-DD HH:MM` in **local** time, falling
@@ -248,18 +247,8 @@ impl App {
     }
 
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
-        if let Some(selector) = &mut self.resume_selector {
-            selector.handle_input(key);
-            match selector.take_result() {
-                SelectResult::Selected(session) => {
-                    self.resume_selector = None;
-                    self.send_resume_session(&session);
-                }
-                SelectResult::Cancelled => {
-                    self.resume_selector = None;
-                }
-                SelectResult::Pending => {}
-            }
+        if let Some(session) = route_overlay_key(&mut self.resume_selector, key) {
+            self.send_resume_session(&session);
         }
     }
 
@@ -345,7 +334,7 @@ impl App {
         // do many short runs, each creating/dropping the spinner — a toggling
         // 0↔1 line would reflow the chat on every run (the panel-size 6↔7 /
         // 11↔12 judder). A reserved slot keeps the below-chat height stable.
-        if self.active_agent_id.is_none() && self.spinner.is_some() {
+        if self.subagents.active_agent_id.is_none() && self.spinner.is_some() {
             // Master is active and mid-turn: show its richer tool spinner (tool
             // name + elapsed), the only master-local render telemetry layered on
             // top of the shared per-session `running` flag (#828).
@@ -356,19 +345,15 @@ impl App {
             // The active session is mid-turn (a sub-agent processing a queued
             // steer, or the master before its spinner exists); show the working
             // indicator so it never looks dead.
-            bottom.push(subagent_activity_line(1, self.subagent_frame));
-        } else if !self.subagent_local.is_empty() {
+            bottom.push(subagent_activity_line(1, self.subagents.frame));
+        } else if !self.subagents.tracked.is_empty() {
             // Parent is idle but sub-agents are tracked. Keep the reserved slot
             // meaningful: if any child is still working, show an animated
             // "N working" indicator (so activity stays visible while the parent
             // waits); otherwise a blank keeps the height stable.
-            let active = self
-                .subagent_local
-                .values()
-                .filter(|t| subagent_status_is_active(&t.info.status))
-                .count();
+            let active = self.subagents.tracked_active_count();
             if active > 0 {
-                bottom.push(subagent_activity_line(active, self.subagent_frame));
+                bottom.push(subagent_activity_line(active, self.subagents.frame));
             } else {
                 bottom.push(String::new());
             }
@@ -501,20 +486,30 @@ impl App {
         // time). All three splice through the same ANSI-aware helper so the
         // centering and escape-safe splice rule lives in one place.
         if let Some(selector) = &mut self.resume_selector {
-            let (selector_lines, overlay_width) =
-                build_resume_selector_overlay(selector, width, height);
+            let (selector_lines, overlay_width) = build_select_list_overlay(
+                "Resume session",
+                "Enter resume · Esc cancel",
+                selector,
+                width,
+                height,
+            );
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
-        if let Some(selector) = &mut self.rewind_selector {
-            let (selector_lines, overlay_width) =
-                build_rewind_selector_overlay(selector, width, height);
+        if let Some(selector) = &mut self.rewind.selector {
+            let (selector_lines, overlay_width) = build_select_list_overlay(
+                "Go back to…",
+                "Enter select · Esc cancel",
+                selector,
+                width,
+                height,
+            );
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
         if let Some(selector) = &mut self.model_selector {
             let (selector_lines, overlay_width) =
-                crate::interface::select_overlay::build_model_selector_overlay(
-                    selector, width, height,
-                );
+                build_select_overlay(width, height, |content_width| {
+                    selector.render(content_width)
+                });
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
 
@@ -526,7 +521,7 @@ impl App {
 
         if panel_visible {
             let panel = self.render_subagent_panel(panel_width, height, now);
-            let divider = if matches!(self.focus, Focus::Panel) {
+            let divider = if matches!(self.subagents.focus, Focus::Panel) {
                 theme::accent("│")
             } else {
                 theme::dim("│")

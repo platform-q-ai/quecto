@@ -45,8 +45,8 @@ impl App {
         // so this is cheap when nothing changed. We defer opening the selector
         // until the fresh list arrives (handled in `handle_list_models`) so the
         // list is always correct rather than a stale cached snapshot.
-        if !self.model_registry.1 {
-            self.model_registry.1 = true;
+        if !self.model_registry.open_pending {
+            self.model_registry.open_pending = true;
             self.send_command(Command::ListModels {
                 id: Some("model-selector".into()),
             });
@@ -54,10 +54,11 @@ impl App {
     }
 
     pub(super) fn open_model_selector_now(&mut self) {
-        let selector = if self.model_registry.0.is_empty() {
+        let selector = if self.model_registry.entries.is_empty() {
             ModelSelector::new(self.current_model.as_deref())
         } else {
-            ModelSelector::with_models(self.model_registry.0.clone(), self.current_model.as_deref())
+            let entries = self.model_registry.entries.clone();
+            ModelSelector::with_models(entries, self.current_model.as_deref())
         };
         self.model_selector = Some(selector);
     }
@@ -71,7 +72,7 @@ impl App {
                     self.model_selector = None;
                     self.send_set_model(&model);
                 }
-                ModelSelectorResult::Cancelled => {
+                ModelSelectorResult::Dismissed => {
                     self.model_selector = None;
                 }
                 ModelSelectorResult::Pending => {}
@@ -83,15 +84,15 @@ impl App {
         let Some(data) = data else {
             // No data on the response: clear the pending flag so a later open can
             // re-request, and fall back to opening with whatever we have cached.
-            if self.model_registry.1 {
-                self.model_registry.1 = false;
+            if self.model_registry.open_pending {
+                self.model_registry.open_pending = false;
                 self.open_model_selector_now();
             }
             return;
         };
-        self.model_registry.0 = parse_model_entries(&data);
-        if self.model_registry.1 {
-            self.model_registry.1 = false;
+        self.model_registry.entries = parse_model_entries(&data);
+        if self.model_registry.open_pending {
+            self.model_registry.open_pending = false;
             self.open_model_selector_now();
         }
     }

@@ -1,17 +1,15 @@
-//! Shared suggestion-list state for dropdown components.
-//!
-//! Both the slash-command [`Autocomplete`](super::autocomplete::Autocomplete)
-//! and the [`FilesAutocomplete`](super::files_autocomplete::FilesAutocomplete)
-//! are near-identical popups: they hold a list of [`Suggestion`]s, track a
-//! selected index, window the list to a maximum height, and replace the list
-//! while preserving the selection when it is unchanged. That shared state lives
-//! here so the two components differ only by how they *build* suggestions and
-//! how they *render* a row (prefix, description column, loading guard).
+//! Shared suggestion-list state for the suggestion-backed surfaces: the
+//! slash-command [`Autocomplete`](super::autocomplete::Autocomplete), the
+//! [`FilesAutocomplete`](super::files_autocomplete::FilesAutocomplete) and
+//! (since #997) the model selector. Each holds [`Suggestion`]s, tracks a
+//! selected index, windows to a maximum height, and replaces the list while
+//! preserving (or clamping) the selection; the components differ only by how
+//! they *build* suggestions and style their rows.
 
-use std::ops::Range;
-
-use crate::interface::components::autocomplete::Suggestion;
+use crate::interface::components::autocomplete::{AutocompleteResult, Suggestion};
 use crate::interface::components::list_navigator::ListNavigator;
+use crate::interface::components::list_rows::{DescriptionMode, ListRow, render_windowed};
+use crate::interface::keys::Key;
 
 /// Shared selection/window state for a suggestion dropdown.
 #[derive(Debug)]
@@ -37,9 +35,66 @@ impl SuggestionList {
         if !suggestions_match(&self.suggestions, &new) {
             self.navigator.reset();
         }
+        self.set_suggestions_clamping(new);
+    }
+
+    /// Replace suggestions, CLAMPING the selection into the new range instead
+    /// of resetting it — the model selector's historical filter-change
+    /// semantics (#997): narrowing keeps the highlight on the last match.
+    pub fn set_suggestions_clamping(&mut self, new: Vec<Suggestion>) {
         self.suggestions = new;
         self.active = !self.suggestions.is_empty();
         self.navigator.clamp(self.suggestions.len());
+    }
+
+    /// Shared dropdown key handling (#997): Up/Down navigate, Tab/Enter accept
+    /// the selected value (only when `can_accept` — `@files` refuses its
+    /// loading placeholder), Escape dismisses. Returns key-consumed.
+    pub fn handle_key(
+        &mut self,
+        key: &Key,
+        can_accept: bool,
+        result: &mut AutocompleteResult,
+    ) -> bool {
+        if !self.active {
+            return false;
+        }
+        match key {
+            Key::Up => self.move_previous(),
+            Key::Down => self.move_next(),
+            Key::Tab | Key::Enter => {
+                if can_accept && let Some(s) = self.selected_suggestion() {
+                    *result = AutocompleteResult::Selected(s.value.clone());
+                    self.close();
+                }
+            }
+            Key::Escape => {
+                *result = AutocompleteResult::Dismissed;
+                self.close();
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Render this list through the shared row renderer (`list_rows`, #997);
+    /// `to_row` builds each visible row's surface-specific label/decorations.
+    pub fn render_rows(
+        &self,
+        width: usize,
+        indent: &str,
+        mode: DescriptionMode,
+        to_row: impl Fn(&Suggestion) -> ListRow,
+    ) -> Vec<String> {
+        render_windowed(
+            &self.suggestions,
+            &self.navigator,
+            self.max_visible,
+            width,
+            indent,
+            mode,
+            to_row,
+        )
     }
 
     /// Clear suggestions and deactivate the dropdown.
@@ -89,12 +144,6 @@ impl SuggestionList {
     pub fn move_previous(&mut self) {
         self.navigator.move_previous(self.suggestions.len());
     }
-
-    /// The visible window over the suggestion list for the current selection.
-    pub fn visible_range(&self) -> Range<usize> {
-        self.navigator
-            .visible_range(self.suggestions.len(), self.max_visible)
-    }
 }
 
 /// Check if two suggestion lists have the same entries (compared by value).
@@ -106,10 +155,17 @@ fn suggestions_match(a: &[Suggestion], b: &[Suggestion]) -> bool {
 mod tests {
     use super::*;
 
+    impl SuggestionList {
+        /// The visible window for the current selection (test observer).
+        fn visible_range(&self) -> std::ops::Range<usize> {
+            self.navigator
+                .visible_range(self.suggestions.len(), self.max_visible)
+        }
+    }
+
     fn sugg(value: &str) -> Suggestion {
         Suggestion {
             value: value.to_string(),
-            label: value.to_string(),
             description: String::new(),
         }
     }
@@ -163,6 +219,18 @@ mod tests {
         assert_eq!(list.selected(), 1);
         list.move_next();
         assert_eq!(list.selected(), 0);
+    }
+
+    #[test]
+    fn clamping_set_keeps_selection_in_new_range() {
+        let mut list = SuggestionList::new(5);
+        list.set_suggestions(vec![sugg("a"), sugg("b"), sugg("c"), sugg("d")]);
+        for _ in 0..3 {
+            list.move_next();
+        }
+        assert_eq!(list.selected(), 3);
+        list.set_suggestions_clamping(vec![sugg("a"), sugg("b")]);
+        assert_eq!(list.selected(), 1, "selection clamps to the last new row");
     }
 
     #[test]

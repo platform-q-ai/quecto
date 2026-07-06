@@ -14,23 +14,22 @@ impl App {
     /// The agent whose session is currently shown in the body. `None` = master.
     #[cfg(any(test, feature = "test-harness"))]
     pub(super) fn active_agent_id(&self) -> Option<&str> {
-        self.active_agent_id.as_deref()
+        self.subagents.active_agent_id.as_deref()
     }
 
     /// Ids of all retained sub-agent sessions (live or exited but still
     /// viewable per the retention policy).
     #[cfg(test)]
     pub(super) fn retained_session_ids(&self) -> Vec<String> {
-        self.sessions.keys().cloned().collect()
+        self.subagents.sessions.keys().cloned().collect()
     }
 
     /// The socket path the connect-on-select connection would dial for `id`, as
     /// surfaced by the kernel (#800). `None` when unknown.
     #[cfg(test)]
     pub(super) fn subagent_socket_path(&self, id: &str) -> Option<String> {
-        self.subagent_local
-            .get(id)
-            .and_then(|t| t.info.socket_path.clone())
+        let tracked = self.subagents.tracked.get(id)?;
+        tracked.info.socket_path.clone()
     }
 
     /// The active session — the master (`active_agent_id == None`) or the
@@ -39,11 +38,12 @@ impl App {
     /// render/input accessor below delegates here so there is no master-vs-
     /// sub-agent branching scattered across the render path.
     pub(super) fn active_session(&self) -> &SessionView {
-        match self.active_agent_id.as_deref() {
+        let ui = &self.subagents;
+        match ui.active_agent_id.as_deref() {
             None => &self.master_session,
             // Fall back to the master session if a selected session is somehow
             // missing, mirroring `active_session_mut`'s lazy-create contract.
-            Some(id) => self.sessions.get(id).unwrap_or(&self.master_session),
+            Some(id) => ui.sessions.get(id).unwrap_or(&self.master_session),
         }
     }
 
@@ -51,18 +51,19 @@ impl App {
     /// sub-agent's session so a selection always has a body to render; the
     /// master session always exists.
     pub(super) fn active_session_mut(&mut self) -> &mut SessionView {
-        let Some(id) = self.active_agent_id.clone() else {
+        let Some(id) = self.subagents.active_agent_id.clone() else {
             return &mut self.master_session;
         };
-        if !self.sessions.contains_key(&id) {
+        if !self.subagents.sessions.contains_key(&id) {
             // Cold path only: clone git_branch and build the session here, so the
             // common already-exists render path allocates nothing extra (#827 perf).
             let git_branch = self.git_branch.clone();
-            Self::remember_session(&mut self.session_order, &id);
-            self.sessions
+            Self::remember_session(&mut self.subagents.session_order, &id);
+            self.subagents
+                .sessions
                 .insert(id.clone(), SessionView::new(git_branch));
         }
-        self.sessions.get_mut(&id).unwrap()
+        self.subagents.sessions.get_mut(&id).unwrap()
     }
 
     /// The chat buffer for the active session (master or selected sub-agent).
@@ -74,7 +75,8 @@ impl App {
     /// the deferred-note buffer cap independently of the rendered viewport).
     #[cfg(test)]
     pub(crate) fn session_chat_entry_count(&self, agent_id: &str) -> Option<usize> {
-        self.sessions.get(agent_id).map(|s| s.chat.entry_count())
+        let session = self.subagents.sessions.get(agent_id)?;
+        Some(session.chat.entry_count())
     }
 
     /// The active session's workflow/phase bar (master or selected sub-agent).
@@ -108,9 +110,10 @@ impl App {
         // MID-TURN and missed `agent_start`, so `session.running` reads a false
         // negative. Fall back to the master's tracked status (`subagent_local`)
         // so Esc still cancels a busy sub-agent instead of navigating to master.
-        match &self.active_agent_id {
-            Some(id) => self
-                .subagent_local
+        let ui = &self.subagents;
+        match &ui.active_agent_id {
+            Some(id) => ui
+                .tracked
                 .get(id)
                 .is_some_and(|t| subagent_status_is_active(&t.info.status)),
             None => false,
@@ -120,13 +123,13 @@ impl App {
     /// The focus region currently holding keyboard input (#802, tests).
     #[cfg(any(test, feature = "test-harness"))]
     pub(super) fn focus_region(&self) -> Focus {
-        self.focus
+        self.subagents.focus
     }
 
     /// The 0-based panel highlight index (#802, tests).
     #[cfg(any(test, feature = "test-harness"))]
     pub(super) fn panel_highlight_index(&self) -> usize {
-        self.panel_nav.selected()
+        self.subagents.panel_nav.selected()
     }
 
     /// Send a command to the active sub-agent's own connection (#802). Returns
@@ -141,10 +144,10 @@ impl App {
     /// `false` so the caller can surface the dropped command rather than
     /// reporting a phantom success.
     pub(super) fn send_to_active_subagent(&mut self, cmd: Command) -> bool {
-        let Some(id) = self.active_agent_id.clone() else {
+        let Some(id) = self.subagents.active_agent_id.clone() else {
             return false;
         };
-        let Some((conn_id, tx)) = &self.active_subagent_cmd_tx else {
+        let Some((conn_id, tx)) = &self.subagents.active_cmd_tx else {
             return false;
         };
         if conn_id != &id {
@@ -160,12 +163,12 @@ impl App {
     /// connect-on-select connection to its live stream.
     pub(super) fn select_agent(&mut self, agent_id: Option<&str>) {
         let new_active = agent_id.map(str::to_string);
-        if new_active == self.active_agent_id {
+        if new_active == self.subagents.active_agent_id {
             return;
         }
         // Tear down the previous sub-agent connection, if any.
         self.teardown_active_connection();
-        self.active_agent_id = new_active.clone();
+        self.subagents.active_agent_id = new_active.clone();
         self.sync_panel_selection_to_active();
 
         let Some(id) = new_active else {
@@ -187,8 +190,8 @@ impl App {
     /// row — and the panel itself may have vanished. Fall back to the master so
     /// body and panel always agree (#800 review).
     fn reconcile_active_agent(&mut self) {
-        if let Some(active) = self.active_agent_id.clone() {
-            if !self.subagent_local.contains_key(&active) {
+        if let Some(active) = self.subagents.active_agent_id.clone() {
+            if !self.subagents.tracked.contains_key(&active) {
                 self.select_agent(None);
             }
         }
@@ -197,10 +200,11 @@ impl App {
     /// Create the session for `id` if missing, recording retention order and
     /// evicting the oldest non-active session beyond the cap.
     pub(super) fn ensure_session(&mut self, id: &str) {
-        if !self.sessions.contains_key(id) {
-            self.sessions
+        if !self.subagents.sessions.contains_key(id) {
+            self.subagents
+                .sessions
                 .insert(id.to_string(), SessionView::new(self.git_branch.clone()));
-            Self::remember_session(&mut self.session_order, id);
+            Self::remember_session(&mut self.subagents.session_order, id);
             self.evict_retained_sessions();
         }
     }
@@ -214,16 +218,17 @@ impl App {
     /// Bound retained-session memory: drop the oldest sessions (never the
     /// active one) once the retained count exceeds `MAX_RETAINED_SESSIONS`.
     fn evict_retained_sessions(&mut self) {
-        while self.sessions.len() > MAX_RETAINED_SESSIONS {
-            let Some(pos) = self
-                .session_order
+        let subs = &mut self.subagents;
+        while subs.sessions.len() > MAX_RETAINED_SESSIONS {
+            let order = &subs.session_order;
+            let Some(pos) = order
                 .iter()
-                .position(|id| Some(id) != self.active_agent_id.as_ref())
+                .position(|id| Some(id) != subs.active_agent_id.as_ref())
             else {
                 break;
             };
-            let victim = self.session_order.remove(pos);
-            self.sessions.remove(&victim);
+            let victim = subs.session_order.remove(pos);
+            subs.sessions.remove(&victim);
         }
     }
 
@@ -233,13 +238,13 @@ impl App {
     /// active session — commit happens only on Enter/Tab (#802).
     pub(super) fn panel_highlight_previous(&mut self) {
         let len = self.panel_rows().len();
-        self.panel_nav.move_previous(len);
+        self.subagents.panel_nav.move_previous(len);
     }
 
     /// Move the panel highlight down WITHOUT switching the active session.
     pub(super) fn panel_highlight_next(&mut self) {
         let len = self.panel_rows().len();
-        self.panel_nav.move_next(len);
+        self.subagents.panel_nav.move_next(len);
     }
 
     /// Jump the panel highlight to a 1-based row number (digits 1–9). Row 1 is
@@ -247,7 +252,7 @@ impl App {
     pub(super) fn panel_highlight_row(&mut self, one_based: usize) {
         let len = self.panel_rows().len();
         if one_based >= 1 && one_based <= len {
-            self.panel_nav.set_selected(one_based - 1);
+            self.subagents.panel_nav.set_selected(one_based - 1);
         }
     }
 
@@ -256,7 +261,7 @@ impl App {
     pub(super) fn commit_panel_selection(&mut self) {
         let target = self
             .panel_rows()
-            .get(self.panel_nav.selected())
+            .get(self.subagents.panel_nav.selected())
             .and_then(|r| r.id.clone());
         self.select_agent(target.as_deref());
     }
@@ -268,7 +273,7 @@ impl App {
         // master before reconciling the cursor (#800 review).
         self.reconcile_active_agent();
         let rows = self.panel_rows();
-        self.panel_nav.clamp(rows.len());
+        self.subagents.panel_nav.clamp(rows.len());
         self.sync_panel_selection_to_active_with(&rows);
     }
 
@@ -280,9 +285,9 @@ impl App {
     fn sync_panel_selection_to_active_with(&mut self, rows: &[PanelRow]) {
         if let Some(idx) = rows
             .iter()
-            .position(|r| r.id.as_deref() == self.active_agent_id.as_deref())
+            .position(|r| r.id.as_deref() == self.subagents.active_agent_id.as_deref())
         {
-            self.panel_nav.set_selected(idx);
+            self.subagents.panel_nav.set_selected(idx);
         }
     }
 
@@ -292,14 +297,11 @@ impl App {
     /// stream into the shared `subagent_event_rx`, tagged with the agent id.
     /// No-op when the socket path is unknown (older kernel / non-local agent).
     fn open_subagent_connection(&mut self, id: &str) {
-        let Some(socket) = self
-            .subagent_local
-            .get(id)
-            .and_then(|t| t.info.socket_path.clone())
-        else {
+        let tracked = &self.subagents.tracked;
+        let Some(socket) = tracked.get(id).and_then(|t| t.info.socket_path.clone()) else {
             return;
         };
-        let tx = self.subagent_event_tx.clone();
+        let tx = self.subagents.event_tx.clone();
         let agent_id = id.to_string();
         let path = std::path::PathBuf::from(socket);
         // Outbound channel so the editor's send/abort path can steer this child
@@ -341,16 +343,16 @@ impl App {
                 }
             }
         });
-        self.active_conn = Some((id.to_string(), handle));
-        self.active_subagent_cmd_tx = Some((id.to_string(), cmd_tx));
+        self.subagents.active_conn = Some((id.to_string(), handle));
+        self.subagents.active_cmd_tx = Some((id.to_string(), cmd_tx));
     }
 
     /// Abort the active sub-agent connection's forwarding task, if any.
     fn teardown_active_connection(&mut self) {
-        if let Some((_, handle)) = self.active_conn.take() {
+        if let Some((_, handle)) = self.subagents.active_conn.take() {
             handle.abort();
         }
-        self.active_subagent_cmd_tx = None;
+        self.subagents.active_cmd_tx = None;
     }
 
     // ── Panel rendering ────────────────────────────────────────────────
@@ -379,7 +381,7 @@ impl App {
             workflow: master_wf,
         }];
         for (id, prefix) in self.subagent_tree_order() {
-            let info = self.subagent_local.get(&id).map(|t| &t.info);
+            let info = self.subagents.tracked.get(&id).map(|t| &t.info);
             let workflow = info
                 .and_then(|i| i.workflow.as_ref())
                 .filter(|w| w.steps_total > 0)
@@ -402,13 +404,13 @@ impl App {
     fn subagent_tree_order(&self) -> Vec<(String, String)> {
         use std::collections::BTreeMap;
         let mut children: BTreeMap<Option<String>, Vec<String>> = BTreeMap::new();
-        for (id, tracked) in &self.subagent_local {
+        for (id, tracked) in &self.subagents.tracked {
             // Treat an unknown parent as a root so its subtree is not lost.
             let parent = tracked
                 .info
                 .parent_id
                 .clone()
-                .filter(|p| self.subagent_local.contains_key(p));
+                .filter(|p| self.subagents.tracked.contains_key(p));
             children.entry(parent).or_default().push(id.clone());
         }
         // Push siblings reversed (with their connector) so popping preserves order.
@@ -446,8 +448,8 @@ impl App {
         now: tokio::time::Instant,
     ) -> Vec<String> {
         let rows = self.panel_rows();
-        let selected = self.panel_nav.selected();
-        let active = self.active_agent_id.as_deref();
+        let selected = self.subagents.panel_nav.selected();
+        let active = self.subagents.active_agent_id.as_deref();
 
         let blocks: Vec<Vec<String>> = rows
             .iter()
@@ -534,7 +536,7 @@ impl App {
 
     fn panel_row_observer(&self, id: Option<&str>) -> Option<&'static str> {
         let id = id?;
-        let entry = self.subagent_local.get(id)?;
+        let entry = self.subagents.tracked.get(id)?;
         if entry.info.read_only {
             Some(theme::OBSERVER_MARKER)
         } else {
@@ -545,11 +547,10 @@ impl App {
     fn panel_row_timer(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         match id {
             None => fmt_mss(now.saturating_duration_since(self.started_at).as_secs()),
-            Some(id) => self
-                .subagent_local
-                .get(id)
-                .map(|t| fmt_mss(t.elapsed_secs(now)))
-                .unwrap_or_default(),
+            Some(id) => {
+                let t = self.subagents.tracked.get(id);
+                t.map(|t| fmt_mss(t.elapsed_secs(now))).unwrap_or_default()
+            }
         }
     }
 
@@ -560,7 +561,7 @@ impl App {
             // Master row → session uptime.
             return fmt_mss(now.saturating_duration_since(self.started_at).as_secs());
         };
-        let Some(t) = self.subagent_local.get(id) else {
+        let Some(t) = self.subagents.tracked.get(id) else {
             return String::new();
         };
         // Per-row timer (#838): non-running agents show a FROZEN value
@@ -614,17 +615,18 @@ impl App {
         state: &workflow_bar::WorkflowBarState,
         now: tokio::time::Instant,
     ) -> String {
-        let (name, status) = match self.active_agent_id.as_deref() {
+        let (name, status) = match self.subagents.active_agent_id.as_deref() {
             None => ("Master".to_string(), self.master_status().to_string()),
             Some(id) => (
                 id.to_string(),
-                self.subagent_local
+                self.subagents
+                    .tracked
                     .get(id)
                     .map(|t| t.info.status.clone())
                     .unwrap_or_default(),
             ),
         };
-        let elapsed = self.panel_row_elapsed(self.active_agent_id.as_deref(), now);
+        let elapsed = self.panel_row_elapsed(self.subagents.active_agent_id.as_deref(), now);
         let mut title = format!(
             "{} {} {} {}",
             theme::bold(&sanitize_panel_label(&name)),

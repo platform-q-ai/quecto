@@ -2,9 +2,9 @@
 
 use crate::interface::component::Component;
 use crate::interface::components::list_navigator::ListNavigator;
+use crate::interface::components::list_rows::{DescriptionMode, ListRow, render_windowed};
 use crate::interface::keys::Key;
 use crate::interface::theme;
-use crate::interface::utils::{truncate_to_width, visible_width};
 
 /// An item in a select list.
 #[derive(Debug, Clone)]
@@ -14,16 +14,10 @@ pub struct SelectItem {
     pub description: Option<String>,
 }
 
-/// Result of a select list interaction.
-#[derive(Debug, Clone, PartialEq)]
-pub enum SelectResult {
-    /// User selected an item.
-    Selected(String),
-    /// User cancelled (Escape).
-    Cancelled,
-    /// No action yet.
-    Pending,
-}
+/// Result of a select list interaction — the shared list-interaction result
+/// (`Selected` / `Dismissed` / `Pending`), re-exported under this surface's
+/// historical name.
+pub use crate::interface::components::autocomplete::AutocompleteResult as SelectResult;
 
 /// A navigable list with selection indicator and optional descriptions.
 pub struct SelectList {
@@ -69,10 +63,21 @@ impl SelectList {
     pub fn item_count(&self) -> usize {
         self.items.len()
     }
+}
 
-    #[cfg(test)]
-    pub fn render_text(&mut self, width: usize) -> String {
-        self.render(width).join("\n")
+/// Route a key into an overlay selector slot (#997 dedup of the resume and
+/// rewind overlay key handlers): forwards the key, closes the overlay on
+/// `Selected`/`Dismissed`, and returns the selected value, if any.
+pub(crate) fn route_overlay_key(slot: &mut Option<SelectList>, key: &Key) -> Option<String> {
+    let selector = slot.as_mut()?;
+    selector.handle_input(key);
+    let result = selector.take_result();
+    if !matches!(result, SelectResult::Pending) {
+        *slot = None;
+    }
+    match result {
+        SelectResult::Selected(value) => Some(value),
+        _ => None,
     }
 }
 
@@ -85,97 +90,36 @@ impl Component for SelectList {
             return lines;
         }
 
-        // Calculate visible window with scrolling.
-        let total = self.items.len();
-        let range = self.navigator.visible_range(total, self.max_visible);
-        let start = range.start;
-        let end = range.end;
-
-        // Calculate primary column width for alignment over the visible window
-        // only — the off-screen items are never drawn, so widening the column
-        // for them would just waste a full-list scan every frame (#757).
-        let primary_width = self.items[start..end]
-            .iter()
-            .map(|i| visible_width(&i.label))
-            .max()
-            .unwrap_or(10)
-            .min(32);
-
-        for i in start..end {
-            let item = &self.items[i];
-            let is_sel = i == self.navigator.selected();
-            let prefix = if is_sel { "→ " } else { "  " };
-            let prefix_width = 2;
-
-            let label = if is_sel {
-                theme::accent(&item.label)
-            } else {
-                item.label.clone()
-            };
-
-            if let Some(desc) = &item.description {
-                let label_vis = visible_width(&item.label);
-                let gap = primary_width.saturating_sub(label_vis) + 2;
-                let desc_start = prefix_width + label_vis + gap;
-                let desc_width = width.saturating_sub(desc_start + 1);
-                if desc_width > 10 {
-                    let truncated_desc = truncate_to_width(desc, desc_width, Some(""));
-                    let spacing = " ".repeat(gap);
-                    let line = format!(
-                        "{}{}{}{}",
-                        prefix,
-                        label,
-                        spacing,
-                        theme::dim(&truncated_desc)
-                    );
-                    lines.push(truncate_to_width(&line, width, None));
-                } else {
-                    lines.push(truncate_to_width(
-                        &format!("{}{}", prefix, label),
-                        width,
-                        None,
-                    ));
-                }
-            } else {
-                lines.push(truncate_to_width(
-                    &format!("{}{}", prefix, label),
-                    width,
-                    None,
-                ));
-            }
-        }
-
-        // Scroll indicator.
-        if start > 0 || end < total {
-            let info = format!("  ({}/{})", self.navigator.selected() + 1, total);
-            lines.push(theme::dim(&info));
-        }
-
+        // Shared row renderer (#997): the alignment column covers the visible
+        // window only, capped at 32 (#757) — see `DescriptionMode::AlignedWindow`.
+        lines.extend(render_windowed(
+            &self.items,
+            &self.navigator,
+            self.max_visible,
+            width,
+            "",
+            DescriptionMode::AlignedWindow { min_desc_width: 10 },
+            |item| ListRow {
+                description: item.description.clone(),
+                ..ListRow::plain(item.label.clone())
+            },
+        ));
         lines
     }
 
     fn handle_input(&mut self, key: &Key) -> bool {
         match key {
-            Key::Up => {
-                self.navigator.move_previous(self.items.len());
-                true
-            }
-            Key::Down => {
-                self.navigator.move_next(self.items.len());
-                true
-            }
+            Key::Up => self.navigator.move_previous(self.items.len()),
+            Key::Down => self.navigator.move_next(self.items.len()),
             Key::Enter => {
                 if let Some(item) = self.items.get(self.navigator.selected()) {
                     self.result = SelectResult::Selected(item.value.clone());
                 }
-                true
             }
-            Key::Escape => {
-                self.result = SelectResult::Cancelled;
-                true
-            }
-            _ => false,
+            Key::Escape => self.result = SelectResult::Dismissed,
+            _ => return false,
         }
+        true
     }
 
     fn invalidate(&mut self) {}
@@ -184,6 +128,12 @@ impl Component for SelectList {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl SelectList {
+        pub(crate) fn render_text(&mut self, width: usize) -> String {
+            self.render(width).join("\n")
+        }
+    }
 
     fn make_items(labels: &[&str]) -> Vec<SelectItem> {
         labels
@@ -249,7 +199,7 @@ mod tests {
     fn escape_cancels() {
         let mut list = SelectList::new(make_items(&["A"]), 10);
         list.handle_input(&Key::Escape);
-        assert_eq!(list.take_result(), SelectResult::Cancelled);
+        assert_eq!(list.take_result(), SelectResult::Dismissed);
     }
 
     #[test]

@@ -608,3 +608,60 @@ mod workflow_display_regression {
         );
     }
 }
+
+// ── #997 grouped App state: behavior observed through the owner groups ──────
+// RED until the rewind / model-registry / sub-agent-UI fields move into their
+// named owner structs; the driving side of each test is the real App path.
+
+/// Double-Escape at idle issues `rewind-open-1`; the rewind owner group must
+/// report the same sequence the wire command carries.
+#[tokio::test]
+async fn rewind_group_tracks_issued_request_ids() {
+    let mut h = TuiHarness::new().await;
+    h.issue_rewind_open();
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter().any(|c| c.contains("rewind-open-1")),
+        "double-Escape should issue the rewind-open-1 correlation id: {cmds:?}"
+    );
+    assert_eq!(
+        h.rewind_group_request_seq(),
+        1,
+        "the rewind owner group must hold the issued sequence"
+    );
+}
+
+/// A `list_models` response lands in the named model-registry group: parsed
+/// entries stored, pending-open flag cleared. Both transitions are driven:
+/// a real selector-open request sets pending, the response clears it.
+#[tokio::test]
+async fn model_registry_group_holds_parsed_entries() {
+    let mut h = TuiHarness::new().await;
+    h.request_model_selector_open();
+    assert!(
+        h.model_registry_group().1,
+        "a selector open defers until the fresh list arrives (pending)"
+    );
+    h.deliver_list_models(2);
+    assert_eq!(
+        h.model_registry_group(),
+        (2, false),
+        "the registry group holds both parsed entries and clears the pending open"
+    );
+}
+
+/// A `subagents_changed` push is tracked by the sub-agent UI owner group.
+#[tokio::test]
+async fn subagent_group_tracks_registered_agents() {
+    let mut h = TuiHarness::new().await;
+    h.event(subagents_changed(vec![subagent(
+        "ui-997-a1",
+        "running",
+        Some(("active", 0, 3)),
+    )]));
+    assert_eq!(
+        h.subagent_group_tracked(),
+        1,
+        "the sub-agent UI group must track the pushed agent"
+    );
+}

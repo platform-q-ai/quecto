@@ -1,4 +1,5 @@
 use super::*;
+use crate::interface::components::select_list::route_overlay_key;
 use crate::interface::select_overlay::DOUBLE_ESC_WINDOW;
 
 pub(super) fn rewind_preview(content: &str) -> String {
@@ -8,22 +9,23 @@ pub(super) fn rewind_preview(content: &str) -> String {
 
 impl App {
     fn next_rewind_request_id(&mut self, kind: &str) -> String {
-        self.rewind_request_seq = self.rewind_request_seq.wrapping_add(1);
-        format!("rewind-{kind}-{}", self.rewind_request_seq)
+        self.rewind.request_seq = self.rewind.request_seq.wrapping_add(1);
+        format!("rewind-{kind}-{}", self.rewind.request_seq)
     }
 
     pub(super) fn handle_idle_escape_for_rewind(&mut self) {
         let now = tokio::time::Instant::now();
         if self
+            .rewind
             .last_idle_escape
             .is_some_and(|prev| now.duration_since(prev) <= DOUBLE_ESC_WINDOW)
         {
-            self.last_idle_escape = None;
+            self.rewind.last_idle_escape = None;
             let id = self.next_rewind_request_id("open");
-            self.pending_rewind_open_id = Some(id.clone());
+            self.rewind.pending_open_id = Some(id.clone());
             self.send_command(Command::GetMessages { id: Some(id) });
         } else {
-            self.last_idle_escape = Some(now);
+            self.rewind.last_idle_escape = Some(now);
             self.notify(
                 "Press Esc again to choose where to go back",
                 NotifyLevel::Info,
@@ -64,31 +66,22 @@ impl App {
             self.notify("No previous user turns to rewind", NotifyLevel::Info);
             return;
         }
-        self.rewind_selector = Some(SelectList::new(items, 10));
+        self.rewind.selector = Some(SelectList::new(items, 10));
     }
 
     pub(super) fn handle_rewind_selector_key(&mut self, key: &Key) {
-        if let Some(selector) = &mut self.rewind_selector {
-            selector.handle_input(key);
-            match selector.take_result() {
-                SelectResult::Selected(value) => {
-                    self.rewind_selector = None;
-                    let Ok(message_index) = value.parse::<usize>() else {
-                        self.notify("Invalid rewind target", NotifyLevel::Error);
-                        return;
-                    };
-                    let id = self.next_rewind_request_id("to");
-                    self.pending_rewind_apply_id = Some(id.clone());
-                    self.send_command(Command::RewindTo {
-                        id: Some(id),
-                        message_index,
-                    });
-                }
-                SelectResult::Cancelled => {
-                    self.rewind_selector = None;
-                }
-                SelectResult::Pending => {}
-            }
-        }
+        let Some(value) = route_overlay_key(&mut self.rewind.selector, key) else {
+            return;
+        };
+        let Ok(message_index) = value.parse::<usize>() else {
+            self.notify("Invalid rewind target", NotifyLevel::Error);
+            return;
+        };
+        let id = self.next_rewind_request_id("to");
+        self.rewind.pending_apply_id = Some(id.clone());
+        self.send_command(Command::RewindTo {
+            id: Some(id),
+            message_index,
+        });
     }
 }

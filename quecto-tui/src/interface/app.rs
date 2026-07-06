@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::infrastructure::client::{Client, Command, Event};
+use crate::infrastructure::client::{Client, Command, Event, SubagentWorkflow};
 use crate::infrastructure::render::DiffRenderer;
 use crate::infrastructure::terminal::Terminal;
 use crate::infrastructure::workspace_files::list_workspace_files;
@@ -17,7 +17,7 @@ use crate::interface::components::model_selector::{
     ModelEntry, ModelSelector, ModelSelectorResult,
 };
 use crate::interface::components::notification::{Notification, NotificationStack, NotifyLevel};
-use crate::interface::components::select_list::{SelectItem, SelectList, SelectResult};
+use crate::interface::components::select_list::{SelectItem, SelectList};
 use crate::interface::components::spinner::Spinner;
 use crate::interface::components::workflow_bar;
 use crate::interface::keys::{self, Key};
@@ -114,29 +114,13 @@ pub struct App {
     connected_agent_id: Option<String>,
     /// The model selector component (created on demand, pushed onto overlay stack).
     model_selector: Option<ModelSelector>,
-    model_registry: (Vec<ModelEntry>, bool),
+    model_registry: ModelRegistry,
     /// Session resume selector shown after `/resume` lists persisted sessions.
     resume_selector: Option<SelectList>,
-    /// Rewind selector shown after idle double-Escape lists prior user turns.
-    rewind_selector: Option<SelectList>,
-    /// Last idle bare Escape used to detect double-Escape for rewind.
-    last_idle_escape: Option<tokio::time::Instant>,
-    /// Locally-issued get_messages id for opening the rewind selector.
-    pending_rewind_open_id: Option<String>,
-    /// Locally-issued rewind_to id awaiting acknowledgement.
-    pending_rewind_apply_id: Option<String>,
-    /// Monotonic client-local sequence for rewind correlation ids.
-    rewind_request_seq: u64,
-    /// Client-side subagent state for immediate bar updates (#525).
-    /// Updated from tool events (spawn/agent_cmd) and server pushes.
-    /// Entries track expiry timestamps for auto-removal (#540).
-    subagent_local: std::collections::BTreeMap<String, TrackedSubagent>,
-    /// Animation frame for the subagent spinner, advanced on each spinner tick.
-    subagent_frame: usize,
-    /// The sub-agent the parent is currently blocked on via `agent_cmd await`,
-    /// if any. Rendered as a per-row "awaiting" indicator instead of a shared
-    /// spinner line.
-    awaited_agent_id: Option<String>,
+    /// Rewind flow state (#997).
+    rewind: RewindFlow,
+    /// Sub-agent / multi-session UI state (#997).
+    subagents: SubagentUi,
     /// Diagnostic: when `QUECTO_TUI_RENDER_LOG` is set, every frame is appended
     /// (ANSI-stripped) to this file for frame-by-frame replay.
     render_log_path: Option<String>,
@@ -168,6 +152,47 @@ pub struct App {
     /// Internal notifications for asynchronous command-send failures.
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
+    /// When the TUI session started — drives the Master row's uptime timer (#820).
+    started_at: tokio::time::Instant,
+}
+
+/// Rewind flow state, grouped by owner (#997).
+#[derive(Default)]
+pub(crate) struct RewindFlow {
+    /// Rewind selector shown after idle double-Escape lists prior user turns.
+    selector: Option<SelectList>,
+    /// Last idle bare Escape used to detect double-Escape for rewind.
+    last_idle_escape: Option<tokio::time::Instant>,
+    /// Locally-issued get_messages id for opening the rewind selector.
+    pending_open_id: Option<String>,
+    /// Locally-issued rewind_to id awaiting acknowledgement.
+    pending_apply_id: Option<String>,
+    /// Monotonic client-local sequence for rewind correlation ids.
+    request_seq: u64,
+}
+
+/// Model registry owned by the selector flow (#997).
+#[derive(Default)]
+pub(crate) struct ModelRegistry {
+    /// Models parsed from the last `list_models` response (may be empty).
+    entries: Vec<ModelEntry>,
+    /// A selector open is deferred until the fresh list arrives (ADR-0002).
+    open_pending: bool,
+}
+
+/// Sub-agent / multi-session UI state, grouped by owner (#997); the former
+/// `App` fields, moved verbatim.
+pub(crate) struct SubagentUi {
+    /// Client-side subagent state for immediate bar updates (#525).
+    /// Updated from tool events (spawn/agent_cmd) and server pushes.
+    /// Entries track expiry timestamps for auto-removal (#540).
+    tracked: std::collections::BTreeMap<String, TrackedSubagent>,
+    /// Animation frame for the subagent spinner, advanced on each spinner tick.
+    frame: usize,
+    /// The sub-agent the parent is currently blocked on via `agent_cmd await`,
+    /// if any. Rendered as a per-row "awaiting" indicator instead of a shared
+    /// spinner line.
+    awaited_agent_id: Option<String>,
     /// Per-sub-agent session views, keyed by agent id (#800). The master is not
     /// in this map — it is the top-level `self.master_session.chat`/`self.master_session.workflow_bar`/etc. and
     /// is `active_agent_id == None`. Sessions are retained after a sub-agent exits
@@ -181,8 +206,8 @@ pub struct App {
     panel_nav: crate::interface::components::list_navigator::ListNavigator,
     /// Fan-in for events from the active sub-agent's direct connection (#800).
     /// Each item is `(agent_id, event)`; routed into that agent's session.
-    subagent_event_tx: mpsc::Sender<(String, Event)>,
-    subagent_event_rx: mpsc::Receiver<(String, Event)>,
+    event_tx: mpsc::Sender<(String, Event)>,
+    event_rx: mpsc::Receiver<(String, Event)>,
     /// The agent id of the currently-open connect-on-select connection and a
     /// handle to abort its forwarding task on deselect/teardown (#800).
     active_conn: Option<(String, tokio::task::JoinHandle<()>)>,
@@ -190,11 +215,42 @@ pub struct App {
     /// (#802). Lets the editor's send/abort path steer the selected sub-agent —
     /// its dispatch loop queues the prompt until its current turn ends. `None`
     /// when the master is active or the child's socket is unknown.
-    active_subagent_cmd_tx: Option<(String, mpsc::Sender<Command>)>,
+    active_cmd_tx: Option<(String, mpsc::Sender<Command>)>,
     /// Which pane has keyboard focus: the editor or the side panel (#802).
     focus: Focus,
-    /// When the TUI session started — drives the Master row's uptime timer (#820).
-    started_at: tokio::time::Instant,
+}
+
+impl SubagentUi {
+    /// How many tracked child agents are currently in an active status.
+    pub(crate) fn tracked_active_count(&self) -> usize {
+        self.tracked
+            .values()
+            .filter(|t| subagent_status_is_active(&t.info.status))
+            .count()
+    }
+
+    /// The workflow snapshot tracked for `id`, if any.
+    pub(crate) fn tracked_workflow(&self, id: &str) -> Option<&SubagentWorkflow> {
+        self.tracked.get(id).and_then(|t| t.info.workflow.as_ref())
+    }
+
+    fn new() -> Self {
+        let (event_tx, event_rx) = mpsc::channel(256);
+        Self {
+            tracked: std::collections::BTreeMap::new(),
+            frame: 0,
+            awaited_agent_id: None,
+            sessions: std::collections::BTreeMap::new(),
+            session_order: Vec::new(),
+            active_agent_id: None,
+            panel_nav: crate::interface::components::list_navigator::ListNavigator::new(),
+            event_tx,
+            event_rx,
+            active_conn: None,
+            active_cmd_tx: None,
+            focus: Focus::Input,
+        }
+    }
 }
 
 /// Per-session state for the multi-session UI (#800/#802). The master (#828)
@@ -266,7 +322,6 @@ impl App {
         let git_branch = git_repo.as_deref().and_then(app_git::read_git_branch_from);
         footer.set_git_branch(git_branch.clone());
         let (command_send_failure_tx, command_send_failure_rx) = mpsc::channel(16);
-        let (subagent_event_tx, subagent_event_rx) = mpsc::channel(256);
 
         Self {
             terminal,
@@ -286,16 +341,10 @@ impl App {
             current_model: None,
             connected_agent_id: None,
             model_selector: None,
-            model_registry: (Vec::new(), false),
+            model_registry: ModelRegistry::default(),
             resume_selector: None,
-            rewind_selector: None,
-            last_idle_escape: None,
-            pending_rewind_open_id: None,
-            pending_rewind_apply_id: None,
-            rewind_request_seq: 0,
-            subagent_local: std::collections::BTreeMap::new(),
-            subagent_frame: 0,
-            awaited_agent_id: None,
+            rewind: RewindFlow::default(),
+            subagents: SubagentUi::new(),
             render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
             #[cfg(any(test, feature = "test-harness"))]
             rendered_frames: 0,
@@ -310,15 +359,6 @@ impl App {
             context_stats_requested: false,
             command_send_failure_tx,
             command_send_failure_rx,
-            sessions: std::collections::BTreeMap::new(),
-            session_order: Vec::new(),
-            active_agent_id: None,
-            panel_nav: crate::interface::components::list_navigator::ListNavigator::new(),
-            subagent_event_tx,
-            subagent_event_rx,
-            active_conn: None,
-            active_subagent_cmd_tx: None,
-            focus: Focus::Input,
             started_at: tokio::time::Instant::now(),
         }
     }

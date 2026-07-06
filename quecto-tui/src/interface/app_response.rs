@@ -29,8 +29,8 @@ impl App {
             }
             "list_models" if success => self.handle_list_models(data),
             "list_models" => {
-                let was_pending = self.model_registry.1;
-                self.model_registry.1 = false;
+                let was_pending = self.model_registry.open_pending;
+                self.model_registry.open_pending = false;
                 self.notify_response_error("Could not list models", error);
                 // Refresh failed but the user asked to open the selector: fall
                 // back to whatever models we already have cached.
@@ -48,23 +48,23 @@ impl App {
             "resume_session" => self.notify_response_error("Resume failed", error),
             "get_messages" if success => {
                 if let Some(data) = data {
-                    if id.is_some() && id == self.pending_rewind_open_id {
-                        self.pending_rewind_open_id = None;
+                    if id.is_some() && id == self.rewind.pending_open_id {
+                        self.rewind.pending_open_id = None;
                         self.open_rewind_selector(&data);
                     } else {
                         self.replace_chat_with_messages(&data);
                     }
                 }
             }
-            "rewind_to" if id.is_some() && id == self.pending_rewind_apply_id && success => {
-                self.pending_rewind_apply_id = None;
+            "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id && success => {
+                self.rewind.pending_apply_id = None;
                 self.notify("Rewound conversation", NotifyLevel::Success);
                 self.send_command(Command::GetMessages {
                     id: Some("rewind-refresh".into()),
                 });
             }
-            "rewind_to" if id.is_some() && id == self.pending_rewind_apply_id => {
-                self.pending_rewind_apply_id = None;
+            "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id => {
+                self.rewind.pending_apply_id = None;
                 self.notify_response_error("Rewind failed", error);
             }
             "rewind_to" => {}

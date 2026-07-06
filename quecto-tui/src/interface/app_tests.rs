@@ -318,8 +318,13 @@ fn resume_selector_overlay_has_opaque_border() {
         }],
         10,
     );
-    let (lines, width) =
-        crate::interface::select_overlay::build_resume_selector_overlay(&mut selector, 100, 40);
+    let (lines, width) = crate::interface::select_overlay::build_select_list_overlay(
+        "Resume session",
+        "Enter resume · Esc cancel",
+        &mut selector,
+        100,
+        40,
+    );
 
     assert!(
         width > 72,
@@ -351,8 +356,13 @@ fn rewind_selector_overlay_uses_go_back_title() {
         }],
         10,
     );
-    let (lines, _) =
-        crate::interface::select_overlay::build_rewind_selector_overlay(&mut selector, 100, 40);
+    let (lines, _) = crate::interface::select_overlay::build_select_list_overlay(
+        "Go back to…",
+        "Enter select · Esc cancel",
+        &mut selector,
+        100,
+        40,
+    );
     let joined = lines.join("\n");
     assert!(joined.contains("Go back to"));
     assert!(joined.contains("Previous turn: hello"));

@@ -49,7 +49,7 @@ async fn process_key_sequence_handles_incomplete_escape() {
     // editor, that arms the rewind affordance (same as Key::Escape).
     a.process_key_sequence(b"\x1b");
     assert!(
-        a.last_idle_escape.is_some(),
+        a.rewind.last_idle_escape.is_some(),
         "bare ESC should be parsed as Escape and arm rewind"
     );
     assert_eq!(a.editor.text(), "", "bare ESC must not insert text");
@@ -151,7 +151,7 @@ async fn handle_key_escape_when_idle_and_editor_empty_arms_rewind() {
     let a = h.app_mut();
     a.handle_key(Key::Escape);
     assert!(
-        a.last_idle_escape.is_some(),
+        a.rewind.last_idle_escape.is_some(),
         "first Escape should arm rewind"
     );
 }
@@ -698,9 +698,9 @@ async fn handle_key_routes_to_rewind_selector_when_active() {
     let a = h.app_mut();
     let data = serde_json::json!({"messages": [{"role": "user", "content": "turn"}]});
     a.open_rewind_selector(&data);
-    assert!(a.rewind_selector.is_some());
+    assert!(a.rewind.selector.is_some());
     a.handle_key(Key::Escape);
-    assert!(a.rewind_selector.is_none());
+    assert!(a.rewind.selector.is_none());
 }
 
 // ── handle_key: Ctrl+Shift combos ──────────────────────────────────────

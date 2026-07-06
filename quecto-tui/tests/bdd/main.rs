@@ -58,6 +58,15 @@ impl std::ops::DerefMut for DebugEditor {
     }
 }
 
+// Opaque Debug wrapper for the #997 list-render BDD: the component is not
+// `Debug`, so wrap it for the derived-`Debug` `TuiWorld`.
+pub struct DebugModelSelector(pub quecto_tui::interface::components::model_selector::ModelSelector);
+impl std::fmt::Debug for DebugModelSelector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<ModelSelector>")
+    }
+}
+
 #[derive(Debug, Default, World)]
 pub struct TuiWorld {
     pub stdout: String,
@@ -66,6 +75,13 @@ pub struct TuiWorld {
     pub _extra_temp_dirs: Vec<TempDir>,
     /// TUI scrollback BDD: chat view under test.
     pub tui_chat: Option<quecto_tui::interface::components::chat::Chat>,
+    /// TUI shared-list-render BDD (#997): model selector under test.
+    pub tui_list_model_selector: Option<DebugModelSelector>,
+    /// TUI shared-list-render BDD (#997): lines from the last explicit render.
+    pub tui_list_rendered: Vec<String>,
+    /// TUI shared-list-render BDD (#997): pending flag right after a model
+    /// selector open was requested (asserted true in the Then).
+    pub tui_model_open_was_pending: bool,
     /// TUI @files BDD: file-mention autocomplete under test.
     pub tui_files_autocomplete:
         Option<quecto_tui::interface::components::files_autocomplete::FilesAutocomplete>,
@@ -289,6 +305,7 @@ mod tui_esc_abort_recovery_steps;
 mod tui_file_mention_steps;
 mod tui_foundation_steps;
 mod tui_idle_efficiency_steps;
+mod tui_list_render_state_steps;
 mod tui_new_reset_context_steps;
 mod tui_pid_safety_steps;
 mod tui_stdin_buffer_cap_steps;

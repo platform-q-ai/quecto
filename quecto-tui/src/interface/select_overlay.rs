@@ -3,7 +3,6 @@
 use std::time::Duration;
 
 use crate::interface::component::Component;
-use crate::interface::components::model_selector::ModelSelector;
 use crate::interface::components::select_list::SelectList;
 use crate::interface::theme;
 
@@ -23,7 +22,7 @@ fn pad_ansi_to_width(text: &str, width: usize) -> String {
     }
 }
 
-fn build_select_list_overlay(
+pub(crate) fn build_select_list_overlay(
     title: &str,
     footer: &str,
     selector: &mut SelectList,
@@ -38,7 +37,7 @@ fn build_select_list_overlay(
     })
 }
 
-fn build_select_overlay(
+pub(crate) fn build_select_overlay(
     terminal_width: usize,
     terminal_height: usize,
     render_content: impl FnOnce(usize) -> Vec<String>,
@@ -92,47 +91,49 @@ fn build_select_overlay(
     (overlay_lines, panel_width)
 }
 
-pub fn build_resume_selector_overlay(
-    selector: &mut SelectList,
-    terminal_width: usize,
-    terminal_height: usize,
-) -> (Vec<String>, usize) {
-    build_select_list_overlay(
-        "Resume session",
-        "Enter resume · Esc cancel",
-        selector,
-        terminal_width,
-        terminal_height,
-    )
-}
-
-pub fn build_model_selector_overlay(
-    selector: &mut ModelSelector,
-    terminal_width: usize,
-    terminal_height: usize,
-) -> (Vec<String>, usize) {
-    build_select_overlay(terminal_width, terminal_height, |content_width| {
-        selector.render(content_width)
-    })
-}
-
-pub fn build_rewind_selector_overlay(
-    selector: &mut SelectList,
-    terminal_width: usize,
-    terminal_height: usize,
-) -> (Vec<String>, usize) {
-    build_select_list_overlay(
-        "Go back to…",
-        "Enter select · Esc cancel",
-        selector,
-        terminal_width,
-        terminal_height,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test conveniences mirroring the production title/footer pairs used at
+    /// the `app_methods` overlay call sites.
+    pub(crate) fn build_resume_selector_overlay(
+        selector: &mut SelectList,
+        terminal_width: usize,
+        terminal_height: usize,
+    ) -> (Vec<String>, usize) {
+        build_select_list_overlay(
+            "Resume session",
+            "Enter resume · Esc cancel",
+            selector,
+            terminal_width,
+            terminal_height,
+        )
+    }
+
+    pub(crate) fn build_rewind_selector_overlay(
+        selector: &mut SelectList,
+        terminal_width: usize,
+        terminal_height: usize,
+    ) -> (Vec<String>, usize) {
+        build_select_list_overlay(
+            "Go back to…",
+            "Enter select · Esc cancel",
+            selector,
+            terminal_width,
+            terminal_height,
+        )
+    }
+
+    pub(crate) fn build_model_selector_overlay(
+        selector: &mut ModelSelector,
+        terminal_width: usize,
+        terminal_height: usize,
+    ) -> (Vec<String>, usize) {
+        build_select_overlay(terminal_width, terminal_height, |content_width| {
+            selector.render(content_width)
+        })
+    }
     use crate::interface::components::model_selector::{ModelEntry, ModelSelector};
     use crate::interface::components::select_list::{SelectItem, SelectList};
 

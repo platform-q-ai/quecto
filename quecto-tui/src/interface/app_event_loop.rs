@@ -239,7 +239,7 @@ impl App {
                 }
                 // Events fanned in from the active sub-agent's direct
                 // connect-on-select connection (#800).
-                Some((agent_id, ev)) = self.subagent_event_rx.recv() => {
+                Some((agent_id, ev)) = self.subagents.event_rx.recv() => {
                     let is_token = Self::is_token_event(&ev);
                     self.route_subagent_event(&agent_id, ev);
                     self.render_stream_event(&mut stream_render_coalescer, is_token);
@@ -374,7 +374,7 @@ impl App {
 
     pub(super) fn handle_key(&mut self, key: Key) {
         if !matches!(key, Key::Escape) {
-            self.last_idle_escape = None;
+            self.rewind.last_idle_escape = None;
         }
 
         // Unconditional exit — Ctrl+D must work regardless of overlays,
@@ -389,21 +389,21 @@ impl App {
 
         // If the resume selector is active, route input to it.
         if self.resume_selector.is_some() {
-            self.last_idle_escape = None;
+            self.rewind.last_idle_escape = None;
             self.handle_resume_selector_key(&key);
             return;
         }
 
         // If the rewind selector is active, route input to it.
-        if self.rewind_selector.is_some() {
-            self.last_idle_escape = None;
+        if self.rewind.selector.is_some() {
+            self.rewind.last_idle_escape = None;
             self.handle_rewind_selector_key(&key);
             return;
         }
 
         // If the model selector is active, route input to it.
         if self.model_selector.is_some() {
-            self.last_idle_escape = None;
+            self.rewind.last_idle_escape = None;
             self.handle_model_selector_key(&key);
             return;
         }
@@ -413,7 +413,7 @@ impl App {
             match &key {
                 Key::Up | Key::Down | Key::Tab | Key::Escape => {
                     if matches!(key, Key::Escape) {
-                        self.last_idle_escape = None;
+                        self.rewind.last_idle_escape = None;
                     }
                     self.autocomplete.handle_input(&key);
                     // Check if a suggestion was selected.
@@ -478,17 +478,17 @@ impl App {
         // Guard on panel visibility: if every sub-agent left while focus was
         // `Panel`, the panel handler would swallow all typing and lock out the
         // editor — reset to `Input` so the editor stays usable (#804 review).
-        if matches!(self.focus, Focus::Panel) {
+        if matches!(self.subagents.focus, Focus::Panel) {
             if self.subagent_panel_visible() {
                 self.handle_panel_focus_key(&key);
                 return;
             }
-            self.focus = Focus::Input;
+            self.subagents.focus = Focus::Input;
         }
         // Tab toggles focus to the panel when it is visible (the autocomplete
         // popups consumed Tab above when active, preserving completion).
         if matches!(key, Key::Tab | Key::BackTab) && self.subagent_panel_visible() {
-            self.focus = Focus::Panel;
+            self.subagents.focus = Focus::Panel;
             self.sync_panel_selection_to_active();
             return;
         }
@@ -512,8 +512,8 @@ impl App {
             }
             Key::Escape => {
                 // Parity: Esc stops the viewed agent if running, else back to master.
-                if self.active_agent_id.is_some() {
-                    self.last_idle_escape = None;
+                if self.subagents.active_agent_id.is_some() {
+                    self.rewind.last_idle_escape = None;
                     if self.active_subagent_running() {
                         self.handle_abort();
                     } else {
@@ -522,10 +522,10 @@ impl App {
                     return;
                 }
                 if self.agent_state.is_running() {
-                    self.last_idle_escape = None;
+                    self.rewind.last_idle_escape = None;
                     self.handle_abort();
                 } else if !self.editor.text().is_empty() {
-                    self.last_idle_escape = None;
+                    self.rewind.last_idle_escape = None;
                     self.editor.set_text("");
                     self.autocomplete.dismiss();
                 } else {
@@ -673,12 +673,12 @@ impl App {
             }
             Key::Enter | Key::Tab => {
                 self.commit_panel_selection();
-                self.focus = Focus::Input;
+                self.subagents.focus = Focus::Input;
             }
             Key::Escape | Key::BackTab => {
                 // Cancel: return to the input, restore the highlight to the
                 // (unchanged) active session.
-                self.focus = Focus::Input;
+                self.subagents.focus = Focus::Input;
                 self.sync_panel_selection_to_active();
             }
             _ => {}
