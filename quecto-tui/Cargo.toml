@@ -1,9 +1,12 @@
 [package]
 name = "quecto-tui"
-version = "0.10.10"
+version = "0.10.11"
 edition = "2024"
 description = "Lightweight terminal UI client for quecto"
 license = "LicenseRef-Proprietary"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 
 [features]
 # Exposes the headless render harness (`interface::app::tui_harness`) and a few
