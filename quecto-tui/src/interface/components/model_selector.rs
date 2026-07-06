@@ -253,8 +253,16 @@ impl Component for ModelSelector {
         let mode = DescriptionMode::AlignedCached {
             label_width: self.cached_max_label_width,
         };
+        // Resolve the current model id ONCE per frame — never a per-row
+        // linear scan of `all_models` (#757 hot-path parity with the
+        // pre-#997 index-based renderer).
+        let current_id: Option<&str> = self
+            .all_models
+            .iter()
+            .find(|m| m.is_current)
+            .map(|m| m.id.as_str());
         lines.extend(self.list.render_rows(width, "  ", mode, |s| {
-            let is_current = self.entry_by_id(&s.value).is_some_and(|m| m.is_current);
+            let is_current = current_id == Some(s.value.as_str());
             ListRow {
                 description: Some(s.description.clone()),
                 marker: if is_current { " ●" } else { "" },
