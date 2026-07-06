@@ -148,6 +148,11 @@ const ANGLES = {
   'Reuse + altitude':
     'Does new code re-implement an existing helper (name it)? Same-defect-class grep: does the defect ' +
     'being fixed exist elsewhere in the codebase? Bandaid vs. mechanism — is the fix at the right depth?',
+  'Clean architecture':
+    'Layering and dependency direction respected; shared logic at the right altitude — a quirk or special ' +
+    'case preserved for compatibility lives inside the shared mechanism, never as caller-side state in a ' +
+    'consumer; no production code path that exists only for tests, e.g. cfg(test) forks or shims; every ' +
+    'new public API item has a consumer outside its own module — flag speculative surface.',
   'Test falsifiability':
     'For each new/changed test, name the implementation change that would make it fail; reject assertions ' +
     'on test-constructed state, constants, or type-guaranteed facts, and anything that would pass with the ' +

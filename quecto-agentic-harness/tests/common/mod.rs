@@ -31,8 +31,9 @@ pub fn assert_reviewer_finder_waves(g: &str, source: &str) {
         "path traversal", // Security angle detail
         "Performance/efficiency",
         "Reuse",
-        "altitude",       // bandaid vs. mechanism, same-defect-class grep
-        "falsifiability", // test falsifiability
+        "altitude",           // bandaid vs. mechanism, same-defect-class grep
+        "Clean architecture", // layering, quirk placement, test-only paths, API surface
+        "falsifiability",     // test falsifiability
         "REFUTE",
         "CONFIRMED",
         "PLAUSIBLE",
@@ -56,6 +57,21 @@ pub fn assert_reviewer_finder_waves(g: &str, source: &str) {
     assert!(
         lower.contains("reverted"),
         "{source}: falsifiability angle should reject tests that pass with the implementation reverted: {g}"
+    );
+    // Clean-architecture angle semantics (added after the PR #1036 review found
+    // caller-side quirk state, cfg(test) production forks and consumer-less pub
+    // API that no existing angle was hunting).
+    assert!(
+        lower.contains("caller-side state"),
+        "{source}: clean-architecture angle should place preserved quirks inside the shared mechanism, not caller-side state: {g}"
+    );
+    assert!(
+        lower.contains("only for tests"),
+        "{source}: clean-architecture angle should flag production code paths that exist only for tests: {g}"
+    );
+    assert!(
+        lower.contains("outside its own module"),
+        "{source}: clean-architecture angle should require new public API to have a consumer outside its own module: {g}"
     );
     // Finders are forbidden GitHub writes.
     assert!(

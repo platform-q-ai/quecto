@@ -284,6 +284,35 @@ fn restructure_step_extends_abstractions_and_keeps_deletion_ledger() {
         g.contains("pass UNMODIFIED"),
         "the frozen suite is the oracle and must pass unmodified"
     );
+    // PR #1036 review retro: the ledger only covered production lines, so a
+    // deleted test's coverage (the C1-control case) vanished silently.
+    assert!(
+        g.contains("deleted TESTS") && g.contains("port the assertion"),
+        "the deletion ledger must cover deleted test assertions: name where the behaviour stays pinned or port it"
+    );
+    // Parity quirks belong inside the shared mechanism, not caller-side state
+    // (the legacy_csi_tail pattern).
+    assert!(
+        g.contains("INSIDE the shared mechanism") && g.contains("caller-side state"),
+        "restructure must place parity quirks inside the shared mechanism, never as caller-side state"
+    );
+    // Consolidation completeness: introducing a shared helper obliges a sweep
+    // for the remaining hand-rolled copies.
+    assert!(
+        g.contains("CONSOLIDATION COMPLETENESS") && g.contains("grep the crate"),
+        "restructure must mandate a consolidation-completeness sweep for remaining duplicates"
+    );
+    // The freeze must not incentivize contorting production code: no cfg(test)
+    // forks/shims to keep frozen tests compiling.
+    assert!(
+        g.contains("cfg(test)") && g.contains("gate violation"),
+        "restructure must forbid production cfg(test) forks/shims added to avoid touching frozen tests"
+    );
+    // No speculative API surface.
+    assert!(
+        g.contains("outside its own module"),
+        "restructure must require every new pub item to have a consumer outside its own module"
+    );
 }
 
 // --- Parity evidence ------------------------------------------------------------
@@ -322,6 +351,14 @@ fn reviewers_step_uses_refactor_weighted_angles_and_single_post() {
         "SINGLE parallel batch",
         "SUBMIT the review",
         "submittedAt != null",
+        // PR #1036 review retro: the refactor wave dropped the feature wave's
+        // reuse/altitude angle — exactly the angle that catches unfinished
+        // consolidation — and no angle owned architecture placement.
+        "Reuse + altitude",
+        "consolidation completeness",
+        "Clean architecture",
+        "caller-side state",
+        "outside its own module",
     ] {
         assert!(
             g.contains(token),
@@ -347,6 +384,16 @@ fn conformance_verifies_structural_goals_and_greps_for_source_text_tests() {
     assert!(
         g.contains("grep the test tree") && g.contains("treat any hit as a FAIL"),
         "conformance must mandate the mechanical grep audit, not just the ban phrase"
+    );
+    // PR #1036 review retro: speculative pub API and test-only production
+    // paths are verified mechanically at conformance.
+    assert!(
+        g.contains("outside its own module"),
+        "conformance must audit that every new pub item has a consumer outside its own module"
+    );
+    assert!(
+        g.contains("cfg(test)"),
+        "conformance must grep the diff for production cfg(test) additions"
     );
     assert!(
         g.contains("CONFORMANCE: PASS") && g.contains("CONFORMANCE: FAIL"),
