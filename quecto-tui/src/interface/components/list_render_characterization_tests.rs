@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{Autocomplete, SlashCommand};
 use crate::interface::components::files_autocomplete::FilesAutocomplete;
-use crate::interface::components::model_selector::{ModelEntry, ModelSelector};
+use crate::interface::components::model_selector::{
+    ModelEntry, ModelSelector, ModelSelectorResult,
+};
 use crate::interface::components::select_list::{SelectItem, SelectList};
 use crate::interface::keys::Key;
 use crate::interface::utils::visible_width;
@@ -303,6 +305,27 @@ fn model_selector_overflow_indicator_pixels() {
     assert_eq!(
         plain, "  (1/28)",
         "12-row window over the 28 known models shows the indicator"
+    );
+}
+
+#[test]
+fn model_selector_no_match_placeholder_pixels() {
+    let mut sel = model_fixture();
+    for c in "zzz-no-such-model".chars() {
+        sel.handle_input(&Key::Char(c));
+    }
+    let lines = sel.render(60);
+    assert_eq!(
+        stripped(&lines)[3..],
+        ["  No matching models".to_string()],
+        "a non-matching filter shows only the dim placeholder under the header"
+    );
+    assert!(lines[3].contains(DIM), "placeholder is dim");
+    sel.handle_input(&Key::Enter);
+    assert_eq!(
+        sel.take_result(),
+        ModelSelectorResult::Cancelled,
+        "Enter with no matches cancels the selector"
     );
 }
 

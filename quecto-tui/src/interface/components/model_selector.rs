@@ -5,8 +5,12 @@
 //! Selecting a model sends a `set_model` command to the agent.
 
 use crate::interface::component::Component;
-use crate::interface::components::list_navigator::ListNavigator;
+use crate::interface::components::autocomplete::Suggestion;
+use crate::interface::components::list_rows::{
+    DescriptionMode, ListRow, RowStyle, render_list_rows,
+};
 use crate::interface::components::sanitize::strip_terminal_control;
+use crate::interface::components::suggestion_list::SuggestionList;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
 use crate::interface::theme;
@@ -83,14 +87,12 @@ pub enum ModelSelectorResult {
 pub struct ModelSelector {
     /// All available models (unfiltered).
     all_models: Vec<ModelEntry>,
-    /// Filtered models based on query.
-    filtered: Vec<usize>,
-    /// Current selection index into `filtered`.
-    navigator: ListNavigator,
+    /// Shared filtered/selection state (#997): each suggestion's `value` IS
+    /// the model id (never an index or hollow value), so
+    /// `SuggestionList::set_suggestions` change detection stays meaningful.
+    list: SuggestionList,
     /// Fuzzy search query.
     query: String,
-    /// Maximum visible items.
-    max_visible: usize,
     /// Interaction result.
     result: ModelSelectorResult,
     /// Cached max label width (recalculated only when filter changes).
@@ -144,15 +146,15 @@ impl ModelSelector {
             }
         }
 
-        let filtered: Vec<usize> = (0..models.len()).collect();
-        let cached_width = compute_max_label_width(&models, &filtered);
+        let suggestions: Vec<Suggestion> = models.iter().map(to_suggestion).collect();
+        let cached_width = compute_max_label_width(&suggestions);
+        let mut list = SuggestionList::new(12);
+        list.set_suggestions(suggestions);
 
         Self {
             all_models: models,
-            filtered,
-            navigator: ListNavigator::new(),
+            list,
             query: String::new(),
-            max_visible: 12,
             result: ModelSelectorResult::Pending,
             cached_max_label_width: cached_width,
         }
@@ -163,58 +165,69 @@ impl ModelSelector {
         std::mem::replace(&mut self.result, ModelSelectorResult::Pending)
     }
 
-    /// Update the filtered list based on the current query.
+    /// Update the filtered list based on the current query. The selection is
+    /// CLAMPED into the new range (historical semantics), not reset to row 0.
     fn update_filter(&mut self) {
-        if self.query.is_empty() {
-            self.filtered = (0..self.all_models.len()).collect();
+        let suggestions: Vec<Suggestion> = if self.query.is_empty() {
+            self.all_models.iter().map(to_suggestion).collect()
         } else {
-            // Build indexed pairs without cloning model IDs.
-            // `all_models` and `query` are separate fields, so no borrow conflict.
-            let indexed: Vec<(usize, &str)> = self
-                .all_models
-                .iter()
-                .enumerate()
-                .map(|(i, m)| (i, m.id.as_str()))
-                .collect();
-            let matching = fuzzy_filter(&indexed, &self.query, |item| item.1);
-            self.filtered = matching.into_iter().map(|item| item.0).collect();
-        }
-        self.navigator.clamp(self.filtered.len());
-        // Recache label width.
-        self.cached_max_label_width = compute_max_label_width(&self.all_models, &self.filtered);
+            fuzzy_filter(&self.all_models, &self.query, |m| &m.id)
+                .into_iter()
+                .map(to_suggestion)
+                .collect()
+        };
+        // Recache label width — only when the filter changes, never per frame
+        // over the full filtered list (#757).
+        self.cached_max_label_width = compute_max_label_width(&suggestions);
+        self.list.set_suggestions_clamping(suggestions);
     }
 
     /// Get the currently selected model entry, if any.
     pub fn selected_model(&self) -> Option<&ModelEntry> {
-        self.filtered
-            .get(self.navigator.selected())
-            .map(|&idx| &self.all_models[idx])
+        let id = &self.list.selected_suggestion()?.value;
+        self.entry_by_id(id)
     }
 
     /// Get the number of visible (filtered) models.
     pub fn visible_count(&self) -> usize {
-        self.filtered.len()
+        self.list.len()
+    }
+
+    /// Look up the [`ModelEntry`] backing a suggestion by its model id.
+    fn entry_by_id(&self, id: &str) -> Option<&ModelEntry> {
+        self.all_models.iter().find(|m| m.id == id)
     }
 
     /// The shared [`SuggestionList`] state backing the selector's rows (#997).
     ///
     /// Contract: each suggestion's `value` IS the model id (never an index or
     /// a hollow empty value), so `SuggestionList::set_suggestions` change
-    /// detection keeps working. RED scaffold — wired when the selector
-    /// migrates off its parallel `filtered`/index machinery.
+    /// detection keeps working.
     #[cfg(test)]
-    pub(crate) fn shared_list(
-        &self,
-    ) -> &crate::interface::components::suggestion_list::SuggestionList {
-        unimplemented!("issue #997: ModelSelector does not yet reuse SuggestionList")
+    pub(crate) fn shared_list(&self) -> &SuggestionList {
+        &self.list
+    }
+}
+
+/// Build the suggestion for a model: `value`/`label` are the model id itself,
+/// the description is the dim provider column (with the auth suffix, if any).
+fn to_suggestion(m: &ModelEntry) -> Suggestion {
+    let description = match m.auth.as_deref() {
+        Some(auth) if !auth.is_empty() => format!("{} [{}]", m.provider, auth),
+        _ => m.provider.clone(),
+    };
+    Suggestion {
+        value: m.id.clone(),
+        label: m.id.clone(),
+        description,
     }
 }
 
 /// Compute the max label width across filtered entries.
-fn compute_max_label_width(models: &[ModelEntry], filtered: &[usize]) -> usize {
-    filtered
+fn compute_max_label_width(suggestions: &[Suggestion]) -> usize {
+    suggestions
         .iter()
-        .map(|&idx| visible_width(&models[idx].id))
+        .map(|s| visible_width(&s.label))
         .max()
         .unwrap_or(10)
         .min(40)
@@ -245,7 +258,7 @@ impl Component for ModelSelector {
         lines.push(String::new()); // spacer
 
         // Filtered list.
-        if self.filtered.is_empty() {
+        if self.list.is_empty() {
             lines.push(truncate_to_width(
                 &format!("  {}", theme::dim("No matching models")),
                 width,
@@ -254,68 +267,46 @@ impl Component for ModelSelector {
             return lines;
         }
 
-        // Calculate visible window.
-        let total = self.filtered.len();
-        let range = self.navigator.visible_range(total, self.max_visible);
-        let start = range.start;
-        let end = range.end;
-
-        // Use cached label width for alignment.
-        let max_label_width = self.cached_max_label_width;
-
-        for i in start..end {
-            let idx = self.filtered[i];
-            let model = &self.all_models[idx];
-            let is_sel = i == self.navigator.selected();
-
-            let prefix = if is_sel { "→ " } else { "  " };
-            let current_marker = if model.is_current { " ●" } else { "" };
-
-            let label = if is_sel {
-                theme::accent(&model.id)
-            } else {
-                model.id.clone()
-            };
-
-            let label_vis = visible_width(&model.id);
-            let gap = max_label_width.saturating_sub(label_vis) + 2;
-            let spacing = " ".repeat(gap);
-            let provider_label = match model.auth.as_deref() {
-                Some(auth) if !auth.is_empty() => format!("{} [{}]", model.provider, auth),
-                _ => model.provider.clone(),
-            };
-            let provider_str = theme::dim(&provider_label);
-
-            let line = format!(
-                "  {}{}{}{}{}",
-                prefix, label, current_marker, spacing, provider_str
-            );
-            lines.push(truncate_to_width(&line, width, None));
-        }
-
-        // Scroll indicator.
-        if start > 0 || end < total {
-            lines.push(truncate_to_width(
-                &format!(
-                    "  {}",
-                    theme::dim(&format!("({}/{})", self.navigator.selected() + 1, total))
-                ),
-                width,
-                None,
-            ));
-        }
-
+        // Shared row renderer (#997): 2-space indent, provider column aligned
+        // to the cached label width (recomputed only on filter change, #757),
+        // and the ` ●` current-model marker outside the alignment column.
+        let rows: Vec<ListRow> = self.list.suggestions()[self.list.visible_range()]
+            .iter()
+            .map(|s| {
+                let is_current = self.entry_by_id(&s.value).is_some_and(|m| m.is_current);
+                ListRow {
+                    label: s.label.clone(),
+                    description: Some(s.description.clone()),
+                    marker: if is_current { " ●" } else { "" },
+                    dim_label: false,
+                }
+            })
+            .collect();
+        let style = RowStyle {
+            indent: "  ",
+            description: DescriptionMode::AlignedCached {
+                label_width: self.cached_max_label_width,
+            },
+        };
+        lines.extend(render_list_rows(
+            &rows,
+            self.list.navigator(),
+            self.list.len(),
+            self.list.max_visible(),
+            width,
+            &style,
+        ));
         lines
     }
 
     fn handle_input(&mut self, key: &Key) -> bool {
         match key {
             Key::Up => {
-                self.navigator.move_previous(self.filtered.len());
+                self.list.move_previous();
                 true
             }
             Key::Down => {
-                self.navigator.move_next(self.filtered.len());
+                self.list.move_next();
                 true
             }
             Key::Enter => {
@@ -500,9 +491,10 @@ mod tests {
             KNOWN_MODELS.len()
         );
         let visible_ids: Vec<&str> = sel
-            .filtered
+            .list
+            .suggestions()
             .iter()
-            .map(|&idx| sel.all_models[idx].id.as_str())
+            .map(|s| s.value.as_str())
             .collect();
         assert!(
             visible_ids.iter().any(|id| id.contains("sonnet")),
@@ -618,6 +610,37 @@ mod tests {
             1,
             "shared state must preserve the clamp-on-filter-change semantics"
         );
+    }
+
+    #[test]
+    fn shared_list_suggestions_track_filter_changes() {
+        // Guards the rejected-attempt bug: re-setting suggestions on a filter
+        // change must actually replace the shared list's values (which only
+        // works because `value` is the model id, not a hollow placeholder).
+        let mut sel = ModelSelector::new(None);
+        for c in "fireworks".chars() {
+            sel.handle_input(&Key::Char(c));
+        }
+        let values: Vec<&str> = sel
+            .shared_list()
+            .suggestions()
+            .iter()
+            .map(|s| s.value.as_str())
+            .collect();
+        assert_eq!(values.len(), 2, "two fireworks models match");
+        assert!(
+            values.iter().all(|v| v.starts_with("fireworks/")),
+            "{values:?}"
+        );
+        for _ in 0.."fireworks".len() {
+            sel.handle_input(&Key::Backspace);
+        }
+        assert_eq!(
+            sel.shared_list().len(),
+            KNOWN_MODELS.len(),
+            "clearing the filter restores the full list"
+        );
+        assert_eq!(sel.shared_list().suggestions()[0].value, KNOWN_MODELS[0].0);
     }
 
     // ── Review fix tests ──────────────────────────────────────────────

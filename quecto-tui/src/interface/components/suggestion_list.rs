@@ -42,6 +42,16 @@ impl SuggestionList {
         self.navigator.clamp(self.suggestions.len());
     }
 
+    /// Replace suggestions, CLAMPING the selection into the new range instead
+    /// of resetting it — the model selector's historical filter-change
+    /// semantics (#997): narrowing the filter keeps the highlight on the last
+    /// match rather than jumping back to row 0.
+    pub fn set_suggestions_clamping(&mut self, new: Vec<Suggestion>) {
+        self.suggestions = new;
+        self.active = !self.suggestions.is_empty();
+        self.navigator.clamp(self.suggestions.len());
+    }
+
     /// Clear suggestions and deactivate the dropdown.
     pub fn clear(&mut self) {
         self.active = false;
@@ -169,6 +179,18 @@ mod tests {
         assert_eq!(list.selected(), 1);
         list.move_next();
         assert_eq!(list.selected(), 0);
+    }
+
+    #[test]
+    fn clamping_set_keeps_selection_in_new_range() {
+        let mut list = SuggestionList::new(5);
+        list.set_suggestions(vec![sugg("a"), sugg("b"), sugg("c"), sugg("d")]);
+        for _ in 0..3 {
+            list.move_next();
+        }
+        assert_eq!(list.selected(), 3);
+        list.set_suggestions_clamping(vec![sugg("a"), sugg("b")]);
+        assert_eq!(list.selected(), 1, "selection clamps to the last new row");
     }
 
     #[test]
