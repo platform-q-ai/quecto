@@ -58,20 +58,8 @@ impl std::ops::DerefMut for DebugEditor {
     }
 }
 
-// Opaque Debug wrappers for the #997 list-render BDD: these components are not
-// `Debug`, so wrap them for the derived-`Debug` `TuiWorld`.
-pub struct DebugSelectList(pub quecto_tui::interface::components::select_list::SelectList);
-impl std::fmt::Debug for DebugSelectList {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("<SelectList>")
-    }
-}
-pub struct DebugAutocomplete(pub quecto_tui::interface::components::autocomplete::Autocomplete);
-impl std::fmt::Debug for DebugAutocomplete {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("<Autocomplete>")
-    }
-}
+// Opaque Debug wrapper for the #997 list-render BDD: the component is not
+// `Debug`, so wrap it for the derived-`Debug` `TuiWorld`.
 pub struct DebugModelSelector(pub quecto_tui::interface::components::model_selector::ModelSelector);
 impl std::fmt::Debug for DebugModelSelector {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -87,12 +75,13 @@ pub struct TuiWorld {
     pub _extra_temp_dirs: Vec<TempDir>,
     /// TUI scrollback BDD: chat view under test.
     pub tui_chat: Option<quecto_tui::interface::components::chat::Chat>,
-    /// TUI shared-list-render BDD (#997): select list under test.
-    pub tui_list_select: Option<DebugSelectList>,
-    /// TUI shared-list-render BDD (#997): slash dropdown under test.
-    pub tui_list_autocomplete: Option<DebugAutocomplete>,
     /// TUI shared-list-render BDD (#997): model selector under test.
     pub tui_list_model_selector: Option<DebugModelSelector>,
+    /// TUI shared-list-render BDD (#997): lines from the last explicit render.
+    pub tui_list_rendered: Vec<String>,
+    /// TUI shared-list-render BDD (#997): pending flag right after a model
+    /// selector open was requested (asserted true in the Then).
+    pub tui_model_open_was_pending: bool,
     /// TUI @files BDD: file-mention autocomplete under test.
     pub tui_files_autocomplete:
         Option<quecto_tui::interface::components::files_autocomplete::FilesAutocomplete>,
