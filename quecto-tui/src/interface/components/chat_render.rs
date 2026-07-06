@@ -631,25 +631,12 @@ pub(super) fn expand_tabs(s: &str) -> Cow<'_, str> {
     }
     let mut out = String::with_capacity(s.len());
     let mut col = 0;
-    let mut legacy_csi_tail = false;
-    for seg in crate::interface::ansi::ansi_segments(s) {
+    for seg in crate::interface::ansi::ansi_segments_legacy_csi(s) {
         match seg {
-            AnsiSegment::Escape(esc) => {
-                legacy_csi_tail = esc.starts_with("\x1b[")
-                    && esc
-                        .chars()
-                        .last()
-                        .is_some_and(|c| !c.is_ascii_alphabetic() && c != '~');
-                out.push_str(esc);
-            }
+            AnsiSegment::Escape(esc) => out.push_str(esc),
             AnsiSegment::Text(text) => {
                 for ch in text.chars() {
-                    if legacy_csi_tail {
-                        out.push(ch);
-                        if ch.is_ascii_alphabetic() || ch == '~' {
-                            legacy_csi_tail = false;
-                        }
-                    } else if ch == '\t' {
+                    if ch == '\t' {
                         let spaces = TAB_STOP - (col % TAB_STOP);
                         for _ in 0..spaces {
                             out.push(' ');

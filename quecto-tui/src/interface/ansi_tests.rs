@@ -5,8 +5,8 @@
 //! implemented in the GREEN phase.
 
 use super::{
-    AnsiSegment, ansi_segments, sanitize_control, sanitize_control_keep_newlines,
-    sanitize_control_truncated, strip_ansi,
+    AnsiSegment, ansi_segments, ansi_segments_legacy_csi, sanitize_control,
+    sanitize_control_keep_newlines, sanitize_control_truncated, strip_ansi,
 };
 
 // ── ansi_segments: classification ─────────────────────────────────────────
@@ -188,4 +188,47 @@ fn sanitize_control_truncated_exact_fit_not_truncated() {
     let (s, truncated) = sanitize_control_truncated("abc", 3);
     assert_eq!(s, "abc");
     assert!(!truncated);
+}
+
+#[test]
+fn sanitize_control_strips_c1_controls_without_swallowing_text() {
+    // 8-bit C1 introducers (U+009B CSI, U+009D OSC) are stripped as lone
+    // control characters; the following printable text must survive. Ported
+    // from the deleted sanitize.rs `strips_c1_control_chars` test (#984).
+    assert_eq!(sanitize_control("a\u{009B}31mb\u{009D}c"), "a31mbc");
+}
+
+// ── ansi_segments_legacy_csi: legacy CSI-tail quirk ────────────────────────
+
+#[test]
+fn legacy_csi_extends_nonalpha_final_byte_through_tail() {
+    // `\x1b[1@` ends on `@` (non-alpha, non-`~`), so the legacy scanner keeps
+    // consuming up to and including the first ASCII letter.
+    let segs: Vec<_> = ansi_segments_legacy_csi("\x1b[1@Xrest").collect();
+    assert_eq!(
+        segs,
+        vec![AnsiSegment::Escape("\x1b[1@X"), AnsiSegment::Text("rest"),]
+    );
+}
+
+#[test]
+fn legacy_csi_matches_canonical_for_alpha_and_tilde_finals() {
+    for input in ["\x1b[31mred", "\x1b[3~del"] {
+        let legacy: Vec<_> = ansi_segments_legacy_csi(input).collect();
+        let canonical: Vec<_> = ansi_segments(input).collect();
+        assert_eq!(legacy, canonical, "input {input:?}");
+    }
+}
+
+#[test]
+fn legacy_csi_tail_stops_at_next_escape() {
+    let segs: Vec<_> = ansi_segments_legacy_csi("\x1b[1@\x1b[0mz").collect();
+    assert_eq!(
+        segs,
+        vec![
+            AnsiSegment::Escape("\x1b[1@"),
+            AnsiSegment::Escape("\x1b[0m"),
+            AnsiSegment::Text("z"),
+        ]
+    );
 }

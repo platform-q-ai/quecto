@@ -89,14 +89,8 @@ static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
     ]
 });
 
-#[cfg(not(test))]
 fn builtin_commands() -> &'static [SlashCommand] {
     &BUILTIN_COMMANDS
-}
-
-#[cfg(test)]
-fn builtin_commands() -> Vec<SlashCommand> {
-    BUILTIN_COMMANDS.clone()
 }
 
 /// Application state.
@@ -515,13 +509,11 @@ fn strip_ansi_for_selection(s: &str) -> String {
 
 /// Truncate tool arguments for spinner display.
 fn truncate_args(args: &str) -> String {
-    let clean: String = args
-        .chars()
-        .filter(|&c| c >= ' ' && c != '\u{007F}')
-        .collect();
+    // sanitize_control (rather than a printable-range filter) so CSI bodies —
+    // whose bytes are all printable — don't leak into the spinner line.
+    let clean = crate::interface::ansi::sanitize_control(args);
     if clean.chars().count() > 40 {
-        let s: String = clean.chars().take(37).collect();
-        format!("{}...", s)
+        crate::interface::utils::truncate_chars_with_ellipsis(&clean, 37, "...")
     } else {
         clean
     }
@@ -654,12 +646,7 @@ const EXITED_SUBAGENT_GRACE: Duration = Duration::from_secs(5);
 
 /// Strip control characters from an agent_id for safe use as a map key.
 fn sanitize_workflow_status_text(text: &str, max_chars: usize) -> String {
-    let (clean, truncated) = crate::interface::ansi::sanitize_control_truncated(text, max_chars);
-    if truncated {
-        format!("{clean}…")
-    } else {
-        clean
-    }
+    crate::interface::utils::sanitize_truncate_chars_with_ellipsis(text, max_chars, "…")
 }
 
 fn sanitize_agent_id(id: &str) -> String {

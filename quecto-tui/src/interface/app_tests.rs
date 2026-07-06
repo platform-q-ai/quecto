@@ -306,7 +306,7 @@ fn builtin_commands_have_stable_order_and_names() {
 #[test]
 fn builtin_commands_have_descriptions() {
     let cmds = super::builtin_commands();
-    for cmd in &cmds {
+    for cmd in cmds {
         assert!(
             !cmd.description.is_empty(),
             "{} has empty description",
