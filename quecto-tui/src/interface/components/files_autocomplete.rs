@@ -234,14 +234,12 @@ impl Component for FilesAutocomplete {
         let rows: Vec<ListRow> = self.list.suggestions()[self.list.visible_range()]
             .iter()
             .map(|s| ListRow {
-                label: if placeholder {
+                dim_label: placeholder,
+                ..ListRow::plain(if placeholder {
                     s.label.clone()
                 } else {
                     format!("@{}", s.label)
-                },
-                description: None,
-                marker: "",
-                dim_label: placeholder,
+                })
             })
             .collect();
         let style = RowStyle {

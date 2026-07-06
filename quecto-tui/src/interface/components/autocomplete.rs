@@ -156,10 +156,8 @@ impl Component for Autocomplete {
         let rows: Vec<ListRow> = self.list.suggestions()[self.list.visible_range()]
             .iter()
             .map(|s| ListRow {
-                label: format!("/{}", s.label),
                 description: Some(s.description.clone()),
-                marker: "",
-                dim_label: false,
+                ..ListRow::plain(format!("/{}", s.label))
             })
             .collect();
         let style = RowStyle {

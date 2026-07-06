@@ -95,10 +95,8 @@ impl Component for SelectList {
         let rows: Vec<ListRow> = self.items[range]
             .iter()
             .map(|item| ListRow {
-                label: item.label.clone(),
                 description: item.description.clone(),
-                marker: "",
-                dim_label: false,
+                ..ListRow::plain(item.label.clone())
             })
             .collect();
         let style = RowStyle {

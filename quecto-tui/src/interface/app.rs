@@ -162,6 +162,7 @@ pub struct App {
 /// Rewind flow state, grouped by owner (#997). Semantics unchanged: idle
 /// double-Escape opens the selector; correlation ids tie the get_messages /
 /// rewind_to round-trips back to this flow.
+#[derive(Default)]
 pub(crate) struct RewindFlow {
     /// Rewind selector shown after idle double-Escape lists prior user turns.
     selector: Option<SelectList>,
@@ -175,34 +176,14 @@ pub(crate) struct RewindFlow {
     request_seq: u64,
 }
 
-impl RewindFlow {
-    fn new() -> Self {
-        Self {
-            selector: None,
-            last_idle_escape: None,
-            pending_open_id: None,
-            pending_apply_id: None,
-            request_seq: 0,
-        }
-    }
-}
-
 /// Model registry owned by the selector flow (#997) — previously an anonymous
 /// `(Vec<ModelEntry>, bool)` tuple on `App`.
+#[derive(Default)]
 pub(crate) struct ModelRegistry {
     /// Models parsed from the last `list_models` response (may be empty).
     entries: Vec<ModelEntry>,
     /// A selector open is deferred until the fresh list arrives (ADR-0002).
     open_pending: bool,
-}
-
-impl ModelRegistry {
-    fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-            open_pending: false,
-        }
-    }
 }
 
 /// Sub-agent / multi-session UI state, grouped by owner (#997). Behaviour
@@ -353,9 +334,9 @@ impl App {
             current_model: None,
             connected_agent_id: None,
             model_selector: None,
-            model_registry: ModelRegistry::new(),
+            model_registry: ModelRegistry::default(),
             resume_selector: None,
-            rewind: RewindFlow::new(),
+            rewind: RewindFlow::default(),
             subagents: SubagentUi::new(),
             render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
             #[cfg(any(test, feature = "test-harness"))]

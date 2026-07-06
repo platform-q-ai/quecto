@@ -275,10 +275,9 @@ impl Component for ModelSelector {
             .map(|s| {
                 let is_current = self.entry_by_id(&s.value).is_some_and(|m| m.is_current);
                 ListRow {
-                    label: s.label.clone(),
                     description: Some(s.description.clone()),
                     marker: if is_current { " ●" } else { "" },
-                    dim_label: false,
+                    ..ListRow::plain(s.label.clone())
                 }
             })
             .collect();

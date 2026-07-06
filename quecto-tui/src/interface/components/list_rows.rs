@@ -130,58 +130,35 @@ pub fn render_list_rows(
         };
         let label_vis = visible_width(&row.label);
 
-        let line = match style.description {
-            DescriptionMode::Inline => match &row.description {
-                Some(desc) => format!(
-                    "{}{}{}{}  {}",
-                    style.indent,
-                    prefix,
-                    label,
-                    row.marker,
-                    theme::dim(desc)
-                ),
-                None => format!("{}{}{}{}", style.indent, prefix, label, row.marker),
-            },
-            DescriptionMode::AlignedWindow { min_desc_width } => {
-                let label_only = format!("{}{}{}{}", style.indent, prefix, label, row.marker);
-                match &row.description {
-                    Some(desc) => {
-                        let gap = window_label_width.saturating_sub(label_vis) + 2;
-                        let desc_start = visible_width(style.indent) + 2 + label_vis + gap;
-                        let desc_width = width.saturating_sub(desc_start + 1);
-                        if desc_width > min_desc_width {
-                            let truncated = truncate_to_width(desc, desc_width, Some(""));
-                            format!(
-                                "{}{}{}{}{}{}",
-                                style.indent,
-                                prefix,
-                                label,
-                                row.marker,
-                                " ".repeat(gap),
-                                theme::dim(&truncated)
-                            )
-                        } else {
-                            label_only
-                        }
-                    }
-                    None => label_only,
+        // The dim column as `(gap cells, text)`, or `None` when the row has no
+        // description or `AlignedWindow` drops it below `min_desc_width`.
+        let column = row
+            .description
+            .as_ref()
+            .and_then(|desc| match style.description {
+                DescriptionMode::Inline => Some((2, desc.clone())),
+                DescriptionMode::AlignedWindow { min_desc_width } => {
+                    let gap = window_label_width.saturating_sub(label_vis) + 2;
+                    let desc_start = visible_width(style.indent) + 2 + label_vis + gap;
+                    let desc_width = width.saturating_sub(desc_start + 1);
+                    (desc_width > min_desc_width)
+                        .then(|| (gap, truncate_to_width(desc, desc_width, Some(""))))
                 }
-            }
-            DescriptionMode::AlignedCached { label_width } => match &row.description {
-                Some(desc) => {
-                    let gap = label_width.saturating_sub(label_vis) + 2;
-                    format!(
-                        "{}{}{}{}{}{}",
-                        style.indent,
-                        prefix,
-                        label,
-                        row.marker,
-                        " ".repeat(gap),
-                        theme::dim(desc)
-                    )
+                DescriptionMode::AlignedCached { label_width } => {
+                    Some((label_width.saturating_sub(label_vis) + 2, desc.clone()))
                 }
-                None => format!("{}{}{}{}", style.indent, prefix, label, row.marker),
-            },
+            });
+        let line = match column {
+            Some((gap, desc)) => format!(
+                "{}{}{}{}{}{}",
+                style.indent,
+                prefix,
+                label,
+                row.marker,
+                " ".repeat(gap),
+                theme::dim(&desc)
+            ),
+            None => format!("{}{}{}{}", style.indent, prefix, label, row.marker),
         };
         lines.push(truncate_to_width(&line, width, None));
     }
