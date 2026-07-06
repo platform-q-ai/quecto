@@ -16,6 +16,24 @@ Feature: TUI @files mention autocomplete
     Then the file mention popup is active
     And the file mention popup lists "@src/main.rs"
 
+  @issue-979
+  Scenario: file mention filtering remains bounded near the workspace file limit
+    Given generated workspace file lists below and above the file mention limit
+    When each generated file list is filtered with the file mention "@file"
+    Then filtering remains bounded as the generated workspace grows
+
+  @issue-979
+  Scenario: file mention suggestions preserve case folding that changes character count
+    Given a workspace with files "src/İstanbul.rs, docs/mañana.md, src/東京.rs"
+    When the user types "@i̇st" in the editor
+    Then the file mention suggestions are exactly "src/İstanbul.rs"
+
+  @issue-979
+  Scenario: file mention suggestions preserve CJK matching
+    Given a workspace with files "src/İstanbul.rs, docs/mañana.md, src/東京.rs"
+    When the user types "@東京" in the editor
+    Then the file mention suggestions are exactly "src/東京.rs"
+
   Scenario: a space ends the @token and dismisses the popup
     When the user types "@src done" in the editor
     Then the file mention popup is not active
@@ -48,5 +66,5 @@ Feature: TUI @files mention autocomplete
   Scenario: stale workspace files request a non-blocking reload
     Given workspace files were loaded more than 30 seconds ago
     When the user types "@" in the editor
-    Then workspace file loading should be requested
+    Then workspace file loading is requested
     And the file mention popup is active

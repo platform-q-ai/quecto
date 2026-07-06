@@ -13,7 +13,7 @@ use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{AutocompleteResult, Suggestion};
 use crate::interface::components::list_rows::{DescriptionMode, ListRow};
 use crate::interface::components::suggestion_list::SuggestionList;
-use crate::interface::fuzzy::fuzzy_filter;
+use crate::interface::fuzzy::fuzzy_filter_limited;
 use crate::interface::keys::Key;
 
 /// How long a loaded file list stays fresh before the next activation reloads
@@ -96,10 +96,12 @@ impl FilesAutocomplete {
             return;
         }
 
-        let new: Vec<Suggestion> = fuzzy_filter(&self.files, prefix, |f| f.as_str())
+        // Bound stored matches; rendering windows to `max_visible` anyway.
+        let new: Vec<Suggestion> =
+            fuzzy_filter_limited(&self.files, prefix, self.list.max_visible() * 4, |f| {
+                f.as_str()
+            })
             .into_iter()
-            // Bound the work; the render windows to `max_visible` anyway.
-            .take(self.list.max_visible() * 4)
             .map(|f| Suggestion {
                 value: f.clone(),
                 description: String::new(),
@@ -167,6 +169,22 @@ impl FilesAutocomplete {
     /// Take the result of the last interaction.
     pub fn take_result(&mut self) -> AutocompleteResult {
         std::mem::replace(&mut self.result, AutocompleteResult::Pending)
+    }
+
+    /// Current suggestion values (test observer).
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn suggestion_values(&self) -> Vec<String> {
+        self.list
+            .suggestions()
+            .iter()
+            .map(|suggestion| suggestion.value.clone())
+            .collect()
+    }
+
+    /// Number of current suggestions (test observer).
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn suggestion_count(&self) -> usize {
+        self.list.suggestions().len()
     }
 }
 
@@ -238,6 +256,8 @@ impl Component for FilesAutocomplete {
 
 #[cfg(test)]
 mod tests {
+    use crate::interface::fuzzy::fuzzy_filter;
+
     use super::*;
 
     impl FilesAutocomplete {
@@ -414,5 +434,29 @@ mod tests {
         assert!(should_reload(false, None, ttl));
         assert!(!should_reload(false, Some(Duration::from_secs(5)), ttl));
         assert!(should_reload(false, Some(Duration::from_secs(31)), ttl));
+    }
+
+    #[test]
+    fn suggestion_storage_limit_is_pinned_around_boundary() {
+        for count in [31, 32, 33] {
+            let files = workspace_files(count);
+            let expected = fuzzy_filter(&files, "file", |s| s.as_str())
+                .into_iter()
+                .take(32)
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut f = FilesAutocomplete::with_files(files, 8);
+
+            f.update("@file", 5);
+
+            assert_eq!(f.suggestion_count(), count.min(32));
+            assert_eq!(f.suggestion_values(), expected);
+        }
+    }
+
+    fn workspace_files(file_count: usize) -> Vec<String> {
+        (0..file_count)
+            .map(|i| format!("src/module_{i:04}/file_{i:04}.rs"))
+            .collect()
     }
 }

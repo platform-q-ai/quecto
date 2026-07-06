@@ -87,6 +87,9 @@ pub struct TuiWorld {
         Option<quecto_tui::interface::components::files_autocomplete::FilesAutocomplete>,
     /// TUI @files BDD: last consumed background-load request.
     pub tui_files_load_requested: bool,
+    /// TUI @files BDD (#979): suggestion counts captured while filtering
+    /// generated workspace file lists.
+    pub tui_files_filter_suggestion_counts: Vec<usize>,
     /// TUI sub-agent session-parity BDD (#805): tokio runtime backing the
     /// headless render harness (its background tasks need a live runtime).
     pub tui_parity_rt: Option<tokio::runtime::Runtime>,
