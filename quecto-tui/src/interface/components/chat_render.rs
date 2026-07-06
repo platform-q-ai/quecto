@@ -191,10 +191,10 @@ pub(super) fn render_bash(
             let shown = BASH_PREVIEW_LINES.min(total);
             let hidden = total.saturating_sub(shown);
             if hidden > 0 {
-                lines.push(theme::dim(&format!(
-                    "... ({} earlier lines, Ctrl+O to expand)",
-                    hidden
-                )));
+                let hint = format!("... ({} earlier lines, Ctrl+O to expand)", hidden);
+                for segment in crate::interface::utils::wrap_text(&hint, width) {
+                    lines.push(theme::dim(&segment));
+                }
             }
             push_preview(
                 lines,
@@ -554,10 +554,13 @@ fn push_wrapped_output_limited(
     }
     let max_width = width.saturating_mul(max_rows).max(width);
     let bounded = truncate_to_width(text, max_width, Some("..."));
-    let truncated = bounded != text;
+    let mut truncated = bounded != text;
     let mut pushed = 0;
     for segment in crate::interface::utils::wrap_text(&bounded, width) {
         if pushed == max_rows {
+            // Word-wrap can spend fewer columns per row than the width bound
+            // assumed, leaving segments beyond the row budget.
+            truncated = true;
             break;
         }
         lines.push(color_fn(&segment));
@@ -597,10 +600,6 @@ pub(super) fn push_preview(
         if line_truncated {
             truncated = true;
         }
-        if pushed == 0 || rows_left == 0 {
-            truncated = true;
-            break;
-        }
     }
     if truncated {
         let hidden = total - shown;
@@ -609,7 +608,9 @@ pub(super) fn push_preview(
         } else {
             format!("... ({} more lines, Ctrl+O to expand)", hidden)
         };
-        lines.push(theme::dim(&hint));
+        for segment in crate::interface::utils::wrap_text(&hint, width) {
+            lines.push(theme::dim(&segment));
+        }
     }
 }
 

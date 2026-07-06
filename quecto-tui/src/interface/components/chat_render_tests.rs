@@ -296,6 +296,38 @@ fn render_tool_long_unbroken_result_wraps_without_losing_text() {
     }
 }
 
+/// The "output truncated" hint must itself wrap at narrow widths instead of
+/// losing its "Ctrl+O to expand" affordance to downstream truncation.
+#[test]
+fn render_tool_truncation_hint_wraps_at_narrow_width() {
+    let huge = "x".repeat(400);
+    let lines = render_tool_execution(ToolRenderArgs {
+        tool_name: "custom_tool",
+        args_json: &None,
+        result: Some(&huge),
+        is_error: false,
+        duration_ms: None,
+        expanded: false,
+        width: 20,
+    });
+    let joined: String = lines
+        .iter()
+        .map(|l| strip_ansi(l).trim().to_string() + " ")
+        .collect();
+    assert!(
+        joined.contains("Ctrl+O to expand"),
+        "truncation hint should stay fully readable at narrow widths: {joined:?}"
+    );
+    for line in lines {
+        let plain = strip_ansi(&line);
+        assert!(
+            visible_width(&plain) <= 20,
+            "rendered line must fit width 20, got {}: {plain:?}",
+            visible_width(&plain)
+        );
+    }
+}
+
 /// Security (#865): a sub-agent-influenced `agent_cmd` result body must have
 /// its terminal control sequences stripped before rendering, so a malicious
 /// sub-agent cannot inject ANSI/OSC escapes into the operator's terminal.

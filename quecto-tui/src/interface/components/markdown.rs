@@ -588,26 +588,60 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
 
     let mut lines = Vec::new();
 
+    // Rows to which one over-long cell may grow before being cut with an
+    // ellipsis, so a single huge cell cannot flood the transcript.
+    const MAX_CELL_ROWS: usize = 4;
+
     for (row_idx, row) in rows.iter().enumerate() {
-        let mut parts = Vec::new();
-        for (i, cell) in row.iter().enumerate() {
-            let w = col_widths.get(i).copied().unwrap_or(10);
-            let cell_width = visible_width(cell);
-            let padding = w.saturating_sub(cell_width);
-            let padded = format!("{}{}", cell, " ".repeat(padding));
-            parts.push(padded);
+        // Wrap each cell inside its own column, so an over-long cell stacks
+        // vertically within that column instead of pushing later cells out of
+        // alignment or bleeding into them on wrapped continuation lines.
+        let cell_rows: Vec<Vec<String>> = (0..num_cols)
+            .map(|i| {
+                let w = col_widths.get(i).copied().unwrap_or(10).max(1);
+                let cell = row.get(i).map(String::as_str).unwrap_or("");
+                let mut wrapped = wrap_text(cell, w);
+                if wrapped.len() > MAX_CELL_ROWS {
+                    wrapped.truncate(MAX_CELL_ROWS);
+                    let tail = wrapped.pop().unwrap_or_default();
+                    // Re-truncate the final row to make room for the ellipsis
+                    // without exceeding the column width. Columns too narrow
+                    // for "..." just cut at the width instead.
+                    wrapped.push(if w >= 3 {
+                        let head = truncate_to_width(&tail, w.saturating_sub(3), None);
+                        format!("{head}...")
+                    } else {
+                        truncate_to_width(&tail, w, None)
+                    });
+                }
+                wrapped
+            })
+            .collect();
+
+        let height = cell_rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
+        for r in 0..height {
+            let parts: Vec<String> = cell_rows
+                .iter()
+                .enumerate()
+                .map(|(i, cell)| {
+                    let w = col_widths.get(i).copied().unwrap_or(10).max(1);
+                    let seg = cell.get(r).map(String::as_str).unwrap_or("");
+                    let padding = w.saturating_sub(visible_width(seg));
+                    format!("{}{}", seg, " ".repeat(padding))
+                })
+                .collect();
+            let line = parts.join(&" ".repeat(gap));
+            if row_idx == 0 {
+                // Header row — bold.
+                lines.push(theme::bold(&line));
+            } else {
+                lines.push(line);
+            }
         }
-        let line = parts.join(&" ".repeat(gap));
-        let bounded = truncate_to_width(&line, max_width.saturating_mul(4), Some("..."));
-        let wrapped = wrap_text(&bounded, max_width);
         if row_idx == 0 {
-            // Header row — bold.
-            lines.extend(wrapped.into_iter().map(|line| theme::bold(&line)));
             // Separator.
             let sep_parts: Vec<String> = col_widths.iter().map(|&w| "─".repeat(w)).collect();
             lines.push(theme::dim(&sep_parts.join(&" ".repeat(gap))));
-        } else {
-            lines.extend(wrapped);
         }
     }
 
@@ -687,3 +721,7 @@ fn flush_line(
 #[cfg(test)]
 #[path = "markdown_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "markdown_table_tests.rs"]
+mod table_tests;

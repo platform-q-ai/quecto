@@ -100,6 +100,14 @@ fn markdown_table_with_long_cell_value(world: &mut TuiWorld) {
     );
 }
 
+#[given("markdown content with a three column table whose first cell is a long value")]
+fn markdown_three_column_table_with_long_first_cell(world: &mut TuiWorld) {
+    world.tui_table_cell = Some(
+        "| Path | Status | Notes |\n| --- | --- | --- |\n| alpha-beta-gamma-delta-epsilon-zeta | ok | fine |\n"
+            .to_string(),
+    );
+}
+
 // ── When ─────────────────────────────────────────────────────────────────────
 
 #[when("the table is rendered")]
@@ -258,6 +266,35 @@ fn every_markdown_output_line_fits_viewport(world: &mut TuiWorld) {
             visible_width(&plain)
         );
     }
+}
+
+#[then("the later table columns should stay aligned under their headers")]
+fn later_table_columns_stay_aligned(world: &mut TuiWorld) {
+    let raw = raw(world);
+    let plain: Vec<String> = rendered(world)
+        .iter()
+        .map(|line| sanitize_control(line))
+        .collect();
+    let header = plain
+        .iter()
+        .find(|l| l.contains("Status"))
+        .unwrap_or_else(|| panic!("header row with Status rendered, got: {raw:?}"));
+    let status_col = header.find("Status").expect("Status offset");
+    let notes_col = header.find("Notes").expect("Notes offset");
+    let data_row = plain
+        .iter()
+        .find(|l| l.contains("ok"))
+        .unwrap_or_else(|| panic!("data row with ok rendered, got: {raw:?}"));
+    assert_eq!(
+        data_row.find("ok"),
+        Some(status_col),
+        "Status cell must render under its header, got: {raw:?}"
+    );
+    assert_eq!(
+        data_row.find("fine"),
+        Some(notes_col),
+        "Notes cell must render under its header, got: {raw:?}"
+    );
 }
 
 #[then(regex = r#"^the cell text should be "([^"]*)" or stripped equivalent$"#)]
