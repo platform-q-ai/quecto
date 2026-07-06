@@ -780,8 +780,7 @@ fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
         assert!(
             content.contains("navigator.move_next")
                 && content.contains("navigator.move_previous")
-                && (content.contains(".visible_range(")
-                    || content.contains("visible_window(&self.navigator")),
+                && (content.contains(".visible_range(") || content.contains("render_windowed(")),
             "{file} should delegate movement and visible-window calculation to ListNavigator"
         );
     }
@@ -800,10 +799,14 @@ fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
             "{file} should delegate list navigation to the shared SuggestionList"
         );
         assert!(
-            content.contains("self.list.move_next")
-                && content.contains("self.list.move_previous")
-                && content.contains("self.list.visible_range"),
-            "{file} should drive movement and visible-window calculation through SuggestionList"
+            content.contains("self.list.handle_key")
+                || (content.contains("self.list.move_next")
+                    && content.contains("self.list.move_previous")),
+            "{file} should drive key navigation through the shared SuggestionList"
+        );
+        assert!(
+            content.contains("self.list.render_rows"),
+            "{file} should window and render rows through the shared renderer"
         );
         assert!(
             !content.contains("navigator: ListNavigator"),
