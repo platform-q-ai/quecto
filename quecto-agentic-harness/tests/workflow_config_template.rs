@@ -460,9 +460,12 @@ fn feature_workflow_guidance_is_self_contained() {
     // The canonical commands the quickstart used to hold now live inline in the
     // steps that need them.
     let tests = guidance(&config, "tests");
-    assert!(tests.contains("cargo test -p quecto --lib <name_substring>"));
+    assert!(tests.contains("cargo test -p quecto-agentic-harness --lib <name_substring>"));
     assert!(tests.contains("cargo test -p quecto-tui --lib <name_substring>"));
-    assert!(tests.contains("never `-p quecto-agentic-harness`"));
+    assert!(
+        tests.contains("`-p` takes the PACKAGE name"),
+        "guidance must explain the package-vs-lib-target naming trap"
+    );
     assert!(
         guidance(&config, "scenarios").contains("gh issue view <N> --json title,body,comments")
     );

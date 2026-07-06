@@ -62,10 +62,16 @@ fn selector_routes_by_issue_shape_not_hardcoded_feature() {
         !selector.contains("single Quecto repository workflow template, 'feature'"),
         "selector must no longer hard-code the feature template"
     );
-    for token in ["zero behaviour change", "'refactor'", "'feature'", "split"] {
+    // Relationship-bearing clauses, not independent tokens: an inverted
+    // selector (zero-behaviour-change -> 'feature') must fail these.
+    for clause in [
+        "zero behaviour change to code the project ships (refactor, consolidation, extraction, dedup, moving state, renames — acceptance criteria are structural/parity-only), select 'refactor'",
+        "adding or altering observable behaviour, and maintenance work such as docs, CI, tooling or dependency changes — select 'feature'",
+        "mixes a behaviour change with a zero-behaviour-change refactor, STOP and report that the issue must be split",
+    ] {
         assert!(
-            selector.contains(token),
-            "selector should route by issue shape and mention {token}: {selector}"
+            selector.contains(clause),
+            "selector should contain the routing clause `{clause}`: {selector}"
         );
     }
 }
@@ -100,9 +106,9 @@ fn templates_have_mutually_exclusive_when_to_use() {
 // --- Step ordering ----------------------------------------------------------
 
 #[test]
-fn refactor_pipeline_steps_are_ordered() {
+fn refactor_pipeline_steps_are_exactly_ordered() {
     let config = read_native_config();
-    let order = [
+    let expected = [
         "hooks",
         "scope",
         "characterize",
@@ -122,16 +128,13 @@ fn refactor_pipeline_steps_are_ordered() {
         "pre_merge",
         "cleanup",
     ];
-    let mut prev = 0;
-    for pair in order.windows(2) {
-        let (a, b) = (step_index(&config, pair[0]), step_index(&config, pair[1]));
-        assert!(a < b, "step `{}` should precede `{}`", pair[0], pair[1]);
-        prev = b;
-    }
+    let actual: Vec<&str> = steps(&config)
+        .iter()
+        .map(|s| s["key"].as_str().expect("step key should be a string"))
+        .collect();
     assert_eq!(
-        prev + 1,
-        steps(&config).len(),
-        "no unexpected trailing steps"
+        actual, expected,
+        "refactor step keys must match exactly, in order — no inserted, removed, or reordered steps"
     );
 }
 
@@ -222,7 +225,8 @@ fn mutation_step_replaces_red_with_mutation_evidence() {
         "per assertion, not per test target",
         "confirm the test FAILS",
         "revert the mutation",
-        "clean working tree",
+        "NO MUTATION RESIDUE",
+        "no production-code changes",
         "mutation log",
         "hollow",
     ] {
@@ -338,7 +342,11 @@ fn conformance_verifies_structural_goals_and_greps_for_source_text_tests() {
     );
     assert!(
         g.contains("NO test asserts on production source text"),
-        "conformance must grep for source-text-asserting tests"
+        "conformance must ban source-text-asserting tests"
+    );
+    assert!(
+        g.contains("grep the test tree") && g.contains("treat any hit as a FAIL"),
+        "conformance must mandate the mechanical grep audit, not just the ban phrase"
     );
     assert!(
         g.contains("CONFORMANCE: PASS") && g.contains("CONFORMANCE: FAIL"),
@@ -362,6 +370,17 @@ fn guards_block_commit_before_parity_and_forbid_merge() {
                 .is_some_and(|c| c.iter().any(|x| x == "git commit"))
         })
         .expect("a git commit guard should exist");
+    let commit_commands: Vec<&str> = commit_guard["commands"]
+        .as_array()
+        .expect("commit guard commands")
+        .iter()
+        .filter_map(|c| c.as_str())
+        .collect();
+    assert_eq!(
+        commit_commands,
+        ["git commit", "git push"],
+        "both commit AND push must be guarded before parity evidence is complete"
+    );
     assert_eq!(
         commit_guard["before_step_key"], "version_bump",
         "commit/push are blocked until parity evidence is complete"
@@ -374,6 +393,17 @@ fn guards_block_commit_before_parity_and_forbid_merge() {
                 .is_some_and(|c| c.iter().any(|x| x == "gh pr merge"))
         })
         .expect("a merge guard should exist");
+    let merge_commands: Vec<&str> = merge_guard["commands"]
+        .as_array()
+        .expect("merge guard commands")
+        .iter()
+        .filter_map(|c| c.as_str())
+        .collect();
+    assert_eq!(
+        merge_commands,
+        ["git merge", "gh pr merge"],
+        "both local git merge AND gh pr merge must be forbidden"
+    );
     assert_eq!(merge_guard["before_step_key"], "cleanup");
     assert!(
         merge_guard["message"]

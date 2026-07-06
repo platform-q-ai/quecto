@@ -757,7 +757,7 @@ Contributor rules for the live/mock e2e split:
 - For UDS workflow scenarios, use the real multi-client socket path when asserting broadcast-only events. The test harness should read the socket while the run is active to avoid backpressure on large workflow event streams.
 - Keep `@provider-smoke` tiny and live-provider only: it validates credentials/provider availability, not tools, sessions, workflow, REPL, or UDS behavior.
 
-`scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test -p quecto --lib`, `cargo test -p quecto --test architecture`, `cargo test -p quecto --test contracts`, `cargo test -p quecto --test repo_docs`, and 24-way sharded non-real BDD), then the zero-cost mocked e2e lane, caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`. A `.env` provider key alone never triggers paid calls - the paid `@manual-real-llm` lane runs only under the explicit `QUECTO_RUN_REAL_LLM=1` opt-in.
+`scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test -p quecto-agentic-harness --lib`, plus the `architecture`, `contracts`, and `repo_docs` integration test targets, and 24-way sharded non-real BDD), then the zero-cost mocked e2e lane, caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`. A `.env` provider key alone never triggers paid calls - the paid `@manual-real-llm` lane runs only under the explicit `QUECTO_RUN_REAL_LLM=1` opt-in.
 
 Pre-push controls:
 - `QUECTO_E2E_TIMEOUT` timeout per BDD shard (default `12m`)

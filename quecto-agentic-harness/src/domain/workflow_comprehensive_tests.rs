@@ -17,7 +17,12 @@ fn snapshot_in_selector_mode_lists_templates() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     let snap = engine.snapshot(true);
     assert_eq!(snap.mode, WorkflowMode::SelectingTemplate);
-    assert_eq!(snap.available_templates.len(), 2);
+    let ids: Vec<&str> = snap
+        .available_templates
+        .iter()
+        .map(|t| t.id.as_str())
+        .collect();
+    assert_eq!(ids, ["feature", "refactor"]);
     assert!(snap.steps.is_empty());
 }
 
