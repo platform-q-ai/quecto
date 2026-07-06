@@ -6,9 +6,7 @@
 
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::Suggestion;
-use crate::interface::components::list_rows::{
-    DescriptionMode, ListRow, RowStyle, render_list_rows,
-};
+use crate::interface::components::list_rows::{DescriptionMode, ListRow};
 use crate::interface::components::sanitize::strip_terminal_control;
 use crate::interface::components::suggestion_list::SuggestionList;
 use crate::interface::fuzzy::fuzzy_filter;
@@ -16,51 +14,57 @@ use crate::interface::keys::Key;
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width};
 
-/// Well-known model identifiers, used as fallback when the caller
-/// doesn't supply a model list.
-const KNOWN_MODELS: &[(&str, &str)] = &[
-    ("anthropic-api/claude-fable-5", "Anthropic API"),
-    ("anthropic-oauth/claude-fable-5", "Anthropic OAuth"),
-    ("anthropic-api/claude-opus-4-8", "Anthropic API"),
-    ("anthropic-oauth/claude-opus-4-8", "Anthropic OAuth"),
-    ("anthropic-api/claude-opus-4-7", "Anthropic API"),
-    ("anthropic-oauth/claude-opus-4-7", "Anthropic OAuth"),
-    ("anthropic-api/claude-opus-4-6", "Anthropic API"),
-    ("anthropic-oauth/claude-opus-4-6", "Anthropic OAuth"),
-    ("anthropic-api/claude-opus-4-5", "Anthropic API"),
-    ("anthropic-oauth/claude-opus-4-5", "Anthropic OAuth"),
-    ("anthropic-api/claude-sonnet-4-6", "Anthropic API"),
-    ("anthropic-oauth/claude-sonnet-4-6", "Anthropic OAuth"),
-    ("anthropic-api/claude-sonnet-4-5", "Anthropic API"),
-    ("anthropic-oauth/claude-sonnet-4-5", "Anthropic OAuth"),
-    ("openai-api/gpt-5.5", "OpenAI API"),
-    ("openai-oauth/gpt-5.5", "OpenAI OAuth"),
-    ("openai-api/gpt-5.5-mini", "OpenAI API"),
-    ("openai-oauth/gpt-5.5-mini", "OpenAI OAuth"),
-    ("openai-api/gpt-5.5-nano", "OpenAI API"),
-    ("openai-oauth/gpt-5.5-nano", "OpenAI OAuth"),
-    ("openai-api/gpt-5.3-codex", "OpenAI API"),
-    ("openai-oauth/gpt-5.3-codex", "OpenAI OAuth"),
-    ("openai-api/gpt-5.3-codex-spark", "OpenAI API"),
-    ("openai-oauth/gpt-5.3-codex-spark", "OpenAI OAuth"),
-    ("openai-api/gpt-5.2-codex", "OpenAI API"),
-    ("openai-oauth/gpt-5.2-codex", "OpenAI OAuth"),
-    ("fireworks/accounts/fireworks/models/glm-5p2", "Fireworks"),
-    (
-        "fireworks/accounts/fireworks/models/kimi-k2p7-code",
-        "Fireworks",
-    ),
-];
+/// Well-known fallback models, used when the caller doesn't supply a model
+/// list: every Anthropic/OpenAI model is offered through both its `api` and
+/// `oauth` provider; the Fireworks serverless ids are single-provider.
+fn known_models() -> Vec<ModelEntry> {
+    const ANTHROPIC: &[&str] = &[
+        "claude-fable-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+        "claude-opus-4-5",
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-5",
+    ];
+    const OPENAI: &[&str] = &[
+        "gpt-5.5",
+        "gpt-5.5-mini",
+        "gpt-5.5-nano",
+        "gpt-5.3-codex",
+        "gpt-5.3-codex-spark",
+        "gpt-5.2-codex",
+    ];
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for (vendor, brand, ids) in [
+        ("anthropic", "Anthropic", ANTHROPIC),
+        ("openai", "OpenAI", OPENAI),
+    ] {
+        for id in ids {
+            for (auth, label) in [("api", "API"), ("oauth", "OAuth")] {
+                pairs.push((format!("{vendor}-{auth}/{id}"), format!("{brand} {label}")));
+            }
+        }
+    }
+    for id in ["glm-5p2", "kimi-k2p7-code"] {
+        pairs.push((
+            format!("fireworks/accounts/fireworks/models/{id}"),
+            "Fireworks".into(),
+        ));
+    }
+    pairs
+        .into_iter()
+        .map(|(id, provider)| ModelEntry {
+            id,
+            provider,
+            auth: None,
+            is_current: false,
+        })
+        .collect()
+}
 
 /// Maximum query length to prevent unbounded growth.
 const MAX_QUERY_LEN: usize = 64;
-
-/// Sanitize a model name by stripping control characters.
-///
-/// Prevents terminal escape injection via agent-sourced model names.
-fn sanitize_model_name(name: &str) -> String {
-    strip_terminal_control(name)
-}
 
 /// A model entry in the selector.
 #[derive(Debug, Clone)]
@@ -72,16 +76,10 @@ pub struct ModelEntry {
     pub is_current: bool,
 }
 
-/// Result of the model selector interaction.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ModelSelectorResult {
-    /// User selected a model.
-    Selected(String),
-    /// User cancelled (Escape).
-    Cancelled,
-    /// No action yet.
-    Pending,
-}
+/// Result of the model selector interaction — the shared list-interaction
+/// result (`Selected` / `Dismissed` / `Pending`), re-exported under this
+/// surface's historical name.
+pub use crate::interface::components::autocomplete::AutocompleteResult as ModelSelectorResult;
 
 /// Scrollable model selector with fuzzy search.
 pub struct ModelSelector {
@@ -105,16 +103,7 @@ impl ModelSelector {
     /// `current_model` is sanitized and marked with ● in the list.
     /// If it's not in the known list, it's added at the top.
     pub fn new(current_model: Option<&str>) -> Self {
-        let models: Vec<ModelEntry> = KNOWN_MODELS
-            .iter()
-            .map(|(id, provider)| ModelEntry {
-                id: id.to_string(),
-                provider: provider.to_string(),
-                auth: None,
-                is_current: false,
-            })
-            .collect();
-        Self::with_models(models, current_model)
+        Self::with_models(known_models(), current_model)
     }
 
     /// Create a model selector with a caller-supplied model list.
@@ -124,7 +113,9 @@ impl ModelSelector {
     pub fn with_models(mut models: Vec<ModelEntry>, current_model: Option<&str>) -> Self {
         // Sanitize and mark the current model.
         if let Some(current) = current_model {
-            let safe_current = sanitize_model_name(current);
+            // Strip control characters — prevents terminal escape injection
+            // via agent-sourced model names.
+            let safe_current = strip_terminal_control(current);
             let mut found = false;
             for m in &mut models {
                 if m.id == safe_current {
@@ -197,20 +188,11 @@ impl ModelSelector {
     fn entry_by_id(&self, id: &str) -> Option<&ModelEntry> {
         self.all_models.iter().find(|m| m.id == id)
     }
-
-    /// The shared [`SuggestionList`] state backing the selector's rows (#997).
-    ///
-    /// Contract: each suggestion's `value` IS the model id (never an index or
-    /// a hollow empty value), so `SuggestionList::set_suggestions` change
-    /// detection keeps working.
-    #[cfg(test)]
-    pub(crate) fn shared_list(&self) -> &SuggestionList {
-        &self.list
-    }
 }
 
-/// Build the suggestion for a model: `value`/`label` are the model id itself,
-/// the description is the dim provider column (with the auth suffix, if any).
+/// Build the suggestion for a model: `value` is the model id itself (also the
+/// display label); the description is the dim provider column (with the auth
+/// suffix, if any).
 fn to_suggestion(m: &ModelEntry) -> Suggestion {
     let description = match m.auth.as_deref() {
         Some(auth) if !auth.is_empty() => format!("{} [{}]", m.provider, auth),
@@ -218,7 +200,6 @@ fn to_suggestion(m: &ModelEntry) -> Suggestion {
     };
     Suggestion {
         value: m.id.clone(),
-        label: m.id.clone(),
         description,
     }
 }
@@ -227,7 +208,7 @@ fn to_suggestion(m: &ModelEntry) -> Suggestion {
 fn compute_max_label_width(suggestions: &[Suggestion]) -> usize {
     suggestions
         .iter()
-        .map(|s| visible_width(&s.label))
+        .map(|s| visible_width(&s.value))
         .max()
         .unwrap_or(10)
         .min(40)
@@ -267,74 +248,47 @@ impl Component for ModelSelector {
             return lines;
         }
 
-        // Shared row renderer (#997): 2-space indent, provider column aligned
-        // to the cached label width (recomputed only on filter change, #757),
-        // and the ` ●` current-model marker outside the alignment column.
-        let rows: Vec<ListRow> = self.list.suggestions()[self.list.visible_range()]
-            .iter()
-            .map(|s| {
-                let is_current = self.entry_by_id(&s.value).is_some_and(|m| m.is_current);
-                ListRow {
-                    description: Some(s.description.clone()),
-                    marker: if is_current { " ●" } else { "" },
-                    ..ListRow::plain(s.label.clone())
-                }
-            })
-            .collect();
-        let style = RowStyle {
-            indent: "  ",
-            description: DescriptionMode::AlignedCached {
-                label_width: self.cached_max_label_width,
-            },
+        // Shared row renderer (#997): 2-space indent, provider column on the
+        // cached width (#757), ` ●` marker outside the alignment column.
+        let mode = DescriptionMode::AlignedCached {
+            label_width: self.cached_max_label_width,
         };
-        lines.extend(render_list_rows(
-            &rows,
-            self.list.navigator(),
-            self.list.len(),
-            self.list.max_visible(),
-            width,
-            &style,
-        ));
+        lines.extend(self.list.render_rows(width, "  ", mode, |s| {
+            let is_current = self.entry_by_id(&s.value).is_some_and(|m| m.is_current);
+            ListRow {
+                description: Some(s.description.clone()),
+                marker: if is_current { " ●" } else { "" },
+                ..ListRow::plain(s.value.clone())
+            }
+        }));
         lines
     }
 
     fn handle_input(&mut self, key: &Key) -> bool {
         match key {
-            Key::Up => {
-                self.list.move_previous();
-                true
-            }
-            Key::Down => {
-                self.list.move_next();
-                true
-            }
+            Key::Up => self.list.move_previous(),
+            Key::Down => self.list.move_next(),
             Key::Enter => {
-                if let Some(model) = self.selected_model() {
-                    self.result = ModelSelectorResult::Selected(model.id.clone());
-                } else {
-                    // No matches — treat Enter as cancel.
-                    self.result = ModelSelectorResult::Cancelled;
-                }
-                true
+                // With no matches, Enter cancels.
+                self.result = match self.selected_model() {
+                    Some(model) => ModelSelectorResult::Selected(model.id.clone()),
+                    None => ModelSelectorResult::Dismissed,
+                };
             }
-            Key::Escape => {
-                self.result = ModelSelectorResult::Cancelled;
-                true
-            }
+            Key::Escape => self.result = ModelSelectorResult::Dismissed,
             Key::Backspace => {
                 self.query.pop();
                 self.update_filter();
-                true
             }
             Key::Char(c) => {
                 if self.query.len() < MAX_QUERY_LEN {
                     self.query.push(*c);
                     self.update_filter();
                 }
-                true
             }
-            _ => false,
+            _ => return false,
         }
+        true
     }
 
     fn invalidate(&mut self) {}
@@ -343,6 +297,22 @@ impl Component for ModelSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl ModelSelector {
+        /// The shared [`SuggestionList`] state backing the selector's rows
+        /// (#997). Contract: each suggestion's `value` IS the model id (never
+        /// an index or a hollow empty value), so
+        /// `SuggestionList::set_suggestions` change detection keeps working.
+        pub(crate) fn shared_list(&self) -> &SuggestionList {
+            &self.list
+        }
+    }
+
+    /// The default model ids, in selector order (test stand-in for the old
+    /// hardcoded table).
+    fn known_ids() -> Vec<String> {
+        known_models().into_iter().map(|m| m.id).collect()
+    }
 
     fn strip_ansi(s: &str) -> String {
         let mut result = String::new();
@@ -379,19 +349,25 @@ mod tests {
 
     #[test]
     fn known_models_include_latest_anthropic_models() {
-        let known_ids: Vec<&str> = KNOWN_MODELS.iter().map(|(id, _)| *id).collect();
+        let known_ids: Vec<String> = known_ids();
         assert!(
-            known_ids.contains(&"anthropic-api/claude-fable-5"),
+            known_ids
+                .iter()
+                .any(|id| id == "anthropic-api/claude-fable-5"),
             "known models should include Claude Fable 5: {:?}",
             known_ids
         );
         assert!(
-            known_ids.contains(&"anthropic-api/claude-opus-4-8"),
+            known_ids
+                .iter()
+                .any(|id| id == "anthropic-api/claude-opus-4-8"),
             "known models should include Opus 4.8: {:?}",
             known_ids
         );
         assert!(
-            known_ids.contains(&"anthropic-api/claude-opus-4-7"),
+            known_ids
+                .iter()
+                .any(|id| id == "anthropic-api/claude-opus-4-7"),
             "known models should include Opus 4.7: {:?}",
             known_ids
         );
@@ -399,14 +375,18 @@ mod tests {
 
     #[test]
     fn known_models_include_fireworks_serverless_models() {
-        let known_ids: Vec<&str> = KNOWN_MODELS.iter().map(|(id, _)| *id).collect();
+        let known_ids: Vec<String> = known_ids();
         assert!(
-            known_ids.contains(&"fireworks/accounts/fireworks/models/glm-5p2"),
+            known_ids
+                .iter()
+                .any(|id| id == "fireworks/accounts/fireworks/models/glm-5p2"),
             "known models should include Fireworks GLM 5.2: {:?}",
             known_ids
         );
         assert!(
-            known_ids.contains(&"fireworks/accounts/fireworks/models/kimi-k2p7-code"),
+            known_ids
+                .iter()
+                .any(|id| id == "fireworks/accounts/fireworks/models/kimi-k2p7-code"),
             "known models should include Fireworks Kimi K2.7 Code: {:?}",
             known_ids
         );
@@ -433,7 +413,7 @@ mod tests {
         let mut sel = ModelSelector::new(None);
         sel.handle_input(&Key::Down);
         let selected = sel.selected_model().unwrap();
-        assert_eq!(selected.id, KNOWN_MODELS[1].0, "should select second model");
+        assert_eq!(selected.id, known_ids()[1], "should select second model");
     }
 
     #[test]
@@ -444,7 +424,7 @@ mod tests {
             sel.handle_input(&Key::Down);
         }
         let selected = sel.selected_model().unwrap();
-        assert_eq!(selected.id, KNOWN_MODELS[0].0, "should wrap to first model");
+        assert_eq!(selected.id, known_ids()[0], "should wrap to first model");
     }
 
     #[test]
@@ -452,9 +432,10 @@ mod tests {
         let mut sel = ModelSelector::new(None);
         sel.handle_input(&Key::Up);
         let selected = sel.selected_model().unwrap();
-        let last_idx = KNOWN_MODELS.len() - 1;
+        let last_idx = known_ids().len() - 1;
         assert_eq!(
-            selected.id, KNOWN_MODELS[last_idx].0,
+            selected.id,
+            known_ids()[last_idx],
             "should wrap to last model"
         );
     }
@@ -466,7 +447,7 @@ mod tests {
         let result = sel.take_result();
         assert_eq!(
             result,
-            ModelSelectorResult::Selected(KNOWN_MODELS[0].0.to_string())
+            ModelSelectorResult::Selected(known_ids()[0].clone())
         );
     }
 
@@ -474,7 +455,7 @@ mod tests {
     fn escape_cancels() {
         let mut sel = ModelSelector::new(None);
         sel.handle_input(&Key::Escape);
-        assert_eq!(sel.take_result(), ModelSelectorResult::Cancelled);
+        assert_eq!(sel.take_result(), ModelSelectorResult::Dismissed);
     }
 
     #[test]
@@ -484,10 +465,10 @@ mod tests {
         sel.handle_input(&Key::Char('o'));
         sel.handle_input(&Key::Char('n'));
         assert!(
-            sel.visible_count() < KNOWN_MODELS.len(),
+            sel.visible_count() < known_ids().len(),
             "filter should reduce visible count: {} vs {}",
             sel.visible_count(),
-            KNOWN_MODELS.len()
+            known_ids().len()
         );
         let visible_ids: Vec<&str> = sel
             .list
@@ -507,7 +488,7 @@ mod tests {
         let mut sel = ModelSelector::new(None);
         sel.handle_input(&Key::Char('x'));
         sel.handle_input(&Key::Backspace);
-        assert_eq!(sel.visible_count(), KNOWN_MODELS.len());
+        assert_eq!(sel.visible_count(), known_ids().len());
     }
 
     #[test]
@@ -587,10 +568,10 @@ mod tests {
     fn shared_list_backs_rows_with_model_id_values() {
         let sel = ModelSelector::new(None);
         let list = sel.shared_list();
-        assert_eq!(list.len(), KNOWN_MODELS.len());
+        assert_eq!(list.len(), known_ids().len());
         assert_eq!(
             list.suggestions()[0].value,
-            KNOWN_MODELS[0].0,
+            known_ids()[0],
             "Suggestion.value must carry the model id itself, not an index"
         );
     }
@@ -636,10 +617,10 @@ mod tests {
         }
         assert_eq!(
             sel.shared_list().len(),
-            KNOWN_MODELS.len(),
+            known_ids().len(),
             "clearing the filter restores the full list"
         );
-        assert_eq!(sel.shared_list().suggestions()[0].value, KNOWN_MODELS[0].0);
+        assert_eq!(sel.shared_list().suggestions()[0].value, known_ids()[0]);
     }
 
     // ── Review fix tests ──────────────────────────────────────────────
@@ -647,7 +628,7 @@ mod tests {
     #[test]
     fn sanitize_strips_control_chars() {
         let dirty = "model\x1b[31m-evil\x07name";
-        let clean = sanitize_model_name(dirty);
+        let clean = strip_terminal_control(dirty);
         assert!(!clean.contains('\x1b'));
         assert!(!clean.contains('\x07'));
         assert!(clean.contains("model"));
@@ -671,7 +652,7 @@ mod tests {
         }
         assert_eq!(sel.visible_count(), 0);
         sel.handle_input(&Key::Enter);
-        assert_eq!(sel.take_result(), ModelSelectorResult::Cancelled);
+        assert_eq!(sel.take_result(), ModelSelectorResult::Dismissed);
     }
 
     #[test]
@@ -704,12 +685,12 @@ mod tests {
 
     #[test]
     fn custom_model_with_control_chars_sanitized() {
-        // \x1b is a control character — sanitize_model_name strips it.
+        // \x1b is a control character — strip_terminal_control strips it.
         // The remaining "[31m" is harmless text (not a valid escape sequence).
         let mut sel = ModelSelector::new(Some("evil\x1b[31mmodel"));
         let lines = sel.render(60);
         let _raw = lines.join("");
-        // The injected \x1b should be stripped by sanitize_model_name.
+        // The injected \x1b should be stripped by strip_terminal_control.
         // Count \x1b occurrences that are NOT from theme styling.
         // Verify the model ID stored is sanitized.
         let custom_entry = sel

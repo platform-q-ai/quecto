@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::infrastructure::client::{Client, Command, Event};
+use crate::infrastructure::client::{Client, Command, Event, SubagentWorkflow};
 use crate::infrastructure::render::DiffRenderer;
 use crate::infrastructure::terminal::Terminal;
 use crate::infrastructure::workspace_files::list_workspace_files;
@@ -17,7 +17,7 @@ use crate::interface::components::model_selector::{
     ModelEntry, ModelSelector, ModelSelectorResult,
 };
 use crate::interface::components::notification::{Notification, NotificationStack, NotifyLevel};
-use crate::interface::components::select_list::{SelectItem, SelectList, SelectResult};
+use crate::interface::components::select_list::{SelectItem, SelectList};
 use crate::interface::components::spinner::Spinner;
 use crate::interface::components::workflow_bar;
 use crate::interface::keys::{self, Key};
@@ -114,15 +114,12 @@ pub struct App {
     connected_agent_id: Option<String>,
     /// The model selector component (created on demand, pushed onto overlay stack).
     model_selector: Option<ModelSelector>,
-    /// Cached model list + pending-open flag for the selector (#997).
     model_registry: ModelRegistry,
     /// Session resume selector shown after `/resume` lists persisted sessions.
     resume_selector: Option<SelectList>,
-    /// Rewind flow state (#997): selector, double-Escape detection and the
-    /// correlation ids for the open/apply round-trips.
+    /// Rewind flow state (#997).
     rewind: RewindFlow,
-    /// Sub-agent / multi-session UI state (#997): tracked agents, per-agent
-    /// sessions, panel navigation, live connection plumbing and focus.
+    /// Sub-agent / multi-session UI state (#997).
     subagents: SubagentUi,
     /// Diagnostic: when `QUECTO_TUI_RENDER_LOG` is set, every frame is appended
     /// (ANSI-stripped) to this file for frame-by-frame replay.
@@ -159,9 +156,7 @@ pub struct App {
     started_at: tokio::time::Instant,
 }
 
-/// Rewind flow state, grouped by owner (#997). Semantics unchanged: idle
-/// double-Escape opens the selector; correlation ids tie the get_messages /
-/// rewind_to round-trips back to this flow.
+/// Rewind flow state, grouped by owner (#997).
 #[derive(Default)]
 pub(crate) struct RewindFlow {
     /// Rewind selector shown after idle double-Escape lists prior user turns.
@@ -176,8 +171,7 @@ pub(crate) struct RewindFlow {
     request_seq: u64,
 }
 
-/// Model registry owned by the selector flow (#997) — previously an anonymous
-/// `(Vec<ModelEntry>, bool)` tuple on `App`.
+/// Model registry owned by the selector flow (#997).
 #[derive(Default)]
 pub(crate) struct ModelRegistry {
     /// Models parsed from the last `list_models` response (may be empty).
@@ -186,8 +180,8 @@ pub(crate) struct ModelRegistry {
     open_pending: bool,
 }
 
-/// Sub-agent / multi-session UI state, grouped by owner (#997). Behaviour
-/// unchanged — these are the former `App` fields, moved verbatim.
+/// Sub-agent / multi-session UI state, grouped by owner (#997); the former
+/// `App` fields, moved verbatim.
 pub(crate) struct SubagentUi {
     /// Client-side subagent state for immediate bar updates (#525).
     /// Updated from tool events (spawn/agent_cmd) and server pushes.
@@ -227,6 +221,19 @@ pub(crate) struct SubagentUi {
 }
 
 impl SubagentUi {
+    /// How many tracked child agents are currently in an active status.
+    pub(crate) fn tracked_active_count(&self) -> usize {
+        self.tracked
+            .values()
+            .filter(|t| subagent_status_is_active(&t.info.status))
+            .count()
+    }
+
+    /// The workflow snapshot tracked for `id`, if any.
+    pub(crate) fn tracked_workflow(&self, id: &str) -> Option<&SubagentWorkflow> {
+        self.tracked.get(id).and_then(|t| t.info.workflow.as_ref())
+    }
+
     fn new() -> Self {
         let (event_tx, event_rx) = mpsc::channel(256);
         Self {

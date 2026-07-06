@@ -2,9 +2,7 @@
 
 use crate::interface::component::Component;
 use crate::interface::components::list_navigator::ListNavigator;
-use crate::interface::components::list_rows::{
-    DescriptionMode, ListRow, RowStyle, render_list_rows, visible_window,
-};
+use crate::interface::components::list_rows::{DescriptionMode, ListRow, render_windowed};
 use crate::interface::keys::Key;
 use crate::interface::theme;
 
@@ -16,16 +14,10 @@ pub struct SelectItem {
     pub description: Option<String>,
 }
 
-/// Result of a select list interaction.
-#[derive(Debug, Clone, PartialEq)]
-pub enum SelectResult {
-    /// User selected an item.
-    Selected(String),
-    /// User cancelled (Escape).
-    Cancelled,
-    /// No action yet.
-    Pending,
-}
+/// Result of a select list interaction — the shared list-interaction result
+/// (`Selected` / `Dismissed` / `Pending`), re-exported under this surface's
+/// historical name.
+pub use crate::interface::components::autocomplete::AutocompleteResult as SelectResult;
 
 /// A navigable list with selection indicator and optional descriptions.
 pub struct SelectList {
@@ -71,10 +63,21 @@ impl SelectList {
     pub fn item_count(&self) -> usize {
         self.items.len()
     }
+}
 
-    #[cfg(test)]
-    pub fn render_text(&mut self, width: usize) -> String {
-        self.render(width).join("\n")
+/// Route a key into an overlay selector slot (#997 dedup of the resume and
+/// rewind overlay key handlers): forwards the key, closes the overlay on
+/// `Selected`/`Dismissed`, and returns the selected value, if any.
+pub(crate) fn route_overlay_key(slot: &mut Option<SelectList>, key: &Key) -> Option<String> {
+    let selector = slot.as_mut()?;
+    selector.handle_input(key);
+    let result = selector.take_result();
+    if !matches!(result, SelectResult::Pending) {
+        *slot = None;
+    }
+    match result {
+        SelectResult::Selected(value) => Some(value),
+        _ => None,
     }
 }
 
@@ -87,55 +90,36 @@ impl Component for SelectList {
             return lines;
         }
 
-        // Shared row renderer (#997): the alignment column is computed over
-        // the visible window only, capped at 32 (#757) — see
-        // `DescriptionMode::AlignedWindow` in `list_rows`.
-        let total = self.items.len();
-        let range = visible_window(&self.navigator, total, self.max_visible);
-        let rows: Vec<ListRow> = self.items[range]
-            .iter()
-            .map(|item| ListRow {
-                description: item.description.clone(),
-                ..ListRow::plain(item.label.clone())
-            })
-            .collect();
-        let style = RowStyle {
-            indent: "",
-            description: DescriptionMode::AlignedWindow { min_desc_width: 10 },
-        };
-        lines.extend(render_list_rows(
-            &rows,
+        // Shared row renderer (#997): the alignment column covers the visible
+        // window only, capped at 32 (#757) — see `DescriptionMode::AlignedWindow`.
+        lines.extend(render_windowed(
+            &self.items,
             &self.navigator,
-            total,
             self.max_visible,
             width,
-            &style,
+            "",
+            DescriptionMode::AlignedWindow { min_desc_width: 10 },
+            |item| ListRow {
+                description: item.description.clone(),
+                ..ListRow::plain(item.label.clone())
+            },
         ));
         lines
     }
 
     fn handle_input(&mut self, key: &Key) -> bool {
         match key {
-            Key::Up => {
-                self.navigator.move_previous(self.items.len());
-                true
-            }
-            Key::Down => {
-                self.navigator.move_next(self.items.len());
-                true
-            }
+            Key::Up => self.navigator.move_previous(self.items.len()),
+            Key::Down => self.navigator.move_next(self.items.len()),
             Key::Enter => {
                 if let Some(item) = self.items.get(self.navigator.selected()) {
                     self.result = SelectResult::Selected(item.value.clone());
                 }
-                true
             }
-            Key::Escape => {
-                self.result = SelectResult::Cancelled;
-                true
-            }
-            _ => false,
+            Key::Escape => self.result = SelectResult::Dismissed,
+            _ => return false,
         }
+        true
     }
 
     fn invalidate(&mut self) {}
@@ -144,6 +128,12 @@ impl Component for SelectList {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl SelectList {
+        pub(crate) fn render_text(&mut self, width: usize) -> String {
+            self.render(width).join("\n")
+        }
+    }
 
     fn make_items(labels: &[&str]) -> Vec<SelectItem> {
         labels
@@ -209,7 +199,7 @@ mod tests {
     fn escape_cancels() {
         let mut list = SelectList::new(make_items(&["A"]), 10);
         list.handle_input(&Key::Escape);
-        assert_eq!(list.take_result(), SelectResult::Cancelled);
+        assert_eq!(list.take_result(), SelectResult::Dismissed);
     }
 
     #[test]

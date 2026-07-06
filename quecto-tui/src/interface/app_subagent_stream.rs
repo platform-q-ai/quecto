@@ -219,12 +219,7 @@ impl App {
     /// — so a more-detailed live bar is never overwritten by the count-only
     /// snapshot.
     pub(super) fn seed_session_bar_from_snapshot(&mut self, id: &str) {
-        let Some(wf) = self
-            .subagents
-            .tracked
-            .get(id)
-            .and_then(|t| t.info.workflow.as_ref())
-        else {
+        let Some(wf) = self.subagents.tracked_workflow(id) else {
             return;
         };
         if wf.steps_total == 0 && wf.steps_completed == 0 {
@@ -256,9 +251,7 @@ impl App {
     fn subagent_workflow_visible(&self, agent_id: &str) -> bool {
         let panel_visible = self
             .subagents
-            .tracked
-            .get(agent_id)
-            .and_then(|t| t.info.workflow.as_ref())
+            .tracked_workflow(agent_id)
             .is_some_and(|w| w.steps_total > 0);
         let bar_visible = self
             .subagents

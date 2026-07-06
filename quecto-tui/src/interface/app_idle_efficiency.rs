@@ -21,11 +21,7 @@ impl App {
             || self.agent_state.is_running()
             || self.active_session().footer.is_streaming()
             || self.active_subagent_running()
-            || self
-                .subagents
-                .tracked
-                .values()
-                .any(|entry| subagent_status_is_active(&entry.info.status))
+            || self.subagents.tracked_active_count() > 0
     }
 
     pub(super) fn service_animation_tick(

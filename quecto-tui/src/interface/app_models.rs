@@ -57,10 +57,8 @@ impl App {
         let selector = if self.model_registry.entries.is_empty() {
             ModelSelector::new(self.current_model.as_deref())
         } else {
-            ModelSelector::with_models(
-                self.model_registry.entries.clone(),
-                self.current_model.as_deref(),
-            )
+            let entries = self.model_registry.entries.clone();
+            ModelSelector::with_models(entries, self.current_model.as_deref())
         };
         self.model_selector = Some(selector);
     }
@@ -74,7 +72,7 @@ impl App {
                     self.model_selector = None;
                     self.send_set_model(&model);
                 }
-                ModelSelectorResult::Cancelled => {
+                ModelSelectorResult::Dismissed => {
                     self.model_selector = None;
                 }
                 ModelSelectorResult::Pending => {}

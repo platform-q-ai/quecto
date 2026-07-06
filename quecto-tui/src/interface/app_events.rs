@@ -205,12 +205,8 @@ impl App {
         // or duplicate spawn ToolStart (event replay on reconnect) would
         // otherwise reset started_at/status and re-mark it optimistic, partly
         // re-opening the #831 drop path for the grace window (review).
-        if self
-            .subagents
-            .tracked
-            .get(&sanitized)
-            .is_some_and(|e| !e.optimistic)
-        {
+        let tracked = &self.subagents.tracked;
+        if tracked.get(&sanitized).is_some_and(|e| !e.optimistic) {
             return;
         }
         let mut tracked = TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {

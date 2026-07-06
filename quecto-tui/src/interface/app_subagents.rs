@@ -129,12 +129,8 @@ impl App {
         // mid-turn on its own connect-on-select stream (#820): the selected
         // session's `running` flag is the source for its working spinner, and the
         // master's `subagent_local` status may still read idle for it.
-        let any_active = self.active_subagent_running()
-            || self
-                .subagents
-                .tracked
-                .values()
-                .any(|t| subagent_status_is_active(&t.info.status));
+        let any_active =
+            self.active_subagent_running() || self.subagents.tracked_active_count() > 0;
         if !any_active {
             return false;
         }

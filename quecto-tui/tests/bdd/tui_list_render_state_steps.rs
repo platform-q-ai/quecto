@@ -314,7 +314,7 @@ fn rewind_group_seq(world: &mut TuiWorld, seq: u64) {
 fn model_selector_open_requested(world: &mut TuiWorld) {
     world.tui_model_open_was_pending = with_harness(world, |h| {
         h.request_model_selector_open();
-        h.model_registry_group_pending()
+        h.model_registry_group().1
     });
 }
 
@@ -325,12 +325,7 @@ fn list_models_arrives(world: &mut TuiWorld, n: usize) {
 
 #[then(regex = r#"^the model registry group holds (\d+) entries and the pending open is cleared$"#)]
 fn model_registry_group(world: &mut TuiWorld, n: usize) {
-    let (entries, pending) = with_harness(world, |h| {
-        (
-            h.model_registry_group_entries(),
-            h.model_registry_group_pending(),
-        )
-    });
+    let (entries, pending) = with_harness(world, |h| h.model_registry_group());
     assert!(
         world.tui_model_open_was_pending,
         "the selector-open request must set the pending flag first"

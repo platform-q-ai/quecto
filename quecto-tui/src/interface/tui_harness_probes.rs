@@ -1,7 +1,4 @@
-//! #997 grouped-state probes for the headless render harness.
-//!
-//! Drive real App paths, then observe the value through the OWNER GROUP
-//! (rewind flow / sub-agent UI / model registry).
+//! #997 grouped-state probes: drive real App paths, observe the owner groups.
 
 use super::TuiHarness;
 
@@ -17,14 +14,12 @@ impl TuiHarness {
         self.app.rewind.request_seq
     }
 
-    /// Request a model-selector open through the real `/model` path — defers
-    /// the open (pending) until the fresh `list_models` response arrives.
+    /// Request a model-selector open through the real (deferred) `/model` path.
     pub fn request_model_selector_open(&mut self) {
         self.app.open_model_selector();
     }
 
-    /// Deliver a `list_models` response with `count` synthetic models through
-    /// the real response handler.
+    /// Deliver a real `list_models` response with `count` synthetic models.
     pub fn deliver_list_models(&mut self, count: usize) {
         let models: Vec<serde_json::Value> = (0..count)
             .map(|i| serde_json::json!({"model": format!("prov/model-{i}"), "provider": "Prov"}))
@@ -33,14 +28,12 @@ impl TuiHarness {
             .handle_list_models(Some(serde_json::json!({ "models": models })));
     }
 
-    /// Entry count held by the model-registry owner group (#997).
-    pub fn model_registry_group_entries(&self) -> usize {
-        self.app.model_registry.entries.len()
-    }
-
-    /// Whether the model-registry owner group has a pending selector open (#997).
-    pub fn model_registry_group_pending(&self) -> bool {
-        self.app.model_registry.open_pending
+    /// Model-registry owner group (#997): `(entry count, open pending)`.
+    pub fn model_registry_group(&self) -> (usize, bool) {
+        (
+            self.app.model_registry.entries.len(),
+            self.app.model_registry.open_pending,
+        )
     }
 
     /// Tracked sub-agent count held by the sub-agent UI owner group (#997).

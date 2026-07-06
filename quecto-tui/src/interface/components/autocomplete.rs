@@ -3,9 +3,7 @@
 //! Provides fuzzy-matched suggestions for slash commands and model names.
 
 use crate::interface::component::Component;
-use crate::interface::components::list_rows::{
-    DescriptionMode, ListRow, RowStyle, render_list_rows,
-};
+use crate::interface::components::list_rows::{DescriptionMode, ListRow};
 use crate::interface::components::suggestion_list::SuggestionList;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
@@ -17,11 +15,11 @@ pub struct SlashCommand {
     pub description: String,
 }
 
-/// Autocomplete suggestion.
+/// Autocomplete suggestion. `value` doubles as the display label (the
+/// surfaces add their own `/`/`@` sigil or show it verbatim).
 #[derive(Debug, Clone)]
 pub struct Suggestion {
     pub value: String,
-    pub label: String,
     pub description: String,
 }
 
@@ -71,15 +69,7 @@ impl Autocomplete {
         if !trimmed.starts_with('/') || trimmed.len() < 2 {
             if trimmed == "/" {
                 // Show all commands.
-                let new: Vec<Suggestion> = self
-                    .commands
-                    .iter()
-                    .map(|c| Suggestion {
-                        value: format!("/{}", c.name),
-                        label: c.name.clone(),
-                        description: c.description.clone(),
-                    })
-                    .collect();
+                let new = self.commands.iter().map(to_suggestion).collect();
                 self.list.set_suggestions(new);
             } else {
                 self.list.clear();
@@ -97,14 +87,7 @@ impl Autocomplete {
 
         // Fuzzy filter commands.
         let filtered = fuzzy_filter(&self.commands, prefix, |c| &c.name);
-        let new: Vec<Suggestion> = filtered
-            .into_iter()
-            .map(|c| Suggestion {
-                value: format!("/{}", c.name),
-                label: c.name.clone(),
-                description: c.description.clone(),
-            })
-            .collect();
+        let new = filtered.into_iter().map(to_suggestion).collect();
         self.list.set_suggestions(new);
     }
 
@@ -123,24 +106,30 @@ impl Autocomplete {
         std::mem::replace(&mut self.result, AutocompleteResult::Pending)
     }
 
-    /// The 0-based index of the currently highlighted suggestion.
-    ///
-    /// Inspection accessor for tests/harness that assert on navigation state.
+    /// The 0-based index of the currently highlighted suggestion
+    /// (tests/harness inspection accessor).
     pub fn selected_index(&self) -> usize {
         self.list.selected()
     }
 
-    /// The `value` of the currently highlighted suggestion (e.g. `"/quit"`),
-    /// or `None` when the dropdown holds no suggestions.
+    /// The `value` of the highlighted suggestion (e.g. `"/quit"`), if any.
     pub fn selected_value(&self) -> Option<String> {
         self.list.selected_suggestion().map(|s| s.value.clone())
     }
 
-    /// The number of suggestions currently held by the dropdown. After a
-    /// Tab/Enter accept the list is `close()`d (hidden) but its suggestions are
-    /// retained, so this stays non-zero — distinct from a `dismiss()`/`clear()`.
+    /// Suggestions currently held. A Tab/Enter accept `close()`s (hides) the
+    /// list but RETAINS its suggestions — distinct from `dismiss()`/`clear()`.
     pub fn suggestion_count(&self) -> usize {
         self.list.len()
+    }
+}
+
+/// Build the dropdown suggestion for a slash command (`value` carries the
+/// leading `/`, ready to submit — it IS the display label).
+fn to_suggestion(c: &SlashCommand) -> Suggestion {
+    Suggestion {
+        value: format!("/{}", c.name),
+        description: c.description.clone(),
     }
 }
 
@@ -150,58 +139,17 @@ impl Component for Autocomplete {
             return vec![];
         }
 
-        // Shared row renderer (#997): inline description with a fixed
-        // two-space gap; windowing and the overflow indicator live in the
-        // helper.
-        let rows: Vec<ListRow> = self.list.suggestions()[self.list.visible_range()]
-            .iter()
-            .map(|s| ListRow {
-                description: Some(s.description.clone()),
-                ..ListRow::plain(format!("/{}", s.label))
-            })
-            .collect();
-        let style = RowStyle {
-            indent: "",
-            description: DescriptionMode::Inline,
-        };
-        render_list_rows(
-            &rows,
-            self.list.navigator(),
-            self.list.len(),
-            self.list.max_visible(),
-            width,
-            &style,
-        )
+        // Shared row renderer (#997): fixed two-space description gap
+        // (`label_width: 0`); windowing + overflow indicator live in the helper.
+        let mode = DescriptionMode::AlignedCached { label_width: 0 };
+        self.list.render_rows(width, "", mode, |s| ListRow {
+            description: Some(s.description.clone()),
+            ..ListRow::plain(s.value.clone())
+        })
     }
 
     fn handle_input(&mut self, key: &Key) -> bool {
-        if !self.list.is_active() {
-            return false;
-        }
-
-        match key {
-            Key::Up => {
-                self.list.move_previous();
-                true
-            }
-            Key::Down => {
-                self.list.move_next();
-                true
-            }
-            Key::Tab | Key::Enter => {
-                if let Some(s) = self.list.selected_suggestion() {
-                    self.result = AutocompleteResult::Selected(s.value.clone());
-                    self.list.close();
-                }
-                true
-            }
-            Key::Escape => {
-                self.result = AutocompleteResult::Dismissed;
-                self.list.close();
-                true
-            }
-            _ => false,
-        }
+        self.list.handle_key(key, true, &mut self.result)
     }
 
     fn invalidate(&mut self) {}
@@ -246,7 +194,7 @@ mod tests {
         ac.update("/mo");
         assert!(ac.is_active());
         assert_eq!(ac.list.len(), 1);
-        assert_eq!(ac.list.suggestions()[0].label, "model");
+        assert_eq!(ac.list.suggestions()[0].value, "/model");
     }
 
     #[test]
@@ -287,9 +235,9 @@ mod tests {
     fn navigate_down_up() {
         let mut ac = Autocomplete::new(test_commands(), 5);
         ac.update("/");
-        let first = ac.list.suggestions()[0].label.clone();
+        let first = ac.list.suggestions()[0].value.clone();
         ac.handle_input(&Key::Down);
-        let second = ac.list.suggestions()[ac.list.selected()].label.clone();
+        let second = ac.list.suggestions()[ac.list.selected()].value.clone();
         assert_ne!(first, second);
     }
 

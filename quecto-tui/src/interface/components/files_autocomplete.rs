@@ -11,9 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{AutocompleteResult, Suggestion};
-use crate::interface::components::list_rows::{
-    DescriptionMode, ListRow, RowStyle, render_list_rows,
-};
+use crate::interface::components::list_rows::{DescriptionMode, ListRow};
 use crate::interface::components::suggestion_list::SuggestionList;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
@@ -91,7 +89,10 @@ impl FilesAutocomplete {
         self.request_load_if_needed();
 
         if self.loading && self.files.is_empty() {
-            self.list.set_suggestions(vec![loading_suggestion()]);
+            self.list.set_suggestions(vec![Suggestion {
+                value: "loading files…".to_string(),
+                description: String::new(),
+            }]);
             return;
         }
 
@@ -101,7 +102,6 @@ impl FilesAutocomplete {
             .take(self.list.max_visible() * 4)
             .map(|f| Suggestion {
                 value: f.clone(),
-                label: f.clone(),
                 description: String::new(),
             })
             .collect();
@@ -129,12 +129,6 @@ impl FilesAutocomplete {
     /// Consume a pending background-load request.
     pub fn take_load_request(&mut self) -> bool {
         std::mem::take(&mut self.load_requested)
-    }
-
-    /// Whether a background load is currently pending (tests only).
-    #[cfg(test)]
-    pub fn is_loading(&self) -> bool {
-        self.loading
     }
 
     /// Request an async file-list load when stale. Injected test lists never
@@ -173,14 +167,6 @@ impl FilesAutocomplete {
     /// Take the result of the last interaction.
     pub fn take_result(&mut self) -> AutocompleteResult {
         std::mem::replace(&mut self.result, AutocompleteResult::Pending)
-    }
-}
-
-fn loading_suggestion() -> Suggestion {
-    Suggestion {
-        value: String::new(),
-        label: "loading files…".to_string(),
-        description: String::new(),
     }
 }
 
@@ -227,64 +213,24 @@ impl Component for FilesAutocomplete {
         }
 
         // Shared row renderer (#997). Only the empty-list loading placeholder
-        // renders dim (and keeps its bare label, no `@`); real rows — even
-        // while a STALE list reloads in the background — keep the `@` sigil,
-        // the selection arrow and the accent.
+        // renders dim (bare label, no `@`); real rows — even while a STALE
+        // list reloads in the background — keep `@`, the arrow and the accent.
         let placeholder = self.loading && self.files.is_empty();
-        let rows: Vec<ListRow> = self.list.suggestions()[self.list.visible_range()]
-            .iter()
-            .map(|s| ListRow {
-                dim_label: placeholder,
-                ..ListRow::plain(if placeholder {
-                    s.label.clone()
-                } else {
-                    format!("@{}", s.label)
-                })
+        let mode = DescriptionMode::AlignedCached { label_width: 0 };
+        self.list.render_rows(width, "", mode, |s| ListRow {
+            dim_label: placeholder,
+            ..ListRow::plain(if placeholder {
+                s.value.clone()
+            } else {
+                format!("@{}", s.value)
             })
-            .collect();
-        let style = RowStyle {
-            indent: "",
-            description: DescriptionMode::Inline,
-        };
-        render_list_rows(
-            &rows,
-            self.list.navigator(),
-            self.list.len(),
-            self.list.max_visible(),
-            width,
-            &style,
-        )
+        })
     }
 
     fn handle_input(&mut self, key: &Key) -> bool {
-        if !self.list.is_active() {
-            return false;
-        }
-        match key {
-            Key::Up => {
-                self.list.move_previous();
-                true
-            }
-            Key::Down => {
-                self.list.move_next();
-                true
-            }
-            Key::Tab | Key::Enter => {
-                if !self.loading || !self.files.is_empty() {
-                    if let Some(s) = self.list.selected_suggestion() {
-                        self.result = AutocompleteResult::Selected(s.value.clone());
-                        self.list.close();
-                    }
-                }
-                true
-            }
-            Key::Escape => {
-                self.result = AutocompleteResult::Dismissed;
-                self.list.close();
-                true
-            }
-            _ => false,
-        }
+        // Tab/Enter must not accept the loading placeholder row.
+        let can_accept = !self.loading || !self.files.is_empty();
+        self.list.handle_key(key, can_accept, &mut self.result)
     }
 
     fn invalidate(&mut self) {}
@@ -293,6 +239,13 @@ impl Component for FilesAutocomplete {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl FilesAutocomplete {
+        /// Whether a background load is currently pending (tests only).
+        fn is_loading(&self) -> bool {
+            self.loading
+        }
+    }
 
     fn fa() -> FilesAutocomplete {
         FilesAutocomplete::with_files(
@@ -323,7 +276,7 @@ mod tests {
         assert!(f.is_loading());
         assert!(f.take_load_request());
         assert_eq!(f.list.len(), 1);
-        assert_eq!(f.list.suggestions()[0].label, "loading files…");
+        assert_eq!(f.list.suggestions()[0].value, "loading files…");
     }
 
     #[test]

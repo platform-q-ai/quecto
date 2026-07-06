@@ -309,7 +309,7 @@ fn model_selector_no_match_placeholder_pixels() {
     sel.handle_input(&Key::Enter);
     assert_eq!(
         sel.take_result(),
-        ModelSelectorResult::Cancelled,
+        ModelSelectorResult::Dismissed,
         "Enter with no matches cancels the selector"
     );
 }

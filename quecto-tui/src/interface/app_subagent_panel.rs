@@ -218,17 +218,17 @@ impl App {
     /// Bound retained-session memory: drop the oldest sessions (never the
     /// active one) once the retained count exceeds `MAX_RETAINED_SESSIONS`.
     fn evict_retained_sessions(&mut self) {
-        while self.subagents.sessions.len() > MAX_RETAINED_SESSIONS {
-            let Some(pos) = self
-                .subagents
-                .session_order
+        let subs = &mut self.subagents;
+        while subs.sessions.len() > MAX_RETAINED_SESSIONS {
+            let order = &subs.session_order;
+            let Some(pos) = order
                 .iter()
-                .position(|id| Some(id) != self.subagents.active_agent_id.as_ref())
+                .position(|id| Some(id) != subs.active_agent_id.as_ref())
             else {
                 break;
             };
-            let victim = self.subagents.session_order.remove(pos);
-            self.subagents.sessions.remove(&victim);
+            let victim = subs.session_order.remove(pos);
+            subs.sessions.remove(&victim);
         }
     }
 
@@ -297,12 +297,8 @@ impl App {
     /// stream into the shared `subagent_event_rx`, tagged with the agent id.
     /// No-op when the socket path is unknown (older kernel / non-local agent).
     fn open_subagent_connection(&mut self, id: &str) {
-        let Some(socket) = self
-            .subagents
-            .tracked
-            .get(id)
-            .and_then(|t| t.info.socket_path.clone())
-        else {
+        let tracked = &self.subagents.tracked;
+        let Some(socket) = tracked.get(id).and_then(|t| t.info.socket_path.clone()) else {
             return;
         };
         let tx = self.subagents.event_tx.clone();
@@ -551,12 +547,10 @@ impl App {
     fn panel_row_timer(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         match id {
             None => fmt_mss(now.saturating_duration_since(self.started_at).as_secs()),
-            Some(id) => self
-                .subagents
-                .tracked
-                .get(id)
-                .map(|t| fmt_mss(t.elapsed_secs(now)))
-                .unwrap_or_default(),
+            Some(id) => {
+                let t = self.subagents.tracked.get(id);
+                t.map(|t| fmt_mss(t.elapsed_secs(now))).unwrap_or_default()
+            }
         }
     }
 

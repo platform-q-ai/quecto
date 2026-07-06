@@ -639,18 +639,14 @@ async fn model_registry_group_holds_parsed_entries() {
     let mut h = TuiHarness::new().await;
     h.request_model_selector_open();
     assert!(
-        h.model_registry_group_pending(),
+        h.model_registry_group().1,
         "a selector open defers until the fresh list arrives (pending)"
     );
     h.deliver_list_models(2);
     assert_eq!(
-        h.model_registry_group_entries(),
-        2,
-        "the registry group must hold both parsed entries"
-    );
-    assert!(
-        !h.model_registry_group_pending(),
-        "the delivered response clears the pending open"
+        h.model_registry_group(),
+        (2, false),
+        "the registry group holds both parsed entries and clears the pending open"
     );
 }
 
