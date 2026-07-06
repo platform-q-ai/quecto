@@ -17,7 +17,7 @@ fn snapshot_in_selector_mode_lists_templates() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     let snap = engine.snapshot(true);
     assert_eq!(snap.mode, WorkflowMode::SelectingTemplate);
-    assert_eq!(snap.available_templates.len(), 1);
+    assert_eq!(snap.available_templates.len(), 2);
     assert!(snap.steps.is_empty());
 }
 
