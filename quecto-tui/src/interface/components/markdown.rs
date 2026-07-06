@@ -7,9 +7,6 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use crate::interface::component::Component;
-use crate::interface::components::sanitize::{
-    strip_terminal_control, strip_terminal_control_preserve_newlines,
-};
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width, wrap_text};
 
@@ -17,9 +14,6 @@ use crate::interface::utils::{truncate_to_width, visible_width, wrap_text};
 pub struct Markdown {
     text: String,
     padding_x: usize,
-    cached_text: Option<String>,
-    cached_width: Option<usize>,
-    cached_lines: Option<Vec<String>>,
 }
 
 impl Markdown {
@@ -27,15 +21,11 @@ impl Markdown {
         Self {
             text: text.to_string(),
             padding_x,
-            cached_text: None,
-            cached_width: None,
-            cached_lines: None,
         }
     }
 
     pub fn set_text(&mut self, text: &str) {
         self.text = text.to_string();
-        self.invalidate();
     }
 
     /// Render markdown text to styled terminal lines.
@@ -269,8 +259,9 @@ impl Markdown {
                         // events with embedded `\n` (rather than SoftBreaks), and
                         // those newlines are needed to detect/strip a literal
                         // inner fence in `flush_code_block` (#799).
-                        code_block_content
-                            .push_str(&strip_terminal_control_preserve_newlines(&text));
+                        code_block_content.push_str(
+                            &crate::interface::ansi::sanitize_control_keep_newlines(&text),
+                        );
                     } else if in_blockquote {
                         blockquote_lines.push(sanitize_for_display(&text));
                     } else {
@@ -365,28 +356,10 @@ impl Markdown {
 
 impl Component for Markdown {
     fn render(&mut self, width: usize) -> Vec<String> {
-        if let (Some(ct), Some(cw), Some(cl)) =
-            (&self.cached_text, self.cached_width, &self.cached_lines)
-        {
-            if ct == &self.text && cw == width {
-                return cl.clone();
-            }
-        }
-
-        let lines = self.render_markdown(width);
-
-        self.cached_text = Some(self.text.clone());
-        self.cached_width = Some(width);
-        self.cached_lines = Some(lines.clone());
-
-        lines
+        self.render_markdown(width)
     }
 
-    fn invalidate(&mut self) {
-        self.cached_text = None;
-        self.cached_width = None;
-        self.cached_lines = None;
-    }
+    fn invalidate(&mut self) {}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -645,7 +618,7 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
 /// This keeps `\n` intact so block/list structure still reaches pulldown-cmark,
 /// while removing terminal escapes before they can affect display.
 fn sanitize_markdown_source(s: &str) -> String {
-    strip_terminal_control_preserve_newlines(s)
+    crate::interface::ansi::sanitize_control_keep_newlines(s)
 }
 
 /// Strip ANSI escape sequences and control characters from text for safe display.
@@ -653,7 +626,7 @@ fn sanitize_markdown_source(s: &str) -> String {
 /// Removes complete CSI sequences (ESC[...letter), OSC sequences
 /// (ESC]...BEL/ST), bare ESC, and all C0/C1 control characters.
 fn sanitize_for_display(s: &str) -> String {
-    strip_terminal_control(s)
+    crate::interface::ansi::sanitize_control(s)
 }
 
 fn push_wrapped_with_hanging_indent(

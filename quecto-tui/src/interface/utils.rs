@@ -3,6 +3,8 @@
 //! All width calculations are ANSI-aware: escape sequences have zero visual
 //! width. CJK characters are correctly counted as width 2.
 
+use std::borrow::Cow;
+
 use crate::interface::ansi::{AnsiSegment, ansi_segments};
 use unicode_width::UnicodeWidthChar;
 
@@ -29,11 +31,20 @@ pub fn visible_width(s: &str) -> usize {
 /// ANSI escape sequences are preserved. If the text is truncated and
 /// `ellipsis` is provided, it replaces the last few characters.
 pub fn truncate_to_width(s: &str, max_width: usize, ellipsis: Option<&str>) -> String {
+    truncate_to_width_cow(s, max_width, ellipsis).into_owned()
+}
+
+/// Borrow `s` when it already fits, otherwise return the truncated owned text.
+pub fn truncate_to_width_cow<'a>(
+    s: &'a str,
+    max_width: usize,
+    ellipsis: Option<&str>,
+) -> Cow<'a, str> {
     let ell = ellipsis.unwrap_or("");
     let ell_width = visible_width(ell);
 
     if visible_width(s) <= max_width {
-        return s.to_string();
+        return Cow::Borrowed(s);
     }
 
     let target = max_width.saturating_sub(ell_width);
@@ -67,7 +78,27 @@ pub fn truncate_to_width(s: &str, max_width: usize, ellipsis: Option<&str>) -> S
     result.push_str(ell);
     // Append SGR reset so truncated escape sequences don't leak
     result.push_str("\x1b[0m");
-    result
+    Cow::Owned(result)
+}
+
+/// Truncate by Unicode scalar count, preserving legacy char-count ellipsis semantics.
+pub fn truncate_chars_with_ellipsis(s: &str, max_chars: usize, ellipsis: &str) -> String {
+    let mut iter = s.chars();
+    let out: String = iter.by_ref().take(max_chars).collect();
+    if iter.next().is_some() {
+        format!("{out}{ellipsis}")
+    } else {
+        s.to_string()
+    }
+}
+
+/// Sanitize, then truncate by Unicode scalar count with an ellipsis on overflow.
+pub fn sanitize_truncate_chars_with_ellipsis(s: &str, max_chars: usize, ellipsis: &str) -> String {
+    let (mut out, truncated) = crate::interface::ansi::sanitize_control_truncated(s, max_chars);
+    if truncated {
+        out.push_str(ellipsis);
+    }
+    out
 }
 
 /// Word-wrap text to fit within `max_width` columns, preserving ANSI escapes.

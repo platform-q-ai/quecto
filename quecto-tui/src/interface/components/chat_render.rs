@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use super::*;
-use crate::interface::components::sanitize::strip_terminal_control;
+use crate::interface::ansi::AnsiSegment;
 
 pub(super) struct ToolRenderArgs<'a> {
     pub tool_name: &'a str,
@@ -345,7 +345,11 @@ pub(super) fn render_subagent(
                 let detail = if task.is_empty() {
                     agent.clone()
                 } else {
-                    format!("{} — {}", agent, truncate_with_ellipsis(&task, 50))
+                    format!(
+                        "{} — {}",
+                        agent,
+                        crate::interface::utils::truncate_chars_with_ellipsis(&task, 50, "...")
+                    )
                 };
                 (detail, Some(agent))
             }
@@ -536,7 +540,7 @@ pub(super) fn push_preview(
         // title/clipboard spoofing) into the parent operator's terminal, since
         // truncate_to_width preserves escape sequences verbatim.
         lines.push(truncate_to_width(
-            &color_fn(&strip_terminal_control(line)),
+            &color_fn(&crate::interface::ansi::sanitize_control(line)),
             width,
             None,
         ));
@@ -584,7 +588,9 @@ pub(super) fn extract_path(args: &Option<serde_json::Value>) -> String {
 pub(super) fn extract_best_arg(v: &serde_json::Value) -> String {
     for key in &["command", "path", "query", "url", "content", "oldText"] {
         if let Some(val) = v.get(key).and_then(|v| v.as_str()) {
-            return sanitize(&truncate_with_ellipsis(val, 60));
+            return sanitize(&crate::interface::utils::truncate_chars_with_ellipsis(
+                val, 60, "...",
+            ));
         }
     }
     String::new()
@@ -603,7 +609,12 @@ pub(super) fn style_diff_line(line: &str) -> String {
 
 /// Sanitize a string by stripping terminal control sequences.
 pub(super) fn sanitize(s: &str) -> String {
-    strip_terminal_control(s)
+    crate::interface::ansi::sanitize_control(s)
+}
+
+#[cfg(test)]
+pub(super) fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
+    crate::interface::utils::truncate_chars_with_ellipsis(s, max_chars, "...")
 }
 
 /// Expand tab characters to spaces using 8-column tab stops, ANSI-aware.
@@ -620,53 +631,37 @@ pub(super) fn expand_tabs(s: &str) -> Cow<'_, str> {
     }
     let mut out = String::with_capacity(s.len());
     let mut col = 0;
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            // Copy the full escape sequence without advancing the column.
-            out.push(ch);
-            if chars.peek() == Some(&']') {
-                out.push(chars.next().unwrap());
-                while let Some(c) = chars.next() {
-                    out.push(c);
-                    if c == '\x07' {
-                        break;
-                    }
-                    if c == '\x1b' && chars.peek() == Some(&'\\') {
-                        out.push(chars.next().unwrap());
-                        break;
-                    }
-                }
-            } else {
-                for c in chars.by_ref() {
-                    out.push(c);
-                    if c.is_ascii_alphabetic() || c == '~' {
-                        break;
+    let mut legacy_csi_tail = false;
+    for seg in crate::interface::ansi::ansi_segments(s) {
+        match seg {
+            AnsiSegment::Escape(esc) => {
+                legacy_csi_tail = esc.starts_with("\x1b[")
+                    && esc
+                        .chars()
+                        .last()
+                        .is_some_and(|c| !c.is_ascii_alphabetic() && c != '~');
+                out.push_str(esc);
+            }
+            AnsiSegment::Text(text) => {
+                for ch in text.chars() {
+                    if legacy_csi_tail {
+                        out.push(ch);
+                        if ch.is_ascii_alphabetic() || ch == '~' {
+                            legacy_csi_tail = false;
+                        }
+                    } else if ch == '\t' {
+                        let spaces = TAB_STOP - (col % TAB_STOP);
+                        for _ in 0..spaces {
+                            out.push(' ');
+                        }
+                        col += spaces;
+                    } else {
+                        out.push(ch);
+                        col += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
                     }
                 }
             }
-            continue;
         }
-        if ch == '\t' {
-            let spaces = TAB_STOP - (col % TAB_STOP);
-            for _ in 0..spaces {
-                out.push(' ');
-            }
-            col += spaces;
-            continue;
-        }
-        out.push(ch);
-        col += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
     }
     Cow::Owned(out)
-}
-
-/// Truncate a string to max_chars, appending "..." if truncated.
-pub(super) fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
-    if s.chars().count() > max_chars {
-        let truncated: String = s.chars().take(max_chars).collect();
-        format!("{}...", truncated)
-    } else {
-        s.to_string()
-    }
 }

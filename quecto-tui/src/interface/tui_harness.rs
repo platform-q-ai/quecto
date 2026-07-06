@@ -485,8 +485,8 @@ impl TuiHarness {
     /// Built-in slash command names from the production command registry.
     pub fn slash_command_names() -> Vec<String> {
         super::builtin_commands()
-            .into_iter()
-            .map(|c| c.name)
+            .iter()
+            .map(|c| c.name.clone())
             .collect()
     }
 

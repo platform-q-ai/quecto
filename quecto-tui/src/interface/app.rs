@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use crate::infrastructure::client::{Client, Command, Event, SubagentWorkflow};
@@ -35,7 +36,7 @@ const MOUSE_SCROLL_LINES: usize = 3;
 const MAX_ESCAPE_RETRIES: usize = 5;
 
 /// Built-in slash commands.
-fn builtin_commands() -> Vec<SlashCommand> {
+static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
     vec![
         SlashCommand {
             name: "clear".into(),
@@ -86,6 +87,16 @@ fn builtin_commands() -> Vec<SlashCommand> {
             description: "Toggle workflow completion nudge".into(),
         },
     ]
+});
+
+#[cfg(not(test))]
+fn builtin_commands() -> &'static [SlashCommand] {
+    &BUILTIN_COMMANDS
+}
+
+#[cfg(test)]
+fn builtin_commands() -> Vec<SlashCommand> {
+    BUILTIN_COMMANDS.clone()
 }
 
 /// Application state.
@@ -330,7 +341,7 @@ impl App {
             editor: Editor::new(),
             master_session: SessionView::with_footer(footer),
             spinner: None,
-            autocomplete: Autocomplete::new(builtin_commands(), 8),
+            autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
             files_autocomplete: FilesAutocomplete::new(8),
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
