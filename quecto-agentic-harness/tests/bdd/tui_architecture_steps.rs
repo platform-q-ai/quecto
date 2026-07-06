@@ -758,10 +758,11 @@ fn then_tui_components_expose_list_navigator(_world: &mut QuectoWorld) {
     "slash autocomplete, files autocomplete, model selector, and select list should use ListNavigator"
 )]
 fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
-    // model_selector and select_list own a ListNavigator directly. The two
-    // autocomplete components delegate through the shared SuggestionList, which
-    // in turn owns the ListNavigator — so navigation has a single home for all
-    // four components without re-implementing window/wraparound logic.
+    // select_list owns a ListNavigator directly. The two autocomplete
+    // components and the model selector delegate through the shared
+    // SuggestionList, which in turn owns the ListNavigator — so navigation has
+    // a single home for all four components without re-implementing
+    // window/wraparound logic (#997 moved model_selector onto SuggestionList).
     let read = |file: &str| {
         let path = Path::new(TUI_ROOT)
             .join("interface")
@@ -770,7 +771,7 @@ fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
     };
 
-    for file in ["model_selector.rs", "select_list.rs", "suggestion_list.rs"] {
+    for file in ["select_list.rs", "suggestion_list.rs"] {
         let content = read(file);
         assert!(
             content.contains("navigator: ListNavigator"),
@@ -779,14 +780,20 @@ fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
         assert!(
             content.contains("navigator.move_next")
                 && content.contains("navigator.move_previous")
-                && content.contains(".visible_range("),
+                && (content.contains(".visible_range(")
+                    || content.contains("visible_window(&self.navigator")),
             "{file} should delegate movement and visible-window calculation to ListNavigator"
         );
     }
 
-    // The autocomplete components share navigation via SuggestionList rather
-    // than re-implementing it, so they must not hold their own navigator.
-    for file in ["autocomplete.rs", "files_autocomplete.rs"] {
+    // The autocomplete components and the model selector share navigation via
+    // SuggestionList rather than re-implementing it, so they must not hold
+    // their own navigator.
+    for file in [
+        "autocomplete.rs",
+        "files_autocomplete.rs",
+        "model_selector.rs",
+    ] {
         let content = read(file);
         assert!(
             content.contains("list: SuggestionList"),
