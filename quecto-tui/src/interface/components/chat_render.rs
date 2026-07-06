@@ -177,21 +177,32 @@ pub(super) fn render_bash(
             theme::tool_output
         };
 
-        if expanded || total <= BASH_PREVIEW_LINES {
+        if expanded {
             // Show all lines.
             for line in &output_lines {
-                lines.push(truncate_to_width(&color_fn(line), width, None));
+                let sanitized = sanitize(line);
+                push_wrapped_output(lines, &sanitized, color_fn, width);
             }
         } else {
-            // Show tail (last N lines) with count of hidden earlier lines.
-            let hidden = total - BASH_PREVIEW_LINES;
-            lines.push(theme::dim(&format!(
-                "... ({} earlier lines, Ctrl+O to expand)",
-                hidden
-            )));
-            for line in &output_lines[hidden..] {
-                lines.push(truncate_to_width(&color_fn(line), width, None));
+            // Show tail (last N source lines) with a bounded number of wrapped
+            // rows, so one huge logical line cannot flood the collapsed tool
+            // card. If the output has few source lines we still use the same
+            // bounded collapsed preview path.
+            let shown = BASH_PREVIEW_LINES.min(total);
+            let hidden = total.saturating_sub(shown);
+            if hidden > 0 {
+                lines.push(theme::dim(&format!(
+                    "... ({} earlier lines, Ctrl+O to expand)",
+                    hidden
+                )));
             }
+            push_preview(
+                lines,
+                &output_lines[total - shown..],
+                shown,
+                color_fn,
+                width,
+            );
         }
     }
 }
@@ -520,6 +531,41 @@ pub(super) fn push_header(
     lines.push(truncate_to_width(&header, width, None));
 }
 
+fn push_wrapped_output(
+    lines: &mut Vec<String>,
+    text: &str,
+    color_fn: fn(&str) -> String,
+    width: usize,
+) {
+    for segment in crate::interface::utils::wrap_text(text, width) {
+        lines.push(color_fn(&segment));
+    }
+}
+
+fn push_wrapped_output_limited(
+    lines: &mut Vec<String>,
+    text: &str,
+    color_fn: fn(&str) -> String,
+    width: usize,
+    max_rows: usize,
+) -> (usize, bool) {
+    if max_rows == 0 {
+        return (0, true);
+    }
+    let max_width = width.saturating_mul(max_rows).max(width);
+    let bounded = truncate_to_width(text, max_width, Some("..."));
+    let truncated = bounded != text;
+    let mut pushed = 0;
+    for segment in crate::interface::utils::wrap_text(&bounded, width) {
+        if pushed == max_rows {
+            break;
+        }
+        lines.push(color_fn(&segment));
+        pushed += 1;
+    }
+    (pushed, truncated)
+}
+
 /// Push a head preview of `content_lines`: the first `max` lines styled by
 /// `color_fn`, followed by a dimmed "… (N more lines, Ctrl+O to expand)" hint
 /// when the content was truncated. Centralises the preview idiom repeated
@@ -533,23 +579,37 @@ pub(super) fn push_preview(
 ) {
     let total = content_lines.len();
     let shown = max.min(total);
+    let mut rows_left = shown.saturating_mul(4);
+    let mut truncated = total > shown;
     for line in &content_lines[..shown] {
+        if rows_left == 0 {
+            truncated = true;
+            break;
+        }
         // Strip sub-agent/extension-influenced terminal control sequences from
         // the result body before colouring (#865 security review): otherwise a
         // malicious sub-agent could inject ANSI/OSC escapes (cursor control,
-        // title/clipboard spoofing) into the parent operator's terminal, since
-        // truncate_to_width preserves escape sequences verbatim.
-        lines.push(truncate_to_width(
-            &color_fn(&crate::interface::ansi::sanitize_control(line)),
-            width,
-            None,
-        ));
+        // title/clipboard spoofing) into the parent operator's terminal.
+        let sanitized = crate::interface::ansi::sanitize_control(line);
+        let (pushed, line_truncated) =
+            push_wrapped_output_limited(lines, &sanitized, color_fn, width, rows_left);
+        rows_left -= pushed;
+        if line_truncated {
+            truncated = true;
+        }
+        if pushed == 0 || rows_left == 0 {
+            truncated = true;
+            break;
+        }
     }
-    if total > shown {
-        lines.push(theme::dim(&format!(
-            "... ({} more lines, Ctrl+O to expand)",
-            total - shown
-        )));
+    if truncated {
+        let hidden = total - shown;
+        let hint = if hidden == 0 {
+            "... (output truncated, Ctrl+O to expand)".to_string()
+        } else {
+            format!("... ({} more lines, Ctrl+O to expand)", hidden)
+        };
+        lines.push(theme::dim(&hint));
     }
 }
 

@@ -267,6 +267,35 @@ fn render_tool_success() {
     );
 }
 
+#[test]
+fn render_tool_long_unbroken_result_wraps_without_losing_text() {
+    let lines = render_tool_execution(ToolRenderArgs {
+        tool_name: "custom_tool",
+        args_json: &Some(serde_json::json!({"query": "demo"})),
+        result: Some("alpha-beta-gamma-delta-epsilon-zeta"),
+        is_error: false,
+        duration_ms: None,
+        expanded: false,
+        width: 32,
+    });
+    let joined_visible_lines: String = lines
+        .iter()
+        .map(|line| strip_ansi(line).trim().to_string())
+        .collect();
+    assert!(
+        joined_visible_lines.contains("alpha-beta-gamma-delta-epsilon-zeta"),
+        "long tool output should remain readable without truncation: {joined_visible_lines:?}"
+    );
+    for line in lines {
+        let plain = strip_ansi(&line);
+        assert!(
+            visible_width(&plain) <= 32,
+            "rendered tool line must fit width 32, got {}: {plain:?}",
+            visible_width(&plain)
+        );
+    }
+}
+
 /// Security (#865): a sub-agent-influenced `agent_cmd` result body must have
 /// its terminal control sequences stripped before rendering, so a malicious
 /// sub-agent cannot inject ANSI/OSC escapes into the operator's terminal.

@@ -92,6 +92,14 @@ fn markdown_mixed_content(world: &mut TuiWorld) {
     );
 }
 
+#[given("markdown content with a table containing a long cell value")]
+fn markdown_table_with_long_cell_value(world: &mut TuiWorld) {
+    world.tui_table_cell = Some(
+        "| Name | Value |\n| --- | --- |\n| key | alpha-beta-gamma-delta-epsilon-zeta |\n"
+            .to_string(),
+    );
+}
+
 // ── When ─────────────────────────────────────────────────────────────────────
 
 #[when("the table is rendered")]
@@ -118,6 +126,16 @@ fn truncate_cell(world: &mut TuiWorld) {
 
 #[when(regex = r#"^the markdown is rendered at width (\d+)$"#)]
 fn render_markdown_at_width(world: &mut TuiWorld, width: usize) {
+    render_markdown_with_width(world, width);
+}
+
+#[when(regex = r#"^the markdown is rendered in a viewport that is (\d+) display columns wide$"#)]
+fn render_markdown_in_viewport(world: &mut TuiWorld, width: usize) {
+    world.tui_table_viewport_width = Some(width);
+    render_markdown_with_width(world, width);
+}
+
+fn render_markdown_with_width(world: &mut TuiWorld, width: usize) {
     let src = world.tui_table_cell.clone().expect("markdown content set");
     let mut md = Markdown::new(&src, 1);
     world.tui_table_rendered = Some(md.render(width));
@@ -194,6 +212,19 @@ fn markdown_output_contains(world: &mut TuiWorld, expected: String) {
     );
 }
 
+#[then("the markdown output should contain the complete long cell value")]
+fn markdown_output_contains_complete_long_cell_value(world: &mut TuiWorld) {
+    let raw = raw(world);
+    let joined_visible_lines: String = rendered(world)
+        .iter()
+        .map(|line| sanitize_control(line).trim().to_string())
+        .collect();
+    assert!(
+        joined_visible_lines.contains("alpha-beta-gamma-delta-epsilon-zeta"),
+        "markdown output should contain the complete long cell value, got: {raw:?}"
+    );
+}
+
 #[then(regex = r#"^the markdown output should not contain "([^"]*)"$"#)]
 fn markdown_output_not_contains(world: &mut TuiWorld, unexpected: String) {
     let raw = raw(world);
@@ -211,6 +242,22 @@ fn no_source_osc_sequences_in_markdown(world: &mut TuiWorld) {
         !raw.contains("\u{1b}]") && !raw.contains("\x1b]"),
         "markdown output should not include source OSC controls: {raw:?}"
     );
+}
+
+#[then("every markdown output line should fit within the viewport")]
+fn every_markdown_output_line_fits_viewport(world: &mut TuiWorld) {
+    let width = world
+        .tui_table_viewport_width
+        .expect("markdown viewport width set");
+    let raw = raw(world);
+    for line in rendered(world) {
+        let plain = sanitize_control(line);
+        assert!(
+            visible_width(&plain) <= width,
+            "markdown line must fit within {width} display columns, got {}: {plain:?}\nraw={raw:?}",
+            visible_width(&plain)
+        );
+    }
 }
 
 #[then(regex = r#"^the cell text should be "([^"]*)" or stripped equivalent$"#)]

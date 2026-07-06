@@ -116,6 +116,8 @@ pub struct TuiWorld {
     // --- TUI markdown table safety BDD ---
     pub tui_table_rendered: Option<Vec<String>>,
     pub tui_table_cell: Option<String>,
+    pub tui_table_viewport_width: Option<usize>,
+    pub tui_tool_viewport_width: Option<usize>,
     // --- TUI stdin buffer cap BDD ---
     pub tui_stdin_buffer: Option<DebugStdinBuffer>,
     pub tui_stdin_last_feed_ok: Option<bool>,

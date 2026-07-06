@@ -524,6 +524,24 @@ fn table_narrow_width_still_shows_tool_names() {
     );
 }
 
+#[test]
+fn table_long_cell_wraps_to_viewport_without_losing_text() {
+    let md = "| Name | Value |\n| --- | --- |\n| key | alpha-beta-gamma-delta-epsilon-zeta |";
+    let rendered = render_plain(md, 32);
+    let joined_visible_lines: String = rendered.lines().map(str::trim).collect();
+    assert!(
+        joined_visible_lines.contains("alpha-beta-gamma-delta-epsilon-zeta"),
+        "long table cell should remain readable without truncation: {rendered:?}"
+    );
+    for line in rendered.lines() {
+        assert!(
+            visible_width(line) <= 32,
+            "rendered table line must fit width 32, got {}: {line:?}\n{rendered}",
+            visible_width(line)
+        );
+    }
+}
+
 // ── Render cache output-equivalence regression guard (#757) ──────────
 //
 // The markdown render cache saves the parse but historically re-cloned the

@@ -592,21 +592,22 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
         let mut parts = Vec::new();
         for (i, cell) in row.iter().enumerate() {
             let w = col_widths.get(i).copied().unwrap_or(10);
-            let truncated = truncate_to_width(cell, w, None);
-            let cell_width = visible_width(&truncated);
+            let cell_width = visible_width(cell);
             let padding = w.saturating_sub(cell_width);
-            let padded = format!("{}{}", truncated, " ".repeat(padding));
+            let padded = format!("{}{}", cell, " ".repeat(padding));
             parts.push(padded);
         }
         let line = parts.join(&" ".repeat(gap));
+        let bounded = truncate_to_width(&line, max_width.saturating_mul(4), Some("..."));
+        let wrapped = wrap_text(&bounded, max_width);
         if row_idx == 0 {
             // Header row — bold.
-            lines.push(theme::bold(&line));
+            lines.extend(wrapped.into_iter().map(|line| theme::bold(&line)));
             // Separator.
             let sep_parts: Vec<String> = col_widths.iter().map(|&w| "─".repeat(w)).collect();
             lines.push(theme::dim(&sep_parts.join(&" ".repeat(gap))));
         } else {
-            lines.push(line);
+            lines.extend(wrapped);
         }
     }
 
