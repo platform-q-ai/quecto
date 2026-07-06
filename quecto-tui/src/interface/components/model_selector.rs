@@ -195,6 +195,19 @@ impl ModelSelector {
     pub fn visible_count(&self) -> usize {
         self.filtered.len()
     }
+
+    /// The shared [`SuggestionList`] state backing the selector's rows (#997).
+    ///
+    /// Contract: each suggestion's `value` IS the model id (never an index or
+    /// a hollow empty value), so `SuggestionList::set_suggestions` change
+    /// detection keeps working. RED scaffold — wired when the selector
+    /// migrates off its parallel `filtered`/index machinery.
+    #[cfg(test)]
+    pub(crate) fn shared_list(
+        &self,
+    ) -> &crate::interface::components::suggestion_list::SuggestionList {
+        unimplemented!("issue #997: ModelSelector does not yet reuse SuggestionList")
+    }
 }
 
 /// Compute the max label width across filtered entries.
@@ -575,6 +588,36 @@ mod tests {
                 visible_width(line)
             );
         }
+    }
+
+    // ── #997 shared-state contract (RED until the SuggestionList migration) ──
+
+    #[test]
+    fn shared_list_backs_rows_with_model_id_values() {
+        let sel = ModelSelector::new(None);
+        let list = sel.shared_list();
+        assert_eq!(list.len(), KNOWN_MODELS.len());
+        assert_eq!(
+            list.suggestions()[0].value,
+            KNOWN_MODELS[0].0,
+            "Suggestion.value must carry the model id itself, not an index"
+        );
+    }
+
+    #[test]
+    fn shared_list_selection_clamps_when_filter_narrows() {
+        let mut sel = ModelSelector::new(None);
+        for _ in 0..5 {
+            sel.handle_input(&Key::Down);
+        }
+        for c in "fireworks".chars() {
+            sel.handle_input(&Key::Char(c));
+        }
+        assert_eq!(
+            sel.shared_list().selected(),
+            1,
+            "shared state must preserve the clamp-on-filter-change semantics"
+        );
     }
 
     // ── Review fix tests ──────────────────────────────────────────────
