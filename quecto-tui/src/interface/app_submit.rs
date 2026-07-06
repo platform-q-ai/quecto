@@ -82,7 +82,7 @@ impl App {
         // Route to the ACTIVE session (#802). A selected sub-agent's prompt
         // steers THAT agent over its own connection (its dispatch loop queues
         // the prompt until its turn ends) and lands in its session, not master's.
-        if self.active_agent_id.is_some() {
+        if self.subagents.active_agent_id.is_some() {
             let steer = self.active_subagent_running();
             let cmd = Command::Prompt {
                 id: None,
@@ -122,11 +122,11 @@ impl App {
     pub(super) fn handle_abort(&mut self) {
         // Abort targets the ACTIVE session (#802): a selected sub-agent's abort is
         // routed over its own connection and finalizes its transcript.
-        if self.active_agent_id.is_some() {
+        if self.subagents.active_agent_id.is_some() {
             self.send_to_active_subagent(Command::Abort { id: None });
             self.active_chat_mut().finalize_assistant();
-            if let Some(id) = self.active_agent_id.clone() {
-                if let Some(session) = self.sessions.get_mut(&id) {
+            if let Some(id) = self.subagents.active_agent_id.clone() {
+                if let Some(session) = self.subagents.sessions.get_mut(&id) {
                     session.running = false;
                     // Just cancelled: mark run-state observed so the lagging tracked
                     // status can't keep it "running" and re-abort on a 2nd Esc (#834).

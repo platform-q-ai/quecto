@@ -632,10 +632,16 @@ async fn rewind_group_tracks_issued_request_ids() {
 }
 
 /// A `list_models` response lands in the named model-registry group: parsed
-/// entries stored, pending-open flag cleared.
+/// entries stored, pending-open flag cleared. Both transitions are driven:
+/// a real selector-open request sets pending, the response clears it.
 #[tokio::test]
 async fn model_registry_group_holds_parsed_entries() {
     let mut h = TuiHarness::new().await;
+    h.request_model_selector_open();
+    assert!(
+        h.model_registry_group_pending(),
+        "a selector open defers until the fresh list arrives (pending)"
+    );
     h.deliver_list_models(2);
     assert_eq!(
         h.model_registry_group_entries(),
@@ -644,7 +650,7 @@ async fn model_registry_group_holds_parsed_entries() {
     );
     assert!(
         !h.model_registry_group_pending(),
-        "an unsolicited list_models response leaves no pending open"
+        "the delivered response clears the pending open"
     );
 }
 

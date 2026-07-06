@@ -7,7 +7,7 @@ impl App {
             .next_expiry()
             .map(tokio::time::Instant::from_std);
         let subagent_gc_deadline =
-            next_exited_subagent_gc_deadline(&self.subagent_local, EXITED_SUBAGENT_GRACE);
+            next_exited_subagent_gc_deadline(&self.subagents.tracked, EXITED_SUBAGENT_GRACE);
         match (notification_deadline, subagent_gc_deadline) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (Some(a), None) | (None, Some(a)) => Some(a),
@@ -22,7 +22,8 @@ impl App {
             || self.active_session().footer.is_streaming()
             || self.active_subagent_running()
             || self
-                .subagent_local
+                .subagents
+                .tracked
                 .values()
                 .any(|entry| subagent_status_is_active(&entry.info.status))
     }

@@ -16,7 +16,7 @@ impl App {
     /// forwarded id we don't track must never resurrect/create a session. Hoisted
     /// so the predicate lives in ONE place instead of being copied per guard site.
     fn is_tracked_agent(&self, id: &str) -> bool {
-        self.sessions.contains_key(id) || self.subagent_local.contains_key(id)
+        self.subagents.sessions.contains_key(id) || self.subagents.tracked.contains_key(id)
     }
 
     /// Route one event from a sub-agent's direct connection into that agent's
@@ -84,7 +84,7 @@ impl App {
             // Mirror onto the panel entry too so the LEFT side panel renders the
             // child's own live progress immediately (#869b).
             self.record_subagent_workflow(target, &bar);
-            if let Some(session) = self.sessions.get_mut(target) {
+            if let Some(session) = self.subagents.sessions.get_mut(target) {
                 session.workflow_bar = bar;
             }
             return;
@@ -110,13 +110,13 @@ impl App {
                 if let Some(wf) = data.get("workflow") {
                     let bar = workflow_bar::parse_workflow_event(wf);
                     self.record_subagent_workflow(agent_id, &bar);
-                    if let Some(session) = self.sessions.get_mut(agent_id) {
+                    if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
                         session.workflow_bar = bar;
                     }
                 }
                 // Preserve the existing per-session footer mapping (model +
                 // context window) that the generic path applied for get_state.
-                if let Some(session) = self.sessions.get_mut(agent_id) {
+                if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
                     Self::update_session_footer(session, &ev);
                 }
                 return;
@@ -131,7 +131,7 @@ impl App {
             return;
         }
         self.ensure_session(agent_id);
-        let Some(session) = self.sessions.get_mut(agent_id) else {
+        let Some(session) = self.subagents.sessions.get_mut(agent_id) else {
             return;
         };
         match &ev {
@@ -220,7 +220,8 @@ impl App {
     /// snapshot.
     pub(super) fn seed_session_bar_from_snapshot(&mut self, id: &str) {
         let Some(wf) = self
-            .subagent_local
+            .subagents
+            .tracked
             .get(id)
             .and_then(|t| t.info.workflow.as_ref())
         else {
@@ -234,7 +235,7 @@ impl App {
             wf.steps_completed,
             wf.steps_total,
         );
-        if let Some(session) = self.sessions.get_mut(id) {
+        if let Some(session) = self.subagents.sessions.get_mut(id) {
             if !session.workflow_bar.is_visible() && session.workflow_bar.done == 0 {
                 session.workflow_bar = seeded;
             }
@@ -254,11 +255,13 @@ impl App {
     /// transient/empty event never blanks an indicator that is already visible.
     fn subagent_workflow_visible(&self, agent_id: &str) -> bool {
         let panel_visible = self
-            .subagent_local
+            .subagents
+            .tracked
             .get(agent_id)
             .and_then(|t| t.info.workflow.as_ref())
             .is_some_and(|w| w.steps_total > 0);
         let bar_visible = self
+            .subagents
             .sessions
             .get(agent_id)
             .is_some_and(|s| s.workflow_bar.is_visible());
@@ -266,7 +269,7 @@ impl App {
     }
 
     fn record_subagent_workflow(&mut self, agent_id: &str, bar: &workflow_bar::WorkflowBarState) {
-        if let Some(tracked) = self.subagent_local.get_mut(agent_id) {
+        if let Some(tracked) = self.subagents.tracked.get_mut(agent_id) {
             let mode = tracked
                 .info
                 .workflow

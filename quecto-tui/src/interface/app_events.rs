@@ -128,7 +128,7 @@ impl App {
         // indicator instead of the shared spinner line.
         if tool_name == "agent_cmd" && args.get("command").and_then(|v| v.as_str()) == Some("await")
         {
-            self.awaited_agent_id = args
+            self.subagents.awaited_agent_id = args
                 .get("agent_id")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
@@ -206,7 +206,8 @@ impl App {
         // otherwise reset started_at/status and re-mark it optimistic, partly
         // re-opening the #831 drop path for the grace window (review).
         if self
-            .subagent_local
+            .subagents
+            .tracked
             .get(&sanitized)
             .is_some_and(|e| !e.optimistic)
         {
@@ -227,7 +228,7 @@ impl App {
         // the child yet, so a snapshot taken in that window must not evict it
         // (#866). Cleared once a payload confirms the agent.
         tracked.optimistic = true;
-        self.subagent_local.insert(sanitized, tracked);
+        self.subagents.tracked.insert(sanitized, tracked);
     }
 
     fn handle_tool_end(
@@ -247,8 +248,8 @@ impl App {
         if is_subagent_tool(&tool_name) {
             self.send_command(Command::GetSubagents { id: None });
         }
-        if self.awaited_agent_id.is_some() {
-            self.awaited_agent_id = None;
+        if self.subagents.awaited_agent_id.is_some() {
+            self.subagents.awaited_agent_id = None;
         }
         if let Some(spinner) = &mut self.spinner {
             spinner.set_message("Working... (Esc to interrupt)");
@@ -264,7 +265,7 @@ impl App {
         };
         let agent_id = &result_text[start + 1..start + 1 + end];
         let sanitized = crate::interface::ansi::sanitize_control(agent_id);
-        if let Some(entry) = self.subagent_local.get_mut(&sanitized) {
+        if let Some(entry) = self.subagents.tracked.get_mut(&sanitized) {
             entry.info.status = "running".to_string();
         }
     }
