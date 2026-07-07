@@ -316,14 +316,10 @@ pub fn run_repl<R: BufRead, W: Write>(
     // default (e.g. Fireworks qwen3p7-plus = 65536) never receives a larger
     // value. Mirror the CLI build path (interface/cli/agent.rs) so the REPL does
     // not silently bypass the clamp.
-    let model_max_tokens =
-        crate::infrastructure::model_registry::ModelRegistry::model_cap_from_base_dir(
-            ctx.base_dir,
-            &model,
-        );
-    // #1044: derive the effective context budget from the model's known window.
-    let model_context_window =
-        crate::infrastructure::model_registry::ModelRegistry::model_context_window_from_base_dir(
+    // #1044: the model's known window bounds the pruning budget; one registry
+    // load supplies both per-model limits.
+    let (model_max_tokens, model_context_window) =
+        crate::infrastructure::model_registry::ModelRegistry::model_limits_from_base_dir(
             ctx.base_dir,
             &model,
         );

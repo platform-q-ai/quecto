@@ -319,6 +319,51 @@ async fn effective_budget_derives_from_known_model_window() {
     );
 }
 
+#[tokio::test]
+async fn set_model_rederives_the_context_window_budget() {
+    // A runtime model switch must carry the new model's window so the pruning
+    // budget never goes stale (PR #1048 review): small-window → large-window
+    // stops over-pruning, and large → small re-clamps before overflow.
+    let store = Arc::new(MemSpillStore::default());
+    let mut agent = agent(vec![], store, 300_000, None).with_model_context_window(Some(32_768));
+    assert_eq!(agent.effective_max_context_tokens(), 32_768);
+
+    agent.set_model("big/model".into(), None, Some(1_000_000));
+    assert_eq!(
+        agent.effective_max_context_tokens(),
+        300_000,
+        "switching to a large-window model must lift the stale 32k clamp"
+    );
+
+    agent.set_model("small/model".into(), None, Some(32_768));
+    assert_eq!(
+        agent.effective_max_context_tokens(),
+        32_768,
+        "switching to a small-window model must re-clamp the budget"
+    );
+
+    agent.set_model("unknown/model".into(), None, None);
+    assert_eq!(
+        agent.effective_max_context_tokens(),
+        300_000,
+        "an unknown window must fall back to the configured budget"
+    );
+}
+
+#[tokio::test]
+async fn reported_max_context_tokens_matches_the_enforced_budget() {
+    // Stats/snapshot consumers read max_context_tokens(); it must report the
+    // same window-aware value pruning enforces (PR #1048 review).
+    let store = Arc::new(MemSpillStore::default());
+    let agent = agent(vec![], store, 300_000, None).with_model_context_window(Some(32_768));
+    assert_eq!(
+        agent.max_context_tokens(),
+        agent.effective_max_context_tokens(),
+        "the reported budget must never diverge from the enforced one"
+    );
+    assert_eq!(agent.max_context_tokens(), 32_768);
+}
+
 // --- #1044 AC1: the unmet-ceiling warning itself is pinned, not just the flag ---
 
 /// Minimal subscriber capturing the targets of WARN-level events.

@@ -8,15 +8,24 @@
 use super::AgentLoopImpl;
 
 impl AgentLoopImpl {
-    /// Switch the active model and its per-model output cap together so they can
-    /// never diverge. `model_max_tokens` is the new model's registry cap (or
-    /// `None` for no clamp); the effective request tokens become
-    /// `min(max_tokens, cap)`. Taking the cap as a parameter (rather than a
-    /// separate setter) ensures every switch re-clamps with no fragile two-call
-    /// protocol (#935).
-    pub fn set_model(&mut self, model: String, model_max_tokens: Option<u32>) {
+    /// Switch the active model, its per-model output cap, and its known
+    /// context window together so they can never diverge. `model_max_tokens`
+    /// is the new model's registry cap (or `None` for no clamp); the effective
+    /// request tokens become `min(max_tokens, cap)` (#935).
+    /// `model_context_window` is the new model's known context window (or
+    /// `None` when unknown); the effective pruning budget becomes
+    /// `min(max_context_tokens, window)` (#1044). Taking both as parameters
+    /// (rather than separate setters) ensures every switch re-clamps with no
+    /// fragile multi-call protocol.
+    pub fn set_model(
+        &mut self,
+        model: String,
+        model_max_tokens: Option<u32>,
+        model_context_window: Option<usize>,
+    ) {
         self.model = model;
         self.model_max_tokens = model_max_tokens;
+        self.model_context_window = model_context_window;
     }
 
     /// Builder variant: set the per-model output cap at construction time.

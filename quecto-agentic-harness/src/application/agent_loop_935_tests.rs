@@ -118,7 +118,7 @@ async fn set_model_max_tokens_re_clamps_for_subsequent_turns() {
     agent.run_loop(&mut m1).await.unwrap();
 
     // Switch to a lower-cap model and re-clamp.
-    agent.set_model("fireworks/qwen3p7-plus".to_string(), Some(65_536));
+    agent.set_model("fireworks/qwen3p7-plus".to_string(), Some(65_536), None);
     let mut m2 = vec![Message::user("b")];
     agent.run_loop(&mut m2).await.unwrap();
 

@@ -1,6 +1,7 @@
-//! #951: the spilling context ceiling — returns dropped messages for
-//! spilling, tail-pins recent turns and the in-flight user prompt, and never
-//! drops pinned messages (system prompt, manifest).
+//! #951/#1046: the demotion-ladder context ceiling — tail-pins recent turns
+//! and the in-flight user prompt, and never demotes pinned messages (system
+//! prompt, manifest). Content is spilled at creation, so the ladder can drop
+//! stubs without a caller-side spill step.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -81,96 +82,107 @@ impl ContextSpillStore for MemStore {
 }
 
 #[test]
-fn ceiling_spilling_returns_dropped_messages_for_spilling() {
-    let big = "x".repeat(600); // ~150 tokens
-    let mut messages = vec![
-        assistant_on_turn(&big, 1),
-        assistant_on_turn(&big, 2),
-        Message::user("current prompt"),
-    ];
-    // Budget 200: only the oldest assistant turn must go — and it must be
-    // returned to the caller for spilling, not silently lost.
-    let dropped = enforce_context_ceiling_spilling(&mut messages, 200, 1);
-    assert_eq!(
-        dropped.len(),
-        1,
-        "the dropped assistant turn must be returned for spilling"
-    );
-    assert_eq!(dropped[0].content, big);
-    assert_eq!(dropped[0].turn, Some(1));
-    assert_eq!(
-        messages.iter().filter(|m| m.content == big).count(),
-        1,
-        "exactly one big assistant turn should remain in context"
-    );
-}
-
-#[test]
-fn ceiling_spilling_under_budget_drops_and_spills_nothing() {
+fn ceiling_ladder_under_budget_demotes_nothing() {
     let mut messages = vec![
         assistant_on_turn("short answer", 1),
         Message::user("current prompt"),
     ];
     let before = messages.len();
-    // Total is well under budget: no drops, nothing returned for spilling.
-    let dropped = enforce_context_ceiling_spilling(&mut messages, 1000, 2);
-    assert!(
-        dropped.is_empty(),
-        "a history within budget must produce no spurious spills"
-    );
-    assert_eq!(messages.len(), before, "no message may be dropped");
+    // Total is well under budget: no demotion at any rung.
+    let outcome = messages::enforce_context_ceiling_ladder(&mut messages, 1000, 2);
+    assert_eq!(outcome.collapsed_to_stubs, 0, "nothing may stub at budget");
+    assert_eq!(outcome.dropped, 0, "nothing may drop at budget");
+    assert_eq!(messages.len(), before, "no message may be removed");
+    assert!(messages.iter().all(|m| !m.is_collapsed));
 }
 
 #[test]
-fn ceiling_spilling_never_drops_most_recent_turns() {
+fn ceiling_ladder_never_demotes_most_recent_turns() {
     let big = "x".repeat(600); // ~150 tokens each
     let mut messages: Vec<Message> = (1..=4).map(|t| assistant_on_turn(&big, t)).collect();
-    // Budget impossible to meet — the 2 most recent turns must survive anyway.
-    enforce_context_ceiling_spilling(&mut messages, 10, 2);
+    // Budget impossible to meet — the 2 most recent turns must survive in
+    // full anyway; older turns stub and then drop.
+    messages::enforce_context_ceiling_ladder(&mut messages, 10, 2);
     for turn in [3u32, 4u32] {
+        let msg = messages
+            .iter()
+            .find(|m| m.turn == Some(turn))
+            .unwrap_or_else(|| panic!("turn {turn} is tail-pinned and must remain"));
         assert!(
-            messages.iter().any(|m| m.turn == Some(turn)),
-            "turn {turn} is within the pinned tail and must never be dropped"
+            !msg.is_collapsed,
+            "turn {turn} is within the pinned tail and must never be demoted"
         );
     }
     assert!(
         messages
             .iter()
             .all(|m| m.turn != Some(1) && m.turn != Some(2)),
-        "turns outside the pinned tail must still be dropped to approach budget"
+        "turns outside the pinned tail must be dropped to approach budget"
     );
 }
 
 #[test]
-fn ceiling_spilling_pins_trailing_turnless_user_prompt() {
+fn ceiling_ladder_pins_trailing_turnless_user_prompt() {
     let big = "x".repeat(600);
     // An earlier user prompt comes first so the prompt under test is trailing
     // but NOT the first user message — a "pin the first user message only"
     // implementation must fail this test.
     let mut old_user = Message::user("old prompt");
-    old_user.turn = Some(1);
+    old_user.turn = Some(7); // stamped: belongs to an earlier prompt's turn
     let mut messages = vec![
         old_user,
-        assistant_on_turn(&big, 1),
+        assistant_on_turn(&big, 7),
         Message::user("what next?"),
     ];
     // Budget of 1 token: even so the in-flight user prompt (no turn yet)
-    // must never be dropped.
-    enforce_context_ceiling_spilling(&mut messages, 1, 1);
+    // must never be demoted. The ladder's tail fallback protects the previous
+    // prompt's single most recent turn (7) as stubs, so with pin 0 here the
+    // old turn is fully droppable.
+    let outcome = messages::enforce_context_ceiling_ladder(&mut messages, 1, 0);
+    let prompt = messages
+        .iter()
+        .find(|m| m.role == Role::User && m.content == "what next?")
+        .expect("trailing turn-less user prompt must survive the ceiling");
     assert!(
-        messages
-            .iter()
-            .any(|m| m.role == Role::User && m.content == "what next?"),
-        "trailing turn-less user prompt must survive the ceiling"
+        !prompt.is_collapsed,
+        "the in-flight prompt is never demoted"
     );
     assert!(
         !messages.iter().any(|m| m.content == "old prompt"),
         "the earlier user prompt is droppable and must go to approach budget"
     );
+    assert!(
+        outcome.over_budget,
+        "a 1-token budget with a surviving prompt is reported unmet"
+    );
 }
 
 #[test]
-fn ceiling_spilling_never_drops_system_prompt_or_manifest() {
+fn ceiling_ladder_tail_fallback_protects_previous_prompt_turns() {
+    // A new prompt was just submitted (no turns stamped yet): the tail
+    // fallback keeps pin_recent_turns protecting the PREVIOUS prompt's most
+    // recent turns instead of leaving everything droppable (#1045).
+    let big = "x".repeat(600);
+    let mut old_prompt = Message::user("old question");
+    old_prompt.turn = None; // previous prompt boundary
+    let mut messages = vec![
+        old_prompt,
+        assistant_on_turn(&big, 1),
+        assistant_on_turn(&big, 2),
+        Message::user("new question just submitted"),
+    ];
+    messages::enforce_context_ceiling_ladder(&mut messages, 10, 2);
+    for turn in [1u32, 2u32] {
+        let msg = messages
+            .iter()
+            .find(|m| m.turn == Some(turn))
+            .unwrap_or_else(|| panic!("previous prompt's turn {turn} must stay tail-pinned"));
+        assert!(!msg.is_collapsed, "tail-pinned turn {turn} stays full");
+    }
+}
+
+#[test]
+fn ceiling_ladder_never_demotes_system_prompt_or_manifest() {
     let big = "x".repeat(600);
     let mut manifest = Message::system("[Session memory: 1 spilled entry via recall()]");
     manifest.is_pinned = true;
@@ -182,27 +194,20 @@ fn ceiling_spilling_never_drops_system_prompt_or_manifest() {
         assistant_on_turn(&big, 2),
         assistant_on_turn(&big, 3),
     ];
-    // Budget impossible to meet: pinned messages must survive AND must never
-    // leak into the returned (to-be-spilled) set.
-    let dropped = enforce_context_ceiling_spilling(&mut messages, 1, 1);
+    // Budget impossible to meet: pinned messages must survive un-demoted.
+    let outcome = messages::enforce_context_ceiling_ladder(&mut messages, 1, 1);
+    let system = messages
+        .iter()
+        .find(|m| m.role == Role::System && !m.is_manifest)
+        .expect("system prompt must never be dropped");
+    assert!(!system.is_collapsed, "system prompt is never demoted");
+    let manifest = messages
+        .iter()
+        .find(|m| m.is_manifest)
+        .expect("spill manifest must never be dropped");
+    assert!(!manifest.is_collapsed, "manifest is never demoted");
     assert!(
-        messages
-            .iter()
-            .any(|m| m.role == Role::System && !m.is_manifest),
-        "system prompt must never be dropped"
-    );
-    assert!(
-        messages.iter().any(|m| m.is_manifest),
-        "spill manifest must never be dropped"
-    );
-    assert!(
-        dropped
-            .iter()
-            .all(|m| !m.is_pinned && m.role != Role::System),
-        "pinned messages must never appear in the spill set"
-    );
-    assert!(
-        !dropped.is_empty(),
+        outcome.dropped > 0,
         "positive control: unpinned old turns must still be dropped"
     );
 }
@@ -297,9 +302,9 @@ fn ceiling_still_prunes_fully_turnless_history() {
         Message::assistant(&big, vec![]),
         Message::user("current prompt"),
     ];
-    let dropped = enforce_context_ceiling_spilling(&mut messages, 200, 2);
+    let outcome = messages::enforce_context_ceiling_ladder(&mut messages, 200, 2);
     assert!(
-        !dropped.is_empty(),
+        outcome.collapsed_to_stubs + outcome.dropped > 0,
         "a fully turn-less over-budget history must still be pruned"
     );
     assert!(
@@ -328,17 +333,23 @@ fn stamped_trailing_user_feedback_does_not_usurp_prompt_boundary() {
         assistant_on_turn(&big, 2),
         feedback,
     ];
-    enforce_context_ceiling_spilling(&mut messages, 10, 2);
+    messages::enforce_context_ceiling_ladder(&mut messages, 10, 2);
     assert!(
-        messages.iter().any(|m| m.content == "real question"),
+        messages
+            .iter()
+            .any(|m| m.content == "real question" && !m.is_collapsed),
         "the in-flight prompt must never lose its protection to feedback"
     );
     assert!(
-        messages.iter().any(|m| m.turn == Some(2)),
+        messages
+            .iter()
+            .any(|m| m.turn == Some(2) && !m.is_collapsed),
         "current-prompt recent turns must stay tail-pinned"
     );
     assert!(
-        messages.iter().any(|m| m.turn == Some(3)),
+        messages
+            .iter()
+            .any(|m| m.turn == Some(3) && !m.is_collapsed),
         "the stamped feedback message is a recent turn and stays pinned"
     );
     assert!(

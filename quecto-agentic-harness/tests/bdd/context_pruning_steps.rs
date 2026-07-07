@@ -266,7 +266,7 @@ fn when_agent_executes_bash_turn_1(world: &mut QuectoWorld) {
 fn when_agent_completes_turn(world: &mut QuectoWorld, turn: u32) {
     world.context_current_turn = Some(turn);
     // No collapse — tool results stay in full context.
-    // Only enforce_context_ceiling_spilling would drop messages (if over budget).
+    // Only the demotion-ladder ceiling would demote messages (if over budget).
 }
 
 #[when(expr = "the agent completes turns {int} through {int}")]
@@ -416,7 +416,7 @@ fn when_sliding_window_drops(world: &mut QuectoWorld) {
     }
 
     let max_tokens = world.context_max_tokens.unwrap_or(500);
-    context_pruning::enforce_context_ceiling_spilling(
+    msg_pruning::enforce_context_ceiling_ladder(
         messages,
         max_tokens,
         context_pruning::DEFAULT_PIN_RECENT_TURNS,
@@ -435,7 +435,7 @@ fn when_agent_accumulates_tokens(world: &mut QuectoWorld, target_tokens: usize) 
     }
     messages.push(Message::user("current question"));
     let max_tokens = world.context_max_tokens.unwrap_or(100_000);
-    context_pruning::enforce_context_ceiling_spilling(
+    msg_pruning::enforce_context_ceiling_ladder(
         messages,
         max_tokens,
         context_pruning::DEFAULT_PIN_RECENT_TURNS,
@@ -462,7 +462,7 @@ fn when_agent_accumulates_tokens_across(
     }
 
     let max_tokens = world.context_max_tokens.unwrap_or(100_000);
-    context_pruning::enforce_context_ceiling_spilling(
+    msg_pruning::enforce_context_ceiling_ladder(
         messages,
         max_tokens,
         context_pruning::DEFAULT_PIN_RECENT_TURNS,
@@ -1444,27 +1444,45 @@ fn then_list_entries_from_cache(world: &mut QuectoWorld, expected: usize) {
 
 use quecto::application::context_pruning::messages as msg_pruning;
 
-/// Complete one text-only prompt: spill the in-flight user prompt and the
-/// turn-1 assistant reply at creation (the #1046 lifecycle), then push both.
+/// Complete one text-only prompt through the REAL agent loop, so these
+/// scenarios fail if the loop's creation-time spilling (#1046 AC1) is ever
+/// removed: the loop itself must spill the turn-1 assistant reply (and the
+/// in-flight prompt) into the world's spill store.
 fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
+    use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+    use quecto::domain::agent::AgentLoop;
+
     let store = world.context_spill_store.as_ref().unwrap().clone();
+    let mock = ensure_mock_llm(world);
+    mock.push_response(quecto::domain::message::LlmResponse {
+        content: Some(reply.to_string()),
+        tool_calls: vec![],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    });
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: mock,
+        tool_registry: Box::new(quecto::infrastructure::tools::registry::ToolRegistryImpl::new()),
+        model: "test-model".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: Some(store.0.clone()),
+        session_key: "test-session".into(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+    });
     let messages = world.context_messages.as_mut().unwrap();
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let mut prompt = Message::user("a question");
-    rt.block_on(msg_pruning::spill_conversation_message(
-        &mut prompt,
-        store.0.as_ref(),
-        "test-session",
-    ));
-    messages.push(prompt);
-    let mut assistant = Message::assistant(reply, vec![]);
-    assistant.turn = Some(1);
-    rt.block_on(msg_pruning::spill_conversation_message(
-        &mut assistant,
-        store.0.as_ref(),
-        "test-session",
-    ));
-    messages.push(assistant);
+    messages.push(Message::user("a question"));
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(agent.process(messages))
+        .expect("the text-only prompt must complete");
     world.context_original_message_content = Some(reply.to_string());
 }
 

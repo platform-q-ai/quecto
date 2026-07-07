@@ -254,7 +254,7 @@ fn build_chat_request_omits_session_id_when_empty() {
 fn model_getter_and_setter_roundtrip() {
     let (mut agent, _p) = super::tests::make_agent(vec![], vec![]);
     assert_eq!(agent.model(), "test-model");
-    agent.set_model("claude-haiku-4-5".into(), None);
+    agent.set_model("claude-haiku-4-5".into(), None, None);
     assert_eq!(agent.model(), "claude-haiku-4-5");
     assert_eq!(agent.max_context_tokens(), 190_000);
 }

@@ -154,9 +154,11 @@ impl AgentLoopImpl {
     pub fn model(&self) -> &str {
         &self.model
     }
-    /// Context-window ceiling (tokens), surfaced for UDS clients.
+    /// Context-window ceiling (tokens), surfaced for UDS clients. Reports the
+    /// window-aware effective budget — the same value pruning enforces
+    /// (#1044) — so stats/snapshots never diverge from actual behaviour.
     pub fn max_context_tokens(&self) -> usize {
-        self.max_context_tokens
+        self.effective_max_context_tokens()
     }
 
     /// Fire a progress event to the registered callback, if any. Takes a closure
@@ -554,7 +556,7 @@ impl AgentLoopImpl {
             // immediately, including during multi-turn tool loops.
             self.notify(|| AgentProgressEvent::Thinking {
                 context_tokens,
-                max_context_tokens: self.max_context_tokens,
+                max_context_tokens: self.effective_max_context_tokens(),
                 provider: self.provider.name().to_string(),
                 model: self.model.clone(),
             });
