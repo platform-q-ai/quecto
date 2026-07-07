@@ -295,11 +295,13 @@ async fn workflowed_agent_renders_step_bar_beneath_name() {
 #[tokio::test]
 async fn selection_uses_left_accent_bar_one_line_tall() {
     // Selection is a single ▌ bar in column 0 of the NAME row only — not a
-    // full-row reverse, and NOT on the workflow-bar row beneath it.
+    // full-row reverse, and NOT on the workflow-bar row beneath it. The bar
+    // only renders while the panel has keyboard focus.
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![child("worker", "running", None)]));
     h.app_mut().select_agent(Some("worker"));
+    h.app_mut().subagents.focus = super::Focus::Panel;
     let lines = panel_lines(&mut h);
     let name_idx = lines
         .iter()

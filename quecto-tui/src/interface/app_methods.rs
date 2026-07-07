@@ -362,7 +362,10 @@ impl App {
         // Autocomplete dropdown (slash commands, then @files — only one active).
         bottom.extend(self.autocomplete.render(width));
         bottom.extend(self.files_autocomplete.render(width));
-        // Editor.
+        // Editor. Hide the block cursor while the sub-agent panel has focus so
+        // it's unambiguous that keystrokes won't land in the input.
+        self.editor
+            .set_show_cursor(!matches!(self.subagents.focus, Focus::Panel));
         bottom.extend(self.editor.render(width));
         // Notifications.
         bottom.extend(self.notifications.render(width));

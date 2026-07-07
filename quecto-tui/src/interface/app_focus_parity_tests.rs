@@ -362,3 +362,24 @@ async fn footer_reflects_active_session() {
         "the sub-agent's footer must NOT show while master is active, got:\n{on_master}"
     );
 }
+
+#[tokio::test]
+async fn selection_bar_hidden_while_input_focused() {
+    // The ▌ bar is the panel's cursor: with focus on the editor (default),
+    // no panel row carries it, even with an agent selected. It appears only
+    // once Tab moves focus to the panel — mirroring the editor's block
+    // cursor, which hides while the panel is focused (#802 follow-up).
+    let mut h = harness_with_subagents(1).await;
+    h.app_mut().select_agent(Some("a1"));
+    let unfocused = frame_text(&mut h);
+    assert!(
+        unfocused.lines().all(|l| !l.starts_with('▌')),
+        "no ▌ bar may render while the editor has focus, got:\n{unfocused}"
+    );
+    h.app_mut().handle_key(Key::Tab);
+    let focused = frame_text(&mut h);
+    assert!(
+        focused.lines().any(|l| l.starts_with('▌')),
+        "the ▌ bar must render once the panel takes focus, got:\n{focused}"
+    );
+}

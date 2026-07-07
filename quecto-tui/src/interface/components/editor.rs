@@ -26,6 +26,9 @@ pub struct Editor {
     submit_text: Option<String>,
     /// Border color function name for bash mode detection.
     bash_mode: bool,
+    /// Whether to draw the block cursor (false when focus is elsewhere,
+    /// e.g. the sub-agent panel).
+    show_cursor: bool,
     /// Render cache.
     cached_width: Option<usize>,
     cached_lines: Option<Vec<String>>,
@@ -48,8 +51,17 @@ impl Editor {
             saved_text: String::new(),
             submit_text: None,
             bash_mode: false,
+            show_cursor: true,
             cached_width: None,
             cached_lines: None,
+        }
+    }
+
+    /// Show or hide the block cursor (hidden while focus is elsewhere).
+    pub fn set_show_cursor(&mut self, show: bool) {
+        if self.show_cursor != show {
+            self.show_cursor = show;
+            self.invalidate();
         }
     }
 
@@ -381,7 +393,7 @@ impl Component for Editor {
 
         // Content lines with cursor.
         for (row_idx, line) in self.lines.iter().enumerate() {
-            let display = if row_idx == self.cursor_row {
+            let display = if row_idx == self.cursor_row && self.show_cursor {
                 render_line_with_cursor(line, self.cursor_col, inner_width)
             } else if visible_width(line) > inner_width {
                 wrap_text(line, inner_width)
