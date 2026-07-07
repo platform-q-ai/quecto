@@ -1873,16 +1873,15 @@ fn then_configured_pin_recent_turns(world: &mut QuectoWorld, expected: u32) {
     );
 }
 
-#[then("the configured context_collapse_after_messages is disabled")]
-fn then_configured_message_collapse_disabled(world: &mut QuectoWorld) {
+#[then(expr = "the configured context_collapse_after_messages is {int}")]
+fn then_configured_message_collapse(world: &mut QuectoWorld, expected: u32) {
     let defaults = world
         .context_agent_defaults
         .as_ref()
         .expect("a default agent configuration must have been established");
     assert_eq!(
-        defaults.context_collapse_after_messages,
-        context_pruning::COLLAPSE_DISABLED,
-        "message collapse must default to the disable sentinel until tuned"
+        defaults.context_collapse_after_messages, expected,
+        "message collapse default must keep the most recent {expected} conversation messages"
     );
 }
 

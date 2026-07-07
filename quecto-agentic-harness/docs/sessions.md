@@ -98,7 +98,8 @@ default `300000`), the agent applies context pruning:
    `context_collapse_after_messages`, keeps the most recent N conversation
    messages in full and replaces older ones with one-line recall stubs.
    Exempt: the system prompt, spill manifest, in-flight user prompt, and the
-   `pin_recent_turns` most recent turns. Disabled by default (`u32::MAX`).
+   `pin_recent_turns` most recent turns. Defaults to 50 (mirroring the
+   tool-call collapse default); set to `4294967295` (`u32::MAX`) to disable.
 4. **Demotion ladder**: When the conversation still exceeds the effective
    budget, messages are demoted down a ladder — full content is collapsed to
    recall stubs first (oldest first), and only if the budget is still
@@ -181,7 +182,7 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 |-------|---------|-------------|
 | `max_context_tokens` | `300000` | Application-level token budget before context pruning (clamped down to the model's declared context window when known) |
 | `context_collapse_after_tool_calls` | `50` | Collapse the oldest tool outputs once the session exceeds N tool calls. Set to `4294967295` (`u32::MAX`) to disable |
-| `context_collapse_after_messages` | `4294967295` (disabled) | Collapse the oldest conversation (user/assistant) messages to recall stubs once the session exceeds N live messages |
+| `context_collapse_after_messages` | `50` | Collapse the oldest conversation (user/assistant) messages to recall stubs once the session exceeds N live messages. Set to `4294967295` (`u32::MAX`) to disable |
 | `pin_recent_turns` | `2` | How many most-recent turns the context ceiling never demotes or drops |
 
 ## See also

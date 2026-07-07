@@ -254,8 +254,9 @@ fn default_pin_recent_turns() -> u32 {
     2
 }
 fn default_context_collapse_after_messages() -> u32 {
-    // Disabled until real-run observation picks a value (#1046 ship-and-observe).
-    u32::MAX
+    // Keep the 50 most recent conversation (assistant+user) messages in full;
+    // older ones collapse to recall() stubs — mirrors the tool-call default.
+    50
 }
 fn default_max_context_tokens() -> usize {
     // Application-level pruning ceiling. Sized well below GPT-5.5's

@@ -375,10 +375,10 @@ Feature: Context pruning via sliding window and tool-call collapse
 
   # --- #1045: configurable pin_recent_turns ---
 
-  Scenario: pin_recent_turns defaults to 2 and message collapse defaults to disabled
+  Scenario: pin_recent_turns defaults to 2 and message collapse defaults to 50
     Given a default agent configuration
     Then the configured pin_recent_turns is 2
-    And the configured context_collapse_after_messages is disabled
+    And the configured context_collapse_after_messages is 50
 
   Scenario: A non-default pin_recent_turns changes pinning behaviour
     Given max_context_tokens is set to 10
