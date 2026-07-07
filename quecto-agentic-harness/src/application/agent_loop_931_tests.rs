@@ -125,6 +125,9 @@ async fn test_malformed_tool_call_api_rejection_is_addressable_not_fatal() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     });
 
     let mut messages = vec![Message::user("call a tool")];
@@ -193,6 +196,9 @@ async fn test_terminal_auth_error_fails_the_turn_with_classified_message() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     });
 
     let mut messages = vec![Message::user("hi")];
@@ -233,6 +239,9 @@ async fn test_terminal_server_error_fails_the_turn_after_retries() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     });
 
     let mut messages = vec![Message::user("hi")];

@@ -28,6 +28,11 @@ pub struct ModelRecord {
     /// when this is true — a listed model that omits `maxTokens` must not be
     /// silently clamped to the default.
     pub max_tokens_explicit: bool,
+    /// Whether `context_window` was explicitly declared for this model rather
+    /// than the synthesized default. Only an explicit window is a real model
+    /// limit, so the #1044 window-aware budget (`context_window_for`) applies
+    /// only when this is true.
+    pub context_window_explicit: bool,
     pub cost: ModelCost,
     pub reasoning: bool,
     /// How this provider authenticates. `ApiKey` uses the resolved `api_key`;
@@ -363,6 +368,7 @@ impl ModelRegistry {
             if id == "claude-sonnet-5" {
                 record.input = vec!["text".to_string(), "image".to_string()];
                 record.context_window = 1_000_000;
+                record.context_window_explicit = true;
                 record.max_tokens = 128_000;
                 record.max_tokens_explicit = true;
                 let pricing = claude_sonnet_5_pricing();
@@ -434,6 +440,7 @@ impl ModelRegistry {
                 }
                 if let Some(v) = model.context_window {
                     record.context_window = v;
+                    record.context_window_explicit = true;
                 }
                 if let Some(v) = model.max_tokens {
                     record.max_tokens = v;
@@ -480,13 +487,33 @@ impl ModelRegistry {
             .map(|m| m.max_tokens)
     }
 
-    /// Load the registry from `<base_dir>/models.json` (falling back to the
-    /// built-in registry on any error) and return the output cap for a
-    /// `provider/id` model, if known (#935).
-    pub fn model_cap_from_base_dir(base_dir: &Path, qualified: &str) -> Option<u32> {
+    /// Load the registry from `<base_dir>/models.json` **once** (falling back
+    /// to the built-in registry on any error) and return both per-model
+    /// limits: `(output cap, context window)` (#935/#1044). This is the single
+    /// per-model-limits accessor — the former single-value wrappers were
+    /// folded away (PR #1048) once they had no production consumers.
+    pub fn model_limits_from_base_dir(
+        base_dir: &Path,
+        qualified: &str,
+    ) -> (Option<u32>, Option<usize>) {
         let registry =
             Self::load_from_path(&base_dir.join("models.json")).unwrap_or_else(|_| Self::builtin());
-        registry.max_tokens_for(qualified)
+        (
+            registry.max_tokens_for(qualified),
+            registry.context_window_for(qualified),
+        )
+    }
+
+    /// The known context window for a `provider/id` qualified model string
+    /// (#1044). Returns `None` when the model is unknown, the id is not
+    /// `provider/id`-shaped, or the model does not declare an explicit
+    /// `contextWindow` (a synthesized default is not a real window and must
+    /// not clamp), so callers fall back to the configured budget.
+    pub fn context_window_for(&self, qualified: &str) -> Option<usize> {
+        let (provider, id) = qualified.split_once('/')?;
+        self.find(provider, id)
+            .filter(|m| m.context_window_explicit)
+            .map(|m| m.context_window as usize)
     }
 
     fn upsert(&mut self, record: ModelRecord) {
@@ -517,6 +544,7 @@ impl ModelRecord {
             context_window: 128_000,
             max_tokens: 16_384,
             max_tokens_explicit: false,
+            context_window_explicit: false,
             cost: ModelCost::default(),
             reasoning: false,
             auth: AuthMode::ApiKey,

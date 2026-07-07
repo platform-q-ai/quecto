@@ -615,3 +615,134 @@ fn test_build_http_client_does_not_panic() {
 fn test_oauth_expiry_margin_is_five_minutes() {
     assert_eq!(OAUTH_EXPIRY_MARGIN_SECS, 300);
 }
+
+// --- #1044/#1045/#1046: config context knobs thread into the loop ---
+// The knobs are AgentLoopConfig constructor fields (PR #1048 follow-up), so
+// these tests build the loop the way production sites do: config values at
+// construction, exercised through the real process() path.
+
+mod context_settings {
+    use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+    use crate::domain::agent::AgentLoop;
+    use crate::domain::message::Message;
+    use crate::infrastructure::config::AgentDefaults;
+    use crate::infrastructure::tools::registry::ToolRegistryImpl;
+
+    /// Build a loop the way production sites do: the context knobs come from
+    /// `AgentDefaults` as constructor fields.
+    fn agent_with(
+        defaults: &AgentDefaults,
+        max_context_tokens: usize,
+        model_context_window: Option<usize>,
+    ) -> AgentLoopImpl {
+        AgentLoopImpl::new(AgentLoopConfig {
+            provider: crate::interface::test_support::make_stub_provider(),
+            tool_registry: Box::new(ToolRegistryImpl::new()),
+            model: "stub".into(),
+            max_tokens: 100,
+            temperature: 0.0,
+            spill_store: None,
+            session_key: String::new(),
+            context_collapse_after_tool_calls: u32::MAX,
+            max_context_tokens,
+            progress_callback: None,
+            streaming: false,
+            effort: None,
+            system_prompt_provider: None,
+            audit_log: None,
+            pin_recent_turns: defaults.pin_recent_turns,
+            context_collapse_after_messages: defaults.context_collapse_after_messages,
+            model_context_window,
+        })
+    }
+
+    /// Four big turn-stamped assistant messages plus the in-flight prompt.
+    fn oversized_history(big: &str) -> Vec<Message> {
+        let mut v: Vec<Message> = (1..=4u32)
+            .map(|t| {
+                let mut m = Message::assistant(big, vec![]);
+                m.turn = Some(t);
+                m
+            })
+            .collect();
+        v.push(Message::user("new prompt"));
+        v
+    }
+
+    /// A config-file `pin_recent_turns` value must change loop behaviour
+    /// when threaded through the constructor field (#1045).
+    #[tokio::test]
+    async fn config_pin_recent_turns_reaches_the_loop() {
+        let defaults: AgentDefaults = serde_json::from_str(r#"{"pin_recent_turns": 3}"#).unwrap();
+        assert_eq!(defaults.pin_recent_turns, 3, "config field parses");
+        let big = "x".repeat(2000); // ~500 tokens each
+
+        // Control: default configuration (pin 2) removes turn 2 in full form.
+        let agent = agent_with(&AgentDefaults::default(), 100, None);
+        let mut messages = oversized_history(&big);
+        agent.process(&mut messages).await.unwrap();
+        assert!(
+            !messages
+                .iter()
+                .any(|m| m.turn == Some(2) && m.content == big),
+            "control: with the default pin of 2, turn 2 must not survive in full"
+        );
+
+        // The configured pin of 3 keeps turn 2 in full despite the same budget.
+        let agent = agent_with(&defaults, 100, None);
+        let mut messages = oversized_history(&big);
+        agent.process(&mut messages).await.unwrap();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.turn == Some(2) && m.content == big),
+            "a configured pin_recent_turns=3 must change pinning in the loop"
+        );
+    }
+
+    /// A config-file `context_collapse_after_messages` value must change
+    /// loop behaviour through the constructor field (#1046 AC5).
+    #[tokio::test]
+    async fn config_message_collapse_threshold_reaches_the_loop() {
+        let defaults: AgentDefaults =
+            serde_json::from_str(r#"{"context_collapse_after_messages": 1}"#).unwrap();
+        let mut old_a = Message::assistant("an old answer with plenty of words in it", vec![]);
+        old_a.turn = Some(1);
+        old_a.spill_id = Some("turn1:msg:assistant".to_string());
+        let mut old_b = Message::assistant("another old answer with plenty of words", vec![]);
+        old_b.turn = Some(2);
+        old_b.spill_id = Some("turn2:msg:assistant".to_string());
+
+        let agent = agent_with(&defaults, 190_000, None);
+        let mut messages = vec![old_a, old_b, Message::user("new prompt")];
+        agent.process(&mut messages).await.unwrap();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.is_collapsed && m.content.contains("recall(\"turn1:msg:assistant\")")),
+            "a configured context_collapse_after_messages=1 must collapse the \
+             oldest conversation message in the loop"
+        );
+    }
+
+    /// The model registry's known window flows through the constructor
+    /// field as the effective budget clamp (#1044 AC2).
+    #[test]
+    fn model_window_from_registry_clamps_the_effective_budget() {
+        let window = crate::infrastructure::model_registry::ModelRegistry::builtin()
+            .context_window_for("anthropic-api/claude-sonnet-5");
+        assert_eq!(window, Some(1_000_000), "precondition: a known window");
+        let agent = agent_with(&AgentDefaults::default(), 200_000, window);
+        assert_eq!(
+            agent.effective_max_context_tokens(),
+            200_000,
+            "config stays the override below the window"
+        );
+        let agent = agent_with(&AgentDefaults::default(), 2_000_000, window);
+        assert_eq!(
+            agent.effective_max_context_tokens(),
+            1_000_000,
+            "a smaller known window must clamp the configured budget"
+        );
+    }
+}

@@ -11,7 +11,7 @@ use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
 use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
-use crate::domain::session::{ContextSpillStore, SpillEntry};
+use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::ToolRegistry;
 
 #[path = "agent_loop_clamp.rs"]
@@ -23,16 +23,18 @@ pub(crate) mod agent_loop_preview;
 #[path = "agent_loop_pruning.rs"]
 mod agent_loop_pruning;
 mod agent_loop_session;
+#[path = "agent_loop_spill.rs"]
+mod agent_loop_spill;
 use agent_loop_errors::{
     append_malformed_feedback, enhance_provider_error, is_context_or_output_limit_error,
     provider_failure_audit_event,
 };
+use agent_loop_spill::ToolMessageArgs;
 
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 const MAX_PROVIDER_ATTEMPTS: usize = 3;
 const PROVIDER_RETRY_BACKOFF_MS: u64 = 100;
-/// How many times a model-malformed request is re-prompted as addressable
-/// feedback before the turn fails, bounding a persistently malforming model (#931).
+/// Cap on model-malformed requests re-prompted as addressable feedback (#931).
 const MAX_MALFORMED_REQUEST_RETRIES: u32 = 3;
 
 /// Configuration for building an agent loop.
@@ -46,14 +48,11 @@ pub struct AgentLoopConfig {
     pub session_key: String,
     pub context_collapse_after_tool_calls: u32,
     pub max_context_tokens: usize,
-    /// Optional callback to receive live progress events during agent processing.
-    /// Used by the REPL progress renderer to display tool activity to the user.
-    /// Pass `None` for headless operation (no-op, zero overhead).
+    /// Optional live progress events callback (REPL renderer); `None` for
+    /// headless operation (no-op, zero overhead).
     pub progress_callback: Option<ProgressCallback>,
-    /// When `true`, use `chat_stream_incremental()` for LLM calls so that
-    /// `AgentProgressEvent::Token` events are emitted in real time.
-    /// Set by the UDS agent path; `false` for REPL (which uses
-    /// non-streaming mock servers in tests).
+    /// When `true`, use `chat_stream_incremental()` so Token events stream in
+    /// real time (UDS path); `false` for REPL (non-streaming mocks in tests).
     pub streaming: bool,
     /// Optional effort level for 4.6 models. When `Some`, passed through to
     /// every `ChatRequest`. When `None`, the provider applies its own default.
@@ -64,6 +63,19 @@ pub struct AgentLoopConfig {
     /// (tool call, tool result, LLM turn, pruning, etc.) is written to a
     /// durable JSONL file. When `None`, no audit overhead.
     pub audit_log: Option<Arc<dyn AuditSink>>,
+    /// #1045: recent-turn tail-pin count for the pruning ceiling. A
+    /// constructor field (not a post-construction builder) so no construction
+    /// site can silently drop the user's configured value.
+    pub pin_recent_turns: u32,
+    /// #1046: count-based conversation-message collapse threshold
+    /// (`u32::MAX` / `COLLAPSE_DISABLED` disables). Constructor field for the
+    /// same reason as `pin_recent_turns`.
+    pub context_collapse_after_messages: u32,
+    /// #1044: the active model's known context window (`None` when unknown);
+    /// bounds the effective pruning budget. Constructor field so window-aware
+    /// budgeting cannot be forgotten at a construction site; `set_model`
+    /// re-derives it on a model switch.
+    pub model_context_window: Option<usize>,
 }
 
 pub struct AgentLoopImpl {
@@ -79,6 +91,12 @@ pub struct AgentLoopImpl {
     session_key: String,
     context_collapse_after_tool_calls: u32,
     max_context_tokens: usize,
+    /// #1045: recent-turn tail-pin count for the spilling ceiling.
+    pub(super) pin_recent_turns: u32,
+    /// #1046: count-based conversation-message collapse threshold.
+    pub(super) context_collapse_after_messages: u32,
+    /// #1044: the active model's known context window (None when unknown).
+    pub(super) model_context_window: Option<usize>,
     /// When true, use incremental streaming for LLM calls.
     streaming: bool,
     /// Optional live progress callback wired by the REPL progress renderer.
@@ -101,18 +119,18 @@ impl std::fmt::Debug for AgentLoopImpl {
     }
 }
 
-/// Arguments for building a tool result message (avoids clippy 5-arg limit).
-struct ToolMessageArgs<'a> {
-    tc: &'a ToolCall,
-    content: String,
-    image_blocks: Vec<crate::domain::tool::ImageBlock>,
-    spill_id: String,
-    is_error: bool,
-}
-
 struct StreamProviderError {
     error: DomainError,
     emitted_event: bool,
+}
+
+/// End-of-loop bookkeeping for the final text response (avoids the clippy
+/// argument-count limit on `finalize_text_response`).
+struct TurnEnd {
+    iterations: u32,
+    usage: UsageTotals,
+    pre_response_context_tokens: usize,
+    current_turn: u32,
 }
 
 impl AgentLoopImpl {
@@ -129,6 +147,9 @@ impl AgentLoopImpl {
             session_key: config.session_key,
             context_collapse_after_tool_calls: config.context_collapse_after_tool_calls,
             max_context_tokens: config.max_context_tokens,
+            pin_recent_turns: config.pin_recent_turns,
+            context_collapse_after_messages: config.context_collapse_after_messages,
+            model_context_window: config.model_context_window,
             progress_callback: config.progress_callback,
             streaming: config.streaming,
             effort: config.effort,
@@ -146,9 +167,21 @@ impl AgentLoopImpl {
     pub fn model(&self) -> &str {
         &self.model
     }
-    /// Context-window ceiling (tokens), surfaced for UDS clients.
+    /// Context-window ceiling (tokens), surfaced for UDS clients. Reports the
+    /// window-aware effective budget — the same value pruning enforces
+    /// (#1044) — so stats/snapshots never diverge from actual behaviour.
     pub fn max_context_tokens(&self) -> usize {
-        self.max_context_tokens
+        self.effective_max_context_tokens()
+    }
+
+    /// Snapshot of the config-threaded context knobs
+    /// `(pin_recent_turns, context_collapse_after_messages)` — observability
+    /// for wiring checks so construction sites that drop user config are
+    /// detectable from outside the loop (#1045/#1046). Test-gated: it exists
+    /// only for wiring tests and must not ship as public API surface.
+    #[cfg(test)]
+    pub fn context_knob_snapshot(&self) -> (u32, u32) {
+        (self.pin_recent_turns, self.context_collapse_after_messages)
     }
 
     /// Fire a progress event to the registered callback, if any. Takes a closure
@@ -172,10 +205,8 @@ impl AgentLoopImpl {
         self.tool_registry = registry;
     }
 
-    /// Return names of tools registered from extensions.
-    ///
-    /// Used by UDS `get_extensions` to report only tools that are actually
-    /// available (shadows are rejected during registration).
+    /// Return names of tools registered from extensions (UDS `get_extensions`
+    /// reports only actually-available tools; shadows are rejected earlier).
     pub fn tool_registry_extension_names(&self) -> Vec<String> {
         self.tool_registry.extension_names()
     }
@@ -200,10 +231,8 @@ impl AgentLoopImpl {
         self.streaming = enabled;
     }
 
-    /// Set or replace the progress callback at runtime.
-    ///
-    /// Used by the UDS agent to install a streaming-token forwarder after
-    /// construction.  Pass `None` to clear the callback.
+    /// Set or replace the progress callback at runtime (UDS installs a
+    /// streaming-token forwarder after construction; `None` clears it).
     pub fn set_progress_callback(&mut self, cb: Option<ProgressCallback>) {
         self.progress_callback = cb;
     }
@@ -221,9 +250,8 @@ impl AgentLoopImpl {
         self.audit_log.as_ref()
     }
 
-    /// Set or replace the audit log at runtime.
-    ///
-    /// Used by the UDS entry point to wire the audit log after construction.
+    /// Set or replace the audit log at runtime (wired by the UDS entry point
+    /// after construction).
     pub fn set_audit_log(&mut self, log: Option<Arc<dyn AuditSink>>) {
         self.audit_log = log;
     }
@@ -302,8 +330,10 @@ impl AgentLoopImpl {
             Message::assistant(response.content.unwrap_or_default(), response.tool_calls);
         assistant.stop_reason = response.stop_reason;
         assistant.thinking_blocks = response.thinking_blocks;
-        // Stamp the turn: a budget drop spills this as turn{N}:msg:assistant (#951).
+        // Stamp the turn: the creation-time spill files this as
+        // turn{N}:msg:assistant (#1046).
         assistant.turn = Some(current_turn);
+        self.spill_conversation_message(&mut assistant).await;
         messages.push(assistant);
         let assistant_index = messages.len() - 1;
         let tool_call_count = messages[assistant_index].tool_calls.len();
@@ -347,11 +377,11 @@ impl AgentLoopImpl {
                 tc,
                 content,
                 image_blocks,
-                spill_id,
                 is_error,
             });
             tool_msg.turn = Some(current_turn);
-            self.spill_tool_message(&mut tool_msg).await;
+            // Stamps `spill_id` on the message only if the append succeeds.
+            self.spill_tool_message(&mut tool_msg, spill_id).await;
             messages.push(tool_msg);
         }
     }
@@ -401,59 +431,27 @@ impl AgentLoopImpl {
         (content, image_blocks, is_err)
     }
 
-    fn build_tool_message(&self, args: ToolMessageArgs) -> Message {
-        let mut tool_msg = Message::tool(args.tc.id.clone(), args.content);
-        tool_msg.tool_name = Some(args.tc.name.clone());
-        tool_msg.input_preview =
-            Some(context_pruning::truncate_utf8_safe(&args.tc.arguments, 100).into_owned());
-        tool_msg.spill_id = Some(args.spill_id);
-        tool_msg.image_blocks = args.image_blocks;
-        tool_msg.invalidate_token_cache();
-        tool_msg.is_error = args.is_error;
-        tool_msg
-    }
-
-    async fn spill_tool_message(&self, tool_msg: &mut Message) {
-        let Some(ref spill_store) = self.spill_store else {
-            return;
-        };
-
-        // Move (not clone) the content into the SpillEntry for the borrowing
-        // append, then move it back — avoids copying up to 1MB of tool output.
-        let content = std::mem::take(&mut tool_msg.content);
-        let entry = SpillEntry {
-            id: tool_msg.spill_id.clone().unwrap_or_default(),
-            tool: tool_msg
-                .tool_name
-                .clone()
-                .unwrap_or_else(|| "tool".to_string()),
-            input_preview: tool_msg.input_preview.clone().unwrap_or_default(),
-            tokens: context_pruning::estimate_tokens(&content),
-            content,
-        };
-        if let Err(e) = spill_store.append(&self.session_key, &entry).await {
-            tracing::warn!(target: "context_prune", error = %e, "failed to spill tool output");
-        }
-        // Restore content back into the message (entry is consumed here).
-        tool_msg.content = entry.content;
-        tool_msg.invalidate_token_cache();
-    }
-
-    fn finalize_text_response(
+    async fn finalize_text_response(
+        &self,
         messages: &mut Vec<Message>,
         response: LlmResponse,
-        iterations: u32,
-        usage: UsageTotals,
-        pre_response_context_tokens: usize,
+        end: TurnEnd,
     ) -> AgentResult {
         let text = response.content.unwrap_or_default();
-        let assistant_message = Message::assistant(text.clone(), vec![]);
-        let context_tokens = pre_response_context_tokens
+        let mut assistant_message = Message::assistant(text.clone(), vec![]);
+        // Stamp + spill at creation: the loop returns right after this, so no
+        // later pruning pass could file the final reply (#1046).
+        assistant_message.turn = Some(end.current_turn);
+        self.spill_conversation_message(&mut assistant_message)
+            .await;
+        let context_tokens = end
+            .pre_response_context_tokens
             .saturating_add(context_pruning::estimate_message_tokens(&assistant_message));
         messages.push(assistant_message);
+        let usage = end.usage;
         AgentResult {
             response: text,
-            tool_iterations: iterations,
+            tool_iterations: end.iterations,
             iteration_limit_reached: false,
             input_tokens: usage.context_input_tokens,
             context_tokens,
@@ -581,7 +579,7 @@ impl AgentLoopImpl {
             // immediately, including during multi-turn tool loops.
             self.notify(|| AgentProgressEvent::Thinking {
                 context_tokens,
-                max_context_tokens: self.max_context_tokens,
+                max_context_tokens: self.effective_max_context_tokens(),
                 provider: self.provider.name().to_string(),
                 model: self.model.clone(),
             });
@@ -671,13 +669,13 @@ impl AgentLoopImpl {
                 // Emit Done before finalising so the REPL can clear the spinner
                 // line before the final response is printed to stdout.
                 self.notify(|| AgentProgressEvent::Done);
-                return Ok(Self::finalize_text_response(
-                    messages,
-                    response,
+                let end = TurnEnd {
                     iterations,
-                    usage_totals,
-                    context_tokens,
-                ));
+                    usage: usage_totals,
+                    pre_response_context_tokens: context_tokens,
+                    current_turn,
+                };
+                return Ok(self.finalize_text_response(messages, response, end).await);
             }
 
             let appended_from = messages.len();

@@ -316,8 +316,10 @@ pub fn run_repl<R: BufRead, W: Write>(
     // default (e.g. Fireworks qwen3p7-plus = 65536) never receives a larger
     // value. Mirror the CLI build path (interface/cli/agent.rs) so the REPL does
     // not silently bypass the clamp.
-    let model_max_tokens =
-        crate::infrastructure::model_registry::ModelRegistry::model_cap_from_base_dir(
+    // #1044: the model's known window bounds the pruning budget; one registry
+    // load supplies both per-model limits.
+    let (model_max_tokens, model_context_window) =
+        crate::infrastructure::model_registry::ModelRegistry::model_limits_from_base_dir(
             ctx.base_dir,
             &model,
         );
@@ -340,6 +342,11 @@ pub fn run_repl<R: BufRead, W: Write>(
         effort: resolve_effort_from_config(ctx.config),
         system_prompt_provider: None,
         audit_log: None,
+        // #1044/#1045/#1046: the context knobs are constructor fields so this
+        // site cannot silently drop the user's configured values.
+        pin_recent_turns: ctx.config.agents.defaults.pin_recent_turns,
+        context_collapse_after_messages: ctx.config.agents.defaults.context_collapse_after_messages,
+        model_context_window,
     })
     .with_model_max_tokens(model_max_tokens);
 
@@ -364,6 +371,7 @@ pub fn run_repl<R: BufRead, W: Write>(
             if let Some(handle) = spinner_handle {
                 handle.stop();
             }
+            crate::interface::shared::scrub_ephemeral_spill(ctx.base_dir, ephemeral);
             return code;
         }
     };
@@ -391,6 +399,8 @@ pub fn run_repl<R: BufRead, W: Write>(
     if let Some(handle) = spinner_handle {
         handle.stop();
     }
+    // An ephemeral (`-s -`) REPL persisted spill content only for in-run recall.
+    crate::interface::shared::scrub_ephemeral_spill(ctx.base_dir, ephemeral);
     code
 }
 

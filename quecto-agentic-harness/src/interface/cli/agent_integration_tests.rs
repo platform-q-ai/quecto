@@ -81,6 +81,9 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     })
     .with_max_tool_iterations(1)
 }
@@ -137,6 +140,11 @@ fn test_agent_ephemeral_session_no_file_created() {
         &ctx,
     );
     assert_eq!(out.exit_code, 1);
+    // Ephemeral runs must not persist a session transcript. Creation-time
+    // spill entries ARE deliberately written under the sanitized empty-key
+    // spill directory ("key_") so collapse/ladder recall() stubs stay
+    // resolvable within a `--no-session` run (PR #1048: conversation spilling
+    // matches the tool-output spill writer's ephemeral behaviour).
     let sessions_dir = tmp.path().join("sessions");
     if sessions_dir.exists() {
         let entries: Vec<_> = std::fs::read_dir(&sessions_dir)
@@ -144,8 +152,11 @@ fn test_agent_ephemeral_session_no_file_created() {
             .filter_map(|e| e.ok())
             .collect();
         assert!(
-            entries.is_empty(),
-            "ephemeral session should not create any session files, found: {:?}",
+            entries
+                .iter()
+                .all(|e| e.file_name() == "key_" && e.path().is_dir()),
+            "ephemeral session must not create session transcript files \
+             (only the empty-key spill dir is allowed), found: {:?}",
             entries.iter().map(|e| e.path()).collect::<Vec<_>>()
         );
     }
@@ -338,6 +349,64 @@ fn test_run_agent_session_ephemeral_no_save() {
 }
 
 #[test]
+fn test_run_agent_session_ephemeral_scrubs_spill_file() {
+    // Ephemeral spilling deliberately persists during the run (recall stubs
+    // must resolve), but nothing may outlive it: run_agent_session must scrub
+    // the empty-key spill file on every exit path, including errors
+    // (PR #1048 round-2 security review).
+    let tmp = tempfile::TempDir::new().unwrap();
+    let spill_path = tmp.path().join("sessions").join("key_").join("spill.jsonl");
+    std::fs::create_dir_all(spill_path.parent().unwrap()).unwrap();
+    std::fs::write(&spill_path, "{\"id\":\"turn0:msg:user\"}\n").unwrap();
+
+    let agent = make_test_agent(tmp.path());
+    let flags = test_flags(Some("secret prompt"), Some("-"), None);
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut out = AgentOutput {
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+    };
+    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    assert_eq!(code, 1, "the fake provider must fail");
+    assert!(
+        !spill_path.exists(),
+        "ephemeral spill content must not survive the run (even on error exits)"
+    );
+}
+
+#[test]
+fn test_run_agent_session_named_session_keeps_spill_file() {
+    // Scrubbing is ephemeral-only: a named session's spill store must persist
+    // for /resume + recall across runs.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let key_dir = crate::infrastructure::persistence::filename::sanitize_session_key(
+        &crate::domain::session::Session::build_key("cli", "keepme"),
+    );
+    let spill_path = tmp
+        .path()
+        .join("sessions")
+        .join(&key_dir)
+        .join("spill.jsonl");
+    std::fs::create_dir_all(spill_path.parent().unwrap()).unwrap();
+    std::fs::write(&spill_path, "{\"id\":\"turn0:msg:user\"}\n").unwrap();
+
+    let agent = make_test_agent(tmp.path());
+    let flags = test_flags(Some("hello"), Some("keepme"), None);
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut out = AgentOutput {
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+    };
+    let _ = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    assert!(
+        spill_path.exists(),
+        "named-session spill files must survive the run"
+    );
+}
+
+#[test]
 fn test_run_agent_session_default_session_key() {
     let tmp = tempfile::TempDir::new().unwrap();
     let agent = make_test_agent(tmp.path());
@@ -414,6 +483,9 @@ fn test_run_with_deadline_completes_before_timeout() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     })
     .with_max_tool_iterations(1);
 

@@ -549,6 +549,29 @@ pub struct QuectoWorld {
     pub context_collapsed_count: Option<usize>,
     /// Context pruning: temp dir for session persistence round-trip tests
     pub context_temp_dir: Option<TempDir>,
+    /// Context pruning: message-count collapse threshold under test (#1046)
+    pub context_collapse_after_messages: Option<u32>,
+    /// Context pruning: conversation messages collapsed by the last message trigger (#1046)
+    pub context_msg_collapsed_count: Option<usize>,
+    /// Context pruning: outcome of the last demotion-ladder ceiling run (#1046/#1044)
+    pub context_ladder_outcome:
+        Option<quecto::application::context_pruning::messages::CeilingLadderOutcome>,
+    /// Context pruning: configured max_context_tokens for budget-derivation scenarios (#1044)
+    pub context_budget_config: Option<usize>,
+    /// Context pruning: the active model's known context window, if any (#1044)
+    pub context_model_window: Option<Option<usize>>,
+    /// Context pruning: the derived effective budget under test (#1044)
+    pub context_effective_budget: Option<usize>,
+    /// Context pruning: token estimate of the first old conversation message (#1046)
+    pub context_original_tokens: Option<usize>,
+    /// Context pruning: the agent defaults established by "a default agent configuration"
+    pub context_agent_defaults: Option<quecto::infrastructure::config::AgentDefaults>,
+    /// Context pruning: run the loop-driving steps with an empty session key
+    /// (`--no-session` ephemeral run), set by "Given the session is ephemeral"
+    pub context_ephemeral: bool,
+    /// Context pruning: collapsed-message count recorded before a rewind so
+    /// the survival assertion is not vacuous (PR #1048)
+    pub context_rewind_collapsed_before: Option<usize>,
     // --- Path utils BDD fields ---
     /// Resolved path from path_utils scenarios
     pub path_utils_resolved: Option<std::path::PathBuf>,

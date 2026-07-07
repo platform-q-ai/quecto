@@ -409,6 +409,7 @@ mod tests {
                 tool_results_collapsed: 0,
                 tokens_before: 100_000,
                 tokens_after: 80_000,
+                budget_unmet: false,
             },
             AuditEvent::SubagentSpawned {
                 agent_id: "reviewer".into(),

@@ -8,6 +8,7 @@ use crate::domain::message::Message;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
+use crate::infrastructure::model_registry::ModelRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 
 /// Max byte length for `--socket` paths.  Linux allows 108, macOS 104;
@@ -383,6 +384,10 @@ pub(crate) fn build_agent_from_config(
 
     let workflow_prompt_initially_active = flags.workflow;
     let wf_config = workflow_state.as_ref().map(|_| config.workflow.clone());
+    // #935/#1044: one registry load supplies the per-model output cap (clamps
+    // max_tokens so low-limit models never get a larger value; set_model
+    // re-derives on switch) and the known context window (bounds the budget).
+    let (cap, window) = ModelRegistry::model_limits_from_base_dir(base_dir, &model);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -398,21 +403,17 @@ pub(crate) fn build_agent_from_config(
         effort,
         system_prompt_provider: None,
         audit_log: None,
+        // #1044/#1045/#1046: constructor fields — config cannot be dropped.
+        pin_recent_turns: config.agents.defaults.pin_recent_turns,
+        context_collapse_after_messages: config.agents.defaults.context_collapse_after_messages,
+        model_context_window: window,
     })
     .with_max_tool_iterations(
         flags
             .max_iterations
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     )
-    // #935: clamp the effective output cap to the model's registry max_tokens
-    // so a model whose real output limit is lower than the configured global
-    // default (e.g. Fireworks qwen3p7-plus = 65536) never receives a larger
-    // value. The set_model path re-derives this so a model switch re-clamps.
-    .with_model_max_tokens(
-        crate::infrastructure::model_registry::ModelRegistry::model_cap_from_base_dir(
-            base_dir, &model,
-        ),
-    );
+    .with_model_max_tokens(cap);
 
     Some(AgentBuildResult {
         agent,
@@ -494,12 +495,15 @@ pub(crate) fn run_agent_session(
             DeadlineResult::Completed(inner) => inner,
             DeadlineResult::TimedOut => {
                 out.stderr.push_str("max-time exceeded\n");
+                scrub_ephemeral_spill(base_dir, ephemeral);
                 return 2;
             }
         }
     } else {
         rt.block_on(agent.process(&mut messages))
     };
+    // Nothing an ephemeral run spilled for in-run recall may outlive the run.
+    scrub_ephemeral_spill(base_dir, ephemeral);
 
     match agent_result {
         Ok(result) => {
@@ -529,6 +533,8 @@ pub(crate) fn run_agent_session(
         }
     }
 }
+
+use crate::interface::shared::scrub_ephemeral_spill;
 
 /// Run the agent with a wall-clock deadline.
 ///
@@ -561,17 +567,6 @@ pub(crate) fn run_with_deadline(
     })
 }
 
-/// Run the agent in UDS mode.
-///
-/// Return the XDG runtime directory if it is set, exists, and is writable by
-/// the current process; otherwise fall back to [`std::env::temp_dir`].
-///
-/// The XDG Base Directory Specification requires `$XDG_RUNTIME_DIR` to be
-/// owned by the user and mode `0700`.  We additionally verify it is writable
-/// before using it so a misconfigured or container-injected value does not
-/// cause a confusing bind error later.
-/// Validates config/provider, then enters the async JSON-lines loop.
-/// Returns an exit code.
 /// Resolve the UDS session key. Ephemeral → empty (no persistence). An explicit
 /// `--session` keeps the `cli:` namespace so internal sessions (sub-agents,
 /// agent-manager) stay out of the user-facing `/resume` list. With no
@@ -691,7 +686,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     });
 
     let mut provider_reload = build.provider_reload;
-    crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
+    let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
         base_dir: &base_dir,
         session_key,
@@ -710,7 +705,10 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         broadcast_tx,
         provider_reload: Some(&mut provider_reload),
         provider_reload_inputs: Some(&build.provider_reload_inputs),
-    })
+    });
+    // An ephemeral UDS server persisted spill content only for in-run recall.
+    scrub_ephemeral_spill(&base_dir, ephemeral);
+    code
 }
 
 #[path = "agent_provider.rs"]
@@ -725,6 +723,9 @@ mod config_tests;
 #[cfg(test)]
 #[path = "agent_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "agent_1048_ctx_wiring_tests.rs"]
+mod ctx_wiring_1048_tests;
 #[cfg(test)]
 #[path = "agent_integration_tests.rs"]
 mod integration_tests;

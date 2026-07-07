@@ -305,18 +305,15 @@ impl crate::domain::tool::Tool for PromptMutatingTool {
 // Helper to build an AgentLoopImpl with mock components
 // -----------------------------------------------------------------------
 
-pub(super) fn make_agent(
-    responses: Vec<LlmResponse>,
-    tools: Vec<(&str, &str)>,
-) -> (AgentLoopImpl, Arc<MockProvider>) {
-    let provider = Arc::new(MockProvider::new(responses));
-    let mut registry = MockRegistry::new();
-    for (name, response) in tools {
-        registry.register(Arc::new(MockTool::new(name, response)));
-    }
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider: provider.clone(),
-        tool_registry: Box::new(registry),
+/// Baseline test config; override individual fields with functional-update
+/// syntax (`AgentLoopConfig { field: ..., ..test_config(...) }`).
+pub(super) fn test_config(
+    provider: Arc<dyn crate::domain::provider::LlmProvider>,
+    tool_registry: Box<dyn crate::domain::tool::ToolRegistry>,
+) -> AgentLoopConfig {
+    AgentLoopConfig {
+        provider,
+        tool_registry,
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
@@ -329,7 +326,22 @@ pub(super) fn make_agent(
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
-    });
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    }
+}
+
+pub(super) fn make_agent(
+    responses: Vec<LlmResponse>,
+    tools: Vec<(&str, &str)>,
+) -> (AgentLoopImpl, Arc<MockProvider>) {
+    let provider = Arc::new(MockProvider::new(responses));
+    let mut registry = MockRegistry::new();
+    for (name, response) in tools {
+        registry.register(Arc::new(MockTool::new(name, response)));
+    }
+    let agent = AgentLoopImpl::new(test_config(provider.clone(), Box::new(registry)));
     (agent, provider)
 }
 
@@ -562,22 +574,7 @@ async fn test_tool_error_is_sent_back() {
     ];
     let provider = Arc::new(MockProvider::new(responses));
     let registry = MockRegistry::new(); // empty
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider,
-        tool_registry: Box::new(registry),
-        model: "test-model".to_string(),
-        max_tokens: 1024,
-        temperature: 0.7,
-        spill_store: None,
-        session_key: String::new(),
-        context_collapse_after_tool_calls: u32::MAX,
-        max_context_tokens: 190_000,
-        progress_callback: None,
-        streaming: false,
-        effort: None,
-        system_prompt_provider: None,
-        audit_log: None,
-    });
+    let agent = AgentLoopImpl::new(test_config(provider, Box::new(registry)));
     let mut messages = vec![Message::user("use a tool")];
     let result = agent.run_loop(&mut messages).await.unwrap();
     assert_eq!(result.response, "I got an error");
@@ -607,23 +604,11 @@ async fn test_system_prompt_provider_is_refreshed_before_each_llm_turn() {
         "ok",
     )));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider: provider.clone(),
-        tool_registry: Box::new(registry),
-        model: "test-model".to_string(),
-        max_tokens: 1024,
-        temperature: 0.7,
-        spill_store: None,
-        session_key: String::new(),
-        context_collapse_after_tool_calls: u32::MAX,
-        max_context_tokens: 190_000,
-        progress_callback: None,
-        streaming: false,
-        effort: None,
         system_prompt_provider: Some(Arc::new({
             let prompts = prompts.clone();
             move || prompts.lock().unwrap().clone()
         })),
-        audit_log: None,
+        ..test_config(provider.clone(), Box::new(registry))
     });
 
     let mut messages = vec![Message::system("stale prompt"), Message::user("advance")];
@@ -644,20 +629,11 @@ async fn test_system_prompt_provider_is_refreshed_before_each_llm_turn() {
 #[test]
 fn test_refresh_dynamic_system_prompt_inserts_before_manifest() {
     let agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider: Arc::new(MockProvider::new(vec![])),
-        tool_registry: Box::new(MockRegistry::new()),
-        model: "test-model".to_string(),
-        max_tokens: 1024,
-        temperature: 0.7,
-        spill_store: None,
-        session_key: String::new(),
-        context_collapse_after_tool_calls: u32::MAX,
-        max_context_tokens: 190_000,
-        progress_callback: None,
-        streaming: false,
-        effort: None,
         system_prompt_provider: Some(Arc::new(|| "live prompt".to_string())),
-        audit_log: None,
+        ..test_config(
+            Arc::new(MockProvider::new(vec![])),
+            Box::new(MockRegistry::new()),
+        )
     });
     let mut manifest = Message::system("[Session memory: 1 spilled entry]");
     manifest.is_manifest = true;
@@ -696,20 +672,8 @@ fn make_agent_with_callback(
         events_clone.lock().unwrap().push(ev);
     });
     let agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider: provider.clone(),
-        tool_registry: Box::new(registry),
-        model: "test-model".to_string(),
-        max_tokens: 1024,
-        temperature: 0.7,
-        spill_store: None,
-        session_key: String::new(),
-        context_collapse_after_tool_calls: u32::MAX,
-        max_context_tokens: 190_000,
         progress_callback: Some(callback),
-        streaming: false,
-        effort: None,
-        system_prompt_provider: None,
-        audit_log: None,
+        ..test_config(provider.clone(), Box::new(registry))
     });
     (agent, provider, events)
 }

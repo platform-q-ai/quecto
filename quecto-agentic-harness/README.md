@@ -6,14 +6,16 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.84.0**.
+Current version: **0.88.0**.
 
 ## Quick Start
 
 ```bash
-# Install both binaries. quecto-tui starts the kernel by running `quecto`,
-# so the root `quecto` binary must be on PATH unless you connect by --socket.
-cargo install --path .
+# Install both binaries (from the repository root). quecto-tui starts the
+# kernel by running `quecto`, so the `quecto` binary must be on PATH unless
+# you connect by --socket. The `quecto` binary is built by the
+# quecto-agentic-harness package.
+cargo install --path quecto-agentic-harness
 cargo install --path quecto-tui
 
 # Store your API key (zero-config: no setup step — defaults apply,
@@ -47,11 +49,11 @@ socket:
 
 ```bash
 # Option A: let the TUI spawn the kernel from target/debug/quecto
-cargo build -p quecto -p quecto-tui
+cargo build -p quecto-agentic-harness -p quecto-tui
 PATH="$PWD/target/debug:$PATH" cargo run -p quecto-tui --
 
 # Option B: run the kernel explicitly, then attach the TUI from another terminal
-cargo run -p quecto -- agent --mode uds --socket /tmp/quecto.sock --persist
+cargo run -p quecto-agentic-harness -- agent --mode uds --socket /tmp/quecto.sock --persist
 cargo run -p quecto-tui -- --socket /tmp/quecto.sock
 ```
 
@@ -130,7 +132,7 @@ Depends only on `domain/`. Orchestration logic, no I/O.
 | File | Purpose |
 |---|---|
 | `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for REPL spinner. Supports incremental streaming via `chat_stream_incremental()`. Passes configured `effort` level through to every `ChatRequest` |
-| `context_pruning.rs` | Token estimation, sliding-window pruning, pinned spill manifest, and tool-call-count tool-result collapse. Current config defaults: `max_context_tokens = 200000`, `context_collapse_after_tool_calls = 50`; set `context_collapse_after_tool_calls` to `4294967295` (`u32::MAX`) to disable collapse |
+| `context_pruning.rs` | Token estimation, pinned spill manifest, tool-call-count tool-result collapse, conversation-message collapse (`context_collapse_after_messages`, default 50), and the demotion-ladder ceiling (stub, then drop; `pin_recent_turns = 2` tail is never demoted). Current config defaults: `max_context_tokens = 200000`, `context_collapse_after_tool_calls = 50`, `context_collapse_after_messages = 50`; set a collapse knob to `4294967295` (`u32::MAX`) to disable it |
 | `reload.rs` | `/reload` use case: strips stale tool history via `strip_tool_history()`, clears spill index, coordinates `SessionStore` + `ContextSpillStore` |
 | `subagent.rs` | `SubagentContext` — child agent contexts with inherited sandbox |
 

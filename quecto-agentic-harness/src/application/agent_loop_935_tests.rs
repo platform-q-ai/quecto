@@ -36,6 +36,9 @@ fn agent_with_caps(
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     })
     .with_model_max_tokens(model_max_tokens);
     (agent, provider)
@@ -112,13 +115,16 @@ async fn set_model_max_tokens_re_clamps_for_subsequent_turns() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     });
     // First turn: no per-model cap → configured value.
     let mut m1 = vec![Message::user("a")];
     agent.run_loop(&mut m1).await.unwrap();
 
     // Switch to a lower-cap model and re-clamp.
-    agent.set_model("fireworks/qwen3p7-plus".to_string(), Some(65_536));
+    agent.set_model("fireworks/qwen3p7-plus".to_string(), Some(65_536), None);
     let mut m2 = vec![Message::user("b")];
     agent.run_loop(&mut m2).await.unwrap();
 

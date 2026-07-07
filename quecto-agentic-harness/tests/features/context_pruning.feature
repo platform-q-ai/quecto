@@ -216,6 +216,210 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the spilling sliding window drops messages to fit budget
     Then the current user prompt remains in context
 
+  # --- #1046: spill conversation messages at creation + count-based collapse ---
+
+  Scenario: Conversation messages are spilled at creation and immediately recallable
+    When the agent completes a text-only prompt on turn 1
+    Then the spill file contains an entry with id "turn1:msg:assistant"
+    And the spill entry for "turn1:msg:assistant" matches the assistant reply
+
+  Scenario: Creation-time message spill ids never collide across prompts
+    Given the agent has completed a text-only prompt on turn 1
+    When the agent completes another text-only prompt on turn 1
+    Then the spill file contains an entry with id "turn1:msg:assistant"
+    And the spill file contains an entry with id "turn1:msg:assistant:2"
+
+  Scenario: Ephemeral sessions spill conversation messages at creation
+    Given the session is ephemeral
+    When the agent completes a text-only prompt on turn 1
+    Then the ephemeral session spill contains a recallable entry with id "turn1:msg:assistant"
+
+  Scenario: Ephemeral sessions still spill tool output at creation
+    Given the session is ephemeral
+    When the agent runs a bash tool
+    Then the ephemeral session spill contains a recallable entry whose tool is "bash"
+
+  Scenario: Rewinding past collapsed conversation messages leaves no empty turns
+    Given context_collapse_after_messages is set to 0
+    And 4 old conversation messages
+    And an in-flight user prompt
+    And the old conversation messages have been collapsed to recall stubs
+    When the conversation is rewound to the in-flight user prompt
+    Then the collapsed conversation messages survive the rewind with non-empty content
+
+  Scenario: Oldest conversation messages collapse once the message count exceeds the threshold
+    Given context_collapse_after_messages is set to 3
+    And 4 old conversation messages
+    And an in-flight user prompt
+    When the agent trims old conversation messages
+    Then 1 conversation message is collapsed to a recall stub
+    And the oldest conversation message is a one-line recall stub
+
+  Scenario: Message collapse triggers at one past the threshold, not at it
+    Given context_collapse_after_messages is set to 3
+    And 3 old conversation messages
+    And an in-flight user prompt
+    When the agent trims old conversation messages
+    Then 0 conversation messages are collapsed to recall stubs
+
+  Scenario: Assistant and user messages share one combined collapse count
+    Given context_collapse_after_messages is set to 3
+    And 2 old assistant messages and 2 old user messages
+    And an in-flight user prompt
+    When the agent trims old conversation messages
+    Then 1 conversation message is collapsed to a recall stub
+
+  Scenario: Tool results are excluded from the message collapse count
+    Given context_collapse_after_messages is set to 3
+    And 3 old conversation messages
+    And an in-flight user prompt
+    And 10 un-collapsed tool results in the session
+    When the agent trims old conversation messages
+    Then 0 conversation messages are collapsed to recall stubs
+    And no tool results are collapsed by the message trigger
+
+  Scenario: Message collapse is cumulative across prompts
+    Given context_collapse_after_messages is set to 3
+    And 4 old conversation messages from an earlier prompt
+    And 4 old conversation messages
+    And an in-flight user prompt
+    When the agent trims old conversation messages
+    Then 5 conversation messages are collapsed to recall stubs
+
+  # The three AC3 exemption scenarios drive BOTH prune paths: the count
+  # trigger AND the demotion ladder under an unmeetable budget. The ladder's
+  # second rung drops any non-exempt message, so each protected message
+  # survives only because of its exemption — deleting the exemption fails the
+  # scenario (falsifiability, PR #1048 round-2 review).
+  Scenario: The system prompt is never collapsed or dropped
+    Given context_collapse_after_messages is set to 0
+    And max_context_tokens is set to 5
+    And recent-turn pinning is set to 0 turns
+    And a system prompt in the conversation
+    And 2 old conversation messages
+    And an in-flight user prompt
+    When the agent trims old conversation messages
+    And the agent enforces the context ceiling
+    Then the system prompt is not collapsed
+    And at least 1 conversation message is collapsed to a recall stub
+    And at least 1 message is removed from the conversation
+
+  Scenario: The spill manifest is never collapsed or dropped
+    Given context_collapse_after_messages is set to 0
+    And max_context_tokens is set to 5
+    And recent-turn pinning is set to 0 turns
+    And a pinned manifest message in the conversation
+    And 2 old conversation messages
+    And an in-flight user prompt
+    When the agent trims old conversation messages
+    And the agent enforces the context ceiling
+    Then the manifest message is not collapsed
+    And at least 1 conversation message is collapsed to a recall stub
+    And at least 1 message is removed from the conversation
+
+  Scenario: The in-flight user prompt is never collapsed or dropped
+    Given context_collapse_after_messages is set to 0
+    And max_context_tokens is set to 5
+    And recent-turn pinning is set to 0 turns
+    And 2 old conversation messages
+    And an in-flight user prompt already spilled at creation
+    When the agent trims old conversation messages
+    And the agent enforces the context ceiling
+    Then the in-flight user prompt is not collapsed
+    And at least 1 conversation message is collapsed to a recall stub
+    And at least 1 message is removed from the conversation
+
+  Scenario: Messages within the pinned recent-turn tail are never collapsed by the message trigger
+    Given context_collapse_after_messages is set to 0
+    And recent-turn pinning is set to 1 turns
+    And 2 old conversation messages
+    And an in-flight user prompt
+    And a conversation message within the pinned recent-turn tail
+    When the agent trims old conversation messages
+    Then the tail-pinned conversation message is not collapsed
+    And at least 1 conversation message is collapsed to a recall stub
+
+  Scenario: Message collapse can be disabled with the sentinel
+    Given message collapse is disabled
+    And 100 old conversation messages
+    And an in-flight user prompt
+    When the agent trims old conversation messages
+    Then 0 conversation messages are collapsed to recall stubs
+
+  Scenario: Collapsed message stubs count toward the token budget
+    Given context_collapse_after_messages is set to 0
+    And 2 old conversation messages
+    And an in-flight user prompt
+    When the agent trims old conversation messages
+    Then each collapsed message stub has a nonzero token estimate
+    And the stub token estimate is below the original message estimate
+
+  Scenario: Budget pressure collapses messages to stubs before dropping anything
+    Given max_context_tokens is set to 150
+    And recent-turn pinning is set to 1 turns
+    And 4 old conversation messages
+    And an in-flight user prompt
+    When the agent enforces the context ceiling
+    Then at least 1 old message is reduced to a recall stub by the ceiling
+    And no messages are removed from the conversation
+    And total context is under 150 tokens
+
+  Scenario: Budget pressure removes stubs entirely only when stubbing is not enough
+    Given max_context_tokens is set to 5
+    And recent-turn pinning is set to 0 turns
+    And 4 old conversation messages
+    And an in-flight user prompt
+    When the agent enforces the context ceiling
+    Then at least 1 message is removed from the conversation
+    And no full un-collapsed conversation message was removed before stubbing
+
+  # --- #1045: configurable pin_recent_turns ---
+
+  Scenario: pin_recent_turns defaults to 2 and message collapse defaults to 50
+    Given a default agent configuration
+    Then the configured pin_recent_turns is 2
+    And the configured context_collapse_after_messages is 50
+
+  Scenario: A non-default pin_recent_turns changes pinning behaviour
+    Given max_context_tokens is set to 10
+    And recent-turn pinning is set to 3 turns
+    And messages from turns 1 through 4 each exceeding the budget
+    When the spilling sliding window drops messages to fit budget
+    Then messages from the most recent 3 turns remain in context
+    And messages from older turns are dropped
+
+  # --- #1044: observable over-budget + window-aware clamp ---
+
+  Scenario: The demotion ladder reports an unmeetable budget
+    Given max_context_tokens is set to 5
+    And recent-turn pinning is set to 0 turns
+    And a user prompt exceeding the budget
+    When the agent enforces the context ceiling
+    Then the context budget is reported as unmet
+
+  Scenario: An unmeetable ceiling is reflected in the ContextPruned audit event
+    Given max_context_tokens is set to 5
+    When the agent completes a prompt exceeding the budget
+    Then the ContextPruned audit event records the budget as unmet
+
+  Scenario: Effective context budget derives from the model window when known
+    Given a configured agent with max_context_tokens 200000
+    And the active model has a known context window of 100000 tokens
+    When the agent derives its effective context budget
+    Then the effective context budget is 100000
+
+  Scenario: Config max_context_tokens overrides a larger model window
+    Given a configured agent with max_context_tokens 200000
+    And the active model has a known context window of 1000000 tokens
+    When the agent derives its effective context budget
+    Then the effective context budget is 200000
+
+  Scenario: Unknown model windows fall back to the configured budget
+    Given a configured agent with max_context_tokens 200000
+    And the active model has no known context window
+    When the agent derives its effective context budget
+    Then the effective context budget is 200000
+
   # --- #305: Improved token estimation heuristic ---
 
   Scenario: Token estimation uses 4 chars per token for ASCII prose

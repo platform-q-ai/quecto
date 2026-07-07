@@ -23,6 +23,9 @@ fn test_swap_registry_replaces_tool_registry() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     });
     assert_eq!(agent.info().tool_count, 1);
     assert_eq!(agent.tool_registry.definitions()[0].name.as_ref(), "tool_a");
@@ -62,6 +65,9 @@ fn test_swap_registry_info_reflects_new_count() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     });
     assert_eq!(agent.info().tool_count, 0);
 
@@ -140,6 +146,29 @@ fn enhance_provider_error_leaves_non_provider_unchanged() {
     }
 }
 
+/// Minimal agent for exercising instance methods like `finalize_text_response`.
+fn bare_agent() -> AgentLoopImpl {
+    AgentLoopImpl::new(AgentLoopConfig {
+        provider: Arc::new(MockProvider::new(vec![])),
+        tool_registry: Box::new(MockRegistry::new()),
+        model: "m".into(),
+        max_tokens: 100,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    })
+}
+
 #[test]
 fn finalize_text_response_builds_result_and_appends_message() {
     let mut messages = vec![Message::user("hi")];
@@ -151,13 +180,19 @@ fn finalize_text_response_builds_result_and_appends_message() {
         thinking_blocks: vec![],
     };
     let pre_response_tokens = context_pruning::estimate_total_tokens(&messages);
-    let result = AgentLoopImpl::finalize_text_response(
-        &mut messages,
-        resp,
-        3,
-        UsageTotals::default(),
-        pre_response_tokens,
-    );
+    let result =
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(bare_agent().finalize_text_response(
+                &mut messages,
+                resp,
+                super::TurnEnd {
+                    iterations: 3,
+                    usage: UsageTotals::default(),
+                    pre_response_context_tokens: pre_response_tokens,
+                    current_turn: 1,
+                },
+            ));
     assert_eq!(result.response, "answer");
     assert_eq!(result.tool_iterations, 3);
     assert!(!result.iteration_limit_reached);
@@ -175,13 +210,19 @@ fn finalize_text_response_defaults_empty_content() {
         thinking_blocks: vec![],
     };
     let pre_response_tokens = context_pruning::estimate_total_tokens(&messages);
-    let result = AgentLoopImpl::finalize_text_response(
-        &mut messages,
-        resp,
-        0,
-        UsageTotals::default(),
-        pre_response_tokens,
-    );
+    let result =
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(bare_agent().finalize_text_response(
+                &mut messages,
+                resp,
+                super::TurnEnd {
+                    iterations: 0,
+                    usage: UsageTotals::default(),
+                    pre_response_context_tokens: pre_response_tokens,
+                    current_turn: 1,
+                },
+            ));
     assert!(result.response.is_empty());
     assert_eq!(messages.len(), 1);
 }
@@ -198,11 +239,13 @@ fn build_tool_message_populates_metadata() {
         tc: &tc,
         content: "output".into(),
         image_blocks: vec![],
-        spill_id: "turn1:bash:0".into(),
         is_error: false,
     });
     assert_eq!(msg.tool_name.as_deref(), Some("bash"));
-    assert_eq!(msg.spill_id.as_deref(), Some("turn1:bash:0"));
+    assert_eq!(
+        msg.spill_id, None,
+        "spill_id is stamped by spill_tool_message on a successful append, never at build time"
+    );
     assert_eq!(msg.content, "output");
     assert!(!msg.is_error);
     assert!(msg.input_preview.is_some());
@@ -222,7 +265,7 @@ fn build_chat_request_omits_session_id_when_empty() {
 fn model_getter_and_setter_roundtrip() {
     let (mut agent, _p) = super::tests::make_agent(vec![], vec![]);
     assert_eq!(agent.model(), "test-model");
-    agent.set_model("claude-haiku-4-5".into(), None);
+    agent.set_model("claude-haiku-4-5".into(), None, None);
     assert_eq!(agent.model(), "claude-haiku-4-5");
     assert_eq!(agent.max_context_tokens(), 190_000);
 }

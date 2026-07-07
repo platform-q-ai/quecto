@@ -136,6 +136,10 @@ for idx in "${!PIDS[@]}"; do
     if ! wait "$pid"; then
         FAIL=1
         echo "Shard ${shard} failed (see $TMP_DIR/shard-${shard}.log)"
+        # Surface the failure inline — on CI the log files are unreachable.
+        echo "--- shard-${shard}.log (last 80 lines) ---"
+        tail -n 80 "$TMP_DIR/shard-${shard}.log" || true
+        echo "--- end shard-${shard}.log ---"
     fi
 done
 

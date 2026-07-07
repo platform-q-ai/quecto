@@ -90,11 +90,37 @@ impl FileContextSpillStore {
     }
 
     fn spill_path(&self, session_key: &str) -> PathBuf {
-        self.base_dir
-            .join("sessions")
-            .join(super::filename::sanitize_session_key(session_key))
-            .join("spill.jsonl")
+        spill_path_for(&self.base_dir, session_key)
     }
+
+    /// Best-effort synchronous removal of a session's on-disk spill file
+    /// (plus its parent directory when that leaves it empty).
+    ///
+    /// Privacy scrub for ephemeral runs (PR #1048 security review): the spill
+    /// writers deliberately persist `--no-session` content under the sanitized
+    /// empty-key path so in-run `recall()` stubs stay resolvable, so ephemeral
+    /// interface paths (one-shot CLI, UDS, REPL) call this at run end to
+    /// guarantee that content does not outlive the run. Synchronous and
+    /// instance-free so exit paths without a live runtime or store handle can
+    /// scrub. Best-effort only: all ephemeral runs share the empty-key path,
+    /// so a concurrent ephemeral run's entries may be scrubbed early (the same
+    /// pre-existing shared-file caveat as the writers themselves).
+    pub fn scrub_session_spill_sync(base_dir: &Path, session_key: &str) {
+        let path = spill_path_for(base_dir, session_key);
+        let _ = std::fs::remove_file(&path);
+        if let Some(dir) = path.parent() {
+            // Only succeeds when the directory is now empty — never removes
+            // unrelated session files.
+            let _ = std::fs::remove_dir(dir);
+        }
+    }
+}
+
+fn spill_path_for(base_dir: &Path, session_key: &str) -> PathBuf {
+    base_dir
+        .join("sessions")
+        .join(super::filename::sanitize_session_key(session_key))
+        .join("spill.jsonl")
 }
 
 /// Lightweight index record for list_entries — avoids deserializing content.
@@ -533,6 +559,35 @@ mod tests {
         // Recall nonexistent
         let missing = store.recall("recall-test", "turn99:bash:0").await.unwrap();
         assert!(missing.is_none());
+    }
+
+    #[tokio::test]
+    async fn scrub_session_spill_sync_removes_ephemeral_spill_file_and_dir() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+        // Ephemeral runs spill under the sanitized empty key.
+        store.append("", &test_entry()).await.unwrap();
+        let path = store.spill_path("");
+        assert!(path.exists(), "positive control: the spill file must exist");
+
+        FileContextSpillStore::scrub_session_spill_sync(tmp.path(), "");
+
+        assert!(
+            !path.exists(),
+            "ephemeral spill content must not outlive the run (PR #1048 security review)"
+        );
+        assert!(
+            !path.parent().unwrap().exists(),
+            "the emptied ephemeral session dir must be removed too"
+        );
+    }
+
+    #[test]
+    fn scrub_session_spill_sync_is_a_noop_when_nothing_was_spilled() {
+        let tmp = TempDir::new().unwrap();
+        // Must not panic or create anything when no spill file exists.
+        FileContextSpillStore::scrub_session_spill_sync(tmp.path(), "");
+        assert!(!tmp.path().join("sessions").exists());
     }
 
     #[tokio::test]

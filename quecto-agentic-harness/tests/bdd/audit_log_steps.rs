@@ -157,6 +157,7 @@ fn given_context_pruned(
         tool_results_collapsed,
         tokens_before,
         tokens_after,
+        budget_unmet: false,
     };
     world.audit_event = Some(event);
 }
@@ -381,6 +382,9 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
         effort: None,
         system_prompt_provider: None,
         audit_log: Some(sink.clone() as std::sync::Arc<dyn quecto::domain::audit::AuditSink>),
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     });
 
     let rt = tokio::runtime::Runtime::new().expect("runtime");

@@ -139,6 +139,9 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     })
     .with_max_tool_iterations(max_tool_iterations);
     // Enable streaming when the scenario has set the flag (e.g. SSE mock).

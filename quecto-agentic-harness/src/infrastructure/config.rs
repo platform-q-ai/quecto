@@ -48,6 +48,13 @@ pub struct AgentDefaults {
     pub context_collapse_after_tool_calls: u32,
     #[serde(default = "default_max_context_tokens")]
     pub max_context_tokens: usize,
+    /// How many most-recent turns the spilling ceiling tail-pins (#1045).
+    #[serde(default = "default_pin_recent_turns")]
+    pub pin_recent_turns: u32,
+    /// Count-based conversation-message collapse threshold (#1046).
+    /// `u32::MAX` disables (conservative default until tuned by observation).
+    #[serde(default = "default_context_collapse_after_messages")]
+    pub context_collapse_after_messages: u32,
     /// Effort level for 4.6 models (`low`/`medium`/`high`/`max`).
     /// Defaults to `None`; provider applies `low` for 4.6 models when unset.
     #[serde(default)]
@@ -72,6 +79,8 @@ impl Default for AgentDefaults {
             max_session_messages: default_max_session_messages(),
             context_collapse_after_tool_calls: default_context_collapse_after_tool_calls(),
             max_context_tokens: default_max_context_tokens(),
+            pin_recent_turns: default_pin_recent_turns(),
+            context_collapse_after_messages: default_context_collapse_after_messages(),
             effort: None,
             command_allowlist: None,
         }
@@ -239,6 +248,14 @@ fn default_context_collapse_after_tool_calls() -> u32 {
     // tool results get collapsed to a `recall(spill_id)` stub and their full
     // content spilled to disk. Keeps the hot context small on long sessions;
     // the agent can retrieve spilled content via the `recall` tool when needed.
+    50
+}
+fn default_pin_recent_turns() -> u32 {
+    2
+}
+fn default_context_collapse_after_messages() -> u32 {
+    // Keep the 50 most recent conversation (assistant+user) messages in full;
+    // older ones collapse to recall() stubs — mirrors the tool-call default.
     50
 }
 fn default_max_context_tokens() -> usize {

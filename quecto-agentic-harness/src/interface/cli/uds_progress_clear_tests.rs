@@ -248,6 +248,60 @@ fn test_rewind_to_removes_retained_spill_references() {
     assert!(!messages.iter().any(|m| m.content.contains("recall(")));
 }
 
+#[test]
+fn test_rewind_keeps_collapsed_conversation_messages_non_empty() {
+    // #1046: `is_collapsed` no longer implies a tool stub. A collapsed
+    // user/assistant message must survive rewind as a NON-EMPTY provider turn
+    // (its stub minus the dangling recall clause) — blanking it like a tool
+    // stub sends empty text blocks to the provider, which some reject.
+    use crate::application::context_pruning::messages::message_collapse_stub;
+    let mut collapsed_assistant = Message::assistant(
+        message_collapse_stub(
+            "assistant",
+            "I analysed the logs",
+            840,
+            "turn2:msg:assistant",
+        ),
+        vec![],
+    );
+    collapsed_assistant.is_collapsed = true;
+    collapsed_assistant.spill_id = Some("turn2:msg:assistant".into());
+    let mut collapsed_tool = Message::tool("call-1", "[bash: out — recall(\"turn1:bash:0\")]");
+    collapsed_tool.is_collapsed = true;
+    collapsed_tool.spill_id = Some("turn1:bash:0".into());
+    let mut messages: Vec<Message> = vec![
+        Message::user("first"),
+        collapsed_assistant,
+        collapsed_tool,
+        Message::user("second"),
+    ];
+
+    assert!(rewind_to_message_index(&mut messages, 3));
+    let assistant = messages
+        .iter()
+        .find(|m| m.role == Role::Assistant)
+        .expect("collapsed assistant turn must be retained");
+    assert!(
+        !assistant.content.is_empty(),
+        "a collapsed conversation message must not become an empty provider turn"
+    );
+    assert!(
+        assistant.content.contains("I analysed the logs") && assistant.content.contains("840"),
+        "the stub annotation (preview + tokens) must survive rewind, got: {}",
+        assistant.content
+    );
+    assert!(
+        !assistant.content.contains("recall("),
+        "the dangling recall clause must be stripped (spill store was wiped)"
+    );
+    assert!(!assistant.is_collapsed && assistant.spill_id.is_none());
+    let tool = messages.iter().find(|m| m.role == Role::Tool).unwrap();
+    assert!(
+        tool.content.is_empty(),
+        "tool stubs keep the pre-#1046 blanking behaviour"
+    );
+}
+
 // ─── clear_history + spill store (#412) ──────────────────────────────────────
 
 #[tokio::test]

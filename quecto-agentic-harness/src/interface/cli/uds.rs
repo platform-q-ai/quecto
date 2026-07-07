@@ -471,10 +471,12 @@ async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool
             return false;
         }
     };
-    // #935: re-derive the per-model cap so a model switch re-clamps subsequent
-    // turns; set_model takes both atomically so model and cap cannot diverge.
-    let cap = ModelRegistry::model_cap_from_base_dir(ctx.base_dir, &resolved_model);
-    ctx.agent.set_model(resolved_model.clone(), cap);
+    // #935/#1044: re-derive the per-model output cap AND context window so a
+    // model switch re-clamps subsequent turns and the pruning budget; one
+    // registry load feeds both, and set_model takes them atomically so model,
+    // cap, and window can never diverge.
+    let (cap, window) = ModelRegistry::model_limits_from_base_dir(ctx.base_dir, &resolved_model);
+    ctx.agent.set_model(resolved_model.clone(), cap, window);
     ctx.session.set_model(resolved_model);
     tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched");
     let ev = AgentEvent::ok(args.id.as_deref(), &args.type_name, None);
