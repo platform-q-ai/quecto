@@ -77,10 +77,11 @@ pub struct Chat {
     combined_width: Option<usize>,
     /// Tool-expand state the offset table was built for.
     combined_tool_expanded: bool,
-    /// Test-only counters proving the incremental cache avoids redundant work.
-    #[cfg(test)]
+    /// Test/harness-only counters proving the incremental cache avoids
+    /// redundant work.
+    #[cfg(any(test, feature = "test-harness"))]
     pub entry_builds: usize,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     pub combined_extends: usize,
     /// Scroll offset from the bottom (0 = at bottom, showing most recent).
     scroll_offset: usize,
@@ -108,9 +109,9 @@ impl Chat {
             combined_offsets: Vec::new(),
             combined_width: None,
             combined_tool_expanded: false,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             entry_builds: 0,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             combined_extends: 0,
             scroll_offset: 0,
             last_render_width: None,
@@ -261,9 +262,28 @@ impl Chat {
     /// Number of retained rendered lines (tests/harness only — production never reads this).
     #[cfg(any(test, feature = "test-harness"))]
     pub fn cached_rendered_line_count(&self) -> usize {
-        self.render_cache
+        // Exhaustive destructuring (no `..`): adding a field to `Chat` fails to
+        // compile here, forcing it to be classified as raw transcript state
+        // (exempt from the bound) or rendered-line storage (counted), so a
+        // second rendered-transcript copy cannot sneak past the bounded-cache
+        // tests (#981).
+        let Self {
+            entries: _,          // raw transcript — intentionally unbounded
+            render_cache,        // rendered lines — counted below
+            combined_offsets: _, // per-entry line counts, O(entries) usize
+            combined_width: _,
+            combined_tool_expanded: _,
+            entry_builds: _,
+            combined_extends: _,
+            scroll_offset: _,
+            last_render_width: _,
+            last_render_line_count: _,
+            viewport_height: _,
+            tool_expanded: _,
+        } = self;
+        render_cache
             .iter()
-            .filter_map(|cached| cached.as_ref())
+            .flatten()
             .filter_map(|cached| cached.lines.as_ref())
             .map(|slice| slice.lines.len())
             .sum()
@@ -428,7 +448,7 @@ impl Component for Chat {
                     line_count,
                     lines,
                 });
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-harness"))]
                 {
                     self.entry_builds += 1;
                 }
@@ -441,7 +461,7 @@ impl Component for Chat {
                 .last()
                 .expect("offset table always has a base entry");
             self.combined_offsets.push(prev + cached.line_count);
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             {
                 self.combined_extends += cached.line_count;
             }
@@ -584,7 +604,7 @@ impl Chat {
                 lines,
             }),
         });
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-harness"))]
         {
             self.entry_builds += 1;
         }
