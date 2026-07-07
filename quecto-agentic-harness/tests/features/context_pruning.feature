@@ -149,6 +149,73 @@ Feature: Context pruning via sliding window and tool-call collapse
     Then the first user [message] remains in context
     And later user messages may be dropped
 
+  # --- #951: spill + recall conversation messages, not just tool outputs ---
+
+  Scenario: Budget-dropped assistant message is spilled before dropping
+    Given max_context_tokens is set to 200
+    And recent-turn pinning is set to 2 turns
+    And an old assistant message of 500 tokens on turn 1
+    When the spilling sliding window drops messages to fit budget
+    Then the spill file contains an entry with id "turn1:msg:assistant"
+    And the spill entry content matches the original assistant text
+
+  Scenario: Budget-dropped assistant message is recallable
+    Given max_context_tokens is set to 200
+    And recent-turn pinning is set to 2 turns
+    And an old assistant message of 500 tokens on turn 1
+    And the spilling sliding window has dropped messages to fit budget
+    When the agent calls recall with id "turn1:msg:assistant"
+    Then the recall result contains the full original assistant text
+
+  Scenario: Budget-dropped user message is spilled with its role in the id
+    Given max_context_tokens is set to 200
+    And recent-turn pinning is set to 2 turns
+    And an old user message of 500 tokens on turn 1
+    When the spilling sliding window drops messages to fit budget
+    Then the spill file contains an entry with id "turn1:msg:user"
+
+  Scenario: Message spills are distinguishable from tool spills in the manifest
+    Given max_context_tokens is set to 200
+    And recent-turn pinning is set to 2 turns
+    And a spilled tool result with id "turn1:bash:0"
+    And an old assistant message of 500 tokens on turn 1
+    When the spilling sliding window drops messages to fit budget
+    Then the manifest contains "turn1:bash:0"
+    And the manifest contains "turn1:msg:assistant"
+
+  Scenario: Manifest reflects a message spill on a turn with no tool calls
+    Given max_context_tokens is set to 200
+    And recent-turn pinning is set to 2 turns
+    And an old assistant message of 500 tokens on turn 1
+    When the agent completes a prompt with no tool calls
+    Then a pinned manifest [message] appears in context
+    And the manifest contains "turn1:msg:assistant"
+
+  Scenario: System prompt and manifest are never dropped by the spilling sliding window
+    Given max_context_tokens is set to 10
+    And recent-turn pinning is set to 2 turns
+    And a system prompt in the conversation
+    And a spilled tool result with id "turn1:bash:0"
+    And an old assistant message of 500 tokens on turn 1
+    When the spilling sliding window drops messages to fit budget
+    Then the system [message] remains in full context
+    And the manifest [message] remains in context
+
+  Scenario: Most-recent turns are never dropped by the sliding window
+    Given max_context_tokens is set to 10
+    And recent-turn pinning is set to 2 turns
+    And messages from turns 1 through 4 each exceeding the budget
+    When the spilling sliding window drops messages to fit budget
+    Then messages from the most recent 2 turns remain in context
+    And messages from older turns are dropped
+
+  Scenario: Current user prompt is never dropped by the sliding window
+    Given max_context_tokens is set to 50
+    And recent-turn pinning is set to 2 turns
+    And a user prompt exceeding the budget
+    When the spilling sliding window drops messages to fit budget
+    Then the current user prompt remains in context
+
   # --- #305: Improved token estimation heuristic ---
 
   Scenario: Token estimation uses 4 chars per token for ASCII prose

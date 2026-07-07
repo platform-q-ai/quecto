@@ -302,6 +302,8 @@ impl AgentLoopImpl {
             Message::assistant(response.content.unwrap_or_default(), response.tool_calls);
         assistant.stop_reason = response.stop_reason;
         assistant.thinking_blocks = response.thinking_blocks;
+        // Stamp the turn: a budget drop spills this as turn{N}:msg:assistant (#951).
+        assistant.turn = Some(current_turn);
         messages.push(assistant);
         let assistant_index = messages.len() - 1;
         let tool_call_count = messages[assistant_index].tool_calls.len();
@@ -416,9 +418,8 @@ impl AgentLoopImpl {
             return;
         };
 
-        // Take content out of the message to avoid cloning up to 1MB of tool output.
-        // The content is moved into the SpillEntry, used for the append (which borrows),
-        // then moved back into the message.
+        // Move (not clone) the content into the SpillEntry for the borrowing
+        // append, then move it back — avoids copying up to 1MB of tool output.
         let content = std::mem::take(&mut tool_msg.content);
         let entry = SpillEntry {
             id: tool_msg.spill_id.clone().unwrap_or_default(),
@@ -564,8 +565,7 @@ impl AgentLoopImpl {
         let tool_defs = self.tool_registry.definitions();
         let mut iterations: u32 = 0;
         let mut current_turn: u32 = 1;
-        // Track whether spills happened so we only rebuild manifest when needed.
-        // Start true to build initial manifest from any prior session spills.
+        // True when the manifest needs a rebuild; starts true for prior spills.
         let mut spills_dirty = true;
         let mut usage_totals = UsageTotals::default();
         // Count of model-malformed requests turned into addressable feedback.
@@ -624,7 +624,7 @@ impl AgentLoopImpl {
                             error = %e,
                             "provider rejected request as malformed — re-prompting with addressable feedback"
                         );
-                        append_malformed_feedback(messages, &e);
+                        append_malformed_feedback(messages, &e, current_turn);
                         current_turn += 1;
                         continue;
                     }

@@ -18,9 +18,33 @@ impl AgentLoopImpl {
             messages,
             self.context_collapse_after_tool_calls,
         );
-        let dropped = context_pruning::enforce_context_ceiling(messages, self.max_context_tokens);
-        // Only rebuild manifest when spills have changed (new tool results spilled)
-        if spills_dirty {
+        // Enforce the token ceiling with tail-pinning, spilling dropped
+        // conversation messages (assistant/user) so they stay recallable (#951).
+        let (dropped, message_spilled) = match self.spill_store {
+            Some(ref spill_store) => {
+                context_pruning::enforce_context_ceiling_spilling_to_store(
+                    messages,
+                    self.max_context_tokens,
+                    context_pruning::DEFAULT_PIN_RECENT_TURNS,
+                    spill_store.as_ref(),
+                    &self.session_key,
+                )
+                .await
+            }
+            None => (
+                context_pruning::enforce_context_ceiling_spilling(
+                    messages,
+                    self.max_context_tokens,
+                    context_pruning::DEFAULT_PIN_RECENT_TURNS,
+                )
+                .len(),
+                false,
+            ),
+        };
+        // Rebuild the manifest when spills have changed: new tool results
+        // spilled last turn, or the ceiling just spilled conversation messages
+        // (which can happen on a turn with no tool calls at all).
+        if spills_dirty || message_spilled {
             if let Some(ref spill_store) = self.spill_store {
                 context_pruning::update_spill_manifest(
                     messages,

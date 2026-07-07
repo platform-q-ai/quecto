@@ -256,6 +256,21 @@ pub enum Role {
     Tool,
 }
 
+impl Role {
+    /// Canonical lowercase wire/persistence name for the role. The single
+    /// source of truth for role strings — spill ids, session persistence,
+    /// the UDS protocol, and provider adapters all use this so they can
+    /// never diverge (mirrors `ProviderErrorClass::as_str`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Tool => "tool",
+        }
+    }
+}
+
 /// A tool invocation requested by the LLM.
 #[derive(Debug)]
 pub struct ToolCall {
