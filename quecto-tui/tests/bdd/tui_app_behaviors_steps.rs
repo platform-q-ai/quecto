@@ -533,6 +533,32 @@ fn given_fresh_tool_rendering_harness(world: &mut TuiWorld) {
     init_fresh(world);
 }
 
+#[given(regex = r#"^a TUI tool rendering viewport that is (\d+) display columns wide$"#)]
+fn given_tui_tool_rendering_viewport(world: &mut TuiWorld, width: usize) {
+    world.tui_tool_viewport_width = Some(width);
+}
+
+#[when("a tool result contains an uninterrupted long value")]
+fn when_tool_result_contains_uninterrupted_long_value(world: &mut TuiWorld) {
+    let width = world
+        .tui_tool_viewport_width
+        .expect("tool viewport width set");
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let mut h = rt.block_on(TuiHarness::sized(width, 30));
+    h.event(tool_start(
+        "bdd-generic",
+        "custom_tool",
+        serde_json::json!({ "query": "demo" }),
+    ));
+    h.event(tool_success(
+        "bdd-generic",
+        "custom_tool",
+        "alpha-beta-gamma-delta-epsilon-zeta",
+    ));
+    world.tui_parity_rt = Some(rt);
+    world.tui_parity = Some(TuiParityHarness(h));
+}
+
 #[when(expr = "a bash tool call runs command {string} with {int} output lines")]
 fn when_bash_tool_call_runs(world: &mut TuiWorld, command: String, line_count: u32) {
     let output = (1..=line_count)
@@ -595,6 +621,19 @@ fn then_tool_rendering_shows(world: &mut TuiWorld, expected: String) {
     );
 }
 
+#[then("the tool rendering includes the complete uninterrupted long value")]
+fn then_tool_rendering_includes_complete_long_value(world: &mut TuiWorld) {
+    let frame = drive(world, |h| h.full_frame());
+    let joined_tool_pane_lines: String = frame
+        .lines()
+        .filter_map(|line| line.split_once('│').map(|(_, pane)| pane.trim()))
+        .collect();
+    assert!(
+        joined_tool_pane_lines.contains("alpha-beta-gamma-delta-epsilon-zeta"),
+        "tool rendering should include the complete long value, got:\n{frame}"
+    );
+}
+
 #[then(expr = "the tool rendering hides {string}")]
 fn then_tool_rendering_hides(world: &mut TuiWorld, unexpected: String) {
     let frame = drive(world, |h| h.full_frame());
@@ -611,6 +650,21 @@ fn then_raw_tool_frame_has_no_title_escapes(world: &mut TuiWorld) {
         !raw.contains("\u{1b}]") && !raw.contains("\u{9d}"),
         "raw rendered frame must not contain OSC/title controls, got:\n{raw:?}"
     );
+}
+
+#[then("every tool rendering line should fit within the viewport")]
+fn then_every_tool_rendering_line_fits_viewport(world: &mut TuiWorld) {
+    let width = world
+        .tui_tool_viewport_width
+        .expect("tool viewport width set");
+    let frame = drive(world, |h| h.full_frame());
+    for line in frame.lines() {
+        assert!(
+            visible_width(line) <= width,
+            "tool rendering line must fit within {width} display columns, got {}: {line:?}\nframe:\n{frame}",
+            visible_width(line)
+        );
+    }
 }
 
 fn workflow_rule_lines(frame: &str) -> Vec<String> {

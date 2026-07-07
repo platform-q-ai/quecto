@@ -23,6 +23,18 @@ Feature: TUI tool execution rendering
     And the tool rendering hides "pwned-title"
     And the raw tool frame does not contain terminal title escape controls
 
+  Scenario Outline: Long tool output remains readable within the viewport
+    Given a TUI tool rendering viewport that is <width> display columns wide
+    When a tool result contains an uninterrupted long value
+    Then the tool rendering includes the complete uninterrupted long value
+    And every tool rendering line should fit within the viewport
+
+    Examples:
+      | width |
+      | 31    |
+      | 32    |
+      | 33    |
+
   Scenario: Workflow tool calls render action summaries and first result line
     Given a fresh TUI tool rendering harness
     When a workflow tool call checks step 2 with multiline result

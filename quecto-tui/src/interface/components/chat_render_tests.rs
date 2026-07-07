@@ -267,6 +267,158 @@ fn render_tool_success() {
     );
 }
 
+#[test]
+fn render_tool_long_unbroken_result_wraps_without_losing_text() {
+    let lines = render_tool_execution(ToolRenderArgs {
+        tool_name: "custom_tool",
+        args_json: &Some(serde_json::json!({"query": "demo"})),
+        result: Some("alpha-beta-gamma-delta-epsilon-zeta"),
+        is_error: false,
+        duration_ms: None,
+        expanded: false,
+        width: 32,
+    });
+    let joined_visible_lines: String = lines
+        .iter()
+        .map(|line| strip_ansi(line).trim().to_string())
+        .collect();
+    assert!(
+        joined_visible_lines.contains("alpha-beta-gamma-delta-epsilon-zeta"),
+        "long tool output should remain readable without truncation: {joined_visible_lines:?}"
+    );
+    for line in lines {
+        let plain = strip_ansi(&line);
+        assert!(
+            visible_width(&plain) <= 32,
+            "rendered tool line must fit width 32, got {}: {plain:?}",
+            visible_width(&plain)
+        );
+    }
+}
+
+/// The "output truncated" hint must itself wrap at narrow widths instead of
+/// losing its "Ctrl+O to expand" affordance to downstream truncation.
+#[test]
+fn render_tool_truncation_hint_wraps_at_narrow_width() {
+    let huge = "x".repeat(400);
+    let lines = render_tool_execution(ToolRenderArgs {
+        tool_name: "custom_tool",
+        args_json: &None,
+        result: Some(&huge),
+        is_error: false,
+        duration_ms: None,
+        expanded: false,
+        width: 20,
+    });
+    let joined: String = lines
+        .iter()
+        .map(|l| strip_ansi(l).trim().to_string() + " ")
+        .collect();
+    assert!(
+        joined.contains("Ctrl+O to expand"),
+        "truncation hint should stay fully readable at narrow widths: {joined:?}"
+    );
+    for line in lines {
+        let plain = strip_ansi(&line);
+        assert!(
+            visible_width(&plain) <= 20,
+            "rendered line must fit width 20, got {}: {plain:?}",
+            visible_width(&plain)
+        );
+    }
+}
+
+/// Expanded mode has no row cap: the complete long payload must survive,
+/// wrapped to the viewport (a regression back to truncation must fail this).
+#[test]
+fn render_tool_expanded_long_result_wraps_completely() {
+    let huge = "x".repeat(400);
+    let lines = render_tool_execution(ToolRenderArgs {
+        tool_name: "custom_tool",
+        args_json: &None,
+        result: Some(&huge),
+        is_error: false,
+        duration_ms: None,
+        expanded: true,
+        width: 32,
+    });
+    let x_count: usize = lines
+        .iter()
+        .map(|l| strip_ansi(l).matches('x').count())
+        .sum();
+    assert_eq!(
+        x_count, 400,
+        "expanded output must retain the entire payload: {lines:?}"
+    );
+    for line in lines {
+        let plain = strip_ansi(&line);
+        assert!(
+            visible_width(&plain) <= 32,
+            "rendered line must fit width 32, got {}: {plain:?}",
+            visible_width(&plain)
+        );
+    }
+}
+
+/// The error path (different colour fn) must wrap long output to the
+/// viewport exactly like the success path.
+#[test]
+fn render_tool_error_long_result_wraps_within_viewport() {
+    let lines = render_tool_execution(ToolRenderArgs {
+        tool_name: "custom_tool",
+        args_json: &None,
+        result: Some("alpha-beta-gamma-delta-epsilon-zeta"),
+        is_error: true,
+        duration_ms: None,
+        expanded: false,
+        width: 20,
+    });
+    let joined: String = lines
+        .iter()
+        .map(|l| strip_ansi(l).trim().to_string())
+        .collect();
+    assert!(
+        joined.contains("alpha-beta-gamma-delta-epsilon-zeta"),
+        "long error output should remain readable: {joined:?}"
+    );
+    for line in lines {
+        let plain = strip_ansi(&line);
+        assert!(
+            visible_width(&plain) <= 20,
+            "rendered error line must fit width 20, got {}: {plain:?}",
+            visible_width(&plain)
+        );
+    }
+}
+
+/// Truncating a collapsed over-long line must not leak escape fragments:
+/// truncate_to_width appends an SGR reset which wrap_text would split across
+/// rows, leaving a dangling raw ESC and a literal "[0m" text row.
+#[test]
+fn render_tool_truncated_line_leaks_no_escape_fragments() {
+    let huge = "x".repeat(400);
+    let lines = render_tool_execution(ToolRenderArgs {
+        tool_name: "custom_tool",
+        args_json: &None,
+        result: Some(&huge),
+        is_error: false,
+        duration_ms: None,
+        expanded: false,
+        width: 20,
+    });
+    for line in lines {
+        assert!(
+            !line.contains("\x1b\x1b"),
+            "rendered line must not contain a dangling bare ESC: {line:?}"
+        );
+        let plain = strip_ansi(&line);
+        assert!(
+            !plain.contains("[0m"),
+            "no escape fragment may surface as visible text: {plain:?}"
+        );
+    }
+}
+
 /// Security (#865): a sub-agent-influenced `agent_cmd` result body must have
 /// its terminal control sequences stripped before rendering, so a malicious
 /// sub-agent cannot inject ANSI/OSC escapes into the operator's terminal.

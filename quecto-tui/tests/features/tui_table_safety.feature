@@ -45,6 +45,32 @@ Feature: TUI markdown table safety and correctness
     Then truncation should use display width not byte length
 
   @markdown-render
+  Scenario Outline: Wide table content remains readable within the viewport
+    Given markdown content with a table containing a long cell value
+    When the markdown is rendered in a viewport that is <width> display columns wide
+    Then the markdown output should contain the complete long cell value
+    And every markdown output line should fit within the viewport
+
+    Examples:
+      | width |
+      | 31    |
+      | 32    |
+      | 33    |
+
+  @markdown-render
+  Scenario Outline: Long first-column cell wraps within its column without displacing later columns
+    Given markdown content with a three column table whose first cell is a long value
+    When the markdown is rendered in a viewport that is <width> display columns wide
+    Then every markdown output line should fit within the viewport
+    And the later table columns should stay aligned under their headers
+
+    Examples:
+      | width |
+      | 31    |
+      | 33    |
+      | 40    |
+
+  @markdown-render
   Scenario: Markdown blocks keep visible text while stripping unsafe links and code language controls
     Given markdown content with a heading, quote, list, unsafe link, and code fence
     When the markdown is rendered at width 80
