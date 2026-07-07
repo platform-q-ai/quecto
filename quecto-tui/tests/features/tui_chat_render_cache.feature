@@ -24,3 +24,4 @@ Feature: Chat render cache remains bounded in long sessions (#981)
     Given the chat transcript is much longer than the visible viewport
     When the same conversation window is rendered with cache eviction enabled
     Then the visible transcript content matches an uncached render
+    And rendered chat lines are retained only near the visible window

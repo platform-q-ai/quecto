@@ -1,21 +1,5 @@
 use super::*;
-
-fn strip_ansi(s: &str) -> String {
-    let mut result = String::new();
-    let mut in_escape = false;
-    for ch in s.chars() {
-        if in_escape {
-            if ch.is_ascii_alphabetic() || ch == '~' {
-                in_escape = false;
-            }
-        } else if ch == '\x1b' {
-            in_escape = true;
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
+use crate::interface::ansi::strip_ansi;
 
 fn render_plain(chat: &mut Chat, width: usize) -> String {
     let lines = chat.render(width);
@@ -86,10 +70,40 @@ fn evicted_history_rerenders_when_scrolled_back_without_losing_position() {
 }
 
 #[test]
+fn large_entry_retains_only_nearby_rendered_lines() {
+    let mut chat = Chat::new();
+    let long_message = (0..1_000)
+        .map(|i| format!("wrapped history line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    chat.add_entry(ChatEntry::Assistant {
+        text: long_message,
+        streaming: false,
+    });
+    chat.set_viewport_height(8);
+
+    let tail = render_plain(&mut chat, 80);
+
+    assert!(
+        tail.contains("wrapped history line 999"),
+        "large entry tail should render: {tail}"
+    );
+    assert!(
+        chat.cached_rendered_line_count() <= 8 * 5,
+        "large overlapping entries should retain only the viewport window, cached {} rendered lines",
+        chat.cached_rendered_line_count()
+    );
+}
+
+#[test]
 fn cache_eviction_preserves_visible_transcript_content() {
     let mut bounded = chat_with_long_history(200);
     bounded.set_viewport_height(8);
     let bounded_tail = render_plain(&mut bounded, 80);
+    assert!(
+        bounded.cached_rendered_line_count() <= 8 * 8,
+        "render cache should be bounded before comparing visible content"
+    );
 
     let mut uncached = chat_with_long_history(200);
     let full_lines: Vec<String> = uncached
@@ -106,6 +120,10 @@ fn cache_eviction_preserves_visible_transcript_content() {
 
     bounded.scroll_up(64);
     let bounded_history = render_plain(&mut bounded, 80);
+    assert!(
+        bounded.cached_rendered_line_count() <= 8 * 8,
+        "history comparison should also keep the render cache bounded"
+    );
     let history_end = full_lines.len() - 64;
     let expected_history = full_lines[history_end - 8..history_end].join("\n");
 

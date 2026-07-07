@@ -46,12 +46,19 @@ pub enum ChatEntry {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CachedLineSlice {
+    /// Entry-local line index corresponding to `lines[0]`.
+    start: usize,
+    lines: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 struct CachedEntryRender {
     width: usize,
     tool_expanded: bool,
     line_count: usize,
-    lines: Option<Vec<String>>,
+    lines: Option<CachedLineSlice>,
 }
 
 /// Chat display component.
@@ -258,7 +265,7 @@ impl Chat {
             .iter()
             .filter_map(|cached| cached.as_ref())
             .filter_map(|cached| cached.lines.as_ref())
-            .map(Vec::len)
+            .map(|slice| slice.lines.len())
             .sum()
     }
 
@@ -396,7 +403,7 @@ impl Component for Chat {
                     width,
                     tool_expanded,
                     line_count: lines.len(),
-                    lines: Some(lines),
+                    lines: Some(CachedLineSlice { start: 0, lines }),
                 });
                 #[cfg(test)]
                 {
@@ -495,33 +502,54 @@ impl Chat {
             if entry_start >= end {
                 break;
             }
-            self.ensure_rendered_lines(idx, width, tool_expanded);
-            let lines = self.render_cache[idx]
+            let lo = start.saturating_sub(entry_start);
+            let hi = (end - entry_start).min(entry_end - entry_start);
+            self.ensure_rendered_line_slice(idx, lo, hi, width, tool_expanded);
+            let slice = self.render_cache[idx]
                 .as_ref()
                 .and_then(|cached| cached.lines.as_ref())
                 .expect("covered entry must have rendered lines");
-            let lo = start.saturating_sub(entry_start);
-            let hi = (end - entry_start).min(lines.len());
-            out.extend_from_slice(&lines[lo..hi]);
+            let slice_lo = lo.saturating_sub(slice.start);
+            let slice_hi = hi.saturating_sub(slice.start).min(slice.lines.len());
+            out.extend_from_slice(&slice.lines[slice_lo..slice_hi]);
         }
         out
     }
 
-    fn ensure_rendered_lines(&mut self, idx: usize, width: usize, tool_expanded: bool) {
+    fn ensure_rendered_line_slice(
+        &mut self,
+        idx: usize,
+        start: usize,
+        end: usize,
+        width: usize,
+        tool_expanded: bool,
+    ) {
         let needs_render = !matches!(
             &self.render_cache[idx],
-            Some(c) if c.width == width && c.tool_expanded == tool_expanded && c.lines.is_some()
+            Some(c)
+                if c.width == width
+                    && c.tool_expanded == tool_expanded
+                    && c.lines
+                        .as_ref()
+                        .is_some_and(|slice| start >= slice.start && end <= slice.start + slice.lines.len())
         );
         if !needs_render {
             return;
         }
 
-        let lines = Self::render_entry(&self.entries[idx], width, tool_expanded);
+        let mut lines = Self::render_entry(&self.entries[idx], width, tool_expanded);
+        let line_count = lines.len();
+        let bounded_start = start.min(line_count);
+        let bounded_end = end.min(line_count).max(bounded_start);
+        let lines = lines.drain(bounded_start..bounded_end).collect();
         self.render_cache[idx] = Some(CachedEntryRender {
             width,
             tool_expanded,
-            line_count: lines.len(),
-            lines: Some(lines),
+            line_count,
+            lines: Some(CachedLineSlice {
+                start: bounded_start,
+                lines,
+            }),
         });
         #[cfg(test)]
         {
@@ -534,11 +562,37 @@ impl Chat {
         for idx in 0..entry_count {
             let entry_start = self.combined_offsets[idx];
             let entry_end = self.combined_offsets[idx + 1];
-            if (entry_end <= retain_start || entry_start >= retain_end)
-                && let Some(cached) = self.render_cache[idx].as_mut()
-            {
+            let Some(cached) = self.render_cache[idx].as_mut() else {
+                continue;
+            };
+            if entry_end <= retain_start || entry_start >= retain_end {
                 cached.lines = None;
+                continue;
             }
+
+            let Some(slice) = cached.lines.as_mut() else {
+                continue;
+            };
+            let keep_start = retain_start
+                .saturating_sub(entry_start)
+                .min(cached.line_count);
+            let keep_end = retain_end
+                .saturating_sub(entry_start)
+                .min(cached.line_count)
+                .max(keep_start);
+            let slice_end = slice.start + slice.lines.len();
+            let overlap_start = slice.start.max(keep_start);
+            let overlap_end = slice_end.min(keep_end);
+            if overlap_start >= overlap_end {
+                cached.lines = None;
+                continue;
+            }
+
+            let drain_prefix = overlap_start - slice.start;
+            let drain_suffix_from = overlap_end - slice.start;
+            slice.lines.drain(drain_suffix_from..);
+            slice.lines.drain(..drain_prefix);
+            slice.start = overlap_start;
         }
     }
 }

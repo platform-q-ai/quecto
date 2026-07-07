@@ -2,29 +2,13 @@
 
 use crate::TuiWorld;
 use cucumber::{given, then, when};
+use quecto_tui::interface::ansi::strip_ansi;
 use quecto_tui::interface::component::Component;
 use quecto_tui::interface::components::chat::{Chat, ChatEntry};
 
 const ENTRY_COUNT: usize = 200;
 const VIEWPORT_HEIGHT: usize = 8;
 const WIDTH: usize = 80;
-
-fn strip_ansi(s: &str) -> String {
-    let mut result = String::new();
-    let mut in_escape = false;
-    for ch in s.chars() {
-        if in_escape {
-            if ch.is_ascii_alphabetic() || ch == '~' {
-                in_escape = false;
-            }
-        } else if ch == '\x1b' {
-            in_escape = true;
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
 
 fn render_plain(chat: &mut Chat) -> String {
     chat.render(WIDTH)

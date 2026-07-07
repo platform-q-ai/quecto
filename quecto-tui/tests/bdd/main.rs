@@ -115,7 +115,7 @@ pub struct TuiWorld {
     pub tui_viewport_after_stream: Vec<String>,
     /// TUI #981 render-cache BDD: tail render captured before scrollback.
     pub tui_chat_cache_tail: Option<String>,
-    /// TUI #981 render-cache BDD: full unbounded render baseline.
+    /// TUI #981 render-cache BDD: full render baseline.
     pub tui_chat_cache_full_lines: Vec<String>,
     // --- TUI markdown table safety BDD ---
     pub tui_table_rendered: Option<Vec<String>>,
