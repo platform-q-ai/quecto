@@ -528,16 +528,7 @@ impl Chat {
             }
             let lo = start.saturating_sub(entry_start);
             let hi = (end - entry_start).min(entry_end - entry_start);
-            // Render the retention margin along with the visible span so a
-            // boundary entry is not fully re-rendered on every scroll step;
-            // eviction keeps the same window, so the extra lines survive.
-            self.ensure_rendered_line_slice(
-                idx,
-                lo.saturating_sub(retain_margin),
-                hi.saturating_add(retain_margin),
-                width,
-                tool_expanded,
-            );
+            self.ensure_rendered_line_slice(idx, lo..hi, retain_margin, width, tool_expanded);
             let slice = self.render_cache[idx]
                 .as_ref()
                 .and_then(|cached| cached.lines.as_ref())
@@ -549,24 +540,26 @@ impl Chat {
         out
     }
 
+    /// Guarantee the cached slice for entry `idx` covers the visible span.
+    /// Coverage is checked against the visible span only, but a re-render
+    /// stores `margin` extra lines on each side, so subsequent scroll steps
+    /// consume the margin before another full `render_entry` — one amortized
+    /// re-render per `margin` lines of scrolling.
     fn ensure_rendered_line_slice(
         &mut self,
         idx: usize,
-        start: usize,
-        end: usize,
+        span: std::ops::Range<usize>,
+        margin: usize,
         width: usize,
         tool_expanded: bool,
     ) {
-        // The requested range may extend past the entry (retention margin);
-        // clamp to the cached line count before checking slice coverage.
         let needs_render = !matches!(
             &self.render_cache[idx],
             Some(c)
                 if c.width == width
                     && c.tool_expanded == tool_expanded
                     && c.lines.as_ref().is_some_and(|slice| {
-                        start.min(c.line_count) >= slice.start
-                            && end.min(c.line_count) <= slice.start + slice.lines.len()
+                        span.start >= slice.start && span.end <= slice.start + slice.lines.len()
                     })
         );
         if !needs_render {
@@ -575,8 +568,12 @@ impl Chat {
 
         let mut lines = Self::render_entry(&self.entries[idx], width, tool_expanded);
         let line_count = lines.len();
-        let bounded_start = start.min(line_count);
-        let bounded_end = end.min(line_count).max(bounded_start);
+        let bounded_start = span.start.saturating_sub(margin).min(line_count);
+        let bounded_end = span
+            .end
+            .saturating_add(margin)
+            .min(line_count)
+            .max(bounded_start);
         let lines = lines.drain(bounded_start..bounded_end).collect();
         self.render_cache[idx] = Some(CachedEntryRender {
             width,

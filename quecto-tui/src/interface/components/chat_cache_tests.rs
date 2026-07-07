@@ -222,6 +222,114 @@ fn scrolling_back_down_restores_the_live_tail() {
 }
 
 #[test]
+fn scrolling_within_a_tall_entry_reuses_the_margin_instead_of_rerendering() {
+    let mut chat = Chat::new();
+    let long_message = (0..1_000)
+        .map(|i| format!("wrapped history line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    chat.add_entry(ChatEntry::Assistant {
+        text: long_message,
+        streaming: false,
+    });
+    let height = 8;
+    chat.set_viewport_height(height);
+    let _ = chat.render(80);
+    chat.scroll_up(500);
+    let _ = chat.render(80);
+
+    chat.entry_builds = 0;
+    for _ in 0..height {
+        chat.scroll_up(1);
+        let _ = chat.render(80);
+    }
+    assert_eq!(
+        chat.entry_builds, 0,
+        "scroll steps within the retention margin must not re-render the tall entry"
+    );
+
+    // Exhausting the margin re-renders once, then the margin refills.
+    chat.scroll_up(height * (RENDER_CACHE_RETAIN_VIEWPORTS + 1));
+    let _ = chat.render(80);
+    assert!(
+        chat.entry_builds <= 1,
+        "moving past the margin should cost at most one amortized re-render, got {}",
+        chat.entry_builds
+    );
+}
+
+#[test]
+fn toggling_tool_expand_after_eviction_matches_uncached_render() {
+    let build = || {
+        let mut chat = Chat::new();
+        for i in 0..100 {
+            chat.start_tool(format!("t{i}"), "bash".into(), r#"{"command":"ls"}"#.into());
+            chat.complete_tool(&format!("t{i}"), "a\nb\nc\nd\ne", false, Some(7));
+        }
+        chat
+    };
+
+    let mut chat = build();
+    chat.set_viewport_height(8);
+    let _ = chat.render(80);
+    chat.toggle_tool_expand();
+    chat.scroll_up(30);
+    let expanded_window = render_plain(&mut chat, 80);
+
+    let mut baseline = build();
+    baseline.toggle_tool_expand();
+    let full_lines: Vec<String> = baseline
+        .render(80)
+        .into_iter()
+        .map(|l| strip_ansi(&l))
+        .collect();
+    let window_end = full_lines.len() - 30;
+    let expected = full_lines[window_end - 8..window_end].join("\n");
+    assert_eq!(
+        expanded_window, expected,
+        "expanding tools after eviction must match an uncached expanded render"
+    );
+    assert!(
+        chat.cached_rendered_line_count() <= chat.rendered_line_retention_bound(),
+        "tool expansion must keep the render cache bounded"
+    );
+}
+
+#[test]
+fn streaming_with_eviction_stays_single_render_and_keeps_scroll_anchor() {
+    let mut chat = chat_with_long_history(200);
+    chat.set_viewport_height(8);
+    chat.append_token("streamed start");
+    let _ = chat.render(80);
+
+    chat.entry_builds = 0;
+    chat.append_token(" and more");
+    let tail = render_plain(&mut chat, 80);
+    assert!(
+        tail.contains("streamed start and more"),
+        "streamed tail should render: {tail}"
+    );
+    assert_eq!(
+        chat.entry_builds, 1,
+        "a streamed token must re-render only the tail entry"
+    );
+    assert!(
+        chat.cached_rendered_line_count() <= chat.rendered_line_retention_bound(),
+        "streaming must keep the render cache bounded"
+    );
+
+    // While scrolled into history, appended tokens must not move the viewport.
+    chat.scroll_up(40);
+    let anchored = render_plain(&mut chat, 80);
+    chat.append_token(" trailing growth");
+    let after_growth = render_plain(&mut chat, 80);
+    assert_eq!(
+        anchored, after_growth,
+        "streaming growth below the viewport must not move an anchored scrollback view"
+    );
+}
+
+#[test]
 fn prepend_history_after_eviction_renders_prepended_content() {
     let mut chat = chat_with_long_history(200);
     chat.set_viewport_height(8);
