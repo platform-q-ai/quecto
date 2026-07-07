@@ -267,6 +267,122 @@ async fn current_user_prompt_survives_tight_budget() {
     );
 }
 
+// --- spill-append failure: no dangling spill_id, no unresolvable stubs ---
+
+/// Spill store whose `append` always fails (disk full / permissions).
+#[derive(Debug, Default)]
+struct FailingSpillStore;
+
+impl ContextSpillStore for FailingSpillStore {
+    fn append(
+        &self,
+        _session_key: &str,
+        _entry: &SpillEntry,
+    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
+    {
+        Box::pin(async {
+            Err(crate::domain::error::DomainError::Session(
+                "disk full".into(),
+            ))
+        })
+    }
+
+    fn recall(
+        &self,
+        _session_key: &str,
+        _id: &str,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn list_entries(
+        &self,
+        _session_key: &str,
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        Arc<Vec<crate::domain::session::SpillIndex>>,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Ok(Arc::new(Vec::new())) })
+    }
+
+    fn clear(
+        &self,
+        _session_key: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
+    {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+#[tokio::test]
+async fn failed_tool_spill_leaves_no_spill_id_and_blocks_collapse() {
+    // A failed append must NOT stamp spill_id (symmetric with the
+    // conversation writer): a dangling id would let tool-result collapse mint
+    // an unresolvable recall() stub and lose the output permanently.
+    let provider = Arc::new(MockProvider::new(vec![
+        tool_call_response("bash", r#"{"command":"echo hi"}"#),
+        text_response("done"),
+    ]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(MockTool::new("bash", "irreplaceable output")));
+
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(registry),
+        model: "test-model".to_string(),
+        max_tokens: 1024,
+        temperature: 0.7,
+        spill_store: Some(Arc::new(FailingSpillStore)),
+        session_key: "test-session".to_string(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    });
+
+    let mut messages = vec![Message::user("run it")];
+    agent.run_loop(&mut messages).await.unwrap();
+
+    let tool_msg = messages.iter().find(|m| m.role == Role::Tool).unwrap();
+    assert_eq!(
+        tool_msg.spill_id, None,
+        "spill_id must be stamped only after a successful append"
+    );
+    assert_eq!(
+        tool_msg.content, "irreplaceable output",
+        "content must survive the failed spill"
+    );
+
+    // And the collapse trigger must skip the unspilled result entirely.
+    let mut msgs = messages.clone();
+    let collapsed = context_pruning::collapse_tool_results_over_limit(&mut msgs, 0);
+    assert_eq!(collapsed, 0, "unspilled tool results must never be stubbed");
+    let tool_after = msgs.iter().find(|m| m.role == Role::Tool).unwrap();
+    assert!(
+        !tool_after.is_collapsed && tool_after.content == "irreplaceable output",
+        "an unresolvable recall() stub must never replace unspilled output"
+    );
+}
+
 // --- ephemeral sessions (empty key): both spill writers must persist ---
 // Pins the tool/conversation spill symmetry for `--no-session` runs (see the
 // NOTE in agent_loop_spill.rs): recall() stubs minted by collapse or the

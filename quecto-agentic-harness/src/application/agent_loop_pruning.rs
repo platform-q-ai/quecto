@@ -94,8 +94,11 @@ impl AgentLoopImpl {
     /// File every not-yet-spilled conversation message through the single
     /// spill writer (#1046 AC1). Returns true when anything was written.
     async fn spill_unspilled_conversation_messages(&self, messages: &mut [Message]) -> bool {
-        // Ephemeral sessions (empty key) leave no files on disk — the shared
-        // writer guards on the empty key, so this loop is a no-op for them.
+        // Ephemeral sessions (empty key) spill to disk too — deliberately, so
+        // collapse/ladder recall() stubs stay resolvable within the run (see
+        // the NOTE in agent_loop_spill.rs). The ephemeral interface paths
+        // scrub the empty-key spill file at run end, so nothing persists
+        // beyond the run.
         let Some(ref spill_store) = self.spill_store else {
             return false;
         };

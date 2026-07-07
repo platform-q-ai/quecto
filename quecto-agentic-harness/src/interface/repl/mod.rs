@@ -371,6 +371,7 @@ pub fn run_repl<R: BufRead, W: Write>(
             if let Some(handle) = spinner_handle {
                 handle.stop();
             }
+            crate::interface::shared::scrub_ephemeral_spill(ctx.base_dir, ephemeral);
             return code;
         }
     };
@@ -398,6 +399,8 @@ pub fn run_repl<R: BufRead, W: Write>(
     if let Some(handle) = spinner_handle {
         handle.stop();
     }
+    // An ephemeral (`-s -`) REPL persisted spill content only for in-run recall.
+    crate::interface::shared::scrub_ephemeral_spill(ctx.base_dir, ephemeral);
     code
 }
 

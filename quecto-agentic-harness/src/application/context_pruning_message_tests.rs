@@ -697,3 +697,33 @@ async fn creation_spill_third_collision_mints_suffix_3() {
         "turn1:msg:assistant:3 must recall the THIRD colliding message"
     );
 }
+
+// --- rewind stub stripping: rfind, not find (PR #1048 round-2 review) ---
+
+#[test]
+fn stub_without_recall_strips_only_the_trailing_clause() {
+    // The 60-char preview is arbitrary user text and can itself contain the
+    // " — recall(" marker (e.g. a user pasting a stub back into chat). Only
+    // the formatter-appended trailing clause may be stripped; a first-match
+    // implementation truncates inside the preview and corrupts the stub.
+    let pasted = r#"[user: "x" (5 tokens) — recall("id")] please explain"#;
+    let stub = message_collapse_stub("user", pasted, 13, "turn3:msg:user");
+    let stripped = message_stub_without_recall(&stub);
+    assert!(
+        !stripped.contains("turn3:msg:user"),
+        "the real trailing recall clause must be stripped, got: {stripped}"
+    );
+    assert!(
+        stripped.contains(r#"recall("id")"#),
+        "the preview text (including a quoted recall marker) must be intact, got: {stripped}"
+    );
+    assert!(
+        stripped.contains("(13 tokens)"),
+        "the token annotation must survive stripping, got: {stripped}"
+    );
+}
+
+#[test]
+fn stub_without_recall_is_identity_without_a_clause() {
+    assert_eq!(message_stub_without_recall("plain text"), "plain text");
+}

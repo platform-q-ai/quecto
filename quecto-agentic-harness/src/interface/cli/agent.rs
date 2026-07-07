@@ -495,12 +495,15 @@ pub(crate) fn run_agent_session(
             DeadlineResult::Completed(inner) => inner,
             DeadlineResult::TimedOut => {
                 out.stderr.push_str("max-time exceeded\n");
+                scrub_ephemeral_spill(base_dir, ephemeral);
                 return 2;
             }
         }
     } else {
         rt.block_on(agent.process(&mut messages))
     };
+    // Nothing an ephemeral run spilled for in-run recall may outlive the run.
+    scrub_ephemeral_spill(base_dir, ephemeral);
 
     match agent_result {
         Ok(result) => {
@@ -530,6 +533,8 @@ pub(crate) fn run_agent_session(
         }
     }
 }
+
+use crate::interface::shared::scrub_ephemeral_spill;
 
 /// Run the agent with a wall-clock deadline.
 ///
@@ -562,17 +567,6 @@ pub(crate) fn run_with_deadline(
     })
 }
 
-/// Run the agent in UDS mode.
-///
-/// Return the XDG runtime directory if it is set, exists, and is writable by
-/// the current process; otherwise fall back to [`std::env::temp_dir`].
-///
-/// The XDG Base Directory Specification requires `$XDG_RUNTIME_DIR` to be
-/// owned by the user and mode `0700`.  We additionally verify it is writable
-/// before using it so a misconfigured or container-injected value does not
-/// cause a confusing bind error later.
-/// Validates config/provider, then enters the async JSON-lines loop.
-/// Returns an exit code.
 /// Resolve the UDS session key. Ephemeral → empty (no persistence). An explicit
 /// `--session` keeps the `cli:` namespace so internal sessions (sub-agents,
 /// agent-manager) stay out of the user-facing `/resume` list. With no
@@ -692,7 +686,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     });
 
     let mut provider_reload = build.provider_reload;
-    crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
+    let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
         base_dir: &base_dir,
         session_key,
@@ -711,7 +705,10 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         broadcast_tx,
         provider_reload: Some(&mut provider_reload),
         provider_reload_inputs: Some(&build.provider_reload_inputs),
-    })
+    });
+    // An ephemeral UDS server persisted spill content only for in-run recall.
+    scrub_ephemeral_spill(&base_dir, ephemeral);
+    code
 }
 
 #[path = "agent_provider.rs"]

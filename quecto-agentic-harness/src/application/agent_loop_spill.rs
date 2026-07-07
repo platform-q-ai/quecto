@@ -10,7 +10,6 @@ pub(super) struct ToolMessageArgs<'a> {
     pub(super) tc: &'a ToolCall,
     pub(super) content: String,
     pub(super) image_blocks: Vec<crate::domain::tool::ImageBlock>,
-    pub(super) spill_id: String,
     pub(super) is_error: bool,
 }
 
@@ -20,7 +19,6 @@ impl AgentLoopImpl {
         tool_msg.tool_name = Some(args.tc.name.clone());
         tool_msg.input_preview =
             Some(context_pruning::truncate_utf8_safe(&args.tc.arguments, 100).into_owned());
-        tool_msg.spill_id = Some(args.spill_id);
         tool_msg.image_blocks = args.image_blocks;
         tool_msg.invalidate_token_cache();
         tool_msg.is_error = args.is_error;
@@ -30,13 +28,20 @@ impl AgentLoopImpl {
     // NOTE: tool-output spilling has no ephemeral-session (empty key) guard —
     // deliberately. Tool-result collapse (#1017) can fire within a single
     // ephemeral run and its recall() stubs must stay resolvable, so ephemeral
-    // tool spills persist under the sanitized empty-key store path. Guarding
-    // here would break recall of collapsed tool output in `--no-session`
-    // runs. Conversation-message spilling is symmetric since PR #1048 (its
-    // former empty-key guard let collapse/ladder stub or drop content that
-    // was never written to disk); both symmetry sides are pinned by
+    // tool spills persist under the sanitized empty-key store path for the
+    // duration of the run. Guarding here would break recall of collapsed tool
+    // output in `--no-session` runs. Conversation-message spilling is
+    // symmetric since PR #1048; both symmetry sides are pinned by
     // `ephemeral_session_spills_both_tool_output_and_conversation_messages`.
-    pub(super) async fn spill_tool_message(&self, tool_msg: &mut Message) {
+    // The privacy counterpart: ephemeral interface paths scrub the empty-key
+    // spill file at run end (`FileContextSpillStore::scrub_session_spill_sync`)
+    // so `--no-session` content does not outlive the run.
+    //
+    // `spill_id` is stamped on the message ONLY after a successful append
+    // (mirroring `spill_conversation_message`): a message whose content never
+    // reached disk must keep `spill_id == None` so collapse never mints an
+    // unresolvable recall() stub for it.
+    pub(super) async fn spill_tool_message(&self, tool_msg: &mut Message, spill_id: String) {
         let Some(ref spill_store) = self.spill_store else {
             return;
         };
@@ -45,7 +50,7 @@ impl AgentLoopImpl {
         // append, then move it back — avoids copying up to 1MB of tool output.
         let content = std::mem::take(&mut tool_msg.content);
         let entry = SpillEntry {
-            id: tool_msg.spill_id.clone().unwrap_or_default(),
+            id: spill_id,
             tool: tool_msg
                 .tool_name
                 .clone()
@@ -54,17 +59,22 @@ impl AgentLoopImpl {
             tokens: context_pruning::estimate_tokens(&content),
             content,
         };
-        if let Err(e) = spill_store.append(&self.session_key, &entry).await {
-            tracing::warn!(target: "context_prune", error = %e, "failed to spill tool output");
-        }
+        let result = spill_store.append(&self.session_key, &entry).await;
         // Restore content back into the message (entry is consumed here).
         tool_msg.content = entry.content;
         tool_msg.invalidate_token_cache();
+        match result {
+            Ok(()) => tool_msg.spill_id = Some(entry.id),
+            Err(e) => {
+                tracing::warn!(target: "context_prune", error = %e, "failed to spill tool output");
+            }
+        }
     }
 
     /// Spill a conversation (assistant/user) message at creation so it is
-    /// immediately recallable (#1046 AC1). No-op without a spill store; the
-    /// ephemeral-session (empty key) guard lives in the shared writer.
+    /// immediately recallable (#1046 AC1). No-op without a spill store. The
+    /// shared writer persists for ephemeral (empty key) sessions too and
+    /// stamps `spill_id` only on a successful append.
     pub(super) async fn spill_conversation_message(&self, msg: &mut Message) {
         if let Some(ref spill_store) = self.spill_store {
             context_pruning::messages::spill_conversation_message(

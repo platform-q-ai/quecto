@@ -286,31 +286,48 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the agent trims old conversation messages
     Then 5 conversation messages are collapsed to recall stubs
 
-  Scenario: The system prompt is never collapsed by the message trigger
+  # The three AC3 exemption scenarios drive BOTH prune paths: the count
+  # trigger AND the demotion ladder under an unmeetable budget. The ladder's
+  # second rung drops any non-exempt message, so each protected message
+  # survives only because of its exemption — deleting the exemption fails the
+  # scenario (falsifiability, PR #1048 round-2 review).
+  Scenario: The system prompt is never collapsed or dropped
     Given context_collapse_after_messages is set to 0
+    And max_context_tokens is set to 5
+    And recent-turn pinning is set to 0 turns
     And a system prompt in the conversation
     And 2 old conversation messages
     And an in-flight user prompt
     When the agent trims old conversation messages
+    And the agent enforces the context ceiling
     Then the system prompt is not collapsed
     And at least 1 conversation message is collapsed to a recall stub
+    And at least 1 message is removed from the conversation
 
-  Scenario: The spill manifest is never collapsed by the message trigger
+  Scenario: The spill manifest is never collapsed or dropped
     Given context_collapse_after_messages is set to 0
+    And max_context_tokens is set to 5
+    And recent-turn pinning is set to 0 turns
     And a pinned manifest message in the conversation
     And 2 old conversation messages
     And an in-flight user prompt
     When the agent trims old conversation messages
+    And the agent enforces the context ceiling
     Then the manifest message is not collapsed
     And at least 1 conversation message is collapsed to a recall stub
+    And at least 1 message is removed from the conversation
 
-  Scenario: The in-flight user prompt is never collapsed by the message trigger
+  Scenario: The in-flight user prompt is never collapsed or dropped
     Given context_collapse_after_messages is set to 0
+    And max_context_tokens is set to 5
+    And recent-turn pinning is set to 0 turns
     And 2 old conversation messages
-    And an in-flight user prompt
+    And an in-flight user prompt already spilled at creation
     When the agent trims old conversation messages
+    And the agent enforces the context ceiling
     Then the in-flight user prompt is not collapsed
     And at least 1 conversation message is collapsed to a recall stub
+    And at least 1 message is removed from the conversation
 
   Scenario: Messages within the pinned recent-turn tail are never collapsed by the message trigger
     Given context_collapse_after_messages is set to 0

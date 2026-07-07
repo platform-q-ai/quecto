@@ -105,9 +105,13 @@ pub fn collapse_tool_results_over_limit(messages: &mut [Message], max_tool_calls
     if max_tool_calls == COLLAPSE_DISABLED {
         return 0;
     }
+    // spill_id == None means the output never reached the spill store (append
+    // failure / missing store): collapsing it would mint an unresolvable
+    // recall() stub, so such results are excluded from both the count and the
+    // collapse front (same rule as the conversation-message trigger).
     let live_tool_calls = messages
         .iter()
-        .filter(|m| m.role == Role::Tool && !m.is_collapsed)
+        .filter(|m| m.role == Role::Tool && !m.is_collapsed && m.spill_id.is_some())
         .count();
     let mut to_collapse = live_tool_calls.saturating_sub(max_tool_calls as usize);
     if to_collapse == 0 {
@@ -118,7 +122,7 @@ pub fn collapse_tool_results_over_limit(messages: &mut [Message], max_tool_calls
         if to_collapse == 0 {
             break;
         }
-        if msg.role != Role::Tool || msg.is_collapsed {
+        if msg.role != Role::Tool || msg.is_collapsed || msg.spill_id.is_none() {
             continue;
         }
         collapse_message(msg);
@@ -372,6 +376,9 @@ mod tests {
     fn test_ceiling_ladder_accounts_for_image_blocks() {
         use crate::domain::tool::ImageBlock;
         let mut msg1 = Message::tool("call_1", "abc");
+        // Spilled at creation, like every production tool result — the ladder
+        // only stubs spill-backed content (unspilled => recall() would dangle).
+        msg1.spill_id = Some("turn1:tool:0".into());
         msg1.image_blocks = vec![ImageBlock {
             mime_type: "image/png",
             data: "x".repeat(600), // 200 tokens

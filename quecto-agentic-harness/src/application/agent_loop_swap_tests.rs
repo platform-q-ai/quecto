@@ -239,11 +239,13 @@ fn build_tool_message_populates_metadata() {
         tc: &tc,
         content: "output".into(),
         image_blocks: vec![],
-        spill_id: "turn1:bash:0".into(),
         is_error: false,
     });
     assert_eq!(msg.tool_name.as_deref(), Some("bash"));
-    assert_eq!(msg.spill_id.as_deref(), Some("turn1:bash:0"));
+    assert_eq!(
+        msg.spill_id, None,
+        "spill_id is stamped by spill_tool_message on a successful append, never at build time"
+    );
     assert_eq!(msg.content, "output");
     assert!(!msg.is_error);
     assert!(msg.input_preview.is_some());

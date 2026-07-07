@@ -177,7 +177,9 @@ impl AgentLoopImpl {
     /// Snapshot of the config-threaded context knobs
     /// `(pin_recent_turns, context_collapse_after_messages)` — observability
     /// for wiring checks so construction sites that drop user config are
-    /// detectable from outside the loop (#1045/#1046).
+    /// detectable from outside the loop (#1045/#1046). Test-gated: it exists
+    /// only for wiring tests and must not ship as public API surface.
+    #[cfg(test)]
     pub fn context_knob_snapshot(&self) -> (u32, u32) {
         (self.pin_recent_turns, self.context_collapse_after_messages)
     }
@@ -375,11 +377,11 @@ impl AgentLoopImpl {
                 tc,
                 content,
                 image_blocks,
-                spill_id,
                 is_error,
             });
             tool_msg.turn = Some(current_turn);
-            self.spill_tool_message(&mut tool_msg).await;
+            // Stamps `spill_id` on the message only if the append succeeds.
+            self.spill_tool_message(&mut tool_msg, spill_id).await;
             messages.push(tool_msg);
         }
     }

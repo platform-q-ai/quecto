@@ -43,8 +43,12 @@ pub fn message_collapse_stub(role: &str, preview: &str, tokens: usize, spill_id:
 /// `[assistant: "<preview>" (840 tokens)]`. Used by rewind: the spill store
 /// is wiped, so retained stubs must not keep dangling recall pointers (the
 /// same no-dangling-recall invariant tool stubs already honour).
+///
+/// `rfind`, not `find`: the 60-char preview is arbitrary user text and can
+/// itself contain ` — recall(` (e.g. a pasted stub); the real clause is the
+/// one the formatter appends, which is always last.
 pub fn message_stub_without_recall(stub: &str) -> String {
-    match stub.find(" — recall(") {
+    match stub.rfind(" — recall(") {
         Some(pos) => format!("{}]", &stub[..pos]),
         None => stub.to_string(),
     }
@@ -193,11 +197,11 @@ pub fn enforce_context_ceiling_ladder(
         if exempt[i] || msg.is_collapsed {
             continue;
         }
-        // Unspilled conversation content (spill_id == None: ephemeral spill
-        // failure or a missing store at creation) is never stubbed — its
-        // recall() would be unresolvable. It falls through to the second
-        // rung's plain drop, as the pre-#1046 ceiling did.
-        if is_conversation(msg) && msg.spill_id.is_none() {
+        // Unspilled content (spill_id == None: a spill-append failure or a
+        // missing store at creation — conversation and tool results alike) is
+        // never stubbed: its recall() would be unresolvable. It falls through
+        // to the second rung's plain drop, as the pre-#1046 ceiling did.
+        if msg.spill_id.is_none() {
             continue;
         }
         let before = estimate_message_tokens(msg);
@@ -252,8 +256,9 @@ pub fn enforce_context_ceiling_ladder(
 /// demotion ladder can fire within a single `--no-session` run, and their
 /// `recall()` stubs must stay resolvable, so entries are written under the
 /// sanitized empty-key store path (PR #1048; see the NOTE in
-/// `agent_loop_spill.rs`). Returns true when an entry was written (the
-/// manifest needs a refresh).
+/// `agent_loop_spill.rs`). The privacy counterpart lives at the interface
+/// layer: ephemeral run paths scrub the empty-key spill file at run end.
+/// Returns true when an entry was written (the manifest needs a refresh).
 pub async fn spill_conversation_message(
     msg: &mut Message,
     store: &dyn ContextSpillStore,

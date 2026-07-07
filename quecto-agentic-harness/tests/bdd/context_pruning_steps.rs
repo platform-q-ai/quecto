@@ -1578,6 +1578,17 @@ fn given_in_flight_user_prompt(world: &mut QuectoWorld) {
     messages.push(Message::user("current question"));
 }
 
+// Matches production state at trim time: creation-time spilling files the
+// in-flight prompt (stamping spill_id) BEFORE the collapse triggers run, so
+// only the AC3 exemption — not the spill_id filter — protects it. Makes the
+// exemption falsifiable (round-2 review of PR #1048).
+#[given("an in-flight user prompt already spilled at creation")]
+fn given_in_flight_user_prompt_spilled(world: &mut QuectoWorld) {
+    let mut m = Message::user("current question");
+    m.spill_id = Some("turn0:msg:user".into());
+    world.context_messages.as_mut().unwrap().push(m);
+}
+
 #[given(expr = "{int} old assistant messages and {int} old user messages")]
 fn given_old_mixed_messages(world: &mut QuectoWorld, a: usize, u: usize) {
     for i in 0..a {
@@ -1605,8 +1616,12 @@ fn given_pinned_manifest_message(world: &mut QuectoWorld) {
 fn given_tail_pinned_conv_message(world: &mut QuectoWorld) {
     // A turn-stamped message of the current prompt's most recent turn: it
     // sits after the in-flight prompt, inside the pin_recent_turns tail.
+    // Spilled at creation (spill_id stamped) like every conversation message
+    // in production, so only the tail-pin exemption — not the spill_id
+    // filter — protects it from collapse (falsifiability, PR #1048 round 2).
     let mut m = Message::assistant("tail-pinned recent answer", vec![]);
     m.turn = Some(99);
+    m.spill_id = Some("turn99:msg:assistant".into());
     world.context_messages.as_mut().unwrap().push(m);
 }
 

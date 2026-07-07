@@ -349,6 +349,64 @@ fn test_run_agent_session_ephemeral_no_save() {
 }
 
 #[test]
+fn test_run_agent_session_ephemeral_scrubs_spill_file() {
+    // Ephemeral spilling deliberately persists during the run (recall stubs
+    // must resolve), but nothing may outlive it: run_agent_session must scrub
+    // the empty-key spill file on every exit path, including errors
+    // (PR #1048 round-2 security review).
+    let tmp = tempfile::TempDir::new().unwrap();
+    let spill_path = tmp.path().join("sessions").join("key_").join("spill.jsonl");
+    std::fs::create_dir_all(spill_path.parent().unwrap()).unwrap();
+    std::fs::write(&spill_path, "{\"id\":\"turn0:msg:user\"}\n").unwrap();
+
+    let agent = make_test_agent(tmp.path());
+    let flags = test_flags(Some("secret prompt"), Some("-"), None);
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut out = AgentOutput {
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+    };
+    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    assert_eq!(code, 1, "the fake provider must fail");
+    assert!(
+        !spill_path.exists(),
+        "ephemeral spill content must not survive the run (even on error exits)"
+    );
+}
+
+#[test]
+fn test_run_agent_session_named_session_keeps_spill_file() {
+    // Scrubbing is ephemeral-only: a named session's spill store must persist
+    // for /resume + recall across runs.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let key_dir = crate::infrastructure::persistence::filename::sanitize_session_key(
+        &crate::domain::session::Session::build_key("cli", "keepme"),
+    );
+    let spill_path = tmp
+        .path()
+        .join("sessions")
+        .join(&key_dir)
+        .join("spill.jsonl");
+    std::fs::create_dir_all(spill_path.parent().unwrap()).unwrap();
+    std::fs::write(&spill_path, "{\"id\":\"turn0:msg:user\"}\n").unwrap();
+
+    let agent = make_test_agent(tmp.path());
+    let flags = test_flags(Some("hello"), Some("keepme"), None);
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut out = AgentOutput {
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+    };
+    let _ = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    assert!(
+        spill_path.exists(),
+        "named-session spill files must survive the run"
+    );
+}
+
+#[test]
 fn test_run_agent_session_default_session_key() {
     let tmp = tempfile::TempDir::new().unwrap();
     let agent = make_test_agent(tmp.path());
