@@ -33,6 +33,9 @@ async fn retries_retryable_provider_failures_before_returning_success() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     })
     .with_max_tool_iterations(1);
 
@@ -68,6 +71,9 @@ async fn retries_streaming_provider_failures_before_any_output() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     })
     .with_max_tool_iterations(1);
 
@@ -99,6 +105,9 @@ async fn does_not_retry_streaming_provider_failures_after_output() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     })
     .with_max_tool_iterations(1);
 
@@ -130,6 +139,9 @@ async fn provider_context_limit_errors_are_actionable() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     })
     .with_max_tool_iterations(1);
 

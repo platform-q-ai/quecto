@@ -116,6 +116,9 @@ fn agent(
         effort: None,
         system_prompt_provider: None,
         audit_log,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     })
 }
 
@@ -497,4 +500,37 @@ async fn ladder_dropped_message_is_never_spilled_a_second_time() {
         "creation-time spilling is the single writer: a later ladder drop \
          must not file a duplicate entry"
     );
+}
+
+// --- PR #1048 follow-up: context knobs are AgentLoopConfig constructor fields ---
+
+#[test]
+fn agent_loop_config_carries_context_knobs_as_constructor_fields() {
+    // pin_recent_turns, context_collapse_after_messages, and
+    // model_context_window must be constructor fields on AgentLoopConfig —
+    // same altitude as max_context_tokens / context_collapse_after_tool_calls
+    // — so a construction site cannot omit them (no post-construction builder
+    // patching required for correctness).
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: Arc::new(MockProvider::new(vec![text_response("hi")])),
+        tool_registry: Box::new(MockRegistry::new()),
+        model: "test-model".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "s".into(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+        pin_recent_turns: 5,
+        context_collapse_after_messages: 7,
+        model_context_window: Some(48_000),
+    });
+    assert_eq!(agent.pin_recent_turns, 5);
+    assert_eq!(agent.context_collapse_after_messages, 7);
+    assert_eq!(agent.model_context_window, Some(48_000));
 }

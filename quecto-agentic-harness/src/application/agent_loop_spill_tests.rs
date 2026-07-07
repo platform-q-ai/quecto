@@ -111,6 +111,9 @@ async fn test_spill_preserves_message_content_after_spill() {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     });
 
     let mut messages = vec![Message::user("run it")];
@@ -153,6 +156,9 @@ fn tight_budget_agent(
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     })
 }
 
@@ -258,5 +264,59 @@ async fn current_user_prompt_survives_tight_budget() {
             .iter()
             .any(|m| m.role == Role::User && m.content == big_prompt),
         "the in-flight user prompt is pinned and must never be dropped by the ceiling"
+    );
+}
+
+// --- ephemeral sessions (empty key): both spill writers must persist ---
+// Pins the tool/conversation spill symmetry for `--no-session` runs (see the
+// NOTE in agent_loop_spill.rs): recall() stubs minted by collapse or the
+// demotion ladder must stay resolvable within an ephemeral run, so neither
+// writer may guard on an empty session key.
+
+#[tokio::test]
+async fn ephemeral_session_spills_both_tool_output_and_conversation_messages() {
+    let spill_store = Arc::new(MockSpillStore::default());
+    let provider = Arc::new(MockProvider::new(vec![
+        tool_call_response("bash", r#"{"command":"echo hi"}"#),
+        text_response("all done"),
+    ]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(MockTool::new("bash", "big output here")));
+
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(registry),
+        model: "test-model".to_string(),
+        max_tokens: 1024,
+        temperature: 0.7,
+        spill_store: Some(spill_store.clone()),
+        session_key: String::new(), // ephemeral: --no-session
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    });
+
+    let mut messages = vec![Message::user("run it")];
+    agent.run_loop(&mut messages).await.unwrap();
+
+    let entries = spill_store.entries.lock().unwrap();
+    assert!(
+        entries.iter().any(|e| e.tool == "bash"),
+        "tool spilling is deliberately unguarded for ephemeral sessions and \
+         must keep persisting (regression guard for the empty-key NOTE)"
+    );
+    assert!(
+        entries.iter().any(|e| e.tool == "assistant"),
+        "conversation spilling must match: ephemeral sessions must persist \
+         assistant messages so collapse/ladder stubs stay resolvable; \
+         entries: {:?}",
+        entries.iter().map(|e| &e.id).collect::<Vec<_>>()
     );
 }

@@ -342,15 +342,13 @@ pub fn run_repl<R: BufRead, W: Write>(
         effort: resolve_effort_from_config(ctx.config),
         system_prompt_provider: None,
         audit_log: None,
+        // #1044/#1045/#1046: the context knobs are constructor fields so this
+        // site cannot silently drop the user's configured values.
+        pin_recent_turns: ctx.config.agents.defaults.pin_recent_turns,
+        context_collapse_after_messages: ctx.config.agents.defaults.context_collapse_after_messages,
+        model_context_window,
     })
     .with_model_max_tokens(model_max_tokens);
-    // #1044/#1045/#1046: thread the context-management knobs and the model's
-    // known context window into the loop.
-    let agent = crate::interface::shared::apply_context_settings(
-        agent,
-        &ctx.config.agents.defaults,
-        model_context_window,
-    );
 
     let session_store = FileSessionStore::new(ctx.base_dir);
 

@@ -27,12 +27,15 @@ impl AgentLoopImpl {
         tool_msg
     }
 
-    // NOTE: unlike conversation-message spilling, tool-output spilling has no
-    // ephemeral-session (empty key) guard — deliberately. Tool-result collapse
-    // (#1017) can fire within a single ephemeral run and its recall() stubs
-    // must stay resolvable, so ephemeral tool spills persist under the
-    // sanitized empty-key store path. Guarding here would break recall of
-    // collapsed tool output in `--no-session` runs.
+    // NOTE: tool-output spilling has no ephemeral-session (empty key) guard —
+    // deliberately. Tool-result collapse (#1017) can fire within a single
+    // ephemeral run and its recall() stubs must stay resolvable, so ephemeral
+    // tool spills persist under the sanitized empty-key store path. Guarding
+    // here would break recall of collapsed tool output in `--no-session`
+    // runs. Conversation-message spilling is symmetric since PR #1048 (its
+    // former empty-key guard let collapse/ladder stub or drop content that
+    // was never written to disk); both symmetry sides are pinned by
+    // `ephemeral_session_spills_both_tool_output_and_conversation_messages`.
     pub(super) async fn spill_tool_message(&self, tool_msg: &mut Message) {
         let Some(ref spill_store) = self.spill_store else {
             return;

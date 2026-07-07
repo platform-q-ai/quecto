@@ -384,6 +384,10 @@ pub(crate) fn build_agent_from_config(
 
     let workflow_prompt_initially_active = flags.workflow;
     let wf_config = workflow_state.as_ref().map(|_| config.workflow.clone());
+    // #935/#1044: one registry load supplies the per-model output cap (clamps
+    // max_tokens so low-limit models never get a larger value; set_model
+    // re-derives on switch) and the known context window (bounds the budget).
+    let (cap, window) = ModelRegistry::model_limits_from_base_dir(base_dir, &model);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -399,23 +403,17 @@ pub(crate) fn build_agent_from_config(
         effort,
         system_prompt_provider: None,
         audit_log: None,
+        // #1044/#1045/#1046: constructor fields — config cannot be dropped.
+        pin_recent_turns: config.agents.defaults.pin_recent_turns,
+        context_collapse_after_messages: config.agents.defaults.context_collapse_after_messages,
+        model_context_window: window,
     })
     .with_max_tool_iterations(
         flags
             .max_iterations
             .unwrap_or(config.agents.defaults.max_tool_iterations),
-    );
-    // #935: clamp the effective output cap to the model's registry max_tokens
-    // so a model whose real output limit is lower than the configured global
-    // default (e.g. Fireworks qwen3p7-plus = 65536) never receives a larger
-    // value. The set_model path re-derives this so a model switch re-clamps.
-    // #1044: the model's known context window bounds the pruning budget.
-    // One registry load supplies both per-model limits.
-    let (cap, window) = ModelRegistry::model_limits_from_base_dir(base_dir, &model);
-    let agent = agent.with_model_max_tokens(cap);
-    // #1044/#1045/#1046: thread context knobs + the model's known window.
-    let agent =
-        crate::interface::shared::apply_context_settings(agent, &config.agents.defaults, window);
+    )
+    .with_model_max_tokens(cap);
 
     Some(AgentBuildResult {
         agent,
@@ -728,6 +726,9 @@ mod config_tests;
 #[cfg(test)]
 #[path = "agent_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "agent_1048_ctx_wiring_tests.rs"]
+mod ctx_wiring_1048_tests;
 #[cfg(test)]
 #[path = "agent_integration_tests.rs"]
 mod integration_tests;

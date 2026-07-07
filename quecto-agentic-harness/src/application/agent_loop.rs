@@ -63,6 +63,19 @@ pub struct AgentLoopConfig {
     /// (tool call, tool result, LLM turn, pruning, etc.) is written to a
     /// durable JSONL file. When `None`, no audit overhead.
     pub audit_log: Option<Arc<dyn AuditSink>>,
+    /// #1045: recent-turn tail-pin count for the pruning ceiling. A
+    /// constructor field (not a post-construction builder) so no construction
+    /// site can silently drop the user's configured value.
+    pub pin_recent_turns: u32,
+    /// #1046: count-based conversation-message collapse threshold
+    /// (`u32::MAX` / `COLLAPSE_DISABLED` disables). Constructor field for the
+    /// same reason as `pin_recent_turns`.
+    pub context_collapse_after_messages: u32,
+    /// #1044: the active model's known context window (`None` when unknown);
+    /// bounds the effective pruning budget. Constructor field so window-aware
+    /// budgeting cannot be forgotten at a construction site; `set_model`
+    /// re-derives it on a model switch.
+    pub model_context_window: Option<usize>,
 }
 
 pub struct AgentLoopImpl {
@@ -134,9 +147,9 @@ impl AgentLoopImpl {
             session_key: config.session_key,
             context_collapse_after_tool_calls: config.context_collapse_after_tool_calls,
             max_context_tokens: config.max_context_tokens,
-            pin_recent_turns: context_pruning::DEFAULT_PIN_RECENT_TURNS,
-            context_collapse_after_messages: u32::MAX,
-            model_context_window: None,
+            pin_recent_turns: config.pin_recent_turns,
+            context_collapse_after_messages: config.context_collapse_after_messages,
+            model_context_window: config.model_context_window,
             progress_callback: config.progress_callback,
             streaming: config.streaming,
             effort: config.effort,
@@ -159,6 +172,14 @@ impl AgentLoopImpl {
     /// (#1044) — so stats/snapshots never diverge from actual behaviour.
     pub fn max_context_tokens(&self) -> usize {
         self.effective_max_context_tokens()
+    }
+
+    /// Snapshot of the config-threaded context knobs
+    /// `(pin_recent_turns, context_collapse_after_messages)` — observability
+    /// for wiring checks so construction sites that drop user config are
+    /// detectable from outside the loop (#1045/#1046).
+    pub fn context_knob_snapshot(&self) -> (u32, u32) {
+        (self.pin_recent_turns, self.context_collapse_after_messages)
     }
 
     /// Fire a progress event to the registered callback, if any. Takes a closure

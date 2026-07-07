@@ -288,13 +288,17 @@ mod tests {
 
     #[test]
     fn test_ceiling_ladder_demotes_oldest_to_meet_budget() {
-        // Create messages that exceed budget
+        // Create messages that exceed budget, spilled at creation as
+        // production guarantees (#1046 AC1) — unspilled content is never
+        // stubbed (PR #1048).
         let big_content = "x".repeat(600); // ~150 tokens
-        let mut messages = vec![
-            Message::user(&big_content),
-            Message::user(&big_content),
-            Message::user(&big_content),
-        ];
+        let mut messages: Vec<Message> = (0..3)
+            .map(|i| {
+                let mut m = Message::user(&big_content);
+                m.spill_id = Some(format!("turn{}:msg:user", i + 1));
+                m
+            })
+            .collect();
         // Budget of 250 tokens, total ~450 tokens. The trailing user message
         // is the in-flight prompt (kept); older ones demote until it fits.
         let outcome = messages::enforce_context_ceiling_ladder(&mut messages, 250, 2);
@@ -305,9 +309,11 @@ mod tests {
     #[test]
     fn test_ceiling_ladder_preserves_pinned() {
         let big = "x".repeat(600);
+        let mut old_user = Message::user(&big);
+        old_user.spill_id = Some("turn1:msg:user".into());
         let mut messages = vec![
             Message::system("system prompt"), // pinned by default
-            Message::user(&big),
+            old_user,
             Message::user(&big),
         ];
         let outcome = messages::enforce_context_ceiling_ladder(&mut messages, 250, 2);
@@ -562,3 +568,8 @@ mod spill_tests;
 #[cfg(test)]
 #[path = "context_pruning_message_tests.rs"]
 mod message_tests;
+
+// PR #1048: unspilled-content (spill_id == None) safety tests (same cap rule).
+#[cfg(test)]
+#[path = "context_pruning_unspilled_tests.rs"]
+mod unspilled_tests;

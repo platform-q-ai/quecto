@@ -43,19 +43,27 @@ impl AgentLoopImpl {
         }
     }
 
-    /// Builder: recent-turn tail-pin count for the spilling ceiling (#1045).
+    /// Test builder: recent-turn tail-pin count (#1045). Production threads
+    /// this through `AgentLoopConfig::pin_recent_turns` at construction.
+    #[cfg(test)]
     pub fn with_pin_recent_turns(mut self, pin_recent_turns: u32) -> Self {
         self.pin_recent_turns = pin_recent_turns;
         self
     }
 
-    /// Builder: count-based conversation-message collapse threshold (#1046).
+    /// Test builder: conversation-message collapse threshold (#1046).
+    /// Production threads this through
+    /// `AgentLoopConfig::context_collapse_after_messages` at construction.
+    #[cfg(test)]
     pub fn with_context_collapse_after_messages(mut self, max_messages: u32) -> Self {
         self.context_collapse_after_messages = max_messages;
         self
     }
 
-    /// Builder: the active model's known context window in tokens (#1044).
+    /// Test builder: the model's known context window (#1044). Production
+    /// threads this through `AgentLoopConfig::model_context_window` at
+    /// construction; `set_model` re-derives it on a model switch.
+    #[cfg(test)]
     pub fn with_model_context_window(mut self, window: Option<usize>) -> Self {
         self.model_context_window = window;
         self

@@ -1468,7 +1468,7 @@ fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
         max_tokens: 1024,
         temperature: 0.0,
         spill_store: Some(store.0.clone()),
-        session_key: "test-session".into(),
+        session_key: session_key_under_test(world),
         context_collapse_after_tool_calls: u32::MAX,
         max_context_tokens: 100_000,
         progress_callback: None,
@@ -1476,6 +1476,9 @@ fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     });
     let messages = world.context_messages.as_mut().unwrap();
     messages.push(Message::user("a question"));
@@ -1919,6 +1922,9 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
         effort: None,
         system_prompt_provider: None,
         audit_log: Some(sink.clone() as Arc<dyn quecto::domain::audit::AuditSink>),
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     });
     // The in-flight prompt alone (never droppable) exceeds the tiny budget.
     let mut messages = vec![Message::user("y".repeat(600))];
@@ -1983,8 +1989,10 @@ fn when_agent_derives_effective_budget(world: &mut QuectoWorld) {
         effort: None,
         system_prompt_provider: None,
         audit_log: None,
-    })
-    .with_model_context_window(world.context_model_window.expect("window declared"));
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: world.context_model_window.expect("window declared"),
+    });
     world.context_effective_budget = Some(agent.effective_max_context_tokens());
 }
 
@@ -1996,4 +2004,212 @@ fn then_effective_context_budget(world: &mut QuectoWorld, expected: usize) {
         "the effective budget must derive from the model window with the \
          config value as override/fallback"
     );
+}
+
+// ===========================================================================
+// Ephemeral sessions (empty session key) — conversation/tool spill symmetry
+// and rewind after conversation-message collapse (PR #1048 follow-up fixes)
+// ===========================================================================
+
+/// The session key the loop-driving steps use: empty for ephemeral runs
+/// (`--no-session`), the fixture key otherwise.
+fn session_key_under_test(world: &QuectoWorld) -> String {
+    if world.context_ephemeral {
+        String::new()
+    } else {
+        "test-session".to_string()
+    }
+}
+
+#[given("the session is ephemeral")]
+fn given_ephemeral_session(world: &mut QuectoWorld) {
+    world.context_ephemeral = true;
+}
+
+/// Drive the REAL agent loop for one prompt so scenarios observe exactly
+/// what a run persists; honours the ephemeral-session context step.
+fn run_prompt_through_loop(
+    world: &mut QuectoWorld,
+    responses: Vec<quecto::domain::message::LlmResponse>,
+) {
+    use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+    use quecto::domain::agent::AgentLoop;
+
+    let store = world.context_spill_store.as_ref().unwrap().clone();
+    let session_key = session_key_under_test(world);
+    let mock = ensure_mock_llm(world);
+    for r in responses {
+        mock.push_response(r);
+    }
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: mock,
+        tool_registry: Box::new(quecto::infrastructure::tools::registry::ToolRegistryImpl::new()),
+        model: "test-model".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: Some(store.0.clone()),
+        session_key,
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    });
+    let messages = world.context_messages.as_mut().unwrap();
+    messages.push(Message::user("a question"));
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(agent.process(messages))
+        .expect("the prompt must complete");
+}
+
+fn text_llm_response(text: &str) -> quecto::domain::message::LlmResponse {
+    quecto::domain::message::LlmResponse {
+        content: Some(text.to_string()),
+        tool_calls: vec![],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    }
+}
+
+#[when("the agent runs a bash tool")]
+fn when_agent_runs_bash_tool(world: &mut QuectoWorld) {
+    let tool_call = quecto::domain::message::LlmResponse {
+        content: None,
+        tool_calls: vec![quecto::domain::message::ToolCall {
+            id: "call_1".into(),
+            name: "bash".into(),
+            arguments: r#"{"command":"echo hi"}"#.into(),
+        }],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    };
+    run_prompt_through_loop(world, vec![tool_call, text_llm_response("done")]);
+}
+
+#[then(expr = "the ephemeral session spill contains a recallable entry with id {string}")]
+fn then_ephemeral_spill_recallable(world: &mut QuectoWorld, id: String) {
+    let store = world.context_spill_store.as_ref().unwrap().clone();
+    let entry = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(store.recall("", &id))
+        .unwrap()
+        .unwrap_or_else(|| {
+            panic!(
+                "ephemeral sessions must spill conversation messages at creation \
+                 so collapse/ladder recall() stubs stay resolvable; missing {id}"
+            )
+        });
+    let expected = world
+        .context_original_message_content
+        .as_ref()
+        .expect("the completed prompt must have recorded its reply");
+    assert_eq!(
+        entry.content, *expected,
+        "the ephemeral spill entry must carry the full assistant reply"
+    );
+}
+
+#[then(expr = "the ephemeral session spill contains a recallable entry whose tool is {string}")]
+fn then_ephemeral_spill_has_tool_entry(world: &mut QuectoWorld, tool: String) {
+    let store = world.context_spill_store.as_ref().unwrap().clone();
+    let index = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(store.list_entries(""))
+        .unwrap();
+    let entry = index.iter().find(|e| e.tool == tool).unwrap_or_else(|| {
+        panic!(
+            "ephemeral tool spilling (deliberately unguarded, see \
+             agent_loop_spill.rs) must persist a {tool} entry; index: {index:?}"
+        )
+    });
+    let recalled = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(store.recall("", &entry.id))
+        .unwrap();
+    assert!(
+        recalled.is_some(),
+        "the ephemeral tool spill entry {} must be recallable",
+        entry.id
+    );
+}
+
+/// Given-phrased wrapper around the collapse trigger: the collapse is
+/// precondition state for the rewind scenario, not its action. Asserts the
+/// collapse actually happened (precondition, not the scenario's outcome) and
+/// records how many conversation messages are collapsed so the Then can
+/// verify they all survive the rewind.
+#[given("the old conversation messages have been collapsed to recall stubs")]
+fn given_old_messages_collapsed(world: &mut QuectoWorld) {
+    let max = world
+        .context_collapse_after_messages
+        .expect("context_collapse_after_messages must be set");
+    let pin = world.context_pin_recent_turns.unwrap_or(0);
+    let messages = world.context_messages.as_mut().unwrap();
+    let collapsed = msg_pruning::collapse_conversation_messages_over_limit(messages, max, pin);
+    assert!(
+        collapsed >= 1,
+        "precondition: at least one conversation message must collapse"
+    );
+    world.context_rewind_collapsed_before = Some(collapsed);
+}
+
+#[when("the conversation is rewound to the in-flight user prompt")]
+fn when_rewound_to_inflight_prompt(world: &mut QuectoWorld) {
+    let messages = world.context_messages.as_mut().unwrap();
+    let idx = messages
+        .iter()
+        .rposition(|m| m.role == Role::User && m.turn.is_none())
+        .expect("precondition: an in-flight user prompt must exist");
+    assert!(
+        quecto::interface::cli::uds_session::rewind_to_message_index(messages, idx),
+        "precondition: rewind to a user-message boundary must succeed"
+    );
+}
+
+#[then("the collapsed conversation messages survive the rewind with non-empty content")]
+fn then_collapsed_messages_survive_rewind(world: &mut QuectoWorld) {
+    let collapsed_before = world
+        .context_rewind_collapsed_before
+        .expect("the collapse Given must have recorded its count");
+    let messages = world.context_messages.as_ref().unwrap();
+    let retained: Vec<&Message> = messages
+        .iter()
+        .filter(|m| m.role == Role::User || m.role == Role::Assistant)
+        .collect();
+    // Positive control: the rewind removed only the in-flight prompt — every
+    // previously collapsed conversation message must still be present (a fix
+    // that deletes collapsed turns outright must fail here).
+    assert_eq!(
+        retained.len(),
+        collapsed_before,
+        "all {collapsed_before} collapsed conversation messages must survive \
+         the rewind; retained: {:?}",
+        retained.iter().map(|m| &m.content).collect::<Vec<_>>()
+    );
+    for (i, m) in retained.iter().enumerate() {
+        assert!(
+            !m.content.is_empty(),
+            "rewind must not blank collapsed conversation messages into \
+             empty provider turns (message {i}, role {:?})",
+            m.role
+        );
+        assert!(
+            !m.content.contains("recall("),
+            "no dangling recall pointers may survive the rewind (the spill \
+             store is wiped); message {i}: {}",
+            m.content
+        );
+        assert!(
+            !m.is_collapsed,
+            "retained messages are no longer recall stubs after rewind"
+        );
+    }
 }

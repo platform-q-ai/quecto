@@ -566,6 +566,12 @@ pub struct QuectoWorld {
     pub context_original_tokens: Option<usize>,
     /// Context pruning: the agent defaults established by "a default agent configuration"
     pub context_agent_defaults: Option<quecto::infrastructure::config::AgentDefaults>,
+    /// Context pruning: run the loop-driving steps with an empty session key
+    /// (`--no-session` ephemeral run), set by "Given the session is ephemeral"
+    pub context_ephemeral: bool,
+    /// Context pruning: collapsed-message count recorded before a rewind so
+    /// the survival assertion is not vacuous (PR #1048)
+    pub context_rewind_collapsed_before: Option<usize>,
     // --- Path utils BDD fields ---
     /// Resolved path from path_utils scenarios
     pub path_utils_resolved: Option<std::path::PathBuf>,

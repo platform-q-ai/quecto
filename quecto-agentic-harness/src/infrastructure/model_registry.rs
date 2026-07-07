@@ -487,18 +487,11 @@ impl ModelRegistry {
             .map(|m| m.max_tokens)
     }
 
-    /// Load the registry from `<base_dir>/models.json` (falling back to the
-    /// built-in registry on any error) and return the output cap for a
-    /// `provider/id` model, if known (#935).
-    pub fn model_cap_from_base_dir(base_dir: &Path, qualified: &str) -> Option<u32> {
-        Self::model_limits_from_base_dir(base_dir, qualified).0
-    }
-
     /// Load the registry from `<base_dir>/models.json` **once** (falling back
     /// to the built-in registry on any error) and return both per-model
-    /// limits: `(output cap, context window)` (#935/#1044). Callers that need
-    /// both must use this rather than the two single-value helpers so the
-    /// registry file is not read and parsed twice.
+    /// limits: `(output cap, context window)` (#935/#1044). This is the single
+    /// per-model-limits accessor — the former single-value wrappers were
+    /// folded away (PR #1048) once they had no production consumers.
     pub fn model_limits_from_base_dir(
         base_dir: &Path,
         qualified: &str,
@@ -521,13 +514,6 @@ impl ModelRegistry {
         self.find(provider, id)
             .filter(|m| m.context_window_explicit)
             .map(|m| m.context_window as usize)
-    }
-
-    /// Load the registry from `<base_dir>/models.json` (falling back to the
-    /// built-in registry on any error) and return the known context window
-    /// for a `provider/id` model, if declared (#1044).
-    pub fn model_context_window_from_base_dir(base_dir: &Path, qualified: &str) -> Option<usize> {
-        Self::model_limits_from_base_dir(base_dir, qualified).1
     }
 
     fn upsert(&mut self, record: ModelRecord) {

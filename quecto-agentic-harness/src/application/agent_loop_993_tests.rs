@@ -28,6 +28,9 @@ fn agent_config(
         effort: None,
         system_prompt_provider,
         audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
     }
 }
 

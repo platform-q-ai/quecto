@@ -42,6 +42,9 @@ fn make_dispatch_test_agent() -> crate::application::agent_loop::AgentLoopImpl {
             effort: None,
             system_prompt_provider: None,
             audit_log: None,
+            pin_recent_turns: 2,
+            context_collapse_after_messages: u32::MAX,
+            model_context_window: None,
         },
     )
 }
@@ -402,6 +405,9 @@ async fn abort_stops_an_already_running_auto_continue_loop() {
             effort: None,
             system_prompt_provider: None,
             audit_log: None,
+            pin_recent_turns: 2,
+            context_collapse_after_messages: u32::MAX,
+            model_context_window: None,
         },
     );
 

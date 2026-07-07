@@ -529,6 +529,8 @@ fn current_run_recent_turns_are_exempt_from_message_collapse() {
     for turn in 1..=3u32 {
         let mut m = Message::assistant(format!("current run answer {turn}"), vec![]);
         m.turn = Some(turn);
+        // Spilled at creation, as production guarantees (#1046 AC1).
+        m.spill_id = Some(format!("turn{turn}:msg:assistant"));
         messages.push(m);
     }
     let collapsed = collapse_conversation_messages_over_limit(&mut messages, 0, 2);
@@ -555,5 +557,143 @@ fn current_run_recent_turns_are_exempt_from_message_collapse() {
     assert!(
         !by_content("current run answer 3").is_collapsed,
         "turn 3 is within the pin_recent_turns tail"
+    );
+}
+
+// --- ephemeral sessions (empty key): creation spilling must still persist ---
+// PR #1048 follow-up: the empty-key guard in the conversation spill writer is
+// removed so ephemeral runs match tool spilling (deliberately unguarded, see
+// the NOTE in agent_loop_spill.rs) — collapse/ladder recall() stubs must stay
+// resolvable in `--no-session` runs instead of pointing at nothing.
+
+#[tokio::test]
+async fn spill_conversation_message_persists_for_ephemeral_sessions() {
+    let store = MemStore::default();
+    let mut msg = Message::assistant("ephemeral reply text", vec![]);
+    msg.turn = Some(1);
+    let written = spill_conversation_message(&mut msg, &store, "").await;
+    assert!(
+        written,
+        "an ephemeral (empty-key) session must still spill conversation \
+         messages so later collapse stubs are recallable"
+    );
+    assert_eq!(
+        msg.spill_id.as_deref(),
+        Some("turn1:msg:assistant"),
+        "the spill id must be stamped for ephemeral sessions too"
+    );
+    let entry = store
+        .recall("", "turn1:msg:assistant")
+        .await
+        .unwrap()
+        .expect("the ephemeral spill entry must be recallable");
+    assert_eq!(entry.content, "ephemeral reply text");
+}
+
+// --- ladder rung 1: tiny messages whose stub is not cheaper are skipped ---
+
+#[test]
+fn ladder_skips_tiny_messages_whose_stub_would_not_be_cheaper() {
+    // A tiny old message (stub estimate >= content estimate) among large ones.
+    let mut tiny = Message::user("ok");
+    tiny.turn = Some(1);
+    tiny.spill_id = Some("turn1:msg:user".into());
+    let mut messages = vec![tiny];
+    for i in 2..=4u32 {
+        messages.push(conv_msg(Role::Assistant, i, i));
+    }
+    messages.push(Message::user("current question"));
+    let total = estimate_total_tokens(&messages);
+    // Slightly over budget: stubbing the large messages suffices, so the
+    // second rung never runs and the tiny message's fate is rung 1's alone.
+    let budget = total - 20;
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 0);
+    assert!(
+        outcome.collapsed_to_stubs >= 1,
+        "positive control: large messages must be stubbed"
+    );
+    assert_eq!(outcome.dropped, 0, "budget must be met by stubbing alone");
+    assert!(
+        !messages[0].is_collapsed && messages[0].content == "ok",
+        "a message whose stub would be no cheaper than its content must be \
+         skipped at rung 1, not inflated into a larger stub; got: {}",
+        messages[0].content
+    );
+    assert!(
+        estimate_total_tokens(&messages) <= budget,
+        "the budget must still be met"
+    );
+}
+
+// --- ladder rung 2: drop order is oldest-first ---
+
+#[test]
+fn ladder_second_rung_drops_the_oldest_stub_first() {
+    // All old messages are already stubs of equal size; the budget is met
+    // after removing exactly ONE of them — the oldest must be the one gone.
+    let mut messages = session_with_old_conv_messages(3);
+    let n_old = 3;
+    for m in messages[..n_old].iter_mut() {
+        let tokens = estimate_tokens(&m.content);
+        let id = m.spill_id.clone().unwrap();
+        m.content = message_collapse_stub(m.role.as_str(), &m.content, tokens, &id);
+        m.is_collapsed = true;
+        m.invalidate_token_cache();
+    }
+    let total = estimate_total_tokens(&messages);
+    let one_stub = estimate_message_tokens(&messages[0]);
+    // Removing one stub meets the budget; removing two would be over-pruning.
+    let budget = total - 1;
+    assert!(
+        one_stub > 1,
+        "sanity: a stub removal must free enough tokens"
+    );
+    let outcome = enforce_context_ceiling_ladder(&mut messages, budget, 0);
+    assert_eq!(
+        outcome.dropped, 1,
+        "exactly one stub removal suffices for this budget"
+    );
+    let contents: Vec<&str> = messages.iter().map(|m| m.content.as_str()).collect();
+    assert!(
+        !contents.iter().any(|c| c.contains("turn1:msg:user")),
+        "the OLDEST stub (turn1) must be the one removed, got: {contents:?}"
+    );
+    assert!(
+        contents.iter().any(|c| c.contains("turn2:msg:assistant"))
+            && contents.iter().any(|c| c.contains("turn3:msg:user")),
+        "newer stubs must survive a partial drop, got: {contents:?}"
+    );
+}
+
+// --- creation-spill id dedup: third collision mints :3, not a re-used :2 ---
+
+#[tokio::test]
+async fn creation_spill_third_collision_mints_suffix_3() {
+    let store = MemStore::default();
+    for (i, text) in ["prompt A reply", "prompt B reply", "prompt C reply"]
+        .iter()
+        .enumerate()
+    {
+        let mut msg = Message::assistant(*text, vec![]);
+        msg.turn = Some(1);
+        spill_conversation_message(&mut msg, &store, "s").await;
+        let expected = match i {
+            0 => "turn1:msg:assistant".to_string(),
+            n => format!("turn1:msg:assistant:{}", n + 1),
+        };
+        assert_eq!(
+            msg.spill_id.as_deref(),
+            Some(expected.as_str()),
+            "collision {i} must mint the next free suffix"
+        );
+    }
+    let entry = store
+        .recall("s", "turn1:msg:assistant:3")
+        .await
+        .unwrap()
+        .expect("the third-collision id must be recallable");
+    assert_eq!(
+        entry.content, "prompt C reply",
+        "turn1:msg:assistant:3 must recall the THIRD colliding message"
     );
 }

@@ -1,4 +1,5 @@
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
+use crate::application::context_pruning::messages::message_stub_without_recall;
 use crate::domain::agent::AgentResult;
 use crate::domain::message::{Message, Role};
 
@@ -531,11 +532,23 @@ pub fn rewind_to_message_index(messages: &mut Vec<Message>, message_index: usize
     true
 }
 
+/// Strip spill residue after a rewind wiped the spill store. Role-aware
+/// (#1046: `is_collapsed` no longer implies a tool stub): collapsed tool
+/// results are blanked as before, but collapsed user/assistant messages must
+/// stay non-empty provider turns — their stub is reduced to its annotation
+/// with the now-dangling `recall("…")` clause stripped, honouring the same
+/// no-dangling-recall invariant the tool side pins.
 fn remove_spill_references(messages: &mut Vec<Message>) {
     messages.retain(|message| !message.is_manifest);
     for message in messages {
         if message.is_collapsed {
-            message.content.clear();
+            match message.role {
+                Role::User | Role::Assistant => {
+                    message.content = message_stub_without_recall(&message.content);
+                    message.invalidate_token_cache();
+                }
+                _ => message.content.clear(),
+            }
             message.is_collapsed = false;
         }
         message.spill_id = None;
@@ -638,3 +651,66 @@ mod passive_subagent_notification_tests {
 #[cfg(test)]
 #[path = "uds_session_coalesce_tests.rs"]
 mod coalesce_pending_tests;
+
+#[cfg(test)]
+mod rewind_collapsed_message_tests {
+    use super::*;
+
+    /// PR #1048 follow-up (#1046 hint: "is_collapsed currently implies
+    /// role == Tool in places"): rewinding past count-collapsed/ladder-stubbed
+    /// conversation messages must not blank them into empty user/assistant
+    /// turns — some providers reject empty text blocks, and the spill store
+    /// is cleared by the rewind so there is no recall path left.
+    #[test]
+    fn rewind_keeps_collapsed_conversation_messages_as_non_empty_turns() {
+        let mut collapsed_user =
+            Message::user("[user: \"old question\" (120 tokens) — recall(\"turn1:msg:user\")]");
+        collapsed_user.is_collapsed = true;
+        collapsed_user.spill_id = Some("turn1:msg:user".into());
+        collapsed_user.turn = Some(1);
+        let mut collapsed_assistant = Message::assistant(
+            "[assistant: \"old answer\" (300 tokens) — recall(\"turn1:msg:assistant\")]",
+            vec![],
+        );
+        collapsed_assistant.is_collapsed = true;
+        collapsed_assistant.spill_id = Some("turn1:msg:assistant".into());
+        collapsed_assistant.turn = Some(1);
+        let mut messages = vec![
+            Message::system("system prompt"),
+            collapsed_user,
+            collapsed_assistant,
+            Message::user("rewind target"),
+            Message::assistant("later answer", vec![]),
+        ];
+
+        assert!(rewind_to_message_index(&mut messages, 3));
+
+        assert_eq!(messages.len(), 3, "rewind truncates at the target");
+        // Exact post-rewind contract for conversation stubs: the annotation
+        // survives with the dangling recall("…") clause stripped (the store
+        // was just wiped), matching the tool-side no-dangling-recall
+        // invariant (`test_rewind_to_removes_retained_spill_references`).
+        assert_eq!(
+            messages[1].content, "[user: \"old question\" (120 tokens)]",
+            "collapsed user turn must keep its annotation minus recall()"
+        );
+        assert_eq!(
+            messages[2].content, "[assistant: \"old answer\" (300 tokens)]",
+            "collapsed assistant turn must keep its annotation minus recall()"
+        );
+        for m in &messages {
+            assert!(
+                !m.is_collapsed,
+                "retained messages are no longer recall stubs after rewind"
+            );
+            assert!(
+                m.spill_id.is_none(),
+                "spill references must be cleared (the store was wiped)"
+            );
+            assert!(
+                !m.content.contains("recall("),
+                "no dangling recall pointers may survive the rewind"
+            );
+        }
+    }
+}

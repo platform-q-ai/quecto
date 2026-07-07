@@ -229,6 +229,24 @@ Feature: Context pruning via sliding window and tool-call collapse
     Then the spill file contains an entry with id "turn1:msg:assistant"
     And the spill file contains an entry with id "turn1:msg:assistant:2"
 
+  Scenario: Ephemeral sessions spill conversation messages at creation
+    Given the session is ephemeral
+    When the agent completes a text-only prompt on turn 1
+    Then the ephemeral session spill contains a recallable entry with id "turn1:msg:assistant"
+
+  Scenario: Ephemeral sessions still spill tool output at creation
+    Given the session is ephemeral
+    When the agent runs a bash tool
+    Then the ephemeral session spill contains a recallable entry whose tool is "bash"
+
+  Scenario: Rewinding past collapsed conversation messages leaves no empty turns
+    Given context_collapse_after_messages is set to 0
+    And 4 old conversation messages
+    And an in-flight user prompt
+    And the old conversation messages have been collapsed to recall stubs
+    When the conversation is rewound to the in-flight user prompt
+    Then the collapsed conversation messages survive the rewind with non-empty content
+
   Scenario: Oldest conversation messages collapse once the message count exceeds the threshold
     Given context_collapse_after_messages is set to 3
     And 4 old conversation messages
