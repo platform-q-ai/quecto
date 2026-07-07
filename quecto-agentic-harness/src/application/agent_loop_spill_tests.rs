@@ -30,7 +30,7 @@ impl ContextSpillStore for MockSpillStore {
     fn recall(
         &self,
         _session_key: &str,
-        _id: &str,
+        id: &str,
     ) -> Pin<
         Box<
             dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
@@ -38,7 +38,14 @@ impl ContextSpillStore for MockSpillStore {
                 + '_,
         >,
     > {
-        Box::pin(async { Ok(None) })
+        let found = self
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|e| e.id == id)
+            .cloned();
+        Box::pin(async move { Ok(found) })
     }
 
     fn list_entries(
@@ -55,7 +62,19 @@ impl ContextSpillStore for MockSpillStore {
                 + '_,
         >,
     > {
-        Box::pin(async { Ok(Arc::new(vec![])) })
+        let index: Vec<crate::domain::session::SpillIndex> = self
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| crate::domain::session::SpillIndex {
+                id: e.id.clone(),
+                tool: e.tool.clone(),
+                input_preview: e.input_preview.clone(),
+                tokens: e.tokens,
+            })
+            .collect();
+        Box::pin(async move { Ok(Arc::new(index)) })
     }
 
     fn clear(
@@ -106,4 +125,135 @@ async fn test_spill_preserves_message_content_after_spill() {
     let entries = spill_store.entries.lock().unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].content, "big output here");
+}
+
+// --- #951: budget pruner spills conversation messages, tail-pins recent turns ---
+
+/// Agent with a tight token-budget ceiling, no tools, and a mock spill store.
+fn tight_budget_agent(
+    spill_store: Arc<MockSpillStore>,
+    max_context_tokens: usize,
+) -> AgentLoopImpl {
+    let provider = Arc::new(MockProvider::new(vec![text_response("done")]));
+    AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(MockRegistry::new()),
+        model: "test-model".to_string(),
+        max_tokens: 1024,
+        temperature: 0.7,
+        spill_store: Some(spill_store),
+        session_key: "test-session".to_string(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+    })
+}
+
+/// An old assistant turn plus the in-flight user prompt, sized so a 200-token
+/// ceiling must drop the assistant turn.
+fn history_with_old_assistant_turn(big: &str) -> Vec<Message> {
+    let mut old_assistant = Message::assistant(big, vec![]);
+    old_assistant.turn = Some(1);
+    vec![
+        Message::user("old prompt"),
+        old_assistant,
+        Message::user("new prompt"),
+    ]
+}
+
+#[tokio::test]
+async fn budget_pruned_assistant_turn_is_spilled_and_recallable() {
+    let spill_store = Arc::new(MockSpillStore::default());
+    let agent = tight_budget_agent(spill_store.clone(), 200);
+    let big = "x".repeat(2000); // ~500 tokens, over the 200-token ceiling
+    let mut messages = history_with_old_assistant_turn(&big);
+
+    agent.run_loop(&mut messages).await.unwrap();
+
+    // End-to-end recallability (through the real recall tool) is covered by
+    // the BDD scenario "Budget-dropped assistant message is recallable";
+    // recalling through the mock here would only verify the mock itself.
+    let entries = spill_store.entries.lock().unwrap();
+    let entry = entries
+        .iter()
+        .find(|e| e.id == "turn1:msg:assistant")
+        .expect("budget-dropped assistant turn must be spilled with id turn1:msg:assistant");
+    assert_eq!(
+        entry.content, big,
+        "spilled content must be the full dropped assistant text"
+    );
+    assert_eq!(
+        entry.tool, "assistant",
+        "message spills must carry the role so the manifest can distinguish them"
+    );
+}
+
+#[tokio::test]
+async fn budget_pruned_user_message_is_spilled_with_role_id() {
+    let spill_store = Arc::new(MockSpillStore::default());
+    let agent = tight_budget_agent(spill_store.clone(), 200);
+    let big = "x".repeat(2000); // ~500 tokens, over the 200-token ceiling
+    let mut old_user = Message::user(&big);
+    old_user.turn = Some(1);
+    let mut messages = vec![old_user, Message::user("new prompt")];
+
+    agent.run_loop(&mut messages).await.unwrap();
+
+    let entries = spill_store.entries.lock().unwrap();
+    let entry = entries
+        .iter()
+        .find(|e| e.id == "turn1:msg:user")
+        .expect("budget-dropped user message must be spilled with id turn1:msg:user");
+    assert_eq!(entry.content, big);
+    assert_eq!(entry.tool, "user", "message spills must carry the role");
+}
+
+#[tokio::test]
+async fn ceiling_message_spill_is_reflected_in_manifest_without_tool_calls() {
+    let spill_store = Arc::new(MockSpillStore::default());
+    let agent = tight_budget_agent(spill_store.clone(), 200);
+    let big = "x".repeat(2000);
+    let mut messages = history_with_old_assistant_turn(&big);
+
+    agent.run_loop(&mut messages).await.unwrap();
+
+    let manifest = messages
+        .iter()
+        .find(|m| m.is_manifest)
+        .expect("a ceiling message spill on a no-tool turn must produce/refresh the manifest");
+    assert!(
+        manifest.content.contains("turn1:msg:assistant"),
+        "manifest must reflect the message spill; got: {}",
+        manifest.content
+    );
+}
+
+#[tokio::test]
+async fn current_user_prompt_survives_tight_budget() {
+    let spill_store = Arc::new(MockSpillStore::default());
+    let agent = tight_budget_agent(spill_store.clone(), 50);
+    let big_prompt = "y".repeat(600); // ~150 tokens, over the 50-token ceiling
+    // Earlier conversation comes first so the prompt under test is trailing
+    // but NOT the first user message — a "pin the first user message only"
+    // implementation must fail this test.
+    let mut earlier_assistant = Message::assistant("earlier answer", vec![]);
+    earlier_assistant.turn = Some(1);
+    let mut messages = vec![
+        Message::user("earlier prompt"),
+        earlier_assistant,
+        Message::user(&big_prompt),
+    ];
+
+    agent.run_loop(&mut messages).await.unwrap();
+
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.role == Role::User && m.content == big_prompt),
+        "the in-flight user prompt is pinned and must never be dropped by the ceiling"
+    );
 }

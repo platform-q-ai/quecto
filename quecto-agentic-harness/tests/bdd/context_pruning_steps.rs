@@ -994,6 +994,193 @@ fn then_later_user_messages_may_be_dropped(world: &mut QuectoWorld) {
     assert!(total <= max_tokens, "context should be under budget");
 }
 
+// --- #951: spilling sliding window (message spill + tail-pinning) steps ---
+
+#[given(expr = "recent-turn pinning is set to {int} turns")]
+fn given_pin_recent_turns(world: &mut QuectoWorld, n: u32) {
+    world.context_pin_recent_turns = Some(n);
+}
+
+/// Append an old (previous-prompt) message of `tokens` on `turn`, followed by
+/// the in-flight user prompt that a real session always ends with.
+fn push_old_message_on_turn(world: &mut QuectoWorld, role: Role, tokens: usize, turn: u32) {
+    let content = "x".repeat(tokens * 4); // ~4 ASCII chars per token
+    let mut msg = match role {
+        Role::Assistant => Message::assistant(&content, vec![]),
+        _ => Message::user(&content),
+    };
+    msg.turn = Some(turn);
+    let messages = world.context_messages.as_mut().unwrap();
+    messages.push(msg);
+    messages.push(Message::user("current question"));
+    world.context_original_message_content = Some(content);
+}
+
+#[given(expr = "an old assistant message of {int} tokens on turn {int}")]
+fn given_old_assistant_message(world: &mut QuectoWorld, tokens: usize, turn: u32) {
+    push_old_message_on_turn(world, Role::Assistant, tokens, turn);
+}
+
+#[given(expr = "an old user message of {int} tokens on turn {int}")]
+fn given_old_user_message(world: &mut QuectoWorld, tokens: usize, turn: u32) {
+    push_old_message_on_turn(world, Role::User, tokens, turn);
+}
+
+#[given("messages from turns 1 through 4 each exceeding the budget")]
+fn given_messages_turns_1_through_4(world: &mut QuectoWorld) {
+    let messages = world.context_messages.as_mut().unwrap();
+    for turn in 1..=4u32 {
+        let mut msg = Message::assistant("x".repeat(600), vec![]);
+        msg.turn = Some(turn);
+        messages.push(msg);
+    }
+    world.context_current_turn = Some(4);
+}
+
+#[given("a user prompt exceeding the budget")]
+fn given_user_prompt_exceeding_budget(world: &mut QuectoWorld) {
+    let messages = world.context_messages.as_mut().unwrap();
+    // Earlier conversation first so the prompt under test is trailing but NOT
+    // the first user message — a first-user-only pin must fail the scenario.
+    messages.push(Message::user("earlier question"));
+    let mut assistant = Message::assistant("earlier answer", vec![]);
+    assistant.turn = Some(1);
+    messages.push(assistant);
+    let prompt = "y".repeat(600); // ~150 tokens
+    messages.push(Message::user(&prompt));
+    world.context_current_user_prompt = Some(prompt);
+}
+
+/// Run the production spill-before-drop path: refresh the manifest (so an
+/// existing one is pinned in context), enforce the spilling ceiling, and
+/// refresh the manifest again if the ceiling spilled messages — mirroring
+/// `apply_context_pruning`.
+fn run_spilling_sliding_window(world: &mut QuectoWorld) {
+    let store = world.context_spill_store.as_ref().unwrap().clone();
+    let max_tokens = world
+        .context_max_tokens
+        .expect("max_context_tokens must be set");
+    let pin_recent_turns = world
+        .context_pin_recent_turns
+        .expect("recent-turn pinning must be set");
+    let messages = world.context_messages.as_mut().unwrap();
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        context_pruning::update_spill_manifest(messages, store.0.as_ref(), "test-session").await;
+        let (_, spilled) = context_pruning::enforce_context_ceiling_spilling_to_store(
+            messages,
+            max_tokens,
+            pin_recent_turns,
+            store.0.as_ref(),
+            "test-session",
+        )
+        .await;
+        if spilled {
+            context_pruning::update_spill_manifest(messages, store.0.as_ref(), "test-session")
+                .await;
+        }
+    });
+}
+
+#[given("the spilling sliding window has dropped messages to fit budget")]
+#[when("the spilling sliding window drops messages to fit budget")]
+fn when_spilling_sliding_window_drops(world: &mut QuectoWorld) {
+    run_spilling_sliding_window(world);
+}
+
+#[when("the agent completes a prompt with no tool calls")]
+fn when_agent_completes_prompt_no_tool_calls(world: &mut QuectoWorld) {
+    // A no-tool turn still runs context pruning: the ceiling may spill
+    // conversation messages, and the manifest must reflect them (#951).
+    run_spilling_sliding_window(world);
+    let messages = world.context_messages.as_mut().unwrap();
+    messages.push(Message::assistant("done", vec![]));
+}
+
+#[then("the spill entry content matches the original assistant text")]
+fn then_spill_entry_matches_original_assistant(world: &mut QuectoWorld) {
+    let store = world.context_spill_store.as_ref().unwrap().clone();
+    let original = world
+        .context_original_message_content
+        .as_ref()
+        .expect("should have saved the original assistant content");
+    let entry = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(store.recall("test-session", "turn1:msg:assistant"))
+        .unwrap()
+        .expect("should find spill entry turn1:msg:assistant");
+    assert_eq!(
+        entry.content, *original,
+        "spilled content must be the full original assistant text"
+    );
+}
+
+#[then("the recall result contains the full original assistant text")]
+fn then_recall_contains_original_assistant(world: &mut QuectoWorld) {
+    let result = world
+        .context_recall_result
+        .as_ref()
+        .expect("should have recall result");
+    assert!(
+        !result.is_error,
+        "recall should succeed: {}",
+        result.content
+    );
+    let original = world
+        .context_original_message_content
+        .as_ref()
+        .expect("should have saved the original assistant content");
+    assert_eq!(
+        result.content, *original,
+        "recall must return the full original assistant text"
+    );
+}
+
+#[then(expr = "messages from the most recent {int} turns remain in context")]
+fn then_most_recent_turns_remain(world: &mut QuectoWorld, n: u32) {
+    let max_turn = world
+        .context_current_turn
+        .expect("current turn should be set");
+    let messages = world.context_messages.as_ref().unwrap();
+    for turn in (max_turn - n + 1)..=max_turn {
+        assert!(
+            messages.iter().any(|m| m.turn == Some(turn)),
+            "turn {turn} is within the pinned tail and must remain in context"
+        );
+    }
+}
+
+#[then("messages from older turns are dropped")]
+fn then_older_turns_dropped(world: &mut QuectoWorld) {
+    let max_turn = world
+        .context_current_turn
+        .expect("current turn should be set");
+    let pin = world
+        .context_pin_recent_turns
+        .expect("recent-turn pinning must be set");
+    let messages = world.context_messages.as_ref().unwrap();
+    assert!(
+        messages
+            .iter()
+            .all(|m| m.turn.is_none_or(|t| t > max_turn - pin)),
+        "turns outside the pinned tail must be dropped to approach budget"
+    );
+}
+
+#[then("the current user prompt remains in context")]
+fn then_current_user_prompt_remains(world: &mut QuectoWorld) {
+    let prompt = world
+        .context_current_user_prompt
+        .as_ref()
+        .expect("should have saved the current user prompt");
+    let messages = world.context_messages.as_ref().unwrap();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.role == Role::User && m.content == *prompt),
+        "the in-flight user prompt must never be dropped by the ceiling"
+    );
+}
+
 // --- Session persistence round-trip steps ---
 
 #[when("the session is saved and reloaded from disk")]

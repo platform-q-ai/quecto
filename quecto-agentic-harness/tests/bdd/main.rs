@@ -537,6 +537,12 @@ pub struct QuectoWorld {
     pub context_recall_count: Option<u32>,
     /// Context pruning: max context token budget for tests
     pub context_max_tokens: Option<usize>,
+    /// Context pruning: recent-turn pin count for the spilling ceiling (#951)
+    pub context_pin_recent_turns: Option<u32>,
+    /// Context pruning: saved original content of the old message under test (#951)
+    pub context_original_message_content: Option<String>,
+    /// Context pruning: saved current (in-flight) user prompt (#951)
+    pub context_current_user_prompt: Option<String>,
     /// Context pruning: tool-call collapse threshold under test (#1017)
     pub context_collapse_after_tool_calls: Option<u32>,
     /// Context pruning: number of tool results collapsed by the last trigger

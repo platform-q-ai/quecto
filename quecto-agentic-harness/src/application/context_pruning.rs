@@ -13,7 +13,7 @@
 use std::fmt::Write;
 
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{ContextSpillStore, SpillIndex};
+use crate::domain::session::{ContextSpillStore, SpillEntry, SpillIndex};
 
 /// Sentinel value indicating that tool-result collapse is disabled.
 /// When `context_collapse_after_tool_calls` is set to this value, collapse is
@@ -137,43 +137,162 @@ pub fn collapse_tool_results_over_limit(messages: &mut [Message], max_tool_calls
 /// 2. Walk droppable indices from oldest, marking for removal until under budget.
 /// 3. Single retain() pass to remove all marked messages.
 pub fn enforce_context_ceiling(messages: &mut Vec<Message>, max_tokens: usize) -> usize {
-    let mut total = estimate_total_tokens(messages);
-    if total <= max_tokens {
+    if estimate_total_tokens(messages) <= max_tokens {
         return 0;
     }
-
     // Collect indices of droppable messages (oldest first, already in order).
-    // Then count how many to drop from the front until under budget.
     let droppable: Vec<usize> = messages
         .iter()
         .enumerate()
         .filter(|(_, m)| !m.is_pinned)
         .map(|(i, _)| i)
         .collect();
+    drop_until_under_budget(messages, max_tokens, &droppable).len()
+}
 
+/// Walk `droppable` (oldest first) marking messages for removal until the
+/// running total fits `max_tokens`, then remove them in a single pass.
+/// Returns the removed messages, oldest first. `droppable` must be sorted
+/// ascending (it is built by an in-order scan).
+fn drop_until_under_budget(
+    messages: &mut Vec<Message>,
+    max_tokens: usize,
+    droppable: &[usize],
+) -> Vec<Message> {
+    let mut total = estimate_total_tokens(messages);
     let mut drop_count = 0;
-    for &idx in &droppable {
+    for &idx in droppable {
         if total <= max_tokens {
             break;
         }
         total = total.saturating_sub(estimate_message_tokens(&messages[idx]));
         drop_count += 1;
     }
-
     if drop_count == 0 {
-        return 0;
+        return Vec::new();
     }
-
-    // Build a set of indices to drop (only the first `drop_count` droppable entries).
-    // Use a sorted slice + binary_search for O(log n) lookup instead of HashSet.
+    // Only the first `drop_count` droppable entries go. Sorted slice +
+    // binary_search gives O(log n) lookup without a HashSet.
     let drop_indices = &droppable[..drop_count];
-    let mut idx = 0;
-    messages.retain(|_| {
-        let keep = drop_indices.binary_search(&idx).is_err();
-        idx += 1;
-        keep
-    });
-    drop_count
+    let mut dropped = Vec::with_capacity(drop_count);
+    let mut kept = Vec::with_capacity(messages.len() - drop_count);
+    for (idx, msg) in std::mem::take(messages).into_iter().enumerate() {
+        if drop_indices.binary_search(&idx).is_ok() {
+            dropped.push(msg);
+        } else {
+            kept.push(msg);
+        }
+    }
+    *messages = kept;
+    dropped
+}
+
+/// Default number of most-recent turns the spilling ceiling never drops.
+pub const DEFAULT_PIN_RECENT_TURNS: u32 = 2;
+
+/// Enforce the context ceiling with tail-pinning, returning the dropped
+/// messages so the caller can spill their content before it is lost (#951).
+///
+/// Contract:
+/// - Never drops pinned messages (system prompt, manifest, first user msg).
+/// - Never drops the in-flight user prompt (the last turn-less user message)
+///   nor trailing turn-less messages — even if the budget cannot be met.
+/// - Never drops messages belonging to the `pin_recent_turns` most recent
+///   distinct turn values of the current prompt. Turn numbering restarts on
+///   each prompt, so only turns *after* the last turn-less user message (the
+///   current prompt) count as recent; earlier prompts' turns stay droppable.
+/// - Returns every dropped message (oldest first) so the caller can
+///   write non-tool content to the spill store with id `turn{N}:msg:{role}`.
+pub fn enforce_context_ceiling_spilling(
+    messages: &mut Vec<Message>,
+    max_tokens: usize,
+    pin_recent_turns: u32,
+) -> Vec<Message> {
+    if estimate_total_tokens(messages) <= max_tokens {
+        return Vec::new();
+    }
+    // Trailing turn-less suffix = the in-flight prompt/response: pinned.
+    let tail_start = messages
+        .iter()
+        .rposition(|m| m.turn.is_some())
+        .map_or(0, |i| i + 1);
+    // The current prompt boundary: everything after the last turn-less user
+    // message belongs to the prompt currently being processed.
+    let boundary = messages
+        .iter()
+        .rposition(|m| m.role == Role::User && m.turn.is_none())
+        .map_or(0, |i| i + 1);
+    let mut recent_turns: Vec<u32> = messages[boundary..].iter().filter_map(|m| m.turn).collect();
+    recent_turns.sort_unstable();
+    recent_turns.dedup();
+    let keep_from = recent_turns.len().saturating_sub(pin_recent_turns as usize);
+    let pinned_turns = &recent_turns[keep_from..];
+
+    let droppable: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|&(i, m)| {
+            !m.is_pinned
+                && i < tail_start
+                && i + 1 != boundary // the current user prompt itself
+                && !(i >= boundary && m.turn.is_some_and(|t| pinned_turns.contains(&t)))
+        })
+        .map(|(i, _)| i)
+        .collect();
+    drop_until_under_budget(messages, max_tokens, &droppable)
+}
+
+/// Prose name for a message role, used in message spill ids and manifests.
+fn role_name(role: Role) -> &'static str {
+    match role {
+        Role::System => "system",
+        Role::User => "user",
+        Role::Assistant => "assistant",
+        Role::Tool => "tool",
+    }
+}
+
+/// Enforce the spilling context ceiling and write every dropped conversation
+/// message (assistant/user) to the spill store as `turn{N}:msg:{role}` so it
+/// stays recallable (#951). Tool results are skipped — they were already
+/// spilled at creation time under `turn{N}:{tool}:{idx}`.
+///
+/// Returns `(dropped_count, message_spilled)`; `message_spilled` tells the
+/// caller the manifest needs a refresh even on a turn with no tool calls.
+pub async fn enforce_context_ceiling_spilling_to_store(
+    messages: &mut Vec<Message>,
+    max_tokens: usize,
+    pin_recent_turns: u32,
+    spill_store: &dyn ContextSpillStore,
+    session_key: &str,
+) -> (usize, bool) {
+    let dropped = enforce_context_ceiling_spilling(messages, max_tokens, pin_recent_turns);
+    let dropped_count = dropped.len();
+    let mut spilled = false;
+    for msg in dropped {
+        if msg.role == Role::Tool || msg.content.is_empty() {
+            continue;
+        }
+        let role = role_name(msg.role);
+        let entry = SpillEntry {
+            id: format!("turn{}:msg:{role}", msg.turn.unwrap_or(0)),
+            tool: role.to_string(),
+            input_preview: truncate_utf8_safe(&msg.content, 100).into_owned(),
+            tokens: estimate_tokens(&msg.content),
+            content: msg.content,
+        };
+        match spill_store.append(session_key, &entry).await {
+            Ok(()) => spilled = true,
+            Err(e) => {
+                tracing::warn!(
+                    target: "context_prune",
+                    error = %e,
+                    "failed to spill dropped message"
+                );
+            }
+        }
+    }
+    (dropped_count, spilled)
 }
 
 /// Build or update the pinned spill manifest message.
@@ -551,3 +670,9 @@ mod tests {
         assert_eq!(estimate_tokens(""), 0);
     }
 }
+
+// #951: spilling ceiling + tail-pinning tests live in a separate file to
+// respect the 750-line source cap.
+#[cfg(test)]
+#[path = "context_pruning_spill_tests.rs"]
+mod spill_tests;
