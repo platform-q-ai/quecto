@@ -450,14 +450,16 @@ impl App {
         let rows = self.panel_rows();
         let selected = self.subagents.panel_nav.selected();
         let active = self.subagents.active_agent_id.as_deref();
+        let focused = matches!(self.subagents.focus, Focus::Panel);
 
         let blocks: Vec<Vec<String>> = rows
             .iter()
             .enumerate()
             .map(|(i, row)| {
                 let sel = i == selected;
+                let is_active = row.id.as_deref() == active;
                 let mut block =
-                    vec![self.panel_name_line(row, sel, row.id.as_deref() == active, width, now)];
+                    vec![self.panel_name_line(row, sel && focused, is_active, width, now)];
                 if let Some((done, total)) = row.workflow {
                     block.push(panel_bar_line(&row.prefix, done, total, width));
                 }
@@ -501,13 +503,15 @@ impl App {
     fn panel_name_line(
         &self,
         row: &PanelRow,
-        selected: bool,
+        show_bar: bool,
         active: bool,
         width: usize,
         now: tokio::time::Instant,
     ) -> String {
         use crate::interface::utils::{truncate_to_width, visible_width};
-        let selbar = if selected {
+        // `show_bar` = selected AND panel-focused: the ▌ bar is the panel's
+        // cursor, mirroring the editor's cursor which hides when focus is here.
+        let selbar = if show_bar {
             theme::accent("▌")
         } else {
             " ".to_string()
