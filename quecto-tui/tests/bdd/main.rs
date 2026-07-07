@@ -113,6 +113,10 @@ pub struct TuiWorld {
     pub tui_viewed_agent: Option<String>,
     /// TUI scrollback BDD: viewport captured after streaming growth.
     pub tui_viewport_after_stream: Vec<String>,
+    /// TUI #981 render-cache BDD: tail render captured before scrollback.
+    pub tui_chat_cache_tail: Option<String>,
+    /// TUI #981 render-cache BDD: full unbounded render baseline.
+    pub tui_chat_cache_full_lines: Vec<String>,
     // --- TUI markdown table safety BDD ---
     pub tui_table_rendered: Option<Vec<String>>,
     pub tui_table_cell: Option<String>,
@@ -302,6 +306,7 @@ mod mouse_selection_steps;
 mod tui_app_behaviors_steps;
 mod tui_autocomplete_steps;
 mod tui_border_replication_steps;
+mod tui_chat_render_cache_steps;
 mod tui_chat_spacing_steps;
 mod tui_cold_start_steps;
 mod tui_ctrl_c_clear_steps;

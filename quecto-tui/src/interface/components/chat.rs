@@ -16,6 +16,8 @@ use crate::interface::utils::{truncate_to_width, visible_width, wrap_text};
 const BASH_PREVIEW_LINES: usize = 5;
 /// Number of content lines shown for read/write in collapsed mode (head).
 const FILE_PREVIEW_LINES: usize = 10;
+/// Extra viewport-sized context retained around the visible chat window.
+const RENDER_CACHE_RETAIN_VIEWPORTS: usize = 2;
 
 /// A single chat entry (user message, assistant message, tool execution, or status).
 #[derive(Debug, Clone)]
@@ -48,7 +50,8 @@ pub enum ChatEntry {
 struct CachedEntryRender {
     width: usize,
     tool_expanded: bool,
-    lines: Vec<String>,
+    line_count: usize,
+    lines: Option<Vec<String>>,
 }
 
 /// Chat display component.
@@ -59,9 +62,9 @@ pub struct Chat {
     /// Cumulative line offsets: `combined_offsets[i]` is the global line index at
     /// which entry `i` starts within the concatenated history, with a trailing
     /// total. Length is `covered_entries + 1`. Rebuilt incrementally so an
-    /// unchanged history is never rescanned per frame (#757); the rendered lines
-    /// themselves live solely in `render_cache` (no second persistent copy), and
-    /// each frame clones only the visible window via `gather_lines`.
+    /// unchanged history is never rescanned per frame (#757). Per-entry line
+    /// counts remain cached here, while rendered line vectors outside the
+    /// viewport window are evicted and rebuilt on demand (#981).
     combined_offsets: Vec<usize>,
     /// Width the offset table was built for; a width change invalidates it.
     combined_width: Option<usize>,
@@ -242,10 +245,21 @@ impl Chat {
         self.scroll_offset = self.scroll_offset.saturating_sub(amount);
     }
 
-    /// Number of chat entries (tests only — production never reads this).
-    #[cfg(test)]
+    /// Number of chat entries (tests/harness only — production never reads this).
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn entry_count(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Number of retained rendered lines (tests/harness only — production never reads this).
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn cached_rendered_line_count(&self) -> usize {
+        self.render_cache
+            .iter()
+            .filter_map(|cached| cached.as_ref())
+            .filter_map(|cached| cached.lines.as_ref())
+            .map(Vec::len)
+            .sum()
     }
 
     /// Text of the last `Status` entry, if the last entry is one (tests only).
@@ -381,7 +395,8 @@ impl Component for Chat {
                 self.render_cache[idx] = Some(CachedEntryRender {
                     width,
                     tool_expanded,
-                    lines,
+                    line_count: lines.len(),
+                    lines: Some(lines),
                 });
                 #[cfg(test)]
                 {
@@ -395,10 +410,10 @@ impl Component for Chat {
                 .combined_offsets
                 .last()
                 .expect("offset table always has a base entry");
-            self.combined_offsets.push(prev + cached.lines.len());
+            self.combined_offsets.push(prev + cached.line_count);
             #[cfg(test)]
             {
-                self.combined_extends += cached.lines.len();
+                self.combined_extends += cached.line_count;
             }
         }
 
@@ -430,7 +445,13 @@ impl Component for Chat {
             self.scroll_offset = effective;
             let end = full_line_count.saturating_sub(effective);
             let start = end.saturating_sub(height);
-            return self.gather_lines(start, end);
+            let lines = self.gather_lines(start, end, width, tool_expanded);
+            let retain_margin = height.saturating_mul(RENDER_CACHE_RETAIN_VIEWPORTS);
+            self.evict_rendered_lines_outside(
+                start.saturating_sub(retain_margin),
+                end.saturating_add(retain_margin),
+            );
+            return lines;
         }
 
         // Apply scroll offset for callers that render the full chat without a
@@ -440,10 +461,10 @@ impl Component for Chat {
             let effective = self.scroll_offset.min(max_scroll);
             self.scroll_offset = effective;
             let end = full_line_count.saturating_sub(effective).max(1);
-            return self.gather_lines(0, end);
+            return self.gather_lines(0, end, width, tool_expanded);
         }
 
-        self.gather_lines(0, full_line_count)
+        self.gather_lines(0, full_line_count, width, tool_expanded)
     }
 
     fn invalidate(&mut self) {}
@@ -451,9 +472,15 @@ impl Component for Chat {
 
 impl Chat {
     /// Clone the global line window `[start, end)` out of the per-entry caches.
-    /// Only the visible window is copied; the full rendered history is never
-    /// cloned per frame and is stored exactly once (in `render_cache`) (#757).
-    fn gather_lines(&self, start: usize, end: usize) -> Vec<String> {
+    /// Only the visible window is copied; rendered lines evicted from distant
+    /// history are rebuilt on demand while their line counts remain cached.
+    fn gather_lines(
+        &mut self,
+        start: usize,
+        end: usize,
+        width: usize,
+        tool_expanded: bool,
+    ) -> Vec<String> {
         if end <= start {
             return Vec::new();
         }
@@ -468,21 +495,60 @@ impl Chat {
             if entry_start >= end {
                 break;
             }
-            let lines = &self.render_cache[idx]
+            self.ensure_rendered_lines(idx, width, tool_expanded);
+            let lines = self.render_cache[idx]
                 .as_ref()
-                .expect("covered entry must be cached")
-                .lines;
+                .and_then(|cached| cached.lines.as_ref())
+                .expect("covered entry must have rendered lines");
             let lo = start.saturating_sub(entry_start);
             let hi = (end - entry_start).min(lines.len());
             out.extend_from_slice(&lines[lo..hi]);
         }
         out
     }
+
+    fn ensure_rendered_lines(&mut self, idx: usize, width: usize, tool_expanded: bool) {
+        let needs_render = !matches!(
+            &self.render_cache[idx],
+            Some(c) if c.width == width && c.tool_expanded == tool_expanded && c.lines.is_some()
+        );
+        if !needs_render {
+            return;
+        }
+
+        let lines = Self::render_entry(&self.entries[idx], width, tool_expanded);
+        self.render_cache[idx] = Some(CachedEntryRender {
+            width,
+            tool_expanded,
+            line_count: lines.len(),
+            lines: Some(lines),
+        });
+        #[cfg(test)]
+        {
+            self.entry_builds += 1;
+        }
+    }
+
+    fn evict_rendered_lines_outside(&mut self, retain_start: usize, retain_end: usize) {
+        let entry_count = self.combined_offsets.len().saturating_sub(1);
+        for idx in 0..entry_count {
+            let entry_start = self.combined_offsets[idx];
+            let entry_end = self.combined_offsets[idx + 1];
+            if (entry_end <= retain_start || entry_start >= retain_end)
+                && let Some(cached) = self.render_cache[idx].as_mut()
+            {
+                cached.lines = None;
+            }
+        }
+    }
 }
 
 #[path = "chat_render.rs"]
 mod chat_render;
 use chat_render::*;
+#[cfg(test)]
+#[path = "chat_cache_tests.rs"]
+mod cache_tests;
 #[cfg(test)]
 #[path = "chat_render_tests.rs"]
 mod chat_render_tests;
