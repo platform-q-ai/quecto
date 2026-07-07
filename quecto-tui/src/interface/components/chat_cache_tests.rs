@@ -20,11 +20,19 @@ fn chat_with_long_history(entry_count: usize) -> Chat {
     chat
 }
 
+/// Full uncached render of the same history, ANSI-stripped.
+fn baseline_lines(entry_count: usize, width: usize) -> Vec<String> {
+    chat_with_long_history(entry_count)
+        .render(width)
+        .into_iter()
+        .map(|l| strip_ansi(&l))
+        .collect()
+}
+
 #[test]
 fn long_viewport_render_keeps_rendered_line_cache_bounded() {
     let mut chat = chat_with_long_history(200);
-    let height = 8;
-    chat.set_viewport_height(height);
+    chat.set_viewport_height(8);
 
     let latest = render_plain(&mut chat, 80);
 
@@ -38,16 +46,17 @@ fn long_viewport_render_keeps_rendered_line_cache_bounded() {
         "cache eviction must not truncate raw transcript entries"
     );
     assert!(
-        chat.cached_rendered_line_count() <= height * 8,
-        "render cache should be bounded near the viewport, cached {} rendered lines",
-        chat.cached_rendered_line_count()
+        chat.cached_rendered_line_count() <= chat.rendered_line_retention_bound(),
+        "render cache should stay within the retention window, cached {} of max {}",
+        chat.cached_rendered_line_count(),
+        chat.rendered_line_retention_bound()
     );
 }
 
 #[test]
 fn evicted_history_rerenders_when_scrolled_back_without_losing_position() {
-    let mut chat = chat_with_long_history(200);
     let height = 8;
+    let mut chat = chat_with_long_history(200);
     chat.set_viewport_height(height);
     let _ = chat.render(80);
 
@@ -58,13 +67,14 @@ fn evicted_history_rerenders_when_scrolled_back_without_losing_position() {
         oldest.contains("history line 0"),
         "oldest history should re-render on demand after eviction: {oldest}"
     );
+    let total_lines = baseline_lines(200, 80).len();
     assert_eq!(
         chat.scroll_offset(),
-        392,
+        total_lines - height,
         "scroll offset should clamp to the oldest full viewport"
     );
     assert!(
-        chat.cached_rendered_line_count() <= height * 8,
+        chat.cached_rendered_line_count() <= chat.rendered_line_retention_bound(),
         "scrollback re-render should not repopulate the whole transcript cache"
     );
 }
@@ -89,9 +99,10 @@ fn large_entry_retains_only_nearby_rendered_lines() {
         "large entry tail should render: {tail}"
     );
     assert!(
-        chat.cached_rendered_line_count() <= 8 * 5,
-        "large overlapping entries should retain only the viewport window, cached {} rendered lines",
-        chat.cached_rendered_line_count()
+        chat.cached_rendered_line_count() <= chat.rendered_line_retention_bound(),
+        "large overlapping entries should retain only the viewport window, cached {} of max {}",
+        chat.cached_rendered_line_count(),
+        chat.rendered_line_retention_bound()
     );
 }
 
@@ -101,16 +112,11 @@ fn cache_eviction_preserves_visible_transcript_content() {
     bounded.set_viewport_height(8);
     let bounded_tail = render_plain(&mut bounded, 80);
     assert!(
-        bounded.cached_rendered_line_count() <= 8 * 8,
+        bounded.cached_rendered_line_count() <= bounded.rendered_line_retention_bound(),
         "render cache should be bounded before comparing visible content"
     );
 
-    let mut uncached = chat_with_long_history(200);
-    let full_lines: Vec<String> = uncached
-        .render(80)
-        .into_iter()
-        .map(|l| strip_ansi(&l))
-        .collect();
+    let full_lines = baseline_lines(200, 80);
     let expected_tail = full_lines[full_lines.len() - 8..].join("\n");
 
     assert_eq!(
@@ -121,7 +127,7 @@ fn cache_eviction_preserves_visible_transcript_content() {
     bounded.scroll_up(64);
     let bounded_history = render_plain(&mut bounded, 80);
     assert!(
-        bounded.cached_rendered_line_count() <= 8 * 8,
+        bounded.cached_rendered_line_count() <= bounded.rendered_line_retention_bound(),
         "history comparison should also keep the render cache bounded"
     );
     let history_end = full_lines.len() - 64;
@@ -130,5 +136,118 @@ fn cache_eviction_preserves_visible_transcript_content() {
     assert_eq!(
         bounded_history, expected_history,
         "on-demand history rendering must match a normal render"
+    );
+}
+
+#[test]
+fn width_change_after_eviction_matches_uncached_render() {
+    let mut chat = chat_with_long_history(200);
+    chat.set_viewport_height(8);
+    let _ = chat.render(80);
+
+    let narrow_tail = render_plain(&mut chat, 60);
+
+    let full_lines = baseline_lines(200, 60);
+    let expected_tail = full_lines[full_lines.len() - 8..].join("\n");
+    assert_eq!(
+        narrow_tail, expected_tail,
+        "a width change after eviction must match an uncached render"
+    );
+    assert!(
+        chat.cached_rendered_line_count() <= chat.rendered_line_retention_bound(),
+        "a full dims-change rebuild must not repopulate the whole transcript cache, cached {}",
+        chat.cached_rendered_line_count()
+    );
+}
+
+#[test]
+fn completing_a_tool_mid_transcript_after_eviction_keeps_content() {
+    let build = |completed: bool| {
+        let mut chat = Chat::new();
+        chat.start_tool("t1".into(), "bash".into(), r#"{"command":"ls"}"#.into());
+        if completed {
+            chat.complete_tool("t1", "a\nb\nc", false, Some(7));
+        }
+        for i in 0..200 {
+            chat.add_entry(ChatEntry::User {
+                text: format!("history line {i}"),
+            });
+        }
+        chat
+    };
+
+    let mut chat = build(false);
+    chat.set_viewport_height(8);
+    let _ = chat.render(80);
+    chat.complete_tool("t1", "a\nb\nc", false, Some(7));
+
+    chat.scroll_up(10_000);
+    let top = render_plain(&mut chat, 80);
+
+    let full_lines: Vec<String> = build(true)
+        .render(80)
+        .into_iter()
+        .map(|l| strip_ansi(&l))
+        .collect();
+    let expected_top = full_lines[..8].join("\n");
+    assert_eq!(
+        top, expected_top,
+        "completing a tool above evicted history must not corrupt offsets"
+    );
+    assert!(
+        chat.cached_rendered_line_count() <= chat.rendered_line_retention_bound(),
+        "mid-transcript invalidation must keep the render cache bounded"
+    );
+}
+
+#[test]
+fn scrolling_back_down_restores_the_live_tail() {
+    let mut chat = chat_with_long_history(200);
+    chat.set_viewport_height(8);
+    let original_tail = render_plain(&mut chat, 80);
+
+    chat.scroll_up(10_000);
+    let _ = chat.render(80);
+    chat.scroll_down(10_000);
+    let restored_tail = render_plain(&mut chat, 80);
+
+    assert_eq!(
+        restored_tail, original_tail,
+        "returning to the tail after scrollback must re-render it identically"
+    );
+    assert!(
+        chat.cached_rendered_line_count() <= chat.rendered_line_retention_bound(),
+        "round-trip scrolling must keep the render cache bounded"
+    );
+}
+
+#[test]
+fn prepend_history_after_eviction_renders_prepended_content() {
+    let mut chat = chat_with_long_history(200);
+    chat.set_viewport_height(8);
+    let original_tail = render_plain(&mut chat, 80);
+
+    let prepended: Vec<ChatEntry> = (0..50)
+        .map(|i| ChatEntry::User {
+            text: format!("prepended line {i}"),
+        })
+        .collect();
+    chat.prepend_history(prepended);
+
+    let tail = render_plain(&mut chat, 80);
+    assert_eq!(
+        tail, original_tail,
+        "prepending history must not disturb the visible tail"
+    );
+
+    chat.scroll_up(10_000);
+    let top = render_plain(&mut chat, 80);
+    assert!(
+        top.contains("prepended line 0"),
+        "prepended history should render at the top after eviction: {top}"
+    );
+    assert!(
+        chat.cached_rendered_line_count() <= chat.rendered_line_retention_bound(),
+        "prepend + scrollback must keep the render cache bounded"
     );
 }

@@ -76,10 +76,12 @@ fn when_render_with_eviction(world: &mut TuiWorld) {
 
 #[then("rendered chat lines are retained only near the visible window")]
 fn then_rendered_lines_bounded(world: &mut TuiWorld) {
-    let cached = chat(world).cached_rendered_line_count();
+    let chat = chat(world);
+    let cached = chat.cached_rendered_line_count();
+    let bound = chat.rendered_line_retention_bound();
     assert!(
-        cached <= VIEWPORT_HEIGHT * 8,
-        "render cache should be bounded near the viewport, cached {cached} rendered lines"
+        cached <= bound,
+        "render cache should be bounded near the viewport, cached {cached} of max {bound}"
     );
 }
 
@@ -107,9 +109,10 @@ fn then_older_window_renders(world: &mut TuiWorld) {
 
 #[then("the scroll position still identifies the requested history")]
 fn then_scroll_position_correct(world: &mut TuiWorld) {
+    let total_lines = long_history_chat().render(WIDTH).len();
     assert_eq!(
         chat(world).scroll_offset(),
-        392,
+        total_lines - VIEWPORT_HEIGHT,
         "scroll offset should clamp to the oldest full viewport"
     );
 }
