@@ -6,14 +6,16 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.87.0**.
+Current version: **0.87.1**.
 
 ## Quick Start
 
 ```bash
-# Install both binaries. quecto-tui starts the kernel by running `quecto`,
-# so the root `quecto` binary must be on PATH unless you connect by --socket.
-cargo install --path .
+# Install both binaries (from the repository root). quecto-tui starts the
+# kernel by running `quecto`, so the `quecto` binary must be on PATH unless
+# you connect by --socket. The `quecto` binary is built by the
+# quecto-agentic-harness package.
+cargo install --path quecto-agentic-harness
 cargo install --path quecto-tui
 
 # Store your API key (zero-config: no setup step — defaults apply,
@@ -47,11 +49,11 @@ socket:
 
 ```bash
 # Option A: let the TUI spawn the kernel from target/debug/quecto
-cargo build -p quecto -p quecto-tui
+cargo build -p quecto-agentic-harness -p quecto-tui
 PATH="$PWD/target/debug:$PATH" cargo run -p quecto-tui --
 
 # Option B: run the kernel explicitly, then attach the TUI from another terminal
-cargo run -p quecto -- agent --mode uds --socket /tmp/quecto.sock --persist
+cargo run -p quecto-agentic-harness -- agent --mode uds --socket /tmp/quecto.sock --persist
 cargo run -p quecto-tui -- --socket /tmp/quecto.sock
 ```
 
