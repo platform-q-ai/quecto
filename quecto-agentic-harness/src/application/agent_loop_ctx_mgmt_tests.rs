@@ -402,6 +402,11 @@ fn warn_targets_for_budget(messages: &mut Vec<Message>, max_context_tokens: usiz
         warn_targets: warn_targets.clone(),
     };
     tracing::subscriber::with_default(subscriber, || {
+        // Parallel sibling tests can hit the warn! callsite with no subscriber
+        // first, caching its interest as "never"; the register-dispatch rebuild
+        // races with that. Rebuild explicitly so this thread's subscriber is
+        // guaranteed to see the event regardless of test ordering.
+        tracing::callsite::rebuild_interest_cache();
         let store = Arc::new(MemSpillStore::default());
         let loop_ = agent(vec![text_response("done")], store, max_context_tokens, None);
         tokio::runtime::Builder::new_current_thread()
