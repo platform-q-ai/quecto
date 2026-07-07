@@ -46,7 +46,18 @@ pub(super) fn provider_failure_audit_event(provider: &str, err: &DomainError) ->
 /// (Anthropic), which would re-enter this branch and burn the retry budget
 /// without the model ever self-correcting. Merge into the trailing user message
 /// when there is one; otherwise push a fresh one.
-pub(super) fn append_malformed_feedback(messages: &mut Vec<Message>, err: &DomainError) {
+///
+/// A pushed feedback message is stamped with `current_turn`: the context
+/// pruner treats the *last turn-less user message* as the in-flight prompt
+/// (never dropped, marks the current-prompt boundary), and an unstamped
+/// mid-prompt feedback message would usurp that role — stripping tail-pin
+/// protection from the real prompt and the most recent turns. Merging keeps
+/// the trailing message's own stamp (turn-less when it is the real prompt).
+pub(super) fn append_malformed_feedback(
+    messages: &mut Vec<Message>,
+    err: &DomainError,
+    current_turn: u32,
+) {
     let feedback = format!(
         "Your previous request was rejected by the provider as malformed (not retryable): {err}\n\nPlease correct the request — for example fix any malformed tool call arguments or invalid fields — and try again.",
     );
@@ -54,8 +65,13 @@ pub(super) fn append_malformed_feedback(messages: &mut Vec<Message>, err: &Domai
         Some(last) if last.role == Role::User => {
             last.content.push_str("\n\n");
             last.content.push_str(&feedback);
+            last.invalidate_token_cache();
         }
-        _ => messages.push(Message::user(feedback)),
+        _ => {
+            let mut msg = Message::user(feedback);
+            msg.turn = Some(current_turn);
+            messages.push(msg);
+        }
     }
 }
 

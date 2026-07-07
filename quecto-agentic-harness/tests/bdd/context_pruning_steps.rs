@@ -266,7 +266,7 @@ fn when_agent_executes_bash_turn_1(world: &mut QuectoWorld) {
 fn when_agent_completes_turn(world: &mut QuectoWorld, turn: u32) {
     world.context_current_turn = Some(turn);
     // No collapse — tool results stay in full context.
-    // Only enforce_context_ceiling would drop messages (if over budget).
+    // Only enforce_context_ceiling_spilling would drop messages (if over budget).
 }
 
 #[when(expr = "the agent completes turns {int} through {int}")]
@@ -416,17 +416,30 @@ fn when_sliding_window_drops(world: &mut QuectoWorld) {
     }
 
     let max_tokens = world.context_max_tokens.unwrap_or(500);
-    context_pruning::enforce_context_ceiling(messages, max_tokens);
+    context_pruning::enforce_context_ceiling_spilling(
+        messages,
+        max_tokens,
+        context_pruning::DEFAULT_PIN_RECENT_TURNS,
+    );
 }
 
 #[when(expr = "the agent accumulates {int} tokens of messages")]
 fn when_agent_accumulates_tokens(world: &mut QuectoWorld, target_tokens: usize) {
     let messages = world.context_messages.as_mut().unwrap();
-    // Each character is ~1/3 token, so we need ~3 * target_tokens bytes
-    let content = "x".repeat(target_tokens * 3);
-    messages.push(Message::user(content));
+    // Accumulate the tokens across several past messages, then end with a
+    // small in-flight prompt (a real session always ends with one; the
+    // ceiling never drops it, so the bulk must be droppable history).
+    let per_msg = "x".repeat((target_tokens / 4) * 3);
+    for _ in 0..4 {
+        messages.push(Message::user(&per_msg));
+    }
+    messages.push(Message::user("current question"));
     let max_tokens = world.context_max_tokens.unwrap_or(100_000);
-    context_pruning::enforce_context_ceiling(messages, max_tokens);
+    context_pruning::enforce_context_ceiling_spilling(
+        messages,
+        max_tokens,
+        context_pruning::DEFAULT_PIN_RECENT_TURNS,
+    );
 }
 
 #[when(expr = "the agent accumulates {int} tokens across {int} user messages")]
@@ -449,7 +462,11 @@ fn when_agent_accumulates_tokens_across(
     }
 
     let max_tokens = world.context_max_tokens.unwrap_or(100_000);
-    context_pruning::enforce_context_ceiling(messages, max_tokens);
+    context_pruning::enforce_context_ceiling_spilling(
+        messages,
+        max_tokens,
+        context_pruning::DEFAULT_PIN_RECENT_TURNS,
+    );
 }
 
 #[when("the agent executes tools on turns 1 through 5")]

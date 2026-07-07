@@ -433,12 +433,7 @@ async fn reject_symlink(path: &Path) -> Result<(), DomainError> {
 }
 
 fn role_to_str(role: &Role) -> &str {
-    match role {
-        Role::System => "system",
-        Role::User => "user",
-        Role::Assistant => "assistant",
-        Role::Tool => "tool",
-    }
+    role.as_str()
 }
 
 fn str_to_role(s: &str) -> Role {

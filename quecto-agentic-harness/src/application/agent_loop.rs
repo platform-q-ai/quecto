@@ -624,7 +624,7 @@ impl AgentLoopImpl {
                             error = %e,
                             "provider rejected request as malformed — re-prompting with addressable feedback"
                         );
-                        append_malformed_feedback(messages, &e);
+                        append_malformed_feedback(messages, &e, current_turn);
                         current_turn += 1;
                         continue;
                     }

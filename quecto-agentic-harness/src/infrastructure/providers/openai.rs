@@ -90,12 +90,10 @@ impl OpenAiProvider {
                 if is_system {
                     seen_system = true;
                 }
-                let role = match m.role {
-                    Role::System if demote_system => "user",
-                    Role::System => "system",
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                    Role::Tool => "tool",
+                let role = if demote_system {
+                    "user"
+                } else {
+                    m.role.as_str()
                 };
                 let content = if demote_system {
                     format!("[system] {}", m.content)

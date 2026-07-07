@@ -3,9 +3,10 @@
 // Once the number of tool-result messages in the session exceeds
 // `context_collapse_after_tool_calls` (default 50), the oldest tool results are
 // collapsed to compact `recall(spill_id)` stubs. Independently, messages age out
-// and are dropped by `enforce_context_ceiling()` when the conversation exceeds
-// the token budget. Spill-to-disk happens at creation time so `recall()` can
-// retrieve collapsed or dropped outputs.
+// and are dropped by `enforce_context_ceiling_spilling()` when the conversation
+// exceeds the token budget. Tool outputs spill to disk at creation time; dropped
+// conversation messages spill at drop time (#951), so `recall()` can retrieve
+// collapsed or dropped content.
 //
 // Depends on: domain::message, domain::session (ContextSpillStore).
 // Never imports infrastructure.
@@ -122,34 +123,6 @@ pub fn collapse_tool_results_over_limit(messages: &mut [Message], max_tool_calls
     collapsed
 }
 
-/// Enforce a hard ceiling on total context tokens.
-/// Drops oldest non-pinned messages until under budget.
-/// Returns the number of messages dropped.
-///
-/// The token budget covers both text content and base64 image blocks,
-/// so image-heavy sessions are correctly bounded. Note that this is an
-/// *application-level* budget — it does not know the actual model context
-/// window. Users on smaller-context models (e.g. GPT-4 128k) should
-/// override `max_context_tokens` in their config.
-///
-/// Uses a two-pass approach to avoid O(n^2) repeated scanning:
-/// 1. Calculate total tokens and identify droppable message indices.
-/// 2. Walk droppable indices from oldest, marking for removal until under budget.
-/// 3. Single retain() pass to remove all marked messages.
-pub fn enforce_context_ceiling(messages: &mut Vec<Message>, max_tokens: usize) -> usize {
-    if estimate_total_tokens(messages) <= max_tokens {
-        return 0;
-    }
-    // Collect indices of droppable messages (oldest first, already in order).
-    let droppable: Vec<usize> = messages
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| !m.is_pinned)
-        .map(|(i, _)| i)
-        .collect();
-    drop_until_under_budget(messages, max_tokens, &droppable).len()
-}
-
 /// Walk `droppable` (oldest first) marking messages for removal until the
 /// running total fits `max_tokens`, then remove them in a single pass.
 /// Returns the removed messages, oldest first. `droppable` must be sorted
@@ -193,14 +166,25 @@ pub const DEFAULT_PIN_RECENT_TURNS: u32 = 2;
 /// Enforce the context ceiling with tail-pinning, returning the dropped
 /// messages so the caller can spill their content before it is lost (#951).
 ///
+/// The token budget covers both text content and base64 image blocks,
+/// so image-heavy sessions are correctly bounded. Note that this is an
+/// *application-level* budget — it does not know the actual model context
+/// window. Users on smaller-context models (e.g. GPT-4 128k) should
+/// override `max_context_tokens` in their config.
+///
 /// Contract:
-/// - Never drops pinned messages (system prompt, manifest, first user msg).
-/// - Never drops the in-flight user prompt (the last turn-less user message)
-///   nor trailing turn-less messages — even if the budget cannot be met.
-/// - Never drops messages belonging to the `pin_recent_turns` most recent
-///   distinct turn values of the current prompt. Turn numbering restarts on
-///   each prompt, so only turns *after* the last turn-less user message (the
-///   current prompt) count as recent; earlier prompts' turns stay droppable.
+/// - Never drops pinned messages (system prompt, manifest).
+/// - Never drops the in-flight user prompt — the last *turn-less* user
+///   message (production never turn-stamps user prompts; a mid-prompt
+///   malformed-feedback user message IS stamped, see
+///   `append_malformed_feedback`, so it can never masquerade as the prompt).
+/// - Within the current prompt (everything from the in-flight prompt
+///   onward), never drops turn-less messages (not yet stamped) nor messages
+///   in the `pin_recent_turns` most recent distinct turns. Turn numbering
+///   restarts on each prompt, so earlier prompts' turns stay droppable.
+/// - Everything before the in-flight prompt — including fully turn-less
+///   histories saved by older builds — is droppable unless pinned, so the
+///   ceiling is still enforced on resumed pre-turn-stamping sessions.
 /// - Returns every dropped message (oldest first) so the caller can
 ///   write non-tool content to the spill store with id `turn{N}:msg:{role}`.
 pub fn enforce_context_ceiling_spilling(
@@ -211,18 +195,16 @@ pub fn enforce_context_ceiling_spilling(
     if estimate_total_tokens(messages) <= max_tokens {
         return Vec::new();
     }
-    // Trailing turn-less suffix = the in-flight prompt/response: pinned.
-    let tail_start = messages
-        .iter()
-        .rposition(|m| m.turn.is_some())
-        .map_or(0, |i| i + 1);
-    // The current prompt boundary: everything after the last turn-less user
-    // message belongs to the prompt currently being processed.
-    let boundary = messages
+    // The in-flight user prompt: the last turn-less user message. Everything
+    // from it onward belongs to the prompt currently being processed.
+    let region_start = messages
         .iter()
         .rposition(|m| m.role == Role::User && m.turn.is_none())
-        .map_or(0, |i| i + 1);
-    let mut recent_turns: Vec<u32> = messages[boundary..].iter().filter_map(|m| m.turn).collect();
+        .unwrap_or(0);
+    let mut recent_turns: Vec<u32> = messages[region_start..]
+        .iter()
+        .filter_map(|m| m.turn)
+        .collect();
     recent_turns.sort_unstable();
     recent_turns.dedup();
     let keep_from = recent_turns.len().saturating_sub(pin_recent_turns as usize);
@@ -233,29 +215,32 @@ pub fn enforce_context_ceiling_spilling(
         .enumerate()
         .filter(|&(i, m)| {
             !m.is_pinned
-                && i < tail_start
-                && i + 1 != boundary // the current user prompt itself
-                && !(i >= boundary && m.turn.is_some_and(|t| pinned_turns.contains(&t)))
+                && if i < region_start {
+                    true // earlier prompts: droppable (turn-stamped or not)
+                } else {
+                    // Current prompt: only stamped turns outside the pinned
+                    // tail are droppable. The prompt itself and any not-yet-
+                    // stamped in-flight message are turn-less → kept.
+                    m.turn.is_some_and(|t| !pinned_turns.contains(&t))
+                }
         })
         .map(|(i, _)| i)
         .collect();
     drop_until_under_budget(messages, max_tokens, &droppable)
 }
 
-/// Prose name for a message role, used in message spill ids and manifests.
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::System => "system",
-        Role::User => "user",
-        Role::Assistant => "assistant",
-        Role::Tool => "tool",
-    }
-}
-
 /// Enforce the spilling context ceiling and write every dropped conversation
 /// message (assistant/user) to the spill store as `turn{N}:msg:{role}` so it
 /// stays recallable (#951). Tool results are skipped — they were already
 /// spilled at creation time under `turn{N}:{tool}:{idx}`.
+///
+/// Turn numbering restarts on every prompt while the spill file persists for
+/// the whole session, so the base id alone would collide across prompts (and
+/// turn-less user prompts would all collide on `turn0:msg:user`). The spill
+/// store is append-only and `recall` returns the first match, so a collision
+/// would make later content unreachable. Ids are therefore de-duplicated
+/// against the store's index with a `:{n}` suffix (`turn1:msg:assistant`,
+/// `turn1:msg:assistant:2`, ...).
 ///
 /// Returns `(dropped_count, message_spilled)`; `message_spilled` tells the
 /// caller the manifest needs a refresh even on a turn with no tool calls.
@@ -269,13 +254,34 @@ pub async fn enforce_context_ceiling_spilling_to_store(
     let dropped = enforce_context_ceiling_spilling(messages, max_tokens, pin_recent_turns);
     let dropped_count = dropped.len();
     let mut spilled = false;
+    let mut existing_ids: Option<std::collections::HashSet<String>> = None;
     for msg in dropped {
         if msg.role == Role::Tool || msg.content.is_empty() {
             continue;
         }
-        let role = role_name(msg.role);
+        // Lazily fetch the store index once, only when something will spill.
+        let ids = match existing_ids {
+            Some(ref mut ids) => ids,
+            None => {
+                let seeded = spill_store
+                    .list_entries(session_key)
+                    .await
+                    .map(|entries| entries.iter().map(|e| e.id.clone()).collect())
+                    .unwrap_or_default();
+                existing_ids.insert(seeded)
+            }
+        };
+        let role = msg.role.as_str();
+        let base = format!("turn{}:msg:{role}", msg.turn.unwrap_or(0));
+        let mut id = base.clone();
+        let mut n = 1usize;
+        while ids.contains(&id) {
+            n += 1;
+            id = format!("{base}:{n}");
+        }
+        ids.insert(id.clone());
         let entry = SpillEntry {
-            id: format!("turn{}:msg:{role}", msg.turn.unwrap_or(0)),
+            id,
             tool: role.to_string(),
             input_preview: truncate_utf8_safe(&msg.content, 100).into_owned(),
             tokens: estimate_tokens(&msg.content),
@@ -406,7 +412,7 @@ mod tests {
     #[test]
     fn test_enforce_context_ceiling_under_budget() {
         let mut messages = vec![Message::user("short")];
-        let dropped = enforce_context_ceiling(&mut messages, 1000);
+        let dropped = enforce_context_ceiling_spilling(&mut messages, 1000, 2).len();
         assert_eq!(dropped, 0);
         assert_eq!(messages.len(), 1);
     }
@@ -414,14 +420,15 @@ mod tests {
     #[test]
     fn test_enforce_context_ceiling_drops_oldest() {
         // Create messages that exceed budget
-        let big_content = "x".repeat(600); // ~200 tokens
+        let big_content = "x".repeat(600); // ~150 tokens
         let mut messages = vec![
             Message::user(&big_content),
             Message::user(&big_content),
             Message::user(&big_content),
         ];
-        // Budget of 250 tokens, total ~600 tokens. Need to drop 2.
-        let dropped = enforce_context_ceiling(&mut messages, 250);
+        // Budget of 250 tokens, total ~450 tokens. The trailing user message
+        // is the in-flight prompt (kept); the two older ones must go.
+        let dropped = enforce_context_ceiling_spilling(&mut messages, 250, 2).len();
         assert!(dropped >= 1);
         assert!(estimate_total_tokens(&messages) <= 250);
     }
@@ -434,7 +441,7 @@ mod tests {
             Message::user(&big),
             Message::user(&big),
         ];
-        let dropped = enforce_context_ceiling(&mut messages, 250);
+        let dropped = enforce_context_ceiling_spilling(&mut messages, 250, 2).len();
         assert!(dropped > 0);
         // System message (pinned) should still be there
         assert!(messages.iter().any(|m| m.role == Role::System));
@@ -496,7 +503,7 @@ mod tests {
         let msg2 = Message::user("y".repeat(300)); // 100 tokens
         let mut messages = vec![msg1, msg2];
         // Budget of 150: total is ~301 tokens, should drop oldest (the 200-token image msg)
-        let dropped = enforce_context_ceiling(&mut messages, 150);
+        let dropped = enforce_context_ceiling_spilling(&mut messages, 150, 2).len();
         assert_eq!(dropped, 1);
         assert_eq!(messages.len(), 1);
         assert!(estimate_total_tokens(&messages) <= 150);

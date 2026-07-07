@@ -2,6 +2,10 @@
 //! spilling, tail-pins recent turns and the in-flight user prompt, and never
 //! drops pinned messages (system prompt, manifest).
 
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+
 use super::*;
 use crate::domain::message::{Message, Role};
 
@@ -9,6 +13,70 @@ fn assistant_on_turn(content: &str, turn: u32) -> Message {
     let mut m = Message::assistant(content, vec![]);
     m.turn = Some(turn);
     m
+}
+
+/// Minimal in-memory spill store for exercising the real spill-to-store path.
+#[derive(Debug, Default)]
+struct MemStore {
+    entries: Mutex<Vec<SpillEntry>>,
+}
+
+impl ContextSpillStore for MemStore {
+    fn append(
+        &self,
+        _session_key: &str,
+        entry: &SpillEntry,
+    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
+    {
+        self.entries.lock().unwrap().push(entry.clone());
+        Box::pin(async { Ok(()) })
+    }
+
+    fn recall(
+        &self,
+        _session_key: &str,
+        id: &str,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        let found = self
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|e| e.id == id)
+            .cloned();
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn list_entries(&self, _session_key: &str) -> crate::domain::session::SpillIndexList<'_> {
+        let index: Vec<SpillIndex> = self
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| SpillIndex {
+                id: e.id.clone(),
+                tool: e.tool.clone(),
+                input_preview: e.input_preview.clone(),
+                tokens: e.tokens,
+            })
+            .collect();
+        Box::pin(async move { Ok(Arc::new(index)) })
+    }
+
+    fn clear(
+        &self,
+        _session_key: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
+    {
+        self.entries.lock().unwrap().clear();
+        Box::pin(async { Ok(()) })
+    }
 }
 
 #[test]
@@ -138,29 +206,147 @@ fn ceiling_spilling_never_drops_system_prompt_or_manifest() {
     );
 }
 
-#[test]
-fn manifest_text_distinguishes_tool_and_message_spills() {
-    let entries = vec![
-        SpillIndex {
-            id: "turn1:bash:0".to_string(),
-            tool: "bash".to_string(),
-            input_preview: "echo hello".to_string(),
-            tokens: 100,
-        },
-        SpillIndex {
-            id: "turn2:msg:assistant".to_string(),
-            tool: "assistant".to_string(),
-            input_preview: "analysis of the build failure".to_string(),
-            tokens: 250,
-        },
-    ];
+#[tokio::test]
+async fn manifest_text_distinguishes_tool_and_message_spills() {
+    // Exercise the REAL id construction: a tool spill already in the store,
+    // plus a budget-dropped assistant turn spilled by the production path.
+    let store = MemStore::default();
+    store
+        .append(
+            "s",
+            &SpillEntry {
+                id: "turn1:bash:0".to_string(),
+                tool: "bash".to_string(),
+                input_preview: "echo hello".to_string(),
+                tokens: 100,
+                content: "hello".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let big = "x".repeat(600);
+    let mut messages = vec![assistant_on_turn(&big, 1), Message::user("current prompt")];
+    enforce_context_ceiling_spilling_to_store(&mut messages, 50, 1, &store, "s").await;
+    let entries = store.list_entries("s").await.unwrap();
     let text = build_manifest_text(&entries);
     assert!(
         text.contains("turn1:bash:0"),
         "manifest must keep the tool-spill id form; got: {text}"
     );
     assert!(
-        text.contains("turn2:msg:assistant"),
-        "manifest must render the message-spill id form; got: {text}"
+        text.contains("turn1:msg:assistant"),
+        "manifest must render the message-spill id produced by the ceiling; got: {text}"
+    );
+}
+
+// --- review fixes for PR #1043 ---
+
+#[tokio::test]
+async fn message_spill_ids_never_collide_across_prompts() {
+    // Turn numbering restarts each prompt, so two different prompts can both
+    // drop a "turn 1" assistant reply into the same session-persistent store.
+    // Every spill must stay individually recallable.
+    let store = MemStore::default();
+    for content in ["prompt A reply", "prompt B reply"] {
+        let mut messages = vec![
+            assistant_on_turn(&content.repeat(50), 1),
+            Message::user("next prompt"),
+        ];
+        enforce_context_ceiling_spilling_to_store(&mut messages, 10, 0, &store, "s").await;
+    }
+    let entries = store.list_entries("s").await.unwrap();
+    let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids.len(), 2, "both dropped replies must spill");
+    assert_eq!(ids[0], "turn1:msg:assistant");
+    assert_eq!(
+        ids[1], "turn1:msg:assistant:2",
+        "a colliding base id must be de-duplicated, got: {ids:?}"
+    );
+    let second = store
+        .recall("s", "turn1:msg:assistant:2")
+        .await
+        .unwrap()
+        .expect("the second prompt's spill must be recallable under its own id");
+    assert!(second.content.contains("prompt B reply"));
+}
+
+#[tokio::test]
+async fn turnless_user_spills_get_distinct_ids() {
+    // Production never turn-stamps user prompts; several dropped past prompts
+    // must not all collide on `turn0:msg:user`.
+    let store = MemStore::default();
+    let big = "z".repeat(600);
+    let mut messages = vec![
+        Message::user(&big),
+        Message::user(&big),
+        Message::user("current prompt"),
+    ];
+    enforce_context_ceiling_spilling_to_store(&mut messages, 10, 0, &store, "s").await;
+    let entries = store.list_entries("s").await.unwrap();
+    let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1], "turn-less user spills must not collide");
+}
+
+#[test]
+fn ceiling_still_prunes_fully_turnless_history() {
+    // A chat-only session saved by a pre-turn-stamping build has no turn on
+    // any message. The ceiling must still be enforced on resume — only the
+    // in-flight prompt (last turn-less user message) is protected.
+    let big = "x".repeat(600); // ~150 tokens each
+    let mut messages = vec![
+        Message::user(&big),
+        Message::assistant(&big, vec![]),
+        Message::user(&big),
+        Message::assistant(&big, vec![]),
+        Message::user("current prompt"),
+    ];
+    let dropped = enforce_context_ceiling_spilling(&mut messages, 200, 2);
+    assert!(
+        !dropped.is_empty(),
+        "a fully turn-less over-budget history must still be pruned"
+    );
+    assert!(
+        estimate_total_tokens(&messages) <= 200,
+        "budget must be met on resumed turn-less histories"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.role == Role::User && m.content == "current prompt"),
+        "the in-flight prompt must survive"
+    );
+}
+
+#[test]
+fn stamped_trailing_user_feedback_does_not_usurp_prompt_boundary() {
+    // Mid-prompt malformed-feedback user messages are turn-stamped (see
+    // append_malformed_feedback), so the real in-flight prompt keeps its
+    // boundary role and this prompt's recent turns keep tail-pin protection.
+    let big = "x".repeat(600);
+    let mut feedback = Message::user("your request was malformed, fix it");
+    feedback.turn = Some(3);
+    let mut messages = vec![
+        assistant_on_turn(&big, 7), // earlier prompt's turn — droppable
+        Message::user("real question"),
+        assistant_on_turn(&big, 2),
+        feedback,
+    ];
+    enforce_context_ceiling_spilling(&mut messages, 10, 2);
+    assert!(
+        messages.iter().any(|m| m.content == "real question"),
+        "the in-flight prompt must never lose its protection to feedback"
+    );
+    assert!(
+        messages.iter().any(|m| m.turn == Some(2)),
+        "current-prompt recent turns must stay tail-pinned"
+    );
+    assert!(
+        messages.iter().any(|m| m.turn == Some(3)),
+        "the stamped feedback message is a recent turn and stays pinned"
+    );
+    assert!(
+        !messages.iter().any(|m| m.turn == Some(7)),
+        "the earlier prompt's turn must still be droppable"
     );
 }

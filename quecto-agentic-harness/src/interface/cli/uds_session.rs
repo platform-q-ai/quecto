@@ -445,12 +445,7 @@ pub fn messages_tail_json(messages: &[Message], count: usize) -> serde_json::Val
 /// Static wire name for a role — no per-message throwaway `String` allocation
 /// (previously `format!("{:?}", role).to_lowercase()`, two heap allocs) (#994).
 pub(crate) fn role_wire_name(role: &Role) -> &'static str {
-    match role {
-        Role::System => "system",
-        Role::User => "user",
-        Role::Assistant => "assistant",
-        Role::Tool => "tool",
-    }
+    role.as_str()
 }
 
 /// A borrowed, zero-copy `Serialize` view of a [`Message`] in the UDS protocol
