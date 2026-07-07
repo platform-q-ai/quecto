@@ -122,9 +122,12 @@ async fn test_spill_preserves_message_content_after_spill() {
         "tool message content must be preserved after spill"
     );
 
+    // Conversation messages spill too (#1046); the tool output must be the
+    // single tool-spill entry, with its content intact.
     let entries = spill_store.entries.lock().unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].content, "big output here");
+    let tool_entries: Vec<_> = entries.iter().filter(|e| e.tool == "bash").collect();
+    assert_eq!(tool_entries.len(), 1);
+    assert_eq!(tool_entries[0].content, "big output here");
 }
 
 // --- #951: budget pruner spills conversation messages, tail-pins recent turns ---

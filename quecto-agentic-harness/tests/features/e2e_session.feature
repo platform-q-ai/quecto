@@ -22,7 +22,7 @@ Feature: End-to-End Session Management
     When I run quecto agent -s chat1 -m "First message"
     Then the exit code should be 0
     And a [session] file should exist for key "cli:chat1"
-    And the [session] "cli:chat1" should contain 2 messages
+    And the [session] "cli:chat1" should contain 2 conversation messages
 
   @done
   Scenario: Second message in same session includes history
@@ -30,7 +30,7 @@ Feature: End-to-End Session Management
     And the mock LLM returns a text response "I remember"
     When I run quecto agent -s chat1 -m "Do you remember?"
     Then the exit code should be 0
-    And the [session] "cli:chat1" should contain 4 messages
+    And the [session] "cli:chat1" should contain 4 conversation messages
 
   @done
   Scenario: Different session names are isolated
@@ -68,5 +68,5 @@ Feature: End-to-End Session Management
     Given the mock LLM returns a text response "Aye aye"
     When I run quecto agent -s pirate --system "You are a pirate" -m "Hello"
     Then the exit code should be 0
-    And the [session] "cli:pirate" should contain 2 messages
+    And the [session] "cli:pirate" should contain 2 conversation messages
     And the session "cli:pirate" should not include a system role message

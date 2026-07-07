@@ -58,6 +58,10 @@ pub enum AuditEvent {
         tool_results_collapsed: usize,
         tokens_before: usize,
         tokens_after: usize,
+        /// True when the ceiling could not be met — the pinned/exempt set
+        /// alone exceeds the budget even after full demotion (#1044).
+        #[serde(default)]
+        budget_unmet: bool,
     },
     #[cfg(any(test, feature = "test-support"))]
     SubagentSpawned {
@@ -283,8 +287,26 @@ mod tests {
             tool_results_collapsed: 0,
             tokens_before: 195_000,
             tokens_after: 142_000,
+            budget_unmet: false,
         };
         let json = serde_json::to_string(&event).unwrap();
+        let back: AuditEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn context_pruned_round_trip_preserves_unmet_budget() {
+        // #1044: a serializer that dropped the field would still round-trip
+        // the `false` case (via #[serde(default)]); only `true` catches it.
+        let event = AuditEvent::ContextPruned {
+            messages_dropped: 0,
+            tool_results_collapsed: 0,
+            tokens_before: 300,
+            tokens_after: 300,
+            budget_unmet: true,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"budget_unmet\":true"), "got: {json}");
         let back: AuditEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(event, back);
     }

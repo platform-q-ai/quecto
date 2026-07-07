@@ -157,6 +157,7 @@ fn given_context_pruned(
         tool_results_collapsed,
         tokens_before,
         tokens_after,
+        budget_unmet: false,
     };
     world.audit_event = Some(event);
 }

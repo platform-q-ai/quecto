@@ -474,3 +474,45 @@ fn model_cap_from_base_dir_reads_models_json() {
         Some(65_536)
     );
 }
+
+// --- #1044: known context windows for the window-aware budget ---
+
+#[test]
+fn context_window_for_returns_declared_windows_only() {
+    let registry = ModelRegistry::builtin();
+    // A builtin model with an explicitly declared window resolves to it.
+    assert_eq!(
+        registry.context_window_for("anthropic-api/claude-sonnet-5"),
+        Some(1_000_000),
+        "a declared context window must be resolvable by qualified model id"
+    );
+    // A model whose window is only the synthesized default is "unknown":
+    // it must not clamp the configured budget.
+    assert_eq!(
+        registry.context_window_for("anthropic-api/claude-opus-4-8"),
+        None
+    );
+    // Unknown models and non-qualified ids are unknown.
+    assert_eq!(registry.context_window_for("nope/never-heard-of-it"), None);
+    assert_eq!(registry.context_window_for("not-qualified"), None);
+}
+
+#[test]
+fn model_context_window_from_base_dir_reads_models_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"small-window","contextWindow":32768},{"id":"no-window"}]}}}"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        ModelRegistry::model_context_window_from_base_dir(tmp.path(), "fireworks/small-window"),
+        Some(32_768)
+    );
+    assert_eq!(
+        ModelRegistry::model_context_window_from_base_dir(tmp.path(), "fireworks/no-window"),
+        None,
+        "a listed model without a declared window must not clamp"
+    );
+}

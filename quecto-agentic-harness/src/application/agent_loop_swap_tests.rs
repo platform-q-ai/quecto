@@ -140,6 +140,26 @@ fn enhance_provider_error_leaves_non_provider_unchanged() {
     }
 }
 
+/// Minimal agent for exercising instance methods like `finalize_text_response`.
+fn bare_agent() -> AgentLoopImpl {
+    AgentLoopImpl::new(AgentLoopConfig {
+        provider: Arc::new(MockProvider::new(vec![])),
+        tool_registry: Box::new(MockRegistry::new()),
+        model: "m".into(),
+        max_tokens: 100,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+    })
+}
+
 #[test]
 fn finalize_text_response_builds_result_and_appends_message() {
     let mut messages = vec![Message::user("hi")];
@@ -151,13 +171,19 @@ fn finalize_text_response_builds_result_and_appends_message() {
         thinking_blocks: vec![],
     };
     let pre_response_tokens = context_pruning::estimate_total_tokens(&messages);
-    let result = AgentLoopImpl::finalize_text_response(
-        &mut messages,
-        resp,
-        3,
-        UsageTotals::default(),
-        pre_response_tokens,
-    );
+    let result =
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(bare_agent().finalize_text_response(
+                &mut messages,
+                resp,
+                super::TurnEnd {
+                    iterations: 3,
+                    usage: UsageTotals::default(),
+                    pre_response_context_tokens: pre_response_tokens,
+                    current_turn: 1,
+                },
+            ));
     assert_eq!(result.response, "answer");
     assert_eq!(result.tool_iterations, 3);
     assert!(!result.iteration_limit_reached);
@@ -175,13 +201,19 @@ fn finalize_text_response_defaults_empty_content() {
         thinking_blocks: vec![],
     };
     let pre_response_tokens = context_pruning::estimate_total_tokens(&messages);
-    let result = AgentLoopImpl::finalize_text_response(
-        &mut messages,
-        resp,
-        0,
-        UsageTotals::default(),
-        pre_response_tokens,
-    );
+    let result =
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(bare_agent().finalize_text_response(
+                &mut messages,
+                resp,
+                super::TurnEnd {
+                    iterations: 0,
+                    usage: UsageTotals::default(),
+                    pre_response_context_tokens: pre_response_tokens,
+                    current_turn: 1,
+                },
+            ));
     assert!(result.response.is_empty());
     assert_eq!(messages.len(), 1);
 }

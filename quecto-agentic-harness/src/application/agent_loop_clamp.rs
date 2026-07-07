@@ -33,4 +33,33 @@ impl AgentLoopImpl {
             None => self.max_tokens,
         }
     }
+
+    /// Builder: recent-turn tail-pin count for the spilling ceiling (#1045).
+    pub fn with_pin_recent_turns(mut self, pin_recent_turns: u32) -> Self {
+        self.pin_recent_turns = pin_recent_turns;
+        self
+    }
+
+    /// Builder: count-based conversation-message collapse threshold (#1046).
+    pub fn with_context_collapse_after_messages(mut self, max_messages: u32) -> Self {
+        self.context_collapse_after_messages = max_messages;
+        self
+    }
+
+    /// Builder: the active model's known context window in tokens (#1044).
+    pub fn with_model_context_window(mut self, window: Option<usize>) -> Self {
+        self.model_context_window = window;
+        self
+    }
+
+    /// The effective context-token budget (#1044): the active model's known
+    /// context window when it is smaller than the configured
+    /// `max_context_tokens`; the config value is the override/fallback
+    /// (unknown windows leave the configured budget untouched).
+    pub fn effective_max_context_tokens(&self) -> usize {
+        match self.model_context_window {
+            Some(window) => self.max_context_tokens.min(window),
+            None => self.max_context_tokens,
+        }
+    }
 }

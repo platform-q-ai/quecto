@@ -321,6 +321,12 @@ pub fn run_repl<R: BufRead, W: Write>(
             ctx.base_dir,
             &model,
         );
+    // #1044: derive the effective context budget from the model's known window.
+    let model_context_window =
+        crate::infrastructure::model_registry::ModelRegistry::model_context_window_from_base_dir(
+            ctx.base_dir,
+            &model,
+        );
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: ctx.provider.clone(),
         tool_registry: Box::new(registry),
@@ -342,6 +348,13 @@ pub fn run_repl<R: BufRead, W: Write>(
         audit_log: None,
     })
     .with_model_max_tokens(model_max_tokens);
+    // #1044/#1045/#1046: thread the context-management knobs and the model's
+    // known context window into the loop.
+    let agent = crate::interface::shared::apply_context_settings(
+        agent,
+        &ctx.config.agents.defaults,
+        model_context_window,
+    );
 
     let session_store = FileSessionStore::new(ctx.base_dir);
 

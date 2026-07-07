@@ -86,17 +86,30 @@ The agent tracks estimated token usage against an application-level context
 budget. When the conversation exceeds `max_context_tokens` (configurable,
 default `300000`), the agent applies context pruning:
 
-1. **Sliding window**: Older non-pinned messages are dropped until the session
-   is under budget (system prompt, first user message, and spill manifest are
-   preserved)
-2. **Spilling**: Tool outputs are written to a spill file when they are created,
-   so dropped outputs can still be recovered with the `recall` tool
-3. **Tool output collapsing**: Once the session accumulates more than
+1. **Spilling at creation**: Tool outputs *and* conversation (user/assistant)
+   messages are written to a spill file when they are created, so anything
+   later collapsed or dropped can still be recovered with the `recall` tool
+2. **Tool output collapsing**: Once the session accumulates more than
    `context_collapse_after_tool_calls` tool calls, the oldest tool outputs are
-   replaced with compact recall stubs before the sliding window drops them. The
-   trigger counts tool calls cumulatively across prompts within a session.
-   Current config default: `50`. Set it to `4294967295` (`u32::MAX`) to disable
-   collapse.
+   replaced with compact recall stubs. The trigger counts tool calls
+   cumulatively across prompts within a session. Current config default: `50`.
+   Set it to `4294967295` (`u32::MAX`) to disable collapse.
+3. **Conversation message collapsing**: An independent dial,
+   `context_collapse_after_messages`, keeps the most recent N conversation
+   messages in full and replaces older ones with one-line recall stubs.
+   Exempt: the system prompt, spill manifest, in-flight user prompt, and the
+   `pin_recent_turns` most recent turns. Disabled by default (`u32::MAX`).
+4. **Demotion ladder**: When the conversation still exceeds the effective
+   budget, messages are demoted down a ladder — full content is collapsed to
+   recall stubs first (oldest first), and only if the budget is still
+   exceeded are stubs removed entirely (their content stays on disk). Pinned
+   and tail-pinned (`pin_recent_turns`, default `2`) content is never
+   demoted; if the pinned set alone exceeds the budget, a
+   `context_prune` warning is logged and the `ContextPruned` audit event
+   records `budget_unmet`.
+
+The effective budget is the smaller of `max_context_tokens` and the active
+model's context window when the model registry declares one.
 
 ### Spill and recall
 
@@ -166,8 +179,10 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `max_context_tokens` | `300000` | Application-level token budget before context pruning |
+| `max_context_tokens` | `300000` | Application-level token budget before context pruning (clamped down to the model's declared context window when known) |
 | `context_collapse_after_tool_calls` | `50` | Collapse the oldest tool outputs once the session exceeds N tool calls. Set to `4294967295` (`u32::MAX`) to disable |
+| `context_collapse_after_messages` | `4294967295` (disabled) | Collapse the oldest conversation (user/assistant) messages to recall stubs once the session exceeds N live messages |
+| `pin_recent_turns` | `2` | How many most-recent turns the context ceiling never demotes or drops |
 
 ## See also
 

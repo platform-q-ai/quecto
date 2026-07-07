@@ -23,6 +23,24 @@ pub fn generate_chat_key() -> String {
     crate::domain::session::user_chat_key(secs, uniq)
 }
 
+/// Thread the context-management knobs from user configuration into a built
+/// agent loop (#1044/#1045/#1046): the recent-turn pin count, the
+/// conversation-message collapse threshold, and the active model's known
+/// context window (from the model registry; `None` for unknown models leaves
+/// the configured `max_context_tokens` as the budget). Every production
+/// construction site must build its loop through this helper so user config
+/// is never silently ignored.
+pub fn apply_context_settings(
+    agent: crate::application::agent_loop::AgentLoopImpl,
+    defaults: &crate::infrastructure::config::AgentDefaults,
+    model_context_window: Option<usize>,
+) -> crate::application::agent_loop::AgentLoopImpl {
+    agent
+        .with_pin_recent_turns(defaults.pin_recent_turns)
+        .with_context_collapse_after_messages(defaults.context_collapse_after_messages)
+        .with_model_context_window(model_context_window)
+}
+
 /// Merge an optional user-provided system prompt.
 pub fn merge_prompts(user_prompt: &Option<String>) -> String {
     match user_prompt {

@@ -8,6 +8,7 @@ use crate::domain::message::Message;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
+use crate::infrastructure::model_registry::ModelRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 
 /// Max byte length for `--socket` paths.  Linux allows 108, macOS 104;
@@ -408,11 +409,11 @@ pub(crate) fn build_agent_from_config(
     // so a model whose real output limit is lower than the configured global
     // default (e.g. Fireworks qwen3p7-plus = 65536) never receives a larger
     // value. The set_model path re-derives this so a model switch re-clamps.
-    .with_model_max_tokens(
-        crate::infrastructure::model_registry::ModelRegistry::model_cap_from_base_dir(
-            base_dir, &model,
-        ),
-    );
+    .with_model_max_tokens(ModelRegistry::model_cap_from_base_dir(base_dir, &model));
+    // #1044/#1045/#1046: thread context knobs + the model's known window.
+    let window = ModelRegistry::model_context_window_from_base_dir(base_dir, &model);
+    let agent =
+        crate::interface::shared::apply_context_settings(agent, &config.agents.defaults, window);
 
     Some(AgentBuildResult {
         agent,

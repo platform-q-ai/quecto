@@ -1291,18 +1291,20 @@ fn then_session_file_exists(world: &mut QuectoWorld, key: String) {
     );
 }
 
-#[then(expr = "the session {string} should contain {int} messages")]
+#[then(expr = "the session {string} should contain {int} conversation messages")]
 fn then_session_has_n_messages(world: &mut QuectoWorld, key: String, expected: usize) {
+    // The pinned spill manifest is context machinery (#951/#1046), not part
+    // of the persisted conversation under test.
     let session = load_session_from_disk(world, &key);
+    let conversation: Vec<_> = session.messages.iter().filter(|m| !m.is_manifest).collect();
     assert_eq!(
-        session.messages.len(),
+        conversation.len(),
         expected,
         "expected session '{}' to have {} messages, got {} (messages: {:?})",
         key,
         expected,
-        session.messages.len(),
-        session
-            .messages
+        conversation.len(),
+        conversation
             .iter()
             .map(|m| format!("{}:{}", m.role, &m.content[..m.content.len().min(40)]))
             .collect::<Vec<_>>()
@@ -1366,10 +1368,12 @@ fn then_no_session_files(world: &mut QuectoWorld) {
 #[then(expr = "the session {string} should not include a system role message")]
 fn then_session_no_system_messages(world: &mut QuectoWorld, key: String) {
     let session = load_session_from_disk(world, &key);
+    // The pinned spill manifest is a persisted system message by design
+    // (#951/#1046); this step is about the *user-supplied* system prompt.
     let system_count = session
         .messages
         .iter()
-        .filter(|m| m.role == "system")
+        .filter(|m| m.role == "system" && !m.is_manifest)
         .count();
     assert_eq!(
         system_count, 0,
@@ -1449,6 +1453,7 @@ struct SessionOnDisk {
 struct MessageOnDisk {
     role: String,
     content: String,
+    is_manifest: bool,
 }
 
 fn load_session_from_disk(world: &QuectoWorld, key: &str) -> SessionOnDisk {
@@ -1513,6 +1518,7 @@ fn messages_from_session_value(json: &serde_json::Value) -> Vec<MessageOnDisk> {
                 .map(|m| MessageOnDisk {
                     role: m["role"].as_str().unwrap_or("").to_string(),
                     content: m["content"].as_str().unwrap_or("").to_string(),
+                    is_manifest: m["is_manifest"].as_bool().unwrap_or(false),
                 })
                 .collect()
         })

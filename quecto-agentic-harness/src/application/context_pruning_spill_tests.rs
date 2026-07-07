@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::domain::message::{Message, Role};
+use crate::domain::session::SpillEntry;
 
 fn assistant_on_turn(content: &str, turn: u32) -> Message {
     let mut m = Message::assistant(content, vec![]);
@@ -209,7 +210,7 @@ fn ceiling_spilling_never_drops_system_prompt_or_manifest() {
 #[tokio::test]
 async fn manifest_text_distinguishes_tool_and_message_spills() {
     // Exercise the REAL id construction: a tool spill already in the store,
-    // plus a budget-dropped assistant turn spilled by the production path.
+    // plus an assistant turn filed by the creation-time spill writer (#1046).
     let store = MemStore::default();
     store
         .append(
@@ -225,8 +226,8 @@ async fn manifest_text_distinguishes_tool_and_message_spills() {
         .await
         .unwrap();
     let big = "x".repeat(600);
-    let mut messages = vec![assistant_on_turn(&big, 1), Message::user("current prompt")];
-    enforce_context_ceiling_spilling_to_store(&mut messages, 50, 1, &store, "s").await;
+    let mut assistant = assistant_on_turn(&big, 1);
+    messages::spill_conversation_message(&mut assistant, &store, "s").await;
     let entries = store.list_entries("s").await.unwrap();
     let text = build_manifest_text(&entries);
     assert!(
@@ -244,19 +245,16 @@ async fn manifest_text_distinguishes_tool_and_message_spills() {
 #[tokio::test]
 async fn message_spill_ids_never_collide_across_prompts() {
     // Turn numbering restarts each prompt, so two different prompts can both
-    // drop a "turn 1" assistant reply into the same session-persistent store.
+    // file a "turn 1" assistant reply into the same session-persistent store.
     // Every spill must stay individually recallable.
     let store = MemStore::default();
     for content in ["prompt A reply", "prompt B reply"] {
-        let mut messages = vec![
-            assistant_on_turn(&content.repeat(50), 1),
-            Message::user("next prompt"),
-        ];
-        enforce_context_ceiling_spilling_to_store(&mut messages, 10, 0, &store, "s").await;
+        let mut assistant = assistant_on_turn(&content.repeat(50), 1);
+        messages::spill_conversation_message(&mut assistant, &store, "s").await;
     }
     let entries = store.list_entries("s").await.unwrap();
     let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
-    assert_eq!(ids.len(), 2, "both dropped replies must spill");
+    assert_eq!(ids.len(), 2, "both replies must spill");
     assert_eq!(ids[0], "turn1:msg:assistant");
     assert_eq!(
         ids[1], "turn1:msg:assistant:2",
@@ -272,16 +270,14 @@ async fn message_spill_ids_never_collide_across_prompts() {
 
 #[tokio::test]
 async fn turnless_user_spills_get_distinct_ids() {
-    // Production never turn-stamps user prompts; several dropped past prompts
+    // Production never turn-stamps user prompts; several spilled past prompts
     // must not all collide on `turn0:msg:user`.
     let store = MemStore::default();
     let big = "z".repeat(600);
-    let mut messages = vec![
-        Message::user(&big),
-        Message::user(&big),
-        Message::user("current prompt"),
-    ];
-    enforce_context_ceiling_spilling_to_store(&mut messages, 10, 0, &store, "s").await;
+    for _ in 0..2 {
+        let mut user = Message::user(&big);
+        messages::spill_conversation_message(&mut user, &store, "s").await;
+    }
     let entries = store.list_entries("s").await.unwrap();
     let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
     assert_eq!(ids.len(), 2);

@@ -2,10 +2,11 @@
 //
 // Once the number of tool-result messages in the session exceeds
 // `context_collapse_after_tool_calls` (default 50), the oldest tool results are
-// collapsed to compact `recall(spill_id)` stubs. Independently, messages age out
-// and are dropped by `enforce_context_ceiling_spilling()` when the conversation
-// exceeds the token budget. Tool outputs spill to disk at creation time; dropped
-// conversation messages spill at drop time (#951), so `recall()` can retrieve
+// collapsed to compact `recall(spill_id)` stubs. Conversation messages get the
+// symmetric lifecycle in the `messages` submodule (#1046): spilled at creation,
+// count-collapsed via `context_collapse_after_messages`, and demoted down the
+// ladder (stub → drop) when the conversation exceeds the token budget. All
+// content spills to disk at creation time, so `recall()` can retrieve
 // collapsed or dropped content.
 //
 // Depends on: domain::message, domain::session (ContextSpillStore).
@@ -13,8 +14,12 @@
 
 use std::fmt::Write;
 
+// #1046: conversation-message collapse, demotion ladder, creation-time spill.
+#[path = "context_pruning_messages.rs"]
+pub mod messages;
+
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{ContextSpillStore, SpillEntry, SpillIndex};
+use crate::domain::session::{ContextSpillStore, SpillIndex};
 
 /// Sentinel value indicating that tool-result collapse is disabled.
 /// When `context_collapse_after_tool_calls` is set to this value, collapse is
@@ -227,78 +232,6 @@ pub fn enforce_context_ceiling_spilling(
         .map(|(i, _)| i)
         .collect();
     drop_until_under_budget(messages, max_tokens, &droppable)
-}
-
-/// Enforce the spilling context ceiling and write every dropped conversation
-/// message (assistant/user) to the spill store as `turn{N}:msg:{role}` so it
-/// stays recallable (#951). Tool results are skipped — they were already
-/// spilled at creation time under `turn{N}:{tool}:{idx}`.
-///
-/// Turn numbering restarts on every prompt while the spill file persists for
-/// the whole session, so the base id alone would collide across prompts (and
-/// turn-less user prompts would all collide on `turn0:msg:user`). The spill
-/// store is append-only and `recall` returns the first match, so a collision
-/// would make later content unreachable. Ids are therefore de-duplicated
-/// against the store's index with a `:{n}` suffix (`turn1:msg:assistant`,
-/// `turn1:msg:assistant:2`, ...).
-///
-/// Returns `(dropped_count, message_spilled)`; `message_spilled` tells the
-/// caller the manifest needs a refresh even on a turn with no tool calls.
-pub async fn enforce_context_ceiling_spilling_to_store(
-    messages: &mut Vec<Message>,
-    max_tokens: usize,
-    pin_recent_turns: u32,
-    spill_store: &dyn ContextSpillStore,
-    session_key: &str,
-) -> (usize, bool) {
-    let dropped = enforce_context_ceiling_spilling(messages, max_tokens, pin_recent_turns);
-    let dropped_count = dropped.len();
-    let mut spilled = false;
-    let mut existing_ids: Option<std::collections::HashSet<String>> = None;
-    for msg in dropped {
-        if msg.role == Role::Tool || msg.content.is_empty() {
-            continue;
-        }
-        // Lazily fetch the store index once, only when something will spill.
-        let ids = match existing_ids {
-            Some(ref mut ids) => ids,
-            None => {
-                let seeded = spill_store
-                    .list_entries(session_key)
-                    .await
-                    .map(|entries| entries.iter().map(|e| e.id.clone()).collect())
-                    .unwrap_or_default();
-                existing_ids.insert(seeded)
-            }
-        };
-        let role = msg.role.as_str();
-        let base = format!("turn{}:msg:{role}", msg.turn.unwrap_or(0));
-        let mut id = base.clone();
-        let mut n = 1usize;
-        while ids.contains(&id) {
-            n += 1;
-            id = format!("{base}:{n}");
-        }
-        ids.insert(id.clone());
-        let entry = SpillEntry {
-            id,
-            tool: role.to_string(),
-            input_preview: truncate_utf8_safe(&msg.content, 100).into_owned(),
-            tokens: estimate_tokens(&msg.content),
-            content: msg.content,
-        };
-        match spill_store.append(session_key, &entry).await {
-            Ok(()) => spilled = true,
-            Err(e) => {
-                tracing::warn!(
-                    target: "context_prune",
-                    error = %e,
-                    "failed to spill dropped message"
-                );
-            }
-        }
-    }
-    (dropped_count, spilled)
 }
 
 /// Build or update the pinned spill manifest message.
@@ -683,3 +616,8 @@ mod tests {
 #[cfg(test)]
 #[path = "context_pruning_spill_tests.rs"]
 mod spill_tests;
+
+// #1046: message-collapse + ladder + creation-spill tests (same cap rule).
+#[cfg(test)]
+#[path = "context_pruning_message_tests.rs"]
+mod message_tests;
