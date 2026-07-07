@@ -427,7 +427,14 @@ fn find_repl_session_file(sessions_dir: &Path) -> PathBuf {
     let entries: Vec<_> = std::fs::read_dir(sessions_dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("repl_"))
+        // Only session FILES (<key>.json): the context spill store (#1046)
+        // creates a sibling DIRECTORY per session (sessions/<key>/spill.jsonl)
+        // with the same "repl_" prefix, and read_dir order is filesystem-
+        // dependent — picking the dir made this helper flake on CI.
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.starts_with("repl_") && name.ends_with(".json") && e.path().is_file()
+        })
         .collect();
 
     assert!(
