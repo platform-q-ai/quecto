@@ -449,3 +449,27 @@ fn render_line_with_cursor_mid_char_keeps_text_intact() {
     let visible = strip_ansi(&out.join(""));
     assert_eq!(visible, "naïve");
 }
+
+#[test]
+fn hidden_cursor_emits_no_reverse_video() {
+    // The block cursor is a reverse-video SGR (\x1b[7m), not the terminal
+    // cursor. With `show_cursor` off (focus elsewhere, e.g. the sub-agent
+    // panel) no line may carry it; re-enabling must bring it back, and each
+    // toggle must invalidate the render cache.
+    let mut e = Editor::new();
+    e.set_text("hello");
+    assert!(
+        e.render(40).iter().any(|l| l.contains("\x1b[7m")),
+        "cursor must render by default"
+    );
+    e.set_show_cursor(false);
+    assert!(
+        e.render(40).iter().all(|l| !l.contains("\x1b[7m")),
+        "no reverse-video cursor may render while hidden"
+    );
+    e.set_show_cursor(true);
+    assert!(
+        e.render(40).iter().any(|l| l.contains("\x1b[7m")),
+        "cursor must return when shown again"
+    );
+}
