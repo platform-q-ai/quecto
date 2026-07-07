@@ -59,6 +59,16 @@ fn heading_level_2() {
 }
 
 #[test]
+fn heading_levels_3_through_6_do_not_render_markdown_markers() {
+    for level in 3..=6 {
+        let md = format!("{} Heading {}", "#".repeat(level), level);
+        let lines = render_plain_nonempty(&md, 80);
+
+        assert_eq!(lines, vec![format!("Heading {}", level)]);
+    }
+}
+
+#[test]
 fn bold_text() {
     let lines = render_md("This is **bold** text", 80);
     let joined = lines.join("");
@@ -238,6 +248,26 @@ fn blockquote() {
         "should contain quote border: {}",
         plain
     );
+}
+
+#[test]
+fn standalone_blockquote_has_no_extra_blank_lines() {
+    let lines: Vec<String> = render_md("> This is a quote", 80)
+        .into_iter()
+        .map(|line| strip_ansi(&line))
+        .collect();
+
+    assert_eq!(lines, vec!["│ This is a quote"]);
+}
+
+#[test]
+fn paragraph_blockquote_paragraph_spacing_has_no_duplicate_blank_lines() {
+    let lines: Vec<String> = render_md("Before\n\n> Quote\n\nAfter", 80)
+        .into_iter()
+        .map(|line| strip_ansi(&line))
+        .collect();
+
+    assert_eq!(lines, vec!["Before", "", "│ Quote", "", "After"]);
 }
 
 #[test]

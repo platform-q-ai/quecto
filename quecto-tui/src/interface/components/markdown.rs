@@ -178,12 +178,7 @@ impl Markdown {
                         let text = std::mem::take(&mut current_line);
                         let styled = match heading_level {
                             1 => theme::bold(&theme::underline(&theme::accent(&text))),
-                            2 => theme::bold(&theme::accent(&text)),
-                            _ => theme::bold(&theme::accent(&format!(
-                                "{} {}",
-                                "#".repeat(heading_level as usize),
-                                text
-                            ))),
+                            _ => theme::bold(&theme::accent(&text)),
                         };
                         lines.push(RenderedLine::plain(styled));
                         lines.push(RenderedLine::blank()); // spacing after heading
@@ -191,7 +186,9 @@ impl Markdown {
                     }
                     TagEnd::Paragraph => {
                         flush_current_line!();
-                        lines.push(RenderedLine::blank()); // spacing after paragraph
+                        if !in_blockquote {
+                            lines.push(RenderedLine::blank()); // spacing after paragraph
+                        }
                     }
                     TagEnd::CodeBlock => {
                         flush_code_block(
