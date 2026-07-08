@@ -15,20 +15,64 @@
 //! terminate requests become no-ops instead of signalling a possibly-reused
 //! PID (#1051 review: PID-reuse race).
 
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot, watch};
+
+/// Maximum stderr lines retained in a [`StderrTail`] ring buffer.
+pub const STDERR_TAIL_MAX_LINES: usize = 20;
+
+/// Bounded ring buffer of the agent child's most recent stderr lines (#1047).
+///
+/// The TUI keeps draining the child's stderr AFTER startup into this buffer
+/// (see `interface::cli::spawn_stderr_drain`), so when the agent dies
+/// mid-session (e.g. a panic-abort near a full context window under the
+/// workspace `panic = "abort"`) the panic message is still available for the
+/// disconnect diagnostics instead of being lost with the process.
+#[derive(Debug, Clone, Default)]
+pub struct StderrTail {
+    lines: Arc<Mutex<VecDeque<String>>>,
+}
+
+impl StderrTail {
+    /// Append a (already redacted/truncated) line, evicting the oldest once
+    /// the ring is full.
+    pub fn push(&self, line: String) {
+        let mut lines = self.lines.lock().expect("stderr tail lock");
+        if lines.len() == STDERR_TAIL_MAX_LINES {
+            lines.pop_front();
+        }
+        lines.push_back(line);
+    }
+
+    /// Snapshot of the retained lines, oldest first.
+    pub fn lines(&self) -> Vec<String> {
+        self.lines
+            .lock()
+            .expect("stderr tail lock")
+            .iter()
+            .cloned()
+            .collect()
+    }
+}
 
 /// Cloneable handle to the background watcher owning a spawned agent child.
 #[derive(Debug, Clone)]
 pub struct ChildWatch {
     exit_rx: watch::Receiver<Option<String>>,
     term_tx: mpsc::Sender<oneshot::Sender<()>>,
+    stderr_tail: StderrTail,
 }
 
 /// Take ownership of the spawned agent child, reap it in the background, and
 /// return a handle for reading its exit diagnosis and requesting termination.
-pub fn watch_child(mut child: tokio::process::Child) -> ChildWatch {
+///
+/// `stderr_tail` is the ring buffer the child's post-startup stderr is being
+/// drained into (#1047); the disconnect path reads it back through
+/// [`ChildWatch::stderr_tail_lines`] to diagnose a panic-abort.
+pub fn watch_child(mut child: tokio::process::Child, stderr_tail: StderrTail) -> ChildWatch {
     let (exit_tx, exit_rx) = watch::channel(None);
     let (term_tx, mut term_rx) = mpsc::channel::<oneshot::Sender<()>>(1);
     tokio::spawn(async move {
@@ -52,13 +96,23 @@ pub fn watch_child(mut child: tokio::process::Child) -> ChildWatch {
             }
         }
     });
-    ChildWatch { exit_rx, term_tx }
+    ChildWatch {
+        exit_rx,
+        term_tx,
+        stderr_tail,
+    }
 }
 
 impl ChildWatch {
     /// The recorded exit detail, if the child has exited and been reaped.
     pub fn exit_detail(&self) -> Option<String> {
         self.exit_rx.borrow().clone()
+    }
+
+    /// The child's most recent stderr lines (oldest first), captured by the
+    /// post-startup drain (#1047). Empty when nothing was written.
+    pub fn stderr_tail_lines(&self) -> Vec<String> {
+        self.stderr_tail.lines()
     }
 
     /// Await the child's exit diagnosis for up to `timeout` (event-driven via
@@ -135,7 +189,7 @@ mod tests {
 
     #[tokio::test]
     async fn records_signal_exit_with_name() {
-        let watch = watch_child(spawn("kill -ABRT $$"));
+        let watch = watch_child(spawn("kill -ABRT $$"), StderrTail::default());
         let detail = watch.wait_exit_detail(Duration::from_secs(5)).await;
         assert_eq!(
             detail.as_deref(),
@@ -146,7 +200,7 @@ mod tests {
 
     #[tokio::test]
     async fn records_nonzero_exit_code() {
-        let watch = watch_child(spawn("exit 3"));
+        let watch = watch_child(spawn("exit 3"), StderrTail::default());
         let detail = watch.wait_exit_detail(Duration::from_secs(5)).await;
         assert_eq!(detail.as_deref(), Some("agent process exited with code 3"));
     }
@@ -155,7 +209,7 @@ mod tests {
     /// child: the long-running child's group is terminated promptly.
     #[tokio::test]
     async fn terminate_kills_a_running_child_group() {
-        let watch = watch_child(spawn("sleep 30"));
+        let watch = watch_child(spawn("sleep 30"), StderrTail::default());
         tokio::time::timeout(Duration::from_secs(5), watch.terminate())
             .await
             .expect("terminate must complete well within the grace window");
@@ -166,7 +220,7 @@ mod tests {
     /// the (possibly recycled) stored PID.
     #[tokio::test]
     async fn terminate_after_reap_is_a_noop() {
-        let watch = watch_child(spawn("exit 0"));
+        let watch = watch_child(spawn("exit 0"), StderrTail::default());
         assert!(
             watch
                 .wait_exit_detail(Duration::from_secs(5))
@@ -183,10 +237,42 @@ mod tests {
     /// consuming the timeout; a child that never exits resolves `None` at it.
     #[tokio::test]
     async fn wait_times_out_to_none_while_child_lives() {
-        let watch = watch_child(spawn("sleep 30"));
+        let watch = watch_child(spawn("sleep 30"), StderrTail::default());
         let detail = watch.wait_exit_detail(Duration::from_millis(50)).await;
         assert_eq!(detail, None);
         watch.terminate().await;
+    }
+
+    /// #1047: the stderr ring buffer keeps only the newest lines — a chatty
+    /// child cannot grow it without bound, and the panic message (written
+    /// last) is always retained.
+    #[test]
+    fn stderr_tail_keeps_only_newest_lines() {
+        let tail = StderrTail::default();
+        for i in 0..(STDERR_TAIL_MAX_LINES + 5) {
+            tail.push(format!("line {i}"));
+        }
+        let lines = tail.lines();
+        assert_eq!(lines.len(), STDERR_TAIL_MAX_LINES);
+        assert_eq!(lines.first().map(String::as_str), Some("line 5"));
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some(&*format!("line {}", STDERR_TAIL_MAX_LINES + 4))
+        );
+    }
+
+    /// #1047: the watch handle exposes the drained stderr tail so the
+    /// disconnect path can include it in the diagnostics.
+    #[tokio::test]
+    async fn watch_exposes_stderr_tail_lines() {
+        let tail = StderrTail::default();
+        tail.push("thread 'main' panicked at src/lib.rs:1: boom".to_string());
+        let watch = watch_child(spawn("exit 0"), tail);
+        assert_eq!(
+            watch.stderr_tail_lines(),
+            vec!["thread 'main' panicked at src/lib.rs:1: boom".to_string()]
+        );
+        watch.wait_exit_detail(Duration::from_secs(5)).await;
     }
 
     #[test]

@@ -73,19 +73,64 @@ fn truncate_long_line_appends_ellipsis() {
 
 #[test]
 fn remember_stderr_line_evicts_oldest_over_cap() {
-    let mut lines = Vec::new();
-    for i in 0..(MAX_STARTUP_STDERR_LINES + 5) {
-        remember_stderr_line(&mut lines, &format!("line {i}"));
+    use crate::infrastructure::child_watch::{STDERR_TAIL_MAX_LINES, StderrTail};
+    let tail = StderrTail::default();
+    for i in 0..(STDERR_TAIL_MAX_LINES + 5) {
+        remember_stderr_line(&tail, &format!("line {i}"));
     }
-    assert_eq!(lines.len(), MAX_STARTUP_STDERR_LINES);
+    let lines = tail.lines();
+    assert_eq!(lines.len(), STDERR_TAIL_MAX_LINES);
     // Oldest lines were evicted; the last appended line remains.
     assert!(
         lines
             .last()
             .unwrap()
-            .contains(&format!("line {}", MAX_STARTUP_STDERR_LINES + 4))
+            .contains(&format!("line {}", STDERR_TAIL_MAX_LINES + 4))
     );
     assert!(!lines.iter().any(|l| l == "line 0"));
+}
+
+// ── post-startup stderr drain (#1047) ────────────────────────────────
+
+#[tokio::test]
+async fn stderr_drain_captures_lines_and_redacts() {
+    use crate::infrastructure::child_watch::StderrTail;
+    let tail = StderrTail::default();
+    let input: &[u8] = b"plain line\napi_key=supersecretvalue\n";
+    spawn_stderr_drain(tokio::io::BufReader::new(input), tail.clone());
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while tail.lines().len() < 2 {
+        assert!(tokio::time::Instant::now() < deadline, "drain must finish");
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let lines = tail.lines();
+    assert_eq!(lines[0], "plain line");
+    assert!(lines[1].contains("[REDACTED]"));
+    assert!(!lines[1].contains("supersecretvalue"));
+}
+
+#[tokio::test]
+async fn capped_line_reader_truncates_oversized_lines_and_keeps_reading() {
+    let oversized = "a".repeat(MAX_DRAIN_STDERR_LINE_BYTES * 3);
+    let input = format!("{oversized}\nnext line\n");
+    let mut reader = tokio::io::BufReader::new(input.as_bytes());
+    let mut line = String::new();
+
+    let consumed = read_stderr_line_capped(&mut reader, &mut line)
+        .await
+        .expect("read oversized line");
+    assert_eq!(consumed, oversized.len() + 1, "the whole line is consumed");
+    assert_eq!(line.len(), MAX_DRAIN_STDERR_LINE_BYTES, "kept bytes capped");
+
+    read_stderr_line_capped(&mut reader, &mut line)
+        .await
+        .expect("read following line");
+    assert_eq!(line, "next line");
+
+    let eof = read_stderr_line_capped(&mut reader, &mut line)
+        .await
+        .expect("read at EOF");
+    assert_eq!(eof, 0, "EOF reads 0 consumed bytes");
 }
 
 // ── redaction ────────────────────────────────────────────────────────

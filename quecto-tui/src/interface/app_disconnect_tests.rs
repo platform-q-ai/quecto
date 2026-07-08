@@ -63,7 +63,10 @@ async fn stream_closed_path_reports_real_child_exit_detail() {
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("spawn aborting child");
-    app.set_child_exit_watch(crate::infrastructure::child_watch::watch_child(child));
+    app.set_child_exit_watch(crate::infrastructure::child_watch::watch_child(
+        child,
+        crate::infrastructure::child_watch::StderrTail::default(),
+    ));
 
     app.handle_agent_stream_closed().await;
 
@@ -71,6 +74,55 @@ async fn stream_closed_path_reports_real_child_exit_detail() {
     assert!(
         rendered.contains("signal 6 (SIGABRT)"),
         "the stream-closed path must diagnose the real child's abort (#1047): {rendered}"
+    );
+}
+
+/// #1047 (top-priority fix): the agent's post-startup stderr is drained into
+/// the watcher's ring buffer, and the disconnect diagnostics include the tail
+/// — under `panic = "abort"` the panic message lands on stderr right before
+/// the process dies, and without this every recurrence is undiagnosable.
+#[tokio::test]
+async fn disconnect_diagnostics_include_drained_stderr_tail() {
+    use crate::infrastructure::child_watch::{StderrTail, watch_child};
+
+    let mut h = TuiHarness::new().await;
+
+    let mut child = tokio::process::Command::new("sh")
+        .args([
+            "-c",
+            "echo \"thread 'main' panicked at boom-panic\" >&2; kill -ABRT $$",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn aborting child");
+    let stderr = child.stderr.take().expect("child stderr");
+    let tail = StderrTail::default();
+    crate::interface::cli::spawn_stderr_drain(tokio::io::BufReader::new(stderr), tail.clone());
+    let watch = watch_child(child, tail.clone());
+    // The child dies immediately; wait for the drain to capture its stderr so
+    // the disconnect path below is deterministic.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while tail.lines().is_empty() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "drain must capture the panic line"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    let app = h.app_mut();
+    app.set_child_exit_watch(watch);
+    app.handle_agent_stream_closed().await;
+
+    let rendered = app.notifications.render(200).join("\n");
+    assert!(
+        rendered.contains("boom-panic"),
+        "disconnect notification must carry the last stderr line (#1047): {rendered}"
+    );
+    assert!(
+        rendered.contains("SIGABRT"),
+        "exit diagnosis must still be present alongside the stderr tail: {rendered}"
     );
 }
 

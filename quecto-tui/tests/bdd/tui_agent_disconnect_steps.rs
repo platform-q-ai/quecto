@@ -81,10 +81,55 @@ fn tui_spawned_agent_child(world: &mut TuiWorld) {
             .spawn()
             .expect("spawn agent stand-in child");
         let pid = child.id().expect("child pid");
-        let watch = child_watch::watch_child(child);
+        let watch = child_watch::watch_child(child, child_watch::StderrTail::default());
         DisconnectChildWatch { pid, watch }
     });
     world.tui_disconnect_child = Some(watch);
+}
+
+/// #1047: an agent stand-in whose stderr carries a panic-style message
+/// mid-session, drained by the PRODUCTION post-startup stderr drain.
+#[given("the TUI spawned its own agent child process that writes a panic message to stderr")]
+fn tui_spawned_agent_child_with_panicky_stderr(world: &mut TuiWorld) {
+    init_disconnect_harness(world);
+    let rt = world.tui_parity_rt.as_ref().expect("runtime");
+    let watch = rt.block_on(async {
+        let mut child = tokio::process::Command::new("sh")
+            .args(["-c", "echo 'panicked: boom-panic' >&2; sleep 600"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn agent stand-in child");
+        let pid = child.id().expect("child pid");
+        let stderr = child.stderr.take().expect("child stderr");
+        let tail = child_watch::StderrTail::default();
+        quecto_tui::interface::cli::spawn_stderr_drain(
+            tokio::io::BufReader::new(stderr),
+            tail.clone(),
+        );
+        let watch = child_watch::watch_child(child, tail);
+        // Wait until the production drain has captured the panic line, so the
+        // later abort exercises the diagnostics path deterministically.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while watch.stderr_tail_lines().is_empty() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the stderr drain must capture the panic line"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        DisconnectChildWatch { pid, watch }
+    });
+    world.tui_disconnect_child = Some(watch);
+}
+
+#[then("the disconnect diagnostics should include the panic message from stderr")]
+fn disconnect_diagnostics_include_panic_message(world: &mut TuiWorld) {
+    let text = harness(world).notification_text();
+    assert!(
+        text.contains("boom-panic"),
+        "the disconnect notification must carry the agent's last stderr line (#1047), got: {text}"
+    );
 }
 
 #[when("the agent child process aborts with a signal")]

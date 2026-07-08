@@ -39,10 +39,34 @@ impl App {
         self.master_session.running = false;
         self.spinner = None;
         self.master_session.chat.finalize_assistant();
-        let message = match exit_detail {
+        let mut message = match exit_detail {
             Some(detail) => format!("Agent disconnected — {detail}"),
             None => "Agent disconnected".to_string(),
         };
+        // Include the child's drained stderr tail (#1047): under the workspace
+        // `panic = "abort"` the panic message lands on stderr right before the
+        // process dies — without it every recurrence is undiagnosable. The
+        // newest line (usually the panic message) goes into the one-line
+        // notification; the full tail goes into the transcript.
+        let stderr_tail = self
+            .child_exit_watch
+            .as_ref()
+            .map(|w| w.stderr_tail_lines())
+            .unwrap_or_default();
+        if let Some(last) = stderr_tail.last() {
+            message = format!("{message} — last stderr: {last}");
+            self.master_session.chat.add_entry(ChatEntry::Status {
+                text: format!(
+                    "Agent disconnected — recent agent stderr ({} lines):",
+                    stderr_tail.len()
+                ),
+            });
+            for line in &stderr_tail {
+                self.master_session.chat.add_entry(ChatEntry::Status {
+                    text: format!("  {line}"),
+                });
+            }
+        }
         self.notify(&message, NotifyLevel::Error);
     }
 
