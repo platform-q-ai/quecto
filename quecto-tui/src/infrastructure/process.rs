@@ -107,6 +107,39 @@ pub async fn terminate_child(child: &mut tokio::process::Child, grace_ms: u64) {
     let _ = child.wait().await;
 }
 
+/// Terminate a process group that may have outlived its (already-reaped)
+/// leader — the sub-agents-share-the-agent's-group case on TUI exit (#1047).
+///
+/// Signals nothing when the group has no members left (`kill(-pgid, 0)`
+/// fails): an empty group's PGID may have been recycled by an unrelated
+/// process, so a liveness probe gates every signal. While any member is
+/// alive POSIX forbids reassigning the PGID, so a successful probe means the
+/// group is still ours and safe to signal.
+///
+/// 1. Probe the group; return if empty.
+/// 2. SIGTERM the group (graceful shutdown).
+/// 3. Poll the probe in `TERMINATE_POLL_TICK_MS` ticks up to `grace_ms`.
+/// 4. If members remain after the grace period, SIGKILL the group.
+pub async fn terminate_group_if_alive(pgid: i32, grace_ms: u64) {
+    if kill_process_group(pgid, 0) == -1 {
+        return; // No members left — never signal a possibly-recycled PGID.
+    }
+    if kill_process_group(pgid, libc::SIGTERM) == -1 {
+        return; // Group vanished between probe and signal.
+    }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(grace_ms);
+    loop {
+        if kill_process_group(pgid, 0) == -1 {
+            return; // All members exited after SIGTERM.
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(TERMINATE_POLL_TICK_MS)).await;
+    }
+    kill_process_group(pgid, libc::SIGKILL);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

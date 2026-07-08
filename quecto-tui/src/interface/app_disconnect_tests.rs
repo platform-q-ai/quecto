@@ -100,16 +100,9 @@ async fn disconnect_diagnostics_include_drained_stderr_tail() {
     let tail = StderrTail::default();
     crate::interface::cli::spawn_stderr_drain(tokio::io::BufReader::new(stderr), tail.clone());
     let watch = watch_child(child, tail.clone());
-    // The child dies immediately; wait for the drain to capture its stderr so
-    // the disconnect path below is deterministic.
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-    while tail.lines().is_empty() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "drain must capture the panic line"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    // Deliberately NO wait for the drain here: the disconnect path itself
+    // must synchronize on drain completion, or the panic message is
+    // nondeterministically missing from the diagnostics (#1051 final review).
 
     let app = h.app_mut();
     app.set_child_exit_watch(watch);

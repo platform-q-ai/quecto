@@ -295,12 +295,30 @@ async fn spawn_agent(
     ),
     String,
 > {
+    spawn_agent_program("quecto", flags).await
+}
+
+/// [`spawn_agent`] with the agent binary injectable, so tests can drive the
+/// REAL spawn path (socket announcement parsing, post-startup stderr drain
+/// wiring) with a stand-in script — reverting the drain hookup must fail a
+/// test, not just the manually-wired drain unit tests (#1051 final review).
+async fn spawn_agent_program(
+    program: &str,
+    flags: &CliFlags,
+) -> Result<
+    (
+        PathBuf,
+        tokio::process::Child,
+        crate::infrastructure::child_watch::StderrTail,
+    ),
+    String,
+> {
     use tokio::io::AsyncBufReadExt;
     use tokio::process::Command;
 
     let args = build_agent_args(flags);
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let mut child = Command::new("quecto")
+    let mut child = Command::new(program)
         .args(&args_ref)
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
@@ -308,7 +326,7 @@ async fn spawn_agent(
         // Create a new process group so we can kill the agent + all its subagents.
         .process_group(0)
         .spawn()
-        .map_err(|e| format!("failed to spawn quecto: {e}"))?;
+        .map_err(|e| format!("failed to spawn {program}: {e}"))?;
 
     let stderr = child
         .stderr
@@ -399,7 +417,9 @@ fn remember_stderr_line(tail: &crate::infrastructure::child_watch::StderrTail, l
 /// Keep draining the agent child's stderr AFTER startup into the shared ring
 /// buffer, so a mid-session panic-abort message survives the process (#1047).
 /// Lines are redacted and truncated exactly like the startup capture. The task
-/// ends when the child closes its stderr (i.e. exits).
+/// ends when the child closes its stderr (i.e. exits) and marks the tail
+/// drained, so the disconnect path can wait for the buffered panic message
+/// instead of racing this task (#1051 final review).
 pub fn spawn_stderr_drain<R>(mut reader: R, tail: crate::infrastructure::child_watch::StderrTail)
 where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
@@ -417,6 +437,7 @@ where
                 }
             }
         }
+        tail.mark_drained();
     });
 }
 
@@ -429,26 +450,41 @@ where
 {
     use tokio::io::AsyncBufReadExt;
     out.clear();
+    let mut bytes: Vec<u8> = Vec::new();
     let mut consumed_total = 0usize;
     loop {
         let buf = reader.fill_buf().await?;
         if buf.is_empty() {
-            return Ok(consumed_total); // EOF (possibly mid-line)
+            break; // EOF (possibly mid-line)
         }
         let (chunk, consumed, line_done) = match buf.iter().position(|&b| b == b'\n') {
             Some(i) => (&buf[..i], i + 1, true),
             None => (buf, buf.len(), false),
         };
-        if out.len() < MAX_DRAIN_STDERR_LINE_BYTES {
-            let take = chunk.len().min(MAX_DRAIN_STDERR_LINE_BYTES - out.len());
-            out.push_str(&String::from_utf8_lossy(&chunk[..take]));
+        if bytes.len() < MAX_DRAIN_STDERR_LINE_BYTES {
+            let take = chunk.len().min(MAX_DRAIN_STDERR_LINE_BYTES - bytes.len());
+            bytes.extend_from_slice(&chunk[..take]);
         }
         reader.consume(consumed);
         consumed_total += consumed;
         if line_done {
-            return Ok(consumed_total);
+            break;
         }
     }
+    // Decode ONCE per line (#1051 final review): a multi-byte character split
+    // across pipe reads must not be mangled into U+FFFD by per-chunk decoding.
+    // A character sliced by the byte cap itself is dropped, not replaced.
+    match std::str::from_utf8(&bytes) {
+        Ok(s) => out.push_str(s),
+        // `error_len() == None`: the only problem is an incomplete sequence
+        // at the very end (cap or EOF mid-character) — keep the valid prefix.
+        Err(e) if e.error_len().is_none() => {
+            out.push_str(&String::from_utf8_lossy(&bytes[..e.valid_up_to()]));
+        }
+        // Genuinely invalid UTF-8 mid-line (binary output): lossy-decode.
+        Err(_) => out.push_str(&String::from_utf8_lossy(&bytes)),
+    }
+    Ok(consumed_total)
 }
 
 fn truncate_stderr_line(line: &str) -> String {

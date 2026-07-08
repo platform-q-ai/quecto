@@ -74,6 +74,13 @@ impl App {
     /// run the disconnect handling with that detail (#1047).
     pub(super) async fn handle_agent_stream_closed(&mut self) {
         let detail = self.wait_child_exit_detail().await;
+        // The exit diagnosis lands the moment the child is reaped, which can
+        // be BEFORE the independent stderr-drain task consumes the buffered
+        // panic message — give the drain the same bounded window so the
+        // stderr snapshot below is complete, not racy (#1051 final review).
+        if let Some(watch) = &self.child_exit_watch {
+            watch.wait_stderr_drained(CHILD_EXIT_DETAIL_WINDOW).await;
+        }
         self.handle_agent_disconnected(detail);
     }
 
