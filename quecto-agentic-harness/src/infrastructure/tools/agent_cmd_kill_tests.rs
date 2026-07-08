@@ -41,8 +41,14 @@ fn kill_cascade_removes_subtree_and_broadcasts_survivors() {
     assert!(g.contains_key("live"), "live agent must never be removed");
     drop(g);
 
-    // A survivor-only state_changed was broadcast.
+    // A survivor-only state_changed was broadcast. #1055: the payload SENT
+    // from this site must be a single newline-terminated, parseable line.
     let event = rx.try_recv().expect("a state_changed should be broadcast");
+    assert!(
+        event.ends_with('\n'),
+        "sent broadcast must end with newline"
+    );
+    serde_json::from_str::<serde_json::Value>(&event).expect("sent line parses");
     assert!(event.contains("subagent_state_changed"));
     assert!(event.contains("live"));
     assert!(!event.contains("parent"));
