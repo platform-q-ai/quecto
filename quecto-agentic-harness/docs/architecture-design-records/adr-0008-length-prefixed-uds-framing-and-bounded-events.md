@@ -112,5 +112,5 @@ signal for that invariant firing.
   shrink arm (`get_messages` was missed exactly this way in #1047).
 - **Raise the cap.** Rejected: any fixed bound loses to conversation growth;
   blind buffering and stall-risk get worse, not better.
-- **Jump straight to binary encoding.** Deferred to ADR-0009: it does not fix
+- **Jump straight to binary encoding.** Covered by ADR-0009: it does not fix
   framing blindness, and its main costs are in code this ADR deletes.

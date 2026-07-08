@@ -19,6 +19,12 @@ change payload encoding (MessagePack/CBOR). Neither should force a semantic
 rewrite of the test corpus: the scenarios pin *protocol behavior* (which
 commands produce which events with which fields), not byte layouts.
 
+Scope note: the JSON⇄wire transcode this ADR describes exists ONLY in test
+helpers. Production code serializes protocol types directly to the wire
+encoding, so ADR-0009's performance case is unaffected by keeping the tests
+JSON-authored — the transcode cost lands on the test suite, where readability
+is worth more than nanoseconds.
+
 ## Decision
 
 Tests keep authoring and asserting **JSON values**; conversion to and from
@@ -30,7 +36,7 @@ production's `quecto-line-io` choke point.
   TUI BDD suites already largely funnel socket I/O through shared helpers;
   the remainder migrate to them as part of ADR-0008). The helpers own
   framing and encoding: under NDJSON they append `\n`; under ADR-0008 they
-  write a length prefix; under a lifted ADR-0009 they transcode
+  write a length prefix; under ADR-0009's binary encoding they transcode
   JSON→MessagePack on send and MessagePack→`Value` on receive.
 - **Assertions stay on parsed values, not raw lines.** Steps that currently
   substring-match raw line text (e.g. `line.contains("agent_end")`) migrate
@@ -53,8 +59,9 @@ production's `quecto-line-io` choke point.
 
 - ADR-0008's test migration cost collapses to the helper layer plus the
   residual raw-line assertions; the scenario corpus survives verbatim.
-- If ADR-0009 is ever lifted, the test suite is a codec flag in the helpers,
-  not a rewrite — removing the largest remaining migration cost from B.
+- If ADR-0009's binary encoding is adopted, the test suite is a codec flag in
+  the helpers, not a rewrite — removing the largest remaining migration cost
+  from ADR-0009.
 - The helpers add one seam where tests could diverge from production
   framing; mitigated by implementing them ON `quecto-line-io` itself (tests
   use the production frame writer/reader, only the JSON⇄Value conveniences
