@@ -284,7 +284,7 @@ pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt:
     }
 }
 
-pub(super) const MAX_LINE_BYTES: usize = 1024 * 1024;
+pub(super) const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
 pub(super) fn is_cancel_command(trimmed: &str) -> bool {
     is_abort_command(trimmed) || is_steer_command(trimmed)

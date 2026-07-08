@@ -24,6 +24,16 @@ Feature: TUI UDS client defensive bounds
     Then the TUI should ignore the oversized events
     And the TUI should receive the later token event
 
+  # The UI surfacing of the recorded drop is covered by the app-level test
+  # `oversized_event_drop_is_surfaced_as_notification` (#1047).
+  @issue-1047 @tui
+  Scenario: Oversized agent event drops are reported by the client
+    Given the TUI is connected to an agent event stream
+    When the agent sends an event larger than the supported event size
+    And the agent then sends a valid token event
+    Then the TUI client should record one dropped oversized event
+    And the TUI should receive the later token event
+
   @issue-982 @tui
   Scenario: Completion events keep their observable behaviour
     Given the TUI is connected to an agent event stream

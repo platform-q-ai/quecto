@@ -188,16 +188,18 @@ impl App {
                         Some(ev) => {
                             let is_token = Self::is_token_event(&ev);
                             self.handle_event(ev);
-                            self.render_stream_event(&mut stream_render_coalescer, is_token);
+                            if self.surface_dropped_oversized_events() {
+                                self.render_and_note(&mut stream_render_coalescer);
+                            } else {
+                                self.render_stream_event(&mut stream_render_coalescer, is_token);
+                            }
                         }
                         None => {
-                            // Agent disconnected — stop polling.
-                            self.agent_connected = false;
-                            self.agent_state.reset();
-                            self.master_session.running = false;
-                            self.spinner = None;
-                            self.master_session.chat.finalize_assistant();
-                            self.notify("Agent disconnected", NotifyLevel::Error);
+                            // Agent disconnected — stop polling. Report any
+                            // dropped events and the child's exit diagnosis
+                            // so the failure is visible (#1047).
+                            self.surface_dropped_oversized_events();
+                            self.handle_agent_stream_closed().await;
                             self.render_and_note(&mut stream_render_coalescer);
                         }
                     }

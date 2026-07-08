@@ -180,3 +180,41 @@ async fn client_connect_drops_line_exactly_at_cap() {
 
     server.await.unwrap();
 }
+
+/// #1047 AC4: dropped oversized event lines must be COUNTED so the UI can
+/// surface the loss — near a full context window `turn_end`/`agent_end` can
+/// exceed the cap, and a silent drop makes the session look frozen.
+#[tokio::test]
+async fn oversized_event_drop_is_recorded_for_ui_surfacing() {
+    let (listener, socket_path, _dir) = bind_test_socket("oversized-drop-counted-test");
+
+    let (frame, _) = token_frame_of_len(MAX_LINE_BYTES + 65_536);
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream.write_all(frame.as_bytes()).await.unwrap();
+        stream.write_all(b"\n").await.unwrap();
+        stream
+            .write_all(b"{\"type\":\"token\",\"token\":\"after\"}\n")
+            .await
+            .unwrap();
+        stream.flush().await.unwrap();
+    });
+
+    let mut client = Client::connect(&socket_path).await.unwrap();
+    match tokio::time::timeout(std::time::Duration::from_secs(2), client.recv())
+        .await
+        .unwrap()
+    {
+        Some(Event::Token { token }) => assert_eq!(token, "after"),
+        other => panic!("expected the event after the oversized frame, got {other:?}"),
+    }
+
+    assert_eq!(
+        client.dropped_oversized_events(),
+        1,
+        "the client must record the dropped oversized event line so the UI can surface it (#1047)"
+    );
+
+    server.await.unwrap();
+}

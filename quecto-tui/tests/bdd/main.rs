@@ -108,6 +108,9 @@ pub struct TuiWorld {
     pub tui_idle_fallback_done: Option<bool>,
     /// TUI UDS client defensive-bounds BDD (#982): socket/client state.
     pub tui_defence_stream: Option<tui_uds_client_defence_steps::TuiDefenceStream>,
+    /// TUI agent-disconnect diagnostics BDD (#1047): the real spawned child
+    /// under the production exit watcher.
+    pub tui_disconnect_child: Option<tui_agent_disconnect_steps::DisconnectChildWatch>,
     /// The sub-agent id currently being viewed (#828): captured on select so
     /// backfill/assertion steps route to the right session, not a literal id.
     pub tui_viewed_agent: Option<String>,
@@ -303,6 +306,7 @@ fn build_shard_plan(
 }
 
 mod mouse_selection_steps;
+mod tui_agent_disconnect_steps;
 mod tui_app_behaviors_steps;
 mod tui_autocomplete_steps;
 mod tui_border_replication_steps;

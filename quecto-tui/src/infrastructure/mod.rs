@@ -4,6 +4,7 @@
 //! UDS implementations. It may depend inward on domain and application code, but
 //! not on the interface composition root.
 
+pub mod child_watch;
 pub mod client;
 pub mod process;
 pub mod render;

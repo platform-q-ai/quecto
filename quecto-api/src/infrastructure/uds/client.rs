@@ -21,7 +21,7 @@ use crate::domain::event::AgentEvent;
 use uuid::Uuid;
 
 /// Maximum line size (1 MiB, matching quecto's protocol limit).
-const MAX_LINE_BYTES: usize = 1_048_576;
+const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
 /// Broadcast channel capacity — how many events can be buffered for slow subscribers.
 const BROADCAST_CAPACITY: usize = 512;

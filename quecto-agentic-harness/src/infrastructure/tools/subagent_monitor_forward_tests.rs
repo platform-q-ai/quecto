@@ -378,3 +378,41 @@ fn forwarded_grandchild_workflow_does_not_overwrite_child_entry() {
 
 // cascade_remove_and_state_changed tests moved to `subagent_cascade_tests.rs`
 // alongside the extracted `subagent_cascade` module (#831).
+
+/// #1051 review: re-stamping a child line already capped near the limit
+/// (empty `agent_id` → real id, added `parent_id`) grows it; the forward must
+/// re-cap so the TUI never drops it unread.
+#[test]
+fn handle_monitor_line_recaps_forwarded_messages_appended_near_the_cap() {
+    let registry = super::super::subagent_registry::new_registry();
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+    // Build a child line the child-side cap would legally emit: just under
+    // the per-line budget, so the parent's re-stamp pushes it over.
+    let overhead = r#"{"type":"subagent_messages_appended","agent_id":"","messages":[{"role":"assistant","content":""}]}"#
+        .len();
+    let content = "x".repeat(MAX_LINE_BYTES - 1 - overhead);
+    let line = format!(
+        r#"{{"type":"subagent_messages_appended","agent_id":"","messages":[{{"role":"assistant","content":"{content}"}}]}}"#
+    );
+    assert!(
+        line.len() <= MAX_LINE_BYTES,
+        "child line passes the size gate"
+    );
+    super::handle_monitor_line(
+        &line,
+        "child-agent-0123456789",
+        &registry,
+        None,
+        Some(&tx),
+        Some("root"),
+    );
+    let fwd = rx.try_recv().expect("re-stamped line is forwarded");
+    assert!(
+        fwd.len() <= MAX_LINE_BYTES,
+        "forwarded line (incl. newline) must stay within the cap, got {}",
+        fwd.len()
+    );
+    let v: serde_json::Value = serde_json::from_str(fwd.trim_end()).unwrap();
+    assert_eq!(v["agent_id"], "child-agent-0123456789");
+    assert_eq!(v["parent_id"], "root");
+}

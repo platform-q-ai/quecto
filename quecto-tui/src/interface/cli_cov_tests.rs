@@ -1,5 +1,6 @@
 //! Region-coverage tests for `cli` flag parsing, stderr redaction, and
-//! socket-path validation. No real agent process or TTY is involved.
+//! socket-path validation. No TTY is involved; the spawn-path wiring test
+//! drives the real `spawn_agent` flow with a stand-in shell script.
 
 use super::*;
 
@@ -73,19 +74,160 @@ fn truncate_long_line_appends_ellipsis() {
 
 #[test]
 fn remember_stderr_line_evicts_oldest_over_cap() {
-    let mut lines = Vec::new();
-    for i in 0..(MAX_STARTUP_STDERR_LINES + 5) {
-        remember_stderr_line(&mut lines, &format!("line {i}"));
+    use crate::infrastructure::child_watch::{STDERR_TAIL_MAX_LINES, StderrTail};
+    let tail = StderrTail::default();
+    for i in 0..(STDERR_TAIL_MAX_LINES + 5) {
+        remember_stderr_line(&tail, &format!("line {i}"));
     }
-    assert_eq!(lines.len(), MAX_STARTUP_STDERR_LINES);
+    let lines = tail.lines();
+    assert_eq!(lines.len(), STDERR_TAIL_MAX_LINES);
     // Oldest lines were evicted; the last appended line remains.
     assert!(
         lines
             .last()
             .unwrap()
-            .contains(&format!("line {}", MAX_STARTUP_STDERR_LINES + 4))
+            .contains(&format!("line {}", STDERR_TAIL_MAX_LINES + 4))
     );
     assert!(!lines.iter().any(|l| l == "line 0"));
+}
+
+// ── post-startup stderr drain (#1047) ────────────────────────────────
+
+#[tokio::test]
+async fn stderr_drain_captures_lines_and_redacts() {
+    use crate::infrastructure::child_watch::StderrTail;
+    let tail = StderrTail::default();
+    let input: &[u8] = b"plain line\napi_key=supersecretvalue\n";
+    spawn_stderr_drain(tokio::io::BufReader::new(input), tail.clone());
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while tail.lines().len() < 2 {
+        assert!(tokio::time::Instant::now() < deadline, "drain must finish");
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let lines = tail.lines();
+    assert_eq!(lines[0], "plain line");
+    assert!(lines[1].contains("[REDACTED]"));
+    assert!(!lines[1].contains("supersecretvalue"));
+}
+
+#[tokio::test]
+async fn capped_line_reader_truncates_oversized_lines_and_keeps_reading() {
+    let oversized = "a".repeat(MAX_DRAIN_STDERR_LINE_BYTES * 3);
+    let input = format!("{oversized}\nnext line\n");
+    let mut reader = tokio::io::BufReader::new(input.as_bytes());
+    let mut line = String::new();
+
+    let consumed = read_stderr_line_capped(&mut reader, &mut line)
+        .await
+        .expect("read oversized line");
+    assert_eq!(consumed, oversized.len() + 1, "the whole line is consumed");
+    assert_eq!(line.len(), MAX_DRAIN_STDERR_LINE_BYTES, "kept bytes capped");
+
+    read_stderr_line_capped(&mut reader, &mut line)
+        .await
+        .expect("read following line");
+    assert_eq!(line, "next line");
+
+    let eof = read_stderr_line_capped(&mut reader, &mut line)
+        .await
+        .expect("read at EOF");
+    assert_eq!(eof, 0, "EOF reads 0 consumed bytes");
+}
+
+/// #1051 final review: a multi-byte character split across two pipe reads
+/// must survive intact — per-chunk lossy decoding turned it into U+FFFD.
+/// The duplex capacity of 5 forces the split inside the 3-byte em-dash.
+#[tokio::test]
+async fn capped_line_reader_keeps_multibyte_char_split_across_reads() {
+    use tokio::io::AsyncWriteExt;
+    let (mut server, client) = tokio::io::duplex(5);
+    let writer = tokio::spawn(async move {
+        server
+            .write_all("pre — post\n".as_bytes())
+            .await
+            .expect("write split line");
+    });
+    let mut reader = tokio::io::BufReader::new(client);
+    let mut line = String::new();
+    read_stderr_line_capped(&mut reader, &mut line)
+        .await
+        .expect("read split line");
+    assert_eq!(line, "pre — post");
+    writer.await.expect("writer task");
+}
+
+/// #1051 final review: a character sliced by the byte cap itself is dropped,
+/// not replaced with U+FFFD, so capped diagnostics stay clean.
+#[tokio::test]
+async fn capped_line_reader_drops_char_sliced_by_the_cap() {
+    let mut input = "a".repeat(MAX_DRAIN_STDERR_LINE_BYTES - 1);
+    input.push('—'); // 3 bytes: the cap slices it after its first byte.
+    input.push('\n');
+    let mut reader = tokio::io::BufReader::new(input.as_bytes());
+    let mut line = String::new();
+    read_stderr_line_capped(&mut reader, &mut line)
+        .await
+        .expect("read capped line");
+    assert_eq!(
+        line.len(),
+        MAX_DRAIN_STDERR_LINE_BYTES - 1,
+        "the sliced character is dropped"
+    );
+    assert!(!line.contains('\u{FFFD}'));
+}
+
+/// #1051 final review (falsifiability): the PRODUCTION spawn path must wire
+/// the post-startup stderr drain — reverting the `spawn_stderr_drain` call in
+/// `spawn_agent` must fail this test, not just the manually-wired drain unit
+/// tests. A stand-in script announces a real Unix socket, then keeps writing
+/// to stderr; the drain spawned inside `spawn_agent_program` must capture it.
+#[tokio::test]
+async fn spawn_agent_wires_the_post_startup_stderr_drain() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tmp_dir("spawnwire");
+    let sock = dir.join("agent.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind fake socket");
+    let script = dir.join("fake-agent.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\n\
+             echo 'quecto-agent-socket: {}' >&2\n\
+             echo 'post-startup panic line' >&2\n\
+             sleep 30\n",
+            sock.display()
+        ),
+    )
+    .expect("write fake agent script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+        .expect("mark script executable");
+
+    let flags = parse_flags(&args(""));
+    let (path, mut child, tail) = spawn_agent_program(script.to_str().unwrap(), &flags)
+        .await
+        .expect("spawn fake agent");
+    assert_eq!(path, sock);
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !tail
+        .lines()
+        .iter()
+        .any(|l| l.contains("post-startup panic line"))
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the drain wired by spawn_agent must capture post-announcement stderr"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    crate::infrastructure::process::terminate_child(
+        &mut child,
+        crate::infrastructure::process::TERMINATE_GRACE_MS,
+    )
+    .await;
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ── redaction ────────────────────────────────────────────────────────

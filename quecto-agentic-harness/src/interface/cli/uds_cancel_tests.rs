@@ -220,3 +220,169 @@ fn fire_then_arm_resets_to_idle() {
     let result2 = arm_cancel(&handle);
     assert!(result2.is_some(), "should arm after Fired was consumed");
 }
+
+// --- #1047: outbound event lines must never exceed the 1 MiB protocol cap ---
+//
+// The TUI client drops any event line above 1 MiB (`MAX_LINE_BYTES` in
+// quecto-tui). Near a full context window a turn's messages can exceed that,
+// so `EventSink::emit` must tail/cap the payload instead of emitting an
+// un-receivable line — otherwise the TUI silently loses `turn_end`/`agent_end`
+// and the session appears frozen/disconnected.
+
+// Bound under test: `protocol::EVENT_LINE_CAP_BYTES`, whose value is pinned to
+// the TUI client's `quecto-tui::infrastructure::client::MAX_LINE_BYTES` (see
+// the constant's doc comment in protocol.rs). If the client cap ever changes,
+// change the protocol constant — these tests follow it automatically.
+use crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
+
+/// Emit `event` through a broadcast sink and return the emitted line
+/// (including its trailing newline).
+async fn emit_line(event: &AgentEvent) -> String {
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let mut sink = EventSink::Broadcast(tx);
+    sink.emit(event).await;
+    rx.recv().await.expect("event line should be emitted")
+}
+
+/// Parse an emitted line as JSON and assert its event `type`.
+fn parse_event_line(line: &str, expected_type: &str) -> serde_json::Value {
+    let v: serde_json::Value = serde_json::from_str(line.trim_end())
+        .unwrap_or_else(|e| panic!("capped line must be valid JSON ({expected_type}): {e}"));
+    assert_eq!(v["type"], expected_type, "capped line must keep its type");
+    v
+}
+
+fn big_turn_end(content: String) -> AgentEvent {
+    AgentEvent::TurnEnd {
+        message: TurnMessage {
+            role: "assistant".to_string(),
+            content,
+            usage: None,
+            stop_reason: None,
+            context_tokens: Some(1),
+            max_context_tokens: Some(2),
+        },
+        tool_results: vec![],
+    }
+}
+
+#[tokio::test]
+async fn agent_end_event_line_stays_within_protocol_cap_keeping_recent_messages() {
+    // ~2 MiB of run messages — well beyond the cap.
+    let big = "x".repeat(256 * 1024);
+    let messages: Vec<serde_json::Value> = (0..8)
+        .map(|i| serde_json::json!({"role": "assistant", "content": format!("{i}:{big}")}))
+        .collect();
+    let line = emit_line(&AgentEvent::AgentEnd { messages }).await;
+
+    assert!(
+        line.len() <= EVENT_LINE_CAP_BYTES,
+        "agent_end event line must be tailed to the protocol cap so the \
+         TUI can receive it (#1047); got {} bytes",
+        line.len()
+    );
+    let v = parse_event_line(&line, "agent_end");
+    // Tailing must keep the MOST RECENT message, not delete content wholesale:
+    // the final answer (message "7:…") is what the user is waiting on.
+    let kept = v["messages"].as_array().expect("messages array");
+    assert!(!kept.is_empty(), "capped agent_end must retain messages");
+    let last = kept.last().unwrap()["content"].as_str().expect("content");
+    assert!(
+        last.ends_with(&"x".repeat(1024)),
+        "capped agent_end must preserve the tail of the most recent message"
+    );
+    assert!(
+        last.starts_with("7:"),
+        "capped agent_end must keep the newest message (got prefix {:?})",
+        &last[..8.min(last.len())]
+    );
+}
+
+#[tokio::test]
+async fn turn_end_event_line_stays_within_protocol_cap_keeping_content_tail() {
+    let original = format!("{}FINAL-ANSWER-TAIL", "y".repeat(2 * 1024 * 1024));
+    let line = emit_line(&big_turn_end(original.clone())).await;
+
+    assert!(
+        line.len() <= EVENT_LINE_CAP_BYTES,
+        "turn_end event line must be capped to the protocol cap so the \
+         TUI can receive it (#1047); got {} bytes",
+        line.len()
+    );
+    let v = parse_event_line(&line, "turn_end");
+    let content = v["message"]["content"].as_str().expect("content string");
+    // Tailing keeps the END of the message — the conclusion of the answer.
+    assert!(
+        content.ends_with(&original[original.len() - 1024..]),
+        "capped turn_end must preserve the tail of the original content"
+    );
+    assert!(
+        content.len() > EVENT_LINE_CAP_BYTES / 2,
+        "capped turn_end should keep most of the budget's worth of content, \
+         not delete it wholesale; kept {} bytes",
+        content.len()
+    );
+}
+
+#[tokio::test]
+async fn turn_end_event_line_under_the_cap_is_emitted_unmodified() {
+    // A payload that serializes just under the cap must pass through
+    // byte-for-byte — capping must never touch in-budget events.
+    let event = big_turn_end("z".repeat(1_000_000));
+    let uncapped = event.to_json_line();
+    assert!(
+        uncapped.len() < EVENT_LINE_CAP_BYTES - 1,
+        "precondition: serialized event is under the cap"
+    );
+
+    let line = emit_line(&event).await;
+    assert_eq!(
+        line,
+        format!("{uncapped}\n"),
+        "an under-cap turn_end must be emitted unmodified"
+    );
+}
+
+#[tokio::test]
+async fn agent_end_event_line_under_the_cap_is_emitted_unmodified() {
+    let event = AgentEvent::AgentEnd {
+        messages: vec![serde_json::json!({
+            "role": "assistant",
+            "content": "w".repeat(1_000_000),
+        })],
+    };
+    let uncapped = event.to_json_line();
+    assert!(
+        uncapped.len() < EVENT_LINE_CAP_BYTES - 1,
+        "precondition: serialized event is under the cap"
+    );
+
+    let line = emit_line(&event).await;
+    assert_eq!(
+        line,
+        format!("{uncapped}\n"),
+        "an under-cap agent_end must be emitted unmodified"
+    );
+}
+
+#[tokio::test]
+async fn turn_end_event_line_just_over_the_cap_is_tailed() {
+    // The other side of the boundary: barely over the cap must trigger
+    // tailing (a blanket truncate-everything implementation would also pass
+    // the far-over tests; this pins the boundary itself).
+    let mut event = big_turn_end("z".repeat(1_000_000));
+    let base_len = event.to_json_line().len();
+    let over_by = (EVENT_LINE_CAP_BYTES - 1) - base_len + 1;
+    if let AgentEvent::TurnEnd { message, .. } = &mut event {
+        message.content.push_str(&"z".repeat(over_by));
+    }
+    assert!(event.to_json_line().len() > EVENT_LINE_CAP_BYTES - 1);
+
+    let line = emit_line(&event).await;
+    assert!(
+        line.len() <= EVENT_LINE_CAP_BYTES,
+        "just-over-cap turn_end must be tailed under the cap; got {} bytes",
+        line.len()
+    );
+    parse_event_line(&line, "turn_end");
+}

@@ -536,7 +536,27 @@ impl AgentEvent {
     pub fn to_json_line(&self) -> String {
         serde_json::to_string(self).expect("AgentEvent is always serializable")
     }
+
+    /// Serialize the event to a JSON line guaranteed to fit within
+    /// [`EVENT_LINE_CAP_BYTES`] once the trailing newline is appended (#1047).
+    ///
+    /// Payloads that grow with conversation size (`turn_end`, `agent_end`,
+    /// `token`, `subagent_messages_appended`, and `response` lines carrying a
+    /// `data.messages` conversation) are tailed — the OLDEST content is
+    /// dropped, the most recent kept — instead of emitting a line the TUI
+    /// client would drop unread. Lines already within the cap pass through
+    /// byte-for-byte unmodified.
+    pub fn to_capped_json_line(&self) -> String {
+        crate::infrastructure::line_cap::cap_line(self.to_json_line())
+    }
 }
+
+// ─── Event line cap (#1047) ──────────────────────────────────────────────────
+//
+// The capping implementation lives in `crate::infrastructure::line_cap` so
+// the sub-agent monitor (infrastructure — must not import `interface`) can
+// re-cap forwarded child lines. Re-exported here for interface-side callers.
+pub use crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES;
 
 // ─── Session state snapshot ──────────────────────────────────────────────────
 
