@@ -140,7 +140,7 @@ if [[ "$FAIL" -ne 0 ]]; then
     exit 1
 fi
 
-step "7/11" "Code coverage (cargo llvm-cov, threshold ${COV_THRESHOLD}%)"
+step "7/11" "Code coverage (cargo llvm-cov, function coverage, threshold ${COV_THRESHOLD}%)"
 
 # Resolve llvm tools — cargo-llvm-cov needs these when llvm-tools-preview
 # isn't installed via rustup (e.g. system Rust on Arch Linux).
@@ -154,21 +154,21 @@ fi
 COV_FAIL=0
 
 echo "  quecto (core)..."
-COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto-agentic-harness --fail-under-regions "$COV_THRESHOLD" 2>&1) || {
-    echo -e "  ${RED}FAIL${NC}: quecto region coverage below ${COV_THRESHOLD}%"
+COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto-agentic-harness --fail-under-functions "$COV_THRESHOLD" 2>&1) || {
+    echo -e "  ${RED}FAIL${NC}: quecto function coverage below ${COV_THRESHOLD}%"
     COV_FAIL=1
 }
 echo "$COV_OUT_QUECTO" | tail -3
 
 echo "  quecto-tui..."
-COV_OUT_TUI=$(cargo llvm-cov --lib -p quecto-tui --fail-under-regions "$COV_THRESHOLD" 2>&1) || {
-    echo -e "  ${RED}FAIL${NC}: quecto-tui region coverage below ${COV_THRESHOLD}%"
+COV_OUT_TUI=$(cargo llvm-cov --lib -p quecto-tui --fail-under-functions "$COV_THRESHOLD" 2>&1) || {
+    echo -e "  ${RED}FAIL${NC}: quecto-tui function coverage below ${COV_THRESHOLD}%"
     COV_FAIL=1
 }
 echo "$COV_OUT_TUI" | tail -3
 
 if [[ "$COV_FAIL" -ne 0 ]]; then
-    echo -e "\n${RED}FAIL${NC}: Code coverage below ${COV_THRESHOLD}% threshold."
+    echo -e "\n${RED}FAIL${NC}: Function coverage below ${COV_THRESHOLD}% threshold."
     echo "  Run: cargo llvm-cov --workspace --lib   to see full report"
     echo "  Run: cargo llvm-cov --html --workspace --lib   for HTML report"
     exit 1
@@ -234,7 +234,7 @@ fi
 step "11/11" "Pre-push summary"
 echo "All local push gates passed."
 echo "BDD shards: ${BDD_SHARDS}; TUI BDD shards: ${TUI_BDD_SHARDS}; timeout per shard: ${E2E_TIMEOUT}"
-echo "Coverage threshold: ${COV_THRESHOLD}%"
+echo "Lib function coverage threshold: ${COV_THRESHOLD}%"
 echo "BDD function coverage thresholds: harness ${HARNESS_BDD_COV_THRESHOLD}%; TUI ${TUI_BDD_COV_THRESHOLD}%"
 
 echo -e "\n${GREEN}Pre-push passed.${NC}"
