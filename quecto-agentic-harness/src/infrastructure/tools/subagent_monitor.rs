@@ -310,8 +310,8 @@ fn handle_monitor_line(
             // event keeps full-replace semantics and never evicts the root's own
             // children (#815). Not a status change for the immediate child, so it
             // returns early and bypasses the registry/notification path below.
-            if let Some(mut fwd) = forward_child_state_changed(line, registry, agent_id) {
-                fwd.push('\n');
+            if let Some(fwd) = forward_child_state_changed(line, registry, agent_id) {
+                // Already newline-terminated by build_state_changed_event (#1055).
                 let _ = tx.send(fwd);
                 return;
             }
@@ -340,8 +340,8 @@ fn handle_monitor_line(
     }
     if let Some(tx) = broadcast_tx {
         if !foreign_workflow && should_broadcast_state_changed_after_event(&value) {
-            let mut event = super::subagent_cascade::build_state_changed_event(registry);
-            event.push('\n');
+            // Already newline-terminated by build_state_changed_event (#1055).
+            let event = super::subagent_cascade::build_state_changed_event(registry);
             let _ = tx.send(event);
         }
         if let Some(mut fwd) = canonical_workflow_forward(&value, agent_id, parent_id) {

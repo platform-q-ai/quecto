@@ -233,6 +233,7 @@ fn register_and_broadcast_emits_immediate_state_changed() {
     let line = rx
         .try_recv()
         .expect("#866: spawn registration must broadcast immediately");
+    assert!(line.ends_with('\n') && line.matches('\n').count() == 1); // #1055 framing
     let v: serde_json::Value = serde_json::from_str(&line).unwrap();
     assert_eq!(v["type"], "subagent_state_changed");
     assert_eq!(v["subagents"][0]["agentId"], "worker");

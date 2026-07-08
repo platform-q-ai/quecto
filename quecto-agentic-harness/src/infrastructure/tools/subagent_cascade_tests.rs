@@ -127,3 +127,48 @@ fn state_changed_event_serializes_read_only_observer_flag() {
     assert_eq!(observer["readOnly"], true);
     assert_eq!(worker["readOnly"], false);
 }
+
+/// #1055: the canonical state_changed line must be `\n`-terminated so every
+/// broadcast send site is correct by construction. A newline-less send made
+/// the client writer splice the event onto the next line, so ancestor
+/// monitors dropped BOTH events — new grandchildren never propagated and
+/// exited ghosts were never pruned.
+#[test]
+fn state_changed_event_is_newline_terminated() {
+    let r = new_registry();
+    r.lock().unwrap().insert(
+        "child".into(),
+        SubagentEntry::new(PathBuf::from("/c.sock"), 1),
+    );
+    let event = build_state_changed_event(&r);
+    assert!(
+        event.ends_with('\n'),
+        "broadcast line must end with newline"
+    );
+    assert!(
+        !event[..event.len() - 1].contains('\n'),
+        "exactly one terminating newline"
+    );
+}
+
+/// #1055 framing regression: two consecutive broadcast events written
+/// back-to-back (as the per-client writer does) must split into two
+/// independently parseable JSON lines.
+#[test]
+fn consecutive_state_changed_events_stay_line_framed() {
+    let r = new_registry();
+    r.lock().unwrap().insert(
+        "child".into(),
+        SubagentEntry::new(PathBuf::from("/c.sock"), 1),
+    );
+    let wire = format!(
+        "{}{}",
+        build_state_changed_event(&r),
+        build_state_changed_event(&r)
+    );
+    let lines: Vec<&str> = wire.lines().collect();
+    assert_eq!(lines.len(), 2, "two sends must frame as two lines");
+    for line in lines {
+        serde_json::from_str::<serde_json::Value>(line).expect("each line parses independently");
+    }
+}

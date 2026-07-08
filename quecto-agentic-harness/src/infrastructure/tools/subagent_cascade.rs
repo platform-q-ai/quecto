@@ -137,6 +137,13 @@ pub fn cascade_remove_and_state_changed(
 /// `SubagentInfo`) from the registry's current entries, sorted by id for stable
 /// ordering. Projects to KNOWN fields only — no arbitrary child-supplied keys
 /// cross onto the parent stream (trust-boundary pattern, review).
+///
+/// The returned line is `\n`-TERMINATED, ready to broadcast as-is. The
+/// protocol frames events by newline; a send site that forgot to append one
+/// made the client writer splice the event onto the NEXT line, so ancestors'
+/// monitors read one unparseable blob and dropped BOTH events — grandchildren
+/// spawned after a merge never propagated and exited ghosts were never pruned
+/// (#1055). Terminating here makes every send site correct by construction.
 pub fn build_state_changed_event(registry: &SubagentRegistry) -> String {
     let guard = registry.lock().unwrap_or_else(|e| e.into_inner());
     build_state_changed_event_locked(&guard)
@@ -182,11 +189,13 @@ pub fn build_state_changed_event_locked(guard: &HashMap<String, SubagentEntry>) 
             })
             .collect()
     };
-    serde_json::json!({
+    let mut line = serde_json::json!({
         "type": "subagent_state_changed",
         "subagents": subagents,
     })
-    .to_string()
+    .to_string();
+    line.push('\n');
+    line
 }
 
 #[cfg(test)]
