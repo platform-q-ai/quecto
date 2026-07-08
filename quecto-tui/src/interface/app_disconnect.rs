@@ -8,14 +8,15 @@
 
 use super::*;
 
+/// How long the disconnect path waits for the child-exit diagnosis to land
+/// after the stream closes, before falling back to a bare "Agent disconnected".
+const CHILD_EXIT_DETAIL_WINDOW: Duration = Duration::from_millis(500);
+
 impl App {
-    /// Attach the exit-diagnosis slot for a TUI-owned agent child (#1047), so
-    /// a later disconnect can report WHY the agent went away.
-    pub fn set_child_exit_watch(
-        &mut self,
-        slot: crate::infrastructure::child_watch::ExitDetailSlot,
-    ) {
-        self.child_exit_watch = Some(slot);
+    /// Attach the exit-diagnosis watch for a TUI-owned agent child (#1047),
+    /// so a later disconnect can report WHY the agent went away.
+    pub fn set_child_exit_watch(&mut self, watch: crate::infrastructure::child_watch::ChildWatch) {
+        self.child_exit_watch = Some(watch);
     }
 
     /// Test fixture: model a TUI that never showed the panel. #1047 pins the
@@ -53,17 +54,14 @@ impl App {
     }
 
     /// Best-effort read of the owned agent child's exit diagnosis. The stream
-    /// usually closes a beat before the watcher reaps the child, so poll the
-    /// slot briefly rather than racing it with a single read.
+    /// usually closes a beat before the watcher reaps the child, so give the
+    /// diagnosis a short window to land. Event-driven via the watcher's watch
+    /// channel (#1051 review — no 20 ms poll loop): the common case resolves
+    /// the moment the reap is recorded; only a child that closed its socket
+    /// but stays alive costs the full (bounded, one-time) window.
     async fn wait_child_exit_detail(&self) -> Option<String> {
-        let slot = self.child_exit_watch.as_ref()?;
-        for _ in 0..25 {
-            if let Some(detail) = crate::infrastructure::child_watch::read_exit_detail(slot) {
-                return Some(detail);
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        None
+        let watch = self.child_exit_watch.as_ref()?;
+        watch.wait_exit_detail(CHILD_EXIT_DETAIL_WINDOW).await
     }
 
     /// Surface newly-recorded oversized-event drops as a warning notification

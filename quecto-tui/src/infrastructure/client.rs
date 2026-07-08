@@ -11,11 +11,13 @@ use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
-/// Maximum line size from the agent (1 MiB, matching quecto's protocol limit).
+/// Maximum line size from the agent — derived from the shared protocol cap
+/// (`quecto_line_io::PROTOCOL_LINE_CAP_BYTES`, 1 MiB) so the harness emitter
+/// and this reader can never disagree (#1047 review).
 ///
 /// Public so out-of-crate tests (the harness BDD suite) can build boundary
 /// frames against the real cap instead of a duplicated literal.
-pub const MAX_LINE_BYTES: usize = 1_048_576;
+pub const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
 

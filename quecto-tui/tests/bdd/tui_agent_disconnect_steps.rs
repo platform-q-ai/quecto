@@ -6,7 +6,7 @@
 //! signal, reaped by the production child watcher.
 
 use super::*;
-use quecto_tui::infrastructure::child_watch::{self, ExitDetailSlot};
+use quecto_tui::infrastructure::child_watch::{self, ChildWatch};
 use quecto_tui::interface::app::tui_harness::TuiHarness;
 
 /// A real spawned "agent" child under the production exit watcher.
@@ -14,8 +14,9 @@ use quecto_tui::interface::app::tui_harness::TuiHarness;
 pub struct DisconnectChildWatch {
     /// PID to signal in the When step.
     pub pid: u32,
-    /// Slot the watcher fills with the exit diagnosis once the child is reaped.
-    pub slot: ExitDetailSlot,
+    /// Watch handle the watcher publishes the exit diagnosis on once the
+    /// child is reaped.
+    pub watch: ChildWatch,
 }
 
 fn init_disconnect_harness(world: &mut TuiWorld) {
@@ -80,8 +81,8 @@ fn tui_spawned_agent_child(world: &mut TuiWorld) {
             .spawn()
             .expect("spawn agent stand-in child");
         let pid = child.id().expect("child pid");
-        let slot = child_watch::watch_child(child);
-        DisconnectChildWatch { pid, slot }
+        let watch = child_watch::watch_child(child);
+        DisconnectChildWatch { pid, watch }
     });
     world.tui_disconnect_child = Some(watch);
 }
@@ -102,7 +103,7 @@ fn agent_child_aborts_with_signal(world: &mut TuiWorld) {
     let rt = world.tui_parity_rt.as_ref().expect("runtime");
     let handle = rt.handle().clone();
     let h = &mut world.tui_parity.as_mut().expect("TUI harness").0;
-    handle.block_on(h.agent_stream_closed_with_child_watch(watch.slot));
+    handle.block_on(h.agent_stream_closed_with_child_watch(watch.watch));
 }
 
 #[then("the disconnect notification should include the child's exit detail")]

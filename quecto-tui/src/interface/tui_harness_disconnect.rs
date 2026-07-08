@@ -32,13 +32,13 @@ impl TuiHarness {
         self
     }
 
-    /// #1047: attach a real child-exit watcher slot, then drive the production
-    /// stream-closed path (which reads the exit diagnosis from that slot).
+    /// #1047: attach a real child-exit watcher, then drive the production
+    /// stream-closed path (which reads the exit diagnosis from it).
     pub async fn agent_stream_closed_with_child_watch(
         &mut self,
-        slot: crate::infrastructure::child_watch::ExitDetailSlot,
+        watch: crate::infrastructure::child_watch::ChildWatch,
     ) {
-        self.app.set_child_exit_watch(slot);
+        self.app.set_child_exit_watch(watch);
         self.app.handle_agent_stream_closed().await;
         self.capture();
     }

@@ -118,10 +118,10 @@ pub struct App {
     /// sub-agent context needed to diagnose the failure. Stays `true` after
     /// `agent_connected` drops on disconnect.
     agent_ever_connected: bool,
-    /// Exit-diagnosis slot for the TUI-owned agent child (#1047), filled by
-    /// [`crate::infrastructure::child_watch`] when the child is reaped.
-    /// `None` when the TUI attached to an external socket.
-    child_exit_watch: Option<crate::infrastructure::child_watch::ExitDetailSlot>,
+    /// Exit-diagnosis watch handle for the TUI-owned agent child (#1047),
+    /// published by [`crate::infrastructure::child_watch`] when the child is
+    /// reaped. `None` when the TUI attached to an external socket.
+    child_exit_watch: Option<crate::infrastructure::child_watch::ChildWatch>,
     /// How many oversized-event drops have already been surfaced as a
     /// notification, so each drop is reported exactly once (#1047).
     surfaced_oversized_drops: u64,

@@ -20,9 +20,9 @@ pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
 };
 
-/// Maximum length for a single JSON-lines event (1 MiB).
+/// Maximum length for a single JSON-lines event (the shared protocol cap).
 /// Lines exceeding this are dropped to prevent OOM from misbehaving children.
-const MAX_LINE_BYTES: usize = 1024 * 1024;
+const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
 /// Maximum length for stored tool name / error strings (256 chars).
 const MAX_STORED_STRING: usize = 256;
@@ -294,7 +294,12 @@ fn handle_monitor_line(
             // Per-turn message stream: forward re-stamped onto the parent's
             // stream so the TUI inspector updates turn-by-turn (#797). Not a
             // status change, so it bypasses the state-changing path below.
-            if let Some(mut fwd) = forward_child_messages_appended(line, agent_id, parent_id) {
+            if let Some(fwd) = forward_child_messages_appended(line, agent_id, parent_id) {
+                // Re-stamping a child line already capped near the limit
+                // (empty `agent_id` → real id, added `parent_id`) can grow it
+                // past the cap; re-cap so the TUI never drops the forwarded
+                // line unread (#1047 review).
+                let mut fwd = crate::infrastructure::line_cap::cap_line(fwd);
                 fwd.push('\n');
                 let _ = tx.send(fwd);
                 return;
