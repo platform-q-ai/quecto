@@ -137,12 +137,20 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
 
 /// Main async entry point.
 async fn run_tui(flags: CliFlags) -> i32 {
-    let (socket, mut _child) = match flags.socket_path {
+    // For a TUI-owned child, the #1047 exit watcher takes ownership of the
+    // `Child` (so it can reap it and record an exit diagnosis for the
+    // disconnect notification). Termination also goes through the watcher —
+    // never by a stored raw PID, which could be recycled after the watcher
+    // reaps the child (#1051 review: PID-reuse race).
+    let (socket, child_watch) = match flags.socket_path {
         Some(path) => (path, None),
         None => {
             // Spawn a quecto agent child process
             match spawn_agent(&flags).await {
-                Ok((path, child)) => (path, Some(child)),
+                Ok((path, child, stderr_tail)) => {
+                    let watch = crate::infrastructure::child_watch::watch_child(child, stderr_tail);
+                    (path, Some(watch))
+                }
                 Err(e) => {
                     eprintln!("Failed to start quecto agent: {e}");
                     return 1;
@@ -184,12 +192,8 @@ async fn run_tui(flags: CliFlags) -> i32 {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to connect to agent: {e}");
-            if let Some(ref mut child) = _child {
-                crate::infrastructure::process::terminate_child(
-                    child,
-                    crate::infrastructure::process::TERMINATE_GRACE_MS,
-                )
-                .await;
+            if let Some(watch) = &child_watch {
+                watch.terminate().await;
             }
             return 1;
         }
@@ -198,16 +202,16 @@ async fn run_tui(flags: CliFlags) -> i32 {
     // Run the TUI.
     let terminal = crate::infrastructure::terminal::Terminal::new();
     let mut app = crate::interface::app::App::new(terminal, client);
+    if let Some(watch) = &child_watch {
+        app.set_child_exit_watch(watch.clone());
+    }
     let exit_code = app.run().await;
 
-    // Kill the child agent process group on TUI exit (catches subagents too).
-    // Uses checked PID conversion to prevent u32→i32 wrapping (see #464).
-    if let Some(ref mut child) = _child {
-        crate::infrastructure::process::terminate_child(
-            child,
-            crate::infrastructure::process::TERMINATE_GRACE_MS,
-        )
-        .await;
+    // Kill the child agent process group on TUI exit (catches subagents too),
+    // via the watcher so an already-reaped (possibly recycled) PID is never
+    // signalled (#1051 review).
+    if let Some(watch) = &child_watch {
+        watch.terminate().await;
     }
 
     exit_code
@@ -274,18 +278,47 @@ pub fn agent_socket_timeout_message() -> String {
     )
 }
 
-/// Spawn a quecto agent in UDS mode and return the socket path and child handle.
+/// Spawn a quecto agent in UDS mode and return the socket path, the child
+/// handle, and the ring buffer its post-startup stderr keeps draining into
+/// (#1047 — so a later panic-abort message is captured, not lost).
 ///
 /// The caller MUST store the child handle and call `child.kill()` + `child.wait()`
 /// on TUI exit. Tokio's `Child` does NOT kill the process on drop — dropping it
 /// creates an orphan. See the security review for PR #442.
-async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child), String> {
+async fn spawn_agent(
+    flags: &CliFlags,
+) -> Result<
+    (
+        PathBuf,
+        tokio::process::Child,
+        crate::infrastructure::child_watch::StderrTail,
+    ),
+    String,
+> {
+    spawn_agent_program("quecto", flags).await
+}
+
+/// [`spawn_agent`] with the agent binary injectable, so tests can drive the
+/// REAL spawn path (socket announcement parsing, post-startup stderr drain
+/// wiring) with a stand-in script — reverting the drain hookup must fail a
+/// test, not just the manually-wired drain unit tests (#1051 final review).
+async fn spawn_agent_program(
+    program: &str,
+    flags: &CliFlags,
+) -> Result<
+    (
+        PathBuf,
+        tokio::process::Child,
+        crate::infrastructure::child_watch::StderrTail,
+    ),
+    String,
+> {
     use tokio::io::AsyncBufReadExt;
     use tokio::process::Command;
 
     let args = build_agent_args(flags);
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let mut child = Command::new("quecto")
+    let mut child = Command::new(program)
         .args(&args_ref)
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
@@ -293,7 +326,7 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
         // Create a new process group so we can kill the agent + all its subagents.
         .process_group(0)
         .spawn()
-        .map_err(|e| format!("failed to spawn quecto: {e}"))?;
+        .map_err(|e| format!("failed to spawn {program}: {e}"))?;
 
     let stderr = child
         .stderr
@@ -302,7 +335,7 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
 
     let mut reader = tokio::io::BufReader::new(stderr);
     let mut line = String::new();
-    let mut stderr_context = Vec::new();
+    let stderr_context = crate::infrastructure::child_watch::StderrTail::default();
 
     // Read stderr lines looking for the socket path announcement
     let socket_prefix = "quecto-agent-socket: ";
@@ -321,13 +354,13 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
                 terminate_spawned_agent(&mut child).await;
                 return Err(format_agent_startup_failure(
                     "agent exited before announcing socket",
-                    &stderr_context,
+                    &stderr_context.lines(),
                 ));
             }
             Ok(Ok(_)) => {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() {
-                    remember_stderr_line(&mut stderr_context, trimmed);
+                    remember_stderr_line(&stderr_context, trimmed);
                 }
                 if let Some(path_str) = trimmed.strip_prefix(socket_prefix) {
                     let path = PathBuf::from(path_str.trim());
@@ -336,21 +369,26 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
                         terminate_spawned_agent(&mut child).await;
                         return Err(e);
                     }
-                    return Ok((path, child));
+                    // Keep draining stderr AFTER startup (#1047): under the
+                    // workspace `panic = "abort"` a mid-session agent panic
+                    // writes its message here and then kills the process, so
+                    // dropping the reader would make the abort undiagnosable.
+                    spawn_stderr_drain(reader, stderr_context.clone());
+                    return Ok((path, child, stderr_context));
                 }
             }
             Ok(Err(e)) => {
                 terminate_spawned_agent(&mut child).await;
                 return Err(format_agent_startup_failure(
                     &format!("error reading agent stderr: {e}"),
-                    &stderr_context,
+                    &stderr_context.lines(),
                 ));
             }
             Err(_) => {
                 terminate_spawned_agent(&mut child).await;
                 return Err(format_agent_startup_failure(
                     &agent_socket_timeout_message(),
-                    &stderr_context,
+                    &stderr_context.lines(),
                 ));
             }
         }
@@ -365,14 +403,88 @@ async fn terminate_spawned_agent(child: &mut tokio::process::Child) {
     .await;
 }
 
-const MAX_STARTUP_STDERR_LINES: usize = 20;
 const MAX_STARTUP_STDERR_LINE_CHARS: usize = 1_000;
 
-fn remember_stderr_line(lines: &mut Vec<String>, line: &str) {
-    if lines.len() == MAX_STARTUP_STDERR_LINES {
-        lines.remove(0);
+/// Byte cap on a single drained stderr line (#1051 review pattern: no uncapped
+/// reads) — a child spewing an endless newline-free stream must not grow the
+/// line buffer without bound. Anything past the cap is discarded.
+const MAX_DRAIN_STDERR_LINE_BYTES: usize = 8 * 1024;
+
+fn remember_stderr_line(tail: &crate::infrastructure::child_watch::StderrTail, line: &str) {
+    tail.push(truncate_stderr_line(&redact_stderr_line(line)));
+}
+
+/// Keep draining the agent child's stderr AFTER startup into the shared ring
+/// buffer, so a mid-session panic-abort message survives the process (#1047).
+/// Lines are redacted and truncated exactly like the startup capture. The task
+/// ends when the child closes its stderr (i.e. exits) and marks the tail
+/// drained, so the disconnect path can wait for the buffered panic message
+/// instead of racing this task (#1051 final review).
+pub fn spawn_stderr_drain<R>(mut reader: R, tail: crate::infrastructure::child_watch::StderrTail)
+where
+    R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut line = String::new();
+        loop {
+            match read_stderr_line_capped(&mut reader, &mut line).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        remember_stderr_line(&tail, trimmed);
+                    }
+                }
+            }
+        }
+        tail.mark_drained();
+    });
+}
+
+/// Read one `\n`-terminated line, keeping at most [`MAX_DRAIN_STDERR_LINE_BYTES`]
+/// of it (the rest of an oversized line is consumed and discarded). Returns the
+/// number of bytes consumed from the stream; 0 means EOF.
+async fn read_stderr_line_capped<R>(reader: &mut R, out: &mut String) -> std::io::Result<usize>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    use tokio::io::AsyncBufReadExt;
+    out.clear();
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut consumed_total = 0usize;
+    loop {
+        let buf = reader.fill_buf().await?;
+        if buf.is_empty() {
+            break; // EOF (possibly mid-line)
+        }
+        let (chunk, consumed, line_done) = match buf.iter().position(|&b| b == b'\n') {
+            Some(i) => (&buf[..i], i + 1, true),
+            None => (buf, buf.len(), false),
+        };
+        if bytes.len() < MAX_DRAIN_STDERR_LINE_BYTES {
+            let take = chunk.len().min(MAX_DRAIN_STDERR_LINE_BYTES - bytes.len());
+            bytes.extend_from_slice(&chunk[..take]);
+        }
+        reader.consume(consumed);
+        consumed_total += consumed;
+        if line_done {
+            break;
+        }
     }
-    lines.push(truncate_stderr_line(&redact_stderr_line(line)));
+    // Decode ONCE per line (#1051 final review): a multi-byte character split
+    // across pipe reads must not be mangled into U+FFFD by per-chunk decoding.
+    // A character sliced by the byte cap itself is dropped, not replaced.
+    match std::str::from_utf8(&bytes) {
+        Ok(s) => out.push_str(s),
+        // `error_len() == None`: the only problem is an incomplete sequence
+        // at the very end (cap or EOF mid-character) — keep the valid prefix.
+        Err(e) if e.error_len().is_none() => {
+            out.push_str(&String::from_utf8_lossy(&bytes[..e.valid_up_to()]));
+        }
+        // Genuinely invalid UTF-8 mid-line (binary output): lossy-decode.
+        Err(_) => out.push_str(&String::from_utf8_lossy(&bytes)),
+    }
+    Ok(consumed_total)
 }
 
 fn truncate_stderr_line(line: &str) -> String {

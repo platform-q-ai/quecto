@@ -2,6 +2,7 @@ pub mod atomic_write;
 pub mod auth;
 pub mod config;
 pub mod extensions;
+pub mod line_cap;
 pub mod logging;
 pub mod model_registry;
 pub mod persistence;

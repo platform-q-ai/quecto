@@ -215,12 +215,13 @@ fn agent_socket_timeout_message_flows_through_failure_formatter() {
 
 #[test]
 fn stderr_context_redacts_common_secret_shapes() {
-    let mut lines = Vec::new();
+    let tail = crate::infrastructure::child_watch::StderrTail::default();
     remember_stderr_line(
-        &mut lines,
+        &tail,
         "Authorization: Bearer sk-ant-secret-token api_key=sk-test-secret-token",
     );
 
+    let lines = tail.lines();
     assert_eq!(lines.len(), 1);
     assert!(lines[0].contains("[REDACTED]"));
     assert!(!lines[0].contains("sk-ant-secret-token"));

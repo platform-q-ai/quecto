@@ -6,9 +6,11 @@ impl App {
 
     /// Whether the persistent left panel is shown. Sub-agent-first default
     /// (#820): ALWAYS on once connected — the Master is pinned as the top row
-    /// even with no sub-agents, so the panel is not gated on the tree.
+    /// even with no sub-agents, so the panel is not gated on the tree. It
+    /// also survives an agent disconnect (#1047): the user keeps the session
+    /// tree context needed to diagnose why the agent went away.
     pub(super) fn subagent_panel_visible(&self) -> bool {
-        self.agent_connected
+        self.agent_ever_connected
     }
 
     /// The agent whose session is currently shown in the body. `None` = master.

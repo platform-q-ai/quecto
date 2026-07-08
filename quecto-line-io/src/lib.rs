@@ -21,6 +21,17 @@
 
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 
+/// Single source of truth for quecto's JSON-lines protocol per-line cap
+/// (1 MiB, INCLUDING the trailing `\n`).
+///
+/// Every reader bound and emitter cap in the workspace derives from this
+/// constant (`quecto-tui`'s `MAX_LINE_BYTES`, the harness's
+/// `EVENT_LINE_CAP_BYTES` and UDS/sub-agent read bounds, `quecto-api`'s
+/// client bound), so an emitter can never legally produce a line a reader
+/// drops unread (#1047). Hand-pinning the value in a dependent crate instead
+/// of referencing this constant reintroduces that failure mode.
+pub const PROTOCOL_LINE_CAP_BYTES: usize = 1_048_576;
+
 /// A single `\n`-terminated (or EOF-terminated final) line, capped to at most
 /// `max_bytes` of content.
 #[derive(Debug, Clone, PartialEq, Eq)]

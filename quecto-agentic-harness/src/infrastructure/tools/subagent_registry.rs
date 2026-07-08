@@ -187,7 +187,7 @@ pub const INSPECTOR_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration:
 /// Per-line cap on a sub-agent's UDS reply (#795 security review). Mirrors the
 /// inbound client cap (`uds::MAX_LINE_BYTES`) so a misbehaving/compromised
 /// sub-agent cannot return an unbounded line and exhaust the parent's memory.
-const SUBAGENT_RESPONSE_MAX_LINE_BYTES: usize = 1024 * 1024;
+const SUBAGENT_RESPONSE_MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
 /// Look up the UDS socket path for a spawned sub-agent by id.
 ///

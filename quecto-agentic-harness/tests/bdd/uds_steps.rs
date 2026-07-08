@@ -942,6 +942,29 @@ fn agent_event_types(world: &QuectoWorld) -> Vec<String> {
         .collect()
 }
 
+/// #1047: every line the agent emitted must be receivable by the TUI client,
+/// i.e. fit within the protocol event line cap INCLUDING its trailing newline
+/// (captured `agent_events` lines have the newline stripped, hence `< cap`).
+#[then("every emitted event line should fit within the event line cap")]
+fn then_every_event_line_fits_cap(world: &mut QuectoWorld) {
+    use quecto::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
+    assert!(
+        !world.agent_events.is_empty(),
+        "expected the agent to have emitted event lines"
+    );
+    for line in &world.agent_events {
+        assert!(
+            line.len() < EVENT_LINE_CAP_BYTES,
+            "an emitted event line exceeds the event line cap and would be \
+             dropped unread by the TUI client (#1047): {} bytes (cap {}), \
+             line head: {}…",
+            line.len() + 1,
+            EVENT_LINE_CAP_BYTES,
+            &line[..80.min(line.len())],
+        );
+    }
+}
+
 #[then(expr = "the agent output should contain an event of type {string}")]
 fn then_agent_output_contains_event_type(world: &mut QuectoWorld, event_type: String) {
     let types = agent_event_types(world);

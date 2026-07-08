@@ -113,6 +113,18 @@ pub struct App {
     should_exit: bool,
     stdin_buffer: crate::interface::stdin_buffer::StdinBuffer,
     agent_connected: bool,
+    /// Pin: once the left panel has shown for a connected agent it must not
+    /// vanish when the agent dies (#1047) — the user keeps the session /
+    /// sub-agent context needed to diagnose the failure. Stays `true` after
+    /// `agent_connected` drops on disconnect.
+    agent_ever_connected: bool,
+    /// Exit-diagnosis watch handle for the TUI-owned agent child (#1047),
+    /// published by [`crate::infrastructure::child_watch`] when the child is
+    /// reaped. `None` when the TUI attached to an external socket.
+    child_exit_watch: Option<crate::infrastructure::child_watch::ChildWatch>,
+    /// How many oversized-event drops have already been surfaced as a
+    /// notification, so each drop is reported exactly once (#1047).
+    surfaced_oversized_drops: u64,
     current_model: Option<String>,
     /// Connected agent's own id (from get_state sessionKey); distinguishes its
     /// own workflow_state from descendants' forwarded events. None when unnamed.
@@ -343,6 +355,9 @@ impl App {
             should_exit: false,
             stdin_buffer: crate::interface::stdin_buffer::StdinBuffer::new(),
             agent_connected: true,
+            agent_ever_connected: true,
+            child_exit_watch: None,
+            surfaced_oversized_drops: 0,
             current_model: None,
             connected_agent_id: None,
             model_selector: None,
@@ -416,6 +431,8 @@ impl App {
     }
 }
 
+#[path = "app_disconnect.rs"]
+mod app_disconnect;
 #[path = "app_event_loop.rs"]
 mod app_event_loop;
 #[path = "app_events.rs"]
@@ -659,6 +676,9 @@ mod app_clipboard_tests;
 #[cfg(test)]
 #[path = "app_cov_tests.rs"]
 mod app_cov_tests;
+#[cfg(test)]
+#[path = "app_disconnect_tests.rs"]
+mod app_disconnect_tests;
 #[cfg(test)]
 #[path = "app_event_loop_tests.rs"]
 mod app_event_loop_tests;
