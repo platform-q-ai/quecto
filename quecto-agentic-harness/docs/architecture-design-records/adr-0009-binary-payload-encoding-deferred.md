@@ -67,8 +67,9 @@ debuggability.
   the four (post-ADR-0008: fewer) JSON-shaped subsystems, and a profiling bar
   to clear, instead of re-deriving the analysis.
 - Debuggability (`socat` + eyeballs, BDD steps asserting on JSON fields)
-  is preserved for as long as the deferral holds; test steps can encode
-  JSON→binary at the transport boundary if the deferral is later lifted.
+  is preserved for as long as the deferral holds; if the deferral is later
+  lifted, BDD steps keep authoring JSON and encode at the transport boundary
+  (ADR-0010), so the test corpus is not part of the migration cost.
 
 ## Alternatives considered
 
