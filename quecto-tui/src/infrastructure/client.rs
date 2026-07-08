@@ -375,6 +375,10 @@ pub struct Client {
     cmd_tx: mpsc::Sender<String>,
     /// Channel for receiving events from the background reader.
     event_rx: mpsc::Receiver<Event>,
+    /// Count of event lines the reader dropped for exceeding
+    /// [`MAX_LINE_BYTES`], so the UI can surface the loss instead of the
+    /// session silently appearing frozen (#1047).
+    dropped_oversized: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Client {
@@ -397,6 +401,8 @@ impl Client {
         });
 
         let (tx, rx) = mpsc::channel(256);
+        let dropped_oversized = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let dropped_counter = std::sync::Arc::clone(&dropped_oversized);
 
         // Spawn background event reader
         tokio::spawn(async move {
@@ -411,10 +417,12 @@ impl Client {
                         if read.truncated
                             || (line.len() >= MAX_LINE_BYTES && !line.ends_with(b"\n"))
                         {
-                            // Drop oversized lines silently. The TUI owns the
-                            // terminal, so printing to stderr here would smear
-                            // diagnostics over the UI (same policy as the
-                            // unparseable-event branch below).
+                            // Drop oversized lines without printing (the TUI
+                            // owns the terminal, so stderr would smear
+                            // diagnostics over the UI) — but COUNT the drop so
+                            // the UI can surface the loss instead of the
+                            // session silently appearing frozen (#1047).
+                            dropped_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             continue;
                         }
                         let trimmed = match std::str::from_utf8(&line) {
@@ -454,7 +462,23 @@ impl Client {
         Ok(Self {
             cmd_tx,
             event_rx: rx,
+            dropped_oversized,
         })
+    }
+
+    /// How many event lines the reader has dropped for exceeding
+    /// [`MAX_LINE_BYTES`] (#1047). The UI polls this to surface the drop.
+    pub fn dropped_oversized_events(&self) -> u64 {
+        self.dropped_oversized
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Test-only: simulate the reader recording `n` oversized-line drops, so
+    /// UI-surfacing tests don't need to stream a >1 MiB frame.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn record_dropped_oversized_for_tests(&self, n: u64) {
+        self.dropped_oversized
+            .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Send a command to the agent.
@@ -490,7 +514,11 @@ impl Client {
         let (cmd_tx, cmd_rx) = mpsc::channel::<String>(1);
         drop(cmd_rx);
         let (_event_tx, event_rx) = mpsc::channel::<Event>(1);
-        Self { cmd_tx, event_rx }
+        Self {
+            cmd_tx,
+            event_rx,
+            dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
     }
 }
 

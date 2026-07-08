@@ -926,3 +926,21 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And client 1 should have received an execute_tool for tool "weather"
     And client 2 should not have received an execute_tool for tool "weather"
+
+  # ─── Event line size cap (#1047) ─────────────────────────────────────────────
+  # The TUI client drops event lines above the event line cap; near a full
+  # context window a turn's messages can exceed that, so the harness must tail
+  # the payload rather than emit an un-receivable line.
+
+  @done @issue-1047
+  Scenario: Agent events remain receivable when a response exceeds the event line cap
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response larger than the event line cap
+    When I start the UDS agent with no [session]
+    And I send prompt "generate a huge answer"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And every emitted event line should fit within the event line cap
+    And the agent output should contain an event of type "turn_end"
+    And the agent output should contain an event of type "agent_end"

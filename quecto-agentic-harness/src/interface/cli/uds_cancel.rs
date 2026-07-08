@@ -178,8 +178,11 @@ impl<'a> EventSink<'a> {
     }
 
     /// Serialize an event to a JSON line and deliver it via this sink.
+    ///
+    /// Uses the capped serializer so a turn near a full context window can
+    /// never produce a line the TUI client would drop unread (#1047).
     pub(crate) async fn emit(&mut self, event: &AgentEvent) {
-        let mut line = event.to_json_line();
+        let mut line = event.to_capped_json_line();
         line.push('\n');
         match self {
             EventSink::Writer(w) => {

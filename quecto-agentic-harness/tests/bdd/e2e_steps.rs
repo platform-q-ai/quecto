@@ -96,6 +96,15 @@ fn given_mock_llm_text_response(world: &mut QuectoWorld, content: String) {
     std::mem::forget(rt);
 }
 
+/// #1047: content big enough that an un-tailed `turn_end`/`agent_end` line
+/// would exceed the protocol event line cap
+/// (`quecto::interface::cli::protocol::EVENT_LINE_CAP_BYTES`).
+#[given("the mock LLM returns a text response larger than the event line cap")]
+fn given_mock_llm_oversized_text_response(world: &mut QuectoWorld) {
+    let content = "x".repeat(2 * quecto::interface::cli::protocol::EVENT_LINE_CAP_BYTES);
+    given_mock_llm_text_response(world, content);
+}
+
 #[given(expr = "the mock provider returns a text response {string}")]
 fn given_mock_provider_text_response(world: &mut QuectoWorld, content: String) {
     assert!(

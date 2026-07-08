@@ -536,6 +536,99 @@ impl AgentEvent {
     pub fn to_json_line(&self) -> String {
         serde_json::to_string(self).expect("AgentEvent is always serializable")
     }
+
+    /// Serialize the event to a JSON line guaranteed to fit within
+    /// [`EVENT_LINE_CAP_BYTES`] once the trailing newline is appended (#1047).
+    ///
+    /// Payloads that grow with conversation size (`turn_end`, `agent_end`,
+    /// `token`, `subagent_messages_appended`) are tailed — the OLDEST content
+    /// is dropped, the most recent kept — instead of emitting a line the TUI
+    /// client would drop unread. Lines already within the cap pass through
+    /// byte-for-byte unmodified.
+    pub fn to_capped_json_line(&self) -> String {
+        let line = self.to_json_line();
+        if line.len() <= EVENT_LINE_JSON_BUDGET {
+            return line;
+        }
+        cap_event_json_line(&line, EVENT_LINE_JSON_BUDGET).unwrap_or(line)
+    }
+}
+
+// ─── Event line cap (#1047) ──────────────────────────────────────────────────
+
+/// Hard cap on a single emitted event line, INCLUDING the trailing newline.
+///
+/// MUST match the TUI client's per-line receive bound
+/// (`quecto-tui/src/infrastructure/client.rs::MAX_LINE_BYTES` = 1 MiB): the
+/// client drops any longer line unread, so an over-cap `turn_end`/`agent_end`
+/// makes the session look frozen/disconnected (#1047).
+pub const EVENT_LINE_CAP_BYTES: usize = 1_048_576;
+
+/// Serialized-JSON budget: the cap minus the trailing newline added on emit.
+const EVENT_LINE_JSON_BUDGET: usize = EVENT_LINE_CAP_BYTES - 1;
+
+/// Cap an over-budget serialized event by tailing its growth-prone payload.
+/// Returns `None` for event shapes with nothing safe to shrink.
+fn cap_event_json_line(line: &str, budget: usize) -> Option<String> {
+    let mut v: serde_json::Value = serde_json::from_str(line).ok()?;
+    loop {
+        let s = serde_json::to_string(&v).ok()?;
+        if s.len() <= budget {
+            return Some(s);
+        }
+        if !shrink_event_payload(&mut v, s.len() - budget) {
+            return None;
+        }
+    }
+}
+
+/// Shrink the event's payload by roughly `excess` bytes of content, keeping
+/// the most recent output. JSON escaping means the byte accounting is
+/// approximate, so the caller re-serializes and loops. Returns `false` when
+/// nothing further can be removed.
+fn shrink_event_payload(v: &mut serde_json::Value, excess: usize) -> bool {
+    match v.get("type").and_then(serde_json::Value::as_str) {
+        Some("turn_end") => tail_string_field(v.pointer_mut("/message/content"), excess),
+        Some("token") => tail_string_field(v.pointer_mut("/token"), excess),
+        Some("agent_end") | Some("subagent_messages_appended") => {
+            let Some(serde_json::Value::Array(messages)) = v.get_mut("messages") else {
+                return false;
+            };
+            if messages.len() > 1 {
+                // Drop the OLDEST message first — keep the most recent ones.
+                messages.remove(0);
+                return true;
+            }
+            let Some(last) = messages.first_mut() else {
+                return false;
+            };
+            if tail_string_field(last.pointer_mut("/content"), excess) {
+                return true;
+            }
+            // Last resort: a lone untailable message (e.g. structured
+            // content blocks) is dropped whole so the event stays receivable.
+            messages.clear();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Keep the TAIL of the string (the most recent output), dropping at least
+/// `excess` bytes from the front on a char boundary.
+fn tail_string_field(field: Option<&mut serde_json::Value>, excess: usize) -> bool {
+    let Some(serde_json::Value::String(s)) = field else {
+        return false;
+    };
+    if s.is_empty() {
+        return false;
+    }
+    let mut cut = excess.min(s.len());
+    while cut < s.len() && !s.is_char_boundary(cut) {
+        cut += 1;
+    }
+    *s = s.split_off(cut);
+    true
 }
 
 // ─── Session state snapshot ──────────────────────────────────────────────────

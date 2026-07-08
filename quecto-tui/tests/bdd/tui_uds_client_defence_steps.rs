@@ -26,6 +26,11 @@ pub struct TuiDefenceStream {
     completion_turn_end: Option<Event>,
     expected_under_cap_token_len: Option<usize>,
     expected_under_cap_token: Option<String>,
+    /// Frames queued by earlier When steps and flushed by the step that sends
+    /// the final frame (#1047: lets distinct agent actions stay distinct steps).
+    pending_frames: Vec<Vec<u8>>,
+    /// Oversized-drop count read from the client after receiving (#1047).
+    dropped_oversized: Option<u64>,
     _temp_dir: TempDir,
 }
 
@@ -47,6 +52,8 @@ fn tui_connected_to_agent_event_stream(world: &mut TuiWorld) {
         completion_turn_end: None,
         expected_under_cap_token_len: None,
         expected_under_cap_token: None,
+        pending_frames: Vec::new(),
+        dropped_oversized: None,
         _temp_dir: temp_dir,
     });
 }
@@ -81,8 +88,47 @@ fn send_frames_and_receive(world: &mut TuiWorld, frames: Vec<Vec<u8>>) -> Vec<Ev
             _ => break,
         }
     }
+    stream.dropped_oversized = Some(client.dropped_oversized_events());
     drop(client);
     events
+}
+
+/// One well-formed token event whose total frame size exceeds the cap.
+fn oversized_token_frame() -> Vec<u8> {
+    let mut oversized = String::with_capacity(MAX_LINE_BYTES + 131_072);
+    oversized.push_str(r#"{"type":"token","token":""#);
+    oversized.push_str(OVERSIZED_MARKER);
+    oversized.push_str(&"x".repeat(MAX_LINE_BYTES + 65_536));
+    oversized.push_str("\"}\n");
+    oversized.into_bytes()
+}
+
+#[when("the agent sends an event larger than the supported event size")]
+fn agent_queues_oversized_event(world: &mut TuiWorld) {
+    let stream = world.tui_defence_stream.as_mut().expect("stream");
+    stream.pending_frames.push(oversized_token_frame());
+}
+
+#[when("the agent then sends a valid token event")]
+fn agent_then_sends_valid_token(world: &mut TuiWorld) {
+    let stream = world.tui_defence_stream.as_mut().expect("stream");
+    let mut frames = std::mem::take(&mut stream.pending_frames);
+    frames.push(b"{\"type\":\"token\",\"token\":\"later\"}\n".to_vec());
+    let events = send_frames_and_receive(world, frames);
+    let stream = world.tui_defence_stream.as_mut().expect("stream");
+    stream.latest_event = events.first().cloned();
+    stream.received_events = events;
+}
+
+#[then("the TUI client should record one dropped oversized event")]
+fn tui_client_records_one_dropped_oversized_event(world: &mut TuiWorld) {
+    let stream = world.tui_defence_stream.as_ref().expect("stream");
+    assert_eq!(
+        stream.dropped_oversized,
+        Some(1),
+        "the client must record exactly one dropped oversized event line \
+         so the UI can surface the loss (#1047)"
+    );
 }
 
 #[when(
@@ -92,15 +138,10 @@ fn agent_sends_oversized_then_valid(world: &mut TuiWorld) {
     // A well-formed token event whose total frame size exceeds the cap. Were
     // the client's bound ever removed, this would parse and be delivered as a
     // token carrying OVERSIZED_MARKER, which the ignore step would catch.
-    let mut oversized = String::with_capacity(MAX_LINE_BYTES + 131_072);
-    oversized.push_str(r#"{"type":"token","token":""#);
-    oversized.push_str(OVERSIZED_MARKER);
-    oversized.push_str(&"x".repeat(MAX_LINE_BYTES + 65_536));
-    oversized.push_str("\"}\n");
     let valid = br#"{"type":"token","token":"later"}
 "#
     .to_vec();
-    let events = send_frames_and_receive(world, vec![oversized.into_bytes(), valid]);
+    let events = send_frames_and_receive(world, vec![oversized_token_frame(), valid]);
     let stream = world.tui_defence_stream.as_mut().expect("stream");
     stream.latest_event = events.first().cloned();
     stream.received_events = events;

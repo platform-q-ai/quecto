@@ -107,6 +107,37 @@ pub async fn terminate_child(child: &mut tokio::process::Child, grace_ms: u64) {
     let _ = child.wait().await;
 }
 
+/// Terminate an agent's process group by PID alone, for callers that no
+/// longer hold the `Child` handle (the #1047 exit watcher owns it so it can
+/// reap the child and record its exit diagnosis).
+///
+/// Same escalation as [`terminate_child`]: SIGTERM the group, poll for it to
+/// disappear within `grace_ms`, then SIGKILL. Reaping is left to the watcher.
+pub async fn terminate_process_group(raw_pid: u32, grace_ms: u64) {
+    let pid = match checked_pid(raw_pid) {
+        Ok(pid) => pid,
+        Err(e) => {
+            eprintln!("Warning: unsafe PID {raw_pid}, skipping group termination: {e}");
+            return;
+        }
+    };
+    if kill_process_group(pid, libc::SIGTERM) == -1 {
+        return; // Group already gone (or unsignalable) — nothing to escalate.
+    }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(grace_ms);
+    loop {
+        // Null signal probes for group existence without signalling.
+        if kill_process_group(pid, 0) == -1 {
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(TERMINATE_POLL_TICK_MS)).await;
+    }
+    kill_process_group(pid, libc::SIGKILL);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

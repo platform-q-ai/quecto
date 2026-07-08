@@ -27,6 +27,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
+#[path = "tui_harness_disconnect.rs"]
+mod disconnect;
 #[path = "tui_harness_events.rs"]
 mod events;
 // Re-export the scenario event builders so callers keep using
@@ -318,14 +320,6 @@ impl TuiHarness {
     /// modifyOtherKeys to mode 0).
     pub fn run_protocol_cleanup(&mut self) {
         self.app.kitty.cleanup();
-    }
-
-    /// Whether any notification is currently visible, rendered to text via the
-    /// real notification stack so tests can assert the message content.
-    pub fn notification_text(&mut self) -> String {
-        use crate::interface::component::Component;
-        let w = self.width;
-        self.app.notifications.render(w).join("\n")
     }
 
     /// Feed a real `io::Error` through the production render-failure handler

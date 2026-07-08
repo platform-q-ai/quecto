@@ -137,12 +137,19 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
 
 /// Main async entry point.
 async fn run_tui(flags: CliFlags) -> i32 {
-    let (socket, mut _child) = match flags.socket_path {
-        Some(path) => (path, None),
+    // For a TUI-owned child, the #1047 exit watcher takes ownership of the
+    // `Child` (so it can reap it and record an exit diagnosis for the
+    // disconnect notification); termination happens by process-group PID.
+    let (socket, child_pid, child_exit_watch) = match flags.socket_path {
+        Some(path) => (path, None, None),
         None => {
             // Spawn a quecto agent child process
             match spawn_agent(&flags).await {
-                Ok((path, child)) => (path, Some(child)),
+                Ok((path, child)) => {
+                    let pid = child.id();
+                    let watch = crate::infrastructure::child_watch::watch_child(child);
+                    (path, pid, Some(watch))
+                }
                 Err(e) => {
                     eprintln!("Failed to start quecto agent: {e}");
                     return 1;
@@ -184,9 +191,9 @@ async fn run_tui(flags: CliFlags) -> i32 {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to connect to agent: {e}");
-            if let Some(ref mut child) = _child {
-                crate::infrastructure::process::terminate_child(
-                    child,
+            if let Some(pid) = child_pid {
+                crate::infrastructure::process::terminate_process_group(
+                    pid,
                     crate::infrastructure::process::TERMINATE_GRACE_MS,
                 )
                 .await;
@@ -198,13 +205,16 @@ async fn run_tui(flags: CliFlags) -> i32 {
     // Run the TUI.
     let terminal = crate::infrastructure::terminal::Terminal::new();
     let mut app = crate::interface::app::App::new(terminal, client);
+    if let Some(watch) = child_exit_watch {
+        app.set_child_exit_watch(watch);
+    }
     let exit_code = app.run().await;
 
     // Kill the child agent process group on TUI exit (catches subagents too).
     // Uses checked PID conversion to prevent u32→i32 wrapping (see #464).
-    if let Some(ref mut child) = _child {
-        crate::infrastructure::process::terminate_child(
-            child,
+    if let Some(pid) = child_pid {
+        crate::infrastructure::process::terminate_process_group(
+            pid,
             crate::infrastructure::process::TERMINATE_GRACE_MS,
         )
         .await;
