@@ -367,76 +367,44 @@ async fn reported_max_context_tokens_matches_the_enforced_budget() {
     assert_eq!(agent.max_context_tokens(), 32_768);
 }
 
-// --- #1044 AC1: the unmet-ceiling warning itself is pinned, not just the flag ---
+// --- #1044 AC1: a met ceiling records no over-budget prune ---
 
-/// Minimal subscriber capturing the targets of WARN-level events.
-struct WarnCapture {
-    warn_targets: Arc<Mutex<Vec<String>>>,
-}
-
-impl tracing::Subscriber for WarnCapture {
-    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
-        true
-    }
-    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
-    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
-    fn event(&self, event: &tracing::Event<'_>) {
-        if *event.metadata().level() == tracing::Level::WARN {
-            self.warn_targets
-                .lock()
-                .unwrap()
-                .push(event.metadata().target().to_string());
-        }
-    }
-    fn enter(&self, _span: &tracing::span::Id) {}
-    fn exit(&self, _span: &tracing::span::Id) {}
-}
-
-/// Run `messages` through a loop with the given budget, capturing WARN targets.
-fn warn_targets_for_budget(messages: &mut Vec<Message>, max_context_tokens: usize) -> Vec<String> {
-    let warn_targets = Arc::new(Mutex::new(Vec::new()));
-    let subscriber = WarnCapture {
-        warn_targets: warn_targets.clone(),
-    };
-    tracing::subscriber::with_default(subscriber, || {
-        // Parallel sibling tests can hit the warn! callsite with no subscriber
-        // first, caching its interest as "never"; the register-dispatch rebuild
-        // races with that. Rebuild explicitly so this thread's subscriber is
-        // guaranteed to see the event regardless of test ordering.
-        tracing::callsite::rebuild_interest_cache();
-        let store = Arc::new(MemSpillStore::default());
-        let loop_ = agent(vec![text_response("done")], store, max_context_tokens, None);
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap()
-            .block_on(loop_.run_loop(messages))
-            .unwrap();
-    });
-    warn_targets.lock().unwrap().clone()
-}
-
-#[test]
-fn unmet_ceiling_emits_a_context_prune_warning() {
-    // Budget of 5 tokens; the in-flight prompt alone (never droppable) blows it.
-    let mut messages = vec![Message::user("y".repeat(600))];
-    let targets = warn_targets_for_budget(&mut messages, 5);
-    assert!(
-        targets.iter().any(|t| t == "context_prune"),
-        "an unmeetable ceiling must emit tracing::warn!(target: \"context_prune\"); \
-         WARN targets seen: {targets:?}"
+/// The over-budget signal is observed through the deterministic
+/// `ContextPruned { budget_unmet }` audit event rather than a captured
+/// `tracing::warn!` — the warn and the audit event are emitted from the same
+/// `over_budget` condition, and a captured warn depends on the process-global
+/// tracing interest cache, which a parallel sibling test can poison to "never"
+/// (races even a `rebuild_interest_cache`), making the assertion flaky (#1053).
+/// The unmet case is pinned by
+/// `unmet_ceiling_is_reflected_in_the_context_pruned_audit_event`.
+#[tokio::test]
+async fn met_ceiling_records_no_over_budget_prune() {
+    let store = Arc::new(MemSpillStore::default());
+    let sink = Arc::new(CapturingAuditSink::default());
+    let loop_ = agent(
+        vec![text_response("done")],
+        store,
+        190_000,
+        Some(sink.clone() as Arc<dyn AuditSink>),
     );
-}
-
-#[test]
-fn met_ceiling_emits_no_context_prune_warning() {
     let mut messages = vec![Message::user("a comfortable prompt")];
-    let targets = warn_targets_for_budget(&mut messages, 190_000);
+    loop_.run_loop(&mut messages).await.unwrap();
+
+    let events = sink.events.lock().unwrap();
+    let over_budget = events.iter().any(|e| {
+        matches!(
+            e,
+            AuditEvent::ContextPruned {
+                budget_unmet: true,
+                ..
+            }
+        )
+    });
     assert!(
-        !targets.iter().any(|t| t == "context_prune"),
-        "a met budget must not warn; WARN targets seen: {targets:?}"
+        !over_budget,
+        "a met budget must not record a ContextPruned event with budget_unmet=true; \
+         events seen: {:?}",
+        *events
     );
 }
 
