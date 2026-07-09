@@ -198,6 +198,40 @@ fn builtin_gpt_5_6_tiers_resolve_for_api_key_and_oauth_with_published_limits() {
     assert_eq!(oauth.oauth_provider.as_deref(), Some("openai"));
 }
 
+/// Guards the id-string coupling between `builtin_specs()` and
+/// `gpt_5_6_cost`: the enrichment in `build_builtin` is keyed by literal id
+/// match, so a tier added or renamed in one table but not the other would
+/// otherwise silently ship with default limits, `reasoning = false`, and
+/// zero pricing. This walks every built-in `gpt-5.6*` id rather than a
+/// hardcoded list, failing loudly on drift.
+#[test]
+fn every_builtin_gpt_5_6_id_has_pricing_and_enriched_limits() {
+    let registry = ModelRegistry::builtin();
+    let tiers: Vec<_> = registry
+        .models()
+        .iter()
+        .filter(|m| m.id.starts_with("gpt-5.6"))
+        .collect();
+    assert!(!tiers.is_empty(), "expected built-in gpt-5.6 tiers");
+    for m in tiers {
+        let id = &m.id;
+        assert!(
+            super::gpt_5_6_cost(id).is_some(),
+            "{id} is in builtin_specs() but gpt_5_6_cost has no entry for it; \
+             add it there so the model does not ship with default limits and \
+             zero pricing"
+        );
+        assert!(m.reasoning, "{id} enrichment not applied: reasoning");
+        assert!(
+            m.context_window_explicit,
+            "{id} context window not explicit"
+        );
+        assert!(m.max_tokens_explicit, "{id} max tokens not explicit");
+        assert!(m.cost.input > 0.0, "{id} input price missing");
+        assert!(m.cost.output > 0.0, "{id} output price missing");
+    }
+}
+
 #[test]
 fn builtin_claude_sonnet_5_is_ordered_before_sonnet_4_6_for_each_auth_mode() {
     let registry = ModelRegistry::builtin();

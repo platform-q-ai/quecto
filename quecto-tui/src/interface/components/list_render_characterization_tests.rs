@@ -288,8 +288,8 @@ fn model_selector_overflow_indicator_pixels() {
     let lines = sel.render(80);
     let plain = strip_ansi(lines.last().unwrap());
     assert_eq!(
-        plain, "  (1/28)",
-        "12-row window over the 28 known models shows the indicator"
+        plain, "  (1/34)",
+        "12-row window over the 34 known models shows the indicator"
     );
 }
 

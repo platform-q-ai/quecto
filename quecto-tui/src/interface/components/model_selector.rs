@@ -27,6 +27,9 @@ fn known_models() -> Vec<ModelEntry> {
         "claude-sonnet-4-5",
     ];
     const OPENAI: &[&str] = &[
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
         "gpt-5.5",
         "gpt-5.5-mini",
         "gpt-5.5-nano",
@@ -378,6 +381,21 @@ mod tests {
             "known models should include Opus 4.7: {:?}",
             known_ids
         );
+    }
+
+    #[test]
+    fn known_models_include_gpt_5_6_tiers_for_both_auth_modes() {
+        let known_ids: Vec<String> = known_ids();
+        for id in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            for auth in ["api", "oauth"] {
+                let full = format!("openai-{auth}/{id}");
+                assert!(
+                    known_ids.iter().any(|k| k == &full),
+                    "known models should include {full}: {:?}",
+                    known_ids
+                );
+            }
+        }
     }
 
     #[test]
