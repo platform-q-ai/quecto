@@ -386,6 +386,10 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 #[cfg(test)]
+#[path = "config_effort_1066_tests.rs"]
+mod effort_1066_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;

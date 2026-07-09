@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod codex;
 pub mod openai;
+pub mod openai_endpoint_router;
 pub mod refreshable;
 pub mod retry;
 pub mod router;
@@ -153,6 +154,10 @@ pub fn create_provider_with_client(
 }
 
 /// Create an OpenAI-compatible/built-in provider with an explicit router prefix.
+///
+/// #1066: reasoning models registered for `provider_name` are routed per
+/// request — reasoning + function tools goes to the Responses API, everything
+/// else stays on Chat Completions.
 pub fn create_named_openai_provider_with_client(
     provider_name: &str,
     api_key: String,
@@ -163,15 +168,34 @@ pub fn create_named_openai_provider_with_client(
     if let Some(ref base) = api_base {
         validate_provider_api_base("openai", base)?;
     }
-    Ok(Arc::new(
+    let chat_completions: Arc<dyn LlmProvider> = Arc::new(
         openai::OpenAiProvider::with_client_and_name_and_oauth_headers(
             provider_name,
-            api_key,
-            api_base,
-            client,
+            api_key.clone(),
+            api_base.clone(),
+            client.clone(),
             include_oauth_headers,
         ),
-    ))
+    );
+    let reasoning_model_ids: std::collections::HashSet<String> =
+        crate::infrastructure::model_registry::ModelRegistry::builtin()
+            .models()
+            .iter()
+            .filter(|m| m.provider == provider_name && m.reasoning)
+            .map(|m| m.id.clone())
+            .collect();
+    if reasoning_model_ids.is_empty() {
+        return Ok(chat_completions);
+    }
+    let responses: Arc<dyn LlmProvider> = Arc::new(codex::CodexProvider::with_api_key(
+        api_key, api_base, client,
+    ));
+    Ok(Arc::new(openai_endpoint_router::OpenAiEndpointRouter::new(
+        provider_name.to_string(),
+        chat_completions,
+        responses,
+        reasoning_model_ids,
+    )))
 }
 
 /// Create the built-in OpenAI provider with explicit OAuth-header control.
@@ -266,10 +290,11 @@ pub fn create_anthropic_compatible_provider(
 pub fn create_codex_provider_with_client(
     api_key: String,
     account_id: String,
+    api_base: Option<String>,
     client: reqwest::Client,
 ) -> Arc<dyn LlmProvider> {
     Arc::new(codex::CodexProvider::with_client(
-        api_key, account_id, None, client,
+        api_key, account_id, api_base, client,
     ))
 }
 

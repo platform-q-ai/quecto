@@ -1,0 +1,64 @@
+// Issue #1066: reasoning-effort behaviour of the Responses request body.
+// Split from codex_tests.rs for the 750-line limit.
+
+use super::*;
+use crate::domain::provider::EffortLevel;
+
+/// Issue #1066: when no effort is configured, the request must omit
+/// `reasoning.effort` entirely so OpenAI's server default applies — the
+/// kernel must not invent a "medium" fallback.
+#[test]
+fn test_build_request_body_omits_effort_when_unconfigured_1066() {
+    let messages = vec![Message::system("Be concise."), Message::user("Hi")];
+    let tools = vec![];
+    let request = ChatRequest {
+        messages: &messages,
+        tools: &tools,
+        model: "gpt-5.6-sol",
+        max_tokens: 4096,
+        temperature: 0.7,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let body = CodexProvider::build_request_body(&request);
+    assert!(
+        body["reasoning"].get("effort").is_none(),
+        "unconfigured effort must be omitted so the server default applies (#1066), got {:?}",
+        body["reasoning"]["effort"]
+    );
+}
+
+/// Issue #1066: every OpenAI-documented effort level (none, low, medium,
+/// high, xhigh) must be transmitted verbatim on the Responses API.
+#[test]
+fn test_build_request_body_transmits_openai_documented_efforts_1066() {
+    for level in ["none", "low", "medium", "high", "xhigh"] {
+        let effort = EffortLevel::parse(level).unwrap_or_else(|| {
+            panic!("OpenAI-documented effort level '{level}' must be configurable (#1066)")
+        });
+        let messages = vec![Message::system("Be concise."), Message::user("Hi")];
+        let tools = vec![];
+        let request = ChatRequest {
+            messages: &messages,
+            tools: &tools,
+            model: "gpt-5.6-sol",
+            max_tokens: 4096,
+            temperature: 0.7,
+            session_id: None,
+            tool_choice: None,
+            metadata: None,
+            thinking_level: None,
+            cancel_flag: None,
+            effort: Some(effort),
+        };
+        let body = CodexProvider::build_request_body(&request);
+        assert_eq!(
+            body["reasoning"]["effort"], *level,
+            "configured effort '{level}' must be transmitted verbatim (#1066)"
+        );
+    }
+}

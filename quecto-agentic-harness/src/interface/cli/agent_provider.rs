@@ -473,6 +473,7 @@ fn build_single_provider(
             return Ok(providers::create_codex_provider_with_client(
                 api_key.to_string(),
                 acct,
+                api_base.clone(),
                 http_client.clone(),
             ));
         }

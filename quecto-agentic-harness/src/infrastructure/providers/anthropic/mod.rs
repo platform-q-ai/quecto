@@ -177,7 +177,7 @@ impl AnthropicProvider {
             .effort
             .or_else(|| adaptive_model.then_some(crate::domain::provider::EffortLevel::Low));
         if let Some(effort) = effective_effort {
-            body["output_config"] = serde_json::json!({"effort": effort.as_str()});
+            body["output_config"] = serde_json::json!({"effort": anthropic_effort_str(effort)});
         }
     }
 
@@ -614,6 +614,19 @@ impl LlmProvider for AnthropicProvider {
     }
 }
 
+/// Map an effort level onto Anthropic's documented vocabulary
+/// (`low`/`medium`/`high`/`max`). The OpenAI-only levels (#1066) clamp to
+/// the nearest documented Anthropic value; Anthropic's own levels are
+/// transmitted verbatim, unchanged from the pre-#1066 behaviour.
+fn anthropic_effort_str(effort: crate::domain::provider::EffortLevel) -> &'static str {
+    use crate::domain::provider::EffortLevel;
+    match effort {
+        EffortLevel::None => "low",
+        EffortLevel::XHigh => "high",
+        other => other.as_str(),
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 mod test_support;
 
@@ -624,3 +637,7 @@ mod tests;
 #[cfg(test)]
 #[path = "anthropic_parity_tests.rs"]
 mod parity_tests;
+
+#[cfg(test)]
+#[path = "anthropic_effort_1066_tests.rs"]
+mod effort_1066_tests;

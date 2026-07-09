@@ -739,6 +739,9 @@ mod no_sandbox_tests;
 #[path = "agent_no_session_tests.rs"]
 mod no_session_tests;
 #[cfg(test)]
+#[path = "agent_provider_1066_tests.rs"]
+mod provider_1066_tests;
+#[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;
 #[cfg(test)]

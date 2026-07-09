@@ -235,7 +235,9 @@ fn test_build_request_body_responses_api_fields() {
     let body = CodexProvider::build_request_body(&request);
     assert_eq!(body["tool_choice"], "auto");
     assert_eq!(body["parallel_tool_calls"], true);
-    assert_eq!(body["reasoning"]["effort"], "medium");
+    // #1066: no configured effort → the field is omitted (server default);
+    // the kernel no longer invents a "medium" fallback.
+    assert!(body["reasoning"].get("effort").is_none());
     assert_eq!(body["reasoning"]["summary"], "auto");
     assert_eq!(body["text"]["verbosity"], "medium");
     let include = body["include"].as_array().unwrap();
@@ -727,6 +729,9 @@ fn codex_streaming_task_clone_preserves_all_fields() {
     );
     let cloned = provider.clone();
     assert_eq!(cloned.api_key, "sk-codex-secret");
-    assert_eq!(cloned.account_id, "acct-xyz");
+    match &cloned.auth {
+        ResponsesAuth::ChatGptOAuth { account_id } => assert_eq!(account_id, "acct-xyz"),
+        other => panic!("OAuth clone must keep ChatGptOAuth auth, got {other:?}"),
+    }
     assert_eq!(cloned.api_base, "https://codex.example");
 }

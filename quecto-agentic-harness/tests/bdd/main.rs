@@ -311,6 +311,10 @@ pub struct QuectoWorld {
     pub tool_result: Option<Result<ToolResult, String>>,
     /// Created LLM provider
     pub provider: Option<Arc<dyn LlmProvider>>,
+    /// Mock OpenAI API server for endpoint-routing scenarios (#1066)
+    pub openai_mock: Option<openai_routing_1066_steps::MockOpenAiApi>,
+    /// Result of the last agent turn sent through the built provider (#1066)
+    pub agent_turn_result: Option<Result<LlmResponse, String>>,
     /// Error classification result
     pub error_class: Option<ProviderErrorClass>,
     /// Fallback provider for fallback/cooldown scenarios
@@ -1242,6 +1246,7 @@ mod grep_steps;
 mod harness_efficiency_steps;
 mod ls_steps;
 mod observability_steps;
+mod openai_routing_1066_steps;
 mod path_utils_steps;
 mod provider_auth_modes_steps;
 mod provider_steps;
