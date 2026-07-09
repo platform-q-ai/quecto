@@ -536,7 +536,6 @@ pub fn make_provider_factory(
                     return providers::create_codex_provider_with_client(
                         new_token.to_string(),
                         acct,
-                        base.clone(),
                         http_client.clone(),
                     );
                 }

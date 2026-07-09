@@ -156,14 +156,18 @@ pub fn create_provider_with_client(
 /// Create an OpenAI-compatible/built-in provider with an explicit router prefix.
 ///
 /// #1066: reasoning models registered for `provider_name` are routed per
-/// request — reasoning + function tools goes to the Responses API, everything
-/// else stays on Chat Completions.
+/// request to the Responses API; everything else stays on Chat Completions.
+///
+/// `reasoning_model_ids` must come from the *effective* (user-override-aware)
+/// model registry, not `ModelRegistry::builtin()`, so `models.json`
+/// `reasoning` overrides steer the endpoint routing.
 pub fn create_named_openai_provider_with_client(
     provider_name: &str,
     api_key: String,
     api_base: Option<String>,
     client: reqwest::Client,
     include_oauth_headers: bool,
+    reasoning_model_ids: std::collections::HashSet<String>,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     if let Some(ref base) = api_base {
         validate_provider_api_base("openai", base)?;
@@ -177,13 +181,6 @@ pub fn create_named_openai_provider_with_client(
             include_oauth_headers,
         ),
     );
-    let reasoning_model_ids: std::collections::HashSet<String> =
-        crate::infrastructure::model_registry::ModelRegistry::builtin()
-            .models()
-            .iter()
-            .filter(|m| m.provider == provider_name && m.reasoning)
-            .map(|m| m.id.clone())
-            .collect();
     if reasoning_model_ids.is_empty() {
         return Ok(chat_completions);
     }
@@ -290,11 +287,14 @@ pub fn create_anthropic_compatible_provider(
 pub fn create_codex_provider_with_client(
     api_key: String,
     account_id: String,
-    api_base: Option<String>,
     client: reqwest::Client,
 ) -> Arc<dyn LlmProvider> {
+    // The ChatGPT OAuth backend is hardwired: a config-supplied
+    // `providers.openai.api_base` must never redirect OAuth-JWT-bearing
+    // requests (it bypasses `validate_provider_api_base`, and the Codex
+    // backend only exists at chatgpt.com anyway).
     Arc::new(codex::CodexProvider::with_client(
-        api_key, account_id, api_base, client,
+        api_key, account_id, None, client,
     ))
 }
 

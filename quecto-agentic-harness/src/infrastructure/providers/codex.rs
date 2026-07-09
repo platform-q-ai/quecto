@@ -258,17 +258,18 @@ impl CodexProvider {
             "reasoning": {
                 "summary": "auto",
             },
-            "text": {
-                "verbosity": request.effort.map_or("medium", Self::verbosity_str),
-            },
             "include": ["reasoning.encrypted_content"],
         });
 
-        // #1066: transmit a configured effort verbatim; when none is
-        // configured, omit the field so OpenAI's server default applies —
-        // the kernel must not invent a fallback.
+        // #1066: transmit a configured effort, clamped onto OpenAI's
+        // documented scale; when none is configured, omit the field so
+        // OpenAI's server default applies — the kernel must not invent a
+        // fallback. The same rule applies to `text.verbosity`: only derive it
+        // from a configured effort, never hardcode a client-side default.
         if let Some(effort) = request.effort {
-            body["reasoning"]["effort"] = serde_json::Value::String(effort.as_str().to_string());
+            body["reasoning"]["effort"] =
+                serde_json::Value::String(Self::reasoning_effort_str(effort).to_string());
+            body["text"] = serde_json::json!({ "verbosity": Self::verbosity_str(effort) });
         }
 
         if let Some(inst) = instructions {
@@ -286,6 +287,18 @@ impl CodexProvider {
         }
 
         body
+    }
+
+    /// Map an effort level onto OpenAI's documented `reasoning.effort` scale
+    /// (`none`/`low`/`medium`/`high`/`xhigh`): levels outside that scale
+    /// clamp to the nearest documented value (#1066). `max` is
+    /// Anthropic-only, so it clamps to `xhigh` here.
+    fn reasoning_effort_str(effort: crate::domain::provider::EffortLevel) -> &'static str {
+        use crate::domain::provider::EffortLevel;
+        match effort {
+            EffortLevel::Max => "xhigh",
+            other => other.as_str(),
+        }
     }
 
     /// Map an effort level onto the Responses API `text.verbosity` scale,

@@ -152,3 +152,99 @@ async fn openai_api_key_non_reasoning_models_stay_on_chat_completions_1066() {
          mock saw: {paths:?}"
     );
 }
+
+async fn send_toolless_turn_with_effort(
+    provider: &std::sync::Arc<dyn LlmProvider>,
+    model: &str,
+) -> Result<crate::domain::message::LlmResponse, crate::domain::error::DomainError> {
+    let messages = vec![
+        Message::system("You are a coding agent."),
+        Message::user("Summarize this repo"),
+    ];
+    let tools: Vec<ToolDefinition> = vec![];
+    let request = ChatRequest {
+        messages: &messages,
+        tools: &tools,
+        model,
+        max_tokens: 1024,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: Some(crate::domain::provider::EffortLevel::XHigh),
+    };
+    provider.chat(request).await
+}
+
+/// Review follow-up (#1066): a reasoning model WITHOUT tools must also route
+/// to the Responses API — Chat Completions never transmits a configured
+/// effort, so leaving tool-less turns there silently drops the setting.
+#[tokio::test]
+async fn openai_api_key_toolless_reasoning_turn_uses_responses_and_transmits_effort_1066() {
+    let server = mock_openai_rejecting_reasoning_on_chat().await;
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = config_with_openai_key(&server.uri());
+    let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+
+    let result = send_toolless_turn_with_effort(&provider, "openai-api/gpt-5.6-sol").await;
+    assert!(
+        result.is_ok(),
+        "tool-less reasoning turn must succeed: {result:?}"
+    );
+
+    let requests = server.received_requests().await.unwrap();
+    let paths: Vec<_> = requests.iter().map(|r| r.url.path().to_string()).collect();
+    let responses_req = requests
+        .iter()
+        .find(|r| r.url.path().ends_with("/responses"))
+        .unwrap_or_else(|| {
+            panic!(
+                "tool-less reasoning turn must use the Responses API (#1066); mock saw: {paths:?}"
+            )
+        });
+    let body: serde_json::Value = serde_json::from_slice(&responses_req.body).unwrap();
+    assert_eq!(
+        body["reasoning"]["effort"], "xhigh",
+        "configured effort must be transmitted on tool-less reasoning turns (#1066)"
+    );
+    assert!(
+        !paths.iter().any(|p| p.ends_with("/chat/completions")),
+        "tool-less reasoning turn must not fall back to Chat Completions (#1066); saw {paths:?}"
+    );
+}
+
+/// Review follow-up (#1066): endpoint routing must honour the effective
+/// (user-override-aware) model registry, not the builtin one — a
+/// `models.json` entry marking a model `reasoning: true` under `openai-api`
+/// must route it to the Responses API.
+#[tokio::test]
+async fn openai_api_key_models_json_reasoning_override_routes_to_responses_1066() {
+    let server = mock_openai_rejecting_reasoning_on_chat().await;
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"openai-api":{"models":[{"id":"o5-preview","reasoning":true}]}}}"#,
+    )
+    .unwrap();
+    let config = config_with_openai_key(&server.uri());
+    let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+
+    let result = send_turn_with_tools(&provider, "openai-api/o5-preview").await;
+    assert!(
+        result.is_ok(),
+        "models.json reasoning override must route o5-preview via the \
+         Responses API instead of 400-ing on Chat Completions (#1066): {result:?}"
+    );
+    let requests = server.received_requests().await.unwrap();
+    let paths: Vec<_> = requests.iter().map(|r| r.url.path().to_string()).collect();
+    assert!(
+        paths.iter().any(|p| p.ends_with("/responses")),
+        "override-flagged reasoning model must hit the Responses endpoint (#1066); saw {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|p| p.ends_with("/chat/completions")),
+        "override-flagged reasoning model must never touch Chat Completions (#1066); saw {paths:?}"
+    );
+}

@@ -235,11 +235,12 @@ fn test_build_request_body_responses_api_fields() {
     let body = CodexProvider::build_request_body(&request);
     assert_eq!(body["tool_choice"], "auto");
     assert_eq!(body["parallel_tool_calls"], true);
-    // #1066: no configured effort → the field is omitted (server default);
-    // the kernel no longer invents a "medium" fallback.
+    // #1066: no configured effort → `reasoning.effort` and `text.verbosity`
+    // are both omitted (server defaults); the kernel no longer invents a
+    // "medium" fallback for either field.
     assert!(body["reasoning"].get("effort").is_none());
     assert_eq!(body["reasoning"]["summary"], "auto");
-    assert_eq!(body["text"]["verbosity"], "medium");
+    assert!(body.get("text").is_none());
     let include = body["include"].as_array().unwrap();
     assert!(
         include

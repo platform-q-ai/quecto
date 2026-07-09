@@ -1,11 +1,12 @@
 // #1066: per-request endpoint routing for API-key-authenticated OpenAI
 // providers.
 //
-// OpenAI's documentation routes reasoning models driven with function tools
-// to the Responses API — Chat Completions rejects that combination with
-// HTTP 400 ("Function tools with reasoning_effort are not supported ...
-// Please use /v1/responses instead"). Non-reasoning models (and reasoning
-// models without tools) stay on Chat Completions exactly as today.
+// OpenAI's documentation routes reasoning models to the Responses API —
+// Chat Completions rejects reasoning + function tools with HTTP 400
+// ("Function tools with reasoning_effort are not supported ... Please use
+// /v1/responses instead"), and our Chat Completions adapter never transmits
+// a configured effort. Non-reasoning models stay on Chat Completions
+// exactly as today.
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -42,10 +43,12 @@ impl OpenAiEndpointRouter {
         }
     }
 
-    /// A reasoning model combined with function tools must use the
-    /// Responses API; everything else keeps Chat Completions.
+    /// A reasoning model always uses the Responses API (with tools it is
+    /// mandatory; without tools it is still the only endpoint where a
+    /// configured `reasoning.effort` is transmitted); everything else keeps
+    /// Chat Completions.
     fn select(&self, request: &ChatRequest<'_>) -> &Arc<dyn LlmProvider> {
-        if !request.tools.is_empty() && self.reasoning_model_ids.contains(request.model) {
+        if self.reasoning_model_ids.contains(request.model) {
             &self.responses
         } else {
             &self.chat_completions
