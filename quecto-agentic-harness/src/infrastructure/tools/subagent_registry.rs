@@ -259,6 +259,13 @@ pub async fn send_subagent_uds_command_with_timeout(
     // A non-object command can't be stamped, so we fall back to first-response.
     let (outbound, expected_id) = stamp_request_id(command);
 
+    // Write the command as a legacy NDJSON line. Per ADR-0008 the deprecation
+    // window has *readers* migrate to dual-mode framing while writers stay on
+    // legacy NDJSON until part 3 removes the sniff and bumps the protocol — the
+    // child's reader (dual-mode since #1059) accepts this line and replies in
+    // the same framing. When part 3 closes the window this write switches to
+    // frames alongside every other writer (out of scope for part 1); the read
+    // side below is already migrated, so this consumer is in the inventory.
     writer
         .write_all(outbound.as_bytes())
         .await
@@ -350,17 +357,16 @@ fn stamp_request_id(command: &str) -> (String, Option<String>) {
     }
 }
 
-/// Read a single `\n`-terminated line, rejecting (rather than buffering) any line
-/// that exceeds `max_bytes` (#795 security review). Unlike `AsyncBufReadExt::lines`,
-/// this caps each line so a sub-agent cannot OOM the parent with one giant line,
-/// while still allowing an unbounded number of normal-sized lines to be skipped
-/// before the `response` event arrives.
+/// Read the next sub-agent message, capping (rather than buffering) any message
+/// that exceeds `max_bytes` (#795 security review) so a sub-agent cannot OOM the
+/// parent with one giant message, while still allowing an unbounded number of
+/// normal-sized messages to be skipped before the `response` event arrives.
 ///
-/// Delegates the bounded-read framing itself to the shared
-/// [`quecto_line_io::read_bounded_line`] helper (#1003) so every JSON-lines
-/// reader in the workspace shares one cap/consume implementation; this
-/// function only adds the crate-local error type and the "reject oversized
-/// lines" policy on top.
+/// Delegates the sniff-and-cap framing to the shared
+/// [`quecto_line_io::read_frame_or_legacy_line`] helper (#1059) so this
+/// parent→child consumer shares the same length-prefixed-frame / legacy-NDJSON
+/// deprecation-window handling as the other four UDS consumers; over-cap
+/// messages are skipped (not hard-errored) here.
 async fn read_line_capped<R>(
     reader: &mut R,
     max_bytes: usize,
@@ -369,16 +375,31 @@ where
     R: tokio::io::AsyncBufRead + Unpin,
 {
     use crate::domain::error::DomainError;
+    use quecto_line_io::{FrameError, Incoming};
 
-    let bounded = quecto_line_io::read_bounded_line(reader, max_bytes)
-        .await
-        .map_err(|e| DomainError::Tool(format!("read from subagent failed: {e}")))?;
-    match bounded {
-        None => Ok(None),
-        Some(line) if line.truncated => Err(DomainError::Tool(
-            "subagent response line exceeded size limit".into(),
-        )),
-        Some(line) => Ok(Some(line.content)),
+    // Deprecation-window reader (#1059): each reply is sniffed as a
+    // length-prefixed frame or a legacy NDJSON line. An over-cap interleaved
+    // message is skipped (the declared/until-newline bytes were consumed, so
+    // the stream stays framed) rather than hard-erroring the whole query — the
+    // same skip-and-continue the other four consumers use, replacing the old
+    // "response line exceeded size limit" abort. An unknown first byte is an
+    // explicit `VersionMismatch`, never a silent misparse.
+    loop {
+        match quecto_line_io::read_frame_or_legacy_line(reader, max_bytes).await {
+            Ok(None) => return Ok(None),
+            Ok(Some(incoming)) => {
+                let bytes = match incoming {
+                    Incoming::Frame(b) | Incoming::LegacyLine(b) => b,
+                };
+                return Ok(Some(String::from_utf8(bytes).unwrap_or_else(|e| {
+                    String::from_utf8_lossy(e.as_bytes()).into_owned()
+                })));
+            }
+            Err(FrameError::Oversized { .. }) => continue,
+            Err(e) => {
+                return Err(DomainError::Tool(format!("read from subagent failed: {e}")));
+            }
+        }
     }
 }
 

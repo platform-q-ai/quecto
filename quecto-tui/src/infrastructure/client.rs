@@ -8,7 +8,7 @@
 //! client is async (tokio) and designed to run in a background task, feeding
 //! events to the TUI's main render loop.
 
-use quecto_line_io::{FrameError, Incoming, WireMode, read_frame_or_legacy_line, write_message};
+use quecto_line_io::{FrameError, WireMode, read_frame_or_legacy_line_into, write_message};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::io::BufReader;
@@ -429,11 +429,19 @@ impl Client {
             }
             while let Some(line) = cmd_rx.recv().await {
                 let payload = line.strip_suffix('\n').unwrap_or(&line).as_bytes();
-                if write_message(&mut write_half, payload, mode, MAX_LINE_BYTES)
-                    .await
-                    .is_err()
-                {
-                    break;
+                match write_message(&mut write_half, payload, mode, MAX_LINE_BYTES).await {
+                    Ok(()) => {}
+                    // An over-cap outbound command is refused with nothing on
+                    // the wire (#1059). Drop just that message and keep the
+                    // writer alive — mirroring the reader's skip-and-continue
+                    // for oversized frames — instead of tearing down the whole
+                    // session for a single per-message validation refusal. (No
+                    // stderr: the TUI owns the terminal.)
+                    Err(FrameError::Oversized { .. }) => continue,
+                    // A real transport error (or a protocol version mismatch)
+                    // is fatal: stop the writer; the closed channel surfaces
+                    // the disconnect to the UI on the next send.
+                    Err(_) => break,
                 }
             }
         });
@@ -448,13 +456,15 @@ impl Client {
         // bounded memory either way (#1003).
         tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
+            // Reused across iterations so a streaming turn (one small JSON
+            // event per token) does not allocate a fresh payload buffer per
+            // message (#1059 review).
+            let mut bytes: Vec<u8> = Vec::new();
             loop {
-                match read_frame_or_legacy_line(&mut reader, MAX_LINE_BYTES).await {
+                match read_frame_or_legacy_line_into(&mut reader, &mut bytes, MAX_LINE_BYTES).await
+                {
                     Ok(None) => break, // EOF — agent closed the connection
-                    Ok(Some(incoming)) => {
-                        let bytes = match incoming {
-                            Incoming::Frame(b) | Incoming::LegacyLine(b) => b,
-                        };
+                    Ok(Some(_wire_mode)) => {
                         let trimmed = match std::str::from_utf8(&bytes) {
                             Ok(value) => value.trim(),
                             Err(_) => continue,

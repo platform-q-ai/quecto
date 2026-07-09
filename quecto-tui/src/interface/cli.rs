@@ -142,10 +142,17 @@ async fn run_tui(flags: CliFlags) -> i32 {
     // disconnect notification). Termination also goes through the watcher —
     // never by a stored raw PID, which could be recycled after the watcher
     // reaps the child (#1051 review: PID-reuse race).
-    // A directly-supplied socket (no spawn, no announcement to inspect) is
-    // assumed to be a current-generation agent (framed, protocol v2).
+    // A directly-supplied socket has no spawn and no stderr announcement to
+    // inspect, so the peer's protocol version is unknown. During the ADR-0008
+    // NDJSON deprecation window we speak legacy framing (`None`) rather than
+    // assume protocol v2: legacy NDJSON is understood by BOTH agent generations
+    // (a current agent's reader sniffs each message and downshifts its replies),
+    // whereas assuming frames against a pre-#1059 agent would write newline-less
+    // frames its NDJSON reader can never parse — the silent hang ADR-0008
+    // forbids. (When part 3 closes the window this path needs an explicit
+    // version handshake; out of scope for part 1.)
     let (socket, child_watch, announced_protocol) = match flags.socket_path {
-        Some(path) => (path, None, Some(quecto_line_io::PROTOCOL_VERSION)),
+        Some(path) => (path, None, None),
         None => {
             // Spawn a quecto agent child process
             match spawn_agent(&flags).await {
@@ -356,7 +363,9 @@ async fn spawn_agent_program(
     // Read stderr lines looking for the socket path announcement (and the
     // protocol-version line that precedes it since #1059).
     let socket_prefix = "quecto-agent-socket: ";
-    let protocol_prefix = "quecto-agent-protocol: ";
+    // Shared single source of truth (quecto-line-io), so the producer (agent
+    // announcement) and this consumer can never drift into a silent mismatch.
+    let protocol_prefix = quecto_line_io::PROTOCOL_ANNOUNCE_PREFIX;
     let mut announced_protocol: Option<u8> = None;
     let deadline = tokio::time::Instant::now() + AGENT_SOCKET_DEADLINE;
 

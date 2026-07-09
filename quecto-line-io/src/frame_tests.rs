@@ -247,3 +247,94 @@ fn oversized_error_message_is_diagnosable() {
     assert!(msg.contains("64"), "message was: {msg}");
     assert!(msg.contains("16"), "message was: {msg}");
 }
+
+/// The buffer-reusing reader returns the same payload bytes as the allocating
+/// twin for both framings, and reuses the caller's `Vec` allocation across
+/// calls (no per-message alloc on the hot event path, #1059 review).
+#[tokio::test]
+async fn into_reader_reuses_buffer_across_framed_and_legacy_messages() {
+    // A framed message, then a legacy NDJSON line, on one stream.
+    let mut wire = framed(&[br#"{"n":1}"#]).await;
+    wire.extend_from_slice(b"{\"n\":2}\n");
+    let mut r = BufReader::new(&wire[..]);
+
+    let mut buf = Vec::with_capacity(8 * 1024);
+    let ptr = buf.as_ptr();
+
+    let mode = read_frame_or_legacy_line_into(&mut r, &mut buf, PROTOCOL_FRAME_CAP_BYTES)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(mode, WireMode::Framed);
+    assert_eq!(buf, br#"{"n":1}"#);
+    assert_eq!(
+        buf.as_ptr(),
+        ptr,
+        "framed read must reuse the caller buffer"
+    );
+
+    let mode = read_frame_or_legacy_line_into(&mut r, &mut buf, PROTOCOL_FRAME_CAP_BYTES)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(mode, WireMode::LegacyLine);
+    assert_eq!(
+        buf, br#"{"n":2}"#,
+        "legacy line must have its newline stripped"
+    );
+    assert_eq!(
+        buf.as_ptr(),
+        ptr,
+        "legacy read must reuse the caller buffer"
+    );
+
+    assert!(
+        read_frame_or_legacy_line_into(&mut r, &mut buf, PROTOCOL_FRAME_CAP_BYTES)
+            .await
+            .unwrap()
+            .is_none(),
+        "clean EOF yields None"
+    );
+}
+
+/// The buffer-reusing reader rejects an over-cap frame cleanly (declared size
+/// learned from the prefix, payload discarded) and keeps the stream framed so a
+/// following in-cap frame still reads.
+#[tokio::test]
+async fn into_reader_rejects_oversized_frame_then_reads_the_next() {
+    // Hand-build an over-cap frame prefix (declares 32 bytes) with a small cap
+    // of 8, followed by a legal in-cap frame.
+    let mut wire = Vec::new();
+    wire.extend_from_slice(&32u32.to_be_bytes());
+    wire.extend_from_slice(&[b'x'; 32]);
+    write_frame(&mut wire, br#"{"n":9}"#, 8).await.unwrap();
+    let mut r = BufReader::new(&wire[..]);
+
+    let mut buf = Vec::new();
+    match read_frame_or_legacy_line_into(&mut r, &mut buf, 8).await {
+        Err(FrameError::Oversized { declared, max }) => {
+            assert_eq!(declared, 32);
+            assert_eq!(max, 8);
+        }
+        other => panic!("expected Oversized, got {other:?}"),
+    }
+    let mode = read_frame_or_legacy_line_into(&mut r, &mut buf, 8)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(mode, WireMode::Framed);
+    assert_eq!(buf, br#"{"n":9}"#);
+}
+
+/// The buffer-reusing reader surfaces an unknown first byte as an explicit
+/// version mismatch (never a silent misparse), matching the allocating twin.
+#[tokio::test]
+async fn into_reader_reports_version_mismatch_on_unknown_first_byte() {
+    let wire = [0xFFu8, 0x00, 0x01, 0x02];
+    let mut r = BufReader::new(&wire[..]);
+    let mut buf = Vec::new();
+    match read_frame_or_legacy_line_into(&mut r, &mut buf, PROTOCOL_FRAME_CAP_BYTES).await {
+        Err(FrameError::VersionMismatch { first_byte }) => assert_eq!(first_byte, 0xFF),
+        other => panic!("expected VersionMismatch, got {other:?}"),
+    }
+}

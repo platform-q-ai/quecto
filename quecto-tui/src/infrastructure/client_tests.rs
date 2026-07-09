@@ -628,24 +628,31 @@ async fn client_connect_reads_events_and_writes_commands() {
         write_half.write_all(b"\n").await.unwrap();
         write_half.flush().await.unwrap();
 
-        // Commands arrive as length-prefixed frames since #1059; skip the
-        // empty hello frame that announces framed mode.
+        // Decode the wire STRICTLY as length-prefixed frames (4-byte BE length
+        // + payload) rather than via the dual-accepting sniffing reader, so a
+        // revert of the client writer to legacy NDJSON is caught: a `{...}\n`
+        // line would be misread as a ~1.9 GiB frame length and stall/fail
+        // instead of passing (#1059 — pins the framed-WRITE migration).
+        use tokio::io::AsyncReadExt;
         let mut reader = tokio::io::BufReader::new(read_half);
-        loop {
-            let incoming = quecto_line_io::read_frame_or_legacy_line(
-                &mut reader,
-                quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
-            )
-            .await
-            .unwrap()
-            .expect("command before EOF");
-            let bytes = match incoming {
-                quecto_line_io::Incoming::Frame(b) | quecto_line_io::Incoming::LegacyLine(b) => b,
-            };
-            if !bytes.is_empty() {
-                break String::from_utf8(bytes).unwrap();
-            }
-        }
+        let mut prefix = [0u8; 4];
+        // First frame is the empty hello frame announcing framed mode.
+        reader.read_exact(&mut prefix).await.unwrap();
+        assert_eq!(u32::from_be_bytes(prefix), 0, "expected empty hello frame");
+        reader.read_exact(&mut prefix).await.unwrap();
+        let declared = u32::from_be_bytes(prefix) as usize;
+        assert!(
+            declared > 0 && declared <= quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+            "implausible command frame length ({declared}) — writer is not framing"
+        );
+        let mut payload = vec![0u8; declared];
+        reader.read_exact(&mut payload).await.unwrap();
+        let command = String::from_utf8(payload).unwrap();
+        assert!(
+            !command.ends_with('\n'),
+            "framed payload must have no newline"
+        );
+        command
     });
 
     let mut client = Client::connect(&socket_path).await.unwrap();

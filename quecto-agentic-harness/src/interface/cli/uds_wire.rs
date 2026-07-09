@@ -9,6 +9,7 @@
 //! NDJSON — safe during the deprecation window because framed clients sniff
 //! each incoming message, while legacy clients only ever receive lines.
 
+pub use quecto_line_io::PROTOCOL_ANNOUNCE_PREFIX;
 use quecto_line_io::{PROTOCOL_FRAME_CAP_BYTES, PROTOCOL_VERSION, WireMode, write_message};
 
 // 0 (`AtomicU8::default()`) = not yet negotiated.
@@ -76,6 +77,3 @@ pub fn socket_announcement(socket_path: &std::path::Path) -> String {
         socket_path.display()
     )
 }
-
-/// Prefix of the protocol-version announcement line.
-pub const PROTOCOL_ANNOUNCE_PREFIX: &str = "quecto-agent-protocol: ";

@@ -243,34 +243,41 @@ fn test_extract_summary_last_assistant() {
 
 #[tokio::test]
 async fn read_line_capped_reads_lines_then_eof() {
-    let data = b"first\nsecond\n";
+    // Since #1059 the reader sniffs framing from the first byte; legacy NDJSON
+    // messages are `{`-opening JSON lines.
+    let data = b"{\"n\":1}\n{\"n\":2}\n";
     let mut reader = tokio::io::BufReader::new(&data[..]);
     assert_eq!(
         read_line_capped(&mut reader, 1024)
             .await
             .unwrap()
             .as_deref(),
-        Some("first")
+        Some(r#"{"n":1}"#)
     );
     assert_eq!(
         read_line_capped(&mut reader, 1024)
             .await
             .unwrap()
             .as_deref(),
-        Some("second")
+        Some(r#"{"n":2}"#)
     );
     assert_eq!(read_line_capped(&mut reader, 1024).await.unwrap(), None);
 }
 
 #[tokio::test]
-async fn read_line_capped_rejects_oversized_line() {
-    let big = format!("{}\n", "x".repeat(100));
-    let mut reader = tokio::io::BufReader::new(big.as_bytes());
-    let err = read_line_capped(&mut reader, 16).await.unwrap_err();
-    assert!(
-        err.to_string().contains("exceeded size limit"),
-        "expected size-limit error, got: {err}"
+async fn read_line_capped_skips_oversized_line_and_reads_the_next() {
+    // #1059 review (finding 5a): an over-cap interleaved message must be
+    // SKIPPED (its bytes consumed so the stream stays framed) rather than
+    // hard-erroring the whole query — mirroring the other four consumers.
+    let mut data = format!("{{\"x\":\"{}\"}}\n", "x".repeat(100)).into_bytes();
+    data.extend_from_slice(b"{\"n\":2}\n");
+    let mut reader = tokio::io::BufReader::new(&data[..]);
+    // The oversized first line is skipped; the next valid line is returned.
+    assert_eq!(
+        read_line_capped(&mut reader, 16).await.unwrap().as_deref(),
+        Some(r#"{"n":2}"#)
     );
+    assert_eq!(read_line_capped(&mut reader, 16).await.unwrap(), None);
 }
 
 // --- command/response matching (#831) ---
@@ -329,7 +336,9 @@ async fn command_reader_skips_connect_time_snapshot_and_returns_matching_reply()
             .write_all(b"{\"type\":\"response\",\"command\":\"get_messages\",\"data\":[{\"content\":\"FIRST MESSAGE ONLY\"}]}\n")
             .await
             .unwrap();
-        // Echo the request id the parent stamped, as the dispatch loop would.
+        // The parent writes its command as a legacy NDJSON line during the
+        // deprecation window (ADR-0008: writers stay legacy, readers migrate);
+        // echo the request id the parent stamped, as the dispatch loop would.
         let mut lines = BufReader::new(read_half).lines();
         let line = lines.next_line().await.unwrap().unwrap();
         let req: serde_json::Value = serde_json::from_str(&line).unwrap();

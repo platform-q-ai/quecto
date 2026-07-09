@@ -12,7 +12,7 @@
 
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 
-use crate::{PROTOCOL_LINE_CAP_BYTES, read_bounded_line_into};
+use crate::{INITIAL_CAPACITY, PROTOCOL_LINE_CAP_BYTES, RECLAIM_THRESHOLD, read_bounded_line_into};
 
 /// Byte length of the frame's size prefix.
 const FRAME_PREFIX_LEN: usize = 4;
@@ -29,6 +29,14 @@ pub const PROTOCOL_FRAME_CAP_BYTES: usize = PROTOCOL_LINE_CAP_BYTES;
 /// Protocol version announced by the agent (in the `quecto-agent-socket:`
 /// stderr announcement) so a client can act on it before speaking.
 pub const PROTOCOL_VERSION: u8 = 2;
+
+/// Prefix of the agent's protocol-version announcement line
+/// (`quecto-agent-protocol: <N>`). The single source of truth shared by the
+/// producer (the agent's stderr announcement) and every consumer that sniffs
+/// it (the TUI spawn path). Hand-duplicating this literal in a consumer crate
+/// reintroduces the silent-version-mismatch failure mode ADR-0008 forbids: a
+/// later edit to one copy leaves the other silently pinned to legacy NDJSON.
+pub const PROTOCOL_ANNOUNCE_PREFIX: &str = "quecto-agent-protocol: ";
 
 /// Errors from the framed reader/writer, distinct from I/O errors so callers
 /// can log a clean protocol error and keep the connection alive.
@@ -268,6 +276,90 @@ where
         0x00 => Ok(read_frame(reader, max_bytes).await?.map(Incoming::Frame)),
         other => Err(FrameError::VersionMismatch { first_byte: other }),
     }
+}
+
+/// Buffer-reusing twin of [`read_frame_or_legacy_line`] for hot event-reader
+/// loops (the TUI client, `quecto-api` gateway, harness readers) that read one
+/// small JSON message per token: it sniffs and reads the next message into a
+/// caller-owned `Vec<u8>` — reused across calls with the same `shrink_to`
+/// reclaim as [`read_bounded_line_into`] — instead of allocating (and, for the
+/// framed branch, zero-initializing) a fresh `Vec` per message. On success the
+/// detected framing is returned and `buf` holds the message payload (no
+/// trailing `\n`); the same [`FrameError::Oversized`] / [`FrameError::VersionMismatch`]
+/// / clean-EOF (`Ok(None)`) semantics apply.
+pub async fn read_frame_or_legacy_line_into<R>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+    max_bytes: usize,
+) -> Result<Option<WireMode>, FrameError>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let first_byte = loop {
+        let available = reader.fill_buf().await?;
+        match available.first() {
+            Some(&(b'\n' | b'\r')) => reader.consume(1),
+            Some(&b) => break b,
+            None => return Ok(None),
+        }
+    };
+    match first_byte {
+        LEGACY_JSON_OPENER => {
+            let Some(read) = read_bounded_line_into(reader, buf, max_bytes).await? else {
+                return Ok(None);
+            };
+            if read.truncated {
+                return Err(FrameError::Oversized {
+                    declared: read.bytes_read,
+                    max: max_bytes,
+                });
+            }
+            if buf.ends_with(b"\n") {
+                buf.pop();
+            }
+            Ok(Some(WireMode::LegacyLine))
+        }
+        0x00 => match read_frame_into(reader, buf, max_bytes).await? {
+            true => Ok(Some(WireMode::Framed)),
+            false => Ok(None),
+        },
+        other => Err(FrameError::VersionMismatch { first_byte: other }),
+    }
+}
+
+/// Buffer-reusing twin of [`read_frame`]. Fills `buf` with the next frame's
+/// payload (reusing its allocation, with the same reclaim policy as
+/// [`read_bounded_line_into`]) and returns `Ok(true)`; `Ok(false)` at clean
+/// EOF before any prefix byte.
+async fn read_frame_into<R>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+    max_bytes: usize,
+) -> Result<bool, FrameError>
+where
+    R: AsyncBufRead + Unpin,
+{
+    buf.clear();
+    if buf.capacity() > RECLAIM_THRESHOLD {
+        buf.shrink_to(INITIAL_CAPACITY.min(max_bytes));
+    }
+    let mut prefix = [0u8; FRAME_PREFIX_LEN];
+    if !read_exact_buffered(reader, &mut prefix).await? {
+        return Ok(false);
+    }
+    let declared = u32::from_be_bytes(prefix) as usize;
+    if declared > max_bytes {
+        discard_up_to(reader, declared).await?;
+        return Err(FrameError::Oversized {
+            declared,
+            max: max_bytes,
+        });
+    }
+    buf.resize(declared, 0);
+    if !read_exact_buffered(reader, buf).await? {
+        return Err(FrameError::Io(std::io::ErrorKind::UnexpectedEof.into()));
+    }
+    Ok(true)
 }
 
 #[cfg(test)]

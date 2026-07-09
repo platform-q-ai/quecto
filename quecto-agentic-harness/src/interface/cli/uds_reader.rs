@@ -53,7 +53,12 @@ pub(super) fn spawn_reader_task(
                     };
                     // Record the peer's framing so replies use it too (#1059).
                     wire_mode.record(mode);
-                    let line = String::from_utf8_lossy(&bytes).into_owned();
+                    // Reuse the payload `Vec`'s allocation on the common
+                    // valid-UTF-8 path; only pay a copy for the lossy fallback
+                    // on malformed input (preserving the tolerate-non-UTF-8
+                    // behaviour).
+                    let line = String::from_utf8(bytes)
+                        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
                     let trimmed = line.trim();
                     if is_cancel_command(trimmed) {
                         // Record operator intent BEFORE firing the cancel so the

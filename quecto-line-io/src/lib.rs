@@ -215,8 +215,9 @@ where
 
 mod frame;
 pub use frame::{
-    FrameError, Incoming, PROTOCOL_FRAME_CAP_BYTES, PROTOCOL_VERSION, WireMode, read_frame,
-    read_frame_or_legacy_line, write_frame, write_message,
+    FrameError, Incoming, PROTOCOL_ANNOUNCE_PREFIX, PROTOCOL_FRAME_CAP_BYTES, PROTOCOL_VERSION,
+    WireMode, read_frame, read_frame_or_legacy_line, read_frame_or_legacy_line_into, write_frame,
+    write_message,
 };
 
 #[cfg(test)]

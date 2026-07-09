@@ -595,7 +595,10 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
             quecto_line_io::Incoming::LegacyLine(b) => (quecto_line_io::WireMode::LegacyLine, b),
         };
         wire_mode.record(mode);
-        let line = String::from_utf8_lossy(&bytes).into_owned();
+        // Reuse the payload `Vec`'s allocation on the common valid-UTF-8 path;
+        // only pay a copy for the lossy fallback on malformed input.
+        let line = String::from_utf8(bytes)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
         let trimmed = line.trim();
 
         if is_cancel_command(trimmed) {

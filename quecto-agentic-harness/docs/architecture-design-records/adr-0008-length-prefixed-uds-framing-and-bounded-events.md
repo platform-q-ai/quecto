@@ -79,6 +79,23 @@ from then on a legacy peer fails with the explicit version-mismatch error
 rather than being read. End condition, concretely: the deprecation window
 closes when `quecto-agent-protocol: 3` ships.
 
+**Announcement-less attachers.** Two consumers attach to an *already-running*
+agent by socket path with no stderr announcement to negotiate against: the
+`quecto-api` gateway (`--socket`/`QUECTO_SOCKET`) and the TUI when given an
+explicit `--socket`. Because they cannot learn the peer's version, during the
+deprecation window they *write* legacy NDJSON — the one framing both agent
+generations accept (a pre-#1059 agent reads it natively; a current agent's
+reader sniffs each message and replies in the same framing). Writing frames to
+an unknown peer risks a pre-#1059 agent's newline reader hanging forever on the
+first newline-less frame — the silent hang this ADR forbids. Their *readers*
+are already dual-mode, so a current agent's framed replies still parse. When
+part 3 closes the window these two paths need an explicit version handshake
+(e.g. the agent recording its version in the socket directory, or a framed
+hello the agent must acknowledge); that handshake is out of scope for part 1.
+The parent→child sub-agent query path is *not* announcement-less — parent and
+child are the same binary, so it writes frames unconditionally and migrates
+with the other consumers.
+
 ### 2. Events become bounded by construction
 
 - **End-of-turn events reference, not re-carry.** `turn_end`/`agent_end`
