@@ -199,7 +199,7 @@ async fn run_tui(flags: CliFlags) -> i32 {
     // Connect to the agent, in the framing its announcement negotiated:
     // length-prefixed frames for protocol v2+, legacy NDJSON for agents that
     // announced no version (deprecation window, ADR-0008 / #1059).
-    let speaks_frames = announced_protocol.is_some_and(|v| v >= quecto_line_io::PROTOCOL_VERSION);
+    let speaks_frames = should_speak_frames(announced_protocol);
     let connect = async {
         if speaks_frames {
             crate::infrastructure::client::Client::connect(&socket).await
@@ -322,6 +322,14 @@ async fn spawn_agent(
 /// REAL spawn path (socket announcement parsing, post-startup stderr drain
 /// wiring) with a stand-in script — reverting the drain hookup must fail a
 /// test, not just the manually-wired drain unit tests (#1051 final review).
+/// Whether the TUI should speak length-prefixed frames to an agent that
+/// announced protocol version `announced` in its socket announcement. Frames
+/// for v2+ ([`quecto_line_io::PROTOCOL_VERSION`]); legacy NDJSON for a
+/// pre-#1059 agent that announced nothing (deprecation window, ADR-0008).
+fn should_speak_frames(announced: Option<u8>) -> bool {
+    announced.is_some_and(|v| v >= quecto_line_io::PROTOCOL_VERSION)
+}
+
 async fn spawn_agent_program(
     program: &str,
     flags: &CliFlags,

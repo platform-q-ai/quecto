@@ -246,11 +246,16 @@ async fn monitor_loop(
     // typically well under 1 KiB. Default 8 KiB is wasteful per child.
     let mut reader = BufReader::with_capacity(1024, read_half);
 
+    // Reused across the child's whole event stream so each high-volume token
+    // line does not allocate (and, on the framed branch, zero-initialize) a
+    // fresh Vec — matching the sibling TUI/quecto-api hot readers migrated in
+    // #1059.
+    let mut buf = Vec::new();
     loop {
-        match read_monitor_message(&mut reader, agent_id).await {
-            MonitorRead::Message(bytes) => {
+        match read_monitor_message(&mut reader, &mut buf, agent_id).await {
+            MonitorRead::Message => {
                 handle_monitor_line(
-                    &String::from_utf8_lossy(&bytes),
+                    &String::from_utf8_lossy(&buf),
                     agent_id,
                     registry,
                     notify_tx,
@@ -267,24 +272,25 @@ async fn monitor_loop(
     }
 }
 
-/// Outcome of a single monitor read: a message payload, a recoverable skip
-/// (oversized frame rejected cleanly), or a closed/broken connection.
+/// Outcome of a single monitor read: a message (now in the caller's reusable
+/// buffer), a recoverable skip (oversized frame rejected cleanly), or a
+/// closed/broken connection.
 enum MonitorRead {
-    Message(Vec<u8>),
+    Message,
     Skip,
     Closed,
 }
 
-/// Read one framed-or-legacy message from the child, classifying EOF,
-/// oversized rejection (stream stays usable), and hard read errors.
-async fn read_monitor_message<R>(reader: &mut R, agent_id: &str) -> MonitorRead
+/// Read one framed-or-legacy message from the child into the reusable `buf`,
+/// classifying EOF, oversized rejection (stream stays usable), and hard read
+/// errors. Uses the buffer-reusing `_into` reader so a child's high-volume
+/// token stream does not allocate per message.
+async fn read_monitor_message<R>(reader: &mut R, buf: &mut Vec<u8>, agent_id: &str) -> MonitorRead
 where
     R: tokio::io::AsyncBufRead + Unpin,
 {
-    match quecto_line_io::read_frame_or_legacy_line(reader, MAX_LINE_BYTES).await {
-        Ok(Some(
-            quecto_line_io::Incoming::Frame(bytes) | quecto_line_io::Incoming::LegacyLine(bytes),
-        )) => MonitorRead::Message(bytes),
+    match quecto_line_io::read_frame_or_legacy_line_into(reader, buf, MAX_LINE_BYTES).await {
+        Ok(Some(_wire_mode)) => MonitorRead::Message,
         Ok(None) => {
             // EOF — child closed the connection.
             tracing::info!(agent = %agent_id, "monitor: child connection closed (EOF)");

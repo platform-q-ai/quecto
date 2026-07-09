@@ -578,3 +578,7 @@ mod client_defence_tests;
 #[cfg(test)]
 #[path = "client_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "client_legacy_tests.rs"]
+mod client_legacy_tests;
