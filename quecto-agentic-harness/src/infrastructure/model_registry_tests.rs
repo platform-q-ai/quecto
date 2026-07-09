@@ -161,6 +161,44 @@ fn builtin_claude_sonnet_5_resolves_for_api_key_and_oauth_with_published_limits(
 }
 
 #[test]
+fn builtin_gpt_5_6_tiers_resolve_for_api_key_and_oauth_with_published_limits() {
+    let registry = ModelRegistry::builtin();
+    // (id, input $/1M, output $/1M)
+    let tiers = [
+        ("gpt-5.6-sol", 5.0, 30.0),
+        ("gpt-5.6-terra", 2.5, 15.0),
+        ("gpt-5.6-luna", 1.0, 6.0),
+    ];
+    for provider in ["openai-api", "openai-oauth"] {
+        for (id, input, output) in tiers {
+            let m = registry
+                .find(provider, id)
+                .unwrap_or_else(|| panic!("{provider}/{id} should be built in"));
+            assert_eq!(m.api, ProviderApi::OpenAiCompletions);
+            // Published limits (OpenAI, 2026-07-09): shared across the tiers.
+            assert_eq!(m.context_window, 1_050_000, "{id} context window");
+            assert!(m.context_window_explicit, "{id} context window is explicit");
+            assert_eq!(m.max_tokens, 128_000, "{id} max output");
+            assert!(m.max_tokens_explicit, "{id} max output is explicit");
+            assert!(m.reasoning, "{id} is a reasoning model");
+            // Per-tier pricing; cache read 0.10x input, cache write 1.25x input.
+            assert_eq!(m.cost.input, input, "{id} input price");
+            assert_eq!(m.cost.output, output, "{id} output price");
+            assert_eq!(m.cost.cache_read, input * 0.10, "{id} cache-read price");
+            assert_eq!(m.cost.cache_write, input * 1.25, "{id} cache-write price");
+        }
+    }
+    // Auth modes are wired per listing.
+    assert_eq!(
+        registry.find("openai-api", "gpt-5.6-sol").unwrap().auth,
+        AuthMode::ApiKey
+    );
+    let oauth = registry.find("openai-oauth", "gpt-5.6-sol").unwrap();
+    assert_eq!(oauth.auth, AuthMode::OAuth);
+    assert_eq!(oauth.oauth_provider.as_deref(), Some("openai"));
+}
+
+#[test]
 fn builtin_claude_sonnet_5_is_ordered_before_sonnet_4_6_for_each_auth_mode() {
     let registry = ModelRegistry::builtin();
     for provider in ["anthropic-api", "anthropic-oauth"] {
