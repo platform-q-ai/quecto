@@ -9,11 +9,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, mpsc};
 
-use quecto_line_io::read_bounded_line;
+use quecto_line_io::{
+    FrameError, Incoming, PROTOCOL_FRAME_CAP_BYTES, read_frame_or_legacy_line, write_frame,
+};
 
 use crate::application::ports::agent_gateway::{AgentCommand, AgentGateway, EventSubscriber};
 use crate::domain::error::ApiError;
@@ -61,14 +63,24 @@ impl UdsGateway {
 
         let (read_half, mut write_half) = tokio::io::split(stream);
 
-        // Command writer task
+        // Command writer task. Commands are sent as length-prefixed frames
+        // (#1059 / ADR-0008 part 1); the empty hello frame announces framed
+        // mode up front so the agent replies framed even before the first
+        // command.
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(64);
         tokio::spawn(async move {
+            if write_frame(&mut write_half, b"", PROTOCOL_FRAME_CAP_BYTES)
+                .await
+                .is_err()
+            {
+                return;
+            }
             while let Some(line) = cmd_rx.recv().await {
-                if write_half.write_all(line.as_bytes()).await.is_err() {
-                    break;
-                }
-                if write_half.flush().await.is_err() {
+                let payload = line.strip_suffix('\n').unwrap_or(&line).as_bytes();
+                if write_frame(&mut write_half, payload, PROTOCOL_FRAME_CAP_BYTES)
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -84,14 +96,17 @@ impl UdsGateway {
         tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
             loop {
-                match read_bounded_line(&mut reader, MAX_LINE_BYTES).await {
+                // Deprecation-window reader (#1059): each incoming message is
+                // sniffed as a length-prefixed frame or a legacy NDJSON line,
+                // so this client interoperates with both agent generations.
+                match read_frame_or_legacy_line(&mut reader, MAX_LINE_BYTES).await {
                     Ok(None) => break,
-                    Ok(Some(bounded)) => {
-                        if bounded.truncated {
-                            tracing::warn!("dropping oversized line (>{} bytes)", MAX_LINE_BYTES);
-                            continue;
-                        }
-                        let trimmed = bounded.content.trim();
+                    Ok(Some(incoming)) => {
+                        let bytes = match incoming {
+                            Incoming::Frame(b) | Incoming::LegacyLine(b) => b,
+                        };
+                        let text = String::from_utf8_lossy(&bytes);
+                        let trimmed = text.trim();
                         if trimmed.is_empty() {
                             continue;
                         }
@@ -109,7 +124,14 @@ impl UdsGateway {
                             }
                         }
                     }
+                    Err(e @ FrameError::Oversized { .. }) => {
+                        // Rejected cleanly; the stream stays framed.
+                        tracing::warn!("dropping oversized message from agent: {e}");
+                        continue;
+                    }
                     Err(e) => {
+                        // I/O error or an explicit protocol version mismatch
+                        // (never a hang or a silent misparse).
                         tracing::error!("UDS read error: {e}");
                         break;
                     }

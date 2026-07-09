@@ -19,6 +19,7 @@ mod uds_reload;
 pub mod uds_session;
 mod uds_snapshots;
 mod uds_socket;
+pub mod uds_wire;
 mod uds_workflow_nudge;
 
 use std::path::PathBuf;

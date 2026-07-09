@@ -473,6 +473,8 @@ pub struct QuectoWorld {
     pub uds_compare_event_types: Option<(Vec<String>, Vec<String>)>,
     /// UDS agent: captured execution stderr from the helper thread
     pub uds_execution_error: Option<String>,
+    /// UDS framing BDD (#1059): which wire framing the scripted client speaks.
+    pub uds_wire_client: Option<uds_framing_steps::UdsWireClient>,
     /// UDS agent: replace config with invalid JSON after building the agent but before the command loop
     pub uds_invalid_config_before_loop: bool,
     /// UDS agent: add Fireworks provider after building the agent but before the command loop
@@ -1270,6 +1272,7 @@ mod tool_empty_args_steps;
 mod truncate_steps;
 mod tui_architecture_steps;
 mod tui_context_usage_steps;
+mod uds_framing_steps;
 mod uds_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;

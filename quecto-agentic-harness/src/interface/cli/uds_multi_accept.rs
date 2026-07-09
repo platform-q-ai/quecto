@@ -75,6 +75,11 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                     );
 
                     let broadcast_rx = broadcast_tx.subscribe();
+                    // The busy-connect snapshot is pushed BEFORE the client
+                    // has spoken, i.e. before its framing is negotiated, so
+                    // it is written as legacy NDJSON for the deprecation
+                    // window — framed clients sniff each incoming message
+                    // (#1059 / ADR-0008 part 1).
                     if busy.load(std::sync::atomic::Ordering::SeqCst) {
                         use tokio::io::AsyncWriteExt;
                         let snapshot_lines = super::uds_snapshots::busy_connect_snapshot_lines(

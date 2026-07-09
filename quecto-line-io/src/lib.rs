@@ -213,6 +213,12 @@ where
     }
 }
 
+mod frame;
+pub use frame::{
+    FrameError, Incoming, PROTOCOL_FRAME_CAP_BYTES, PROTOCOL_VERSION, WireMode, read_frame,
+    read_frame_or_legacy_line, write_frame, write_message,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

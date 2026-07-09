@@ -130,6 +130,7 @@ mod tests {
                 self.agent.max_context_tokens(),
             );
             crate::interface::cli::uds::DispatchCtx {
+                wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
                 base_dir: self._tmp.path(),
                 agent: &mut self.agent,
                 messages: &mut self.messages,

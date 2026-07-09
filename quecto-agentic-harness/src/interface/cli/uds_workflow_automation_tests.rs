@@ -66,6 +66,7 @@ async fn new_session_resets_workflow_run_state() {
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let mut ctx = DispatchCtx {
+        wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
@@ -125,6 +126,7 @@ async fn resume_session_restores_target_workflow_run_state() {
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let mut ctx = DispatchCtx {
+        wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
@@ -197,6 +199,7 @@ async fn resume_session_clears_workflow_when_target_has_none() {
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let mut ctx = DispatchCtx {
+        wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
@@ -259,6 +262,7 @@ async fn set_workflow_automation_updates_config_and_engine() {
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let mut ctx = DispatchCtx {
+        wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
@@ -327,6 +331,7 @@ fn workflow_nudge_message_waits_for_selected_template() {
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let ctx = DispatchCtx {
+        wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
@@ -399,6 +404,7 @@ async fn drain_refreshes_busy_state_snapshot_per_turn() {
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let mut ctx = DispatchCtx {
+        wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
@@ -495,6 +501,7 @@ fn workflow_progress_fingerprint_changes_with_step_progress() {
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
     let ctx = DispatchCtx {
+        wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,

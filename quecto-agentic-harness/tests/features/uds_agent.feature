@@ -345,7 +345,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     When I start the UDS agent with no [session]
-    And I send raw line "not valid json{"
+    And I send raw line "{invalid json"
     And I close the UDS connection
     Then the agent output should contain a parse error response
 

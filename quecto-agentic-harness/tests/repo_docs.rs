@@ -329,3 +329,32 @@ fn obsolete_development_planning_artifacts_are_removed() {
         );
     }
 }
+
+/// #1059 (ADR-0008 part 1): the NDJSON deprecation window and its end
+/// condition must be documented with the protocol, so a peer author can tell
+/// when legacy newline framing stops interoperating. Replaces the earlier
+/// Gherkin docs-check scenario — a docs-content assertion is a conformance
+/// test, not observable system behaviour.
+#[test]
+fn adr_0008_documents_the_ndjson_deprecation_window_and_end_condition() {
+    let adr = read_repo_file(
+        "docs/architecture-design-records/adr-0008-length-prefixed-uds-framing-and-bounded-events.md",
+    );
+
+    assert!(
+        adr.contains("**Deprecation window.**"),
+        "ADR-0008 must document the legacy NDJSON deprecation window"
+    );
+    assert!(
+        adr.contains("End condition"),
+        "ADR-0008 must state when the deprecation window closes"
+    );
+    assert!(
+        adr.contains("quecto-agent-protocol: 3"),
+        "the window's end condition must be pinned to the protocol v3 announcement"
+    );
+    assert!(
+        adr.contains("quecto-agent-protocol: 2"),
+        "ADR-0008 must document the protocol-version announcement line"
+    );
+}

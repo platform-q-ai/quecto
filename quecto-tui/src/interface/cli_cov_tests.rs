@@ -204,7 +204,7 @@ async fn spawn_agent_wires_the_post_startup_stderr_drain() {
         .expect("mark script executable");
 
     let flags = parse_flags(&args(""));
-    let (path, mut child, tail) = spawn_agent_program(script.to_str().unwrap(), &flags)
+    let (path, mut child, tail, _protocol) = spawn_agent_program(script.to_str().unwrap(), &flags)
         .await
         .expect("spawn fake agent");
     assert_eq!(path, sock);

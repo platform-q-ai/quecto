@@ -142,14 +142,16 @@ async fn run_tui(flags: CliFlags) -> i32 {
     // disconnect notification). Termination also goes through the watcher —
     // never by a stored raw PID, which could be recycled after the watcher
     // reaps the child (#1051 review: PID-reuse race).
-    let (socket, child_watch) = match flags.socket_path {
-        Some(path) => (path, None),
+    // A directly-supplied socket (no spawn, no announcement to inspect) is
+    // assumed to be a current-generation agent (framed, protocol v2).
+    let (socket, child_watch, announced_protocol) = match flags.socket_path {
+        Some(path) => (path, None, Some(quecto_line_io::PROTOCOL_VERSION)),
         None => {
             // Spawn a quecto agent child process
             match spawn_agent(&flags).await {
-                Ok((path, child, stderr_tail)) => {
+                Ok((path, child, stderr_tail, announced_protocol)) => {
                     let watch = crate::infrastructure::child_watch::watch_child(child, stderr_tail);
-                    (path, Some(watch))
+                    (path, Some(watch), announced_protocol)
                 }
                 Err(e) => {
                     eprintln!("Failed to start quecto agent: {e}");
@@ -187,8 +189,18 @@ async fn run_tui(flags: CliFlags) -> i32 {
         default_hook(info);
     }));
 
-    // Connect to the agent.
-    let client = match crate::infrastructure::client::Client::connect(&socket).await {
+    // Connect to the agent, in the framing its announcement negotiated:
+    // length-prefixed frames for protocol v2+, legacy NDJSON for agents that
+    // announced no version (deprecation window, ADR-0008 / #1059).
+    let speaks_frames = announced_protocol.is_some_and(|v| v >= quecto_line_io::PROTOCOL_VERSION);
+    let connect = async {
+        if speaks_frames {
+            crate::infrastructure::client::Client::connect(&socket).await
+        } else {
+            crate::infrastructure::client::Client::connect_legacy(&socket).await
+        }
+    };
+    let client = match connect.await {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to connect to agent: {e}");
@@ -292,6 +304,7 @@ async fn spawn_agent(
         PathBuf,
         tokio::process::Child,
         crate::infrastructure::child_watch::StderrTail,
+        Option<u8>,
     ),
     String,
 > {
@@ -310,6 +323,9 @@ async fn spawn_agent_program(
         PathBuf,
         tokio::process::Child,
         crate::infrastructure::child_watch::StderrTail,
+        // Protocol version from the `quecto-agent-protocol: N` announcement
+        // line, `None` for pre-#1059 agents (legacy NDJSON framing).
+        Option<u8>,
     ),
     String,
 > {
@@ -337,8 +353,11 @@ async fn spawn_agent_program(
     let mut line = String::new();
     let stderr_context = crate::infrastructure::child_watch::StderrTail::default();
 
-    // Read stderr lines looking for the socket path announcement
+    // Read stderr lines looking for the socket path announcement (and the
+    // protocol-version line that precedes it since #1059).
     let socket_prefix = "quecto-agent-socket: ";
+    let protocol_prefix = "quecto-agent-protocol: ";
+    let mut announced_protocol: Option<u8> = None;
     let deadline = tokio::time::Instant::now() + AGENT_SOCKET_DEADLINE;
 
     // Surface a brief status so the readiness wait is not a silent pause (#808).
@@ -362,6 +381,9 @@ async fn spawn_agent_program(
                 if !trimmed.is_empty() {
                     remember_stderr_line(&stderr_context, trimmed);
                 }
+                if let Some(version) = trimmed.strip_prefix(protocol_prefix) {
+                    announced_protocol = version.trim().parse().ok();
+                }
                 if let Some(path_str) = trimmed.strip_prefix(socket_prefix) {
                     let path = PathBuf::from(path_str.trim());
                     // Validate the socket path is under a safe directory.
@@ -374,7 +396,7 @@ async fn spawn_agent_program(
                     // writes its message here and then kills the process, so
                     // dropping the reader would make the abort undiagnosable.
                     spawn_stderr_drain(reader, stderr_context.clone());
-                    return Ok((path, child, stderr_context));
+                    return Ok((path, child, stderr_context, announced_protocol));
                 }
             }
             Ok(Err(e)) => {

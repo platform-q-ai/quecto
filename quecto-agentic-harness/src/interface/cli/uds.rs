@@ -131,7 +131,9 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 return 1;
             }
         };
-        eprintln!("quecto-agent-socket: {}", socket_path.display());
+        // Version line first, then the socket line: a client learns the
+        // framing to speak before it connects (#1059 / ADR-0008 part 1).
+        eprint!("{}", super::uds_wire::socket_announcement(&socket_path));
         let _guard = SocketGuard(socket_path);
         super::uds_multi::multi_client_loop(
             MultiClientArgs {
@@ -202,6 +204,9 @@ async fn single_client_loop(
     let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
     let mut writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
 
+    // #1059: the reader records the client's framing; replies follow it.
+    let wire_mode = super::uds_wire::ConnectionWireMode::default();
+
     inject_system_prompt(&mut messages, &system_prompt);
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
@@ -212,6 +217,7 @@ async fn single_client_loop(
     run_command_loop(
         reader,
         &mut DispatchCtx {
+            wire_mode,
             base_dir,
             agent: &mut { agent },
             messages: &mut messages,
@@ -331,13 +337,22 @@ async fn run_command_loop(
     let cancel_for_reader = std::sync::Arc::clone(&ctx.cancel_handle);
     let control_for_reader = std::sync::Arc::clone(&ctx.turn_control);
 
-    let (reader_task, mut rx) = spawn_reader_task(reader, cancel_for_reader, control_for_reader);
+    let (reader_task, mut rx) = spawn_reader_task(
+        reader,
+        cancel_for_reader,
+        control_for_reader,
+        ctx.wire_mode.clone(),
+    );
 
     loop {
         let raw = match rx.recv().await {
             Some(Some(RawLine::Line(l))) => l,
-            Some(Some(RawLine::TooLong)) => {
-                let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
+            Some(Some(RawLine::ProtocolError(msg))) => {
+                // Over-cap frame/line or version mismatch (#1059): surface a
+                // clean, explicit protocol error. For an over-cap frame the
+                // connection stays usable — subsequent frames still dispatch.
+                tracing::warn!("UDS protocol error: {msg}");
+                let ev = AgentEvent::err(None, "protocol_error", msg);
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 continue;
             }
@@ -365,6 +380,10 @@ mod uds_session_load;
 use uds_session_load::load_session;
 
 pub(crate) struct DispatchCtx<'a> {
+    /// Negotiated framing for the single-client connection's replies (#1059).
+    /// Multi-client contexts stream via `broadcast_tx` (each client's writer
+    /// task re-frames per connection), so they pin this to legacy.
+    pub wire_mode: super::uds_wire::ConnectionWireMode,
     pub base_dir: &'a std::path::Path,
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
@@ -404,7 +423,7 @@ impl<'a> DispatchCtx<'a> {
     /// The [`EventSink`] this context streams to: the broadcast channel on the
     /// multi-client server, otherwise the direct writer (#994).
     fn event_sink(&mut self) -> EventSink<'_> {
-        make_event_sink(&self.broadcast_tx, &mut self.stdout)
+        make_event_sink(&self.broadcast_tx, &mut self.stdout, &self.wire_mode)
     }
 }
 
@@ -415,14 +434,16 @@ impl<'a> DispatchCtx<'a> {
 fn make_event_sink<'s>(
     broadcast_tx: &Option<tokio::sync::broadcast::Sender<String>>,
     stdout: &'s mut Option<&mut (dyn tokio::io::AsyncWrite + Send + Unpin)>,
+    wire_mode: &super::uds_wire::ConnectionWireMode,
 ) -> EventSink<'s> {
     if let Some(tx) = broadcast_tx {
         EventSink::Broadcast(tx.clone())
     } else {
-        EventSink::writer(
+        EventSink::writer_with_mode(
             stdout
                 .as_deref_mut()
                 .expect("dispatch context has neither broadcast_tx nor stdout"),
+            wire_mode.clone(),
         )
     }
 }
@@ -664,7 +685,7 @@ async fn run_prompt_dispatch(
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> PromptOutcome {
     let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828: gates connect-time snapshot
-    let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout);
+    let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
     run_agent_message(PromptRun {
         agent: ctx.agent,
         messages: ctx.messages,
@@ -698,7 +719,7 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 emit_pre_cancelled(ctx).await; // Stale abort (#483).
                 continue; // Don't drop remaining messages — Fired consumed, next arm succeeds.
             };
-            let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout);
+            let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
             run_agent_message(PromptRun {
                 agent: ctx.agent,
                 messages: ctx.messages,

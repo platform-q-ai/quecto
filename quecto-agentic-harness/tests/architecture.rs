@@ -672,3 +672,29 @@ fn cargo_toml_section_contains_dependency(section: &str, dependency: &str) -> bo
                 || trimmed.starts_with(&format!("{dependency}=")))
     })
 }
+
+/// #1059 / ADR-0008 part 1: all four socket consumers must migrate together.
+/// Each production read site (harness UDS reader + multi-client reader,
+/// sub-agent parent monitor, TUI client, quecto-api extension gateway) must
+/// route through `quecto_line_io`'s deprecation-window frame reader, so a
+/// partial migration (one consumer silently left on bare newline reads)
+/// cannot land.
+#[test]
+fn all_four_socket_consumers_read_via_the_shared_frame_reader() {
+    let consumers = [
+        "src/interface/cli/uds_reader.rs",
+        "src/interface/cli/uds_multi.rs",
+        "src/infrastructure/tools/subagent_monitor.rs",
+        "../quecto-tui/src/infrastructure/client.rs",
+        "../quecto-api/src/infrastructure/uds/client.rs",
+    ];
+    for path in consumers {
+        let source =
+            fs::read_to_string(path).unwrap_or_else(|e| panic!("read consumer source {path}: {e}"));
+        assert!(
+            source.contains("read_frame_or_legacy_line"),
+            "{path} must read socket messages via \
+             quecto_line_io::read_frame_or_legacy_line (#1059)"
+        );
+    }
+}

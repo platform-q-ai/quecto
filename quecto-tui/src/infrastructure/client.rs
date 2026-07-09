@@ -1,13 +1,17 @@
 //! UDS client — connects to a quecto agent over a Unix domain socket.
 //!
-//! Sends JSON-lines commands and receives JSON-lines events. The client
-//! is async (tokio) and designed to run in a background task, feeding
+//! Sends JSON commands and receives JSON events. Since #1059 (ADR-0008
+//! part 1) messages travel as length-prefixed frames; during the NDJSON
+//! deprecation window the reader sniffs each incoming message so legacy
+//! agents still interoperate, and [`Client::connect_legacy`] keeps the writer
+//! on newline framing for agents that did not announce protocol v2. The
+//! client is async (tokio) and designed to run in a background task, feeding
 //! events to the TUI's main render loop.
 
-use quecto_line_io::read_bounded_line_into;
+use quecto_line_io::{FrameError, Incoming, WireMode, read_frame_or_legacy_line, write_message};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
@@ -390,19 +394,45 @@ pub struct Client {
 }
 
 impl Client {
-    /// Connect to a quecto agent at the given socket path.
+    /// Connect to a quecto agent at the given socket path, speaking
+    /// length-prefixed frames (protocol v2, #1059).
     pub async fn connect(socket_path: &Path) -> Result<Self, ClientError> {
+        Self::connect_with_wire_mode(socket_path, WireMode::Framed).await
+    }
+
+    /// Connect to an agent that did NOT announce protocol v2 in its socket
+    /// announcement: commands are written as legacy NDJSON lines for the
+    /// deprecation window (ADR-0008).
+    pub async fn connect_legacy(socket_path: &Path) -> Result<Self, ClientError> {
+        Self::connect_with_wire_mode(socket_path, WireMode::LegacyLine).await
+    }
+
+    async fn connect_with_wire_mode(
+        socket_path: &Path,
+        mode: WireMode,
+    ) -> Result<Self, ClientError> {
         let stream = UnixStream::connect(socket_path).await?;
         let (read_half, mut write_half) = tokio::io::split(stream);
 
-        // Command writer task: receives serialized JSON lines and writes them to the socket.
+        // Command writer task: receives serialized JSON lines and writes them
+        // in the negotiated framing. In framed mode an empty hello frame
+        // announces the framing up front so the agent replies framed even
+        // before the first command (#1059).
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(64);
         tokio::spawn(async move {
+            if mode == WireMode::Framed
+                && write_message(&mut write_half, b"", mode, MAX_LINE_BYTES)
+                    .await
+                    .is_err()
+            {
+                return;
+            }
             while let Some(line) = cmd_rx.recv().await {
-                if write_half.write_all(line.as_bytes()).await.is_err() {
-                    break;
-                }
-                if write_half.flush().await.is_err() {
+                let payload = line.strip_suffix('\n').unwrap_or(&line).as_bytes();
+                if write_message(&mut write_half, payload, mode, MAX_LINE_BYTES)
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -412,28 +442,20 @@ impl Client {
         let dropped_oversized = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let dropped_counter = std::sync::Arc::clone(&dropped_oversized);
 
-        // Spawn background event reader
+        // Spawn background event reader. Each incoming message is sniffed as
+        // a length-prefixed frame or a legacy NDJSON line (deprecation
+        // window, #1059), with over-cap messages rejected while reading —
+        // bounded memory either way (#1003).
         tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
-            let mut line = Vec::new();
             loop {
-                match read_bounded_line_into(&mut reader, &mut line, MAX_LINE_BYTES).await {
+                match read_frame_or_legacy_line(&mut reader, MAX_LINE_BYTES).await {
                     Ok(None) => break, // EOF — agent closed the connection
-                    Ok(Some(read)) => {
-                        // Enforce max line size while framing so malicious/buggy agents
-                        // cannot inflate this buffer beyond the protocol cap.
-                        if read.truncated
-                            || (line.len() >= MAX_LINE_BYTES && !line.ends_with(b"\n"))
-                        {
-                            // Drop oversized lines without printing (the TUI
-                            // owns the terminal, so stderr would smear
-                            // diagnostics over the UI) — but COUNT the drop so
-                            // the UI can surface the loss instead of the
-                            // session silently appearing frozen (#1047).
-                            dropped_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            continue;
-                        }
-                        let trimmed = match std::str::from_utf8(&line) {
+                    Ok(Some(incoming)) => {
+                        let bytes = match incoming {
+                            Incoming::Frame(b) | Incoming::LegacyLine(b) => b,
+                        };
+                        let trimmed = match std::str::from_utf8(&bytes) {
                             Ok(value) => value.trim(),
                             Err(_) => continue,
                         };
@@ -456,8 +478,17 @@ impl Client {
                             }
                         }
                     }
+                    Err(FrameError::Oversized { .. }) => {
+                        // Drop over-cap messages without printing (the TUI
+                        // owns the terminal, so stderr would smear
+                        // diagnostics over the UI) — but COUNT the drop so
+                        // the UI can surface the loss instead of the
+                        // session silently appearing frozen (#1047).
+                        dropped_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                     Err(_e) => {
-                        // Stop reading silently on a socket error; printing to
+                        // Socket error or an explicit protocol version
+                        // mismatch — stop reading silently; printing to
                         // stderr here would paint over the TUI (see no-stderr
                         // policy above). The closed channel will surface the
                         // disconnect to the UI on the next send.

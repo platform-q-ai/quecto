@@ -1,5 +1,5 @@
 use super::*;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 #[test]
 fn command_serializes_to_json_lines() {
@@ -617,7 +617,10 @@ async fn client_connect_reads_events_and_writes_commands() {
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let (read_half, mut write_half) = tokio::io::split(stream);
-        write_half.write_all(b"\nnot json\n").await.unwrap();
+        // A blank keep-alive line, then a `{`-opening line that is not valid
+        // JSON: both must be tolerated (skipped) by the deprecation-window
+        // sniffing reader (#1059) without killing the connection.
+        write_half.write_all(b"\n{not json\n").await.unwrap();
         write_half
             .write_all(br#"{"type":"token","token":"from-server"}"#)
             .await
@@ -625,10 +628,24 @@ async fn client_connect_reads_events_and_writes_commands() {
         write_half.write_all(b"\n").await.unwrap();
         write_half.flush().await.unwrap();
 
+        // Commands arrive as length-prefixed frames since #1059; skip the
+        // empty hello frame that announces framed mode.
         let mut reader = tokio::io::BufReader::new(read_half);
-        let mut line = String::new();
-        reader.read_line(&mut line).await.unwrap();
-        line
+        loop {
+            let incoming = quecto_line_io::read_frame_or_legacy_line(
+                &mut reader,
+                quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+            )
+            .await
+            .unwrap()
+            .expect("command before EOF");
+            let bytes = match incoming {
+                quecto_line_io::Incoming::Frame(b) | quecto_line_io::Incoming::LegacyLine(b) => b,
+            };
+            if !bytes.is_empty() {
+                break String::from_utf8(bytes).unwrap();
+            }
+        }
     });
 
     let mut client = Client::connect(&socket_path).await.unwrap();

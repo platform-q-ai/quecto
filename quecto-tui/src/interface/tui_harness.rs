@@ -24,7 +24,6 @@ use crate::interface::components::chat::ChatEntry;
 use crate::interface::components::notification::NotifyLevel;
 use crate::interface::components::spinner::Spinner;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
 #[path = "tui_harness_disconnect.rs"]
@@ -51,16 +50,7 @@ async fn headless_app(width: usize, height: usize) -> (App, mpsc::Receiver<Strin
     let socket_path = dir.join("agent.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let (cmd_tx, cmd_rx) = mpsc::channel(64);
-    tokio::spawn(async move {
-        if let Ok((stream, _)) = listener.accept().await {
-            let mut lines = BufReader::new(stream).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if cmd_tx.send(line).await.is_err() {
-                    break;
-                }
-            }
-        }
-    });
+    events::spawn_command_reader(listener, cmd_tx);
     let client = Client::connect(&socket_path).await.unwrap();
     let mut term = Terminal::new();
     term.width = width;

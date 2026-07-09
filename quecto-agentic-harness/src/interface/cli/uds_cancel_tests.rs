@@ -36,7 +36,7 @@ fn registry_with_worker() -> SubagentRegistry {
 fn writer_sink_collects_notification_when_not_awaited() {
     let registry = Some(registry_with_worker());
     let mut buf: Vec<u8> = Vec::new();
-    let sink = EventSink::Writer(&mut buf);
+    let sink = EventSink::writer(&mut buf);
     let mut notifications = Vec::new();
 
     collect_notification(make_notif(1), &sink, &registry, &mut notifications);
@@ -58,7 +58,7 @@ fn writer_sink_suppresses_notification_when_awaited() {
     mark_completion_consumed_by_await(&registry, "worker");
     let registry = Some(registry);
     let mut buf: Vec<u8> = Vec::new();
-    let sink = EventSink::Writer(&mut buf);
+    let sink = EventSink::writer(&mut buf);
     let mut notifications = Vec::new();
 
     collect_notification(make_notif(1), &sink, &registry, &mut notifications);
@@ -75,7 +75,7 @@ fn writer_sink_dedupe_flag_consumed_once() {
     mark_completion_consumed_by_await(&registry, "worker");
     let registry = Some(registry);
     let mut buf: Vec<u8> = Vec::new();
-    let sink = EventSink::Writer(&mut buf);
+    let sink = EventSink::writer(&mut buf);
     let mut notifications = Vec::new();
 
     // First notification consumes the pending await flag (suppressed);

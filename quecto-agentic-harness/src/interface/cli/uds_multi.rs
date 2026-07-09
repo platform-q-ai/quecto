@@ -257,6 +257,9 @@ pub(super) async fn multi_client_loop(
     drop(cmd_tx);
 
     let mut ctx = DispatchCtx {
+        // Multi-client replies stream via broadcast; each client's writer
+        // task re-frames per its own negotiated connection mode (#1059).
+        wire_mode: super::uds_wire::ConnectionWireMode::legacy(),
         base_dir,
         agent: &mut agent,
         messages: &mut messages,
@@ -508,21 +511,30 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
         client_tool_registry,
         _guard,
     } = args;
-    use tokio::io::{AsyncWriteExt, BufReader};
+    use tokio::io::BufReader;
 
     let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
+
+    // Negotiated per-connection framing (#1059): the reader loop below
+    // records the client's detected framing; the writer task replies in it.
+    // Until the client has spoken, writes fall back to legacy NDJSON — safe
+    // because framed clients sniff each incoming message during the
+    // deprecation window (see `uds_wire` module docs).
+    let wire_mode = super::uds_wire::ConnectionWireMode::default();
+    let wire_mode_for_writer = wire_mode.clone();
 
     // Writer task: multiplex shared broadcast events AND per-client
     // targeted events (currently just `execute_tool` from forwarder
     // tasks) onto the client's socket. Targeted events never fan out
     // to other clients.
     let writer_task = tokio::spawn(async move {
+        let mode = wire_mode_for_writer;
         loop {
             tokio::select! {
                 b = broadcast_rx.recv() => match b {
                     Ok(line) => {
-                        if writer.write_all(line.as_bytes()).await.is_err() {
+                        if super::uds_wire::write_event_line(&mut writer, &line, &mode).await.is_err() {
                             break;
                         }
                     }
@@ -533,13 +545,13 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
                             "{{\"type\":\"error\",\"message\":\"dropped {} events — use get_messages to re-sync\"}}\n",
                             n
                         );
-                        if writer.write_all(msg.as_bytes()).await.is_err() {
+                        if super::uds_wire::write_event_line(&mut writer, &msg, &mode).await.is_err() {
                             break;
                         }
                     }
                 },
                 t = targeted_rx.recv() => match t {
-                    Some(line) if writer.write_all(line.as_bytes()).await.is_err() => {
+                    Some(line) if super::uds_wire::write_event_line(&mut writer, &line, &mode).await.is_err() => {
                         break;
                     }
                     Some(_) => {}
@@ -554,30 +566,36 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
     });
 
     // Reader loop: commands → dispatch mpsc.
-    // Guard oversized lines at read time via the shared bounded reader
-    // (#1003) — oversized lines are truncated during the read itself rather
-    // than allocated in full and dropped afterward, so they never queue an
-    // oversized payload in the mpsc channel either way.
+    // Each message is sniffed as a length-prefixed frame or a legacy NDJSON
+    // line (#1059, deprecation window). Over-cap messages are rejected while
+    // reading (bounded memory, #1003) with the connection kept usable; a peer
+    // speaking neither framing is an explicit version mismatch and the
+    // connection closes — never a silent misparse or a hang.
     loop {
-        let bounded = match quecto_line_io::read_bounded_line(&mut reader, MAX_LINE_BYTES).await {
-            Ok(Some(bounded)) => bounded,
+        let incoming = match quecto_line_io::read_frame_or_legacy_line(&mut reader, MAX_LINE_BYTES)
+            .await
+        {
+            Ok(Some(incoming)) => incoming,
             Ok(None) => break,
+            Err(e @ quecto_line_io::FrameError::Oversized { .. }) => {
+                tracing::warn!(client_id, "dropping over-cap message from client: {e}");
+                continue;
+            }
+            Err(e @ quecto_line_io::FrameError::VersionMismatch { .. }) => {
+                tracing::warn!(client_id, "closing client connection: {e}");
+                break;
+            }
             Err(e) => {
                 tracing::warn!(client_id, error = %e, "client reader loop exiting on I/O error");
                 break;
             }
         };
-        if bounded.truncated {
-            // `bounded.content.len()` is the *capped* length, not the wire
-            // length (the tail was discarded during the read), so report the
-            // cap it exceeded rather than a misleading exact size.
-            tracing::warn!(
-                "dropping oversized line from client (over {} bytes)",
-                MAX_LINE_BYTES
-            );
-            continue;
-        }
-        let line = bounded.content;
+        let (mode, bytes) = match incoming {
+            quecto_line_io::Incoming::Frame(b) => (quecto_line_io::WireMode::Framed, b),
+            quecto_line_io::Incoming::LegacyLine(b) => (quecto_line_io::WireMode::LegacyLine, b),
+        };
+        wire_mode.record(mode);
+        let line = String::from_utf8_lossy(&bytes).into_owned();
         let trimmed = line.trim();
 
         if is_cancel_command(trimmed) {
