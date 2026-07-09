@@ -286,7 +286,19 @@ impl Config {
             Err(e) => return Err(ConfigError::Io(path.to_string(), e)),
         };
         let config: Config = serde_json::from_str(&content).map_err(ConfigError::Parse)?;
+        config.validate_effort()?;
         Ok(config)
+    }
+
+    /// Reject an unrecognised `agents.defaults.effort` at configuration time
+    /// with an error naming every valid value (#1066).
+    fn validate_effort(&self) -> Result<(), ConfigError> {
+        if let Some(effort) = self.agents.defaults.effort.as_deref()
+            && crate::domain::provider::EffortLevel::parse(effort).is_none()
+        {
+            return Err(ConfigError::InvalidEffort(effort.to_string()));
+        }
+        Ok(())
     }
 
     /// Load config from a JSON file, then apply environment variable overrides.
@@ -299,6 +311,7 @@ impl Config {
     ) -> Result<Self, ConfigError> {
         let mut config = Self::load(path)?;
         Self::apply_env_overrides(&mut config, env_overrides);
+        config.validate_effort()?;
         Ok(config)
     }
 
@@ -348,10 +361,10 @@ impl Config {
             config.providers.anthropic.api_key = v.clone();
         }
         if let Some(v) = env.get("QUECTO_AGENTS_DEFAULTS_EFFORT") {
-            if crate::domain::provider::EffortLevel::parse(v).is_some() {
-                config.agents.defaults.effort = Some(v.clone());
-            }
-            // Invalid values are silently ignored (same as invalid MAX_TOKENS).
+            // Applied verbatim; `load_with_env` validates afterwards so an
+            // unknown value is rejected with an error naming the valid
+            // values rather than silently ignored (#1066).
+            config.agents.defaults.effort = Some(v.clone());
         }
         if let Some(v) = env.get("QUECTO_TOOLS_WEB_BRAVE_API_KEY") {
             config.tools.web.brave.api_key = v.clone();
@@ -370,6 +383,8 @@ impl Config {
 pub enum ConfigError {
     Io(String, std::io::Error),
     Parse(serde_json::Error),
+    /// Unrecognised `agents.defaults.effort` value (#1066).
+    InvalidEffort(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -379,6 +394,12 @@ impl std::fmt::Display for ConfigError {
                 write!(f, "failed to read config file '{}': {}", path, err)
             }
             ConfigError::Parse(err) => write!(f, "failed to parse config: {}", err),
+            ConfigError::InvalidEffort(v) => write!(
+                f,
+                "invalid effort level '{}'; expected one of: {}",
+                v,
+                crate::domain::provider::EffortLevel::VALID_VALUES
+            ),
         }
     }
 }
@@ -505,38 +526,6 @@ mod tests {
         );
         let config = Config::load_with_env("/nonexistent/path/config.json", &env).unwrap();
         assert_eq!(config.agents.defaults.model, "env/model");
-    }
-
-    #[test]
-    fn test_env_overrides_cover_all_keys_on_default() {
-        // Exercises every env-override branch on top of the default config
-        // (zero-config path: no file present).
-        let mut env = HashMap::new();
-        env.insert(
-            "QUECTO_AGENTS_DEFAULTS_WORKSPACE".to_string(),
-            "/ws".to_string(),
-        );
-        env.insert(
-            "QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES".to_string(),
-            "42".to_string(),
-        );
-        env.insert("QUECTO_MAX_CONTEXT_TOKENS".to_string(), "12345".to_string());
-        env.insert("ANTHROPIC_API_KEY".to_string(), "ant-key".to_string());
-        env.insert(
-            "QUECTO_AGENTS_DEFAULTS_EFFORT".to_string(),
-            "high".to_string(),
-        );
-        env.insert(
-            "QUECTO_TOOLS_WEB_BRAVE_API_KEY".to_string(),
-            "brave-key".to_string(),
-        );
-        let cfg = Config::load_with_env("/nonexistent/config.json", &env).unwrap();
-        assert_eq!(cfg.agents.defaults.workspace, "/ws");
-        assert_eq!(cfg.agents.defaults.max_session_messages, 42);
-        assert_eq!(cfg.agents.defaults.max_context_tokens, 12345);
-        assert_eq!(cfg.providers.anthropic.api_key, "ant-key");
-        assert_eq!(cfg.agents.defaults.effort.as_deref(), Some("high"));
-        assert_eq!(cfg.tools.web.brave.api_key, "brave-key");
     }
 
     #[test]

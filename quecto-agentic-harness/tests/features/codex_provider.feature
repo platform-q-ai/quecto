@@ -45,9 +45,11 @@ Feature: Codex Responses API Provider
     Given a Codex request body for model "gpt-5.3-codex" with tools
     Then the request body should contain "include" with "reasoning.encrypted_content"
 
-  Scenario: Codex request body includes text verbosity
+  # #1066: no configured effort means no harness-invented verbosity — the
+  # request omits `text` entirely so OpenAI's server default applies.
+  Scenario: Codex request body omits text verbosity when no effort is configured
     Given a Codex request body for model "gpt-5.3-codex" with tools
-    Then the request body should contain a "text" object with "verbosity" set to "medium"
+    Then the request body should not contain "text"
 
   Scenario: Codex request body does not include max_completion_tokens
     Given a Codex request body for model "gpt-5.3-codex" with tools

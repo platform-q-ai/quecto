@@ -255,7 +255,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--workflow-guards` | No | UDS mode only — enable workflow bash command guards; does not force prompt injection |
 | `--no-workflow` | No | UDS mode only — explicitly disable workflow tool/state/prompt |
 | `--parent-id` | No | UDS mode only — declares this agent's parent in the unit tree; stamped as `parent_id` on its `workflow_state` events. Set automatically by `spawn`; rarely passed by hand |
-| `--effort` | No | Effort level for 4.6 models (`low`/`medium`/`high`/`max`). Overrides config and env var |
+| `--effort` | No | Reasoning effort level (`none`/`low`/`medium`/`high`/`xhigh`/`max`). OpenAI reasoning models take the documented OpenAI scale (`none`–`xhigh`); Anthropic 4.6 models take `low`/`medium`/`high`/`max`. Unknown values are rejected. Overrides config and env var |
 | `--disable-tool` | No | Remove a tool from the registry (repeatable). See [Disabling Tools](docs/disable-tools.md) |
 | `--config` | No | Override config file path |
 
@@ -465,7 +465,7 @@ Config file: `~/.quecto/config.json`
 }
 ```
 
-All fields are optional. An empty `{}` is valid — everything uses sensible defaults. `effort` is optional and is unset by default; Anthropic 4.6 requests default to `low` effort when unset. For a workflow template example, see [`examples/config.json`](examples/config.json).
+All fields are optional. An empty `{}` is valid — everything uses sensible defaults. `effort` is optional and is unset by default; Anthropic 4.6 requests default to `low` effort when unset, and OpenAI reasoning requests omit the field so the server default applies. For a workflow template example, see [`examples/config.json`](examples/config.json).
 
 ### Provider API base overrides
 
@@ -583,7 +583,7 @@ To use an OAuth-backed registry provider, first run `quecto auth login openai` o
 | `QUECTO_AGENTS_DEFAULTS_WORKSPACE` | `agents.defaults.workspace` |
 | `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` | `agents.defaults.max_session_messages` |
 | `QUECTO_MAX_CONTEXT_TOKENS` | `agents.defaults.max_context_tokens` |
-| `QUECTO_AGENTS_DEFAULTS_EFFORT` | `agents.defaults.effort` (`low`/`medium`/`high`/`max`; invalid values ignored) |
+| `QUECTO_AGENTS_DEFAULTS_EFFORT` | `agents.defaults.effort` (`none`/`low`/`medium`/`high`/`xhigh`/`max`; unknown values are rejected at config load with an error naming the valid values) |
 | `QUECTO_TOOLS_WEB_BRAVE_API_KEY` | `tools.web.brave.api_key` |
 | `OPENAI_API_KEY` | `providers.openai.api_key` |
 | `ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |

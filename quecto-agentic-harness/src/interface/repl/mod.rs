@@ -452,7 +452,13 @@ fn resolve_progress_callback(
 fn resolve_effort_from_config(config: &Config) -> Option<crate::domain::provider::EffortLevel> {
     config.agents.defaults.effort.as_deref().and_then(|s| {
         crate::domain::provider::EffortLevel::parse(s).or_else(|| {
-            eprintln!("WARNING: invalid effort level '{}' in config; ignoring", s);
+            // Unreachable via config/env — Config::load rejects unknown
+            // effort values at load time (#1066); defensive fallback only.
+            eprintln!(
+                "WARNING: invalid effort level '{}' in config; expected one of: {}; ignoring",
+                s,
+                crate::domain::provider::EffortLevel::VALID_VALUES
+            );
             None
         })
     })

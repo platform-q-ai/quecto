@@ -480,11 +480,13 @@ fn build_single_provider(
     if name == "openai" && !disable_codex_routing {
         let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(api_key);
         if let Some(acct) = account_id {
-            return Ok(providers::create_codex_provider_with_client(
+            return providers::create_codex_provider_with_client(
                 api_key.to_string(),
                 acct,
+                api_base.clone(),
                 http_client.clone(),
-            ));
+            )
+            .map_err(|e| format!("openai provider configuration error: {}", e));
         }
     }
     let base = api_base.clone();

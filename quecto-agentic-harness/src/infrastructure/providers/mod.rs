@@ -287,15 +287,20 @@ pub fn create_anthropic_compatible_provider(
 pub fn create_codex_provider_with_client(
     api_key: String,
     account_id: String,
+    api_base: Option<String>,
     client: reqwest::Client,
-) -> Arc<dyn LlmProvider> {
-    // The ChatGPT OAuth backend is hardwired: a config-supplied
-    // `providers.openai.api_base` must never redirect OAuth-JWT-bearing
-    // requests (it bypasses `validate_provider_api_base`, and the Codex
-    // backend only exists at chatgpt.com anyway).
-    Arc::new(codex::CodexProvider::with_client(
-        api_key, account_id, None, client,
-    ))
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    // A config-supplied `providers.openai.api_base` may redirect
+    // OAuth-JWT-bearing requests only when it passes the same
+    // `validate_provider_api_base` gate as every other provider base
+    // (https required for non-loopback); unset falls back to the
+    // hardwired ChatGPT backend.
+    if let Some(ref base) = api_base {
+        validate_provider_api_base("openai", base)?;
+    }
+    Ok(Arc::new(codex::CodexProvider::with_client(
+        api_key, account_id, api_base, client,
+    )))
 }
 
 #[cfg(test)]

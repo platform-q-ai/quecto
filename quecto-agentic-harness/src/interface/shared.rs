@@ -533,11 +533,31 @@ pub fn make_provider_factory(
                 let account_id =
                     crate::infrastructure::auth::oauth::extract_openai_account_id(new_token);
                 if let Some(acct) = account_id {
-                    return providers::create_codex_provider_with_client(
+                    // `base` was already validated when the original provider
+                    // was constructed; an invalid base cannot appear here, but
+                    // degrade to the hardwired ChatGPT backend rather than
+                    // panic inside the refresh path.
+                    match providers::create_codex_provider_with_client(
                         new_token.to_string(),
-                        acct,
+                        acct.clone(),
+                        base.clone(),
                         http_client.clone(),
-                    );
+                    ) {
+                        Ok(p) => return p,
+                        Err(e) => {
+                            tracing::error!(
+                                error = %e,
+                                "invalid openai api_base at token refresh; using default backend"
+                            );
+                            return providers::create_codex_provider_with_client(
+                                new_token.to_string(),
+                                acct,
+                                None,
+                                http_client.clone(),
+                            )
+                            .expect("default Codex backend is always valid");
+                        }
+                    }
                 }
             }
             match providers::create_provider_with_client(
