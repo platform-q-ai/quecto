@@ -1,6 +1,5 @@
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::LazyLock;
 use std::time::Duration;
 
 use crate::infrastructure::client::{Client, Command, Event, SubagentWorkflow};
@@ -8,10 +7,11 @@ use crate::infrastructure::render::DiffRenderer;
 use crate::infrastructure::terminal::Terminal;
 use crate::infrastructure::workspace_files::list_workspace_files;
 use crate::interface::component::Component;
-use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResult, SlashCommand};
+use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResult};
 use crate::interface::components::chat::Chat;
 use crate::interface::components::chat::ChatEntry;
 use crate::interface::components::editor::Editor;
+use crate::interface::components::effort_selector::{EffortSelector, EffortSelectorResult};
 use crate::interface::components::files_autocomplete::FilesAutocomplete;
 use crate::interface::components::footer::Footer;
 use crate::interface::components::model_selector::{
@@ -35,63 +35,9 @@ const MOUSE_SCROLL_LINES: usize = 3;
 /// Total max wait = MAX_ESCAPE_RETRIES × escape_timeout (10ms) = 50ms.
 const MAX_ESCAPE_RETRIES: usize = 5;
 
-/// Built-in slash commands.
-static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
-    vec![
-        SlashCommand {
-            name: "clear".into(),
-            description: "Clear conversation history".into(),
-        },
-        SlashCommand {
-            name: "quit".into(),
-            description: "Exit TUI".into(),
-        },
-        SlashCommand {
-            name: "exit".into(),
-            description: "Exit TUI".into(),
-        },
-        SlashCommand {
-            name: "help".into(),
-            description: "Show keyboard shortcuts".into(),
-        },
-        SlashCommand {
-            name: "hotkeys".into(),
-            description: "Show keyboard shortcuts".into(),
-        },
-        SlashCommand {
-            name: "new".into(),
-            description: "Start a new session".into(),
-        },
-        SlashCommand {
-            name: "session".into(),
-            description: "Show session info".into(),
-        },
-        SlashCommand {
-            name: "resume".into(),
-            description: "Resume a persisted CLI session".into(),
-        },
-        SlashCommand {
-            name: "model".into(),
-            description: "Switch model".into(),
-        },
-        SlashCommand {
-            name: "workflow".into(),
-            description: "Show workflow status and hotkeys".into(),
-        },
-        SlashCommand {
-            name: "workflow-auto".into(),
-            description: "Toggle workflow auto-continue".into(),
-        },
-        SlashCommand {
-            name: "workflow-nudge".into(),
-            description: "Toggle workflow completion nudge".into(),
-        },
-    ]
-});
-
-fn builtin_commands() -> &'static [SlashCommand] {
-    &BUILTIN_COMMANDS
-}
+#[path = "app_commands.rs"]
+mod app_commands;
+use app_commands::builtin_commands;
 
 /// Application state.
 pub struct App {
@@ -132,6 +78,11 @@ pub struct App {
     /// The model selector component (created on demand, pushed onto overlay stack).
     model_selector: Option<ModelSelector>,
     model_registry: ModelRegistry,
+    /// The effort selector overlay (#1067), opened by bare `/effort`.
+    effort_selector: Option<EffortSelector>,
+    /// The session's active effort level (`None` = effective default),
+    /// tracked for the selector's current-marker and footer fallback (#1067).
+    current_effort: Option<String>,
     /// Session resume selector shown after `/resume` lists persisted sessions.
     resume_selector: Option<SelectList>,
     /// Rewind flow state (#997).
@@ -361,6 +312,8 @@ impl App {
             current_model: None,
             connected_agent_id: None,
             model_selector: None,
+            effort_selector: None,
+            current_effort: None,
             model_registry: ModelRegistry::default(),
             resume_selector: None,
             rewind: RewindFlow::default(),
@@ -433,6 +386,8 @@ impl App {
 
 #[path = "app_disconnect.rs"]
 mod app_disconnect;
+#[path = "app_effort.rs"]
+mod app_effort;
 #[path = "app_event_loop.rs"]
 mod app_event_loop;
 #[path = "app_events.rs"]
@@ -679,6 +634,9 @@ mod app_cov_tests;
 #[cfg(test)]
 #[path = "app_disconnect_tests.rs"]
 mod app_disconnect_tests;
+#[cfg(test)]
+#[path = "app_effort_1067_tests.rs"]
+mod app_effort_1067_tests;
 #[cfg(test)]
 #[path = "app_event_loop_tests.rs"]
 mod app_event_loop_tests;

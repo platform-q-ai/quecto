@@ -791,6 +791,14 @@ fn when_send_set_model_provider(world: &mut QuectoWorld, provider: String, model
     world.uds_commands.push(cmd.to_string());
 }
 
+#[when(expr = "I send set_effort {string}")]
+fn when_send_set_effort(world: &mut QuectoWorld, effort: String) {
+    // The id is generated internally: no Then step correlates on it, so it is
+    // kept out of the scenario text (mirrors `I send set_model {string}`).
+    let cmd = serde_json::json!({"type": "set_effort", "id": "se-auto", "effort": effort});
+    world.uds_commands.push(cmd.to_string());
+}
+
 #[when(expr = "I send follow_up {string} with id {string}")]
 fn when_send_follow_up(world: &mut QuectoWorld, message: String, id: String) {
     let cmd = serde_json::json!({"type": "follow_up", "id": id, "message": message});
@@ -1192,6 +1200,163 @@ fn then_get_state_model(world: &mut QuectoWorld, expected_model: String) {
     let resp = find_agent_response(world, "get_state").expect("no get_state response");
     let model = resp["data"]["model"].as_str().unwrap_or("");
     assert_eq!(model, expected_model);
+}
+
+// ─── set_effort assertions (#1067) ────────────────────────────────────────────
+
+#[then(expr = "the get_state response effort should be {string}")]
+fn then_get_state_effort(world: &mut QuectoWorld, expected_effort: String) {
+    let resp = find_agent_response(world, "get_state").expect("no get_state response");
+    let effort = resp["data"]["effort"].as_str().unwrap_or("");
+    assert_eq!(
+        effort, expected_effort,
+        "get_state data.effort mismatch\ndata: {}",
+        resp["data"]
+    );
+}
+
+/// Unset effort surfaces as an explicit null (never a missing key), so
+/// clients can distinguish "provider default" from a missing capability.
+#[then("the get_state response effort should be unset")]
+fn then_get_state_effort_unset(world: &mut QuectoWorld) {
+    let resp = find_agent_response(world, "get_state").expect("no get_state response");
+    let data = resp["data"]
+        .as_object()
+        .expect("get_state response has no data object");
+    assert!(
+        data.contains_key("effort"),
+        "get_state data must include an effort key\ndata: {}",
+        resp["data"]
+    );
+    assert!(
+        data["effort"].is_null(),
+        "unset effort must be null, got: {}",
+        data["effort"]
+    );
+}
+
+/// Scans ALL set_effort responses (not just the first) for a failed one whose
+/// error message lists EXACTLY the expected provider-scoped vocabulary
+/// (#1067). Token-exact set comparison — substring matching would let "xhigh"
+/// satisfy a missing "high" entry.
+#[then(
+    expr = "the agent output should contain a failed set_effort response listing the valid effort levels {string}"
+)]
+fn then_failed_set_effort_lists_levels(world: &mut QuectoWorld, expected_csv: String) {
+    let expected: Vec<&str> = expected_csv.split(',').map(str::trim).collect();
+    let found = world.agent_events.iter().any(|l| {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(l) else {
+            return false;
+        };
+        if v["type"] != "response" || v["command"] != "set_effort" || v["success"] != false {
+            return false;
+        }
+        let err = v["error"].as_str().unwrap_or("");
+        let Some((_, listed)) = err.split_once("valid levels:") else {
+            return false;
+        };
+        let listed: Vec<&str> = listed.split(',').map(str::trim).collect();
+        listed == expected
+    });
+    assert!(
+        found,
+        "expected a failed set_effort response listing exactly [{expected_csv}]\nlines: {:#?}",
+        world.agent_events,
+    );
+}
+
+#[when(expr = "client {int} sends set_effort {string}")]
+fn when_client_sends_set_effort(world: &mut QuectoWorld, client_id: u32, effort: String) {
+    let cmd = serde_json::json!({"type": "set_effort", "id": "se-auto", "effort": effort});
+    world
+        .mc_client_commands
+        .entry(client_id)
+        .or_default()
+        .push(cmd.to_string());
+}
+
+#[then(expr = "client {int} get_state response effort should be {string}")]
+fn then_client_get_state_effort(world: &mut QuectoWorld, client_id: u32, expected: String) {
+    execute_multi_client_uds(world);
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .cloned()
+        .unwrap_or_default();
+    let effort = events.iter().find_map(|l| {
+        let v: serde_json::Value = serde_json::from_str(l).ok()?;
+        if v["type"] == "response" && v["command"] == "get_state" {
+            Some(v["data"]["effort"].as_str().unwrap_or("").to_string())
+        } else {
+            None
+        }
+    });
+    assert_eq!(
+        effort.as_deref(),
+        Some(expected.as_str()),
+        "client {client_id} get_state data.effort mismatch\nevents: {events:#?}"
+    );
+}
+
+/// Anthropic mock that CAPTURES requests (#1067): unlike the fire-and-forget
+/// mocks, keeps a leaked server ref so Then steps can inspect what the agent
+/// actually sent to the LLM.
+#[given(expr = "a capturing Anthropic mock LLM returning text {string}")]
+fn given_capturing_anthropic_mock(world: &mut QuectoWorld, content: String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        let body = serde_json::json!({
+            "id": "msg_mock",
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "text", "text": content }],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 10, "output_tokens": 5 }
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+        e2e_steps::rewrite_config_to_provider_uri(world, "anthropic", &new_uri);
+        let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        world.wiremock_server_ref = Some(leaked);
+    });
+    std::mem::forget(rt);
+}
+
+fn captured_anthropic_bodies(world: &QuectoWorld) -> Vec<serde_json::Value> {
+    let server = world
+        .wiremock_server_ref
+        .expect("no capturing Anthropic mock configured");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let requests = rt
+        .block_on(server.received_requests())
+        .expect("request recording not enabled");
+    std::mem::forget(rt);
+    requests
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/v1/messages")
+        .map(|r| serde_json::from_slice(&r.body).unwrap_or_default())
+        .collect()
+}
+
+#[then(expr = "Anthropic request {int} should carry reasoning effort {string}")]
+fn then_anthropic_request_effort(world: &mut QuectoWorld, index: usize, expected: String) {
+    let bodies = captured_anthropic_bodies(world);
+    let body = bodies.get(index - 1).unwrap_or_else(|| {
+        panic!(
+            "no Anthropic request {index}; got {} requests",
+            bodies.len()
+        )
+    });
+    assert_eq!(
+        body["output_config"]["effort"].as_str(),
+        Some(expected.as_str()),
+        "request {index} must carry output_config.effort {expected:?}, body: {body}"
+    );
 }
 
 // ─── get_messages assertions ──────────────────────────────────────────────────

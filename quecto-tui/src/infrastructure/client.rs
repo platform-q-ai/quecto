@@ -95,6 +95,11 @@ pub enum Command {
         #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
         model_id: Option<String>,
     },
+    SetEffort {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        effort: String,
+    },
     SetWorkflowAutomation {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -336,6 +341,7 @@ impl Command {
             Self::NewSession { .. } => "new_session",
             Self::ResumeSession { .. } => "resume_session",
             Self::SetModel { .. } => "set_model",
+            Self::SetEffort { .. } => "set_effort",
             Self::SetWorkflowAutomation { .. } => "set_workflow_automation",
             Self::ClearHistory { .. } => "clear_history",
             Self::RewindTo { .. } => "rewind_to",

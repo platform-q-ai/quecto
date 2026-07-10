@@ -12,6 +12,8 @@ impl App {
             "get_state" if success => self.handle_get_state(data),
             "set_model" if success => self.notify("Model switched", NotifyLevel::Success),
             "set_model" => self.notify_response_error("Model switch failed", error),
+            "set_effort" if success => self.handle_set_effort_success(data),
+            "set_effort" => self.notify_response_error("Effort switch failed", error),
             "set_workflow_automation" if success => self.handle_workflow_automation(data),
             "set_workflow_automation" => {
                 self.notify_response_error("Workflow automation update failed", error)
@@ -86,6 +88,13 @@ impl App {
         if let Some(model) = self.master_session.footer.apply_get_state(&data) {
             self.current_model = Some(model);
         }
+        // #1067: track the session's active effort (explicit null / missing
+        // key = effective default); the footer itself is updated inside
+        // apply_get_state, shared with per-session sub-agent footers.
+        self.current_effort = data
+            .get("effort")
+            .and_then(|v| v.as_str())
+            .map(crate::interface::ansi::sanitize_control);
         if data
             .get("maxContextTokens")
             .and_then(|v| v.as_u64())

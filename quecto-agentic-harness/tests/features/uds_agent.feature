@@ -218,6 +218,82 @@ Feature: UDS mode for headless agent operation
     Then the agent output should contain a response command "set_model" with success true
     And the get_state response model should be "openai-codex/gpt-5.3-codex"
 
+  # ─── set_effort command (#1067) ─────────────────────────────────────────────
+
+  @done @effort-1067
+  Scenario: set_effort switches the session reasoning effort
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send set_effort "xhigh"
+    And I send command "get_state" with id "gs-1"
+    And I close the UDS connection
+    Then the agent output should contain a response command "set_effort" with success true
+    And the get_state response effort should be "xhigh"
+
+  @done @effort-1067
+  Scenario: A switched effort is carried on the next LLM request
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And a capturing Anthropic mock LLM returning text "ok"
+    When I start the UDS agent with no [session]
+    And I send set_model "anthropic-api/claude-sonnet-4-6"
+    And I send prompt "before any override"
+    And I send set_effort "high"
+    And I send prompt "after the override"
+    And I close the UDS connection
+    Then Anthropic request 1 should carry reasoning effort "low"
+    And Anthropic request 2 should carry reasoning effort "high"
+
+  @done @effort-1067
+  Scenario: set_effort rejects an invalid level and keeps the previous setting
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send set_effort "high"
+    And I send set_effort "turbo"
+    And I send command "get_state" with id "gs-1"
+    And I close the UDS connection
+    Then the agent output should contain a failed set_effort response listing the valid effort levels "none, low, medium, high, xhigh"
+    And the get_state response effort should be "high"
+
+  @done @effort-1067
+  Scenario: set_effort rejects a level outside the active provider's vocabulary
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send set_effort "high"
+    And I send set_effort "max"
+    And I send command "get_state" with id "gs-1"
+    And I close the UDS connection
+    Then the agent output should contain a failed set_effort response listing the valid effort levels "none, low, medium, high, xhigh"
+    And the get_state response effort should be "high"
+
+  @done @effort-1067
+  Scenario: set_effort does not leak into a fresh session
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send set_effort "xhigh"
+    And I send command "new_session" with id "ns-1"
+    And I send command "get_state" with id "gs-1"
+    And I close the UDS connection
+    Then the get_state response effort should be unset
+
+  @done @multi-client @persist @effort-1067
+  Scenario: set_effort is session-scoped and survives client reconnect over the socket
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "ok"
+    When I start the multi-client UDS agent with persist
+    And client 1 connects
+    And client 1 sends set_effort "xhigh"
+    And a new client 2 connects after all clients disconnected
+    And client 2 sends command "get_state" with id "gs-2"
+    And I close all UDS clients
+    Then client 1 should have received a response command "set_effort" with success true
+    And client 2 get_state response effort should be "xhigh"
+
   # ─── abort command ──────────────────────────────────────────────────────────
 
   @done

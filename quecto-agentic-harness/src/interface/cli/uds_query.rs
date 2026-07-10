@@ -25,7 +25,16 @@ pub(super) fn query_response_data(
                 workflow,
                 ctx.agent.max_context_tokens(),
             );
-            Some(serde_json::to_value(&state).unwrap_or_default())
+            let mut value = serde_json::to_value(&state).unwrap_or_default();
+            // #1067: always expose the session's effective effort — the level
+            // string when set (config default or runtime set_effort), an
+            // explicit null when unset — so clients can distinguish "provider
+            // default" from a missing capability.
+            value["effort"] = match ctx.agent.effort() {
+                Some(level) => serde_json::json!(level.as_str()),
+                None => serde_json::Value::Null,
+            };
+            Some(value)
         }
         AgentCommand::GetMessages { count, .. } => match count {
             Some(count) => Some(messages_tail_json(ctx.messages, *count)),

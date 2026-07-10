@@ -14,6 +14,13 @@ impl TuiHarness {
         self.app.notifications.render(w).join("\n")
     }
 
+    /// Raw notification messages regardless of display expiry (#1067):
+    /// content assertions must not race the 3s popup lifetime under
+    /// concurrent-scenario scheduling delays.
+    pub fn notification_messages(&self) -> Vec<String> {
+        self.app.notifications.messages()
+    }
+
     /// #1047: whether the persistent left (sub-agent) panel is shown.
     pub fn subagent_panel_visible(&self) -> bool {
         self.app.subagent_panel_visible()

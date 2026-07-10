@@ -40,4 +40,28 @@ impl TuiHarness {
     pub fn subagent_group_tracked(&self) -> usize {
         self.app.subagents.tracked.len()
     }
+
+    /// Drain whatever commands are ALREADY queued, without the bounded
+    /// polling wait of [`TuiHarness::drain_commands`]. For asserting that an
+    /// action sent nothing (#1067): a 400×1ms poll for a command that never
+    /// comes stalls the scenario long enough for 3s-lived notifications to
+    /// expire under concurrent-scenario scheduling.
+    pub fn try_drain_commands(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(line) = self.cmd_rx.try_recv() {
+            out.push(line);
+        }
+        out
+    }
+
+    /// The effort selector's visible entries in display order (#1067), or
+    /// `None` when the overlay is closed. Lets tests assert the exact
+    /// vocabulary instead of substring-matching the rendered frame (where
+    /// "high" is a substring of "xhigh" and the footer also names levels).
+    pub fn effort_selector_entries(&self) -> Option<Vec<String>> {
+        self.app
+            .effort_selector
+            .as_ref()
+            .map(crate::interface::components::effort_selector::EffortSelector::visible_levels)
+    }
 }

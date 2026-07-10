@@ -716,6 +716,9 @@ mod abort_steer_tests;
 #[path = "uds_bounded_read_tests.rs"]
 mod bounded_read_tests;
 #[cfg(test)]
+#[path = "uds_effort_1067_tests.rs"]
+mod effort_1067_tests;
+#[cfg(test)]
 #[path = "uds_926_act_tests.rs"]
 mod issue_926_act_tests;
 #[cfg(test)]

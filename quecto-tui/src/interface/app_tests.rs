@@ -296,6 +296,7 @@ fn builtin_commands_have_stable_order_and_names() {
             "session",
             "resume",
             "model",
+            "effort",
             "workflow",
             "workflow-auto",
             "workflow-nudge",

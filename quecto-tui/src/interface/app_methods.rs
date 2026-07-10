@@ -202,18 +202,6 @@ impl App {
         });
     }
 
-    pub(super) fn send_set_model(&mut self, model: &str) {
-        self.send_command(Command::SetModel {
-            id: Some("sm".into()),
-            model: Some(model.to_string()),
-            provider: None,
-            model_id: None,
-        });
-        self.master_session.footer.set_model(model);
-        self.current_model = Some(model.to_string());
-        self.context_stats_requested = false;
-    }
-
     // ── Resume selector ─────────────────────────────────────────────
 
     pub(super) fn open_resume_selector(&mut self, data: &serde_json::Value) {
@@ -509,6 +497,13 @@ impl App {
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
         if let Some(selector) = &mut self.model_selector {
+            let (selector_lines, overlay_width) =
+                build_select_overlay(width, height, |content_width| {
+                    selector.render(content_width)
+                });
+            Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
+        }
+        if let Some(selector) = &mut self.effort_selector {
             let (selector_lines, overlay_width) =
                 build_select_overlay(width, height, |content_width| {
                     selector.render(content_width)

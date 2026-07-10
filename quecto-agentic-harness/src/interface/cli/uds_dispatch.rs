@@ -98,6 +98,9 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             )
             .await
         }
+        AgentCommand::SetEffort { effort, .. } => {
+            handle_set_effort(ctx, id.as_deref(), &type_name, &effort).await
+        }
         AgentCommand::Reload { .. } => {
             super::super::uds_reload::handle_reload(ctx, id.as_deref(), &type_name).await
         }
@@ -227,6 +230,44 @@ pub(super) async fn persist_current_session(
     result
 }
 
+/// Switch the session's reasoning effort at runtime (#1067).
+///
+/// The level is validated against the ACTIVE model's provider vocabulary
+/// (OpenAI-shaped: none/low/medium/high/xhigh; Anthropic: low/medium/high/max)
+/// — never the cross-provider union — so a level another provider accepts is
+/// rejected here, listing exactly the levels this session can use. On
+/// rejection the previous setting stays in effect.
+pub(super) async fn handle_set_effort(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    effort: &str,
+) -> bool {
+    use crate::domain::provider::EffortLevel;
+    let valid = EffortLevel::levels_for_model(ctx.session.model());
+    let ev = match EffortLevel::parse(effort).filter(|level| valid.contains(level)) {
+        Some(level) => {
+            ctx.agent.set_effort(level);
+            tracing::debug!(effort = level.as_str(), "UDS: effort switched");
+            AgentEvent::ok(
+                id,
+                type_name,
+                Some(serde_json::json!({ "effort": level.as_str() })),
+            )
+        }
+        None => AgentEvent::err(
+            id,
+            type_name,
+            format!(
+                "invalid effort level \"{effort}\"; valid levels: {}",
+                EffortLevel::levels_list(valid)
+            ),
+        ),
+    };
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    false
+}
+
 pub(super) async fn handle_new_session(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -259,6 +300,8 @@ pub(super) async fn handle_new_session(
     ctx.session_key.push_str(&key);
     ctx.session.set_session_key(key.clone());
     ctx.agent.set_session_key(key.clone());
+    // Session-scoped effort must not leak into the fresh session (#1067).
+    ctx.agent.reset_effort_to_default();
     set_workflow_run(ctx, None);
     if let Some(spill) = ctx.agent.spill_store() {
         if let Err(e) = spill.clear(ctx.session_key).await {
@@ -337,6 +380,9 @@ pub(super) async fn handle_resume_session(
     *ctx.session_key = new_key.clone();
     ctx.session.set_session_key(new_key.clone());
     ctx.agent.set_session_key(new_key.clone());
+    // Session-scoped effort must not follow the client into the resumed
+    // session (#1067).
+    ctx.agent.reset_effort_to_default();
     ctx.session.clear_usage();
     ctx.session.drain_pending();
     let workflow_run = loaded.workflow_run;

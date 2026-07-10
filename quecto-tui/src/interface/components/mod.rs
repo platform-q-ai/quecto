@@ -1,6 +1,7 @@
 pub mod autocomplete;
 pub mod chat;
 pub mod editor;
+pub mod effort_selector;
 pub mod files_autocomplete;
 pub mod footer;
 pub mod list_navigator;

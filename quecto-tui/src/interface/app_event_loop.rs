@@ -410,6 +410,13 @@ impl App {
             return;
         }
 
+        // If the effort selector is active, route input to it (#1067).
+        if self.effort_selector.is_some() {
+            self.rewind.last_idle_escape = None;
+            self.handle_effort_selector_key(&key);
+            return;
+        }
+
         // If autocomplete is active, route navigation keys there.
         if self.autocomplete.is_active() {
             match &key {
