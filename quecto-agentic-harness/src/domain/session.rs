@@ -94,6 +94,18 @@ pub trait SessionStore: Send + Sync {
         Box::pin(async move { self.save(&session).await })
     }
 
+    /// Save a delta when the caller guarantees the durable prefix is unchanged.
+    /// Adapters may use this stronger contract to avoid reading that prefix.
+    fn save_clean_delta<'a>(
+        &'a self,
+        key: &'a str,
+        messages: &'a [Message],
+        previously_persisted: usize,
+        workflow_run: Option<super::workflow::WorkflowRunPersisted>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        self.save_delta(key, messages, previously_persisted, workflow_run)
+    }
+
     /// Check if a session exists.
     fn exists(
         &self,

@@ -45,8 +45,10 @@ mod feature_preprocess;
 
 #[derive(Debug)]
 struct MockLlmProvider {
-    /// Queue of responses to return (FIFO).
-    responses: Mutex<Vec<LlmResponse>>,
+    /// Queue of results to return (FIFO). `Err` entries are provider
+    /// rejections carried as error strings (e.g. a 400 malformed-request
+    /// rejection, #1072).
+    responses: Mutex<Vec<Result<LlmResponse, String>>>,
     /// Captured tool definitions from the most recent chat() call.
     last_tool_defs: Mutex<Vec<ToolDefinition>>,
     /// Captured `max_tokens` (effective output cap) from the most recent
@@ -64,7 +66,13 @@ impl MockLlmProvider {
     }
 
     fn push_response(&self, response: LlmResponse) {
-        self.responses.lock().unwrap().push(response);
+        self.responses.lock().unwrap().push(Ok(response));
+    }
+
+    /// Queue a provider-side rejection (returned as a `DomainError::Provider`)
+    /// at this position in the FIFO (#1072).
+    fn push_error_response(&self, error: impl Into<String>) {
+        self.responses.lock().unwrap().push(Err(error.into()));
     }
 
     fn last_tool_defs(&self) -> Vec<ToolDefinition> {
@@ -90,18 +98,18 @@ impl LlmProvider for MockLlmProvider {
         let response = {
             let mut responses = self.responses.lock().unwrap();
             if responses.is_empty() {
-                LlmResponse {
+                Ok(LlmResponse {
                     content: Some("(no more responses)".to_string()),
                     tool_calls: vec![],
                     usage: None,
                     stop_reason: None,
                     thinking_blocks: vec![],
-                }
+                })
             } else {
                 responses.remove(0)
             }
         };
-        Box::pin(async move { Ok(response) })
+        Box::pin(async move { response.map_err(DomainError::Provider) })
     }
 }
 
@@ -333,6 +341,14 @@ pub struct QuectoWorld {
     pub executed_tools: Arc<Mutex<Vec<String>>>,
     /// Roles captured from the last completed agent turn
     pub completed_turn_roles: Vec<Role>,
+    /// #1072: pre-run conversation history for pruning-watermark scenarios.
+    pub watermark_history: Vec<Message>,
+    /// #1072: conversation snapshot taken just before the pruning-agent run.
+    pub watermark_pre_run: Vec<Message>,
+    /// #1072: conversation after the pruning-agent run completed.
+    pub watermark_post_run: Vec<Message>,
+    /// #1072: context token budget for the pruning agent (0 = default).
+    pub watermark_budget: usize,
     /// Session workspace path (for session scenarios)
     pub session_workspace: Option<PathBuf>,
     /// Session store for session scenarios
@@ -613,6 +629,10 @@ pub struct QuectoWorld {
     pub tool_result_preview_build_count: Option<usize>,
     /// Tool-call clone count from a headless multi-tool turn
     pub headless_tool_call_clone_count: Option<usize>,
+    /// Number of tool calls the LLM issued in the last headless turn (#1072:
+    /// the run-ledger retention assertion derives its expected clone count
+    /// from this rather than hardcoding the scenario's setup).
+    pub headless_tool_calls_issued: Option<usize>,
     /// Retained conversation from repeated-instructions agent-loop scenarios
     pub repeated_instruction_messages: Vec<Message>,
     // --- Grep BDD fields ---
@@ -1252,6 +1272,7 @@ mod openai_routing_1066_steps;
 mod path_utils_steps;
 mod provider_auth_modes_steps;
 mod provider_steps;
+mod pruning_1072_steps;
 mod read_tool_steps;
 mod recall_tool_steps;
 mod release_profile_steps;

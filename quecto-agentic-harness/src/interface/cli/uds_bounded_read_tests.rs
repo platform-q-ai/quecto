@@ -85,6 +85,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
         provider_reload: None,
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
+        durable_prefix_dirty: false,
     };
 
     let (mut client, server) = tokio::net::UnixStream::pair().expect("socketpair");

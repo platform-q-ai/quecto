@@ -146,6 +146,8 @@ pub(crate) struct DispatchCtx<'a> {
     pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
     pub last_persisted_message_index: usize,
+    /// The agent changed history that existed before its latest run.
+    pub durable_prefix_dirty: bool,
 }
 
 impl<'a> DispatchCtx<'a> {
@@ -346,7 +348,11 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
     };
     let outcome = run_prompt_dispatch(ctx, message, cancel_rx).await;
     disarm_cancel(&ctx.cancel_handle);
-    if matches!(outcome, PromptOutcome::Success) {
+    // #1072: the dirty latch is read after EVERY outcome — pruning may have
+    // mutated history before an Error or a Cancelled ending, and the
+    // persistence below still runs for those turns.
+    ctx.durable_prefix_dirty |= ctx.agent.take_durable_prefix_dirty();
+    if matches!(outcome, PromptOutcome::Success(_)) {
         let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
@@ -457,6 +463,10 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
             })
             .await;
             disarm_cancel(&ctx.cancel_handle);
+            // #1072: drained runs (steer follow-ups, workflow auto-continue,
+            // coalesced sub-agent notes) can prune too — propagate their dirty
+            // latch even though their PromptOutcome is not otherwise consumed.
+            ctx.durable_prefix_dirty |= ctx.agent.take_durable_prefix_dirty();
             // #899: keep busy-child snapshots fresh across auto-continue nudges
             // instead of frozen at the pre-turn snapshot until dispatch returns.
             super::uds_snapshots::refresh_busy_snapshots(ctx).await;

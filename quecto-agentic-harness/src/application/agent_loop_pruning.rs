@@ -65,6 +65,14 @@ impl AgentLoopImpl {
         }
         let total_tokens = context_pruning::estimate_total_tokens(messages);
         let stubbed = msg_collapsed + outcome.collapsed_to_stubs;
+        // #1072: any mutating outcome — an in-place collapse/stub demotion
+        // (content changes, message ids do NOT) or a physical drop — means the
+        // live history is no longer an append-only extension of what was
+        // already persisted, so latch the durable-prefix dirty flag. The latch
+        // is outcome-independent: it survives an Error or Cancelled turn.
+        if collapsed > 0 || stubbed > 0 || outcome.dropped > 0 {
+            self.latch_durable_prefix_dirty();
+        }
         if collapsed > 0 || stubbed > 0 || outcome.dropped > 0 || outcome.over_budget {
             tracing::info!(
                 target: "context_prune",

@@ -465,3 +465,42 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the [session] is saved and reloaded from disk
     And the agent completes turn 5
     Then the tool result from turn 1 is still in full context
+
+  # --- #1072: mid-run pruning vs positional watermarks ---
+
+  @issue-1072
+  Scenario: A run that shrinks history below its pre-run length reports exactly its appended messages
+    Given a configured agent with a mock LLM
+    And a spilled conversation history of 8 prior turns each exceeding the pruning budget
+    And the pruning agent context budget is 700 tokens
+    And the LLM returns a tool call for "bulk" with args:
+      | key | value |
+    And the tool "bulk" returns "tool-output-payload"
+    And the LLM returns a plain text response "final answer"
+    When the user sends "go" through the pruning agent
+    Then fewer pre-run messages survive than were present before the run
+    And the run's appended messages are exactly the assistant tool call, the tool result and the final reply "final answer"
+    And the agent result marks the durable prefix dirty
+
+  @issue-1072
+  Scenario: In-place stub demotion alone marks the durable prefix dirty
+    Given a configured agent with a mock LLM
+    And a spilled conversation history of 2 prior turns each exceeding the pruning budget
+    And a spilled conversation history of 2 further small prior turns
+    And the pruning agent context budget is 300 tokens
+    And the LLM returns a plain text response "ok"
+    When the user sends "hi" through the pruning agent
+    Then the oversized pre-run messages are collapsed to recall stubs in place
+    And no pre-run message is removed from the conversation
+    And the agent result marks the durable prefix dirty
+
+  @issue-1072
+  Scenario: Malformed-request feedback appears in the run's appended messages
+    Given a configured agent with a mock LLM
+    And the LLM returns a tool call for "echo" with args:
+      | key | value |
+    And the tool "echo" returns "echoed"
+    And the provider rejects the next request as malformed
+    And the LLM returns a plain text response "recovered"
+    When the user sends "go" through the pruning agent
+    Then the run's appended messages include the malformed-request feedback

@@ -30,7 +30,7 @@ impl MockProvider {
         }
     }
 
-    fn new_results(responses: Vec<Result<LlmResponse, DomainError>>) -> Self {
+    pub(super) fn new_results(responses: Vec<Result<LlmResponse, DomainError>>) -> Self {
         Self {
             responses: Mutex::new(responses),
             last_tool_defs: Mutex::new(vec![]),

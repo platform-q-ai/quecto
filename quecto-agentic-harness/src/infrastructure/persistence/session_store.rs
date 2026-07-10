@@ -38,6 +38,42 @@ impl FileSessionStore {
         self.sessions_dir.join(Self::key_to_filename(key))
     }
 
+    /// Append a caller-known clean delta without reading/parsing durable history.
+    /// Callers must reset the watermark whenever the persisted prefix may have
+    /// been removed, replaced, or reordered.
+    pub async fn save_clean_delta(
+        &self,
+        key: &str,
+        messages: &[Message],
+        previously_persisted: usize,
+        workflow_run: Option<WorkflowRunPersisted>,
+    ) -> Result<(), DomainError> {
+        self.ensure_dir().await?;
+        let path = self.session_path(key);
+        if previously_persisted == 0
+            || previously_persisted > messages.len()
+            || !path.exists()
+            || !is_jsonl_session_file(&path).await?
+        {
+            let session = Session {
+                key: key.to_string(),
+                messages: messages.to_vec(),
+                workflow_run,
+            };
+            return write_compacted(&path, &session).await;
+        }
+        let record = SessionRecordRef::Append {
+            start_index: Some(previously_persisted),
+            messages: messages[previously_persisted..]
+                .iter()
+                .map(message_to_record_ref)
+                .collect(),
+            workflow_run: workflow_run.as_ref(),
+            workflow_run_cleared: workflow_run.is_none(),
+        };
+        append_record(&path, &record).await
+    }
+
     /// Ensure the sessions directory exists.
     async fn ensure_dir(&self) -> Result<(), DomainError> {
         tokio::fs::create_dir_all(&self.sessions_dir)
@@ -96,6 +132,22 @@ impl SessionStore for FileSessionStore {
             )
             .await
         })
+    }
+
+    fn save_clean_delta<'a>(
+        &'a self,
+        key: &'a str,
+        messages: &'a [Message],
+        previously_persisted: usize,
+        workflow_run: Option<WorkflowRunPersisted>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        Box::pin(FileSessionStore::save_clean_delta(
+            self,
+            key,
+            messages,
+            previously_persisted,
+            workflow_run,
+        ))
     }
 
     fn exists(
@@ -315,6 +367,31 @@ async fn is_jsonl_session_file(path: &Path) -> Result<bool, DomainError> {
     Ok(prefix.trim_start().starts_with(r#"{"type":"#))
 }
 
+async fn persisted_prefix_changed(
+    path: &Path,
+    messages: &[Message],
+    previously_persisted: usize,
+) -> Result<bool, DomainError> {
+    if previously_persisted > messages.len() {
+        return Ok(true);
+    }
+    let data = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
+    let persisted = parse_session_data(&data)
+        .map_err(|e| DomainError::Session(format!("failed to parse session: {e}")))?;
+    if persisted.messages.len() < previously_persisted {
+        // Another writer replaced the durable session after this caller cached
+        // its watermark. Preserve that newer history; the out-of-order append
+        // record will be ignored by the loader.
+        return Ok(false);
+    }
+    Ok(persisted.messages[..previously_persisted]
+        .iter()
+        .zip(&messages[..previously_persisted])
+        .any(|(left, right)| message_to_record(left) != message_to_record(right)))
+}
+
 async fn append_known_delta(
     path: &Path,
     key: &str,
@@ -323,9 +400,9 @@ async fn append_known_delta(
     workflow_run: Option<&WorkflowRunPersisted>,
 ) -> Result<(), DomainError> {
     if previously_persisted == 0
-        || previously_persisted > messages.len()
         || !path.exists()
         || !is_jsonl_session_file(path).await?
+        || persisted_prefix_changed(path, messages, previously_persisted).await?
     {
         let session = Session {
             key: key.to_string(),

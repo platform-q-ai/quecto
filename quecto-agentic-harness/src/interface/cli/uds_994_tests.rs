@@ -106,6 +106,7 @@ impl Fixture {
             provider_reload: None,
             provider_reload_inputs: None,
             last_persisted_message_index: 0,
+            durable_prefix_dirty: false,
         }
     }
 }
@@ -416,7 +417,7 @@ async fn run_stub_turn_event_types_with_sink(
     .await;
     assert!(matches!(
         outcome,
-        crate::interface::cli::uds_cancel::PromptOutcome::Success
+        crate::interface::cli::uds_cancel::PromptOutcome::Success(_)
     ));
 
     messages

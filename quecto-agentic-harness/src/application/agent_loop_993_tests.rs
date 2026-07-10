@@ -199,8 +199,10 @@ async fn tool_turn_preserves_message_order_and_tool_arguments() {
     assert_eq!(messages[1].tool_calls[1].arguments, second_arguments);
     assert_eq!(messages[1].stop_reason, Some(StopReason::ToolUse));
     assert_eq!(messages[1].thinking_blocks.len(), 1);
-    assert_eq!(tool_call_clone_count_for_tests("call_993_read"), 0);
-    assert_eq!(tool_call_clone_count_for_tests("call_993_write"), 0);
+    // The run append ledger owns one clone so AgentEnd remains correct even if
+    // active-context pruning removes these messages before the run completes.
+    assert_eq!(tool_call_clone_count_for_tests("call_993_read"), 1);
+    assert_eq!(tool_call_clone_count_for_tests("call_993_write"), 1);
     assert_eq!(messages[2].role, Role::Tool);
     assert_eq!(messages[2].tool_call_id.as_deref(), Some("call_993_read"));
     assert_eq!(messages[3].role, Role::Tool);

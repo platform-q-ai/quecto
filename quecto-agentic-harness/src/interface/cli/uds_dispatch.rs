@@ -213,19 +213,25 @@ pub(super) async fn persist_current_session(
         .workflow_state
         .as_ref()
         .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run()));
-    let result = ctx
-        .session_store
-        .save_delta(
-            ctx.session_key,
-            ctx.messages,
-            ctx.last_persisted_message_index,
-            workflow_run,
-        )
-        .await;
+    let result = if ctx.durable_prefix_dirty {
+        ctx.session_store
+            .save_delta(ctx.session_key, ctx.messages, 0, workflow_run)
+            .await
+    } else {
+        ctx.session_store
+            .save_clean_delta(
+                ctx.session_key,
+                ctx.messages,
+                ctx.last_persisted_message_index,
+                workflow_run,
+            )
+            .await
+    };
     let persisted_len = ctx.messages.len();
     inject_system_prompt(ctx.messages, ctx.system_prompt);
     if result.is_ok() {
         ctx.last_persisted_message_index = persisted_len;
+        ctx.durable_prefix_dirty = false;
     }
     result
 }
@@ -603,6 +609,9 @@ pub(super) async fn dispatch_ext_command(
 #[cfg(test)]
 #[path = "uds_dispatch_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "uds_dispatch_masked_pruning_tests.rs"]
+mod masked_pruning_tests;
 
 #[cfg(test)]
 #[path = "uds_dispatch_935_clamp_tests.rs"]

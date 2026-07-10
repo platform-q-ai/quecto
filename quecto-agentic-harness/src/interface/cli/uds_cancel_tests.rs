@@ -6,6 +6,22 @@ use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentNotification, mark_completion_consumed_by_await, new_registry,
 };
 
+#[test]
+fn cancellation_removes_prompt_at_its_logical_boundary_after_pruning() {
+    let prompt = Message::user("cancel me");
+    let prompt_id = prompt.id();
+    let mut messages = vec![
+        Message::user("survivor"),
+        prompt,
+        Message::assistant("partial output", vec![]),
+    ];
+
+    rollback_prompt(&mut messages, prompt_id);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].content, "survivor");
+}
+
 fn make_notif(seq: u64) -> SequencedSubagentNotification {
     SequencedSubagentNotification::new(
         seq,

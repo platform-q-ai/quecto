@@ -99,6 +99,7 @@ impl Fx {
             provider_reload: None,
             provider_reload_inputs: None,
             last_persisted_message_index: 0,
+            durable_prefix_dirty: false,
         }
     }
 }
