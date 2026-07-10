@@ -131,8 +131,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 return 1;
             }
         };
-        // Version line first, then the socket line: a client learns the
-        // framing to speak before it connects (#1059 / ADR-0008 part 1).
         eprint!("{}", super::uds_wire::socket_announcement(&socket_path));
         let _guard = SocketGuard(socket_path);
         super::uds_multi::multi_client_loop(
@@ -204,7 +202,6 @@ async fn single_client_loop(
     let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
     let mut writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
 
-    // #1059: the reader records the client's framing; replies follow it.
     let wire_mode = super::uds_wire::ConnectionWireMode::default();
 
     inject_system_prompt(&mut messages, &system_prompt);
@@ -348,9 +345,6 @@ async fn run_command_loop(
         let raw = match rx.recv().await {
             Some(Some(RawLine::Line(l))) => l,
             Some(Some(RawLine::ProtocolError(msg))) => {
-                // Over-cap frame/line or version mismatch (#1059): surface a
-                // clean, explicit protocol error. For an over-cap frame the
-                // connection stays usable — subsequent frames still dispatch.
                 tracing::warn!("UDS protocol error: {msg}");
                 let ev = AgentEvent::err(None, "protocol_error", msg);
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
@@ -380,9 +374,6 @@ mod uds_session_load;
 use uds_session_load::load_session;
 
 pub(crate) struct DispatchCtx<'a> {
-    /// Negotiated framing for the single-client connection's replies (#1059).
-    /// Multi-client contexts stream via `broadcast_tx` (each client's writer
-    /// task re-frames per connection), so they pin this to legacy.
     pub wire_mode: super::uds_wire::ConnectionWireMode,
     pub base_dir: &'a std::path::Path,
     pub agent: &'a mut AgentLoopImpl,
@@ -586,11 +577,7 @@ struct PromptCommand {
 }
 
 async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
-    // A genuine `prompt` takes over from any stale steer gate. The reader marks
-    // `steer_pending` from a loose `"type":"steer"` substring match, so a prompt
-    // whose body merely quotes the protocol (or a line that fails to parse) could
-    // otherwise leave the gate stuck `true`, permanently suppressing the
-    // auto-continue nudge (#896 AC3). `handle_steer` is the only other clearer.
+    // A prompt clears any stale substring-detected steer gate (#896 AC3).
     ctx.turn_control.clear_steer();
     let PromptCommand {
         id,

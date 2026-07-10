@@ -204,11 +204,11 @@ pub fn lookup_subagent_socket(
         .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
 }
 
-/// Send a JSON-lines command to a sub-agent's UDS socket and read back the
-/// `response` line that matches the command we sent.
+/// Send a framed JSON command to a sub-agent's UDS socket and read back the
+/// `response` message that matches the command we sent.
 ///
 /// Each call opens a new connection, stamps a unique `id` on the command, writes
-/// it + newline, and reads lines until the `{"type":"response","id":<that id>,...}`
+/// one frame, and reads messages until the `{"type":"response","id":<that id>,...}`
 /// event arrives (skipping tokens, agent_start, and unsolicited responses such as
 /// the connect-time `get_messages` snapshot — built with no id — that the
 /// broadcast delivers to all clients).
@@ -235,7 +235,7 @@ pub async fn send_subagent_uds_command_with_timeout(
     response_timeout: std::time::Duration,
 ) -> Result<String, crate::domain::error::DomainError> {
     use crate::domain::error::DomainError;
-    use tokio::io::{AsyncWriteExt, BufReader};
+    use tokio::io::BufReader;
 
     let stream = tokio::net::UnixStream::connect(socket_path)
         .await
@@ -259,21 +259,16 @@ pub async fn send_subagent_uds_command_with_timeout(
     // A non-object command can't be stamped, so we fall back to first-response.
     let (outbound, expected_id) = stamp_request_id(command);
 
-    // Write the command as a legacy NDJSON line. Per ADR-0008 the deprecation
-    // window has *readers* migrate to dual-mode framing while writers stay on
-    // legacy NDJSON until part 3 removes the sniff and bumps the protocol — the
-    // child's reader (dual-mode since #1059) accepts this line and replies in
-    // the same framing. When part 3 closes the window this write switches to
-    // frames alongside every other writer (out of scope for part 1); the read
-    // side below is already migrated, so this consumer is in the inventory.
-    writer
-        .write_all(outbound.as_bytes())
-        .await
-        .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
-    writer
-        .write_all(b"\n")
-        .await
-        .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
+    // Parent and child are the same binary, so outbound commands always use
+    // ADR-0008 framing. Compatibility remains reader-side and is sniffed for
+    // every incoming message; it does not pin or downgrade this writer.
+    quecto_line_io::write_frame(
+        &mut writer,
+        outbound.as_bytes(),
+        quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+    )
+    .await
+    .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
     // Do NOT shutdown or drop the write half (#557): in multi-client mode the
     // server's reader loop exits on EOF and aborts the broadcast writer, so the
     // response would never arrive. Keep the write half alive until we're done.

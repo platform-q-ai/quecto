@@ -323,7 +323,7 @@ async fn command_reader_skips_connect_time_snapshot_and_returns_matching_reply()
     // the snapshot (the child's first message only). This also proves the fix
     // generalises to a `get_messages` request: the snapshot shares its command
     // string, yet id-correlation still skips it.
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncWriteExt, BufReader};
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("busy.sock");
     let listener = tokio::net::UnixListener::bind(&sock).unwrap();
@@ -336,12 +336,15 @@ async fn command_reader_skips_connect_time_snapshot_and_returns_matching_reply()
             .write_all(b"{\"type\":\"response\",\"command\":\"get_messages\",\"data\":[{\"content\":\"FIRST MESSAGE ONLY\"}]}\n")
             .await
             .unwrap();
-        // The parent writes its command as a legacy NDJSON line during the
-        // deprecation window (ADR-0008: writers stay legacy, readers migrate);
-        // echo the request id the parent stamped, as the dispatch loop would.
-        let mut lines = BufReader::new(read_half).lines();
-        let line = lines.next_line().await.unwrap().unwrap();
-        let req: serde_json::Value = serde_json::from_str(&line).unwrap();
+        // A same-binary parent must write a length-prefixed frame regardless
+        // of the compatibility reader's per-message sniffing mode.
+        let mut reader = BufReader::new(read_half);
+        let payload =
+            quecto_line_io::read_frame(&mut reader, quecto_line_io::PROTOCOL_FRAME_CAP_BYTES)
+                .await
+                .expect("parent command should be framed")
+                .expect("parent should send a command");
+        let req: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         let id = req.get("id").and_then(|v| v.as_str()).unwrap();
         let reply = format!(
             "{{\"type\":\"response\",\"id\":\"{id}\",\"command\":\"get_messages_tail\",\"data\":[{{\"content\":\"LATEST TURNS\"}}]}}\n"
