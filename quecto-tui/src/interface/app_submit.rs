@@ -54,6 +54,11 @@ impl App {
                     self.send_resume_session(session);
                     return;
                 }
+                _ if trimmed.starts_with("/effort") => {
+                    let arg = trimmed["/effort".len()..].trim();
+                    self.handle_effort_command(arg);
+                    return;
+                }
                 _ if trimmed.starts_with("/model") => {
                     let model_name = trimmed["/model".len()..].trim();
                     if !model_name.is_empty() {

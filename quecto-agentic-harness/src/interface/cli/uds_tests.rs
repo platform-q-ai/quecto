@@ -25,7 +25,7 @@ fn test_set_model_changes_model() {
 #[test]
 fn test_session_state_snapshot() {
     let session = AgentSession::new("gpt-5".to_string(), "cli:my".to_string());
-    let state = session.state_snapshot(4, None, 200_000);
+    let state = session.state_snapshot(4, None, 200_000, None);
     assert_eq!(state.model, "gpt-5");
     assert!(!state.is_streaming);
     assert_eq!(state.session_key, "cli:my");
@@ -39,7 +39,7 @@ fn test_pending_message_count_after_enqueue() {
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
     session.enqueue_pending("first".to_string());
     session.enqueue_pending("second".to_string());
-    let state = session.state_snapshot(0, None, 0);
+    let state = session.state_snapshot(0, None, 0, None);
     assert_eq!(state.pending_message_count, 2);
 }
 
@@ -54,7 +54,12 @@ fn test_drain_pending_messages() {
         .map(|m| m.into_message().content)
         .collect();
     assert_eq!(drained, vec!["a".to_string(), "b".to_string()]);
-    assert_eq!(session.state_snapshot(0, None, 0).pending_message_count, 0);
+    assert_eq!(
+        session
+            .state_snapshot(0, None, 0, None)
+            .pending_message_count,
+        0
+    );
 }
 
 // ─── compute_session_stats ───────────────────────────────────────────────────
@@ -339,7 +344,7 @@ fn test_resolve_set_model_target_from_provider_and_model_id() {
 fn test_set_model_is_reflected_in_state_snapshot() {
     let mut session = AgentSession::new("gpt-4".into(), "cli:test".into());
     session.set_model("claude-opus-4-5".into());
-    let snap = session.state_snapshot(0, None, 0);
+    let snap = session.state_snapshot(0, None, 0, None);
     assert_eq!(snap.model, "claude-opus-4-5");
 }
 

@@ -81,7 +81,7 @@ impl Fixture {
             messages: &mut self.messages,
             conversation_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             state_snapshot: Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0),
+                self.session.state_snapshot(0, None, 0, None),
             )),
             session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(initial_stats)),
             extension_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),

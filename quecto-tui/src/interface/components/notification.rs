@@ -45,6 +45,13 @@ impl Notification {
     pub fn expires_at(&self) -> Instant {
         self.created + self.duration
     }
+
+    /// The raw message text, independent of expiry/rendering. Test seam —
+    /// gated like its only consumers so it never ships in a plain build.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl Component for Notification {
@@ -87,6 +94,19 @@ impl NotificationStack {
         Self {
             notifications: Vec::new(),
         }
+    }
+
+    /// Raw messages of every notification pushed and not yet gc'd, INCLUDING
+    /// expired ones. Test seam (#1067): asserting "a notification was pushed
+    /// with this content" must not race the 3s display lifetime. Gated like
+    /// its only consumers (the cfg'd test-harness modules) so a plain build
+    /// never ships a zero-caller accessor.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn messages(&self) -> Vec<String> {
+        self.notifications
+            .iter()
+            .map(|n| n.message().to_string())
+            .collect()
     }
 
     pub fn push(&mut self, notification: Notification) {

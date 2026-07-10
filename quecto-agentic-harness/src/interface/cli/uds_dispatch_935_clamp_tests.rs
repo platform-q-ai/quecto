@@ -68,7 +68,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             messages: &mut messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                session.state_snapshot(0, None, 0),
+                session.state_snapshot(0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

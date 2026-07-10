@@ -43,9 +43,12 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
             value
         })
     });
-    let state =
-        ctx.session
-            .state_snapshot(ctx.messages.len(), workflow, ctx.agent.max_context_tokens());
+    let state = ctx.session.state_snapshot(
+        ctx.messages.len(),
+        workflow,
+        ctx.agent.max_context_tokens(),
+        ctx.agent.effort().map(|l| l.as_str().to_string()),
+    );
     let mut snap = ctx.state_snapshot.write().await;
     *snap = state;
 }

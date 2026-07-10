@@ -69,7 +69,7 @@ impl ActEnv {
             &self.session_key,
             &self.messages,
         );
-        let state = self.session.state_snapshot(0, None, 0);
+        let state = self.session.state_snapshot(0, None, 0, None);
         DispatchCtx {
             base_dir: self.tmp.path(),
             agent: &mut self.agent,
@@ -130,7 +130,9 @@ async fn test_926_single_completion_drives_a_parent_turn() {
     drain_pending_and_nudge(&mut ctx).await;
 
     assert_eq!(
-        ctx.session.state_snapshot(0, None, 0).pending_message_count,
+        ctx.session
+            .state_snapshot(0, None, 0, None)
+            .pending_message_count,
         0,
         "the buffered completion note must be consumed by the idle drain"
     );

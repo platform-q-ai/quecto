@@ -38,6 +38,18 @@ pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
 }
 
 impl App {
+    pub(super) fn send_set_model(&mut self, model: &str) {
+        self.send_command(Command::SetModel {
+            id: Some("sm".into()),
+            model: Some(model.to_string()),
+            provider: None,
+            model_id: None,
+        });
+        self.master_session.footer.set_model(model);
+        self.current_model = Some(model.to_string());
+        self.context_stats_requested = false;
+    }
+
     pub(super) fn open_model_selector(&mut self) {
         // On-consume reload (ADR-0002): always re-request the model list when the
         // selector is opened so edits to `models.json` are reflected, not just on

@@ -245,6 +245,237 @@ fn when_accept_selected_model(world: &mut TuiWorld) {
     world.tui_last_commands = drain_commands(world);
 }
 
+// ── Effort control (#1067) ─────────────────────────────────────────────
+
+fn apply_get_state(world: &mut TuiWorld, model: String, effort: serde_json::Value) {
+    // Mirror the agent's real get_state shape: it always reports the
+    // provider's valid effort vocabulary in `effortLevels` (#1067) — the
+    // TUI's single source of truth for validation and the selector.
+    let levels: &[&str] = if model.contains("anthropic") || model.contains("claude") {
+        &["low", "medium", "high", "max"]
+    } else {
+        &["none", "low", "medium", "high", "xhigh"]
+    };
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("gs".into()),
+            command: "get_state".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "model": model,
+                "effort": effort,
+                "effortLevels": levels,
+            })),
+            error: None,
+        });
+    });
+}
+
+/// Trigger form: the arriving state IS the behaviour under test (footer
+/// display scenarios).
+#[when(expr = "a get_state response arrives with model {string} and effort {string}")]
+fn when_get_state_with_effort(world: &mut TuiWorld, model: String, effort: String) {
+    apply_get_state(world, model, serde_json::json!(effort));
+}
+
+/// Context form: the same state arrival used as a precondition for a later
+/// `/effort` action (same handler, Given semantics).
+#[given(expr = "the agent reports model {string} with effort {string}")]
+fn given_agent_reports_model_with_effort(world: &mut TuiWorld, model: String, effort: String) {
+    apply_get_state(world, model, serde_json::json!(effort));
+}
+
+/// The agent's real wire shape for a never-set effort is an explicit
+/// `"effort": null` (never a missing key).
+#[when(expr = "a get_state response arrives with model {string} and a null effort")]
+fn when_get_state_with_null_effort(world: &mut TuiWorld, model: String) {
+    apply_get_state(world, model, serde_json::Value::Null);
+}
+
+#[given(expr = "I have submitted the master prompt {string}")]
+fn given_submitted_master_prompt(world: &mut TuiWorld, prompt: String) {
+    drive(world, |h| {
+        h.submit(&prompt);
+    });
+    world.tui_last_commands = drain_commands(world);
+}
+
+/// Submit a prompt that is handled locally (rejected or selector-opening):
+/// uses the NON-polling drain, because the shared submit step's bounded poll
+/// blocks a runtime worker for its full window when no command ever arrives,
+/// starving concurrent scenarios (and their 3s notification lifetimes).
+#[when(expr = "I submit the master prompt {string} expecting no agent command")]
+fn when_submit_master_prompt_no_command(world: &mut TuiWorld, prompt: String) {
+    drive(world, |h| {
+        h.submit(&prompt);
+    });
+    world.tui_last_commands = drive(world, |h| h.try_drain_commands());
+}
+
+/// Open the effort selector overlay. No command drain: bare `/effort` is a
+/// purely local action (see the non-polling rationale above).
+#[when("I open the effort selector via the /effort prompt")]
+#[given("I have opened the effort selector via the /effort prompt")]
+fn when_open_effort_selector(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.submit("/effort");
+    });
+    world.tui_last_commands = drive(world, |h| h.try_drain_commands());
+}
+
+#[then(expr = "the footer shows effort level {string}")]
+fn then_footer_shows_effort(world: &mut TuiWorld, level: String) {
+    let frame = drive(world, |h| h.full_frame());
+    let needle = format!("effort: {level}");
+    assert!(
+        frame.contains(&needle),
+        "footer should show {needle:?}, got:\n{frame}"
+    );
+}
+
+/// "default" is deliberately NOT an effort level: the footer's placeholder
+/// for the effective config/provider default gets its own step so the
+/// level-valued step is never fed out-of-vocabulary values.
+#[then("the footer shows the effective default effort")]
+fn then_footer_shows_default_effort(world: &mut TuiWorld) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains("effort: default"),
+        "footer should show the effective default effort, got:\n{frame}"
+    );
+}
+
+#[then(expr = "a set effort command is sent for {string}")]
+fn then_set_effort_command_sent_for(world: &mut TuiWorld, expected: String) {
+    let cmd = command_of_type(&world.tui_last_commands, "set_effort").unwrap_or_else(|| {
+        panic!(
+            "expected set_effort command, got {:?}",
+            world.tui_last_commands
+        )
+    });
+    let value: serde_json::Value = serde_json::from_str(cmd).expect("set_effort command json");
+    assert_eq!(
+        value.get("effort").and_then(|v| v.as_str()),
+        Some(expected.as_str()),
+        "selected effort should be sent in set_effort command: {cmd}"
+    );
+}
+
+#[then("no set effort command is sent")]
+fn then_no_set_effort_command_sent(world: &mut TuiWorld) {
+    // Non-polling drain: the submit step already waited for late sends, and a
+    // 400ms empty poll here would push the rejection notification past its
+    // 3s lifetime before the next step can assert it.
+    let mut commands = world.tui_last_commands.clone();
+    commands.extend(drive(world, |h| h.try_drain_commands()));
+    world.tui_last_commands = commands;
+    assert!(
+        command_of_type(&world.tui_last_commands, "set_effort").is_none(),
+        "no set_effort command should be sent, got {:?}",
+        world.tui_last_commands
+    );
+}
+
+/// One logical outcome — "rejected with a message listing the valid levels" —
+/// asserted level-list-aware: the list after "valid levels:" must match the
+/// expected vocabulary token-for-token (substring checks would let "xhigh"
+/// stand in for "high").
+#[then(expr = "the app reports an invalid effort level listing {string}")]
+fn then_app_reports_invalid_effort(world: &mut TuiWorld, expected_csv: String) {
+    // Raw pushed messages, not the rendered popup: the popup's 3s display
+    // lifetime races concurrent-scenario scheduling; the behaviour under test
+    // is the rejection content, not the popup's decay.
+    let messages = drive(world, |h| h.notification_messages());
+    let notification = messages
+        .iter()
+        .find(|m| m.contains("Invalid effort level"))
+        .unwrap_or_else(|| panic!("expected an invalid-effort notification, got: {messages:?}"));
+    let listed = notification
+        .split_once("valid levels:")
+        .map(|(_, rest)| rest.trim())
+        .unwrap_or_else(|| panic!("notification lists no valid levels:\n{notification}"));
+    let listed: Vec<&str> = listed.split(',').map(str::trim).collect();
+    let expected: Vec<&str> = expected_csv.split(',').map(str::trim).collect();
+    assert_eq!(
+        listed, expected,
+        "rejection must list exactly the provider vocabulary, got:\n{notification}"
+    );
+}
+
+#[when(expr = "the set effort response succeeds with effort {string}")]
+fn when_set_effort_response_succeeds(world: &mut TuiWorld, effort: String) {
+    let id = command_of_type(&world.tui_last_commands, "set_effort")
+        .and_then(|cmd| json_field(cmd, "id"));
+    drive(world, |h| {
+        h.event(Event::Response {
+            id,
+            command: "set_effort".into(),
+            success: true,
+            data: Some(serde_json::json!({ "effort": effort })),
+            error: None,
+        });
+    });
+}
+
+#[when(expr = "the set effort response fails with {string}")]
+fn when_set_effort_response_fails(world: &mut TuiWorld, error: String) {
+    let id = command_of_type(&world.tui_last_commands, "set_effort")
+        .and_then(|cmd| json_field(cmd, "id"));
+    drive(world, |h| {
+        h.event(Event::Response {
+            id,
+            command: "set_effort".into(),
+            success: false,
+            data: None,
+            error: Some(error),
+        });
+    });
+}
+
+#[then("the effort selector is visible")]
+fn then_effort_selector_visible(world: &mut TuiWorld) {
+    let entries = drive(world, |h| h.effort_selector_entries());
+    assert!(
+        entries.is_some(),
+        "effort selector should be open after bare /effort"
+    );
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains("Select Effort"),
+        "effort selector overlay should render, frame:\n{frame}"
+    );
+}
+
+/// Asserts against the selector's OWN entry list — not frame substrings,
+/// where the footer also names a level and "high" is a substring of "xhigh".
+#[then(expr = "the effort selector lists exactly {string}")]
+fn then_effort_selector_lists_exactly(world: &mut TuiWorld, csv: String) {
+    let expected: Vec<String> = csv.split(',').map(|l| l.trim().to_string()).collect();
+    let entries =
+        drive(world, |h| h.effort_selector_entries()).expect("effort selector should be open");
+    assert_eq!(
+        entries, expected,
+        "effort selector must list exactly the provider vocabulary"
+    );
+}
+
+#[when(expr = "I filter the effort selector with {string}")]
+fn when_filter_effort_selector(world: &mut TuiWorld, query: String) {
+    drive(world, |h| {
+        for ch in query.chars() {
+            h.press(Key::Char(ch));
+        }
+    });
+}
+
+#[when("I accept the selected effort")]
+fn when_accept_selected_effort(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.press(Key::Enter);
+    });
+    world.tui_last_commands = drain_commands(world);
+}
+
 #[when("I request rewind history with two prior user turns")]
 fn when_request_rewind_history(world: &mut TuiWorld) {
     drive(world, |h| {

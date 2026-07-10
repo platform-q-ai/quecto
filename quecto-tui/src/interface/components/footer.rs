@@ -1,7 +1,5 @@
 //! Footer component — status bar showing model, context, git branch.
 
-use std::borrow::Cow;
-
 use crate::interface::component::Component;
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width};
@@ -18,6 +16,8 @@ pub struct Footer {
     /// Cumulative session cost in USD. `None` until the first stats report.
     session_cost: Option<f64>,
     is_streaming: bool,
+    /// Active reasoning-effort level (#1067); `None` = effective default.
+    effort: Option<String>,
     /// Cached working directory (read once at construction).
     pwd: String,
 }
@@ -46,12 +46,18 @@ impl Footer {
             context_used: None,
             session_cost: None,
             is_streaming: false,
+            effort: None,
             pwd,
         }
     }
 
     pub fn set_model(&mut self, model: &str) {
         self.model = model.to_string();
+    }
+
+    /// Record the active effort level; `None` shows the effective default.
+    pub fn set_effort(&mut self, effort: Option<String>) {
+        self.effort = effort;
     }
 
     pub fn set_git_branch(&mut self, branch: Option<String>) {
@@ -107,6 +113,14 @@ impl Footer {
         if let Some(max_ctx) = data.get("maxContextTokens").and_then(|v| v.as_u64()) {
             self.set_context_window(max_ctx as usize);
         }
+        // #1067: the wire shape is an explicit `"effort": null` when unset;
+        // treat a missing key identically so the footer always reflects the
+        // effective default rather than freezing a stale level.
+        self.set_effort(
+            data.get("effort")
+                .and_then(|v| v.as_str())
+                .map(crate::interface::ansi::sanitize_control),
+        );
         model
     }
 
@@ -157,15 +171,21 @@ impl Component for Footer {
             _ => context_str,
         };
         // Prefix the model with a streaming indicator while a response is
-        // streaming so the toggled flag is actually visible (issue #760). Borrow
-        // the model unchanged in the dominant idle path to avoid a per-frame
-        // allocation.
-        let right: Cow<str> = if self.is_streaming {
-            Cow::Owned(format!("{} {}", theme::STREAMING_INDICATOR, self.model))
+        // streaming so the toggled flag is actually visible (issue #760), and
+        // suffix the active effort level (#1067) — "default" when never set,
+        // so the effective config/provider default is always visible.
+        let effort = self.effort.as_deref().unwrap_or("default");
+        let right = if self.is_streaming {
+            format!(
+                "{} {} · effort: {}",
+                theme::STREAMING_INDICATOR,
+                self.model,
+                effort
+            )
         } else {
-            Cow::Borrowed(&self.model)
+            format!("{} · effort: {}", self.model, effort)
         };
-        let right = right.as_ref();
+        let right = right.as_str();
         let left_width = visible_width(&left);
         let right_width = visible_width(right);
         let min_padding = 2;

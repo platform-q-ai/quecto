@@ -165,6 +165,8 @@ fn build_get_state_line_serializes_status_snapshot() {
         message_count: 2,
         pending_message_count: 1,
         max_context_tokens: 1234,
+        effort: None,
+        effort_levels: Vec::new(),
         workflow: None,
     };
 
@@ -307,6 +309,8 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
         message_count: 1,
         pending_message_count: 0,
         max_context_tokens: 1,
+        effort: None,
+        effort_levels: Vec::new(),
         workflow: Some(frozen_wf),
     };
 

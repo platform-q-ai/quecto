@@ -119,6 +119,14 @@ pub enum AgentCommand {
         #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
         model_id: Option<String>,
     },
+    /// Switch the active reasoning-effort level at runtime (#1067).
+    /// Session-scoped: validated against the active model's provider
+    /// vocabulary and applied to every subsequent turn.
+    SetEffort {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        effort: String,
+    },
     /// Return the list of registered extensions.
     GetExtensions {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -215,6 +223,7 @@ impl AgentCommand {
             Self::NewSession { id } => id.as_deref(),
             Self::ResumeSession { id, .. } => id.as_deref(),
             Self::SetModel { id, .. } => id.as_deref(),
+            Self::SetEffort { id, .. } => id.as_deref(),
             Self::RegisterTools { id, .. } => id.as_deref(),
             Self::UnregisterTools { id, .. } => id.as_deref(),
             Self::ToolResult { .. } => None,
@@ -241,6 +250,7 @@ impl AgentCommand {
             Self::NewSession { .. } => "new_session",
             Self::ResumeSession { .. } => "resume_session",
             Self::SetModel { .. } => "set_model",
+            Self::SetEffort { .. } => "set_effort",
             Self::GetExtensions { .. } => "get_extensions",
             Self::Reload { .. } => "reload",
             Self::ReloadExtensions { .. } => "reload_extensions",
@@ -570,6 +580,18 @@ pub struct SessionState {
     pub pending_message_count: usize,
     /// The active model's context-window limit (tokens). `0` when unknown.
     pub max_context_tokens: usize,
+    /// The session's effective reasoning-effort level (#1067): the level
+    /// string when set (config default or runtime `set_effort`), an explicit
+    /// `null` when unset — so clients can distinguish "provider default"
+    /// from a missing capability. Always serialized, on both the live-query
+    /// and busy-connect snapshot paths.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// The effort vocabulary valid for the active model's provider (#1067).
+    /// Agent-side source of truth so clients never duplicate the
+    /// provider→levels rule.
+    #[serde(default)]
+    pub effort_levels: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<serde_json::Value>,
 }

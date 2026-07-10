@@ -16,6 +16,8 @@ use crate::domain::tool::ToolRegistry;
 
 #[path = "agent_loop_clamp.rs"]
 mod agent_loop_clamp;
+#[path = "agent_loop_effort.rs"]
+mod agent_loop_effort;
 #[path = "agent_loop_errors.rs"]
 mod agent_loop_errors;
 #[path = "agent_loop_preview.rs"]
@@ -48,14 +50,11 @@ pub struct AgentLoopConfig {
     pub session_key: String,
     pub context_collapse_after_tool_calls: u32,
     pub max_context_tokens: usize,
-    /// Optional live progress events callback (REPL renderer); `None` for
-    /// headless operation (no-op, zero overhead).
+    /// Optional live progress events callback (REPL renderer); `None` = headless no-op.
     pub progress_callback: Option<ProgressCallback>,
-    /// When `true`, use `chat_stream_incremental()` so Token events stream in
-    /// real time (UDS path); `false` for REPL (non-streaming mocks in tests).
+    /// `true`: stream Token events live (UDS); `false` for REPL (non-streaming mocks).
     pub streaming: bool,
-    /// Optional effort level for 4.6 models. When `Some`, passed through to
-    /// every `ChatRequest`. When `None`, the provider applies its own default.
+    /// Optional effort level for every `ChatRequest`; `None` = provider default.
     pub effort: Option<EffortLevel>,
     /// Optional dynamic system prompt provider invoked before each LLM turn.
     pub system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
@@ -102,7 +101,9 @@ pub struct AgentLoopImpl {
     /// Optional live progress callback wired by the REPL progress renderer.
     progress_callback: Option<ProgressCallback>,
     /// Optional effort level passed through to every ChatRequest.
-    effort: Option<EffortLevel>,
+    pub(super) effort: Option<EffortLevel>,
+    /// Startup default effort, restored on session switches (#1067).
+    pub(super) default_effort: Option<EffortLevel>,
     /// Optional dynamic system prompt provider invoked before each LLM turn.
     system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     /// Optional append-only audit log for durable event recording.
@@ -153,6 +154,7 @@ impl AgentLoopImpl {
             progress_callback: config.progress_callback,
             streaming: config.streaming,
             effort: config.effort,
+            default_effort: config.effort,
             system_prompt_provider: config.system_prompt_provider,
             audit_log: config.audit_log,
         }

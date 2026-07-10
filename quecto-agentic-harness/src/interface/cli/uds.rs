@@ -206,6 +206,7 @@ async fn single_client_loop(
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
     let max_context_tokens = agent.max_context_tokens();
+    let initial_effort = agent.effort().map(|l| l.as_str().to_string());
     let initial_stats = super::uds_session::compute_session_stats(&session_key, &messages);
 
     run_command_loop(
@@ -216,7 +217,7 @@ async fn single_client_loop(
             messages: &mut messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                agent_session.state_snapshot(0, None, max_context_tokens),
+                agent_session.state_snapshot(0, None, max_context_tokens, initial_effort),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -478,7 +479,14 @@ async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool
     let (cap, window) = ModelRegistry::model_limits_from_base_dir(ctx.base_dir, &resolved_model);
     ctx.agent.set_model(resolved_model.clone(), cap, window);
     ctx.session.set_model(resolved_model);
-    tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched");
+    // Every model switch resets the session effort to `low` (#1067): a level
+    // chosen for one provider (e.g. OpenAI `xhigh`) must not silently carry
+    // into another provider's vocabulary, where it would be clamped on the
+    // wire while the UI still displays the stale level. Explicit `low` is
+    // predictable and cost-safe; the user re-raises effort via set_effort.
+    ctx.agent
+        .set_effort(crate::domain::provider::EffortLevel::Low);
+    tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched; effort reset to low");
     let ev = AgentEvent::ok(args.id.as_deref(), &args.type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
@@ -715,6 +723,9 @@ mod abort_steer_tests;
 #[cfg(test)]
 #[path = "uds_bounded_read_tests.rs"]
 mod bounded_read_tests;
+#[cfg(test)]
+#[path = "uds_effort_1067_tests.rs"]
+mod effort_1067_tests;
 #[cfg(test)]
 #[path = "uds_926_act_tests.rs"]
 mod issue_926_act_tests;

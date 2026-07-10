@@ -50,6 +50,85 @@ Feature: TUI app event routing and command behaviours
     Then the app notification includes "Could not list models: registry unavailable"
     And the model selector is visible
 
+  @effort
+  Scenario: Footer shows the active effort level from agent state
+    Given a fresh TUI app harness
+    When a get_state response arrives with model "openai-api/gpt-5.5" and effort "medium"
+    Then the footer shows effort level "medium"
+
+  @effort
+  Scenario: Footer shows the effective default effort when the agent reports none set
+    Given a fresh TUI app harness
+    When a get_state response arrives with model "openai-api/gpt-5.5" and a null effort
+    Then the footer shows the effective default effort
+
+  @effort
+  Scenario: Explicit /effort level sends set_effort
+    Given a fresh TUI app harness
+    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    When I submit the master prompt "/effort high"
+    Then a set effort command is sent for "high"
+
+  @effort
+  Scenario: Successful effort switch updates the footer
+    Given a fresh TUI app harness
+    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And I have submitted the master prompt "/effort high"
+    When the set effort response succeeds with effort "high"
+    Then the footer shows effort level "high"
+
+  @effort
+  Scenario: Invalid /effort level is rejected and the previous setting stays
+    Given a fresh TUI app harness
+    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    When I submit the master prompt "/effort turbo" expecting no agent command
+    Then the app reports an invalid effort level listing "none, low, medium, high, xhigh"
+    And no set effort command is sent
+    And the footer shows effort level "medium"
+
+  @effort
+  Scenario: An effort level from another provider's vocabulary is rejected
+    Given a fresh TUI app harness
+    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    When I submit the master prompt "/effort max" expecting no agent command
+    Then the app reports an invalid effort level listing "none, low, medium, high, xhigh"
+    And no set effort command is sent
+    And the footer shows effort level "medium"
+
+  @effort @effort-selector
+  Scenario: /effort opens a selector with the OpenAI effort vocabulary
+    Given a fresh TUI app harness
+    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    When I open the effort selector via the /effort prompt
+    Then the effort selector is visible
+    And the effort selector lists exactly "none, low, medium, high, xhigh"
+
+  @effort @effort-selector
+  Scenario: /effort selector for an Anthropic model lists the Anthropic vocabulary
+    Given a fresh TUI app harness
+    And the agent reports model "anthropic-api/claude-fable-5" with effort "high"
+    When I open the effort selector via the /effort prompt
+    Then the effort selector is visible
+    And the effort selector lists exactly "low, medium, high, max"
+
+  @effort @effort-selector
+  Scenario: Accepting an effort selector entry sends set_effort
+    Given a fresh TUI app harness
+    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And I have opened the effort selector via the /effort prompt
+    When I filter the effort selector with "xh"
+    And I accept the selected effort
+    Then a set effort command is sent for "xhigh"
+
+  @effort
+  Scenario: Failed effort switch is notified and the footer keeps the previous level
+    Given a fresh TUI app harness
+    And the agent reports model "openai-api/gpt-5.5" with effort "medium"
+    And I have submitted the master prompt "/effort high"
+    When the set effort response fails with "agent busy"
+    Then the app notification includes "Effort switch failed: agent busy"
+    And the footer shows effort level "medium"
+
   Scenario: Rewind selector opens from history and applies the selected turn
     Given a fresh TUI app harness
     When I request rewind history with two prior user turns

@@ -184,8 +184,12 @@ pub(super) async fn multi_client_loop(
         std::sync::Arc::new(tokio::sync::RwLock::new(messages.clone()));
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
-    let initial_state =
-        agent_session.state_snapshot(messages.len(), None, agent.max_context_tokens());
+    let initial_state = agent_session.state_snapshot(
+        messages.len(),
+        None,
+        agent.max_context_tokens(),
+        agent.effort().map(|l| l.as_str().to_string()),
+    );
     let state_snapshot: StateSnapshot =
         std::sync::Arc::new(tokio::sync::RwLock::new(initial_state));
     let session_stats_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
