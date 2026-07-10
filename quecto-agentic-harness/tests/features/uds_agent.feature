@@ -232,6 +232,17 @@ Feature: UDS mode for headless agent operation
     And the get_state response effort should be "xhigh"
 
   @done @effort-1067
+  Scenario: Switching models resets the effort to low
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send set_effort "xhigh"
+    And I send set_model "anthropic-api/claude-sonnet-4-6"
+    And I send command "get_state" with id "gs-1"
+    And I close the UDS connection
+    Then the get_state response effort should be "low"
+
+  @done @effort-1067
   Scenario: A switched effort is carried on the next LLM request
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server

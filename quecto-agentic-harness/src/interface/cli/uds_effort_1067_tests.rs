@@ -190,3 +190,28 @@ async fn busy_snapshot_get_state_carries_effort_and_vocabulary() {
         "busy-connect snapshot get_state must carry the vocabulary, got: {value}"
     );
 }
+
+// ── model switch resets effort ───────────────────────────────────────────
+
+/// Switching models resets the session effort to `low`: a level chosen for
+/// one provider (e.g. OpenAI `xhigh`) must not silently carry into another
+/// provider's vocabulary, where it would be clamped while the UI still shows
+/// the stale level. Explicit `low` on every switch is predictable and
+/// cost-safe; the user re-raises effort deliberately via set_effort.
+#[tokio::test]
+async fn set_model_resets_the_session_effort_to_low() {
+    let mut fx = EffortFx::new(Some(EffortLevel::XHigh));
+    {
+        let mut ctx = fx.ctx();
+        let cmd: AgentCommand = serde_json::from_str(
+            r#"{"type":"set_model","model":"anthropic-api/claude-sonnet-4-6"}"#,
+        )
+        .expect("set_model parses");
+        crate::interface::cli::uds::uds_dispatch::dispatch_command(cmd, &mut ctx).await;
+    }
+    assert_eq!(
+        fx.agent.effort(),
+        Some(EffortLevel::Low),
+        "a model switch must reset the session effort to low"
+    );
+}
