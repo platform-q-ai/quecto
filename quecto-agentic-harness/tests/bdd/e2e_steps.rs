@@ -350,6 +350,110 @@ fn openai_tool_call_json(tool_name: &str, args_json: &str) -> serde_json::Value 
     })
 }
 
+/// Convert a mocked OpenAI chat-completion JSON body into the minimal SSE
+/// stream the in-repo parser accepts. Auto-mocked UDS runs stream since
+/// #1060 (completion events are bounded, so scenario assertions reconstruct
+/// response text from token events — which only exist when the provider
+/// actually streams), so every mocked completion must go over the wire as
+/// SSE rather than a plain JSON body the SSE pump would read as zero deltas.
+fn openai_json_to_sse(body: &serde_json::Value) -> String {
+    let msg = &body["choices"][0]["message"];
+    let mut out = String::new();
+    if let Some(content) = msg["content"].as_str() {
+        if !content.is_empty() {
+            let chunk = serde_json::json!({"choices":[{"delta":{"content": content}}]});
+            out.push_str(&format!("data: {chunk}\n\n"));
+        }
+    }
+    if let Some(calls) = msg["tool_calls"].as_array() {
+        for (i, call) in calls.iter().enumerate() {
+            let chunk = serde_json::json!({"choices":[{"delta":{"tool_calls":[{
+                "index": i,
+                "id": call["id"],
+                "function": {
+                    "name": call["function"]["name"],
+                    "arguments": call["function"]["arguments"],
+                }
+            }]}}]});
+            out.push_str(&format!("data: {chunk}\n\n"));
+        }
+    }
+    if let Some(usage) = body.get("usage") {
+        let chunk = serde_json::json!({"choices": [], "usage": usage});
+        out.push_str(&format!("data: {chunk}\n\n"));
+    }
+    out.push_str("data: [DONE]\n\n");
+    out
+}
+
+/// Anthropic twin of [`openai_json_to_sse`]: convert a mocked Messages-API
+/// JSON body into the minimal Anthropic SSE event sequence the in-repo
+/// parser accepts.
+fn anthropic_json_to_sse(body: &serde_json::Value) -> String {
+    let mut out = String::new();
+    if let Some(blocks) = body["content"].as_array() {
+        for block in blocks {
+            match block["type"].as_str() {
+                Some("text") => {
+                    let chunk =
+                        serde_json::json!({"delta":{"type":"text_delta","text": block["text"]}});
+                    out.push_str(&format!("event: content_block_delta\ndata: {chunk}\n\n"));
+                }
+                Some("tool_use") => {
+                    let start = serde_json::json!({"content_block":{
+                        "type":"tool_use","id": block["id"], "name": block["name"]}});
+                    out.push_str(&format!("event: content_block_start\ndata: {start}\n\n"));
+                    let input =
+                        serde_json::to_string(&block["input"]).unwrap_or_else(|_| "{}".into());
+                    let delta = serde_json::json!({"delta":{
+                        "type":"input_json_delta","partial_json": input}});
+                    out.push_str(&format!("event: content_block_delta\ndata: {delta}\n\n"));
+                    out.push_str("event: content_block_stop\ndata: {}\n\n");
+                }
+                _ => {}
+            }
+        }
+    }
+    out.push_str("event: message_stop\ndata: {}\n\n");
+    out
+}
+
+/// Wiremock responder serving the SSE encoding to streaming requests
+/// (`"stream":true` in the body — set by both providers' streaming paths)
+/// and the plain JSON completion to non-streaming ones. One responder per
+/// mock keeps priorities and `up_to_n_times` sequencing identical while the
+/// same mounted mock serves UDS (streaming) and subprocess/REPL
+/// (non-streaming) scenarios correctly.
+struct DualEncodingResponder {
+    json: serde_json::Value,
+    sse: String,
+}
+
+impl wiremock::Respond for DualEncodingResponder {
+    fn respond(&self, request: &wiremock::Request) -> wiremock::ResponseTemplate {
+        let body = String::from_utf8_lossy(&request.body);
+        if body.contains("\"stream\":true") {
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(self.sse.clone())
+        } else {
+            wiremock::ResponseTemplate::new(200).set_body_json(self.json.clone())
+        }
+    }
+}
+
+/// Build a [`DualEncodingResponder`] for an OpenAI-shaped completion body.
+fn openai_dual(body: serde_json::Value) -> DualEncodingResponder {
+    let sse = openai_json_to_sse(&body);
+    DualEncodingResponder { json: body, sse }
+}
+
+/// Build a [`DualEncodingResponder`] for an Anthropic-shaped message body.
+fn anthropic_dual(body: serde_json::Value) -> DualEncodingResponder {
+    let sse = anthropic_json_to_sse(&body);
+    DualEncodingResponder { json: body, sse }
+}
+
 /// Helper: build the OpenAI-format JSON for a text response.
 fn openai_text_json(content: &str) -> serde_json::Value {
     serde_json::json!({
@@ -816,18 +920,14 @@ pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, me
             wiremock::Mock::given(wiremock::matchers::method("POST"))
                 .and(wiremock::matchers::path("/chat/completions"))
                 .and(wiremock::matchers::body_string_contains(marker))
-                .respond_with(
-                    wiremock::ResponseTemplate::new(200).set_body_json(openai_text_json(text)),
-                )
+                .respond_with(openai_dual(openai_text_json(text)))
                 .with_priority(priority)
                 .mount(&server)
                 .await;
             wiremock::Mock::given(wiremock::matchers::method("POST"))
                 .and(wiremock::matchers::path("/v1/messages"))
                 .and(wiremock::matchers::body_string_contains(marker))
-                .respond_with(
-                    wiremock::ResponseTemplate::new(200).set_body_json(anthropic_text_json(text)),
-                )
+                .respond_with(anthropic_dual(anthropic_text_json(text)))
                 .with_priority(priority)
                 .mount(&server)
                 .await;
@@ -836,7 +936,7 @@ pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, me
         for (i, body) in responses.into_iter().enumerate() {
             let mock = wiremock::Mock::given(wiremock::matchers::method("POST"))
                 .and(wiremock::matchers::path("/chat/completions"))
-                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+                .respond_with(openai_dual(body))
                 .with_priority(u8::try_from(i + 50).expect("too many auto mock responses"));
             if i < last {
                 mock.up_to_n_times(1).mount(&server).await;
@@ -848,7 +948,7 @@ pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, me
         for (i, body) in anthropic_responses.into_iter().enumerate() {
             let mock = wiremock::Mock::given(wiremock::matchers::method("POST"))
                 .and(wiremock::matchers::path("/v1/messages"))
-                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+                .respond_with(anthropic_dual(body))
                 .with_priority(u8::try_from(i + 50).expect("too many auto mock responses"));
             if i < anthropic_last {
                 mock.up_to_n_times(1).mount(&server).await;
