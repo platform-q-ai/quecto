@@ -240,12 +240,12 @@ async fn multi_client_loop_drops_oversized_command_but_dispatches_the_next_valid
         .await
         .expect("connect to idle accept loop");
 
-    // Derive the oversized payload from the real cap (`uds::MAX_LINE_BYTES`,
+    // Derive the oversized payload from the real cap (`uds::MAX_FRAME_PAYLOAD_BYTES`,
     // re-exported into scope via `uds_multi`'s imports) so the test cannot
     // silently under-shoot if the cap ever grows.
     let oversized = format!(
         "{{\"command\":\"prompt\",\"task\":\"{}\"}}\n",
-        "x".repeat(MAX_LINE_BYTES + 65_536)
+        "x".repeat(MAX_FRAME_PAYLOAD_BYTES + 65_536)
     );
     let valid = "{\"command\":\"get_state\"}\n";
     client

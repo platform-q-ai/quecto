@@ -242,30 +242,30 @@ fn test_extract_summary_last_assistant() {
 // --- capped line reader (#795 security review) ---
 
 #[tokio::test]
-async fn read_line_capped_reads_lines_then_eof() {
+async fn read_response_capped_reads_lines_then_eof() {
     // Since #1059 the reader sniffs framing from the first byte; legacy NDJSON
     // messages are `{`-opening JSON lines.
     let data = b"{\"n\":1}\n{\"n\":2}\n";
     let mut reader = tokio::io::BufReader::new(&data[..]);
     assert_eq!(
-        read_line_capped(&mut reader, 1024)
+        read_response_capped(&mut reader, 1024)
             .await
             .unwrap()
             .as_deref(),
         Some(r#"{"n":1}"#)
     );
     assert_eq!(
-        read_line_capped(&mut reader, 1024)
+        read_response_capped(&mut reader, 1024)
             .await
             .unwrap()
             .as_deref(),
         Some(r#"{"n":2}"#)
     );
-    assert_eq!(read_line_capped(&mut reader, 1024).await.unwrap(), None);
+    assert_eq!(read_response_capped(&mut reader, 1024).await.unwrap(), None);
 }
 
 #[tokio::test]
-async fn read_line_capped_skips_oversized_line_and_reads_the_next() {
+async fn read_response_capped_skips_oversized_line_and_reads_the_next() {
     // #1059 review (finding 5a): an over-cap interleaved message must be
     // SKIPPED (its bytes consumed so the stream stays framed) rather than
     // hard-erroring the whole query — mirroring the other four consumers.
@@ -274,10 +274,13 @@ async fn read_line_capped_skips_oversized_line_and_reads_the_next() {
     let mut reader = tokio::io::BufReader::new(&data[..]);
     // The oversized first line is skipped; the next valid line is returned.
     assert_eq!(
-        read_line_capped(&mut reader, 16).await.unwrap().as_deref(),
+        read_response_capped(&mut reader, 16)
+            .await
+            .unwrap()
+            .as_deref(),
         Some(r#"{"n":2}"#)
     );
-    assert_eq!(read_line_capped(&mut reader, 16).await.unwrap(), None);
+    assert_eq!(read_response_capped(&mut reader, 16).await.unwrap(), None);
 }
 
 // --- command/response matching (#831) ---

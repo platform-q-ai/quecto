@@ -1,7 +1,7 @@
 //! quecto-tui — Lightweight terminal UI client for quecto.
 //!
 //! Spawns (or connects to) a `quecto agent --mode uds` process and provides
-//! a rich interactive terminal interface over the UDS JSON-lines protocol.
+//! a rich interactive terminal interface over the framed JSON UDS protocol.
 
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Component, Path, PathBuf};

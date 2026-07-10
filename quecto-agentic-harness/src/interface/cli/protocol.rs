@@ -1,6 +1,6 @@
 /// UDS protocol types and wire-format helpers for `quecto agent --mode uds`.
 ///
-/// JSON-lines protocol over a Unix domain socket.  One JSON object per line.
+/// Length-prefixed UTF-8 JSON protocol over a Unix domain socket.
 /// All commands carry an optional `id` field for request/response correlation.
 use serde::{Deserialize, Serialize};
 

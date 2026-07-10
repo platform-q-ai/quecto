@@ -10,6 +10,7 @@ pub mod uds_cancel;
 mod uds_control_forward;
 mod uds_ext_protocol;
 mod uds_extensions;
+mod uds_lifecycle;
 mod uds_models;
 mod uds_multi;
 mod uds_multi_accept;
@@ -525,7 +526,7 @@ fn help_text(out: &mut String) {
     out.push_str("                       --max-iterations <n>  Max tool iterations\n");
     out.push_str("                       --max-time <s>  Wall-clock timeout in seconds\n");
     out.push_str(
-        "                       --mode uds    JSON-lines agent mode via Unix domain socket\n",
+        "                       --mode uds    framed JSON agent mode via Unix domain socket\n",
     );
     out.push_str(
         "                       --socket <path>  Socket path for --mode uds (default: auto in tmpdir)\n",

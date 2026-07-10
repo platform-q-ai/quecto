@@ -12,5 +12,8 @@ pub mod security;
 pub mod time;
 pub mod tools;
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 #[cfg(test)]
 mod issue_996_efficiency_tests;

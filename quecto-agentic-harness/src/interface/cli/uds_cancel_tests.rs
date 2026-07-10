@@ -223,14 +223,14 @@ fn fire_then_arm_resets_to_idle() {
 
 // --- #1047: outbound event lines must never exceed the 1 MiB protocol cap ---
 //
-// The TUI client drops any event line above 1 MiB (`MAX_LINE_BYTES` in
+// The TUI client drops any event line above 1 MiB (`MAX_FRAME_PAYLOAD_BYTES` in
 // quecto-tui). Near a full context window a turn's messages can exceed that,
 // so `EventSink::emit` must tail/cap the payload instead of emitting an
 // un-receivable line — otherwise the TUI silently loses `turn_end`/`agent_end`
 // and the session appears frozen/disconnected.
 
 // Bound under test: `protocol::EVENT_LINE_CAP_BYTES`, whose value is pinned to
-// the TUI client's `quecto-tui::infrastructure::client::MAX_LINE_BYTES` (see
+// the TUI client's `quecto-tui::infrastructure::client::MAX_FRAME_PAYLOAD_BYTES` (see
 // the constant's doc comment in protocol.rs). If the client cap ever changes,
 // change the protocol constant — these tests follow it automatically.
 use crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES;

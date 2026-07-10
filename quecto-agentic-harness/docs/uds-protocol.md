@@ -1,6 +1,6 @@
 # UDS Protocol Reference
 
-Quecto's UDS (Unix Domain Socket) mode runs a persistent agent process that accepts JSON-lines commands over a local socket. This is the integration point for TUIs, IDE plugins, web UIs, Telegram bots, and any external automation.
+Quecto's UDS (Unix Domain Socket) mode runs a persistent agent process that accepts length-prefixed JSON commands over a local socket. This is the integration point for TUIs, IDE plugins, web UIs, Telegram bots, and any external automation.
 
 ## Starting the agent
 
@@ -568,7 +568,7 @@ Return the result of a tool execution request. Sent by an extension client in re
 
 ## Events (agent → client)
 
-Events are emitted as JSON lines. Every connected client receives every event (broadcast model).
+Events are emitted as length-prefixed JSON frames. Every connected client receives every event (broadcast model).
 
 ### `agent_start`
 

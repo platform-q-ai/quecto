@@ -2,7 +2,7 @@
 name = "quecto-line-io"
 version = "0.2.0"
 edition = "2024"
-description = "Shared bounded JSON-lines reader for quecto's UDS protocol"
+description = "Shared bounded framed-JSON reader for quecto's UDS protocol"
 license = "LicenseRef-Proprietary"
 
 [dependencies]

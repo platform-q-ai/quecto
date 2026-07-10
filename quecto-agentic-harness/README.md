@@ -37,7 +37,7 @@ quecto-tui --workflow --workflow-guards
 ```
 
 `quecto-tui` is a lightweight terminal UI for the UDS agent. By default it
-spawns `quecto agent --mode uds` for you, then connects over the same JSON-lines
+spawns `quecto agent --mode uds` for you, then connects over the same framed JSON
 protocol documented below. In that normal mode, the workflow tool is available
 but dormant: the model is not instructed to start a workflow until you ask it to
 select a template. You can also point the TUI at an already-running agent with
@@ -165,7 +165,7 @@ Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 |---|---|
 | `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override, `--no-sandbox`; global `--config <path>`) with live progress spinner |
 | `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--effort`, `--disable-tool`, `--no-sandbox`; global `--config <path>`) |
-| `quecto agent --mode uds` | Persistent UDS event bus: multi-client JSON-lines protocol over Unix domain socket (`--socket <path>` for explicit path, auto-generated otherwise; `--persist`, `--workflow`, `--workflow-guards`, `--no-workflow` supported) |
+| `quecto agent --mode uds` | Persistent UDS event bus: multi-client length-prefixed JSON protocol over Unix domain socket (`--socket <path>` for explicit path, auto-generated otherwise; `--persist`, `--workflow`, `--workflow-guards`, `--no-workflow` supported) |
 | `quecto status` | Config summary, provider availability |
 | `quecto auth login\|logout\|status` | Credential management (token/OAuth/device-code) |
 | `quecto help\|version` | Self-explanatory |
@@ -312,7 +312,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `set_workflow_automation` | optional `id`, `autoContinue`, `completionNudge` | Toggle core workflow auto-continue/completion nudges for this UDS session |
 | `get_subagents` | optional `id` | Return spawned subagents and live status. Each entry includes `readOnly` to identify observer sub-agents spawned with write/edit disabled |
 
-**Events** (emitted as JSON lines):
+**Events** (emitted as length-prefixed JSON frames):
 
 | Type | Description |
 |---|---|

@@ -715,8 +715,8 @@ fn all_four_socket_consumers_read_via_the_shared_frame_reader() {
 /// through the helper, so such a revert fails a test (#1059 review, finding 9).
 #[test]
 fn multi_client_agent_announces_protocol_version_via_shared_helper() {
-    let source =
-        fs::read_to_string("src/interface/cli/uds.rs").expect("read src/interface/cli/uds.rs");
+    let source = fs::read_to_string("src/interface/cli/uds_lifecycle.rs")
+        .expect("read src/interface/cli/uds_lifecycle.rs");
     assert!(
         source.contains("socket_announcement(&socket_path)"),
         "the multi-client agent startup must emit its socket announcement via \

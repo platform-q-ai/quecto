@@ -710,5 +710,5 @@ The three control verbs stay distinct — `follow_up` = queue, `steer` = redirec
 ## See also
 
 - Disabling Tools (`docs {"name":"disable-tools"}`) — `--disable-tool spawn` to prevent subagent spawning
-- UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — the JSON-lines protocol used for agent communication
+- UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — the framed JSON protocol used for agent communication
 - Extensions (`docs {"name":"extensions"}`) — adding custom tools to the agent

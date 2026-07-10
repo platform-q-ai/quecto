@@ -1,6 +1,6 @@
 Feature: UDS mode for headless agent operation
   As an external tool or IDE integration
-  I want to drive quecto agent via a JSON-lines protocol over a Unix domain socket
+  I want to drive quecto agent via a length-prefixed JSON protocol over a Unix domain socket
   So that I can interact with a long-lived agent session programmatically
 
   # ─── --system flag ──────────────────────────────────────────────────────────

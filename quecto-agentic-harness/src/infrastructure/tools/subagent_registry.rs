@@ -185,9 +185,9 @@ const SUBAGENT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from
 pub const INSPECTOR_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Per-line cap on a sub-agent's UDS reply (#795 security review). Mirrors the
-/// inbound client cap (`uds::MAX_LINE_BYTES`) so a misbehaving/compromised
+/// inbound client cap (`uds::MAX_FRAME_PAYLOAD_BYTES`) so a misbehaving/compromised
 /// sub-agent cannot return an unbounded line and exhaust the parent's memory.
-const SUBAGENT_RESPONSE_MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
+const SUBAGENT_RESPONSE_MAX_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
 /// Look up the UDS socket path for a spawned sub-agent by id.
 ///
@@ -289,7 +289,7 @@ pub async fn send_subagent_uds_command_with_timeout(
         }
         let line = tokio::time::timeout(
             remaining,
-            read_line_capped(&mut reader, SUBAGENT_RESPONSE_MAX_LINE_BYTES),
+            read_response_capped(&mut reader, SUBAGENT_RESPONSE_MAX_BYTES),
         )
         .await
         .map_err(|_| DomainError::Tool(timeout_msg()))??;
@@ -362,7 +362,7 @@ fn stamp_request_id(command: &str) -> (String, Option<String>) {
 /// parent→child consumer shares the same length-prefixed-frame / legacy-NDJSON
 /// deprecation-window handling as the other four UDS consumers; over-cap
 /// messages are skipped (not hard-errored) here.
-async fn read_line_capped<R>(
+async fn read_response_capped<R>(
     reader: &mut R,
     max_bytes: usize,
 ) -> Result<Option<String>, crate::domain::error::DomainError>

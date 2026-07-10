@@ -1,7 +1,7 @@
 // Persistent subagent monitor — live event stream from child agents (#522).
 //
 // Pure async monitor logic, no coupling to dispatch.
-// The monitor task connects to a child's UDS socket, reads JSON-lines events,
+// The monitor task connects to a child's UDS socket, reads framed JSON events,
 // and updates the SubagentEntry in the SubagentRegistry with live status.
 //
 // NOTE: This module lives in the infrastructure layer and therefore MUST NOT
@@ -20,9 +20,9 @@ pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
 };
 
-/// Maximum length for a single JSON-lines event (the shared protocol cap).
+/// Maximum length for a single JSON event (the shared protocol cap).
 /// Lines exceeding this are dropped to prevent OOM from misbehaving children.
-const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
+const MAX_EVENT_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
 /// Maximum length for stored tool name / error strings (256 chars).
 const MAX_STORED_STRING: usize = 256;
@@ -162,7 +162,7 @@ pub fn mark_exited(entry: &mut SubagentEntry) {
 }
 
 /// Spawn a background monitor task that connects to a child agent's UDS socket
-/// and reads the JSON-lines event stream, updating the registry in real-time.
+/// and reads the framed JSON event stream, updating the registry in real-time.
 /// When `notify_tx` is `Some`, sends [`SubagentNotification`]s on the child's
 /// completion/error/exit (#523). Returns an abortable `JoinHandle`.
 pub fn spawn_monitor_task(
@@ -289,7 +289,8 @@ async fn read_monitor_message<R>(reader: &mut R, buf: &mut Vec<u8>, agent_id: &s
 where
     R: tokio::io::AsyncBufRead + Unpin,
 {
-    match quecto_line_io::read_frame_or_legacy_line_into(reader, buf, MAX_LINE_BYTES).await {
+    match quecto_line_io::read_frame_or_legacy_line_into(reader, buf, MAX_EVENT_PAYLOAD_BYTES).await
+    {
         Ok(Some(_wire_mode)) => MonitorRead::Message,
         Ok(None) => {
             // EOF — child closed the connection.
@@ -319,7 +320,7 @@ fn handle_monitor_line(
     broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
     parent_id: Option<&str>,
 ) {
-    if line.len() > MAX_LINE_BYTES {
+    if line.len() > MAX_EVENT_PAYLOAD_BYTES {
         tracing::warn!(agent = %agent_id, len = line.len(), "monitor: dropping oversized line");
         return;
     }
@@ -499,7 +500,7 @@ pub fn forward_child_workflow_event(
     canonical_workflow_forward(&value, child_id, parent_id)
 }
 
-/// Check if a JSON-lines event should trigger a notification and send it.
+/// Check if a JSON event should trigger a notification and send it.
 /// Parses the line from string — use `notify_from_parsed` when you already have a Value.
 #[cfg(test)]
 pub fn maybe_notify(notify_tx: Option<&NotificationTx>, agent_id: &str, line: &str) {

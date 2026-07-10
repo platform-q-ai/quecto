@@ -1,7 +1,7 @@
-//! Shared bounded line reader for quecto's JSON-lines UDS protocol.
+//! Shared bounded reader for quecto's framed JSON UDS protocol.
 //!
 //! Several crates (`quecto-api`, `quecto-agentic-harness`) read
-//! `\n`-terminated JSON lines off a `UnixStream`/pipe from a peer that must be
+//! length-prefixed JSON frames (or legacy `\n`-terminated JSON lines) from a `UnixStream`/pipe
 //! treated as untrusted (a UDS client, a spawned sub-agent, or a parent
 //! process). Reading with `AsyncBufReadExt::lines()`/`read_line` buffers the
 //! *entire* line before any length check can run, so one giant unterminated
@@ -21,7 +21,7 @@
 
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 
-/// Single source of truth for quecto's JSON-lines protocol per-line cap
+/// Single source of truth for quecto's UDS protocol payload cap
 /// (1 MiB, INCLUDING the trailing `\n`).
 ///
 /// Every reader bound and emitter cap in the workspace derives from this

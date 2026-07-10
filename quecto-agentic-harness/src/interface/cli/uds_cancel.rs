@@ -171,7 +171,7 @@ pub(crate) enum EventSink<'a> {
         &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
         super::uds_wire::ConnectionWireMode,
     ),
-    /// Fan JSON lines out to every connected client (multi-client server).
+    /// Fan JSON messages out to every connected client (multi-client server).
     /// Lines stay newline-terminated on this channel; each client's writer
     /// task re-frames them for its own connection (#1059).
     Broadcast(tokio::sync::broadcast::Sender<String>),

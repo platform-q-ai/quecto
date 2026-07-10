@@ -10,7 +10,7 @@
 //
 // The interior await loop (idle/exit/timeout/error state transitions) and the
 // successful workflow-snapshot decode require a live UDS server that streams a
-// JSON-lines `response` event; those are intentionally left to the existing
+// JSON `response` event; those are intentionally left to the existing
 // socket-based integration tests, per the no-real-socket constraint.
 
 use super::*;

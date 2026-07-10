@@ -1,6 +1,6 @@
 // UDS client — infrastructure adapter implementing the AgentGateway port.
 //
-// Connects to a quecto agent's Unix domain socket, sends JSON-lines commands,
+// Connects to a quecto agent's Unix domain socket, sends JSON messages,
 // and distributes incoming events to subscribers via broadcast channels.
 
 use std::future::Future;
@@ -32,7 +32,7 @@ const BROADCAST_CAPACITY: usize = 512;
 /// to establish the connection, then pass clones to axum handlers.
 #[derive(Clone)]
 pub struct UdsGateway {
-    /// Channel to send serialised JSON-lines commands to the writer task.
+    /// Channel to send serialised JSON commands to the writer task.
     cmd_tx: mpsc::Sender<String>,
     /// Broadcast sender — every incoming event is sent here.
     event_tx: broadcast::Sender<AgentEvent>,
@@ -53,7 +53,7 @@ impl UdsGateway {
     ///
     /// Spawns two background tasks:
     /// - A writer that drains the command channel and writes to the socket.
-    /// - A reader that parses incoming JSON-lines events and broadcasts them.
+    /// - A reader that parses incoming JSON events and broadcasts them.
     pub async fn connect(socket_path: &Path) -> Result<Self, ApiError> {
         let stream = UnixStream::connect(socket_path)
             .await
@@ -166,7 +166,7 @@ impl UdsGateway {
         })
     }
 
-    /// Send a raw JSON-lines command string.
+    /// Send a raw JSON command payload.
     async fn send_raw(&self, json: String) -> Result<(), ApiError> {
         self.cmd_tx
             .send(json)

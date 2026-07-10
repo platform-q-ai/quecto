@@ -17,7 +17,7 @@ path = "src/main.rs"
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-std", "sync"] }
 
-# Shared bounded JSON-lines reader (#1003)
+# Shared bounded protocol reader (#1003)
 quecto-line-io = { version = "0.2.0", path = "../quecto-line-io" }
 
 # HTTP client

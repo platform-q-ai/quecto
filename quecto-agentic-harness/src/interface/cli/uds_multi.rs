@@ -12,8 +12,9 @@ use crate::domain::session::{Session, SessionStore};
 
 use super::protocol::AgentEvent;
 use super::uds::{
-    DispatchCtx, LineResult, MAX_LINE_BYTES, dispatch_command, emit_event_to_broadcast_or_writer,
-    inject_system_prompt, is_cancel_command, parse_line, remove_injected_system_prompt,
+    DispatchCtx, LineResult, MAX_FRAME_PAYLOAD_BYTES, dispatch_command,
+    emit_event_to_broadcast_or_writer, inject_system_prompt, is_cancel_command, parse_line,
+    remove_injected_system_prompt,
 };
 use super::uds_cancel::{CancelHandle, CancelSlot, fire_cancel};
 pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
@@ -572,8 +573,11 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
     // speaking neither framing is an explicit version mismatch and the
     // connection closes — never a silent misparse or a hang.
     loop {
-        let incoming = match quecto_line_io::read_frame_or_legacy_line(&mut reader, MAX_LINE_BYTES)
-            .await
+        let incoming = match quecto_line_io::read_frame_or_legacy_line(
+            &mut reader,
+            MAX_FRAME_PAYLOAD_BYTES,
+        )
+        .await
         {
             Ok(Some(incoming)) => incoming,
             Ok(None) => break,

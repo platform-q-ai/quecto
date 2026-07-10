@@ -113,7 +113,7 @@ async fn spawn_recording_child(
     tempfile::TempDir,
     tokio::task::JoinHandle<()>,
 ) {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncWriteExt, BufReader};
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("child.sock");
     let listener = tokio::net::UnixListener::bind(&sock).unwrap();
@@ -122,8 +122,10 @@ async fn spawn_recording_child(
     let handle = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let (read_half, mut write_half) = tokio::io::split(stream);
-        let mut lines = BufReader::new(read_half).lines();
-        let line = lines.next_line().await.unwrap().unwrap();
+        let mut reader = BufReader::new(read_half);
+        let line = crate::infrastructure::test_support::read_framed_command_async(&mut reader)
+            .await
+            .unwrap();
         *recv2.lock().await = line.clone();
         let req: serde_json::Value = serde_json::from_str(&line).unwrap();
         let id = req.get("id").and_then(|v| v.as_str()).unwrap();
