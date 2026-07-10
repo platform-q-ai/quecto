@@ -1876,21 +1876,22 @@ fn then_agent_output_contains_token(world: &mut QuectoWorld, expected: String) {
     );
 }
 
-#[then(expr = "the agent output should contain a turn_end event with content {string}")]
-fn then_agent_output_contains_turn_end(world: &mut QuectoWorld, expected: String) {
+#[then("the agent output should contain a bounded turn_end event with message references")]
+fn then_agent_output_contains_bounded_turn_end(world: &mut QuectoWorld) {
     execute_uds(world);
     let events = &world.agent_events;
     let found = events.iter().any(|line| {
-        if let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) {
+        serde_json::from_str::<serde_json::Value>(line).is_ok_and(|ev| {
             ev["type"].as_str() == Some("turn_end")
-                && ev["message"]["content"].as_str() == Some(&expected)
-        } else {
-            false
-        }
+                && ev["message"]["content"].as_str() == Some("")
+                && ev["messageRefs"]
+                    .as_array()
+                    .is_some_and(|refs| !refs.is_empty())
+        })
     });
     assert!(
         found,
-        "expected a turn_end event with content {expected:?} in events:\n{events:#?}"
+        "expected a bounded turn_end event with message references in events:\n{events:#?}"
     );
 }
 

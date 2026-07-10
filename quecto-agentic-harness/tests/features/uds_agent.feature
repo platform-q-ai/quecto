@@ -619,7 +619,7 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And the agent output should contain a token event with "Hello"
     And the agent output should contain a token event with " world"
-    And the agent output should contain a turn_end event with content "Hello world"
+    And the agent output should contain a bounded turn_end event with message references
 
   # ─── Multi-client UDS event bus (#318) ───────────────────────────────────────
 
