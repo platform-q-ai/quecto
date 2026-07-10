@@ -101,6 +101,9 @@ fn when_user_sends_through_pruning_agent(world: &mut QuectoWorld, text: String) 
         .unwrap()
         .block_on(agent.process(&mut messages));
     world.agent_result = Some(result.expect("agent process failed"));
+    // #1073 review: the sticky agent latch is the single dirty channel —
+    // drain it here so the Then can assert on it.
+    world.watermark_prefix_dirty = agent.take_durable_prefix_dirty();
     world.watermark_post_run = messages;
 }
 
@@ -160,10 +163,9 @@ fn then_appended_exactly_tool_turn_and_final(world: &mut QuectoWorld, final_repl
 
 #[then("the agent result marks the durable prefix dirty")]
 fn then_agent_result_marks_prefix_dirty(world: &mut QuectoWorld) {
-    let result = world.agent_result.as_ref().expect("no agent result");
     assert!(
-        result.durable_prefix_dirty,
-        "mid-run demotion (stub or drop) must mark the durable prefix dirty"
+        world.watermark_prefix_dirty,
+        "mid-run demotion (stub or drop) must latch the durable prefix dirty"
     );
 }
 

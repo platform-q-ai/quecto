@@ -175,12 +175,6 @@ impl AgentLoopImpl {
         self.durable_prefix_dirty
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    /// Read the latch without clearing it — `AgentResult` reporting only; the
-    /// UDS layer clears it via [`Self::take_durable_prefix_dirty`].
-    fn peek_durable_prefix_dirty(&self) -> bool {
-        self.durable_prefix_dirty
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
     /// Replace the LLM provider after config reload.
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
         self.provider = provider;
@@ -361,7 +355,6 @@ impl AgentLoopImpl {
             cache_write_tokens: usage.cache_write_tokens,
             cost_micro_usd: usage.cost_micro_usd,
             appended_messages: Vec::new(),
-            durable_prefix_dirty: false,
         }
     }
 
@@ -471,9 +464,20 @@ impl AgentLoopImpl {
         // append time: a later ladder pass may demote any of them IN PLACE
         // (`collapse_message` mutates the `&mut Message` in the conversation
         // vector), so a shared representation (`Arc<Message>`) or clone-on-emit
-        // cannot preserve as-appended content. Cost: one clone per appended
-        // message, held for the run — bounded by the context budget, since
-        // everything appended was under the ceiling when it was appended.
+        // cannot preserve as-appended content.
+        //
+        // Cost (#1073 review): one clone per appended message, held until run
+        // end. This is a PER-MESSAGE bound only — the aggregate is the sum of
+        // everything the run appended and is NOT bounded by the context
+        // budget; a very long tool loop with large results accumulates the
+        // full total even while the pruning ladder reclaims the conversation
+        // copies. Accepted deliberately: the ledger drops when `AgentResult`
+        // is consumed at run end, and emission is independently capped at the
+        // 1 MiB protocol line cap (#1047, `to_capped_json_line`), so the wire
+        // never sees the aggregate. If a real workload ever demonstrates
+        // run-lifetime ledger growth as a problem, the remedy is
+        // clone-on-demote (move the original into the ledger only when a
+        // prune pass is about to mutate it), not Arc sharing.
         let mut appended_messages = Vec::new();
         // #1072: durable-prefix dirtiness is latched by `apply_context_pruning`
         // itself (any mutating ladder/collapse outcome) rather than diffing a
@@ -598,7 +602,6 @@ impl AgentLoopImpl {
                     appended_messages.push(final_message.clone());
                 }
                 result.appended_messages = appended_messages;
-                result.durable_prefix_dirty = self.peek_durable_prefix_dirty();
                 return Ok(result);
             }
 
@@ -646,7 +649,6 @@ impl AgentLoopImpl {
                     cache_write_tokens: usage_totals.cache_write_tokens,
                     cost_micro_usd: usage_totals.cost_micro_usd,
                     appended_messages,
-                    durable_prefix_dirty: self.peek_durable_prefix_dirty(),
                 });
             }
         }

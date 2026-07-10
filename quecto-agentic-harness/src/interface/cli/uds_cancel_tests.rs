@@ -10,15 +10,40 @@ use crate::infrastructure::tools::subagent_registry::{
 fn cancellation_removes_prompt_at_its_logical_boundary_after_pruning() {
     let prompt = Message::user("cancel me");
     let prompt_id = prompt.id();
+    // The prompt is pushed at index 2 — the position a caller would have
+    // recorded pre-run.
     let mut messages = vec![
+        Message::user("dropped-by-pruning"),
         Message::user("survivor"),
         prompt,
         Message::assistant("partial output", vec![]),
     ];
+    let recorded_prompt_index = 2;
+
+    // Simulate a mid-run physical drop (#1046 ladder rung 2) shifting the
+    // prompt LEFT of its recorded index. A positional rollback that
+    // truncates at the recorded index would now RETAIN the prompt
+    // (#1073 review: without this shift, positional and id-based rollback
+    // were indistinguishable and the test falsified nothing).
+    messages.remove(0);
+    assert_ne!(
+        messages
+            .iter()
+            .position(|m| m.id() == prompt_id)
+            .expect("prompt present"),
+        recorded_prompt_index,
+        "scenario setup: the drop must move the prompt off its recorded index"
+    );
 
     rollback_prompt(&mut messages, prompt_id);
 
-    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages.len(),
+        1,
+        "rollback must remove the prompt and everything after it, located by \
+         id — a stale positional truncate at index {recorded_prompt_index} \
+         would have kept the cancelled prompt"
+    );
     assert_eq!(messages[0].content, "survivor");
 }
 

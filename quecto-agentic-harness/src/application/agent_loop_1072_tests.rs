@@ -149,8 +149,9 @@ async fn in_place_stub_demotion_latches_durable_prefix_dirty() {
         "scenario setup: no message may be dropped in this stub-only scenario"
     );
 
+    drop(result);
     assert!(
-        result.durable_prefix_dirty,
+        agent.take_durable_prefix_dirty(),
         "in-place stub demotion changes the durable prefix content (same ids!) \
          and MUST latch durable_prefix_dirty, or persistence appends a delta \
          against a durable prefix still holding the full pre-stub content"
@@ -200,7 +201,7 @@ async fn mid_run_shrink_below_pre_turn_length_reports_exact_ledger_and_dirty() {
     assert_eq!(appended[1].content, "tool-output-payload");
     assert_eq!(appended[2].content, "final answer");
     assert!(
-        result.durable_prefix_dirty,
+        agent.take_durable_prefix_dirty(),
         "physical drops must latch durable_prefix_dirty"
     );
 }
@@ -320,25 +321,26 @@ async fn malformed_feedback_message_is_included_in_the_appended_ledger() {
 
 // ─── (d) the run ledger is recorded at append time, not via a slice ─────────
 
-/// #1072 (option d-2): the positional `appended_from` slice was migrated to
-/// the ledger — `execute_tool_calls_for_response` records each message it
-/// appends directly in the run ledger at the moment of the append. This test
-/// pins that contract: even under a budget that would prune the oversized
-/// prefix if pruning ever ran here, the ledger carries exactly the appended
-/// assistant tool-call message and tool result, independent of any positional
-/// arithmetic over `messages`.
+/// Unit contract of `execute_tool_calls_for_response`: each message it
+/// appends is recorded in the run ledger AT the moment of the append, and the
+/// pre-existing prefix is left untouched. NOTE (#1073 review): no pruning can
+/// run inside this function (only `run_loop` prunes), so this test cannot —
+/// and does not claim to — falsify ladder behavior or a positional-slice
+/// regression in `run_loop`; that end-to-end coverage lives in
+/// `mid_run_shrink_below_pre_turn_length_reports_exact_ledger_and_dirty`
+/// above. What this pins: the ledger parameter is a live write (not dead),
+/// its entries are exact as-appended clones, and tool execution never
+/// mutates messages it did not append.
 #[tokio::test]
-async fn tool_execution_records_its_appends_in_the_run_ledger_under_budget_pressure() {
+async fn tool_execution_records_its_appends_in_the_run_ledger_at_append_time() {
     let big = big_content();
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(MockTool::new("bulk", "tool-output-payload")));
-    // Budget 100: any pruning pass inside tool execution WOULD demote/drop
-    // the oversized prefix below.
     let agent = agent_with(
         MockProvider::new(vec![]),
         registry,
         Some(Arc::new(MemSpillStore::default())),
-        100,
+        190_000,
     );
     let mut messages: Vec<Message> = (1..=4).map(|t| spilled_history_message(t, &big)).collect();
     messages.push(Message::user("go"));
@@ -384,6 +386,79 @@ async fn tool_execution_records_its_appends_in_the_run_ledger_under_budget_press
     assert_eq!(messages.len(), prefix.len() + 2);
 }
 
+// ─── manifest structural changes must latch dirty (#1073 review) ────────────
+
+/// CONFIRMED #1073 finding: `update_spill_manifest` can INSERT a manifest at
+/// the front of the persisted prefix (e.g. the first prompt after `rewind_to`
+/// cleared spill references), shifting every persisted index right — with no
+/// collapse/stub/drop to fire the latch. Persistence would then append a
+/// clean delta starting at the (shifted) watermark, duplicating the last
+/// already-persisted message in the durable file. A manifest insert/removal
+/// must latch dirty on its own.
+#[tokio::test]
+async fn manifest_insertion_into_the_persisted_prefix_latches_dirty() {
+    // Small resumed history, far under budget: no collapse, no stub, no drop.
+    // The messages carry no spill_id (rewind_to strips them), so the
+    // creation-time spill files them and a fresh manifest is inserted at the
+    // front of the conversation.
+    let mut messages = vec![
+        Message::user("persisted one"),
+        Message::assistant("persisted two", vec![]),
+        Message::user("go"),
+    ];
+    let agent = agent_with(
+        MockProvider::new(vec![text_response("ok")]),
+        MockRegistry::new(),
+        Some(Arc::new(MemSpillStore::default())),
+        190_000,
+    );
+    let _ = agent.run_loop(&mut messages).await.unwrap();
+
+    // Positive control: a manifest really was inserted before the prefix.
+    assert!(
+        messages.first().is_some_and(|m| m.is_manifest),
+        "scenario setup: the spill pass must insert a manifest message"
+    );
+    assert!(
+        agent.take_durable_prefix_dirty(),
+        "a manifest insert shifts every persisted index and MUST latch \
+         durable_prefix_dirty, or the clean-delta fast path appends against \
+         a shifted prefix and duplicates a persisted message"
+    );
+}
+
+/// Clean-side companion: when the manifest already exists and only its TEXT
+/// is rewritten in place (every tool-calling turn), no index shifts — the
+/// latch must stay clean or `save_clean_delta` would be defeated on
+/// virtually every turn.
+#[tokio::test]
+async fn in_place_manifest_text_rewrite_does_not_latch_dirty() {
+    let store: Arc<dyn crate::domain::session::ContextSpillStore> =
+        Arc::new(MemSpillStore::default());
+    let agent = agent_with(
+        MockProvider::new(vec![text_response("first"), text_response("second")]),
+        MockRegistry::new(),
+        Some(store),
+        190_000,
+    );
+    // First run inserts the manifest (latches — drain it).
+    let mut messages = vec![Message::user("go")];
+    let _ = agent.run_loop(&mut messages).await.unwrap();
+    assert!(agent.take_durable_prefix_dirty());
+    assert!(messages.iter().any(|m| m.is_manifest));
+
+    // Second run: manifest exists, all history spilled — the manifest text is
+    // rewritten in place only.
+    messages.push(Message::user("again"));
+    let _ = agent.run_loop(&mut messages).await.unwrap();
+    assert!(
+        !agent.take_durable_prefix_dirty(),
+        "an in-place manifest text rewrite shifts no indices and must NOT \
+         latch dirty — latching here would force a full compact rewrite on \
+         virtually every turn"
+    );
+}
+
 // ─── clean-side boundary: no demotion means NOT dirty ───────────────────────
 
 /// #1072 review (coverage finding 2): the latch must stay CLEAN for a run
@@ -412,13 +487,10 @@ async fn under_budget_run_leaves_the_durable_prefix_clean() {
             "scenario setup: an under-budget run must not touch history"
         );
     }
-    assert!(
-        !result.durable_prefix_dirty,
-        "a run with no demotion must report the durable prefix CLEAN so \
-         persistence keeps the append-only fast path"
-    );
+    drop(result);
     assert!(
         !agent.take_durable_prefix_dirty(),
-        "the agent-level latch must also stay clean for an untouched run"
+        "a run with no demotion must leave the agent latch CLEAN so \
+         persistence keeps the append-only fast path"
     );
 }

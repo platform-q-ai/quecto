@@ -226,8 +226,15 @@ impl<'a> EventSink<'a> {
 
 /// Return code from [`run_agent_message`].
 pub enum PromptOutcome {
-    /// Agent completed successfully; the flag reports a changed durable prefix.
-    Success(bool),
+    /// Agent completed successfully.
+    ///
+    /// Deliberately carries NO durable-prefix-dirty payload (#1073 review):
+    /// the agent-level latch (`AgentLoopImpl::take_durable_prefix_dirty`,
+    /// drained centrally by `persist_current_session`) is the single
+    /// authoritative channel. A result-carried flag existed briefly but was
+    /// success-only — dirtiness from an Error/Cancelled turn would be lost by
+    /// any consumer that trusted it — and no production code ever read it.
+    Success,
     /// Agent returned an error (fatal — exit the loop).
     Error,
     /// The run was cancelled via `abort` or `steer`.
@@ -340,7 +347,6 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         }
         Some(Ok(agent_result)) => {
             agent_session.record_agent_result(&agent_result);
-            let durable_prefix_dirty = agent_result.durable_prefix_dirty;
             // Tool events are forwarded in real-time via forward_progress_event
             // — emitting them again here would duplicate events with conflicting
             // IDs.
@@ -373,7 +379,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                 .collect();
             sink.emit(&AgentEvent::AgentEnd { messages: run_msgs })
                 .await;
-            PromptOutcome::Success(durable_prefix_dirty)
+            PromptOutcome::Success
         }
         Some(Err(e)) => {
             sink.emit(&AgentEvent::err(None, "agent_error", format!("{e}")))

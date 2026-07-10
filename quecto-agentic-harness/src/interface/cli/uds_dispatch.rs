@@ -206,6 +206,14 @@ pub(super) async fn persist_current_session(
         return Ok(());
     }
     remove_injected_system_prompt(ctx.messages, ctx.system_prompt);
+    // #1072/#1073 review: drain the agent's durable-prefix dirty latch HERE,
+    // at the single sink that acts on it, instead of at every agent-running
+    // dispatch site. The latch is sticky and outcome-independent (Success,
+    // Error, Cancelled), so any run that mutated pre-existing history —
+    // including drained steer follow-ups, workflow auto-continue turns and
+    // coalesced sub-agent notes — is reconciled by the next persist, and a
+    // future dispatch path cannot forget to propagate it.
+    ctx.durable_prefix_dirty |= ctx.agent.take_durable_prefix_dirty();
     if ctx.messages.len() < ctx.last_persisted_message_index {
         ctx.last_persisted_message_index = 0;
     }

@@ -176,19 +176,31 @@ pub const DEFAULT_PIN_RECENT_TURNS: u32 = 2;
 /// Build or update the pinned spill manifest message.
 /// Shows the last 10 spill entries plus summary metadata.
 /// Fixed token budget (~500 tokens) regardless of session length.
+///
+/// Returns `true` when the update STRUCTURALLY changed the conversation —
+/// a manifest message was inserted or removed, shifting every later index —
+/// so callers can latch the durable-prefix dirty flag (#1073 review): a
+/// structural change misaligns any persisted-prefix watermark, and a clean
+/// delta appended against it would duplicate or drop messages. An in-place
+/// content rewrite of an existing manifest deliberately returns `false`: it
+/// shifts no indices, and the manifest text is rebuilt from the spill store
+/// before every LLM turn (including on resume), so stale durable manifest
+/// text is self-healing and latching on it would force a full compact
+/// rewrite on virtually every tool-calling turn.
 pub async fn update_spill_manifest(
     messages: &mut Vec<Message>,
     spill_store: &dyn ContextSpillStore,
     session_key: &str,
-) {
+) -> bool {
     let entries = spill_store
         .list_entries(session_key)
         .await
         .unwrap_or_default();
     if entries.is_empty() {
         // Remove manifest if it exists and there are no entries
+        let before = messages.len();
         messages.retain(|m| !m.is_manifest);
-        return;
+        return messages.len() != before;
     }
 
     let manifest = build_manifest_text(&entries);
@@ -197,6 +209,7 @@ pub async fn update_spill_manifest(
     if let Some(msg) = messages.iter_mut().find(|m| m.is_manifest) {
         msg.content = manifest;
         msg.invalidate_token_cache();
+        false
     } else {
         let mut msg = Message::system(manifest);
         msg.is_pinned = true;
@@ -207,6 +220,7 @@ pub async fn update_spill_manifest(
             .position(|m| m.role != Role::System)
             .unwrap_or(messages.len());
         messages.insert(pos, msg);
+        true
     }
 }
 

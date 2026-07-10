@@ -476,17 +476,15 @@ pub(crate) fn run_agent_session(
         rt.block_on(agent.prune_resumed_context(&mut messages));
     }
 
-    // System prompt is injected at call time but not persisted in session history.
-    // Track its index so we can remove exactly this message before saving.
-    let system_prompt_idx = if flags.system_prompt.is_some() {
-        let idx = messages.len();
-        messages.push(Message::system(
-            flags.system_prompt.as_deref().unwrap_or("").to_string(),
-        ));
-        Some(idx)
-    } else {
-        None
-    };
+    // System prompt is injected at call time, never persisted. Track its
+    // message ID, not its position: mid-run pruning can shift indices left,
+    // making a positional `remove(idx)` delete the wrong message (#1073).
+    let system_prompt_id = flags.system_prompt.as_deref().map(|sp| {
+        let msg = Message::system(sp.to_string());
+        let id = msg.id();
+        messages.push(msg);
+        id
+    });
 
     let message = flags.message.as_deref().unwrap_or("");
     messages.push(Message::user(message.to_string()));
@@ -509,10 +507,12 @@ pub(crate) fn run_agent_session(
     match agent_result {
         Ok(result) => {
             if !ephemeral {
-                if let Some(idx) = system_prompt_idx {
-                    if idx < messages.len() {
-                        messages.remove(idx);
-                    }
+                // Identity-based removal: immune to index shifts from
+                // mid-run pruning (a no-op if pruning dropped it).
+                if let Some(id) = system_prompt_id
+                    && let Some(idx) = messages.iter().position(|m| m.id() == id)
+                {
+                    messages.remove(idx);
                 }
                 let session = Session {
                     key: session_key,

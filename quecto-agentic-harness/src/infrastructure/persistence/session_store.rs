@@ -50,28 +50,23 @@ impl FileSessionStore {
     ) -> Result<(), DomainError> {
         self.ensure_dir().await?;
         let path = self.session_path(key);
-        if previously_persisted == 0
+        // Trust-the-caller gate: unlike `append_known_delta` this deliberately
+        // never reads/parses durable history (`persisted_prefix_changed`) —
+        // the caller vouches for a clean prefix via the dirty latch. Only the
+        // structural preconditions for appending are checked here.
+        let must_compact = previously_persisted == 0
             || previously_persisted > messages.len()
             || !path.exists()
-            || !is_jsonl_session_file(&path).await?
-        {
-            let session = Session {
-                key: key.to_string(),
-                messages: messages.to_vec(),
-                workflow_run,
-            };
-            return write_compacted(&path, &session).await;
-        }
-        let record = SessionRecordRef::Append {
-            start_index: Some(previously_persisted),
-            messages: messages[previously_persisted..]
-                .iter()
-                .map(message_to_record_ref)
-                .collect(),
-            workflow_run: workflow_run.as_ref(),
-            workflow_run_cleared: workflow_run.is_none(),
-        };
-        append_record(&path, &record).await
+            || !is_jsonl_session_file(&path).await?;
+        compact_or_append_delta(
+            &path,
+            key,
+            messages,
+            previously_persisted,
+            workflow_run.as_ref(),
+            must_compact,
+        )
+        .await
     }
 
     /// Ensure the sessions directory exists.
@@ -399,11 +394,38 @@ async fn append_known_delta(
     previously_persisted: usize,
     workflow_run: Option<&WorkflowRunPersisted>,
 ) -> Result<(), DomainError> {
-    if previously_persisted == 0
+    // Verified gate: reads and parses durable history to detect a changed
+    // persisted prefix (masked pruning). `save_clean_delta` shares the same
+    // compact-or-append tail below but replaces this verification with the
+    // caller-vouched dirty latch.
+    let must_compact = previously_persisted == 0
         || !path.exists()
         || !is_jsonl_session_file(path).await?
-        || persisted_prefix_changed(path, messages, previously_persisted).await?
-    {
+        || persisted_prefix_changed(path, messages, previously_persisted).await?;
+    compact_or_append_delta(
+        path,
+        key,
+        messages,
+        previously_persisted,
+        workflow_run,
+        must_compact,
+    )
+    .await
+}
+
+/// Shared tail of the two delta writers (#1073 review): compact-rewrite the
+/// whole session, or append `messages[previously_persisted..]` as one Append
+/// record. Keeping this in ONE place means a future fix to the record shape
+/// or the compaction write cannot land in only one of the two paths.
+async fn compact_or_append_delta(
+    path: &Path,
+    key: &str,
+    messages: &[Message],
+    previously_persisted: usize,
+    workflow_run: Option<&WorkflowRunPersisted>,
+    must_compact: bool,
+) -> Result<(), DomainError> {
+    if must_compact {
         let session = Session {
             key: key.to_string(),
             messages: messages.to_vec(),
@@ -411,11 +433,12 @@ async fn append_known_delta(
         };
         return write_compacted(path, &session).await;
     }
-
-    let added = &messages[previously_persisted..];
     let record = SessionRecordRef::Append {
         start_index: Some(previously_persisted),
-        messages: added.iter().map(message_to_record_ref).collect(),
+        messages: messages[previously_persisted..]
+            .iter()
+            .map(message_to_record_ref)
+            .collect(),
         workflow_run,
         workflow_run_cleared: workflow_run.is_none(),
     };

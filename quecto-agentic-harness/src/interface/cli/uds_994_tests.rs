@@ -417,7 +417,7 @@ async fn run_stub_turn_event_types_with_sink(
     .await;
     assert!(matches!(
         outcome,
-        crate::interface::cli::uds_cancel::PromptOutcome::Success(_)
+        crate::interface::cli::uds_cancel::PromptOutcome::Success
     ));
 
     messages

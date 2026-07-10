@@ -6,8 +6,8 @@
 //! and truncated at a pre-turn `user_msg_idx` on cancel; both panic or emit
 //! wrong data once pruning removes earlier vector entries. This test fails
 //! (by panic or by payload mismatch) if those call sites ever revert to
-//! positional slicing, and fails if the durable-prefix dirty signal is
-//! dropped from the outcome.
+//! positional slicing, and fails if the durable-prefix dirty latch is
+//! dropped from the pruning pass.
 
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -104,7 +104,7 @@ fn droppable_history_message(turn: u32) -> Message {
 /// pre-turn length, then asserts:
 ///   1. the run completes (the pre-fix positional slice aborts here);
 ///   2. AgentEnd carries exactly the messages this run appended;
-///   3. the outcome reports the durable prefix dirty, so persistence
+///   3. the agent latch reports the durable prefix dirty, so persistence
 ///      reconciles.
 #[tokio::test]
 async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag() {
@@ -177,9 +177,14 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
     );
 
     assert!(
-        matches!(outcome, PromptOutcome::Success(true)),
-        "a run that dropped pre-existing history must report the durable \
-         prefix dirty on its outcome so persistence reconciles"
+        matches!(outcome, PromptOutcome::Success),
+        "the shrinking run must still complete successfully"
+    );
+    assert!(
+        agent.take_durable_prefix_dirty(),
+        "a run that dropped pre-existing history must latch the durable \
+         prefix dirty so persistence reconciles — the latch (drained by \
+         persist_current_session) is the single authoritative channel"
     );
 
     let agent_end = String::from_utf8(writer_bytes)
@@ -205,7 +210,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
 }
 
 /// Clean-side boundary (#1072 review, coverage finding 2), dispatch level: a
-/// turn far under budget must report `PromptOutcome::Success(false)` so the
+/// turn far under budget must leave the agent's dirty latch CLEAR so the
 /// UDS layer keeps the append-only `save_clean_delta` fast path. Fails if the
 /// latch is hardcoded true or latched on a non-mutating prune pass.
 #[tokio::test]
@@ -257,9 +262,13 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
     };
 
     assert!(
-        matches!(outcome, PromptOutcome::Success(false)),
-        "an under-budget turn must NOT report the durable prefix dirty — a \
-         spurious dirty flag forces a full compact-rewrite every turn and \
+        matches!(outcome, PromptOutcome::Success),
+        "the under-budget turn must complete successfully"
+    );
+    assert!(
+        !agent.take_durable_prefix_dirty(),
+        "an under-budget turn must NOT latch the durable prefix dirty — a \
+         spurious dirty latch forces a full compact-rewrite every turn and \
          defeats the save_clean_delta fast path"
     );
 }
