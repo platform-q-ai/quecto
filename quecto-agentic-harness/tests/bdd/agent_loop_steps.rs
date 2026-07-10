@@ -509,8 +509,8 @@ fn then_no_tool_result_preview_should_be_captured(world: &mut QuectoWorld) {
 fn then_assistant_tool_requests_should_be_reused_for_execution(world: &mut QuectoWorld) {
     assert_eq!(
         world.headless_tool_call_clone_count,
-        Some(0),
-        "tool-call arguments should move into the assistant message and be borrowed for execution"
+        Some(2),
+        "execution borrows tool requests; one clone per request is retained by the run append ledger"
     );
 }
 

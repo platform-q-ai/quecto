@@ -38,6 +38,42 @@ impl FileSessionStore {
         self.sessions_dir.join(Self::key_to_filename(key))
     }
 
+    /// Append a caller-known clean delta without reading/parsing durable history.
+    /// Callers must reset the watermark whenever the persisted prefix may have
+    /// been removed, replaced, or reordered.
+    pub async fn save_clean_delta(
+        &self,
+        key: &str,
+        messages: &[Message],
+        previously_persisted: usize,
+        workflow_run: Option<WorkflowRunPersisted>,
+    ) -> Result<(), DomainError> {
+        self.ensure_dir().await?;
+        let path = self.session_path(key);
+        if previously_persisted == 0
+            || previously_persisted > messages.len()
+            || !path.exists()
+            || !is_jsonl_session_file(&path).await?
+        {
+            let session = Session {
+                key: key.to_string(),
+                messages: messages.to_vec(),
+                workflow_run,
+            };
+            return write_compacted(&path, &session).await;
+        }
+        let record = SessionRecordRef::Append {
+            start_index: Some(previously_persisted),
+            messages: messages[previously_persisted..]
+                .iter()
+                .map(message_to_record_ref)
+                .collect(),
+            workflow_run: workflow_run.as_ref(),
+            workflow_run_cleared: workflow_run.is_none(),
+        };
+        append_record(&path, &record).await
+    }
+
     /// Ensure the sessions directory exists.
     async fn ensure_dir(&self) -> Result<(), DomainError> {
         tokio::fs::create_dir_all(&self.sessions_dir)
@@ -96,6 +132,22 @@ impl SessionStore for FileSessionStore {
             )
             .await
         })
+    }
+
+    fn save_clean_delta<'a>(
+        &'a self,
+        key: &'a str,
+        messages: &'a [Message],
+        previously_persisted: usize,
+        workflow_run: Option<WorkflowRunPersisted>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        Box::pin(FileSessionStore::save_clean_delta(
+            self,
+            key,
+            messages,
+            previously_persisted,
+            workflow_run,
+        ))
     }
 
     fn exists(

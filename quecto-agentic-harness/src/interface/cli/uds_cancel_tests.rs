@@ -7,39 +7,6 @@ use crate::infrastructure::tools::subagent_registry::{
 };
 
 #[test]
-fn run_messages_follow_logical_prompt_after_history_shrinks() {
-    let pre_turn = ["old 1", "old 2", "old 3"];
-    let pre_turn_len = pre_turn.len();
-    let prompt = Message::user("current prompt");
-    let prompt_id = prompt.id();
-    let messages = vec![prompt, Message::assistant("current answer", vec![])];
-    assert!(messages.len() < pre_turn_len);
-
-    let run = messages_after(&messages, prompt_id);
-
-    assert_eq!(run.len(), 1);
-    assert_eq!(run[0].content, "current answer");
-}
-
-#[test]
-fn run_messages_ignore_masked_history_length() {
-    let prompt = Message::user("current prompt");
-    let prompt_id = prompt.id();
-    let messages = vec![
-        Message::user("surviving old history"),
-        prompt,
-        Message::assistant("first new message", vec![]),
-        Message::tool("call", "second new message"),
-    ];
-
-    let run = messages_after(&messages, prompt_id);
-
-    assert_eq!(run.len(), 2);
-    assert_eq!(run[0].content, "first new message");
-    assert_eq!(run[1].content, "second new message");
-}
-
-#[test]
 fn cancellation_removes_prompt_at_its_logical_boundary_after_pruning() {
     let prompt = Message::user("cancel me");
     let prompt_id = prompt.id();

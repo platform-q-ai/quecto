@@ -1,6 +1,3 @@
-use std::pin::Pin;
-use std::sync::Arc;
-
 use crate::application::agent_usage::UsageTotals;
 use crate::application::context_pruning;
 use crate::domain::agent::{
@@ -13,7 +10,8 @@ use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent
 use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::ToolRegistry;
-
+use std::pin::Pin;
+use std::sync::Arc;
 #[path = "agent_loop_clamp.rs"]
 mod agent_loop_clamp;
 #[path = "agent_loop_effort.rs"]
@@ -32,13 +30,11 @@ use agent_loop_errors::{
     provider_failure_audit_event,
 };
 use agent_loop_spill::ToolMessageArgs;
-
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 const MAX_PROVIDER_ATTEMPTS: usize = 3;
 const PROVIDER_RETRY_BACKOFF_MS: u64 = 100;
 /// Cap on model-malformed requests re-prompted as addressable feedback (#931).
 const MAX_MALFORMED_REQUEST_RETRIES: u32 = 3;
-
 /// Configuration for building an agent loop.
 pub struct AgentLoopConfig {
     pub provider: Arc<dyn LlmProvider>,
@@ -76,7 +72,6 @@ pub struct AgentLoopConfig {
     /// re-derives it on a model switch.
     pub model_context_window: Option<usize>,
 }
-
 pub struct AgentLoopImpl {
     provider: Arc<dyn LlmProvider>,
     tool_registry: Box<dyn ToolRegistry>,
@@ -109,7 +104,6 @@ pub struct AgentLoopImpl {
     /// Optional append-only audit log for durable event recording.
     audit_log: Option<Arc<dyn AuditSink>>,
 }
-
 impl std::fmt::Debug for AgentLoopImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentLoopImpl")
@@ -119,12 +113,10 @@ impl std::fmt::Debug for AgentLoopImpl {
             .finish()
     }
 }
-
 struct StreamProviderError {
     error: DomainError,
     emitted_event: bool,
 }
-
 /// End-of-loop bookkeeping for the final text response (avoids the clippy
 /// argument-count limit on `finalize_text_response`).
 struct TurnEnd {
@@ -133,7 +125,6 @@ struct TurnEnd {
     pre_response_context_tokens: usize,
     current_turn: u32,
 }
-
 impl AgentLoopImpl {
     pub fn new(config: AgentLoopConfig) -> Self {
         Self {
@@ -159,12 +150,10 @@ impl AgentLoopImpl {
             audit_log: config.audit_log,
         }
     }
-
     /// Replace the LLM provider after config reload.
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
         self.provider = provider;
     }
-
     /// Return the currently configured model name.
     pub fn model(&self) -> &str {
         &self.model
@@ -175,7 +164,6 @@ impl AgentLoopImpl {
     pub fn max_context_tokens(&self) -> usize {
         self.effective_max_context_tokens()
     }
-
     /// Snapshot of the config-threaded context knobs
     /// `(pin_recent_turns, context_collapse_after_messages)` — observability
     /// for wiring checks so construction sites that drop user config are
@@ -185,7 +173,6 @@ impl AgentLoopImpl {
     pub fn context_knob_snapshot(&self) -> (u32, u32) {
         (self.pin_recent_turns, self.context_collapse_after_messages)
     }
-
     /// Fire a progress event to the registered callback, if any. Takes a closure
     /// so the event is only constructed when a callback is registered; on the
     /// headless path (`progress_callback = None`) it's never called.
@@ -195,13 +182,11 @@ impl AgentLoopImpl {
             cb(make_event());
         }
     }
-
     /// Set the maximum number of tool iterations (overrides default).
     pub fn with_max_tool_iterations(mut self, max: u32) -> Self {
         self.max_tool_iterations = max;
         self
     }
-
     /// Replace the tool registry with a new one.
     pub fn swap_registry(&mut self, registry: Box<dyn ToolRegistry>) {
         self.tool_registry = registry;
@@ -463,6 +448,7 @@ impl AgentLoopImpl {
             cache_read_tokens: usage.cache_read_tokens,
             cache_write_tokens: usage.cache_write_tokens,
             cost_micro_usd: usage.cost_micro_usd,
+            appended_messages: Vec::new(),
         }
     }
 
@@ -568,6 +554,9 @@ impl AgentLoopImpl {
         // True when the manifest needs a rebuild; starts true for prior spills.
         let mut spills_dirty = true;
         let mut usage_totals = UsageTotals::default();
+        // Independent append ledger: active context pruning may later remove
+        // messages produced earlier in this same run.
+        let mut appended_messages = Vec::new();
         // Count of model-malformed requests turned into addressable feedback.
         let mut malformed_retries: u32 = 0;
 
@@ -677,12 +666,22 @@ impl AgentLoopImpl {
                     pre_response_context_tokens: context_tokens,
                     current_turn,
                 };
-                return Ok(self.finalize_text_response(messages, response, end).await);
+                let mut result = self.finalize_text_response(messages, response, end).await;
+                if let Some(final_message) = messages.last() {
+                    appended_messages.push(final_message.clone());
+                }
+                result.appended_messages = appended_messages;
+                return Ok(result);
             }
 
+            // Invariant: `execute_tool_calls_for_response` is append-only with
+            // respect to `messages`; it must not remove, replace, insert before,
+            // or reorder the existing prefix. This boundary therefore isolates
+            // exactly the assistant and tool messages produced by this turn.
             let appended_from = messages.len();
             self.execute_tool_calls_for_response(messages, current_turn, response)
                 .await;
+            appended_messages.extend_from_slice(&messages[appended_from..]);
             // Stream this turn's output (assistant message + tool results) over
             // the live progress path so a parent/inspector sees it turn-by-turn,
             // not only at completion (#797). The clone is only paid when a
@@ -714,6 +713,7 @@ impl AgentLoopImpl {
                     cache_read_tokens: usage_totals.cache_read_tokens,
                     cache_write_tokens: usage_totals.cache_write_tokens,
                     cost_micro_usd: usage_totals.cost_micro_usd,
+                    appended_messages,
                 });
             }
         }

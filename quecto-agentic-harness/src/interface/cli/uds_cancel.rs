@@ -268,12 +268,6 @@ fn prompt_position(messages: &[Message], prompt_id: uuid::Uuid) -> Option<usize>
         .position(|message| message.id() == prompt_id)
 }
 
-fn messages_after(messages: &[Message], prompt_id: uuid::Uuid) -> &[Message] {
-    prompt_position(messages, prompt_id)
-        .map(|index| &messages[index + 1..])
-        .unwrap_or_default()
-}
-
 fn rollback_prompt(messages: &mut Vec<Message>, prompt_id: uuid::Uuid) {
     if let Some(index) = prompt_position(messages, prompt_id) {
         messages.truncate(index);
@@ -371,7 +365,8 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                 tool_results: vec![],
             };
             sink.emit(&turn_end).await;
-            let run_msgs: Vec<serde_json::Value> = messages_after(messages, prompt_id)
+            let run_msgs: Vec<serde_json::Value> = agent_result
+                .appended_messages
                 .iter()
                 .map(message_to_json)
                 .collect();

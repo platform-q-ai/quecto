@@ -215,7 +215,7 @@ pub(super) async fn persist_current_session(
         .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run()));
     let result = ctx
         .session_store
-        .save_delta(
+        .save_clean_delta(
             ctx.session_key,
             ctx.messages,
             ctx.last_persisted_message_index,

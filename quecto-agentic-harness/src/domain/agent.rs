@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::error::DomainError;
+use super::message::Message;
 
 /// A live progress event emitted by the agent loop during processing.
 ///
@@ -103,6 +104,9 @@ pub struct AgentResult {
     pub cache_write_tokens: u64,
     /// Cumulative provider-reported cost for this run, in micro-USD.
     pub cost_micro_usd: u64,
+    /// Messages appended by this run, in append order, even if later pruning
+    /// removes them from the active context.
+    pub appended_messages: Vec<Message>,
 }
 
 impl AgentResult {
@@ -119,6 +123,7 @@ impl AgentResult {
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             cost_micro_usd: 0,
+            appended_messages: Vec::new(),
         }
     }
 
