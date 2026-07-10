@@ -142,6 +142,68 @@ fn given_codex_request_body_with_tools(world: &mut QuectoWorld, model: String) {
         .insert("_codex_body".to_string(), body.to_string());
 }
 
+// --- Issue #1066: Given context / When action steps for effort scenarios ---
+
+#[given(expr = "an OpenAI reasoning model {string} with function tools")]
+fn given_openai_reasoning_model_with_tools(world: &mut QuectoWorld, model: String) {
+    world
+        .env_overrides
+        .insert("_codex_model".to_string(), model);
+}
+
+#[given(expr = "a configured reasoning effort {string}")]
+fn given_configured_reasoning_effort(world: &mut QuectoWorld, effort: String) {
+    world
+        .env_overrides
+        .insert("_codex_effort".to_string(), effort);
+}
+
+#[given("no reasoning effort is configured")]
+fn given_no_reasoning_effort_configured(world: &mut QuectoWorld) {
+    world.env_overrides.remove("_codex_effort");
+}
+
+#[when("the provider builds the Responses request")]
+fn when_provider_builds_responses_request(world: &mut QuectoWorld) {
+    let model = world
+        .env_overrides
+        .get("_codex_model")
+        .cloned()
+        .expect("no model — add 'Given an OpenAI reasoning model ... with function tools'");
+    // Issue #1066: the full OpenAI-documented effort scale must be
+    // configurable; parse() rejecting a documented level is a failure.
+    let effort = world.env_overrides.get("_codex_effort").map(|e| {
+        quecto::domain::provider::EffortLevel::parse(e).unwrap_or_else(|| {
+            panic!("effort level '{e}' must be a valid configurable level (#1066)")
+        })
+    });
+    let messages = vec![Message::system("You are helpful."), Message::user("Run ls")];
+    let tools = vec![ToolDefinition {
+        name: "bash".into(),
+        description: "Execute a command".into(),
+        parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
+    }];
+    let request = quecto::domain::provider::ChatRequest {
+        messages: &messages,
+        tools: &tools,
+        model: &model,
+        max_tokens: 4096,
+        temperature: 0.7,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort,
+    };
+    let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
+        &request,
+    );
+    world
+        .env_overrides
+        .insert("_codex_body".to_string(), body.to_string());
+}
+
 #[given(expr = "a Codex request body for model {string} with session ID {string}")]
 fn given_codex_request_body_with_session_id(
     world: &mut QuectoWorld,
@@ -281,6 +343,26 @@ fn then_body_contains_nested_string(
         key,
         expected,
         body[&parent][&key]
+    );
+}
+
+#[then(expr = "the request body should contain a {string} object without {string}")]
+fn then_body_nested_object_without_key(world: &mut QuectoWorld, parent: String, key: String) {
+    let body_str = world
+        .env_overrides
+        .get("_codex_body")
+        .expect("codex body not set");
+    let body: serde_json::Value = serde_json::from_str(body_str).expect("invalid json");
+    let obj = body
+        .get(&parent)
+        .and_then(|v| v.as_object())
+        .unwrap_or_else(|| panic!("expected body[\"{}\"] to be an object", parent));
+    assert!(
+        !obj.contains_key(&key),
+        "expected body[\"{}\"] not to contain \"{}\" (server default must apply, #1066), got {:?}",
+        parent,
+        key,
+        obj.get(&key)
     );
 }
 

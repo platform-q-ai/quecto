@@ -28,6 +28,14 @@ pub fn build_agent_provider(
     let store_arc = Arc::new(CredentialStore::new(base_dir));
     let refresh_fn = crate::interface::shared::make_oauth_refresh_fn();
 
+    // #1066: the endpoint router needs the *effective* registry (builtin +
+    // ~/.quecto/models.json overrides) so user `reasoning` overrides steer
+    // Responses-vs-Chat-Completions routing. Loaded once, reused below.
+    let model_registry = crate::infrastructure::model_registry::ModelRegistry::load_from_path(
+        &base_dir.join("models.json"),
+    )
+    .map_err(|e| e.to_string())?;
+
     // Built-in providers are explicit by billing/auth mode. We deliberately do
     // not resolve a single `openai`/`anthropic` slot by precedence because that
     // can silently switch a request between monthly-plan OAuth and token-billed
@@ -56,6 +64,12 @@ pub fn build_agent_provider(
                 openai_base.clone(),
                 http_client.clone(),
                 false,
+                model_registry
+                    .models()
+                    .iter()
+                    .filter(|m| m.provider == "openai-api" && m.reasoning)
+                    .map(|m| m.id.clone())
+                    .collect(),
             )
             .map_err(|e| format!("openai-api provider configuration error: {}", e))?,
         );
@@ -176,10 +190,6 @@ pub fn build_agent_provider(
         ));
     }
     let mut custom_prefixes = HashSet::new();
-    let model_registry = crate::infrastructure::model_registry::ModelRegistry::load_from_path(
-        &base_dir.join("models.json"),
-    )
-    .map_err(|e| e.to_string())?;
     // Build at most one provider per distinct registry provider key. Each key
     // carries its own wire protocol (`api`) and explicit auth mode; we never
     // silently switch a vendor between OAuth and API-key billing.
@@ -470,11 +480,13 @@ fn build_single_provider(
     if name == "openai" && !disable_codex_routing {
         let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(api_key);
         if let Some(acct) = account_id {
-            return Ok(providers::create_codex_provider_with_client(
+            return providers::create_codex_provider_with_client(
                 api_key.to_string(),
                 acct,
+                api_base.clone(),
                 http_client.clone(),
-            ));
+            )
+            .map_err(|e| format!("openai provider configuration error: {}", e));
         }
     }
     let base = api_base.clone();

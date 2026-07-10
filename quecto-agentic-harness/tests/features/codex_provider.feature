@@ -14,18 +14,42 @@ Feature: Codex Responses API Provider
     Given a Codex request body for model "gpt-5.3-codex" with tools
     Then the request body should contain "parallel_tool_calls" set to true
 
-  Scenario: Codex request body includes reasoning configuration
-    Given a Codex request body for model "gpt-5.3-codex" with tools
-    Then the request body should contain a "reasoning" object with "effort" set to "medium"
+  @issue-1066
+  Scenario: Responses request omits reasoning effort when none is configured
+    # Issue #1066: when no effort is configured the server default applies;
+    # the kernel must not invent a "medium" fallback.
+    Given an OpenAI reasoning model "gpt-5.3-codex" with function tools
+    And no reasoning effort is configured
+    When the provider builds the Responses request
+    Then the request body should contain a "reasoning" object without "effort"
     And the request body should contain a "reasoning" object with "summary" set to "auto"
+
+  @issue-1066
+  Scenario Outline: Configured effort is transmitted verbatim to the Responses API
+    # Issue #1066: OpenAI's documented effort scale (none, low, medium, high,
+    # xhigh) must be configurable and transmitted for OpenAI reasoning models.
+    Given an OpenAI reasoning model "gpt-5.6-sol" with function tools
+    And a configured reasoning effort "<effort>"
+    When the provider builds the Responses request
+    Then the request body should contain a "reasoning" object with "effort" set to "<effort>"
+
+    Examples:
+      | effort |
+      | none   |
+      | low    |
+      | medium |
+      | high   |
+      | xhigh  |
 
   Scenario: Codex request body includes reasoning encrypted content
     Given a Codex request body for model "gpt-5.3-codex" with tools
     Then the request body should contain "include" with "reasoning.encrypted_content"
 
-  Scenario: Codex request body includes text verbosity
+  # #1066: no configured effort means no harness-invented verbosity — the
+  # request omits `text` entirely so OpenAI's server default applies.
+  Scenario: Codex request body omits text verbosity when no effort is configured
     Given a Codex request body for model "gpt-5.3-codex" with tools
-    Then the request body should contain a "text" object with "verbosity" set to "medium"
+    Then the request body should not contain "text"
 
   Scenario: Codex request body does not include max_completion_tokens
     Given a Codex request body for model "gpt-5.3-codex" with tools

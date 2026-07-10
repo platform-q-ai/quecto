@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod codex;
 pub mod openai;
+pub mod openai_endpoint_router;
 pub mod refreshable;
 pub mod retry;
 pub mod router;
@@ -153,25 +154,45 @@ pub fn create_provider_with_client(
 }
 
 /// Create an OpenAI-compatible/built-in provider with an explicit router prefix.
+///
+/// #1066: reasoning models registered for `provider_name` are routed per
+/// request to the Responses API; everything else stays on Chat Completions.
+///
+/// `reasoning_model_ids` must come from the *effective* (user-override-aware)
+/// model registry, not `ModelRegistry::builtin()`, so `models.json`
+/// `reasoning` overrides steer the endpoint routing.
 pub fn create_named_openai_provider_with_client(
     provider_name: &str,
     api_key: String,
     api_base: Option<String>,
     client: reqwest::Client,
     include_oauth_headers: bool,
+    reasoning_model_ids: std::collections::HashSet<String>,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     if let Some(ref base) = api_base {
         validate_provider_api_base("openai", base)?;
     }
-    Ok(Arc::new(
+    let chat_completions: Arc<dyn LlmProvider> = Arc::new(
         openai::OpenAiProvider::with_client_and_name_and_oauth_headers(
             provider_name,
-            api_key,
-            api_base,
-            client,
+            api_key.clone(),
+            api_base.clone(),
+            client.clone(),
             include_oauth_headers,
         ),
-    ))
+    );
+    if reasoning_model_ids.is_empty() {
+        return Ok(chat_completions);
+    }
+    let responses: Arc<dyn LlmProvider> = Arc::new(codex::CodexProvider::with_api_key(
+        api_key, api_base, client,
+    ));
+    Ok(Arc::new(openai_endpoint_router::OpenAiEndpointRouter::new(
+        provider_name.to_string(),
+        chat_completions,
+        responses,
+        reasoning_model_ids,
+    )))
 }
 
 /// Create the built-in OpenAI provider with explicit OAuth-header control.
@@ -266,11 +287,20 @@ pub fn create_anthropic_compatible_provider(
 pub fn create_codex_provider_with_client(
     api_key: String,
     account_id: String,
+    api_base: Option<String>,
     client: reqwest::Client,
-) -> Arc<dyn LlmProvider> {
-    Arc::new(codex::CodexProvider::with_client(
-        api_key, account_id, None, client,
-    ))
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    // A config-supplied `providers.openai.api_base` may redirect
+    // OAuth-JWT-bearing requests only when it passes the same
+    // `validate_provider_api_base` gate as every other provider base
+    // (https required for non-loopback); unset falls back to the
+    // hardwired ChatGPT backend.
+    if let Some(ref base) = api_base {
+        validate_provider_api_base("openai", base)?;
+    }
+    Ok(Arc::new(codex::CodexProvider::with_client(
+        api_key, account_id, api_base, client,
+    )))
 }
 
 #[cfg(test)]

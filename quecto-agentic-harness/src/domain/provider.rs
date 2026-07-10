@@ -129,31 +129,43 @@ impl ThinkingLevel {
     }
 }
 
-/// Effort level for the `output_config.effort` API parameter.
+/// Reasoning/output effort level.
 ///
-/// Controls how eagerly Claude spends tokens. Works with adaptive thinking on
-/// Opus 4.6 / Sonnet 4.6, and alongside manual thinking on Opus 4.5.
-/// Emitted as `output_config: {effort: "<level>"}` in the request body.
+/// The accepted vocabulary is the union of the providers' documented scales
+/// (#1066):
 ///
-/// - `Low` — fastest, fewest tokens, may skip thinking on simple tasks.
-/// - `Medium` — balanced speed/quality.
-/// - `High` — maximum quality (default when omitted).
-/// - `Max` — absolute highest capability; **Opus 4.6 only**.
+/// - OpenAI reasoning models document `none, low, medium, high, xhigh`
+///   (transmitted verbatim as `reasoning.effort` on the Responses API).
+/// - Anthropic documents `low, medium, high` plus `max` (Opus 4.6 only),
+///   emitted as `output_config: {effort: "<level>"}`.
+///
+/// Each provider adapter maps levels outside its own documented scale to its
+/// nearest documented value; parsing rejects anything outside the union.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffortLevel {
+    /// OpenAI only: disable reasoning ("none").
+    None,
     Low,
     Medium,
     High,
+    /// OpenAI only: extra-high reasoning ("xhigh").
+    XHigh,
+    /// Anthropic only (Opus 4.6): absolute highest capability.
     Max,
 }
 
 impl EffortLevel {
+    /// Comma-separated list of every accepted effort string, for error messages.
+    pub const VALID_VALUES: &'static str = "none, low, medium, high, xhigh, max";
+
     /// Return the API string value for this effort level.
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::None => "none",
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::XHigh => "xhigh",
             Self::Max => "max",
         }
     }
@@ -163,9 +175,11 @@ impl EffortLevel {
     /// Returns `None` for unrecognised values.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
+            "none" => Some(Self::None),
             "low" => Some(Self::Low),
             "medium" => Some(Self::Medium),
             "high" => Some(Self::High),
+            "xhigh" => Some(Self::XHigh),
             "max" => Some(Self::Max),
             _ => None,
         }
@@ -327,6 +341,23 @@ mod tests {
         assert_eq!(EffortLevel::parse("medium"), Some(EffortLevel::Medium));
         assert_eq!(EffortLevel::parse("high"), Some(EffortLevel::High));
         assert_eq!(EffortLevel::parse("max"), Some(EffortLevel::Max));
+    }
+
+    /// Issue #1066: OpenAI's documented reasoning-effort scale (none, low,
+    /// medium, high, xhigh) must be parseable and round-trip through as_str
+    /// so it can be transmitted verbatim for OpenAI reasoning models.
+    #[test]
+    fn effort_level_parse_openai_documented_scale_1066() {
+        for level in ["none", "low", "medium", "high", "xhigh"] {
+            let parsed = EffortLevel::parse(level).unwrap_or_else(|| {
+                panic!("OpenAI-documented effort level '{level}' must parse (#1066)")
+            });
+            assert_eq!(
+                parsed.as_str(),
+                level,
+                "effort '{level}' must round-trip verbatim (#1066)"
+            );
+        }
     }
 
     #[test]

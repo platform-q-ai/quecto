@@ -44,8 +44,9 @@ pub(super) fn parse_effort_level(
 ) -> Option<crate::domain::provider::EffortLevel> {
     crate::domain::provider::EffortLevel::parse(val).or_else(|| {
         stderr.push_str(&format!(
-            "agent: invalid effort level '{}'; expected one of: low, medium, high, max\n",
-            val
+            "agent: invalid effort level '{}'; expected one of: {}\n",
+            val,
+            crate::domain::provider::EffortLevel::VALID_VALUES
         ));
         None
     })
@@ -72,5 +73,45 @@ pub(super) fn parse_agent_mode(val: &str, stderr: &mut String) -> Option<bool> {
             ));
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod flag_parse_1066_tests {
+    use super::parse_effort_level;
+
+    /// Issue #1066: every OpenAI-documented effort level (none, low, medium,
+    /// high, xhigh) must be accepted at configuration time.
+    #[test]
+    fn parse_effort_level_accepts_openai_documented_scale_1066() {
+        for level in ["none", "low", "medium", "high", "xhigh"] {
+            let mut stderr = String::new();
+            let parsed = parse_effort_level(level, &mut stderr);
+            assert!(
+                parsed.is_some(),
+                "effort '{level}' must be accepted (#1066); stderr: {stderr}"
+            );
+            assert!(
+                stderr.is_empty(),
+                "no error expected for effort '{level}' (#1066); stderr: {stderr}"
+            );
+        }
+    }
+
+    /// Issue #1066: an unknown effort string is rejected with a clear error
+    /// naming the full set of valid values.
+    #[test]
+    fn parse_effort_level_rejection_names_valid_values_1066() {
+        let mut stderr = String::new();
+        let parsed = parse_effort_level("turbo", &mut stderr);
+        assert!(parsed.is_none(), "'turbo' must be rejected");
+        assert!(
+            stderr.contains("invalid effort level 'turbo'"),
+            "rejection must name the offending value; stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("none, low, medium, high, xhigh, max"),
+            "rejection must name the valid values (#1066); stderr: {stderr}"
+        );
     }
 }

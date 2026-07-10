@@ -373,9 +373,10 @@ pub(crate) fn build_agent_from_config(
     let effort = flags.effort.or_else(|| {
         config.agents.defaults.effort.as_deref().and_then(|s| {
             crate::domain::provider::EffortLevel::parse(s).or_else(|| {
+                // Defensive only: Config::load rejects unknown efforts (#1066).
+                let valid = crate::domain::provider::EffortLevel::VALID_VALUES;
                 stderr.push_str(&format!(
-                    "WARNING: invalid effort level '{}' in config; ignoring\n",
-                    s
+                    "WARNING: invalid effort level '{s}' in config; expected one of: {valid}; ignoring\n"
                 ));
                 None
             })
@@ -738,6 +739,9 @@ mod no_sandbox_tests;
 #[cfg(test)]
 #[path = "agent_no_session_tests.rs"]
 mod no_session_tests;
+#[cfg(test)]
+#[path = "agent_provider_1066_tests.rs"]
+mod provider_1066_tests;
 #[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;

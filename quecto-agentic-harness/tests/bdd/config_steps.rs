@@ -246,19 +246,12 @@ fn then_openai_disable_codex_enabled(world: &mut QuectoWorld) {
 #[when("I load the config and validate effort")]
 fn when_load_config_and_validate_effort(world: &mut QuectoWorld) {
     let path = world.config_path.as_ref().expect("config_path must be set");
-    let config =
-        Config::load_with_env(path, &world.env_overrides).expect("Config::load_with_env failed");
-    // Validate the effort value (domain validation)
-    let valid = ["low", "medium", "high", "max"];
-    if let Some(ref effort) = config.agents.defaults.effort {
-        if !valid.contains(&effort.as_str()) {
-            world.stderr = format!(
-                "invalid effort level '{}'; expected one of: low, medium, high, max",
-                effort
-            );
-        }
+    // #1066: unknown effort values are rejected by Config load itself,
+    // with an error naming the valid values.
+    match Config::load_with_env(path, &world.env_overrides) {
+        Ok(config) => world.config = Some(config),
+        Err(e) => world.stderr = e.to_string(),
     }
-    world.config = Some(config);
 }
 
 #[then(expr = "the effort validation should fail with {string}")]

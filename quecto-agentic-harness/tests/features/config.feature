@@ -123,6 +123,7 @@ Feature: Configuration
       """
     When I load the config and validate effort
     Then the effort validation should fail with "invalid effort level"
+    And the effort validation should fail with "expected one of: none, low, medium, high, xhigh, max"
 
   # --- #629: OpenAI-compatible custom endpoints alongside OpenAI OAuth ---
 

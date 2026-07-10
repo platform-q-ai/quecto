@@ -1,8 +1,11 @@
-// ChatGPT Codex adapter: impl LlmProvider using the Responses API.
+// OpenAI Responses API adapter: impl LlmProvider using the Responses wire
+// protocol under either auth mode (#1066).
 //
-// Used for OAuth tokens obtained via `auth.openai.com`. These tokens
-// only work against `chatgpt.com/backend-api/codex/responses`, using
-// the Responses API format (not Chat Completions).
+// - ChatGPT OAuth tokens (from `auth.openai.com`) only work against
+//   `chatgpt.com/backend-api/codex/responses` and require Codex-specific
+//   headers (`chatgpt-account-id`, `originator`, ...).
+// - API keys use the standard `api.openai.com/v1/responses` endpoint with
+//   plain `Authorization: Bearer` auth and none of the OAuth-only headers.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -15,13 +18,27 @@ use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 /// Default Codex backend base URL for ChatGPT OAuth tokens.
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
 
-/// ChatGPT Codex provider using the Responses API.
+/// Default base URL for API-key auth against the standard Responses API.
+const OPENAI_API_BASE_URL: &str = "https://api.openai.com/v1";
+
+/// How a [`CodexProvider`] authenticates, which also selects the endpoint
+/// flavour (#1066).
+#[derive(Debug, Clone)]
+enum ResponsesAuth {
+    /// ChatGPT OAuth JWT; requests go to `{base}/codex/responses` with the
+    /// Codex backend's OAuth-only headers.
+    ChatGptOAuth { account_id: String },
+    /// Plain OpenAI API key; requests go to `{base}/responses`.
+    ApiKey,
+}
+
+/// OpenAI Responses API provider (ChatGPT Codex backend or standard API).
 #[derive(Debug, Clone)]
 pub struct CodexProvider {
     api_key: String,
     api_base: String,
     client: reqwest::Client,
-    account_id: String,
+    auth: ResponsesAuth,
 }
 
 impl CodexProvider {
@@ -44,18 +61,45 @@ impl CodexProvider {
             api_key,
             api_base: api_base.unwrap_or_else(|| CODEX_BASE_URL.to_string()),
             client,
-            account_id,
+            auth: ResponsesAuth::ChatGptOAuth { account_id },
         }
     }
 
-    /// Build Codex-specific request headers.
+    /// Create an API-key-authenticated provider against the standard
+    /// Responses API (`{base}/responses`) — no OAuth-only headers (#1066).
+    pub fn with_api_key(
+        api_key: String,
+        api_base: Option<String>,
+        client: reqwest::Client,
+    ) -> Self {
+        Self {
+            api_key,
+            api_base: api_base.unwrap_or_else(|| OPENAI_API_BASE_URL.to_string()),
+            client,
+            auth: ResponsesAuth::ApiKey,
+        }
+    }
+
+    /// The Responses endpoint URL for this auth mode.
+    fn responses_url(&self) -> String {
+        match self.auth {
+            ResponsesAuth::ChatGptOAuth { .. } => format!("{}/codex/responses", self.api_base),
+            ResponsesAuth::ApiKey => format!("{}/responses", self.api_base),
+        }
+    }
+
+    /// Build request headers for the active auth mode.
     fn apply_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        builder
+        let builder = builder
             .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("chatgpt-account-id", &self.account_id)
-            .header("OpenAI-Beta", "responses=experimental")
-            .header("originator", "codex_cli_rs")
-            .header("accept", "text/event-stream")
+            .header("accept", "text/event-stream");
+        match &self.auth {
+            ResponsesAuth::ChatGptOAuth { account_id } => builder
+                .header("chatgpt-account-id", account_id)
+                .header("OpenAI-Beta", "responses=experimental")
+                .header("originator", "codex_cli_rs"),
+            ResponsesAuth::ApiKey => builder,
+        }
     }
 
     /// Convert our domain messages into Responses API `input` array.
@@ -176,21 +220,25 @@ impl CodexProvider {
     /// tests, future code paths) could pass a provider-qualified name, which
     /// the Codex backend would silently reject with an opaque HTTP 400. The
     /// check surfaces this misconfiguration early with a clear message.
-    fn validate_request(request: &ChatRequest<'_>) -> Result<(), DomainError> {
+    fn validate_request(&self, request: &ChatRequest<'_>) -> Result<(), DomainError> {
         if request.model.contains('/') {
             return Err(DomainError::Provider(
                 "codex provider expects a bare model id (e.g. 'gpt-5.3-codex'), not a provider-qualified name".to_string(),
             ));
         }
 
-        let has_instructions = request
-            .messages
-            .iter()
-            .any(|m| matches!(m.role, Role::System) && !m.content.trim().is_empty());
-        if !has_instructions {
-            return Err(DomainError::Provider(
-                "codex provider requires instructions; include a non-empty system message (e.g. pass --system)".to_string(),
-            ));
+        // Only the ChatGPT Codex backend mandates instructions; the standard
+        // Responses API accepts requests without a system message (#1066).
+        if matches!(self.auth, ResponsesAuth::ChatGptOAuth { .. }) {
+            let has_instructions = request
+                .messages
+                .iter()
+                .any(|m| matches!(m.role, Role::System) && !m.content.trim().is_empty());
+            if !has_instructions {
+                return Err(DomainError::Provider(
+                    "codex provider requires instructions; include a non-empty system message (e.g. pass --system)".to_string(),
+                ));
+            }
         }
 
         Ok(())
@@ -208,14 +256,21 @@ impl CodexProvider {
             "tool_choice": "auto",
             "parallel_tool_calls": true,
             "reasoning": {
-                "effort": request.effort.map_or("medium", |e| e.as_str()),
                 "summary": "auto",
-            },
-            "text": {
-                "verbosity": request.effort.map_or("medium", |e| e.as_str()),
             },
             "include": ["reasoning.encrypted_content"],
         });
+
+        // #1066: transmit a configured effort, clamped onto OpenAI's
+        // documented scale; when none is configured, omit the field so
+        // OpenAI's server default applies — the kernel must not invent a
+        // fallback. The same rule applies to `text.verbosity`: only derive it
+        // from a configured effort, never hardcode a client-side default.
+        if let Some(effort) = request.effort {
+            body["reasoning"]["effort"] =
+                serde_json::Value::String(Self::reasoning_effort_str(effort).to_string());
+            body["text"] = serde_json::json!({ "verbosity": Self::verbosity_str(effort) });
+        }
 
         if let Some(inst) = instructions {
             body["instructions"] = serde_json::Value::String(inst);
@@ -232,6 +287,30 @@ impl CodexProvider {
         }
 
         body
+    }
+
+    /// Map an effort level onto OpenAI's documented `reasoning.effort` scale
+    /// (`none`/`low`/`medium`/`high`/`xhigh`): levels outside that scale
+    /// clamp to the nearest documented value (#1066). `max` is
+    /// Anthropic-only, so it clamps to `xhigh` here.
+    fn reasoning_effort_str(effort: crate::domain::provider::EffortLevel) -> &'static str {
+        use crate::domain::provider::EffortLevel;
+        match effort {
+            EffortLevel::Max => "xhigh",
+            other => other.as_str(),
+        }
+    }
+
+    /// Map an effort level onto the Responses API `text.verbosity` scale,
+    /// which only accepts `low`/`medium`/`high`: levels outside that scale
+    /// clamp to the nearest documented value.
+    fn verbosity_str(effort: crate::domain::provider::EffortLevel) -> &'static str {
+        use crate::domain::provider::EffortLevel;
+        match effort {
+            EffortLevel::None | EffortLevel::Low => "low",
+            EffortLevel::Medium => "medium",
+            EffortLevel::High | EffortLevel::XHigh | EffortLevel::Max => "high",
+        }
     }
 
     /// Parse a non-streaming Responses API response.
@@ -473,12 +552,12 @@ impl LlmProvider for CodexProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
-        if let Err(err) = Self::validate_request(&request) {
+        if let Err(err) = self.validate_request(&request) {
             return Box::pin(async move { Err(err) });
         }
 
         let body = Self::build_request_body(&request);
-        let url = format!("{}/codex/responses", self.api_base);
+        let url = self.responses_url();
 
         Box::pin(async move {
             let resp = self
@@ -517,7 +596,7 @@ impl LlmProvider for CodexProvider {
         &'a self,
         request: ChatRequest<'a>,
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + 'a>> {
-        if let Err(err) = Self::validate_request(&request) {
+        if let Err(err) = self.validate_request(&request) {
             return Box::pin(async move {
                 let (tx, rx) = tokio::sync::mpsc::channel(1);
                 let _ = tx.send(StreamEvent::Error(err.to_string())).await;
@@ -525,7 +604,7 @@ impl LlmProvider for CodexProvider {
             });
         }
         let body = Self::build_request_body(&request);
-        let url = format!("{}/codex/responses", self.api_base);
+        let url = self.responses_url();
         let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
@@ -592,6 +671,10 @@ impl SseHandler for CodexSseHandler {
 #[cfg(test)]
 #[path = "codex_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "codex_effort_1066_tests.rs"]
+mod effort_1066_tests;
 
 #[cfg(test)]
 #[path = "codex_cov_tests.rs"]
