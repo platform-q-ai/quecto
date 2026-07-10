@@ -331,8 +331,12 @@ fn then_tui_chat_viewport_still_shows_full_historical_page(world: &mut QuectoWor
 
 #[then(expr = "the quecto-tui slash autocomplete should include command {string}")]
 fn then_tui_slash_autocomplete_includes_command(_world: &mut QuectoWorld, command: String) {
-    let content = std::fs::read_to_string("../quecto-tui/src/interface/app.rs")
-        .expect("read quecto-tui app source");
+    // The builtin command list lives in app_commands.rs since the #1067
+    // file-cap split (previously app.rs); accept either home so a future
+    // move within the app command modules is not a false failure.
+    let content = std::fs::read_to_string("../quecto-tui/src/interface/app_commands.rs")
+        .or_else(|_| std::fs::read_to_string("../quecto-tui/src/interface/app.rs"))
+        .expect("read quecto-tui app command source");
     assert!(
         content.contains(&format!("name: \"{command}\".into()")),
         "quecto-tui builtin slash command list should include /{command}"
@@ -1026,7 +1030,14 @@ fn then_markdown_extracts_handlers(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui builtin command set should be the single source of truth")]
 fn then_builtin_commands_single_source(_world: &mut QuectoWorld) {
-    let content = tui_read("interface/app.rs");
+    // builtin_commands() moved from app.rs to app_commands.rs in the #1067
+    // file-cap split; the invariant is that it exists exactly once in the app
+    // command modules, not which of the two files hosts it.
+    let content = format!(
+        "{}{}",
+        tui_read("interface/app.rs"),
+        std::fs::read_to_string("../quecto-tui/src/interface/app_commands.rs").unwrap_or_default()
+    );
     assert!(
         content.contains("fn builtin_commands"),
         "builtin_commands() must remain the single source of truth for slash commands"
