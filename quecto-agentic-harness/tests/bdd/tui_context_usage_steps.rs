@@ -43,6 +43,7 @@ fn with_harness<R>(world: &mut QuectoWorld, f: impl FnOnce(&mut TuiHarness) -> R
 fn turn_end_with_context(world: &mut QuectoWorld, context_tokens: u64, window: u64) {
     with_harness(world, |h| {
         h.event(Event::TurnEnd {
+            message_refs: vec![],
             message: serde_json::json!({
                 "role": "assistant",
                 "content": "",

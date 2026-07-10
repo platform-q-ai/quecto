@@ -430,7 +430,14 @@ async fn run_prompt_dispatch(
 }
 async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
     emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentStart).await;
-    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentEnd { messages: vec![] }).await;
+    emit_event_to_broadcast_or_writer(
+        ctx,
+        &AgentEvent::AgentEnd {
+            messages: vec![],
+            message_refs: vec![],
+        },
+    )
+    .await;
 }
 async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
     let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828

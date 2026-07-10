@@ -53,6 +53,11 @@ impl App {
             "list_sessions" => self.notify_response_error("Could not list sessions", error),
             "resume_session" if success => self.handle_resume_success(data),
             "resume_session" => self.notify_response_error("Resume failed", error),
+            "get_message" if success => {
+                if let Some(message) = data.and_then(|d| d.get("message").cloned()) {
+                    self.append_recovered_message(&message);
+                }
+            }
             "get_messages" if success => {
                 if let Some(data) = data {
                     if id.is_some() && id == self.rewind.pending_open_id {

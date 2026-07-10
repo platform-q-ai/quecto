@@ -349,6 +349,7 @@ async fn event_sink_variants_emit_identical_json_for_same_events() {
                 max_context_tokens: Some(100),
             },
             tool_results: vec![],
+            message_refs: vec![],
         },
         AgentEvent::ToolExecutionEnd {
             tool_call_id: "tc-1".to_string(),
@@ -358,7 +359,10 @@ async fn event_sink_variants_emit_identical_json_for_same_events() {
             },
             is_error: false,
         },
-        AgentEvent::AgentEnd { messages: vec![] },
+        AgentEvent::AgentEnd {
+            messages: vec![],
+            message_refs: vec![],
+        },
     ];
 
     let mut writer_bytes = Vec::new();

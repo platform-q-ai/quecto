@@ -1,6 +1,5 @@
 use super::*;
 use tokio::io::AsyncWriteExt;
-
 #[test]
 fn command_serializes_to_json_lines() {
     let cmd = Command::Prompt {
@@ -15,7 +14,6 @@ fn command_serializes_to_json_lines() {
     // streaming_behavior should be omitted when None
     assert!(!json.contains("streamingBehavior"));
 }
-
 #[test]
 fn command_prompt_with_streaming_behavior() {
     let cmd = Command::Prompt {
@@ -26,7 +24,6 @@ fn command_prompt_with_streaming_behavior() {
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"streamingBehavior\":\"steer\""));
 }
-
 #[test]
 fn command_get_state_serializes() {
     let cmd = Command::GetState {
@@ -35,7 +32,6 @@ fn command_get_state_serializes() {
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"get_state\""));
 }
-
 #[test]
 fn command_abort_serializes() {
     let cmd = Command::Abort { id: None };
@@ -43,7 +39,6 @@ fn command_abort_serializes() {
     assert!(json.contains("\"type\":\"abort\""));
     assert!(!json.contains("\"id\""));
 }
-
 #[test]
 fn event_deserializes_agent_start() {
     let json = r#"{"type":"agent_start"}"#;
@@ -192,7 +187,11 @@ fn event_unknown_type_deserializes_as_unknown() {
 fn event_deserializes_agent_end() {
     let json = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"hi"}]}"#;
     let event: Event = serde_json::from_str(json).unwrap();
-    assert!(matches!(event, Event::AgentEnd));
+    assert!(matches!(
+        event,
+        Event::AgentEnd {
+            message_refs } if message_refs.is_empty()
+    ));
 }
 
 #[test]
@@ -204,7 +203,11 @@ fn agent_end_tolerates_unused_messages_payload() {
     let json = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"unused-agent-end-payload"}]}"#;
     let event: Event = serde_json::from_str(json).unwrap();
 
-    assert!(matches!(event, Event::AgentEnd));
+    assert!(matches!(
+        event,
+        Event::AgentEnd {
+            message_refs } if message_refs.is_empty()
+    ));
 }
 
 // ── Integration: result text extraction ─────────────────────────
@@ -429,7 +432,7 @@ fn event_deserializes_turn_end() {
         r#"{"type":"turn_end","message":{"role":"assistant","content":"hi"},"toolResults":[]}"#;
     let event: Event = serde_json::from_str(json).unwrap();
     match event {
-        Event::TurnEnd { message } => {
+        Event::TurnEnd { message, .. } => {
             assert_eq!(message["role"], "assistant");
         }
         _ => panic!("expected TurnEnd"),
@@ -444,7 +447,7 @@ fn turn_end_keeps_message_and_tolerates_unused_tool_results() {
     let event: Event = serde_json::from_str(json).unwrap();
 
     match &event {
-        Event::TurnEnd { message } => assert_eq!(message["content"], "kept"),
+        Event::TurnEnd { message, .. } => assert_eq!(message["content"], "kept"),
         _ => panic!("expected TurnEnd"),
     }
 }

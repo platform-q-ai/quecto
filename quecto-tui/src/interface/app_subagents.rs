@@ -31,7 +31,7 @@ impl App {
                 let stats = session_payloads::parse_session_stats(data);
                 session.footer.apply_session_stats(&stats);
             }
-            Event::TurnEnd { message } => {
+            Event::TurnEnd { message, .. } => {
                 let used = message.get("contextTokens").and_then(|v| v.as_u64());
                 let window = message
                     .get("maxContextTokens")

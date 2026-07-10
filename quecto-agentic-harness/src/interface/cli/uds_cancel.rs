@@ -363,22 +363,33 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             let turn_end = AgentEvent::TurnEnd {
                 message: TurnMessage {
                     role: "assistant".to_string(),
-                    content: agent_result.response.clone(),
+                    // Completion metadata stays backward compatible, but the
+                    // completed content is recovered by `messageRefs`.
+                    content: String::new(),
                     usage,
                     stop_reason: None,
                     context_tokens: Some(agent_result.context_tokens as u64),
                     max_context_tokens: Some(agent.max_context_tokens() as u64),
                 },
                 tool_results: vec![],
+                message_refs: agent_result
+                    .appended_messages
+                    .iter()
+                    .map(|m| m.id().to_string())
+                    .collect(),
             };
             sink.emit(&turn_end).await;
-            let run_msgs: Vec<serde_json::Value> = agent_result
-                .appended_messages
-                .iter()
-                .map(message_to_json)
-                .collect();
-            sink.emit(&AgentEvent::AgentEnd { messages: run_msgs })
-                .await;
+            sink.emit(&AgentEvent::AgentEnd {
+                // Retain the compatibility field additively, without
+                // re-carrying the potentially unbounded messages.
+                messages: vec![],
+                message_refs: agent_result
+                    .appended_messages
+                    .iter()
+                    .map(|m| m.id().to_string())
+                    .collect(),
+            })
+            .await;
             PromptOutcome::Success
         }
         Some(Err(e)) => {

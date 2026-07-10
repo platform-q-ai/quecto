@@ -59,6 +59,7 @@ fn turn_end_matches_spec_shape() {
             max_context_tokens: Some(200_000),
         },
         tool_results: vec![],
+        message_refs: vec![],
     };
     let j = round_trip(&ev);
     assert_eq!(j["type"], "turn_end");
@@ -190,6 +191,7 @@ fn steer_streaming_behavior_value() {
 #[test]
 fn agent_end_has_messages_array() {
     let ev = AgentEvent::AgentEnd {
+        message_refs: vec![],
         messages: vec![serde_json::json!({"role":"assistant","content":"ok"})],
     };
     let j = round_trip(&ev);

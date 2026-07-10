@@ -121,6 +121,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         | AgentCommand::GetExtensions { .. }
         | AgentCommand::GetSubagents { .. }
         | AgentCommand::GetState { .. }
+        | AgentCommand::GetMessage { .. }
         | AgentCommand::GetMessages { .. }
         | AgentCommand::GetMessagesTail { .. }
         | AgentCommand::GetSessionStats { .. }

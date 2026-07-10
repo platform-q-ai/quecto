@@ -6,7 +6,18 @@ impl App {
             Event::AgentStart => self.handle_agent_start(),
             Event::Token { token } => self.master_session.chat.append_token(&token),
             Event::TurnStart => {}
-            Event::TurnEnd { message } => self.handle_turn_end(message),
+            Event::TurnEnd {
+                message,
+                message_refs,
+            } => {
+                self.handle_turn_end(message);
+                for message_ref in message_refs {
+                    self.send_command(Command::GetMessage {
+                        id: Some(format!("recover-{message_ref}")),
+                        message_ref,
+                    });
+                }
+            }
             Event::ToolExecutionStart {
                 tool_call_id,
                 tool_name,
@@ -18,8 +29,8 @@ impl App {
                 result,
                 is_error,
             } => self.handle_tool_end(tool_call_id, tool_name, result, is_error),
-            Event::AgentEnd if self.agent_state.end() => self.handle_agent_end(),
-            Event::AgentEnd => {}
+            Event::AgentEnd { .. } if self.agent_state.end() => self.handle_agent_end(),
+            Event::AgentEnd { .. } => {}
             Event::Response {
                 id,
                 command,

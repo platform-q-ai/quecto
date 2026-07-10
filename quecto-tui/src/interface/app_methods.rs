@@ -4,13 +4,11 @@ use crate::application::session_payloads::{self, ResumedChatMessage};
 use crate::interface::components::select_list::route_overlay_key;
 use crate::interface::select_overlay::{build_select_list_overlay, build_select_overlay};
 use crate::interface::theme;
-
 /// Format a Unix timestamp as `YYYY-MM-DD HH:MM` in **local** time, falling
 /// back to UTC if the platform's local-time conversion is unavailable.
 fn format_unix_minutes(secs: u64) -> String {
     format_local_minutes(secs).unwrap_or_else(|| format_utc_minutes(secs))
 }
-
 /// Local time via `libc::localtime_r`. Returns `None` if the conversion fails.
 fn format_local_minutes(secs: u64) -> Option<String> {
     let t = secs as libc::time_t;
@@ -29,7 +27,6 @@ fn format_local_minutes(secs: u64) -> Option<String> {
         tm.tm_min
     ))
 }
-
 /// UTC fallback (pure arithmetic) when local-time conversion is unavailable.
 pub(super) fn format_utc_minutes(secs: u64) -> String {
     let secs = secs as i64;
@@ -41,7 +38,6 @@ pub(super) fn format_utc_minutes(secs: u64) -> String {
     let (year, month, day) = civil_from_days(days);
     format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
 }
-
 pub(super) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -55,10 +51,8 @@ pub(super) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let year = y + if m <= 2 { 1 } else { 0 };
     (year, m as u32, d as u32)
 }
-
 impl App {
     // ── Slash command handlers ─────────────────────────────────────────
-
     pub(super) fn reject_unknown_slash_command(&mut self, command: &str) {
         self.master_session.chat.add_entry(ChatEntry::Status {
             text: format!(
@@ -67,7 +61,6 @@ impl App {
         });
         self.notify("Unknown slash command", NotifyLevel::Warning);
     }
-
     pub(super) fn show_help(&mut self) {
         let mut text = String::from(
             "Keyboard shortcuts:\n\
@@ -100,7 +93,6 @@ impl App {
             .chat
             .add_entry(ChatEntry::Status { text });
     }
-
     pub(super) fn show_workflow_status(&mut self) {
         let wf = &self.master_session.workflow_bar;
         let text = if workflow_bar::render_widget(wf, self.terminal.width).is_empty() {
@@ -125,7 +117,6 @@ impl App {
             .chat
             .add_entry(ChatEntry::Status { text });
     }
-
     pub(super) fn toggle_workflow_auto_continue(&mut self) {
         let next = !self.workflow_auto_continue;
         self.send_command(Command::SetWorkflowAutomation {
@@ -134,7 +125,6 @@ impl App {
             completion_nudge: None,
         });
     }
-
     pub(super) fn toggle_workflow_completion_nudge(&mut self) {
         let next = !self.workflow_completion_nudge;
         self.send_command(Command::SetWorkflowAutomation {
@@ -143,13 +133,11 @@ impl App {
             completion_nudge: Some(next),
         });
     }
-
     pub(super) fn send_session_stats(&mut self) {
         self.send_command(Command::GetSessionStats {
             id: Some("stats".into()),
         });
     }
-
     /// Request session stats for a quiet footer-only refresh (no chat Status
     /// line). Routed by the "stats-footer" id in the response handler.
     pub(super) fn send_session_stats_footer(&mut self) {
@@ -157,7 +145,6 @@ impl App {
             id: Some("stats-footer".into()),
         });
     }
-
     /// Update the footer's context/cost indicators from a session-stats
     /// payload without emitting a chat entry.
     pub(super) fn update_footer_stats(&mut self, data: &serde_json::Value) {
@@ -168,7 +155,6 @@ impl App {
         // Shared session-stats→footer mapping (context + cost gate); see #805.
         self.master_session.footer.apply_session_stats(&stats);
     }
-
     pub(super) fn send_list_sessions(&mut self) {
         self.send_command(Command::ListSessions {
             id: Some("resume-list".into()),
@@ -237,6 +223,22 @@ impl App {
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
         if let Some(session) = route_overlay_key(&mut self.resume_selector, key) {
             self.send_resume_session(&session);
+        }
+    }
+
+    pub(super) fn append_recovered_message(&mut self, message: &serde_json::Value) {
+        let Some(content) = message.get("content").and_then(|v| v.as_str()) else {
+            return;
+        };
+        match message.get("role").and_then(|v| v.as_str()) {
+            Some("user") => self.master_session.chat.add_entry(ChatEntry::User {
+                text: content.into(),
+            }),
+            Some("assistant") => self.master_session.chat.add_entry(ChatEntry::Assistant {
+                text: content.into(),
+                streaming: false,
+            }),
+            _ => {}
         }
     }
 

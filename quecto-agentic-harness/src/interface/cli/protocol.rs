@@ -58,6 +58,12 @@ pub enum AgentCommand {
     /// sub-agent and its history is returned instead of the connected agent's
     /// own — with `count` the tail, without `count` the full history (#843). It
     /// is never silently answered from the connected/parent agent's history.
+    GetMessage {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "messageRef")]
+        message_ref: String,
+    },
     GetMessages {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -212,6 +218,7 @@ impl AgentCommand {
             Self::FollowUp { id, .. } => id.as_deref(),
             Self::Abort { id } => id.as_deref(),
             Self::GetState { id } => id.as_deref(),
+            Self::GetMessage { id, .. } => id.as_deref(),
             Self::GetMessages { id, .. } => id.as_deref(),
             Self::GetExtensions { id } => id.as_deref(),
             Self::Reload { id } => id.as_deref(),
@@ -242,6 +249,7 @@ impl AgentCommand {
             Self::FollowUp { .. } => "follow_up",
             Self::Abort { .. } => "abort",
             Self::GetState { .. } => "get_state",
+            Self::GetMessage { .. } => "get_message",
             Self::GetMessages { .. } => "get_messages",
             Self::GetMessagesTail { .. } => "get_messages_tail",
             Self::GetSessionStats { .. } => "get_session_stats",
@@ -284,7 +292,11 @@ pub enum AgentEvent {
     /// Agent begins processing a prompt.
     AgentStart,
     /// Agent finished processing.  Contains messages from this run as JSON values.
-    AgentEnd { messages: Vec<serde_json::Value> },
+    AgentEnd {
+        messages: Vec<serde_json::Value>,
+        #[serde(rename = "messageRefs", default, skip_serializing_if = "Vec::is_empty")]
+        message_refs: Vec<String>,
+    },
     /// An incremental text token from the LLM during streaming.
     Token { token: String },
     /// A new LLM call begins.
@@ -294,6 +306,8 @@ pub enum AgentEvent {
         message: TurnMessage,
         #[serde(rename = "toolResults")]
         tool_results: Vec<ToolResultEvent>,
+        #[serde(rename = "messageRefs", default, skip_serializing_if = "Vec::is_empty")]
+        message_refs: Vec<String>,
     },
     /// A tool began executing.
     ToolExecutionStart {
@@ -628,6 +642,10 @@ pub struct TokenStats {
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "issue_1060_tests.rs"]
+mod issue_1060_tests;
 
 #[cfg(test)]
 #[path = "protocol_shape_tests.rs"]

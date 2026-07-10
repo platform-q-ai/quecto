@@ -579,6 +579,7 @@ fn when_subagent_reports_state(
         h.route(
             &id,
             Event::TurnEnd {
+                message_refs: vec![],
                 message: serde_json::json!({
                     "contextTokens": context_tokens,
                     "maxContextTokens": 100_000,

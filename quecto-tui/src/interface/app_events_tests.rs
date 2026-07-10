@@ -59,7 +59,9 @@ async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idl
         "note must be deferred while the parent is streaming"
     );
     // Parent goes idle → the note is flushed after the finished response.
-    app.handle_event(Event::AgentEnd);
+    app.handle_event(Event::AgentEnd {
+        message_refs: vec![],
+    });
     let text = app
         .master_session
         .chat
@@ -78,7 +80,9 @@ async fn handles_agent_lifecycle_and_token_events() {
         token: "hello".into(),
     });
     app.handle_event(Event::TurnStart);
-    app.handle_event(Event::AgentEnd);
+    app.handle_event(Event::AgentEnd {
+        message_refs: vec![],
+    });
     assert!(!app.agent_state.is_running());
     assert!(app.spinner.is_none());
 }
@@ -92,6 +96,7 @@ async fn handles_turn_end_usage_with_context_window_and_stats_fallback() {
             "contextTokens": 40,
             "maxContextTokens": 100
         }),
+        message_refs: vec![],
     });
     assert!(app.context_stats_requested);
     let rendered = app.master_session.footer.render(80).join("\n");
@@ -103,6 +108,7 @@ async fn handles_turn_end_usage_with_context_window_and_stats_fallback() {
     let mut app = test_app().await;
     app.handle_event(Event::TurnEnd {
         message: serde_json::json!({"usage": {"total": 1}}),
+        message_refs: vec![],
     });
     assert!(app.context_stats_requested);
 }
@@ -118,6 +124,7 @@ async fn handles_turn_end_context_tokens_without_usage_field() {
             "contextTokens": 40,
             "maxContextTokens": 100
         }),
+        message_refs: vec![],
     });
     assert!(app.context_stats_requested);
     let rendered = app.master_session.footer.render(80).join("\n");

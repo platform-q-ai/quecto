@@ -317,7 +317,9 @@ async fn spinner_blink_with_subagents_does_not_reflow() {
     ));
     // Parent runs repeatedly (one per subagent notification): spinner blinks.
     for _ in 0..5 {
-        h.event(Event::AgentEnd); // spinner off
+        h.event(Event::AgentEnd {
+            message_refs: vec![],
+        }); // spinner off
         h.event(Event::AgentStart); // spinner on
     }
     assert!(
@@ -391,7 +393,9 @@ async fn idle_parent_shows_subagent_activity() {
         "running",
         Some(("active", 2, 3)),
     )]));
-    h.event(Event::AgentEnd); // parent idle, a1 still running
+    h.event(Event::AgentEnd {
+        message_refs: vec![],
+    }); // parent idle, a1 still running
     assert!(
         h.last().contains("subagent working"),
         "idle parent with an active child should show an activity line:\n{}",
@@ -504,7 +508,9 @@ mod workflow_display_regression {
     async fn master_dormant_selecting_template_shows_no_bar() {
         let mut h = TuiHarness::sized(100, 24).await;
         h.event(Event::AgentStart);
-        h.event(Event::AgentEnd);
+        h.event(Event::AgentEnd {
+            message_refs: vec![],
+        });
         h.select(None);
         h.event(get_state_dormant(true));
         let pane = h.main_pane();
@@ -600,7 +606,9 @@ mod workflow_display_regression {
         // completion-note coalescing (deferred then flushed)
         h.event(Event::SubagentNotification{agent_id:"wf-1".into(), sequence:1, message:"Sub-agent 'wf-1' finished. Review with agent_cmd get_messages when you need its output.".into()});
         h.event(Event::SubagentNotification{agent_id:"wf-2".into(), sequence:1, message:"Sub-agent 'wf-2' finished. Review with agent_cmd get_messages when you need its output.".into()});
-        h.event(Event::AgentEnd);
+        h.event(Event::AgentEnd {
+            message_refs: vec![],
+        });
         let frame = h.full_frame();
         assert!(
             frame.contains("2 sub-agents finished"),

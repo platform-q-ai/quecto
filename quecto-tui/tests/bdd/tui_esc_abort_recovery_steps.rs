@@ -68,9 +68,12 @@ fn submit_and_respond(world: &mut TuiWorld, prompt: &str) {
             token: RESPONSE_TEXT.to_string(),
         });
         h.event(Event::TurnEnd {
+            message_refs: vec![],
             message: serde_json::json!({ "role": "assistant", "content": RESPONSE_TEXT }),
         });
-        h.event(Event::AgentEnd);
+        h.event(Event::AgentEnd {
+            message_refs: vec![],
+        });
     });
 }
 
@@ -166,7 +169,9 @@ fn agent_sends_agent_end(world: &mut TuiWorld) {
     // Deliver the stale AgentEnd from the pre-cancelled run. The abort-aware
     // state machine must consume the pending abort rather than corrupt state.
     with_harness(world, |h| {
-        h.event(Event::AgentEnd);
+        h.event(Event::AgentEnd {
+            message_refs: vec![],
+        });
     });
     let pending = with_harness(world, |h| h.pending_aborts());
     assert_eq!(
@@ -188,7 +193,9 @@ fn tui_does_not_hang(world: &mut TuiWorld) {
         h.event(Event::Token {
             token: RESPONSE_TEXT.to_string(),
         });
-        h.event(Event::AgentEnd);
+        h.event(Event::AgentEnd {
+            message_refs: vec![],
+        });
     });
     let frame = with_harness(world, |h| h.full_frame());
     assert!(

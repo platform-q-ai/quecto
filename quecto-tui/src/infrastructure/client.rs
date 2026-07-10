@@ -55,6 +55,12 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    GetMessage {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "messageRef")]
+        message_ref: String,
+    },
     GetMessages {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -133,13 +139,18 @@ pub enum Command {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     AgentStart,
-    AgentEnd,
+    AgentEnd {
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
+    },
     Token {
         token: String,
     },
     TurnStart,
     TurnEnd {
         message: serde_json::Value,
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
     },
     ToolExecutionStart {
         #[serde(rename = "toolCallId")]
@@ -337,6 +348,7 @@ impl Command {
             Self::FollowUp { .. } => "follow_up",
             Self::Abort { .. } => "abort",
             Self::GetState { .. } => "get_state",
+            Self::GetMessage { .. } => "get_message",
             Self::GetMessages { .. } => "get_messages",
             Self::GetMessagesTail { .. } => "get_messages_tail",
             Self::GetSessionStats { .. } => "get_session_stats",

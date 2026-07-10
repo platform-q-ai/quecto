@@ -74,6 +74,7 @@ fn seed_subagent_footer(h: &mut TuiHarness, id: &str, model: &str, used: u64, co
     h.route(
         id,
         Event::TurnEnd {
+            message_refs: vec![],
             message: serde_json::json!({ "contextTokens": used, "maxContextTokens": 200_000 }),
         },
     );
@@ -103,6 +104,7 @@ fn seed_master_footer(h: &mut TuiHarness, model: &str, used: u64) {
         error: None,
     });
     h.event(Event::TurnEnd {
+        message_refs: vec![],
         message: serde_json::json!({ "contextTokens": used, "maxContextTokens": 200_000 }),
     });
 }

@@ -32,6 +32,16 @@ pub(super) fn query_response_data(
             );
             Some(serde_json::to_value(&state).unwrap_or_default())
         }
+        AgentCommand::GetMessage { message_ref, .. } => Some(
+            match ctx
+                .messages
+                .iter()
+                .find(|m| m.id().to_string() == *message_ref)
+            {
+                Some(message) => serde_json::json!({ "message": message_to_json(message) }),
+                None => serde_json::json!({ "message": null }),
+            },
+        ),
         AgentCommand::GetMessages { count, .. } => match count {
             Some(count) => Some(messages_tail_json(ctx.messages, *count)),
             None => {
