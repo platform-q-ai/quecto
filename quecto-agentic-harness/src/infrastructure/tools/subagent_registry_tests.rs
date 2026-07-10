@@ -283,6 +283,62 @@ async fn read_response_capped_skips_oversized_line_and_reads_the_next() {
     assert_eq!(read_response_capped(&mut reader, 16).await.unwrap(), None);
 }
 
+#[tokio::test]
+async fn read_response_capped_reads_framed_replies_then_eof() {
+    // #1063 rebase review: since 8322aad3 a same-binary child negotiates
+    // framed mode and replies in FRAMES, but every mock child writes legacy
+    // NDJSON, so the framed branch of this composed reader was covered only
+    // by quecto-line-io unit tests. Pin it here with production-written
+    // frames.
+    let mut data: Vec<u8> = Vec::new();
+    quecto_line_io::write_frame(&mut data, br#"{"n":1}"#, 1024)
+        .await
+        .unwrap();
+    quecto_line_io::write_frame(&mut data, br#"{"n":2}"#, 1024)
+        .await
+        .unwrap();
+    let mut reader = tokio::io::BufReader::new(&data[..]);
+    assert_eq!(
+        read_response_capped(&mut reader, 1024)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(r#"{"n":1}"#)
+    );
+    assert_eq!(
+        read_response_capped(&mut reader, 1024)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(r#"{"n":2}"#)
+    );
+    assert_eq!(read_response_capped(&mut reader, 1024).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn read_response_capped_skips_oversized_frame_and_reads_the_next() {
+    // Framed twin of the legacy oversized-skip test above: an over-cap FRAME
+    // must be skipped (declared bytes consumed, stream stays framed), not
+    // hard-error the query.
+    let mut data: Vec<u8> = Vec::new();
+    let big = format!("{{\"x\":\"{}\"}}", "x".repeat(100));
+    quecto_line_io::write_frame(&mut data, big.as_bytes(), 1024)
+        .await
+        .unwrap();
+    quecto_line_io::write_frame(&mut data, br#"{"n":2}"#, 1024)
+        .await
+        .unwrap();
+    let mut reader = tokio::io::BufReader::new(&data[..]);
+    assert_eq!(
+        read_response_capped(&mut reader, 16)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(r#"{"n":2}"#)
+    );
+    assert_eq!(read_response_capped(&mut reader, 16).await.unwrap(), None);
+}
+
 // --- command/response matching (#831) ---
 
 #[test]
