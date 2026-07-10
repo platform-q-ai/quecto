@@ -107,6 +107,15 @@ impl std::fmt::Display for ModelRegistryError {
 
 impl std::error::Error for ModelRegistryError {}
 
+type BuiltinSpec = (
+    &'static str,
+    &'static str,
+    &'static str,
+    ProviderApi,
+    AuthMode,
+    Option<&'static str>,
+);
+
 impl ModelRegistry {
     /// The built-in model table, constructed once and shared. The ~30 records
     /// are identical on every call, so we build them a single time behind a
@@ -120,248 +129,7 @@ impl ModelRegistry {
 
     fn build_builtin() -> Self {
         let mut r = Self { models: Vec::new() };
-        for (provider, id, name, api, auth, oauth_provider) in [
-            (
-                "anthropic-api",
-                "claude-fable-5",
-                "Claude Fable 5 (API key)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "anthropic-api",
-                "claude-opus-4-8",
-                "Claude Opus 4.8 (API key)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "anthropic-api",
-                "claude-opus-4-7",
-                "Claude Opus 4.7 (API key)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "anthropic-api",
-                "claude-opus-4-6",
-                "Claude Opus 4.6 (API key)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "anthropic-api",
-                "claude-opus-4-5",
-                "Claude Opus 4.5 (API key)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "anthropic-api",
-                "claude-sonnet-5",
-                "Claude Sonnet 5 (API key)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "anthropic-api",
-                "claude-sonnet-4-6",
-                "Claude Sonnet 4.6 (API key)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "anthropic-api",
-                "claude-sonnet-4-5",
-                "Claude Sonnet 4.5 (API key)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "anthropic-oauth",
-                "claude-fable-5",
-                "Claude Fable 5 (OAuth)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::OAuth,
-                Some("anthropic"),
-            ),
-            (
-                "anthropic-oauth",
-                "claude-opus-4-8",
-                "Claude Opus 4.8 (OAuth)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::OAuth,
-                Some("anthropic"),
-            ),
-            (
-                "anthropic-oauth",
-                "claude-opus-4-7",
-                "Claude Opus 4.7 (OAuth)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::OAuth,
-                Some("anthropic"),
-            ),
-            (
-                "anthropic-oauth",
-                "claude-opus-4-6",
-                "Claude Opus 4.6 (OAuth)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::OAuth,
-                Some("anthropic"),
-            ),
-            (
-                "anthropic-oauth",
-                "claude-opus-4-5",
-                "Claude Opus 4.5 (OAuth)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::OAuth,
-                Some("anthropic"),
-            ),
-            (
-                "anthropic-oauth",
-                "claude-sonnet-5",
-                "Claude Sonnet 5 (OAuth)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::OAuth,
-                Some("anthropic"),
-            ),
-            (
-                "anthropic-oauth",
-                "claude-sonnet-4-6",
-                "Claude Sonnet 4.6 (OAuth)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::OAuth,
-                Some("anthropic"),
-            ),
-            (
-                "anthropic-oauth",
-                "claude-sonnet-4-5",
-                "Claude Sonnet 4.5 (OAuth)",
-                ProviderApi::AnthropicMessages,
-                AuthMode::OAuth,
-                Some("anthropic"),
-            ),
-            (
-                "openai-api",
-                "gpt-5.5",
-                "GPT 5.5 (API key)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "openai-api",
-                "gpt-5.5-mini",
-                "GPT 5.5 Mini (API key)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "openai-api",
-                "gpt-5.5-nano",
-                "GPT 5.5 Nano (API key)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "openai-api",
-                "gpt-5.3-codex",
-                "GPT 5.3 Codex (API key)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "openai-api",
-                "gpt-5.3-codex-spark",
-                "GPT 5.3 Codex Spark (API key)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "openai-api",
-                "gpt-5.2-codex",
-                "GPT 5.2 Codex (API key)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "openai-oauth",
-                "gpt-5.5",
-                "GPT 5.5 (OAuth)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::OAuth,
-                Some("openai"),
-            ),
-            (
-                "openai-oauth",
-                "gpt-5.5-mini",
-                "GPT 5.5 Mini (OAuth)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::OAuth,
-                Some("openai"),
-            ),
-            (
-                "openai-oauth",
-                "gpt-5.5-nano",
-                "GPT 5.5 Nano (OAuth)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::OAuth,
-                Some("openai"),
-            ),
-            (
-                "openai-oauth",
-                "gpt-5.3-codex",
-                "GPT 5.3 Codex (OAuth)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::OAuth,
-                Some("openai"),
-            ),
-            (
-                "openai-oauth",
-                "gpt-5.3-codex-spark",
-                "GPT 5.3 Codex Spark (OAuth)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::OAuth,
-                Some("openai"),
-            ),
-            (
-                "openai-oauth",
-                "gpt-5.2-codex",
-                "GPT 5.2 Codex (OAuth)",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::OAuth,
-                Some("openai"),
-            ),
-            (
-                "fireworks",
-                "accounts/fireworks/models/glm-5p2",
-                "GLM 5.2",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::ApiKey,
-                None,
-            ),
-            (
-                "fireworks",
-                "accounts/fireworks/models/kimi-k2p7-code",
-                "Kimi K2.7 Code",
-                ProviderApi::OpenAiCompletions,
-                AuthMode::ApiKey,
-                None,
-            ),
-        ] {
+        for (provider, id, name, api, auth, oauth_provider) in Self::builtin_specs() {
             let mut record = ModelRecord::with_defaults(provider, id, Some(name), api);
             record.auth = auth;
             record.oauth_provider = oauth_provider.map(str::to_string);
@@ -378,10 +146,113 @@ impl ModelRegistry {
                     cache_read: pricing.cache_read_micro_usd_per_million as f64 / 1_000_000.0,
                     cache_write: pricing.cache_write_micro_usd_per_million as f64 / 1_000_000.0,
                 };
+            } else if let Some(cost) = gpt_5_6_cost(id) {
+                // GPT-5.6 tiers share these published limits (2026-07-09);
+                // sources: openai.com/index/previewing-gpt-5-6-sol and
+                // developers.openai.com/api/docs/models/gpt-5.6-{sol,terra,luna}.
+                record.context_window = 1_050_000;
+                record.context_window_explicit = true;
+                record.max_tokens = 128_000;
+                record.max_tokens_explicit = true;
+                record.reasoning = true;
+                record.cost = cost;
             }
             r.upsert(record);
         }
         r
+    }
+
+    /// The (provider, id, display_name, api, auth, oauth) rows for every
+    /// built-in model, grouped by their shared provider/auth so each model is
+    /// a single (id, name) line.
+    fn builtin_specs() -> Vec<BuiltinSpec> {
+        let mut v: Vec<BuiltinSpec> = Vec::new();
+        let mut group = |provider,
+                         api,
+                         auth,
+                         oauth: Option<&'static str>,
+                         ids: &[(&'static str, &'static str)]| {
+            for &(id, name) in ids {
+                v.push((provider, id, name, api, auth, oauth));
+            }
+        };
+        group(
+            "anthropic-api",
+            ProviderApi::AnthropicMessages,
+            AuthMode::ApiKey,
+            None,
+            &[
+                ("claude-fable-5", "Claude Fable 5 (API key)"),
+                ("claude-opus-4-8", "Claude Opus 4.8 (API key)"),
+                ("claude-opus-4-7", "Claude Opus 4.7 (API key)"),
+                ("claude-opus-4-6", "Claude Opus 4.6 (API key)"),
+                ("claude-opus-4-5", "Claude Opus 4.5 (API key)"),
+                ("claude-sonnet-5", "Claude Sonnet 5 (API key)"),
+                ("claude-sonnet-4-6", "Claude Sonnet 4.6 (API key)"),
+                ("claude-sonnet-4-5", "Claude Sonnet 4.5 (API key)"),
+            ],
+        );
+        group(
+            "anthropic-oauth",
+            ProviderApi::AnthropicMessages,
+            AuthMode::OAuth,
+            Some("anthropic"),
+            &[
+                ("claude-fable-5", "Claude Fable 5 (OAuth)"),
+                ("claude-opus-4-8", "Claude Opus 4.8 (OAuth)"),
+                ("claude-opus-4-7", "Claude Opus 4.7 (OAuth)"),
+                ("claude-opus-4-6", "Claude Opus 4.6 (OAuth)"),
+                ("claude-opus-4-5", "Claude Opus 4.5 (OAuth)"),
+                ("claude-sonnet-5", "Claude Sonnet 5 (OAuth)"),
+                ("claude-sonnet-4-6", "Claude Sonnet 4.6 (OAuth)"),
+                ("claude-sonnet-4-5", "Claude Sonnet 4.5 (OAuth)"),
+            ],
+        );
+        group(
+            "openai-api",
+            ProviderApi::OpenAiCompletions,
+            AuthMode::ApiKey,
+            None,
+            &[
+                ("gpt-5.6-sol", "GPT 5.6 Sol (API key)"),
+                ("gpt-5.6-terra", "GPT 5.6 Terra (API key)"),
+                ("gpt-5.6-luna", "GPT 5.6 Luna (API key)"),
+                ("gpt-5.5", "GPT 5.5 (API key)"),
+                ("gpt-5.5-mini", "GPT 5.5 Mini (API key)"),
+                ("gpt-5.5-nano", "GPT 5.5 Nano (API key)"),
+                ("gpt-5.3-codex", "GPT 5.3 Codex (API key)"),
+                ("gpt-5.3-codex-spark", "GPT 5.3 Codex Spark (API key)"),
+                ("gpt-5.2-codex", "GPT 5.2 Codex (API key)"),
+            ],
+        );
+        group(
+            "openai-oauth",
+            ProviderApi::OpenAiCompletions,
+            AuthMode::OAuth,
+            Some("openai"),
+            &[
+                ("gpt-5.6-sol", "GPT 5.6 Sol (OAuth)"),
+                ("gpt-5.6-terra", "GPT 5.6 Terra (OAuth)"),
+                ("gpt-5.6-luna", "GPT 5.6 Luna (OAuth)"),
+                ("gpt-5.5", "GPT 5.5 (OAuth)"),
+                ("gpt-5.5-mini", "GPT 5.5 Mini (OAuth)"),
+                ("gpt-5.5-nano", "GPT 5.5 Nano (OAuth)"),
+                ("gpt-5.3-codex", "GPT 5.3 Codex (OAuth)"),
+                ("gpt-5.3-codex-spark", "GPT 5.3 Codex Spark (OAuth)"),
+                ("gpt-5.2-codex", "GPT 5.2 Codex (OAuth)"),
+            ],
+        );
+        group(
+            "fireworks",
+            ProviderApi::OpenAiCompletions,
+            AuthMode::ApiKey,
+            None,
+            &[
+                ("accounts/fireworks/models/glm-5p2", "GLM 5.2"),
+                ("accounts/fireworks/models/kimi-k2p7-code", "Kimi K2.7 Code"),
+            ],
+        );
+        v
     }
 
     pub fn load_from_path(path: &Path) -> Result<Self, ModelRegistryError> {
@@ -676,6 +547,10 @@ struct RegistryCost {
     #[serde(default, rename = "cache_write")]
     cache_write: Option<f64>,
 }
+
+#[path = "model_registry_gpt56_pricing.rs"]
+mod gpt56_pricing;
+use gpt56_pricing::gpt_5_6_cost;
 
 #[cfg(test)]
 #[path = "model_registry_tests.rs"]
