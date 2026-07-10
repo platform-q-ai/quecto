@@ -371,11 +371,16 @@ impl AgentSession {
         Vec::from(std::mem::take(&mut self.pending))
     }
 
+    /// `effort` is the agent loop's effective level (`None` = provider
+    /// default); it lives on the agent, not this tracker, so callers pass it
+    /// in (#1067). The valid vocabulary is derived here from the active
+    /// model so every `get_state` shape (live or snapshot) carries it.
     pub fn state_snapshot(
         &self,
         message_count: usize,
         workflow: Option<serde_json::Value>,
         max_context_tokens: usize,
+        effort: Option<String>,
     ) -> SessionState {
         SessionState {
             model: self.model.clone(),
@@ -384,6 +389,11 @@ impl AgentSession {
             message_count,
             pending_message_count: self.pending.len(),
             max_context_tokens,
+            effort,
+            effort_levels: crate::domain::provider::EffortLevel::levels_for_model(&self.model)
+                .iter()
+                .map(|l| l.as_str().to_string())
+                .collect(),
             workflow,
         }
     }
@@ -642,7 +652,12 @@ mod passive_subagent_notification_tests {
         let mut session = AgentSession::new("m".into(), "k".into());
 
         assert!(session.record_subagent_notification("worker".into(), 1));
-        assert_eq!(session.state_snapshot(0, None, 0).pending_message_count, 0);
+        assert_eq!(
+            session
+                .state_snapshot(0, None, 0, None)
+                .pending_message_count,
+            0
+        );
         assert!(session.drain_pending().is_empty());
         assert!(!session.record_subagent_notification("worker".into(), 1));
     }

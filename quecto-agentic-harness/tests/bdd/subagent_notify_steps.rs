@@ -398,7 +398,9 @@ fn then_pending_note_count(world: &mut QuectoWorld, expected: usize) {
         .notify_parent_session
         .as_ref()
         .expect("no parent session");
-    let count = session.state_snapshot(0, None, 0).pending_message_count;
+    let count = session
+        .state_snapshot(0, None, 0, None)
+        .pending_message_count;
     assert_eq!(count, expected, "unexpected pending note count");
 }
 
@@ -418,7 +420,9 @@ fn then_busy_not_consumed(world: &mut QuectoWorld) {
         .as_ref()
         .expect("no parent session");
     assert_eq!(
-        session.state_snapshot(0, None, 0).pending_message_count,
+        session
+            .state_snapshot(0, None, 0, None)
+            .pending_message_count,
         1,
         "while busy the note stays buffered and is not injected into the turn"
     );

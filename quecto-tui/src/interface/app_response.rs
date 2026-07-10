@@ -10,7 +10,12 @@ impl App {
     ) {
         match command.as_str() {
             "get_state" if success => self.handle_get_state(data),
-            "set_model" if success => self.notify("Model switched", NotifyLevel::Success),
+            "set_model" if success => {
+                self.notify("Model switched", NotifyLevel::Success);
+                // A model switch can change the provider's effort vocabulary
+                // and context window — re-sync from the agent (#1067).
+                self.send_state_resync();
+            }
             "set_model" => self.notify_response_error("Model switch failed", error),
             "set_effort" if success => self.handle_set_effort_success(data),
             "set_effort" => self.notify_response_error("Effort switch failed", error),
@@ -95,6 +100,20 @@ impl App {
             .get("effort")
             .and_then(|v| v.as_str())
             .map(crate::interface::ansi::sanitize_control);
+        // #1067: the agent reports the provider's valid effort vocabulary in
+        // every get_state — the single source of truth for `/effort`
+        // validation and the selector. Missing/empty leaves the current
+        // (possibly empty) vocabulary untouched.
+        if let Some(levels) = data.get("effortLevels").and_then(|v| v.as_array()) {
+            let levels: Vec<String> = levels
+                .iter()
+                .filter_map(|l| l.as_str())
+                .map(crate::interface::ansi::sanitize_control)
+                .collect();
+            if !levels.is_empty() {
+                self.effort_levels = levels;
+            }
+        }
         if data
             .get("maxContextTokens")
             .and_then(|v| v.as_u64())
@@ -166,6 +185,9 @@ impl App {
             id: Some("resume-messages".into()),
         });
         self.send_session_stats();
+        // The agent resets session-scoped state (e.g. the effort override,
+        // #1067) on resume_session; re-fetch so the footer tracks it.
+        self.send_state_resync();
     }
 
     fn handle_get_subagents(&mut self, data: Option<serde_json::Value>) {

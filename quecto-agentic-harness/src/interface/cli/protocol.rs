@@ -580,6 +580,18 @@ pub struct SessionState {
     pub pending_message_count: usize,
     /// The active model's context-window limit (tokens). `0` when unknown.
     pub max_context_tokens: usize,
+    /// The session's effective reasoning-effort level (#1067): the level
+    /// string when set (config default or runtime `set_effort`), an explicit
+    /// `null` when unset — so clients can distinguish "provider default"
+    /// from a missing capability. Always serialized, on both the live-query
+    /// and busy-connect snapshot paths.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// The effort vocabulary valid for the active model's provider (#1067).
+    /// Agent-side source of truth so clients never duplicate the
+    /// provider→levels rule.
+    #[serde(default)]
+    pub effort_levels: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<serde_json::Value>,
 }

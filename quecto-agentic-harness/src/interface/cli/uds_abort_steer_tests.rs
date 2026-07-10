@@ -82,7 +82,7 @@ impl Env {
             &self.session_key,
             &self.messages,
         );
-        let state = self.session.state_snapshot(0, None, 0);
+        let state = self.session.state_snapshot(0, None, 0, None);
         DispatchCtx {
             base_dir: self.tmp.path(),
             agent: &mut self.agent,

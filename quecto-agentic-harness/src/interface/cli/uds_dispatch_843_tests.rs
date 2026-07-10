@@ -74,7 +74,7 @@ impl Fx {
             messages: &mut self.messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0),
+                self.session.state_snapshot(0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

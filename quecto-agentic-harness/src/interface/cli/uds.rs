@@ -206,6 +206,7 @@ async fn single_client_loop(
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
     let max_context_tokens = agent.max_context_tokens();
+    let initial_effort = agent.effort().map(|l| l.as_str().to_string());
     let initial_stats = super::uds_session::compute_session_stats(&session_key, &messages);
 
     run_command_loop(
@@ -216,7 +217,7 @@ async fn single_client_loop(
             messages: &mut messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                agent_session.state_snapshot(0, None, max_context_tokens),
+                agent_session.state_snapshot(0, None, max_context_tokens, initial_effort),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

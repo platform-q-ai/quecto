@@ -57,6 +57,9 @@ impl EffortSelector {
     }
 
     /// The levels currently visible (after filtering), in display order.
+    /// Test seam — gated like its only consumers (the cfg'd test-harness
+    /// probes) so a plain build never ships a zero-caller accessor.
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn visible_levels(&self) -> Vec<String> {
         self.list
             .suggestions()

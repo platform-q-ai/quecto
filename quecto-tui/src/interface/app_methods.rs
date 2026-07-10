@@ -628,6 +628,11 @@ impl App {
         self.master_session.chat.clear();
         self.master_session.footer.set_context(None, 0);
         self.context_stats_requested = false;
+        // The agent resets session-scoped state (e.g. the effort override,
+        // #1067) on new_session; re-fetch so the footer tracks it. Commands
+        // are dispatched in order, so this get_state observes the fresh
+        // session.
+        self.send_state_resync();
         self.notify(message, NotifyLevel::Success);
     }
 

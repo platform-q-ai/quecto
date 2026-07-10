@@ -6,30 +6,13 @@
 //! <level>` validates locally (so an invalid level never leaves the TUI and
 //! the previous setting stays) and sends `set_effort` over the socket. The
 //! footer only updates on a successful response.
+//!
+//! The vocabulary is NOT derived locally: the agent reports it in
+//! `get_state` (`effortLevels`) so the provider→levels rule lives in one
+//! place. Before the first `get_state` lands, `/effort <level>` is sent
+//! through and the agent's own validation rejects an invalid level.
 
 use super::*;
-
-/// OpenAI's documented reasoning-effort scale (#1066), also what
-/// OpenAI-compatible providers accept.
-const OPENAI_EFFORT_LEVELS: &[&str] = &["none", "low", "medium", "high", "xhigh"];
-
-/// Anthropic's documented effort scale (`max` is Opus 4.6 only).
-const ANTHROPIC_EFFORT_LEVELS: &[&str] = &["low", "medium", "high", "max"];
-
-/// The effort vocabulary valid for the provider serving `model` (a
-/// `provider/model-id` pair, or a bare model id). Mirrors the agent-side
-/// rule so local validation and the agent always agree.
-pub(super) fn effort_levels_for_model(model: Option<&str>) -> &'static [&'static str] {
-    let Some(model) = model else {
-        return OPENAI_EFFORT_LEVELS;
-    };
-    let (provider, id) = model.split_once('/').unwrap_or(("", model));
-    if provider.contains("anthropic") || id.starts_with("claude") {
-        ANTHROPIC_EFFORT_LEVELS
-    } else {
-        OPENAI_EFFORT_LEVELS
-    }
-}
 
 impl App {
     /// Handle `/effort` (bare → selector) and `/effort <level>` (direct set).
@@ -38,14 +21,16 @@ impl App {
             self.open_effort_selector();
             return;
         }
-        let levels = effort_levels_for_model(self.current_model.as_deref());
-        if levels.contains(&arg) {
+        // Local pre-validation against the agent-reported vocabulary; when it
+        // hasn't arrived yet, defer to the agent's own validation (it rejects
+        // invalid levels listing the valid ones).
+        if self.effort_levels.is_empty() || self.effort_levels.iter().any(|l| l == arg) {
             self.send_set_effort(arg);
         } else {
             self.notify(
                 &format!(
                     "Invalid effort level \"{arg}\" — valid levels: {}",
-                    levels.join(", ")
+                    self.effort_levels.join(", ")
                 ),
                 NotifyLevel::Error,
             );
@@ -53,8 +38,15 @@ impl App {
     }
 
     pub(super) fn open_effort_selector(&mut self) {
-        let levels = effort_levels_for_model(self.current_model.as_deref());
-        self.effort_selector = Some(EffortSelector::new(levels, self.current_effort.as_deref()));
+        if self.effort_levels.is_empty() {
+            self.notify(
+                "Effort levels not known yet — still waiting for agent state",
+                NotifyLevel::Warning,
+            );
+            return;
+        }
+        let levels: Vec<&str> = self.effort_levels.iter().map(String::as_str).collect();
+        self.effort_selector = Some(EffortSelector::new(&levels, self.current_effort.as_deref()));
     }
 
     pub(super) fn handle_effort_selector_key(&mut self, key: &Key) {
@@ -96,6 +88,15 @@ impl App {
         };
         self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
         self.set_current_effort(Some(level));
+    }
+
+    /// Re-fetch agent state after a session/model switch so session-scoped
+    /// display state (effort level + vocabulary, model, context window)
+    /// never goes stale (#1067).
+    pub(super) fn send_state_resync(&mut self) {
+        self.send_command(Command::GetState {
+            id: Some("resync".into()),
+        });
     }
 
     /// Track the session's active effort and mirror it onto the footer.

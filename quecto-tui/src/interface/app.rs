@@ -83,6 +83,11 @@ pub struct App {
     /// The session's active effort level (`None` = effective default),
     /// tracked for the selector's current-marker and footer fallback (#1067).
     current_effort: Option<String>,
+    /// The effort vocabulary valid for the active model's provider, as
+    /// reported by the agent in `get_state` (`effortLevels`). Empty until the
+    /// first `get_state` lands; the agent is the single source of truth —
+    /// the TUI never re-derives the provider→levels rule locally (#1067).
+    effort_levels: Vec<String>,
     /// Session resume selector shown after `/resume` lists persisted sessions.
     resume_selector: Option<SelectList>,
     /// Rewind flow state (#997).
@@ -314,6 +319,7 @@ impl App {
             model_selector: None,
             effort_selector: None,
             current_effort: None,
+            effort_levels: Vec::new(),
             model_registry: ModelRegistry::default(),
             resume_selector: None,
             rewind: RewindFlow::default(),

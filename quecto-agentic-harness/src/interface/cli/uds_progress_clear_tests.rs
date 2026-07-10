@@ -167,7 +167,12 @@ fn test_clear_history_drains_pending() {
     // Simulate drain as in handle_clear_history
     session.drain_pending();
 
-    assert_eq!(session.state_snapshot(0, None, 0).pending_message_count, 0);
+    assert_eq!(
+        session
+            .state_snapshot(0, None, 0, None)
+            .pending_message_count,
+        0
+    );
 }
 
 #[test]

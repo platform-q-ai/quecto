@@ -85,7 +85,7 @@ impl EffortFx {
             messages: &mut self.messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                self.session.state_snapshot(0, None, 0),
+                self.session.state_snapshot(0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -147,5 +147,46 @@ fn get_state_exposes_null_effort_when_unset() {
     assert!(
         state["effort"].is_null(),
         "unset effort must surface as null (provider default), got: {state}"
+    );
+}
+
+#[test]
+fn get_state_exposes_provider_effort_vocabulary() {
+    // The agent is the single source of truth for the provider→levels rule:
+    // get_state must carry the valid vocabulary so clients (TUI selector /
+    // validation) never duplicate it (#1067 review).
+    let mut fx = EffortFx::new(None);
+    let ctx = fx.ctx();
+    let state = crate::interface::cli::uds_query::query_response_data(
+        &AgentCommand::GetState { id: None },
+        &ctx,
+    )
+    .expect("get_state must return data");
+    assert_eq!(
+        state["effortLevels"],
+        serde_json::json!(["none", "low", "medium", "high", "xhigh"]),
+        "get_state must list the provider's valid effort levels, got: {state}"
+    );
+}
+
+#[tokio::test]
+async fn busy_snapshot_get_state_carries_effort_and_vocabulary() {
+    // A TUI connecting mid-turn is served the frozen snapshot instead of the
+    // live query; it must not silently drop the effort override or the
+    // vocabulary (#1067 review: snapshot/live get_state shape parity).
+    let mut fx = EffortFx::new(Some(EffortLevel::XHigh));
+    let ctx = fx.ctx();
+    crate::interface::cli::uds_snapshots::refresh_state_snapshot(&ctx).await;
+    let snap = ctx.state_snapshot.read().await;
+    let line = crate::interface::cli::uds_snapshots::build_get_state_line_live(&snap, &None, true);
+    let value: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(
+        value["data"]["effort"], "xhigh",
+        "busy-connect snapshot get_state must carry the active effort, got: {value}"
+    );
+    assert_eq!(
+        value["data"]["effortLevels"],
+        serde_json::json!(["none", "low", "medium", "high", "xhigh"]),
+        "busy-connect snapshot get_state must carry the vocabulary, got: {value}"
     );
 }

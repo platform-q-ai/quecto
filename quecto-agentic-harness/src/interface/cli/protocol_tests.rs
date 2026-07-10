@@ -501,6 +501,8 @@ fn test_session_state_serializes() {
         message_count: 4,
         pending_message_count: 0,
         max_context_tokens: 200_000,
+        effort: None,
+        effort_levels: Vec::new(),
         workflow: None,
     };
     let json = serde_json::to_string(&state).unwrap();
@@ -518,6 +520,8 @@ fn test_session_state_with_workflow_serializes() {
         message_count: 2,
         pending_message_count: 0,
         max_context_tokens: 200_000,
+        effort: None,
+        effort_levels: Vec::new(),
         workflow: Some(serde_json::json!({
             "enabled": true,
             "guardsEnabled": true,
@@ -539,6 +543,8 @@ fn test_session_state_without_workflow_omits_field() {
         message_count: 0,
         pending_message_count: 0,
         max_context_tokens: 200_000,
+        effort: None,
+        effort_levels: Vec::new(),
         workflow: None,
     };
     let json = serde_json::to_string(&state).unwrap();

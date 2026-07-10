@@ -20,7 +20,9 @@ fn test_enqueue_subagent_notification_buffers_system_note() {
     );
     assert!(enqueued, "first completion note should be enqueued");
     assert_eq!(
-        session.state_snapshot(0, None, 0).pending_message_count,
+        session
+            .state_snapshot(0, None, 0, None)
+            .pending_message_count,
         1,
         "note must be buffered for the next idle drain, not delivered immediately"
     );
@@ -47,7 +49,9 @@ fn test_enqueue_subagent_notification_dedupes_same_sequence() {
         "an older sequence must be deduped"
     );
     assert_eq!(
-        session.state_snapshot(0, None, 0).pending_message_count,
+        session
+            .state_snapshot(0, None, 0, None)
+            .pending_message_count,
         1,
         "dedupe must leave exactly one pending note"
     );
@@ -123,7 +127,9 @@ fn test_enqueue_subagent_notification_is_buffered_until_idle_drain() {
         true,
     ));
     assert_eq!(
-        session.state_snapshot(0, None, 0).pending_message_count,
+        session
+            .state_snapshot(0, None, 0, None)
+            .pending_message_count,
         1,
         "a mid-turn arrival must be held in the pending queue, not delivered"
     );
@@ -136,7 +142,9 @@ fn test_enqueue_subagent_notification_is_buffered_until_idle_drain() {
         "the idle drain delivers the buffered note"
     );
     assert_eq!(
-        session.state_snapshot(0, None, 0).pending_message_count,
+        session
+            .state_snapshot(0, None, 0, None)
+            .pending_message_count,
         0,
         "after the idle drain the note is consumed exactly once"
     );

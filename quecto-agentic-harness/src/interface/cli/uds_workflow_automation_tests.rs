@@ -71,7 +71,7 @@ async fn new_session_resets_workflow_run_state() {
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            session.state_snapshot(0, None, 0),
+            session.state_snapshot(0, None, 0, None),
         )),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -130,7 +130,7 @@ async fn resume_session_restores_target_workflow_run_state() {
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            session.state_snapshot(0, None, 0),
+            session.state_snapshot(0, None, 0, None),
         )),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -202,7 +202,7 @@ async fn resume_session_clears_workflow_when_target_has_none() {
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            session.state_snapshot(0, None, 0),
+            session.state_snapshot(0, None, 0, None),
         )),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -264,7 +264,7 @@ async fn set_workflow_automation_updates_config_and_engine() {
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            session.state_snapshot(0, None, 0),
+            session.state_snapshot(0, None, 0, None),
         )),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -332,7 +332,7 @@ fn workflow_nudge_message_waits_for_selected_template() {
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            session.state_snapshot(0, None, 0),
+            session.state_snapshot(0, None, 0, None),
         )),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -394,7 +394,7 @@ async fn drain_refreshes_busy_state_snapshot_per_turn() {
     // The shared state snapshot starts at the pre-turn (initial) view: no
     // workflow attached, zero messages — exactly what a busy child wrongly
     // served before #899.
-    let initial_state = session.state_snapshot(0, None, 0);
+    let initial_state = session.state_snapshot(0, None, 0, None);
     let state_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(initial_state));
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
@@ -500,7 +500,7 @@ fn workflow_progress_fingerprint_changes_with_step_progress() {
         messages: &mut messages,
         conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-            session.state_snapshot(0, None, 0),
+            session.state_snapshot(0, None, 0, None),
         )),
         session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
         extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

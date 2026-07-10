@@ -11,7 +11,14 @@ async fn harness() -> TuiHarness {
 }
 
 fn get_state_event(model: &str, effort: Option<&str>) -> Event {
-    let mut data = serde_json::json!({ "model": model });
+    // Mirror the agent's real get_state shape: it reports the provider's
+    // valid vocabulary in `effortLevels` (the TUI's single source of truth).
+    let levels: &[&str] = if model.contains("anthropic") || model.contains("claude") {
+        &["low", "medium", "high", "max"]
+    } else {
+        &["none", "low", "medium", "high", "xhigh"]
+    };
+    let mut data = serde_json::json!({ "model": model, "effortLevels": levels });
     if let Some(effort) = effort {
         data["effort"] = serde_json::json!(effort);
     }
@@ -204,4 +211,102 @@ async fn failed_set_effort_response_keeps_previous_footer_value() {
         frame.contains("effort: medium"),
         "footer must keep the previous effort after a failed switch, frame:\n{frame}"
     );
+}
+
+// ── state re-sync (#1067 review) ─────────────────────────────────────────
+
+fn commands_of_type(commands: &[String], ty: &str) -> Vec<serde_json::Value> {
+    commands
+        .iter()
+        .filter_map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).ok()?;
+            (v["type"] == ty).then_some(v)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn new_session_refetches_state_so_effort_display_cannot_go_stale() {
+    // The agent resets its session-scoped effort override on new_session;
+    // the TUI must re-fetch state or the footer/selector show a stale level.
+    let mut h = harness().await;
+    h.event(get_state_event("openai-api/gpt-5.5", Some("xhigh")));
+    h.drain_commands().await;
+    h.submit("/new");
+    let commands = h.drain_commands().await;
+    assert!(
+        !commands_of_type(&commands, "get_state").is_empty(),
+        "/new must re-fetch agent state (effort was reset agent-side), got {commands:?}"
+    );
+}
+
+#[tokio::test]
+async fn set_model_success_refetches_state_for_new_vocabulary() {
+    // A model switch can change the provider's effort vocabulary; the TUI
+    // must re-sync from the agent rather than re-derive it locally.
+    let mut h = harness().await;
+    h.event(get_state_event("openai-api/gpt-5.5", Some("high")));
+    h.drain_commands().await;
+    h.event(Event::Response {
+        id: None,
+        command: "set_model".into(),
+        success: true,
+        data: None,
+        error: None,
+    });
+    let commands = h.drain_commands().await;
+    assert!(
+        !commands_of_type(&commands, "get_state").is_empty(),
+        "set_model success must re-fetch agent state, got {commands:?}"
+    );
+}
+
+// ── agent-sourced vocabulary (#1067 review) ──────────────────────────────
+
+#[tokio::test]
+async fn effort_validation_uses_agent_reported_vocabulary_not_a_local_copy() {
+    // The vocabulary comes from get_state's `effortLevels`; a level the
+    // agent reports must pass local validation even if it matches no
+    // built-in list, and rejection messages must list the agent's levels.
+    let mut h = harness().await;
+    h.event(Event::Response {
+        id: Some("gs".into()),
+        command: "get_state".into(),
+        success: true,
+        data: Some(serde_json::json!({
+            "model": "openai-api/gpt-5.5",
+            "effort": "low",
+            "effortLevels": ["low", "ultra"],
+        })),
+        error: None,
+    });
+    h.submit("/effort ultra");
+    let commands = h.drain_commands().await;
+    assert!(
+        command_of_type(&commands, "set_effort").is_some(),
+        "an agent-reported level must be accepted, got {commands:?}"
+    );
+    h.submit("/effort xhigh");
+    let commands = h.drain_commands().await;
+    assert!(
+        command_of_type(&commands, "set_effort").is_none(),
+        "a level outside the agent-reported vocabulary must be rejected"
+    );
+    let frame = h.full_frame();
+    assert!(
+        frame.contains("valid levels: low, ultra"),
+        "rejection must list the agent-reported levels, frame:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn effort_set_before_first_get_state_defers_validation_to_agent() {
+    // Before any get_state lands the TUI has no vocabulary; it must not
+    // block the command — the agent validates and rejects with the list.
+    let mut h = harness().await;
+    h.submit("/effort anything");
+    let commands = h.drain_commands().await;
+    let cmd = command_of_type(&commands, "set_effort")
+        .unwrap_or_else(|| panic!("expected set_effort to pass through, got {commands:?}"));
+    assert_eq!(cmd["effort"], "anything");
 }

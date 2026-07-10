@@ -50,6 +50,8 @@ fn make_args(
             message_count: 0,
             pending_message_count: 0,
             max_context_tokens: 0,
+            effort: None,
+            effort_levels: Vec::new(),
             workflow: None,
         })),
         session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(
