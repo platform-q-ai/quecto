@@ -109,7 +109,7 @@ This registers a single `"web"` extension with both `web_search` and `web_fetch`
 
 ## UDS extensions
 
-UDS extensions are external processes that connect to the agent's Unix domain socket and register tools via the JSON-lines protocol. This is the same socket used by TUIs, IDE plugins, and web UIs.
+UDS extensions are external processes that connect to the agent's Unix domain socket and register tools via the framed JSON protocol. This is the same socket used by TUIs, IDE plugins, and web UIs.
 
 ### How it works
 
@@ -122,7 +122,7 @@ UDS extensions are external processes that connect to the agent's Unix domain so
 
 ### Protocol
 
-All communication uses JSON-lines (one JSON object per line, `\n`-delimited) over a Unix domain socket.
+All communication uses length-prefixed UTF-8 JSON frames over a Unix domain socket.
 
 #### Registering tools
 

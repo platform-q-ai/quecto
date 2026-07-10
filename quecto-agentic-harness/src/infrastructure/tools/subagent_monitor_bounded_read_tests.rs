@@ -37,9 +37,9 @@ async fn monitor_loop_drops_oversized_line_but_keeps_processing_later_events() {
     );
     let (mut stream, _) = listener.accept().await.unwrap();
 
-    // One giant unterminated-then-terminated line, well over MAX_LINE_BYTES,
+    // One giant unterminated-then-terminated line, well over MAX_EVENT_PAYLOAD_BYTES,
     // followed by a normal, valid workflow_state event.
-    let oversized_payload = "x".repeat(super::MAX_LINE_BYTES + 65_536);
+    let oversized_payload = "x".repeat(super::MAX_EVENT_PAYLOAD_BYTES + 65_536);
     stream
         .write_all(format!("{{\"type\":\"noop\",\"pad\":\"{oversized_payload}\"}}\n").as_bytes())
         .await
@@ -66,25 +66,25 @@ async fn monitor_loop_drops_oversized_line_but_keeps_processing_later_events() {
 async fn monitor_loop_never_buffers_an_oversized_line_past_the_cap() {
     // Directly exercises the read primitive `monitor_loop` now uses, proving
     // the accumulated buffer for one absurdly large unterminated line never
-    // grows past MAX_LINE_BYTES — the defect this change fixes (previously
+    // grows past MAX_EVENT_PAYLOAD_BYTES — the defect this change fixes (previously
     // `.lines()`/`next_line()` buffered the entire line before any length
     // check could run).
-    let mut payload = vec![b'x'; 8 * super::MAX_LINE_BYTES];
+    let mut payload = vec![b'x'; 8 * super::MAX_EVENT_PAYLOAD_BYTES];
     payload.push(b'\n');
     let mut reader = tokio::io::BufReader::with_capacity(4096, &payload[..]);
-    let bounded = quecto_line_io::read_bounded_line(&mut reader, super::MAX_LINE_BYTES)
+    let bounded = quecto_line_io::read_bounded_line(&mut reader, super::MAX_EVENT_PAYLOAD_BYTES)
         .await
         .unwrap()
         .expect("line present");
     assert!(bounded.truncated);
-    assert_eq!(bounded.content.len(), super::MAX_LINE_BYTES);
+    assert_eq!(bounded.content.len(), super::MAX_EVENT_PAYLOAD_BYTES);
     // Duplicate of the quecto-line-io crate test, kept here to pin the
     // helper's invariant at this call site: the valid-UTF-8 path reuses the
     // accumulation buffer's allocation, so capacity() observes the internal
     // buffer — it must never grow past the cap.
     assert!(
-        bounded.content.capacity() <= super::MAX_LINE_BYTES,
-        "buffer capacity {} exceeded MAX_LINE_BYTES",
+        bounded.content.capacity() <= super::MAX_EVENT_PAYLOAD_BYTES,
+        "buffer capacity {} exceeded MAX_EVENT_PAYLOAD_BYTES",
         bounded.content.capacity()
     );
 }

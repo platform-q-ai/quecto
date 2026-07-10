@@ -165,16 +165,33 @@ use crate::infrastructure::tools::subagent_registry::{
 /// implementation parameterized by this sink. Production takes `Broadcast`; the
 /// `Writer` variant is the trivial single-client/test case.
 pub(crate) enum EventSink<'a> {
-    /// Write JSON lines directly to an async writer (single client).
-    Writer(&'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)),
-    /// Fan JSON lines out to every connected client (multi-client server).
+    /// Write JSON messages directly to an async writer (single client), in
+    /// the connection's negotiated framing (#1059).
+    Writer(
+        &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+        super::uds_wire::ConnectionWireMode,
+    ),
+    /// Fan JSON messages out to every connected client (multi-client server).
+    /// Lines stay newline-terminated on this channel; each client's writer
+    /// task re-frames them for its own connection (#1059).
     Broadcast(tokio::sync::broadcast::Sender<String>),
 }
 
 impl<'a> EventSink<'a> {
-    /// Build a writer sink from a borrowed async writer.
+    /// Build a writer sink from a borrowed async writer. Writes legacy NDJSON
+    /// (non-negotiating test paths that assert on raw writer bytes).
+    #[cfg(test)]
     pub(crate) fn writer(w: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)) -> Self {
-        EventSink::Writer(w)
+        Self::writer_with_mode(w, super::uds_wire::ConnectionWireMode::legacy())
+    }
+
+    /// Build a writer sink that replies in a UDS connection's negotiated
+    /// framing (#1059).
+    pub(crate) fn writer_with_mode(
+        w: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+        mode: super::uds_wire::ConnectionWireMode,
+    ) -> Self {
+        EventSink::Writer(w, mode)
     }
 
     /// Serialize an event to a JSON line and deliver it via this sink.
@@ -185,9 +202,8 @@ impl<'a> EventSink<'a> {
         let mut line = event.to_capped_json_line();
         line.push('\n');
         match self {
-            EventSink::Writer(w) => {
-                use tokio::io::AsyncWriteExt;
-                let _ = w.write_all(line.as_bytes()).await;
+            EventSink::Writer(w, mode) => {
+                let _ = super::uds_wire::write_event_line(&mut **w, &line, mode).await;
             }
             EventSink::Broadcast(tx) => {
                 let _ = tx.send(line);
@@ -201,7 +217,7 @@ impl<'a> EventSink<'a> {
     fn broadcast_sender(&self) -> Option<&tokio::sync::broadcast::Sender<String>> {
         match self {
             EventSink::Broadcast(tx) => Some(tx),
-            EventSink::Writer(_) => None,
+            EventSink::Writer(..) => None,
         }
     }
 }
@@ -557,7 +573,7 @@ pub(crate) async fn forward_progress_event(
     ev: AgentProgressEvent,
     stdout: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
 ) {
-    forward_progress_event_sink(ev, &mut EventSink::Writer(stdout)).await;
+    forward_progress_event_sink(ev, &mut EventSink::writer(stdout)).await;
 }
 
 #[cfg(test)]

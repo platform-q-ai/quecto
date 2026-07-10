@@ -7,8 +7,9 @@
 //! buffered and only checked afterward. This exercises the real reader loop
 //! over a live socket pair and asserts on the one thing an external observer
 //! can see: which events/effects actually happen — the too-long line
-//! produces exactly one `parse_error` event and does not block the valid
-//! command that follows it from being dispatched.
+//! produces exactly one `protocol_error` event (#1059: a clean protocol
+//! rejection, not a silent drop) and does not block the valid command that
+//! follows it from being dispatched.
 //!
 //! This file is compiled as `mod bounded_read_tests` inside `uds.rs`, so
 //! `super` = `uds`.
@@ -54,6 +55,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(1024);
 
     let mut ctx = DispatchCtx {
+        wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
@@ -95,7 +97,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     let writer = tokio::spawn(async move {
         let oversized = format!(
             "{{\"type\":\"prompt\",\"task\":\"{}\"}}\n",
-            "x".repeat(MAX_LINE_BYTES + 65_536)
+            "x".repeat(MAX_FRAME_PAYLOAD_BYTES + 65_536)
         );
         client
             .write_all(oversized.as_bytes())
@@ -116,11 +118,14 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     while let Ok(line) = broadcast_rx.try_recv() {
         let v: serde_json::Value = serde_json::from_str(&line).expect("valid JSON event");
         match (v["type"].as_str(), v["command"].as_str()) {
-            (Some("response"), Some("parse_error")) => {
+            (Some("response"), Some("protocol_error")) => {
                 saw_parse_error = true;
-                assert_eq!(
-                    v["error"], "line exceeds 1 MiB limit",
-                    "the too-long event must report the same message as before #1003"
+                let error = v["error"].as_str().unwrap_or_default();
+                assert!(
+                    error.contains("frame cap")
+                        && error.contains(&MAX_FRAME_PAYLOAD_BYTES.to_string()),
+                    "the over-cap event must be a diagnosable protocol error naming \
+                     the cap (#1059); got: {error}"
                 );
             }
             (Some("response"), Some("get_state")) => saw_state = true,
@@ -130,7 +135,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
 
     assert!(
         saw_parse_error,
-        "an oversized line must still produce exactly one parse_error event"
+        "an oversized line must still produce exactly one protocol_error event"
     );
     assert!(
         saw_state,
@@ -142,25 +147,25 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
 async fn read_bounded_line_never_buffers_an_oversized_command_past_the_cap() {
     // Directly exercises the read primitive `run_command_loop` now uses,
     // proving the accumulated buffer for one absurdly large unterminated
-    // line never grows past MAX_LINE_BYTES — the defect this change fixes
+    // line never grows past MAX_FRAME_PAYLOAD_BYTES — the defect this change fixes
     // (previously `.lines()`/`next_line()` buffered the entire line before
     // any length check could run).
-    let mut payload = vec![b'x'; 8 * MAX_LINE_BYTES];
+    let mut payload = vec![b'x'; 8 * MAX_FRAME_PAYLOAD_BYTES];
     payload.push(b'\n');
     let mut reader = tokio::io::BufReader::with_capacity(4096, &payload[..]);
-    let bounded = quecto_line_io::read_bounded_line(&mut reader, MAX_LINE_BYTES)
+    let bounded = quecto_line_io::read_bounded_line(&mut reader, MAX_FRAME_PAYLOAD_BYTES)
         .await
         .unwrap()
         .expect("line present");
     assert!(bounded.truncated);
-    assert_eq!(bounded.content.len(), MAX_LINE_BYTES);
+    assert_eq!(bounded.content.len(), MAX_FRAME_PAYLOAD_BYTES);
     // Duplicate of the quecto-line-io crate test, kept here to pin the
     // helper's invariant at this call site: the valid-UTF-8 path reuses the
     // accumulation buffer's allocation, so capacity() observes the internal
     // buffer — it must never grow past the cap.
     assert!(
-        bounded.content.capacity() <= MAX_LINE_BYTES,
-        "buffer capacity {} exceeded MAX_LINE_BYTES",
+        bounded.content.capacity() <= MAX_FRAME_PAYLOAD_BYTES,
+        "buffer capacity {} exceeded MAX_FRAME_PAYLOAD_BYTES",
         bounded.content.capacity()
     );
 }

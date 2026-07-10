@@ -114,10 +114,10 @@ fn timeout_with_in_progress_workflow_reads_as_still_running_checkin() {
 /// half, the reader sees EOF immediately → aborts writer → response
 /// is never delivered.
 async fn mock_uds_server(listener: tokio::net::UnixListener) {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncWriteExt, BufReader};
     let (stream, _) = listener.accept().await.unwrap();
     let (reader, mut writer) = tokio::io::split(stream);
-    let mut lines = BufReader::new(reader).lines();
+    let mut reader = BufReader::new(reader);
 
     // Channel simulates the broadcast: dispatch sends events here,
     // writer task drains them to the client.
@@ -134,7 +134,8 @@ async fn mock_uds_server(listener: tokio::net::UnixListener) {
 
     // Reader loop: read commands until EOF, then abort writer.
     // This matches uds_multi.rs handle_client_task behaviour.
-    let cmd_line = lines.next_line().await.unwrap();
+    let cmd_line =
+        crate::infrastructure::test_support::read_framed_command_async(&mut reader).await;
     if let Some(cmd) = cmd_line {
         // Echo the stamped request id so the command reader correlates the
         // reply to its request (#831).
@@ -152,8 +153,11 @@ async fn mock_uds_server(listener: tokio::net::UnixListener) {
                 .await;
     }
 
-    // Wait for reader EOF (client closed write half → next_line returns None).
-    while lines.next_line().await.unwrap_or(None).is_some() {}
+    // Wait for reader EOF after any additional framed commands.
+    while crate::infrastructure::test_support::read_framed_command_async(&mut reader)
+        .await
+        .is_some()
+    {}
 
     // Real server aborts writer when reader exits.
     writer_task.abort();
@@ -187,10 +191,9 @@ async fn test_send_uds_command_eof_without_response_errors() {
 
     // Server that closes immediately without sending response.
     let server = tokio::spawn(async move {
-        use tokio::io::AsyncBufReadExt;
         let (stream, _) = listener.accept().await.unwrap();
-        let mut lines = tokio::io::BufReader::new(stream).lines();
-        let _ = lines.next_line().await; // read command
+        let mut reader = tokio::io::BufReader::new(stream);
+        let _ = crate::infrastructure::test_support::read_framed_command_async(&mut reader).await;
         // Close without sending response.
     });
 
@@ -235,13 +238,15 @@ async fn execute_await_invalid_json_is_error() {
 }
 
 async fn serve_get_state_once(listener: tokio::net::UnixListener) {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncWriteExt, BufReader};
     // One connection is used by the await preflight connect check and then dropped.
     let _ = listener.accept().await;
     if let Ok((stream, _)) = listener.accept().await {
         let (reader, mut writer) = tokio::io::split(stream);
-        let mut lines = BufReader::new(reader).lines();
-        let cmd = lines.next_line().await.ok().flatten().unwrap_or_default();
+        let mut reader = BufReader::new(reader);
+        let cmd = crate::infrastructure::test_support::read_framed_command_async(&mut reader)
+            .await
+            .unwrap_or_default();
         let id = serde_json::from_str::<serde_json::Value>(&cmd)
             .ok()
             .and_then(|v| v.get("id").and_then(|t| t.as_str()).map(str::to_owned))

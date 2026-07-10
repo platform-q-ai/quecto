@@ -189,6 +189,7 @@ impl Fixture {
             &self.messages,
         );
         DispatchCtx {
+            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
@@ -714,9 +715,8 @@ async fn dispatch_agent_targeted_tail_without_registry_emits_error() {
         count: 5,
         agent_id: Some("worker".into()),
     };
-    let mut ctx = fx.ctx(); // subagent_registry: None
-    // The early intercept handles it (emits an event) and keeps the loop alive.
-    assert!(!dispatch_command(cmd, &mut ctx).await);
+    // subagent_registry is None: the early intercept still handles it.
+    assert!(!dispatch_command(cmd, &mut fx.ctx()).await);
 }
 
 #[tokio::test]

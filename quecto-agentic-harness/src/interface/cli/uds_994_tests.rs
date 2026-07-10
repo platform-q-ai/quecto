@@ -76,6 +76,7 @@ impl Fixture {
     fn ctx(&mut self) -> DispatchCtx<'_> {
         let initial_stats = compute_session_stats(&self.session_key, &self.messages);
         DispatchCtx {
+            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,

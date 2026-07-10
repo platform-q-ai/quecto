@@ -180,7 +180,7 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
 /// "client" half is used to write commands and read events.
 ///
 /// Stores event lines, stderr text, and exit code into `world`. Idempotent.
-fn execute_uds(world: &mut QuectoWorld) {
+pub(crate) fn execute_uds(world: &mut QuectoWorld) {
     if world.uds_exit_code.is_some() {
         return;
     }
@@ -315,12 +315,10 @@ fn execute_uds(world: &mut QuectoWorld) {
     let (server_stream, client_stream) =
         std::os::unix::net::UnixStream::pair().expect("UnixStream::pair failed");
 
-    // Build stdin bytes from accumulated command lines.
-    let stdin_bytes: Vec<u8> = world
-        .uds_commands
-        .iter()
-        .flat_map(|l| format!("{l}\n").into_bytes())
-        .collect();
+    // Build stdin bytes from the accumulated commands, in the scenario's
+    // wire framing (#1059): legacy newline lines by default, length-prefixed
+    // frames (or raw garbage) when the scenario scripted such a client.
+    let stdin_bytes: Vec<u8> = crate::uds_framing_steps::build_wire_client_bytes(world);
 
     let system_prompt = world.system_prompt.clone().unwrap_or_default();
     let base_for_thread = base.clone();
@@ -385,18 +383,15 @@ fn execute_uds(world: &mut QuectoWorld) {
         }
     };
 
-    let raw = String::from_utf8_lossy(&response_bytes).to_string();
-    world.agent_events = raw
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(str::to_owned)
-        .collect();
+    world.agent_events = crate::uds_framing_steps::parse_wire_events(world, &response_bytes);
     world.uds_exit_code = Some(exit);
 
-    // Simulate what the production binary prints to stderr: the socket path.
-    // In tests the socket_override path skips the real eprintln!, so we inject
-    // it here so the "agent stderr should contain" step can assert on it.
-    world.agent_stderr = format!("quecto-agent-socket: {}\n", socket_path.display());
+    // Simulate what the production binary prints to stderr: the announcement
+    // (protocol-version line + socket-path line, #1059). In tests the
+    // socket_override path skips the real eprint!, so we inject the SAME
+    // production-built string here so announcement steps assert on the real
+    // format.
+    world.agent_stderr = quecto::interface::cli::uds_wire::socket_announcement(&socket_path);
 
     // Capture socket path for transport assertions.
     world._uds_socket_path = Some(socket_path);
@@ -975,6 +970,9 @@ fn then_every_event_line_fits_cap(world: &mut QuectoWorld) {
 
 #[then(expr = "the agent output should contain an event of type {string}")]
 fn then_agent_output_contains_event_type(world: &mut QuectoWorld, event_type: String) {
+    // Framing scenarios (#1059) model the disconnect in a Given, so the
+    // deferred run is triggered here instead of by an explicit close step.
+    crate::uds_framing_steps::ensure_wire_client_executed(world);
     let types = agent_event_types(world);
     assert!(
         types.contains(&event_type),

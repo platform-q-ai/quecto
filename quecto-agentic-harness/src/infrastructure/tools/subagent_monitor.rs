@@ -1,7 +1,7 @@
 // Persistent subagent monitor — live event stream from child agents (#522).
 //
 // Pure async monitor logic, no coupling to dispatch.
-// The monitor task connects to a child's UDS socket, reads JSON-lines events,
+// The monitor task connects to a child's UDS socket, reads framed JSON events,
 // and updates the SubagentEntry in the SubagentRegistry with live status.
 //
 // NOTE: This module lives in the infrastructure layer and therefore MUST NOT
@@ -20,9 +20,9 @@ pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
 };
 
-/// Maximum length for a single JSON-lines event (the shared protocol cap).
+/// Maximum length for a single JSON event (the shared protocol cap).
 /// Lines exceeding this are dropped to prevent OOM from misbehaving children.
-const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
+const MAX_EVENT_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
 /// Maximum length for stored tool name / error strings (256 chars).
 const MAX_STORED_STRING: usize = 256;
@@ -162,7 +162,7 @@ pub fn mark_exited(entry: &mut SubagentEntry) {
 }
 
 /// Spawn a background monitor task that connects to a child agent's UDS socket
-/// and reads the JSON-lines event stream, updating the registry in real-time.
+/// and reads the framed JSON event stream, updating the registry in real-time.
 /// When `notify_tx` is `Some`, sends [`SubagentNotification`]s on the child's
 /// completion/error/exit (#523). Returns an abortable `JoinHandle`.
 pub fn spawn_monitor_task(
@@ -186,6 +186,24 @@ pub fn spawn_monitor_task(
     })
 }
 
+/// Mark the child as exited in the registry and notify listeners.
+fn notify_child_exited(
+    registry: &SubagentRegistry,
+    agent_id: &str,
+    notify_tx: Option<&NotificationTx>,
+) {
+    let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
+    send_notification(
+        notify_tx,
+        super::subagent_registry::SequencedSubagentNotification::new(
+            sequence,
+            SubagentNotification::Exited {
+                agent_id: agent_id.to_string(),
+            },
+        ),
+    );
+}
+
 /// Internal monitor loop: connect → read lines → apply events → detect close.
 async fn monitor_loop(
     agent_id: &str,
@@ -203,33 +221,41 @@ async fn monitor_loop(
         Some(s) => s,
         None => {
             tracing::warn!(agent = %agent_id, "monitor: failed to connect to child socket");
-            let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
-            send_notification(
-                notify_tx,
-                super::subagent_registry::SequencedSubagentNotification::new(
-                    sequence,
-                    SubagentNotification::Exited {
-                        agent_id: agent_id.to_string(),
-                    },
-                ),
-            );
+            notify_child_exited(registry, agent_id, notify_tx);
             return;
         }
     };
 
-    // Use a smaller BufReader capacity (1 KiB) since JSON-lines events are
-    // typically well under 1 KiB. Default 8 KiB is wasteful per child.
-    let mut reader = BufReader::with_capacity(1024, stream);
+    // The monitor is otherwise listen-only, so announce framed mode with an
+    // empty hello frame (ignored by the dispatch loop) — the child then
+    // replies in length-prefixed frames (#1059 / ADR-0008 part 1). The write
+    // half must stay open: dropping it would shut down the socket's write
+    // direction and read as a client disconnect on the child.
+    let (read_half, mut write_half) = tokio::io::split(stream);
+    if let Err(e) = quecto_line_io::write_frame(
+        &mut write_half,
+        b"",
+        quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+    )
+    .await
+    {
+        tracing::warn!(agent = %agent_id, error = %e, "monitor: framed hello not delivered");
+    }
 
+    // Use a smaller BufReader capacity (1 KiB) since JSON events are
+    // typically well under 1 KiB. Default 8 KiB is wasteful per child.
+    let mut reader = BufReader::with_capacity(1024, read_half);
+
+    // Reused across the child's whole event stream so each high-volume token
+    // line does not allocate (and, on the framed branch, zero-initialize) a
+    // fresh Vec — matching the sibling TUI/quecto-api hot readers migrated in
+    // #1059.
+    let mut buf = Vec::new();
     loop {
-        match quecto_line_io::read_bounded_line(&mut reader, MAX_LINE_BYTES).await {
-            Ok(Some(bounded)) => {
-                if bounded.truncated {
-                    tracing::warn!(agent = %agent_id, "monitor: dropping oversized line");
-                    continue;
-                }
+        match read_monitor_message(&mut reader, &mut buf, agent_id).await {
+            MonitorRead::Message => {
                 handle_monitor_line(
-                    &bounded.content,
+                    &String::from_utf8_lossy(&buf),
                     agent_id,
                     registry,
                     notify_tx,
@@ -237,35 +263,48 @@ async fn monitor_loop(
                     parent_id,
                 );
             }
-            Ok(None) => {
-                // EOF — child closed the connection.
-                tracing::info!(agent = %agent_id, "monitor: child connection closed (EOF)");
-                let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
-                send_notification(
-                    notify_tx,
-                    super::subagent_registry::SequencedSubagentNotification::new(
-                        sequence,
-                        SubagentNotification::Exited {
-                            agent_id: agent_id.to_string(),
-                        },
-                    ),
-                );
+            MonitorRead::Skip => continue,
+            MonitorRead::Closed => {
+                notify_child_exited(registry, agent_id, notify_tx);
                 return;
             }
-            Err(e) => {
-                tracing::warn!(agent = %agent_id, error = %e, "monitor: read error");
-                let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
-                send_notification(
-                    notify_tx,
-                    super::subagent_registry::SequencedSubagentNotification::new(
-                        sequence,
-                        SubagentNotification::Exited {
-                            agent_id: agent_id.to_string(),
-                        },
-                    ),
-                );
-                return;
-            }
+        }
+    }
+}
+
+/// Outcome of a single monitor read: a message (now in the caller's reusable
+/// buffer), a recoverable skip (oversized frame rejected cleanly), or a
+/// closed/broken connection.
+enum MonitorRead {
+    Message,
+    Skip,
+    Closed,
+}
+
+/// Read one framed-or-legacy message from the child into the reusable `buf`,
+/// classifying EOF, oversized rejection (stream stays usable), and hard read
+/// errors. Uses the buffer-reusing `_into` reader so a child's high-volume
+/// token stream does not allocate per message.
+async fn read_monitor_message<R>(reader: &mut R, buf: &mut Vec<u8>, agent_id: &str) -> MonitorRead
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    match quecto_line_io::read_frame_or_legacy_line_into(reader, buf, MAX_EVENT_PAYLOAD_BYTES).await
+    {
+        Ok(Some(_wire_mode)) => MonitorRead::Message,
+        Ok(None) => {
+            // EOF — child closed the connection.
+            tracing::info!(agent = %agent_id, "monitor: child connection closed (EOF)");
+            MonitorRead::Closed
+        }
+        Err(e @ quecto_line_io::FrameError::Oversized { .. }) => {
+            // Over-cap message: rejected cleanly, stream stays framed.
+            tracing::warn!(agent = %agent_id, "monitor: dropping oversized message: {e}");
+            MonitorRead::Skip
+        }
+        Err(e) => {
+            tracing::warn!(agent = %agent_id, error = %e, "monitor: read error");
+            MonitorRead::Closed
         }
     }
 }
@@ -281,7 +320,7 @@ fn handle_monitor_line(
     broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
     parent_id: Option<&str>,
 ) {
-    if line.len() > MAX_LINE_BYTES {
+    if line.len() > MAX_EVENT_PAYLOAD_BYTES {
         tracing::warn!(agent = %agent_id, len = line.len(), "monitor: dropping oversized line");
         return;
     }
@@ -461,7 +500,7 @@ pub fn forward_child_workflow_event(
     canonical_workflow_forward(&value, child_id, parent_id)
 }
 
-/// Check if a JSON-lines event should trigger a notification and send it.
+/// Check if a JSON event should trigger a notification and send it.
 /// Parses the line from string — use `notify_from_parsed` when you already have a Value.
 #[cfg(test)]
 pub fn maybe_notify(notify_tx: Option<&NotificationTx>, agent_id: &str, line: &str) {

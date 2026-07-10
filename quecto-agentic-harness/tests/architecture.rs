@@ -672,3 +672,64 @@ fn cargo_toml_section_contains_dependency(section: &str, dependency: &str) -> bo
                 || trimmed.starts_with(&format!("{dependency}=")))
     })
 }
+
+/// #1059 / ADR-0008 part 1: all four socket consumers must migrate together.
+/// Each production read site (harness UDS reader + multi-client reader,
+/// sub-agent parent monitor, TUI client, quecto-api extension gateway) must
+/// route through `quecto_line_io`'s deprecation-window frame reader, so a
+/// partial migration (one consumer silently left on bare newline reads)
+/// cannot land.
+#[test]
+fn all_four_socket_consumers_read_via_the_shared_frame_reader() {
+    let consumers = [
+        "src/interface/cli/uds_reader.rs",
+        "src/interface/cli/uds_multi.rs",
+        "src/infrastructure/tools/subagent_monitor.rs",
+        // The parent→child query path (agent tool + TUI inspector poll) is a
+        // socket consumer too; it must not be stranded on legacy NDJSON reads
+        // when the deprecation window closes (#1059 review, finding 5).
+        "src/infrastructure/tools/subagent_registry.rs",
+        "../quecto-tui/src/infrastructure/client.rs",
+        "../quecto-api/src/infrastructure/uds/client.rs",
+    ];
+    for path in consumers {
+        let source =
+            fs::read_to_string(path).unwrap_or_else(|e| panic!("read consumer source {path}: {e}"));
+        assert!(
+            source.contains("read_frame_or_legacy_line"),
+            "{path} must read socket messages via \
+             quecto_line_io::read_frame_or_legacy_line (#1059)"
+        );
+    }
+}
+
+/// #1059 / ADR-0008 part 1: the agent's socket announcement must carry the
+/// protocol version, and the production multi-client emit site must produce it
+/// via the shared `socket_announcement` helper (the single source of truth for
+/// the `quecto-agent-protocol: N` line a client sniffs before connecting).
+///
+/// The BDD announcement scenario asserts on `socket_announcement`'s output, so
+/// on its own it cannot catch the emit site being reverted to a bare
+/// `eprintln!("quecto-agent-socket: …")` that drops the version line. This
+/// source guard pins that the production path actually emits the version line
+/// through the helper, so such a revert fails a test (#1059 review, finding 9).
+#[test]
+fn multi_client_agent_announces_protocol_version_via_shared_helper() {
+    let source = fs::read_to_string("src/interface/cli/uds_lifecycle.rs")
+        .expect("read src/interface/cli/uds_lifecycle.rs");
+    assert!(
+        source.contains("socket_announcement(&socket_path)"),
+        "the multi-client agent startup must emit its socket announcement via \
+         uds_wire::socket_announcement (which carries the protocol-version line); \
+         a bare eprintln! that drops the version line would silently strand \
+         clients on legacy framing (#1059)"
+    );
+    // And the helper itself must include the version token, so the emitted
+    // announcement is never just the legacy socket line.
+    let wire = fs::read_to_string("src/interface/cli/uds_wire.rs")
+        .expect("read src/interface/cli/uds_wire.rs");
+    assert!(
+        wire.contains("PROTOCOL_ANNOUNCE_PREFIX") && wire.contains("PROTOCOL_VERSION"),
+        "socket_announcement must include the PROTOCOL_ANNOUNCE_PREFIX + PROTOCOL_VERSION token"
+    );
+}

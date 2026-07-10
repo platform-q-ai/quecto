@@ -150,3 +150,32 @@ pub fn forwarded_workflow(agent_id: &str, done: u32, total: u32) -> Event {
         available_templates: None,
     }
 }
+
+/// Accept one connection on `listener` and forward each decoded command to
+/// `cmd_tx`. The client speaks length-prefixed frames since #1059; commands
+/// are read via the production deprecation-window reader, skipping the empty
+/// hello frame that announces framed mode.
+pub(super) fn spawn_command_reader(
+    listener: tokio::net::UnixListener,
+    cmd_tx: tokio::sync::mpsc::Sender<String>,
+) {
+    use quecto_line_io::{Incoming, PROTOCOL_FRAME_CAP_BYTES, read_frame_or_legacy_line};
+    tokio::spawn(async move {
+        let Ok((stream, _)) = listener.accept().await else {
+            return;
+        };
+        let mut reader = BufReader::new(stream);
+        while let Ok(Some(incoming)) =
+            read_frame_or_legacy_line(&mut reader, PROTOCOL_FRAME_CAP_BYTES).await
+        {
+            let (Incoming::Frame(bytes) | Incoming::LegacyLine(bytes)) = incoming;
+            if bytes.is_empty() {
+                continue;
+            }
+            let line = String::from_utf8_lossy(&bytes).into_owned();
+            if cmd_tx.send(line).await.is_err() {
+                break;
+            }
+        }
+    });
+}

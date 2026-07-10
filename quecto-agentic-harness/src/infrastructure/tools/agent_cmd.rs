@@ -1,7 +1,7 @@
 // Agent command tool: native UDS interaction with spawned subagents (#421).
 //
 // Connects to child agent UDS sockets directly from Rust — no ncat, no socat,
-// no bash intermediary.  Uses the existing JSON-lines protocol from
+// no bash intermediary.  Uses the framed JSON protocol from
 // `src/interface/cli/protocol.rs`.
 //
 // Extended with `await` command (#612) that blocks until a sub-agent reaches a
@@ -59,7 +59,7 @@ const AWAIT_POLL_INTERVAL_MS: u64 = 500;
 /// Tool that sends UDS commands to spawned subagents.
 ///
 /// Looks up the socket path from a shared [`SubagentRegistry`], connects,
-/// sends the JSON-lines command, reads the response, and returns it as a
+/// sends the framed JSON command, reads the response, and returns it as a
 /// structured [`ToolResult`].
 #[derive(Debug, Clone)]
 pub struct AgentCmdTool {
@@ -148,7 +148,7 @@ impl AgentCmdTool {
             ));
         }
 
-        // Build the JSON-lines command. Control commands (prompt/steer/
+        // Build the framed JSON command. Control commands (prompt/steer/
         // follow_up/abort) carry `"ack":"accept"` so a BUSY child's reader acks
         // ACCEPTANCE immediately instead of leaving the parent frozen until the
         // child's turn completes (#876); completion still arrives via the

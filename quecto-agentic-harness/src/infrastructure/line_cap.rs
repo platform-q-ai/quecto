@@ -1,6 +1,6 @@
 //! Protocol event-line capping (#1047).
 //!
-//! A single oversized JSON-lines event is dropped unread by every reader in
+//! A single oversized protocol message is dropped unread by every reader in
 //! the workspace (they all bound reads at [`EVENT_LINE_CAP_BYTES`]), which
 //! makes the session look frozen/disconnected. These helpers shrink an
 //! over-budget event by tailing its growth-prone payload — the OLDEST content
@@ -15,7 +15,7 @@
 /// Hard cap on a single emitted event line, INCLUDING the trailing newline.
 ///
 /// Derived from the shared framing crate's protocol bound so the emitter and
-/// every reader (`quecto-tui`'s `MAX_LINE_BYTES`, the UDS and sub-agent read
+/// every reader (`quecto-tui`'s compatibility cap, the UDS and sub-agent read
 /// bounds, `quecto-api`'s client bound) agree by construction (#1047).
 pub const EVENT_LINE_CAP_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 

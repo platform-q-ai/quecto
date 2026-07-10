@@ -204,10 +204,13 @@ async fn spawn_agent_wires_the_post_startup_stderr_drain() {
         .expect("mark script executable");
 
     let flags = parse_flags(&args(""));
-    let (path, mut child, tail) = spawn_agent_program(script.to_str().unwrap(), &flags)
+    let (path, mut child, tail, protocol) = spawn_agent_program(script.to_str().unwrap(), &flags)
         .await
         .expect("spawn fake agent");
     assert_eq!(path, sock);
+    // This fake agent announces no protocol line, so the spawn must report the
+    // legacy (None) framing rather than inventing a version (#1059).
+    assert_eq!(protocol, None);
 
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     while !tail
@@ -228,6 +231,74 @@ async fn spawn_agent_wires_the_post_startup_stderr_drain() {
     )
     .await;
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #1059: the spawn path must PARSE the `quecto-agent-protocol: N` line the
+/// agent emits before its socket announcement, so the caller can negotiate
+/// framing. Reverting the parse to always-None would keep every client on
+/// legacy NDJSON forever — this pins the parse.
+#[tokio::test]
+async fn spawn_agent_parses_the_protocol_version_announcement() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tmp_dir("spawnproto");
+    let sock = dir.join("agent.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind fake socket");
+    let script = dir.join("fake-agent.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\n\
+             echo 'quecto-agent-protocol: {}' >&2\n\
+             echo 'quecto-agent-socket: {}' >&2\n\
+             sleep 30\n",
+            quecto_line_io::PROTOCOL_VERSION,
+            sock.display()
+        ),
+    )
+    .expect("write fake agent script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+        .expect("mark script executable");
+
+    let flags = parse_flags(&args(""));
+    let (_path, mut child, _tail, protocol) = spawn_agent_program(script.to_str().unwrap(), &flags)
+        .await
+        .expect("spawn fake agent");
+    assert_eq!(
+        protocol,
+        Some(quecto_line_io::PROTOCOL_VERSION),
+        "spawn must parse the announced protocol version"
+    );
+
+    crate::infrastructure::process::terminate_child(
+        &mut child,
+        crate::infrastructure::process::TERMINATE_GRACE_MS,
+    )
+    .await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #1059: the framing decision — frames for an announced v2+, legacy NDJSON for
+/// an agent that announced nothing. Pins `should_speak_frames` so a revert that
+/// always picks one framing is caught.
+#[test]
+fn should_speak_frames_negotiates_on_announced_version() {
+    assert!(
+        should_speak_frames(Some(quecto_line_io::PROTOCOL_VERSION)),
+        "an agent announcing the current protocol version speaks frames"
+    );
+    assert!(
+        should_speak_frames(Some(quecto_line_io::PROTOCOL_VERSION + 1)),
+        "a newer protocol version still speaks frames"
+    );
+    assert!(
+        !should_speak_frames(Some(quecto_line_io::PROTOCOL_VERSION - 1)),
+        "an older announced version falls back to legacy NDJSON"
+    );
+    assert!(
+        !should_speak_frames(None),
+        "an agent that announced no version is treated as legacy NDJSON"
+    );
 }
 
 // ── redaction ────────────────────────────────────────────────────────

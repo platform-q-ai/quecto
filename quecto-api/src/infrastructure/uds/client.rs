@@ -1,6 +1,6 @@
 // UDS client — infrastructure adapter implementing the AgentGateway port.
 //
-// Connects to a quecto agent's Unix domain socket, sends JSON-lines commands,
+// Connects to a quecto agent's Unix domain socket, sends JSON messages,
 // and distributes incoming events to subscribers via broadcast channels.
 
 use std::future::Future;
@@ -9,11 +9,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, mpsc};
 
-use quecto_line_io::read_bounded_line;
+use quecto_line_io::{FrameError, WireMode, read_frame_or_legacy_line_into, write_message};
 
 use crate::application::ports::agent_gateway::{AgentCommand, AgentGateway, EventSubscriber};
 use crate::domain::error::ApiError;
@@ -32,7 +32,7 @@ const BROADCAST_CAPACITY: usize = 512;
 /// to establish the connection, then pass clones to axum handlers.
 #[derive(Clone)]
 pub struct UdsGateway {
-    /// Channel to send serialised JSON-lines commands to the writer task.
+    /// Channel to send serialised JSON commands to the writer task.
     cmd_tx: mpsc::Sender<String>,
     /// Broadcast sender — every incoming event is sent here.
     event_tx: broadcast::Sender<AgentEvent>,
@@ -53,7 +53,7 @@ impl UdsGateway {
     ///
     /// Spawns two background tasks:
     /// - A writer that drains the command channel and writes to the socket.
-    /// - A reader that parses incoming JSON-lines events and broadcasts them.
+    /// - A reader that parses incoming JSON events and broadcasts them.
     pub async fn connect(socket_path: &Path) -> Result<Self, ApiError> {
         let stream = UnixStream::connect(socket_path)
             .await
@@ -61,15 +61,44 @@ impl UdsGateway {
 
         let (read_half, mut write_half) = tokio::io::split(stream);
 
-        // Command writer task
+        // Command writer task. The gateway attaches to an already-running,
+        // separately-versioned agent by socket path — there is no stderr
+        // announcement to negotiate against — so during the ADR-0008 NDJSON
+        // deprecation window it writes commands as legacy NDJSON lines. That is
+        // the one framing BOTH agent generations accept: a pre-#1059 agent
+        // reads NDJSON natively, and a current agent's reader sniffs each
+        // message and replies in the same (legacy) framing. Writing frames here
+        // would make a pre-#1059 agent's newline reader hang forever on the
+        // first (newline-less) frame — the silent hang ADR-0008 forbids. (When
+        // part 3 closes the window this path needs an explicit version
+        // handshake; out of scope for part 1.) The reader below stays
+        // dual-mode so a current agent's framed replies still parse.
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(64);
         tokio::spawn(async move {
             while let Some(line) = cmd_rx.recv().await {
-                if write_half.write_all(line.as_bytes()).await.is_err() {
-                    break;
-                }
-                if write_half.flush().await.is_err() {
-                    break;
+                let payload = line.strip_suffix('\n').unwrap_or(&line).as_bytes();
+                match write_message(
+                    &mut write_half,
+                    payload,
+                    WireMode::LegacyLine,
+                    MAX_LINE_BYTES,
+                )
+                .await
+                {
+                    Ok(()) => {}
+                    // An over-cap command is refused with nothing on the wire.
+                    // Drop just that one message and keep the shared writer
+                    // alive — a per-message validation refusal must not tear
+                    // down the single gateway connection for every client.
+                    Err(FrameError::Oversized { .. }) => {
+                        tracing::warn!("dropping oversized outbound command");
+                        continue;
+                    }
+                    // A real transport error is fatal to this connection.
+                    Err(e) => {
+                        tracing::error!("UDS write error: {e}");
+                        break;
+                    }
                 }
             }
         });
@@ -83,15 +112,19 @@ impl UdsGateway {
         let reader_connected = connected.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
+            // Reused across iterations so a streaming turn does not allocate a
+            // fresh payload buffer per event (#1059 review).
+            let mut bytes: Vec<u8> = Vec::new();
             loop {
-                match read_bounded_line(&mut reader, MAX_LINE_BYTES).await {
+                // Deprecation-window reader (#1059): each incoming message is
+                // sniffed as a length-prefixed frame or a legacy NDJSON line,
+                // so this client interoperates with both agent generations.
+                match read_frame_or_legacy_line_into(&mut reader, &mut bytes, MAX_LINE_BYTES).await
+                {
                     Ok(None) => break,
-                    Ok(Some(bounded)) => {
-                        if bounded.truncated {
-                            tracing::warn!("dropping oversized line (>{} bytes)", MAX_LINE_BYTES);
-                            continue;
-                        }
-                        let trimmed = bounded.content.trim();
+                    Ok(Some(_wire_mode)) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        let trimmed = text.trim();
                         if trimmed.is_empty() {
                             continue;
                         }
@@ -109,7 +142,14 @@ impl UdsGateway {
                             }
                         }
                     }
+                    Err(e @ FrameError::Oversized { .. }) => {
+                        // Rejected cleanly; the stream stays framed.
+                        tracing::warn!("dropping oversized message from agent: {e}");
+                        continue;
+                    }
                     Err(e) => {
+                        // I/O error or an explicit protocol version mismatch
+                        // (never a hang or a silent misparse).
                         tracing::error!("UDS read error: {e}");
                         break;
                     }
@@ -126,7 +166,7 @@ impl UdsGateway {
         })
     }
 
-    /// Send a raw JSON-lines command string.
+    /// Send a raw JSON command payload.
     async fn send_raw(&self, json: String) -> Result<(), ApiError> {
         self.cmd_tx
             .send(json)

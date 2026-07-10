@@ -2,7 +2,7 @@
 ///
 /// These mirror the quecto UDS protocol events but are owned by quecto-api's
 /// domain layer, decoupled from the wire format. The infrastructure layer
-/// is responsible for converting to/from the UDS JSON-lines format.
+/// is responsible for converting to/from the UDS framed JSON format.
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,8 +1,10 @@
 # ADR-0008 — Length-Prefixed UDS Framing and Bounded Events
 
-**Status:** Proposed.
+**Status:** Accepted.
 
-**Implementation status:** Not implemented.
+**Implementation status:** Part 1 (length-prefixed framing with version
+negotiation, #1059) is implemented; parts 2–3 (bounded events, cap as
+invariant) are not yet implemented.
 
 ## Context
 
@@ -61,10 +63,38 @@ loggable protocol error instead of mid-buffer truncation heuristics.
 
 **Compatibility.** The TUI, harness, sub-agents, and extension processes are
 separately versioned binaries; framing is a hard wire break. The socket
-announcement (`quecto-agent-socket: …` on stderr) grows a protocol-version
-token, and readers sniff the first byte of a connection (`{` = legacy NDJSON,
-otherwise a frame prefix / magic byte) for one deprecation window, after
-which NDJSON support is removed.
+announcement grows a protocol-version token — a `quecto-agent-protocol: 2`
+stderr line emitted immediately before the `quecto-agent-socket: …` line, so
+a client knows the framing to speak before it connects (a separate line keeps
+pre-v2 clients, which parse only the socket prefix, working). Readers sniff
+each message's first byte (`{` = legacy NDJSON, `0x00` frame-prefix opener =
+framed, anything else = an explicit version-mismatch error — never a silent
+misparse or a hang) for the deprecation window below.
+
+**Deprecation window.** Legacy NDJSON peers interoperate from protocol v2
+(the #1059 release) until ADR-0008 part 3 lands — the change that deletes the
+PR #1051 shrink/tail machinery and makes the frame cap an invariant. That
+change removes NDJSON sniffing and bumps the announced protocol version to 3;
+from then on a legacy peer fails with the explicit version-mismatch error
+rather than being read. End condition, concretely: the deprecation window
+closes when `quecto-agent-protocol: 3` ships.
+
+**Announcement-less attachers.** Two consumers attach to an *already-running*
+agent by socket path with no stderr announcement to negotiate against: the
+`quecto-api` gateway (`--socket`/`QUECTO_SOCKET`) and the TUI when given an
+explicit `--socket`. Because they cannot learn the peer's version, during the
+deprecation window they *write* legacy NDJSON — the one framing both agent
+generations accept (a pre-#1059 agent reads it natively; a current agent's
+reader sniffs each message and replies in the same framing). Writing frames to
+an unknown peer risks a pre-#1059 agent's newline reader hanging forever on the
+first newline-less frame — the silent hang this ADR forbids. Their *readers*
+are already dual-mode, so a current agent's framed replies still parse. When
+part 3 closes the window these two paths need an explicit version handshake
+(e.g. the agent recording its version in the socket directory, or a framed
+hello the agent must acknowledge); that handshake is out of scope for part 1.
+The parent→child sub-agent query path is *not* announcement-less — parent and
+child are the same binary, so it writes frames unconditionally and migrates
+with the other consumers.
 
 ### 2. Events become bounded by construction
 

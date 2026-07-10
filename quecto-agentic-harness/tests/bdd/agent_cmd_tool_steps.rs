@@ -40,13 +40,10 @@ fn given_agent_cmd_with_mock_entry(world: &mut QuectoWorld, agent_id: String) {
                 Ok(mut stream) => {
                     let last_cmd_inner = last_cmd_clone.clone();
                     std::thread::spawn(move || {
-                        use std::io::{BufRead, BufReader, Write};
-                        let reader = BufReader::new(stream.try_clone().unwrap());
-                        for line in reader.lines() {
-                            let line = match line {
-                                Ok(l) => l,
-                                Err(_) => break,
-                            };
+                        use std::io::Write;
+                        while let Some(line) =
+                            quecto::infrastructure::test_support::read_framed_command(&stream)
+                        {
                             // Echo the request `id` (and command type) in the
                             // response, mirroring the real child dispatch
                             // (`AgentEvent::ok(id, type_name, data)`), so the
@@ -108,13 +105,13 @@ fn given_agent_cmd_with_busy_mock_entry(world: &mut QuectoWorld, agent_id: Strin
             let Ok(mut stream) = stream else { break };
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Write};
+                use std::io::Write;
                 // Connect-time snapshot pushed BEFORE the client's command reply.
                 let snapshot = r#"{"type":"response","command":"get_messages","data":[{"role":"assistant","content":"FIRST MESSAGE ONLY"}]}"#;
                 let _ = writeln!(stream, "{}", snapshot);
-                let reader = BufReader::new(stream.try_clone().unwrap());
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
                     let parsed = serde_json::from_str::<serde_json::Value>(&line).ok();
                     let sent_type = parsed
                         .as_ref()
@@ -164,12 +161,12 @@ fn given_agent_cmd_with_busy_snapshot_entry(world: &mut QuectoWorld, agent_id: S
             let Ok(mut stream) = stream else { break };
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Write};
+                use std::io::Write;
                 let snapshot = r#"{"type":"response","command":"get_messages","data":{"messages":[{"role":"assistant","content":"FIRST MESSAGE ONLY"}]}}"#;
                 let _ = writeln!(stream, "{}", snapshot);
-                let reader = BufReader::new(stream.try_clone().unwrap());
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
                     *last_cmd_inner.lock().unwrap() = line;
                 }
             });
@@ -204,12 +201,12 @@ fn given_agent_cmd_with_busy_multi_snapshot_entry(world: &mut QuectoWorld, agent
             let Ok(mut stream) = stream else { break };
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Write};
+                use std::io::Write;
                 let snapshot = r#"{"type":"response","command":"get_messages","data":{"messages":[{"role":"user","content":"OLDEST MESSAGE"},{"role":"assistant","content":"NEWEST MESSAGE"}],"snapshot":true}}"#;
                 let _ = writeln!(stream, "{}", snapshot);
-                let reader = BufReader::new(stream.try_clone().unwrap());
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
                     *last_cmd_inner.lock().unwrap() = line;
                 }
             });
@@ -247,13 +244,13 @@ fn given_agent_cmd_with_fast_ack_busy_entry(world: &mut QuectoWorld, agent_id: S
             let Ok(mut stream) = stream else { break };
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Write};
+                use std::io::Write;
                 let snapshot =
                     r#"{"type":"response","command":"get_messages","data":{"messages":[]}}"#;
                 let _ = writeln!(stream, "{}", snapshot);
-                let reader = BufReader::new(stream.try_clone().unwrap());
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
                     *last_cmd_inner.lock().unwrap() = line.clone();
                     let v: serde_json::Value = match serde_json::from_str(&line) {
                         Ok(v) => v,
@@ -297,12 +294,12 @@ fn given_agent_cmd_with_busy_state_snapshot_entry(world: &mut QuectoWorld, agent
             let Ok(mut stream) = stream else { break };
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Write};
+                use std::io::Write;
                 let snapshot = r#"{"type":"response","command":"get_state","data":{"isStreaming":true,"messageCount":2,"model":"mock"}}"#;
                 let _ = writeln!(stream, "{}", snapshot);
-                let reader = BufReader::new(stream.try_clone().unwrap());
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
                     *last_cmd_inner.lock().unwrap() = line;
                 }
             });
@@ -338,12 +335,12 @@ fn given_agent_cmd_with_busy_subagents_snapshot_entry(world: &mut QuectoWorld, a
             let Ok(mut stream) = stream else { break };
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Write};
+                use std::io::Write;
                 let snapshot = r#"{"type":"response","command":"get_subagents","data":{"subagents":[{"agentId":"grandchild-worker","status":"running","pid":4321}],"snapshot":true}}"#;
                 let _ = writeln!(stream, "{}", snapshot);
-                let reader = BufReader::new(stream.try_clone().unwrap());
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
                     *last_cmd_inner.lock().unwrap() = line;
                 }
             });
@@ -381,12 +378,12 @@ fn given_agent_cmd_with_busy_subagents_snapshot_and_echo_entry(
             let Ok(mut stream) = stream else { break };
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Write};
+                use std::io::Write;
                 let snapshot = r#"{"type":"response","command":"get_subagents","data":{"subagents":[{"agentId":"grandchild-worker","status":"running","pid":4321}],"snapshot":true}}"#;
                 let _ = writeln!(stream, "{}", snapshot);
-                let reader = BufReader::new(stream.try_clone().unwrap());
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
                     let parsed = serde_json::from_str::<serde_json::Value>(&line).ok();
                     let sent_type = parsed
                         .as_ref()
@@ -436,12 +433,12 @@ fn given_agent_cmd_with_busy_session_stats_snapshot_entry(
             let Ok(mut stream) = stream else { break };
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Write};
+                use std::io::Write;
                 let snapshot = r#"{"type":"response","command":"get_session_stats","data":{"sessionKey":"cli:busy-stats","userMessages":1,"assistantMessages":1,"totalMessages":2,"toolCalls":0,"toolResults":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"contextTokens":0,"maxContextTokens":0,"costUsd":0.0,"snapshot":true}}"#;
                 let _ = writeln!(stream, "{}", snapshot);
-                let reader = BufReader::new(stream.try_clone().unwrap());
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
                     *last_cmd_inner.lock().unwrap() = line;
                 }
             });
@@ -472,12 +469,12 @@ fn given_agent_cmd_with_busy_extensions_snapshot_entry(world: &mut QuectoWorld, 
             let Ok(mut stream) = stream else { break };
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Write};
+                use std::io::Write;
                 let snapshot = r#"{"type":"response","command":"get_extensions","data":{"extensions":[{"name":"mock_ext_tool","description":"mock extension"}],"snapshot":true}}"#;
                 let _ = writeln!(stream, "{}", snapshot);
-                let reader = BufReader::new(stream.try_clone().unwrap());
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
                     *last_cmd_inner.lock().unwrap() = line;
                 }
             });
@@ -513,14 +510,14 @@ fn given_agent_cmd_with_busy_remaining_snapshots_and_echo_entry(
             let Ok(mut stream) = stream else { break };
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Write};
+                use std::io::Write;
                 let stats = r#"{"type":"response","command":"get_session_stats","data":{"sessionKey":"cli:busy-stats","userMessages":1,"assistantMessages":1,"totalMessages":2,"snapshot":true}}"#;
                 let exts = r#"{"type":"response","command":"get_extensions","data":{"extensions":[{"name":"mock_ext_tool"}],"snapshot":true}}"#;
                 let _ = writeln!(stream, "{}", stats);
                 let _ = writeln!(stream, "{}", exts);
-                let reader = BufReader::new(stream.try_clone().unwrap());
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
                     let parsed = serde_json::from_str::<serde_json::Value>(&line).ok();
                     let sent_type = parsed
                         .as_ref()

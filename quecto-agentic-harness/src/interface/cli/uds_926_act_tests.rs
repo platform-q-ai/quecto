@@ -71,6 +71,7 @@ impl ActEnv {
         );
         let state = self.session.state_snapshot(0, None, 0, None);
         DispatchCtx {
+            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self.tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,

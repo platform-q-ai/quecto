@@ -104,6 +104,7 @@ impl EffortFx {
             ext_registry: None,
             client_tool_registry: new_client_tool_registry(),
             current_client_id: 0,
+            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             subagent_registry: None,
             notification_rx: None,
             workflow_state: None,

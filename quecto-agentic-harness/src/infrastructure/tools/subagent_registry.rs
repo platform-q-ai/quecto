@@ -185,9 +185,9 @@ const SUBAGENT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from
 pub const INSPECTOR_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Per-line cap on a sub-agent's UDS reply (#795 security review). Mirrors the
-/// inbound client cap (`uds::MAX_LINE_BYTES`) so a misbehaving/compromised
+/// inbound client cap (`uds::MAX_FRAME_PAYLOAD_BYTES`) so a misbehaving/compromised
 /// sub-agent cannot return an unbounded line and exhaust the parent's memory.
-const SUBAGENT_RESPONSE_MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
+const SUBAGENT_RESPONSE_MAX_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
 /// Look up the UDS socket path for a spawned sub-agent by id.
 ///
@@ -204,11 +204,11 @@ pub fn lookup_subagent_socket(
         .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
 }
 
-/// Send a JSON-lines command to a sub-agent's UDS socket and read back the
-/// `response` line that matches the command we sent.
+/// Send a framed JSON command to a sub-agent's UDS socket and read back the
+/// `response` message that matches the command we sent.
 ///
 /// Each call opens a new connection, stamps a unique `id` on the command, writes
-/// it + newline, and reads lines until the `{"type":"response","id":<that id>,...}`
+/// one frame, and reads messages until the `{"type":"response","id":<that id>,...}`
 /// event arrives (skipping tokens, agent_start, and unsolicited responses such as
 /// the connect-time `get_messages` snapshot — built with no id — that the
 /// broadcast delivers to all clients).
@@ -235,7 +235,7 @@ pub async fn send_subagent_uds_command_with_timeout(
     response_timeout: std::time::Duration,
 ) -> Result<String, crate::domain::error::DomainError> {
     use crate::domain::error::DomainError;
-    use tokio::io::{AsyncWriteExt, BufReader};
+    use tokio::io::BufReader;
 
     let stream = tokio::net::UnixStream::connect(socket_path)
         .await
@@ -259,14 +259,16 @@ pub async fn send_subagent_uds_command_with_timeout(
     // A non-object command can't be stamped, so we fall back to first-response.
     let (outbound, expected_id) = stamp_request_id(command);
 
-    writer
-        .write_all(outbound.as_bytes())
-        .await
-        .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
-    writer
-        .write_all(b"\n")
-        .await
-        .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
+    // Parent and child are the same binary, so outbound commands always use
+    // ADR-0008 framing. Compatibility remains reader-side and is sniffed for
+    // every incoming message; it does not pin or downgrade this writer.
+    quecto_line_io::write_frame(
+        &mut writer,
+        outbound.as_bytes(),
+        quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+    )
+    .await
+    .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
     // Do NOT shutdown or drop the write half (#557): in multi-client mode the
     // server's reader loop exits on EOF and aborts the broadcast writer, so the
     // response would never arrive. Keep the write half alive until we're done.
@@ -287,7 +289,7 @@ pub async fn send_subagent_uds_command_with_timeout(
         }
         let line = tokio::time::timeout(
             remaining,
-            read_line_capped(&mut reader, SUBAGENT_RESPONSE_MAX_LINE_BYTES),
+            read_response_capped(&mut reader, SUBAGENT_RESPONSE_MAX_BYTES),
         )
         .await
         .map_err(|_| DomainError::Tool(timeout_msg()))??;
@@ -350,18 +352,17 @@ fn stamp_request_id(command: &str) -> (String, Option<String>) {
     }
 }
 
-/// Read a single `\n`-terminated line, rejecting (rather than buffering) any line
-/// that exceeds `max_bytes` (#795 security review). Unlike `AsyncBufReadExt::lines`,
-/// this caps each line so a sub-agent cannot OOM the parent with one giant line,
-/// while still allowing an unbounded number of normal-sized lines to be skipped
-/// before the `response` event arrives.
+/// Read the next sub-agent message, capping (rather than buffering) any message
+/// that exceeds `max_bytes` (#795 security review) so a sub-agent cannot OOM the
+/// parent with one giant message, while still allowing an unbounded number of
+/// normal-sized messages to be skipped before the `response` event arrives.
 ///
-/// Delegates the bounded-read framing itself to the shared
-/// [`quecto_line_io::read_bounded_line`] helper (#1003) so every JSON-lines
-/// reader in the workspace shares one cap/consume implementation; this
-/// function only adds the crate-local error type and the "reject oversized
-/// lines" policy on top.
-async fn read_line_capped<R>(
+/// Delegates the sniff-and-cap framing to the shared
+/// [`quecto_line_io::read_frame_or_legacy_line`] helper (#1059) so this
+/// parent→child consumer shares the same length-prefixed-frame / legacy-NDJSON
+/// deprecation-window handling as the other four UDS consumers; over-cap
+/// messages are skipped (not hard-errored) here.
+async fn read_response_capped<R>(
     reader: &mut R,
     max_bytes: usize,
 ) -> Result<Option<String>, crate::domain::error::DomainError>
@@ -369,16 +370,31 @@ where
     R: tokio::io::AsyncBufRead + Unpin,
 {
     use crate::domain::error::DomainError;
+    use quecto_line_io::{FrameError, Incoming};
 
-    let bounded = quecto_line_io::read_bounded_line(reader, max_bytes)
-        .await
-        .map_err(|e| DomainError::Tool(format!("read from subagent failed: {e}")))?;
-    match bounded {
-        None => Ok(None),
-        Some(line) if line.truncated => Err(DomainError::Tool(
-            "subagent response line exceeded size limit".into(),
-        )),
-        Some(line) => Ok(Some(line.content)),
+    // Deprecation-window reader (#1059): each reply is sniffed as a
+    // length-prefixed frame or a legacy NDJSON line. An over-cap interleaved
+    // message is skipped (the declared/until-newline bytes were consumed, so
+    // the stream stays framed) rather than hard-erroring the whole query — the
+    // same skip-and-continue the other four consumers use, replacing the old
+    // "response line exceeded size limit" abort. An unknown first byte is an
+    // explicit `VersionMismatch`, never a silent misparse.
+    loop {
+        match quecto_line_io::read_frame_or_legacy_line(reader, max_bytes).await {
+            Ok(None) => return Ok(None),
+            Ok(Some(incoming)) => {
+                let bytes = match incoming {
+                    Incoming::Frame(b) | Incoming::LegacyLine(b) => b,
+                };
+                return Ok(Some(String::from_utf8(bytes).unwrap_or_else(|e| {
+                    String::from_utf8_lossy(e.as_bytes()).into_owned()
+                })));
+            }
+            Err(FrameError::Oversized { .. }) => continue,
+            Err(e) => {
+                return Err(DomainError::Tool(format!("read from subagent failed: {e}")));
+            }
+        }
     }
 }
 

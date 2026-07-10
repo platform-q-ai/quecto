@@ -9,7 +9,7 @@
 //! same queue-and-accept semantic to set_model/clear_history/reload_extensions.
 
 use super::*;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 
 fn parsed(tool: &AgentCmdTool, args: &str) -> serde_json::Value {
     let (_, cmd, _) = tool.parse_and_build(args).unwrap();
@@ -119,9 +119,9 @@ fn busy_fast_ack_child(agent_id: &str) -> (AgentCmdTool, SubagentRegistry, tempf
                     stream,
                     r#"{{"type":"response","command":"get_messages","data":{{"messages":[]}}}}"#
                 );
-                let reader = BufReader::new(stream.try_clone().unwrap());
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Some(line) =
+                    crate::infrastructure::test_support::read_framed_command(&stream)
+                {
                     let v: serde_json::Value = match serde_json::from_str(&line) {
                         Ok(v) => v,
                         Err(_) => continue,

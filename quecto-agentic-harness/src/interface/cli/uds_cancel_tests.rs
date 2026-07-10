@@ -36,7 +36,7 @@ fn registry_with_worker() -> SubagentRegistry {
 fn writer_sink_collects_notification_when_not_awaited() {
     let registry = Some(registry_with_worker());
     let mut buf: Vec<u8> = Vec::new();
-    let sink = EventSink::Writer(&mut buf);
+    let sink = EventSink::writer(&mut buf);
     let mut notifications = Vec::new();
 
     collect_notification(make_notif(1), &sink, &registry, &mut notifications);
@@ -58,7 +58,7 @@ fn writer_sink_suppresses_notification_when_awaited() {
     mark_completion_consumed_by_await(&registry, "worker");
     let registry = Some(registry);
     let mut buf: Vec<u8> = Vec::new();
-    let sink = EventSink::Writer(&mut buf);
+    let sink = EventSink::writer(&mut buf);
     let mut notifications = Vec::new();
 
     collect_notification(make_notif(1), &sink, &registry, &mut notifications);
@@ -75,7 +75,7 @@ fn writer_sink_dedupe_flag_consumed_once() {
     mark_completion_consumed_by_await(&registry, "worker");
     let registry = Some(registry);
     let mut buf: Vec<u8> = Vec::new();
-    let sink = EventSink::Writer(&mut buf);
+    let sink = EventSink::writer(&mut buf);
     let mut notifications = Vec::new();
 
     // First notification consumes the pending await flag (suppressed);
@@ -223,14 +223,14 @@ fn fire_then_arm_resets_to_idle() {
 
 // --- #1047: outbound event lines must never exceed the 1 MiB protocol cap ---
 //
-// The TUI client drops any event line above 1 MiB (`MAX_LINE_BYTES` in
+// The TUI client drops any event line above 1 MiB (`MAX_FRAME_PAYLOAD_BYTES` in
 // quecto-tui). Near a full context window a turn's messages can exceed that,
 // so `EventSink::emit` must tail/cap the payload instead of emitting an
 // un-receivable line — otherwise the TUI silently loses `turn_end`/`agent_end`
 // and the session appears frozen/disconnected.
 
 // Bound under test: `protocol::EVENT_LINE_CAP_BYTES`, whose value is pinned to
-// the TUI client's `quecto-tui::infrastructure::client::MAX_LINE_BYTES` (see
+// the TUI client's `quecto-tui::infrastructure::client::MAX_FRAME_PAYLOAD_BYTES` (see
 // the constant's doc comment in protocol.rs). If the client cap ever changes,
 // change the protocol constant — these tests follow it automatically.
 use crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES;

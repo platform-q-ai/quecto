@@ -390,12 +390,12 @@ fn handle_monitor_line_recaps_forwarded_messages_appended_near_the_cap() {
     // the per-line budget, so the parent's re-stamp pushes it over.
     let overhead = r#"{"type":"subagent_messages_appended","agent_id":"","messages":[{"role":"assistant","content":""}]}"#
         .len();
-    let content = "x".repeat(MAX_LINE_BYTES - 1 - overhead);
+    let content = "x".repeat(MAX_EVENT_PAYLOAD_BYTES - 1 - overhead);
     let line = format!(
         r#"{{"type":"subagent_messages_appended","agent_id":"","messages":[{{"role":"assistant","content":"{content}"}}]}}"#
     );
     assert!(
-        line.len() <= MAX_LINE_BYTES,
+        line.len() <= MAX_EVENT_PAYLOAD_BYTES,
         "child line passes the size gate"
     );
     super::handle_monitor_line(
@@ -408,7 +408,7 @@ fn handle_monitor_line_recaps_forwarded_messages_appended_near_the_cap() {
     );
     let fwd = rx.try_recv().expect("re-stamped line is forwarded");
     assert!(
-        fwd.len() <= MAX_LINE_BYTES,
+        fwd.len() <= MAX_EVENT_PAYLOAD_BYTES,
         "forwarded line (incl. newline) must stay within the cap, got {}",
         fwd.len()
     );
