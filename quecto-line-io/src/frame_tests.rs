@@ -176,6 +176,44 @@ async fn write_frame_refuses_over_limit_payloads() {
     assert!(wire.is_empty(), "no partial frame may reach the wire");
 }
 
+/// Compatibility emit boundary: the legacy cap includes the trailing newline,
+/// so payload + newline exactly at `max_bytes` is legal.
+#[tokio::test]
+async fn write_message_legacy_line_exactly_at_wire_cap_succeeds() {
+    let mut wire = Vec::new();
+    write_message(&mut wire, b"1234567", WireMode::LegacyLine, 8)
+        .await
+        .expect("an eight-byte legacy wire line must fit an eight-byte cap");
+    assert_eq!(wire, b"1234567\n");
+}
+
+/// Compatibility emit boundary: exceeding the whole legacy wire-line cap by
+/// one byte is rejected before either payload or newline reaches the writer.
+#[tokio::test]
+async fn write_message_legacy_line_one_byte_over_wire_cap_writes_nothing() {
+    let mut wire = Vec::new();
+    assert!(matches!(
+        write_message(&mut wire, b"12345678", WireMode::LegacyLine, 8).await,
+        Err(FrameError::Oversized {
+            declared: 9,
+            max: 8
+        })
+    ));
+    assert!(wire.is_empty(), "no partial legacy line may reach the wire");
+}
+
+/// `write_message` retains framed payload-cap semantics: the prefix is not
+/// counted against `max_bytes` and an exactly-at-cap payload is emitted.
+#[tokio::test]
+async fn write_message_framed_mode_retains_payload_cap_semantics() {
+    let mut wire = Vec::new();
+    write_message(&mut wire, b"12345678", WireMode::Framed, 8)
+        .await
+        .expect("an eight-byte framed payload must fit an eight-byte cap");
+    assert_eq!(&wire[..4], &8u32.to_be_bytes());
+    assert_eq!(&wire[4..], b"12345678");
+}
+
 /// AC (deprecation window): a legacy NDJSON peer's `{`-opening line is
 /// detected and read as a legacy line, not misparsed as a frame.
 #[tokio::test]

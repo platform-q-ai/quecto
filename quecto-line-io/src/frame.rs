@@ -115,8 +115,18 @@ where
     match mode {
         WireMode::Framed => write_frame(writer, payload, max_bytes).await,
         WireMode::LegacyLine => {
-            // Legacy emitters cap content upstream (line_cap machinery, kept
-            // for the deprecation window per ADR-0008 part 4).
+            // The legacy cap covers the whole wire line, including its newline
+            // (the reader's PROTOCOL_LINE_CAP_BYTES convention).
+            let declared = payload.len().checked_add(1).ok_or(FrameError::Oversized {
+                declared: usize::MAX,
+                max: max_bytes,
+            })?;
+            if declared > max_bytes {
+                return Err(FrameError::Oversized {
+                    declared,
+                    max: max_bytes,
+                });
+            }
             writer.write_all(payload).await?;
             writer.write_all(b"\n").await?;
             writer.flush().await?;
