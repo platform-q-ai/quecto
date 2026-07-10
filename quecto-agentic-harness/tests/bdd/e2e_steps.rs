@@ -3140,27 +3140,24 @@ fn when_start_real_llm_uds(world: &mut QuectoWorld) {
 
 // ─── Real-LLM UDS Then steps ────────────────────────────────────────────────
 
-/// Assert that agent_end messages contain a specific string.
+/// Assert that a completed agent response contains a specific string. Completion
+/// payloads are bounded, so response text is reconstructed from token events.
 #[then(expr = "the agent_end messages should contain {string}")]
 fn then_agent_end_contains(world: &mut QuectoWorld, expected: String) {
-    let found = world.agent_events.iter().any(|l| {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(l) {
-            if v["type"].as_str() == Some("agent_end") {
-                if let Some(msgs) = v["messages"].as_array() {
-                    return msgs.iter().any(|m| {
-                        m["content"]
-                            .as_str()
-                            .map(|c| c.contains(&expected))
-                            .unwrap_or(false)
-                    });
-                }
+    let mut completed = false;
+    let mut response = String::new();
+    for line in &world.agent_events {
+        if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
+            match event["type"].as_str() {
+                Some("token") => response.push_str(event["token"].as_str().unwrap_or_default()),
+                Some("agent_end") => completed = true,
+                _ => {}
             }
         }
-        false
-    });
+    }
     assert!(
-        found,
-        "expected agent_end messages to contain {expected:?}\nevents: {:#?}",
+        completed && response.contains(&expected),
+        "expected completed agent response to contain {expected:?}; response={response:?}\nevents: {:#?}",
         world.agent_events,
     );
 }
