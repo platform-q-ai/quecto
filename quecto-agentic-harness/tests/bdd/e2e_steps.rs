@@ -3126,7 +3126,7 @@ fn when_start_real_llm_uds(world: &mut QuectoWorld) {
     world.no_session = true;
     world._workflow_enabled = false;
     if world.auto_mock_manual_llm {
-        world._uds_streaming_enabled = false;
+        world._uds_streaming_enabled = true;
         world._real_llm_uds = false;
     } else {
         world._uds_streaming_enabled = true;
