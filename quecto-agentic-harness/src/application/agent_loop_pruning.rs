@@ -53,9 +53,10 @@ impl AgentLoopImpl {
         // Rebuild the manifest when spills have changed: new tool results
         // spilled last turn, or conversation messages just spilled (which can
         // happen on a turn with no tool calls at all).
+        let mut manifest_shifted = false;
         if spills_dirty || message_spilled {
             if let Some(ref spill_store) = self.spill_store {
-                context_pruning::update_spill_manifest(
+                manifest_shifted = context_pruning::update_spill_manifest(
                     messages,
                     spill_store.as_ref(),
                     &self.session_key,
@@ -70,7 +71,14 @@ impl AgentLoopImpl {
         // live history is no longer an append-only extension of what was
         // already persisted, so latch the durable-prefix dirty flag. The latch
         // is outcome-independent: it survives an Error or Cancelled turn.
-        if collapsed > 0 || stubbed > 0 || outcome.dropped > 0 {
+        //
+        // #1073 review: a manifest insert/removal shifts every later index the
+        // same way a drop does (e.g. the first prompt after `rewind_to`
+        // re-spills history and inserts a fresh manifest at the front of the
+        // persisted prefix), so it must latch too — otherwise the clean-delta
+        // fast path appends against a shifted prefix and duplicates or drops
+        // a message in the durable file.
+        if collapsed > 0 || stubbed > 0 || outcome.dropped > 0 || manifest_shifted {
             self.latch_durable_prefix_dirty();
         }
         if collapsed > 0 || stubbed > 0 || outcome.dropped > 0 || outcome.over_budget {

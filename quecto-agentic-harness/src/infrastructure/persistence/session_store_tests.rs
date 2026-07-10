@@ -117,8 +117,17 @@ async fn append_delta_from_stale_cached_index_does_not_mix_replaced_history() {
     assert_eq!(loaded.messages[0].content, "replacement");
 }
 
+/// Pins the shrink SHORTCUT (`previously_persisted > messages.len()` inside
+/// `persisted_prefix_changed`): a shorter live history must force a compact
+/// rewrite and resume exactly. NOTE (#1073 review): this behavior was also
+/// satisfied by the pre-#1072 inline guard, so this test alone does not
+/// falsify the masked-prefix detection — that new logic (same-length or
+/// longer history with a changed prefix) is pinned by the sibling
+/// `masked_pruning_*` tests below; this one guards the shortcut against
+/// regressions that would make a shrunk history reach the prefix `zip`
+/// (which would index out of bounds or append against a stale prefix).
 #[tokio::test]
-async fn shorter_pruned_history_compacts_and_resumes_exactly() {
+async fn shorter_history_shortcut_forces_compact_and_resumes_exactly() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
     let mut session = Session::new("test:shorter-prune");

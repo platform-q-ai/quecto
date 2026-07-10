@@ -107,9 +107,6 @@ pub struct AgentResult {
     /// Messages appended by this run, in append order, even if later pruning
     /// removes them from the active context.
     pub appended_messages: Vec<Message>,
-    /// Whether pruning changed messages that predated this run. Persistence must
-    /// reconcile the durable prefix when this is true.
-    pub durable_prefix_dirty: bool,
 }
 
 impl AgentResult {
@@ -127,7 +124,6 @@ impl AgentResult {
             cache_write_tokens: 0,
             cost_micro_usd: 0,
             appended_messages: Vec::new(),
-            durable_prefix_dirty: false,
         }
     }
 

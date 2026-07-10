@@ -347,6 +347,8 @@ pub struct QuectoWorld {
     pub watermark_pre_run: Vec<Message>,
     /// #1072: conversation after the pruning-agent run completed.
     pub watermark_post_run: Vec<Message>,
+    /// #1072: the agent's durable-prefix dirty latch, drained post-run.
+    pub watermark_prefix_dirty: bool,
     /// #1072: context token budget for the pruning agent (0 = default).
     pub watermark_budget: usize,
     /// Session workspace path (for session scenarios)
