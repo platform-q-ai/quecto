@@ -96,6 +96,7 @@ async fn new_session_resets_workflow_run_state() {
         provider_reload: None,
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
+        durable_prefix_dirty: false,
     };
 
     super::uds_dispatch::handle_new_session(&mut ctx, Some("n"), "new_session").await;
@@ -156,6 +157,7 @@ async fn resume_session_restores_target_workflow_run_state() {
         provider_reload: None,
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
+        durable_prefix_dirty: false,
     };
 
     super::uds_dispatch::handle_resume_session(
@@ -229,6 +231,7 @@ async fn resume_session_clears_workflow_when_target_has_none() {
         provider_reload: None,
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
+        durable_prefix_dirty: false,
     };
 
     super::uds_dispatch::handle_resume_session(
@@ -292,6 +295,7 @@ async fn set_workflow_automation_updates_config_and_engine() {
         provider_reload: None,
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
+        durable_prefix_dirty: false,
     };
 
     super::uds_dispatch::handle_set_workflow_automation(
@@ -361,6 +365,7 @@ fn workflow_nudge_message_waits_for_selected_template() {
         provider_reload: None,
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
+        durable_prefix_dirty: false,
     };
 
     assert!(super::workflow_nudge_message(&ctx).is_none());
@@ -432,6 +437,7 @@ async fn drain_refreshes_busy_state_snapshot_per_turn() {
         provider_reload: None,
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
+        durable_prefix_dirty: false,
     };
 
     // Two pending messages drive TWO inner turns through the drain loop, so the
@@ -531,6 +537,7 @@ fn workflow_progress_fingerprint_changes_with_step_progress() {
         provider_reload: None,
         provider_reload_inputs: None,
         last_persisted_message_index: 0,
+        durable_prefix_dirty: false,
     };
     let before = super::workflow_progress_fingerprint(&ctx).unwrap();
     workflow.lock().unwrap().check(1).unwrap();

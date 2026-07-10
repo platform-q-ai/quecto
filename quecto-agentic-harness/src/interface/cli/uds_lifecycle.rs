@@ -236,6 +236,7 @@ async fn single_client_loop(
             provider_reload,
             provider_reload_inputs,
             last_persisted_message_index,
+            durable_prefix_dirty: false,
         },
     )
     .await;

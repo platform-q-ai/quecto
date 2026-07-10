@@ -152,21 +152,22 @@ fn make_agent_with(
 }
 
 /// Owns everything a `DispatchCtx` borrows so individual tests stay short.
-struct Fixture {
+pub(super) struct Fixture {
     agent: AgentLoopImpl,
-    messages: Vec<Message>,
+    pub(super) messages: Vec<Message>,
     session: AgentSession,
-    session_key: String,
-    store: FileSessionStore,
+    pub(super) session_key: String,
+    pub(super) store: FileSessionStore,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
     cancel: CancelHandle,
     registry: ClientToolRegistry,
     ephemeral: bool,
+    pub(super) last_persisted_message_index: usize,
 }
 
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
         let store = FileSessionStore::new(tmp.path());
         Self {
@@ -180,10 +181,11 @@ impl Fixture {
             cancel: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             registry: new_client_tool_registry(),
             ephemeral: false,
+            last_persisted_message_index: 0,
         }
     }
 
-    fn ctx(&mut self) -> DispatchCtx<'_> {
+    pub(super) fn ctx(&mut self) -> DispatchCtx<'_> {
         let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
             &self.session_key,
             &self.messages,
@@ -218,7 +220,8 @@ impl Fixture {
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
-            last_persisted_message_index: 0,
+            last_persisted_message_index: self.last_persisted_message_index,
+            durable_prefix_dirty: false,
         }
     }
 }
@@ -504,8 +507,6 @@ async fn persist_saves_when_durable() {
     assert!(persist_current_session(&mut ctx).await.is_ok());
 }
 
-// ─── dispatch_command routing ────────────────────────────────────────────────
-
 #[tokio::test]
 async fn dispatch_routes_abort() {
     let mut fx = Fixture::new();
@@ -650,7 +651,6 @@ async fn dispatch_routes_fieldless_get_state() {
     // Handled by the fieldless fast-path; returns early.
     assert!(!dispatch_command(cmd, &mut ctx).await);
 }
-
 // ─── extension command dispatch ──────────────────────────────────────────────
 
 #[tokio::test]

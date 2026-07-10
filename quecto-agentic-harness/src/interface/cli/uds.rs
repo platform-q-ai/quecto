@@ -146,6 +146,8 @@ pub(crate) struct DispatchCtx<'a> {
     pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
     pub last_persisted_message_index: usize,
+    /// The agent changed history that existed before its latest run.
+    pub durable_prefix_dirty: bool,
 }
 
 impl<'a> DispatchCtx<'a> {
@@ -346,7 +348,8 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
     };
     let outcome = run_prompt_dispatch(ctx, message, cancel_rx).await;
     disarm_cancel(&ctx.cancel_handle);
-    if matches!(outcome, PromptOutcome::Success) {
+    if let PromptOutcome::Success(prefix_dirty) = outcome {
+        ctx.durable_prefix_dirty |= prefix_dirty;
         let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }

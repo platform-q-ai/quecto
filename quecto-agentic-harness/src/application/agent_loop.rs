@@ -191,39 +191,32 @@ impl AgentLoopImpl {
     pub fn swap_registry(&mut self, registry: Box<dyn ToolRegistry>) {
         self.tool_registry = registry;
     }
-
     /// Return names of tools registered from extensions (UDS `get_extensions`
     /// reports only actually-available tools; shadows are rejected earlier).
     pub fn tool_registry_extension_names(&self) -> Vec<String> {
         self.tool_registry.extension_names()
     }
-
     /// Register a single extension tool (e.g. from a UDS client).
     pub fn register_extension_tool(&mut self, tool: std::sync::Arc<dyn crate::domain::tool::Tool>) {
         crate::domain::tool::ToolRegistry::register_extension(&mut *self.tool_registry, tool);
     }
-
     /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
     pub fn unregister_extension_tool(&mut self, name: &str) {
         crate::domain::tool::ToolRegistry::unregister_extension(&mut *self.tool_registry, name);
     }
-
     /// Return all tool definitions (for core name lookups).
     pub fn tool_definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
         self.tool_registry.definitions()
     }
-
     /// Enable or disable incremental streaming for LLM calls.
     pub fn set_streaming(&mut self, enabled: bool) {
         self.streaming = enabled;
     }
-
     /// Set or replace the progress callback at runtime (UDS installs a
     /// streaming-token forwarder after construction; `None` clears it).
     pub fn set_progress_callback(&mut self, cb: Option<ProgressCallback>) {
         self.progress_callback = cb;
     }
-
     /// Set or replace the dynamic system prompt provider at runtime.
     pub fn set_system_prompt_provider(
         &mut self,
@@ -231,7 +224,6 @@ impl AgentLoopImpl {
     ) {
         self.system_prompt_provider = provider;
     }
-
     /// Access the audit log (if configured).
     pub fn audit_log(&self) -> Option<&Arc<dyn AuditSink>> {
         self.audit_log.as_ref()
@@ -449,6 +441,7 @@ impl AgentLoopImpl {
             cache_write_tokens: usage.cache_write_tokens,
             cost_micro_usd: usage.cost_micro_usd,
             appended_messages: Vec::new(),
+            durable_prefix_dirty: false,
         }
     }
 
@@ -554,9 +547,9 @@ impl AgentLoopImpl {
         // True when the manifest needs a rebuild; starts true for prior spills.
         let mut spills_dirty = true;
         let mut usage_totals = UsageTotals::default();
-        // Independent append ledger: active context pruning may later remove
-        // messages produced earlier in this same run.
         let mut appended_messages = Vec::new();
+        let preexisting_ids: Vec<_> = messages.iter().map(Message::id).collect();
+        let mut durable_prefix_dirty = false;
         // Count of model-malformed requests turned into addressable feedback.
         let mut malformed_retries: u32 = 0;
 
@@ -565,6 +558,11 @@ impl AgentLoopImpl {
             let context_tokens = self
                 .apply_context_pruning(messages, current_turn, spills_dirty)
                 .await;
+            durable_prefix_dirty |= messages
+                .iter()
+                .take(preexisting_ids.len())
+                .map(Message::id)
+                .ne(preexisting_ids.iter().copied());
 
             // Emit Thinking before every LLM call so the REPL spinner activates
             // immediately, including during multi-turn tool loops.
@@ -671,6 +669,7 @@ impl AgentLoopImpl {
                     appended_messages.push(final_message.clone());
                 }
                 result.appended_messages = appended_messages;
+                result.durable_prefix_dirty = durable_prefix_dirty;
                 return Ok(result);
             }
 
@@ -714,6 +713,7 @@ impl AgentLoopImpl {
                     cache_write_tokens: usage_totals.cache_write_tokens,
                     cost_micro_usd: usage_totals.cost_micro_usd,
                     appended_messages,
+                    durable_prefix_dirty,
                 });
             }
         }
