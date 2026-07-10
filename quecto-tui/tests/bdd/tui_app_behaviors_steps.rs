@@ -248,12 +248,24 @@ fn when_accept_selected_model(world: &mut TuiWorld) {
 // ── Effort control (#1067) ─────────────────────────────────────────────
 
 fn apply_get_state(world: &mut TuiWorld, model: String, effort: serde_json::Value) {
+    // Mirror the agent's real get_state shape: it always reports the
+    // provider's valid effort vocabulary in `effortLevels` (#1067) — the
+    // TUI's single source of truth for validation and the selector.
+    let levels: &[&str] = if model.contains("anthropic") || model.contains("claude") {
+        &["low", "medium", "high", "max"]
+    } else {
+        &["none", "low", "medium", "high", "xhigh"]
+    };
     drive(world, |h| {
         h.event(Event::Response {
             id: Some("gs".into()),
             command: "get_state".into(),
             success: true,
-            data: Some(serde_json::json!({ "model": model, "effort": effort })),
+            data: Some(serde_json::json!({
+                "model": model,
+                "effort": effort,
+                "effortLevels": levels,
+            })),
             error: None,
         });
     });
