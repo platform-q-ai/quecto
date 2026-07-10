@@ -316,6 +316,8 @@ fn when_agent_processes_message(world: &mut QuectoWorld, message: String) {
         agent_loop_test_support::tool_call_clone_count_for_tests("call_read")
             + agent_loop_test_support::tool_call_clone_count_for_tests("call_write"),
     );
+    world.headless_tool_calls_issued =
+        Some(messages.iter().map(|m| m.tool_calls.len()).sum::<usize>());
 }
 
 #[when(expr = "the agent reports progress while processing message {string}")]
@@ -505,12 +507,19 @@ fn then_no_tool_result_preview_should_be_captured(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the assistant tool requests should be reused for execution")]
-fn then_assistant_tool_requests_should_be_reused_for_execution(world: &mut QuectoWorld) {
+#[then(
+    "execution should borrow the tool requests and the run ledger should retain one copy per request"
+)]
+fn then_tool_requests_borrowed_and_ledger_retains_one_copy_each(world: &mut QuectoWorld) {
+    let issued = world
+        .headless_tool_calls_issued
+        .expect("no headless turn was processed");
+    assert!(issued > 0, "scenario setup: the turn must issue tool calls");
     assert_eq!(
         world.headless_tool_call_clone_count,
-        Some(2),
-        "execution borrows tool requests; one clone per request is retained by the run append ledger"
+        Some(issued),
+        "execution borrows tool requests; exactly one clone per issued \
+         request is retained by the run append ledger (#1072)"
     );
 }
 

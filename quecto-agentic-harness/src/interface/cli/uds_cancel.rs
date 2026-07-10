@@ -592,5 +592,8 @@ pub(crate) async fn forward_progress_event(
 }
 
 #[cfg(test)]
+#[path = "uds_1072_e2e_tests.rs"]
+mod issue_1072_e2e_tests;
+#[cfg(test)]
 #[path = "uds_cancel_tests.rs"]
 mod tests;

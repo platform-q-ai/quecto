@@ -153,14 +153,14 @@ fn make_agent_with(
 
 /// Owns everything a `DispatchCtx` borrows so individual tests stay short.
 pub(super) struct Fixture {
-    agent: AgentLoopImpl,
+    pub(super) agent: AgentLoopImpl,
     pub(super) messages: Vec<Message>,
-    session: AgentSession,
+    pub(super) session: AgentSession,
     pub(super) session_key: String,
     pub(super) store: FileSessionStore,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
-    cancel: CancelHandle,
+    pub(super) cancel: CancelHandle,
     registry: ClientToolRegistry,
     ephemeral: bool,
     pub(super) last_persisted_message_index: usize,

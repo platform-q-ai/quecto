@@ -25,6 +25,8 @@ mod agent_loop_pruning;
 mod agent_loop_session;
 #[path = "agent_loop_spill.rs"]
 mod agent_loop_spill;
+#[path = "agent_loop_tool_exec.rs"]
+mod agent_loop_tool_exec;
 use agent_loop_errors::{
     append_malformed_feedback, enhance_provider_error, is_context_or_output_limit_error,
     provider_failure_audit_event,
@@ -103,6 +105,12 @@ pub struct AgentLoopImpl {
     system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     /// Optional append-only audit log for durable event recording.
     audit_log: Option<Arc<dyn AuditSink>>,
+    /// #1072: latched by `apply_context_pruning` whenever a pass mutated
+    /// existing history (in-place stub demotion, tool-result collapse, or a
+    /// physical drop). Outcome-independent: it stays set across an Error or
+    /// Cancelled turn so persistence can still reconcile. Consumed via
+    /// [`Self::take_durable_prefix_dirty`].
+    durable_prefix_dirty: std::sync::atomic::AtomicBool,
 }
 impl std::fmt::Debug for AgentLoopImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -148,7 +156,30 @@ impl AgentLoopImpl {
             default_effort: config.effort,
             system_prompt_provider: config.system_prompt_provider,
             audit_log: config.audit_log,
+            durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+    /// Read-and-clear the durable-prefix dirty latch (#1072).
+    ///
+    /// True when any pruning pass since the last take mutated already-existing
+    /// history — including in-place stub demotion, which changes message
+    /// CONTENT while every message id stays the same. Callers on the UDS
+    /// dispatch path read this after EVERY prompt outcome (Success, Error,
+    /// Cancelled) so persistence reconciles regardless of how the run ended.
+    pub fn take_durable_prefix_dirty(&self) -> bool {
+        self.durable_prefix_dirty
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+    }
+    /// Latch the durable-prefix dirty flag (called from the pruning pass).
+    pub(super) fn latch_durable_prefix_dirty(&self) {
+        self.durable_prefix_dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    /// Read the latch without clearing it — `AgentResult` reporting only; the
+    /// UDS layer clears it via [`Self::take_durable_prefix_dirty`].
+    fn peek_durable_prefix_dirty(&self) -> bool {
+        self.durable_prefix_dirty
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
     /// Replace the LLM provider after config reload.
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
@@ -299,117 +330,6 @@ impl AgentLoopImpl {
         }
     }
 
-    async fn execute_tool_calls_for_response(
-        &self,
-        messages: &mut Vec<Message>,
-        current_turn: u32,
-        response: LlmResponse,
-    ) {
-        let mut assistant =
-            Message::assistant(response.content.unwrap_or_default(), response.tool_calls);
-        assistant.stop_reason = response.stop_reason;
-        assistant.thinking_blocks = response.thinking_blocks;
-        // Stamp the turn: the creation-time spill files this as
-        // turn{N}:msg:assistant (#1046).
-        assistant.turn = Some(current_turn);
-        self.spill_conversation_message(&mut assistant).await;
-        messages.push(assistant);
-        let assistant_index = messages.len() - 1;
-        let tool_call_count = messages[assistant_index].tool_calls.len();
-
-        for idx in 0..tool_call_count {
-            let tc = &messages[assistant_index].tool_calls[idx];
-            // Audit: ToolCall (guarded — avoid clones when audit is disabled)
-            if self.audit_log.is_some() {
-                self.audit(
-                    current_turn,
-                    AuditEvent::ToolCall {
-                        tool: tc.name.clone(),
-                        call_id: tc.id.clone(),
-                        arguments: tc.arguments.clone(),
-                    },
-                )
-                .await;
-            }
-
-            let (content, image_blocks, is_error) = self.execute_single_tool_call(tc).await;
-
-            // Audit: ToolResult (guarded — avoid estimate_tokens/preview when disabled)
-            if self.audit_log.is_some() {
-                let content_tokens = context_pruning::estimate_tokens(&content);
-                let preview = crate::domain::audit::content_preview(&content, 200);
-                self.audit(
-                    current_turn,
-                    AuditEvent::ToolResult {
-                        call_id: tc.id.clone(),
-                        tool: tc.name.clone(),
-                        is_error,
-                        content_tokens,
-                        content_preview: preview,
-                    },
-                )
-                .await;
-            }
-
-            let spill_id = format!("turn{}:{}:{}", current_turn, tc.name, idx);
-            let mut tool_msg = self.build_tool_message(ToolMessageArgs {
-                tc,
-                content,
-                image_blocks,
-                is_error,
-            });
-            tool_msg.turn = Some(current_turn);
-            // Stamps `spill_id` on the message only if the append succeeds.
-            self.spill_tool_message(&mut tool_msg, spill_id).await;
-            messages.push(tool_msg);
-        }
-    }
-
-    async fn execute_single_tool_call(
-        &self,
-        tc: &ToolCall,
-    ) -> (String, Vec<crate::domain::tool::ImageBlock>, bool) {
-        // Emit ToolStarted before executing so the REPL can show the tool name
-        // immediately, even if the tool itself takes a long time.
-        // Clones inside the closure are only evaluated when a callback is
-        // registered (zero-cost on headless paths via notify's guard).
-        self.notify(|| AgentProgressEvent::ToolStarted {
-            tool_call_id: tc.id.clone(),
-            name: tc.name.clone(),
-            arguments: tc.arguments.clone(),
-        });
-
-        let start = std::time::Instant::now();
-        let tool_result = self.tool_registry.execute(&tc.name, &tc.arguments).await;
-        let duration_ms = start.elapsed().as_millis() as u64;
-
-        let is_err = tool_result.is_err();
-        let (content, image_blocks) = match tool_result {
-            Ok(tr) => (tr.content, tr.image_blocks),
-            Err(e) => (format!("Error: {}", e), vec![]),
-        };
-
-        // Emit ToolFinished so the REPL can replace the spinner line.
-        // Build the bounded preview inside notify so headless runs allocate none.
-        self.notify(|| AgentProgressEvent::ToolFinished {
-            tool_call_id: tc.id.clone(),
-            name: tc.name.clone(),
-            arguments: tc.arguments.clone(),
-            result_content: agent_loop_preview::tool_result_preview(&content),
-            duration_ms,
-            is_error: is_err,
-        });
-
-        tracing::info!(
-            target: "tool_exec",
-            tool_name = tc.name.as_str(),
-            duration_ms,
-            is_error = is_err,
-            "tool executed"
-        );
-        (content, image_blocks, is_err)
-    }
-
     async fn finalize_text_response(
         &self,
         messages: &mut Vec<Message>,
@@ -547,9 +467,18 @@ impl AgentLoopImpl {
         // True when the manifest needs a rebuild; starts true for prior spills.
         let mut spills_dirty = true;
         let mut usage_totals = UsageTotals::default();
+        // Per-run append ledger (#1072). Entries are full clones taken at
+        // append time: a later ladder pass may demote any of them IN PLACE
+        // (`collapse_message` mutates the `&mut Message` in the conversation
+        // vector), so a shared representation (`Arc<Message>`) or clone-on-emit
+        // cannot preserve as-appended content. Cost: one clone per appended
+        // message, held for the run — bounded by the context budget, since
+        // everything appended was under the ceiling when it was appended.
         let mut appended_messages = Vec::new();
-        let preexisting_ids: Vec<_> = messages.iter().map(Message::id).collect();
-        let mut durable_prefix_dirty = false;
+        // #1072: durable-prefix dirtiness is latched by `apply_context_pruning`
+        // itself (any mutating ladder/collapse outcome) rather than diffing a
+        // pre-run id snapshot — in-place stub demotion changes content while
+        // every message id stays the same, which a snapshot comparison misses.
         // Count of model-malformed requests turned into addressable feedback.
         let mut malformed_retries: u32 = 0;
 
@@ -558,11 +487,6 @@ impl AgentLoopImpl {
             let context_tokens = self
                 .apply_context_pruning(messages, current_turn, spills_dirty)
                 .await;
-            durable_prefix_dirty |= messages
-                .iter()
-                .take(preexisting_ids.len())
-                .map(Message::id)
-                .ne(preexisting_ids.iter().copied());
 
             // Emit Thinking before every LLM call so the REPL spinner activates
             // immediately, including during multi-turn tool loops.
@@ -612,6 +536,11 @@ impl AgentLoopImpl {
                             "provider rejected request as malformed — re-prompting with addressable feedback"
                         );
                         append_malformed_feedback(messages, &e, current_turn);
+                        // The feedback user message was appended by this run,
+                        // so it belongs in the ledger (#1072 review).
+                        if let Some(feedback) = messages.last() {
+                            appended_messages.push(feedback.clone());
+                        }
                         current_turn += 1;
                         continue;
                     }
@@ -669,25 +598,29 @@ impl AgentLoopImpl {
                     appended_messages.push(final_message.clone());
                 }
                 result.appended_messages = appended_messages;
-                result.durable_prefix_dirty = durable_prefix_dirty;
+                result.durable_prefix_dirty = self.peek_durable_prefix_dirty();
                 return Ok(result);
             }
 
-            // Invariant: `execute_tool_calls_for_response` is append-only with
-            // respect to `messages`; it must not remove, replace, insert before,
-            // or reorder the existing prefix. This boundary therefore isolates
-            // exactly the assistant and tool messages produced by this turn.
-            let appended_from = messages.len();
-            self.execute_tool_calls_for_response(messages, current_turn, response)
-                .await;
-            appended_messages.extend_from_slice(&messages[appended_from..]);
+            // #1072: this turn's appended messages are recorded in the run
+            // ledger AT APPEND TIME inside `execute_tool_calls_for_response`
+            // — never recovered from a positional slice of `messages`, which
+            // pruning can shrink or demote in place.
+            let ledger_from = appended_messages.len();
+            self.execute_tool_calls_for_response(
+                messages,
+                current_turn,
+                response,
+                &mut appended_messages,
+            )
+            .await;
             // Stream this turn's output (assistant message + tool results) over
             // the live progress path so a parent/inspector sees it turn-by-turn,
             // not only at completion (#797). The clone is only paid when a
             // progress callback is registered (via `notify`'s guard), and the
             // Arc<[Message]> payload makes further event clones refcount bumps (#993).
             self.notify(|| AgentProgressEvent::TurnCompleted {
-                messages: messages[appended_from..].into(),
+                messages: appended_messages[ledger_from..].into(),
             });
             // Tool calls were executed and spilled — mark dirty for next iteration
             spills_dirty = self.spill_store.is_some();
@@ -713,7 +646,7 @@ impl AgentLoopImpl {
                     cache_write_tokens: usage_totals.cache_write_tokens,
                     cost_micro_usd: usage_totals.cost_micro_usd,
                     appended_messages,
-                    durable_prefix_dirty,
+                    durable_prefix_dirty: self.peek_durable_prefix_dirty(),
                 });
             }
         }
@@ -736,6 +669,9 @@ impl AgentLoop for AgentLoopImpl {
     }
 }
 
+#[cfg(test)]
+#[path = "agent_loop_1072_tests.rs"]
+mod issue_1072_tests;
 #[cfg(test)]
 #[path = "agent_loop_993_tests.rs"]
 mod issue_993_tests;
