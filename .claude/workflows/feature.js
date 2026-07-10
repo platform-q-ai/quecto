@@ -109,19 +109,43 @@ await agent(
 
 // ── Ship: commit, push (full gate), PR ─────────────────────────────────────
 phase('Ship')
-const pr = await agent(
+// Structured output makes "waiting for the gate" an unreturnable answer: the
+// agent MUST come back with a validated {pr_number, head_sha} or keep working.
+// Four runs stalled on prose returns before this (worst case: the stall text
+// named the BASE PR and the finders reviewed the wrong diff).
+const SHIP_RESULT = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['pr_number', 'head_sha'],
+  properties: {
+    pr_number: {
+      type: 'integer',
+      description:
+        'The number of the OPEN pull request whose head branch is THIS feature branch — verified via gh pr view. Never a base, stacked, or unrelated PR number.',
+    },
+    head_sha: {
+      type: 'string',
+      description: 'The pushed head commit SHA that the PR points at.',
+    },
+  },
+}
+const ship = await agent(
   `Task: ${TASK}\n\n` +
   `STEP — Commit. If on the default branch (master), create a feature branch first. Stage only intended files. Remember git commit pre-commit does not run unit/BDD tests. Write a clear, ` +
   `descriptive commit message with any required commit trailers. GUARD: hook setup and RED/GREEN must be ` +
   `done first.\n` +
-  `STEP — Push. This triggers the full local gate (or run scripts/pre-push.sh without pushing): fmt, strict clippy, unit/architecture/contracts/` +
-  `repo_docs, the 24-shard non-real BDD suite, region coverage at/above threshold (quecto and quecto-tui), ` +
-  `machete, deny, and the zero-cost mocked @mock-llm e2e lane (the live suite is opt-in via ` +
-  `QUECTO_RUN_REAL_LLM=1). Fix every failure; never use --no-verify — a bypassed gate does NOT count as ` +
-  `passing. If only the load-flaky find.feature scenario fails, re-run the shard.\n` +
+  `STEP — Push. Run 'git push' in the FOREGROUND with a timeout of at least 20 minutes and WAIT for it to ` +
+  `exit — the push runs the full local gate as a pre-push hook and takes 10-15+ minutes. Do NOT run it in ` +
+  `the background, do NOT end your turn while it runs, and never conclude with any variant of "waiting for ` +
+  `the gate": your task is not done until the push command has exited. The gate: fmt, strict clippy, ` +
+  `unit/architecture/contracts/repo_docs, the 24-shard non-real BDD suite, lib function coverage at/above ` +
+  `threshold (quecto and quecto-tui), machete, deny, and the zero-cost mocked @mock-llm e2e lane (the live ` +
+  `suite is opt-in via QUECTO_RUN_REAL_LLM=1). Fix every failure and push again; never use --no-verify — a ` +
+  `bypassed gate does NOT count as passing. If only the load-flaky find.feature scenario fails, re-run the shard.\n` +
   `STEP — Create PR. Open the PR against master with gh, clear title and a body summarizing the change. ` +
-  `Do not claim Claude co-authorship. Return the PR number and head commit SHA.`,
-  { label: 'commit-push-pr', phase: 'Ship' }
+  `Do not claim Claude co-authorship. Confirm with 'gh pr view <n> --json number,headRefOid,state' that the ` +
+  `PR is OPEN and its head is your pushed commit before returning the pr_number and head_sha.`,
+  { label: 'commit-push-pr', phase: 'Ship', schema: SHIP_RESULT }
 )
 
 // ── PR Review: find → verify → single-post waves (#1004) ───────────────────
@@ -158,12 +182,13 @@ const ANGLES = {
     'on test-constructed state, constants, or type-guaranteed facts, and anything that would pass with the ' +
     'implementation reverted.',
 }
-const prText = String(pr || '')
-const prNumberMatch = prText.match(/(?:#|pull\/)?(\d+)/)
-if (!prNumberMatch) {
-  throw new Error('finders MUST NOT be dispatched before a PR exists; commit/push/PR step must return a PR number')
+// The schema guarantees shape; this guards against a nonsense value (0,
+// negative) so finders can never review a wrong or absent PR.
+if (!ship || !Number.isInteger(ship.pr_number) || ship.pr_number <= 0) {
+  throw new Error('finders MUST NOT be dispatched before a PR exists; ship must return a positive pr_number')
 }
-const prNumber = prNumberMatch[1]
+const prNumber = ship.pr_number
+const pr = `PR #${ship.pr_number}, head commit ${ship.head_sha}`
 const finderReports = await parallel(Object.entries(ANGLES).map(([angle, focus]) => () => agent(
   `You are a narrow ${angle} finder for this Quecto PR. PR/context: #${prNumber}\n\n` +
   `PRECONDITION: finders MUST NOT be dispatched before a PR exists; stop if this prompt does not include a PR number. ` +

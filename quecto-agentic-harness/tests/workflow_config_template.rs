@@ -391,9 +391,21 @@ fn feature_js_reviewers_run_finder_waves() {
         lower.contains("inline") && lower.contains("on the pr"),
         "feature.js Wave 3 prompt should require inline comments on the PR"
     );
+    // The ship step must return a SCHEMA-validated {pr_number, head_sha} — a
+    // prose reply once slipped a BASE PR number past a regex guard and the
+    // finders reviewed the wrong PR — and the script must still sanity-check
+    // the integer before dispatching finders.
     assert!(
-        reviewer_block.contains("prNumberMatch") && reviewer_block.contains("prNumber"),
-        "feature.js should parse and validate the returned PR number before dispatching finders"
+        js.contains("SHIP_RESULT")
+            && js.contains("'pr_number'")
+            && js.contains("'head_sha'")
+            && js.contains("schema: SHIP_RESULT"),
+        "feature.js ship step should force a structured {{pr_number, head_sha}} return via schema"
+    );
+    assert!(
+        reviewer_block.contains("Number.isInteger(ship.pr_number)")
+            && reviewer_block.contains("prNumber"),
+        "feature.js should validate the schema-returned PR number before dispatching finders"
     );
     assert!(
         reviewer_block.contains("PR/context: #${prNumber}"),
