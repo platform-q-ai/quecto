@@ -222,13 +222,10 @@ fn given_mock_subagent_workflow(
                     let c = completed_clone;
                     let t = total_clone;
                     std::thread::spawn(move || {
-                        use std::io::{BufRead, BufReader, Write};
-                        let reader = BufReader::new(stream.try_clone().unwrap());
-                        for line in reader.lines() {
-                            let line = match line {
-                                Ok(l) => l,
-                                Err(_) => break,
-                            };
+                        use std::io::Write;
+                        while let Some(line) =
+                            quecto::infrastructure::test_support::read_framed_command(&stream)
+                        {
                             // Echo the stamped request id so the command reader
                             // correlates the reply to its request (#831).
                             let sent_id = serde_json::from_str::<serde_json::Value>(&line)
