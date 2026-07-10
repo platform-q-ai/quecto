@@ -315,6 +315,31 @@ async fn is_jsonl_session_file(path: &Path) -> Result<bool, DomainError> {
     Ok(prefix.trim_start().starts_with(r#"{"type":"#))
 }
 
+async fn persisted_prefix_changed(
+    path: &Path,
+    messages: &[Message],
+    previously_persisted: usize,
+) -> Result<bool, DomainError> {
+    if previously_persisted > messages.len() {
+        return Ok(true);
+    }
+    let data = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
+    let persisted = parse_session_data(&data)
+        .map_err(|e| DomainError::Session(format!("failed to parse session: {e}")))?;
+    if persisted.messages.len() < previously_persisted {
+        // Another writer replaced the durable session after this caller cached
+        // its watermark. Preserve that newer history; the out-of-order append
+        // record will be ignored by the loader.
+        return Ok(false);
+    }
+    Ok(persisted.messages[..previously_persisted]
+        .iter()
+        .zip(&messages[..previously_persisted])
+        .any(|(left, right)| message_to_record(left) != message_to_record(right)))
+}
+
 async fn append_known_delta(
     path: &Path,
     key: &str,
@@ -323,9 +348,9 @@ async fn append_known_delta(
     workflow_run: Option<&WorkflowRunPersisted>,
 ) -> Result<(), DomainError> {
     if previously_persisted == 0
-        || previously_persisted > messages.len()
         || !path.exists()
         || !is_jsonl_session_file(path).await?
+        || persisted_prefix_changed(path, messages, previously_persisted).await?
     {
         let session = Session {
             key: key.to_string(),

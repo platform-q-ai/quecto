@@ -118,6 +118,90 @@ async fn append_delta_from_stale_cached_index_does_not_mix_replaced_history() {
 }
 
 #[tokio::test]
+async fn shorter_pruned_history_compacts_and_resumes_exactly() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    let mut session = Session::new("test:shorter-prune");
+    for content in ["old 1", "old 2", "old 3"] {
+        session.messages.push(make_message(Role::User, content));
+    }
+    store.save(&session).await.unwrap();
+
+    session.messages = vec![make_message(Role::User, "old 3")];
+    store
+        .save_delta(&session.key, &session.messages, 3, None)
+        .await
+        .unwrap();
+
+    let resumed = store.load(&session.key).await.unwrap().unwrap();
+    assert_eq!(resumed.messages.len(), 1);
+    assert_eq!(resumed.messages[0].role, Role::User);
+    assert_eq!(resumed.messages[0].content, "old 3");
+}
+
+#[tokio::test]
+async fn masked_pruning_compacts_and_resumes_exact_current_history() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    let mut session = Session::new("test:masked-prune");
+    for content in ["old 1", "old 2", "old 3"] {
+        session.messages.push(make_message(Role::User, content));
+    }
+    store.save(&session).await.unwrap();
+
+    session.messages = vec![
+        make_message(Role::User, "old 3"),
+        make_message(Role::User, "new prompt"),
+        make_message(Role::Assistant, "new answer"),
+    ];
+    store
+        .save_delta(&session.key, &session.messages, 3, None)
+        .await
+        .unwrap();
+
+    let resumed = store.load(&session.key).await.unwrap().unwrap();
+    let contents: Vec<_> = resumed
+        .messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(contents, ["old 3", "new prompt", "new answer"]);
+}
+
+#[tokio::test]
+async fn masked_pruning_with_longer_current_history_resumes_exactly() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    let mut session = Session::new("test:masked-prune-longer");
+    for content in ["old 1", "old 2", "old 3"] {
+        session.messages.push(make_message(Role::User, content));
+    }
+    store.save(&session).await.unwrap();
+
+    session.messages = vec![
+        make_message(Role::User, "old 3"),
+        make_message(Role::User, "new prompt"),
+        make_message(Role::Assistant, "new answer"),
+        make_message(Role::User, "later prompt"),
+    ];
+    store
+        .save_delta(&session.key, &session.messages, 3, None)
+        .await
+        .unwrap();
+
+    let resumed = store.load(&session.key).await.unwrap().unwrap();
+    let contents: Vec<_> = resumed
+        .messages
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect();
+    assert_eq!(
+        contents,
+        ["old 3", "new prompt", "new answer", "later prompt"]
+    );
+}
+
+#[tokio::test]
 async fn replacing_history_compacts_to_the_requested_messages() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());

@@ -31,6 +31,9 @@ impl Clone for TokenCache {
 /// A single message in a conversation.
 #[derive(Debug, Default)]
 pub struct Message {
+    /// Runtime identity for locating this message while in-memory history is pruned.
+    /// It is intentionally not persisted; loaded messages receive fresh identities.
+    id: uuid::Uuid,
     pub role: Role,
     pub content: String,
     pub tool_calls: Vec<ToolCall>,
@@ -125,6 +128,7 @@ pub struct UserImageBlock {
 impl Clone for Message {
     fn clone(&self) -> Self {
         Self {
+            id: self.id,
             role: self.role.clone(),
             content: self.content.clone(),
             tool_calls: self.tool_calls.clone(),
@@ -147,8 +151,14 @@ impl Clone for Message {
 }
 
 impl Message {
+    /// Return the stable identity used to track this message across pruning.
+    pub(crate) fn id(&self) -> uuid::Uuid {
+        self.id
+    }
+
     pub fn system(content: impl Into<String>) -> Self {
         Self {
+            id: uuid::Uuid::new_v4(),
             role: Role::System,
             content: content.into(),
             is_pinned: true,
@@ -158,6 +168,7 @@ impl Message {
 
     pub fn user(content: impl Into<String>) -> Self {
         Self {
+            id: uuid::Uuid::new_v4(),
             role: Role::User,
             content: content.into(),
             ..Default::default()
@@ -166,6 +177,7 @@ impl Message {
 
     pub fn assistant(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
         Self {
+            id: uuid::Uuid::new_v4(),
             role: Role::Assistant,
             content: content.into(),
             tool_calls,
@@ -175,6 +187,7 @@ impl Message {
 
     pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
+            id: uuid::Uuid::new_v4(),
             role: Role::Tool,
             content: content.into(),
             tool_call_id: Some(tool_call_id.into()),

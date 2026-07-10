@@ -262,6 +262,24 @@ pub(crate) struct PromptRun<'a, 's> {
 /// oneshot, the token-forwarding drain loop, and (on a broadcast sink) subagent
 /// notifications, so tokens/notes are emitted in real time — not buffered until
 /// completion.
+fn prompt_position(messages: &[Message], prompt_id: uuid::Uuid) -> Option<usize> {
+    messages
+        .iter()
+        .position(|message| message.id() == prompt_id)
+}
+
+fn messages_after(messages: &[Message], prompt_id: uuid::Uuid) -> &[Message] {
+    prompt_position(messages, prompt_id)
+        .map(|index| &messages[index + 1..])
+        .unwrap_or_default()
+}
+
+fn rollback_prompt(messages: &mut Vec<Message>, prompt_id: uuid::Uuid) {
+    if let Some(index) = prompt_position(messages, prompt_id) {
+        messages.truncate(index);
+    }
+}
+
 pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome {
     let PromptRun {
         agent,
@@ -278,9 +296,8 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     sink.emit(&AgentEvent::AgentStart).await;
     sink.emit(&AgentEvent::TurnStart).await;
 
-    let user_msg_idx = messages.len();
+    let prompt_id = message.id();
     messages.push(message);
-    let before_len = messages.len();
 
     // Install a progress callback that forwards events to a bounded channel.
     // Capacity 256 limits back-pressure from a slow UDS consumer while being
@@ -324,7 +341,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
 
     match result {
         None => {
-            messages.truncate(user_msg_idx);
+            rollback_prompt(messages, prompt_id);
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
@@ -354,8 +371,10 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                 tool_results: vec![],
             };
             sink.emit(&turn_end).await;
-            let run_msgs: Vec<serde_json::Value> =
-                messages[before_len..].iter().map(message_to_json).collect();
+            let run_msgs: Vec<serde_json::Value> = messages_after(messages, prompt_id)
+                .iter()
+                .map(message_to_json)
+                .collect();
             sink.emit(&AgentEvent::AgentEnd { messages: run_msgs })
                 .await;
             PromptOutcome::Success
