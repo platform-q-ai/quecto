@@ -1,25 +1,96 @@
-use super::subagent_registry::{NotificationTx, SubagentRegistry, WorkflowSnapshot};
+use super::subagent_registry::{
+    NotificationTx, SequencedSubagentNotification, SubagentRegistry, WorkflowSnapshot,
+};
 
-/// Retry a stall alert retained after bounded-channel saturation. The pending
-/// value is removed only after the exact sequenced notification is accepted.
-pub(super) fn retry_pending_stall(
+/// Send a stall alert, retaining it as a retryable pending stall on the
+/// registry entry when the bounded channel is saturated. Supervision-critical:
+/// the alert must survive saturation (#1076 review).
+pub(super) fn deliver_or_retain_stall(
+    registry: &SubagentRegistry,
+    tx: &NotificationTx,
+    agent_id: &str,
+    notification: SequencedSubagentNotification,
+) {
+    if let Err(err) = tx.try_send(notification) {
+        retain_pending_stall(registry, tx, agent_id, err.into_inner());
+    }
+}
+
+/// Retain a saturated stall alert for retry, and arm a capacity backstop.
+///
+/// A stalled child emits no further events, so a retry driven only by that
+/// child's own event stream would starve in exactly the case the alert exists
+/// for. Two triggers cover it: `retry_pending_stalls` runs on ANY agent's
+/// monitor event, and — when a runtime is available — a background task waits
+/// for channel capacity directly. `claim_pending_stall` keeps the two paths
+/// exactly-once: the notification is owned by whichever claims it first.
+fn retain_pending_stall(
+    registry: &SubagentRegistry,
+    tx: &NotificationTx,
+    agent_id: &str,
+    notification: SequencedSubagentNotification,
+) {
+    {
+        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(entry) = entries.get_mut(agent_id) else {
+            return;
+        };
+        entry.pending_stall = Some(notification.clone());
+    }
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        let registry = registry.clone();
+        let tx = tx.clone();
+        let agent_id = agent_id.to_string();
+        handle.spawn(async move {
+            if claim_pending_stall(&registry, &agent_id, &notification) {
+                // Waits for capacity; an Err means the receiver is gone
+                // (parent shutting down) and the alert is moot.
+                let _ = tx.send(notification).await;
+            }
+        });
+    }
+}
+
+/// Take the pending stall off `agent_id`'s entry iff it is still exactly
+/// `expected`. Whoever claims it owns delivery; a lost claim means another
+/// path already delivered (or superseded) it.
+fn claim_pending_stall(
+    registry: &SubagentRegistry,
+    agent_id: &str,
+    expected: &SequencedSubagentNotification,
+) -> bool {
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(entry) = entries.get_mut(agent_id) else {
+        return false;
+    };
+    if entry.pending_stall.as_ref() == Some(expected) {
+        entry.pending_stall = None;
+        true
+    } else {
+        false
+    }
+}
+
+/// Retry every retained stall alert, whichever agent it belongs to. The
+/// stalled child itself is silent, so any monitor activity elsewhere in the
+/// fleet must drive the retry — a same-agent-only retry would starve.
+pub(super) fn retry_pending_stalls(
     registry: &SubagentRegistry,
     notify_tx: Option<&NotificationTx>,
-    agent_id: &str,
 ) {
     let Some(tx) = notify_tx else { return };
-    let pending = registry
+    let pendings: Vec<(String, SequencedSubagentNotification)> = registry
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .get(agent_id)
-        .and_then(|entry| entry.pending_stall.clone());
-    let Some(pending) = pending else { return };
-    if tx.try_send(pending.clone()).is_ok() {
-        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(entry) = entries.get_mut(agent_id)
-            && entry.pending_stall.as_ref() == Some(&pending)
-        {
-            entry.pending_stall = None;
+        .iter()
+        .filter_map(|(id, entry)| entry.pending_stall.clone().map(|p| (id.clone(), p)))
+        .collect();
+    for (agent_id, pending) in pendings {
+        if !claim_pending_stall(registry, &agent_id, &pending) {
+            continue;
+        }
+        if let Err(err) = tx.try_send(pending) {
+            retain_pending_stall(registry, tx, &agent_id, err.into_inner());
         }
     }
 }

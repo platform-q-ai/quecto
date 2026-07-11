@@ -4,7 +4,7 @@ pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
 };
 use super::subagent_monitor_stall::{
-    retry_pending_stall, take_completion_armed, take_stalled_snapshot,
+    deliver_or_retain_stall, retry_pending_stalls, take_completion_armed, take_stalled_snapshot,
 };
 use super::subagent_registry::{
     NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
@@ -21,6 +21,7 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"tool_execution_start\"",
     "\"type\":\"tool_execution_end\"",
     "\"type\":\"workflow_state\"",
+    "\"type\":\"workflow_idle\"",
     "\"command\":\"agent_error\"",
 ];
 
@@ -510,7 +511,7 @@ fn apply_and_notify(
     agent_id: &str,
     value: &serde_json::Value,
 ) {
-    retry_pending_stall(registry, notify_tx, agent_id);
+    retry_pending_stalls(registry, notify_tx);
     let sequence = update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, value));
     let workflow_mode = entry_workflow_mode(registry, agent_id);
     // A tool failure remains the observed outcome for this turn. `agent_end`
@@ -552,13 +553,7 @@ fn apply_and_notify(
                     steps_total: u64::from(workflow.steps_total),
                 },
             );
-            if let Err(notification) = tx.try_send(notification) {
-                let notification = notification.into_inner();
-                let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(entry) = entries.get_mut(agent_id) {
-                    entry.pending_stall = Some(notification);
-                }
-            }
+            deliver_or_retain_stall(registry, tx, agent_id, notification);
         }
         return;
     }

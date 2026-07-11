@@ -470,3 +470,165 @@ async fn tool_error_still_notifies_mid_workflow() {
         SubagentNotification::Errored { .. }
     ));
 }
+
+// Review fix (#1082): `workflow_idle` must survive the monitor's cheap
+// substring pre-filter. This enters through `handle_monitor_line` — the real
+// wire path — so it fails if the event is missing from STATE_CHANGING_EVENTS,
+// unlike the `apply_and_notify`-level tests above.
+#[tokio::test]
+async fn workflow_idle_line_from_wire_emits_stall() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+
+    handle_monitor_line(
+        r#"{"type":"workflow_state","mode":"active","progress":{"done":1,"total":3}}"#,
+        "worker",
+        &registry,
+        Some(&tx),
+        None,
+        None,
+    );
+    handle_monitor_line(
+        r#"{"type":"workflow_idle"}"#,
+        "worker",
+        &registry,
+        Some(&tx),
+        None,
+        None,
+    );
+
+    let stalled = std::iter::from_fn(|| rx.try_recv().ok())
+        .any(|n| matches!(n.notification, SubagentNotification::Stalled { .. }));
+    assert!(
+        stalled,
+        "a workflow_idle wire line must pass the pre-filter and raise a stall alert"
+    );
+}
+
+// Review fix (#1082): a retained stall must not depend on the stalled child's
+// own (nonexistent) future events. Any OTHER agent's monitor event retries it.
+#[tokio::test]
+async fn saturated_stall_retried_by_another_agents_event() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    insert_entry(&registry, "other");
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    tx.try_send(
+        crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification::new(
+            99,
+            SubagentNotification::Completed {
+                agent_id: "other".to_string(),
+                summary: "occupy channel".to_string(),
+            },
+        ),
+    )
+    .expect("fill bounded channel");
+
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_state","mode":"active","progress":{"done":3,"total":7}}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_idle"}),
+    );
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("worker")
+            .is_some_and(|entry| entry.pending_stall.is_some()),
+        "saturated stall must be retained"
+    );
+
+    rx.try_recv().expect("free channel capacity");
+    // The stalled worker stays silent; a DIFFERENT agent's event must retry.
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "other",
+        &serde_json::json!({"type":"tool_execution_start","toolName":"read"}),
+    );
+
+    let delivered = rx
+        .try_recv()
+        .expect("cross-agent retry must deliver the stall");
+    assert!(matches!(
+        delivered.notification,
+        SubagentNotification::Stalled { .. }
+    ));
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("worker")
+            .is_some_and(|entry| entry.pending_stall.is_none()),
+        "delivered retry must clear pending state"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "stall must be delivered exactly once"
+    );
+}
+
+// Review fix (#1082): with NO further monitor events anywhere in the fleet, the
+// capacity backstop alone must deliver the retained stall once the parent
+// drains the channel.
+#[tokio::test]
+async fn saturated_stall_delivered_by_backstop_without_any_further_events() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    tx.try_send(
+        crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification::new(
+            99,
+            SubagentNotification::Completed {
+                agent_id: "other".to_string(),
+                summary: "occupy channel".to_string(),
+            },
+        ),
+    )
+    .expect("fill bounded channel");
+
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_state","mode":"active","progress":{"done":3,"total":7}}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_idle"}),
+    );
+
+    // Drain the occupying note. No further monitor events are applied: only
+    // the background capacity backstop can deliver the retained stall.
+    let occupying = rx.recv().await.expect("occupying note");
+    assert!(matches!(
+        occupying.notification,
+        SubagentNotification::Completed { .. }
+    ));
+    let delivered = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .expect("backstop must deliver the stall without further child events")
+        .expect("channel must stay open");
+    assert!(matches!(
+        delivered.notification,
+        SubagentNotification::Stalled { .. }
+    ));
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("worker")
+            .is_some_and(|entry| entry.pending_stall.is_none()),
+        "backstop delivery must clear pending state"
+    );
+}
