@@ -30,6 +30,20 @@ pub(super) fn make_selected_feature_workflow() -> WorkflowStateHandle {
     workflow
 }
 
+/// A workflow engine handle with the `feature` template selected and every
+/// step checked, so only the completion nudge can fire at the idle drain.
+pub(super) fn make_completed_feature_workflow() -> WorkflowStateHandle {
+    let workflow = make_selected_feature_workflow();
+    {
+        let mut engine = workflow.lock().unwrap();
+        let steps = engine.snapshot(true).steps.len() as u32;
+        for step in 1..=steps {
+            engine.check(step).unwrap();
+        }
+    }
+    workflow
+}
+
 /// The canonical agent-loop config for dispatch tests, parameterised by
 /// provider so scripted providers slot in without copying the literal.
 pub(super) fn make_dispatch_test_agent(
@@ -74,6 +88,10 @@ pub(super) struct DispatchTestEnv {
     pub(super) writer: tokio::io::Sink,
     pub(super) workflow: WorkflowStateHandle,
     pub(super) turn_control: crate::interface::cli::uds_cancel::TurnControlHandle,
+    /// Pre-seeded sub-agent notification channel; `ctx()` moves it into the
+    /// context, mirroring the real dispatch loop's single owned receiver.
+    pub(super) notification_rx:
+        Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
 }
 
 impl DispatchTestEnv {
@@ -95,6 +113,7 @@ impl DispatchTestEnv {
             writer: tokio::io::sink(),
             workflow,
             turn_control: std::sync::Arc::default(),
+            notification_rx: None,
         }
     }
 
@@ -146,7 +165,7 @@ impl DispatchTestEnv {
             ),
             current_client_id: 0,
             subagent_registry: None,
-            notification_rx: None,
+            notification_rx: self.notification_rx.take(),
             workflow_state: Some(self.workflow.clone()),
             workflow_config: Some(WorkflowConfig::default()),
             provider_reload: None,

@@ -9,7 +9,9 @@
 //! third), send a corrective nudge after a no-progress turn instead of the
 //! verbatim repeat, and reset the streak whenever a turn advances progress.
 
-use super::dispatch_test_env::{DispatchTestEnv, make_selected_feature_workflow};
+use super::dispatch_test_env::{
+    DispatchTestEnv, make_completed_feature_workflow, make_selected_feature_workflow,
+};
 use super::*;
 use crate::interface::shared::WorkflowStateHandle;
 
@@ -136,8 +138,21 @@ impl Env {
         Self::build(Vec::new(), true)
     }
 
+    /// Build an `Env` whose workflow is already COMPLETE (every step checked),
+    /// so only the completion nudge can fire at the idle drain.
+    fn with_completed_workflow() -> Self {
+        Self::around_workflow(make_completed_feature_workflow(), Vec::new(), false)
+    }
+
     fn build(script: Vec<bool>, toggle_forever: bool) -> Self {
-        let workflow = make_selected_feature_workflow();
+        Self::around_workflow(make_selected_feature_workflow(), script, toggle_forever)
+    }
+
+    fn around_workflow(
+        workflow: WorkflowStateHandle,
+        script: Vec<bool>,
+        toggle_forever: bool,
+    ) -> Self {
         let provider = std::sync::Arc::new(ScriptedProgressProvider::new(
             workflow.clone(),
             script,
@@ -275,5 +290,79 @@ async fn progress_resets_the_no_progress_counter() {
         msgs[4].contains(CORRECTIVE_FRAGMENT),
         "a post-reset no-progress turn is followed by the corrective nudge again: {:?}",
         msgs[4]
+    );
+}
+
+/// The completion nudge is single-shot: it asks for a final report and a stop,
+/// which never advances the fingerprint, so the loop must send it exactly once
+/// and break — never retry it with the corrective wording.
+#[tokio::test]
+async fn completion_nudge_is_sent_exactly_once() {
+    let mut env = Env::with_completed_workflow();
+    {
+        let mut ctx = env.ctx();
+        super::drain_pending_and_nudge(&mut ctx).await;
+    }
+
+    assert_eq!(
+        env.calls(),
+        1,
+        "a complete workflow gets exactly one completion nudge despite the unchanged fingerprint"
+    );
+    let msgs = env.seen_user_messages();
+    assert!(
+        msgs[0].contains("report your result and stop"),
+        "the single nudged turn must carry the completion wording: {:?}",
+        msgs[0]
+    );
+}
+
+/// Progress made by an UNRELATED turn — here a buffered sub-agent completion
+/// note that arrives during a nudged turn and drains at the next idle boundary
+/// — must not be attributed to the nudge: the note runs OUTSIDE the measured
+/// fingerprint window, so it neither resets the no-progress streak nor flips
+/// the next nudge back to the standard wording.
+#[tokio::test]
+async fn unrelated_pending_turn_progress_is_not_attributed_to_the_nudge() {
+    // Provider script by call index: call 0 is the first nudged turn (no
+    // progress), call 1 is the drained sub-agent note's turn (advances the
+    // workflow), calls 2-3 are the remaining nudged turns (no progress).
+    let mut env = Env::with_progress_script(vec![false, true, false, false]);
+    let (tx, rx) = crate::infrastructure::tools::subagent_registry::new_notification_channel();
+    tx.try_send(
+        crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification::new(
+            1,
+            crate::infrastructure::tools::subagent_registry::SubagentNotification::Completed {
+                agent_id: "child-1".into(),
+                summary: "child finished".into(),
+            },
+        ),
+    )
+    .unwrap();
+    env.inner.notification_rx = Some(rx);
+    {
+        let mut ctx = env.ctx();
+        super::drain_pending_and_nudge(&mut ctx).await;
+    }
+
+    // Turns: nudge (no progress, streak 1), note (progress, unmeasured),
+    // corrective nudge (streak 2), corrective nudge (streak 3 → break).
+    assert_eq!(
+        env.calls(),
+        4,
+        "the note's progress must not reset the streak or extend the tolerance"
+    );
+    // seen_user_messages records the LAST user message per provider call, so
+    // the note's system-message turn (call 1) re-records the first nudge.
+    let msgs = env.seen_user_messages();
+    assert!(
+        msgs[2].contains(CORRECTIVE_FRAGMENT),
+        "the nudge after the stalled nudged turn stays corrective despite the note's progress: {:?}",
+        msgs[2]
+    );
+    assert!(
+        msgs[3].contains(CORRECTIVE_FRAGMENT),
+        "the final nudge is still corrective: {:?}",
+        msgs[3]
     );
 }

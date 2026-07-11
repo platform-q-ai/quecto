@@ -416,10 +416,23 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
         // its corrective wording: literal instruction-following models (e.g.
         // GPT-5.6) reply to the standard nudge with a bare status message and
         // no tool calls, so a verbatim repeat just re-elicits the same stall.
-        ctx.session
-            .enqueue_pending(nudge.into_message(no_progress_turns > 0));
-        drain_and_run_pending(ctx).await;
+        //
+        // The nudged turn runs ALONE inside the measured fingerprint window.
+        // Messages that land in the pending queue while it streams (steer
+        // follow-ups, buffered sub-agent notes) are drained AFTER the window
+        // closes, so progress made by an unrelated turn is never attributed
+        // to the nudge — it must not reset the no-progress streak or pick
+        // the nudge wording.
+        {
+            let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828
+            run_drained_message(
+                ctx,
+                Message::user(nudge.into_message(no_progress_turns > 0)),
+            )
+            .await;
+        }
         let after = workflow_progress_fingerprint(ctx);
+        drain_and_run_pending(ctx).await;
         if after == before {
             // The completion nudge is single-shot: it asks for a final report
             // and a stop, which never advances the fingerprint, so retrying
@@ -472,33 +485,42 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
             break;
         }
         for pending_msg in pending {
-            let msg = pending_msg.into_message();
-            let Some(rx) = arm_cancel(&ctx.cancel_handle) else {
-                emit_pre_cancelled(ctx).await; // Stale abort (#483).
-                continue; // Don't drop remaining messages — Fired consumed, next arm succeeds.
-            };
-            let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
-            run_agent_message(PromptRun {
-                agent: ctx.agent,
-                messages: ctx.messages,
-                session: ctx.session,
-                sink: &mut sink,
-                message: msg,
-                cancel_rx: rx,
-                notification_rx: &mut ctx.notification_rx,
-                subagent_registry: &ctx.subagent_registry,
-            })
-            .await;
-            disarm_cancel(&ctx.cancel_handle);
-            // #1072: drained runs (steer follow-ups, workflow auto-continue,
-            // coalesced sub-agent notes) can prune too. Their dirty latch is
-            // sticky on the agent; `persist_current_session` drains it
-            // centrally before choosing a persistence path.
-            // #899: keep busy-child snapshots fresh across auto-continue nudges
-            // instead of frozen at the pre-turn snapshot until dispatch returns.
-            super::uds_snapshots::refresh_busy_snapshots(ctx).await;
+            run_drained_message(ctx, pending_msg.into_message()).await;
         }
     }
+}
+
+/// Run one drained or injected message through the agent: arm cancel, run,
+/// disarm, refresh busy snapshots. A stale abort (#483) skips the run without
+/// dropping the message's siblings — Fired is consumed, the next arm succeeds.
+/// Callers own the busy flag (#828); this helper does not touch it, because
+/// [`BusyGuard`](super::uds_multi::BusyGuard) is a plain set/clear flag and
+/// nesting one per message would clear it while an outer scope is still busy.
+async fn run_drained_message(ctx: &mut DispatchCtx<'_>, msg: Message) {
+    let Some(rx) = arm_cancel(&ctx.cancel_handle) else {
+        emit_pre_cancelled(ctx).await; // Stale abort (#483).
+        return;
+    };
+    let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
+    run_agent_message(PromptRun {
+        agent: ctx.agent,
+        messages: ctx.messages,
+        session: ctx.session,
+        sink: &mut sink,
+        message: msg,
+        cancel_rx: rx,
+        notification_rx: &mut ctx.notification_rx,
+        subagent_registry: &ctx.subagent_registry,
+    })
+    .await;
+    disarm_cancel(&ctx.cancel_handle);
+    // #1072: drained runs (steer follow-ups, workflow auto-continue,
+    // coalesced sub-agent notes) can prune too. Their dirty latch is
+    // sticky on the agent; `persist_current_session` drains it
+    // centrally before choosing a persistence path.
+    // #899: keep busy-child snapshots fresh across auto-continue nudges
+    // instead of frozen at the pre-turn snapshot until dispatch returns.
+    super::uds_snapshots::refresh_busy_snapshots(ctx).await;
 }
 #[cfg(test)]
 #[path = "uds_abort_steer_tests.rs"]
