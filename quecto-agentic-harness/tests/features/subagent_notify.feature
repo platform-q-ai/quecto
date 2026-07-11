@@ -1,16 +1,18 @@
 @done
-Feature: Auto-notify parent LLM when subagents complete or error
+Feature: Auto-notify a parent when a sub-agent ends a turn
   As a parent agent
-  I want automatic follow-up messages when child agents finish or fail
-  So that I don't have to manually poll subagent status
+  I want turn-end notifications that do not imply successful task completion
+  So that I inspect the child output before treating its work as complete
 
   # --- SubagentNotification enum ---
 
-  Scenario: Completed notification includes agent_id and summary
+  Scenario: A turn-end notification distinguishes the event from task success
     Given a Completed notification for agent "researcher" with summary "All tests pass"
     Then the notification [message] should contain "researcher"
-    And the notification [message] should contain "finished"
+    And the notification [message] should contain "ended a turn"
+    And the notification [message] should contain "status: idle"
     And the notification [message] should contain "get_messages"
+    And the notification [message] should contain "before treating its work as complete"
 
   Scenario: Errored notification includes agent_id and error
     Given an Errored notification for agent "linter" with error "rate limit exceeded"
@@ -130,11 +132,11 @@ Feature: Auto-notify parent LLM when subagents complete or error
     Then the parent should have 1 pending subagent note
     And the parent's next idle note should contain "failed"
 
-  Scenario: A spawned child's completion reaches the parent with no manual await
+  Scenario: A spawned child's turn end reaches the parent with no manual await
     Given a parent session with no pending notes
     And a monitor with notification sender
     When the monitor processes an agent_end event with messages
     And the parent drains its subagent notifications
     Then the parent should have 1 pending subagent note
     And the parent's next idle note should be delivered on the operator channel
-    And the parent's next idle note should contain "finished"
+    And the parent's next idle note should contain "ended a turn"

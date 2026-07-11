@@ -14,7 +14,7 @@ use crate::interface::app::tui_harness::*;
 /// display-side detection is tested against the real wording, not a stand-in.
 fn completion_msg(name: &str) -> String {
     format!(
-        "Sub-agent '{name}' finished. Review with agent_cmd get_messages when you need its output."
+        "Sub-agent '{name}' ended a turn (status: idle). Inspect agent_cmd get_messages before treating its work as complete."
     )
 }
 
@@ -53,7 +53,7 @@ async fn burst_of_completions_coalesces_to_one_summary_line() {
         "a burst of completions must coalesce to ONE `◆` line:\n{frame}"
     );
     assert!(
-        frame.contains("3 sub-agents finished:"),
+        frame.contains("3 sub-agents ended a turn:") && !frame.contains("finished"),
         "the summary must count the completions:\n{frame}"
     );
     for name in ["issue-895-feature", "basic-10", "basic-11"] {
@@ -63,8 +63,8 @@ async fn burst_of_completions_coalesces_to_one_summary_line() {
         );
     }
     assert!(
-        !frame.contains("Review with agent_cmd"),
-        "the verbose per-agent completion text must NOT survive coalescing:\n{frame}"
+        frame.contains("Inspect agent_cmd ge"),
+        "the coalesced note must preserve the inspection warning:\n{frame}"
     );
 }
 
@@ -83,11 +83,11 @@ async fn single_completion_keeps_its_own_line() {
         "a single completion is one `◆` line:\n{frame}"
     );
     assert!(
-        frame.contains("Sub-agent 'solo-agent' finished"),
+        frame.contains("Sub-agent 'solo-agent' ended a turn (status: idle)"),
         "a single completion keeps its own verbatim note:\n{frame}"
     );
     assert!(
-        !frame.contains("sub-agents finished:"),
+        !frame.contains("sub-agents ended a turn:"),
         "a single completion must NOT be reworded as a coalesced summary:\n{frame}"
     );
 }
@@ -120,7 +120,7 @@ async fn errored_and_exited_are_not_folded_into_summary() {
         "summary + error + exited = three `◆` lines:\n{frame}"
     );
     assert!(
-        frame.contains("2 sub-agents finished:"),
+        frame.contains("2 sub-agents ended a turn:"),
         "the two completions coalesce into one summary:\n{frame}"
     );
     assert!(
@@ -153,7 +153,7 @@ async fn completion_names_are_capped_with_more_tail() {
         "many completions still coalesce to one line:\n{frame}"
     );
     assert!(
-        frame.contains("13 sub-agents finished:"),
+        frame.contains("13 sub-agents ended a turn:"),
         "the count reflects ALL completions, not just the shown names:\n{frame}"
     );
     assert!(
@@ -173,14 +173,14 @@ async fn coalesced_notes_still_defer_until_idle() {
 
     let mid = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
-        !mid.contains("sub-agents finished") && bullet_lines(&mid) == 0,
+        !mid.contains("sub-agents ended a turn") && bullet_lines(&mid) == 0,
         "completion notes must stay DEFERRED while the parent is mid-turn:\n{mid}"
     );
 
     h.event(Event::AgentEnd);
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
-        frame.contains("2 sub-agents finished:"),
+        frame.contains("2 sub-agents ended a turn:"),
         "the coalesced summary surfaces once the parent is idle:\n{frame}"
     );
 }

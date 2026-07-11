@@ -522,6 +522,17 @@ fn apply_and_notify(
 ) {
     let sequence = update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, value));
     let workflow_mode = entry_workflow_mode(registry, agent_id);
+    // A tool failure remains the observed outcome for this turn. `agent_end`
+    // merely closes the turn and must not follow it with a success-like idle note.
+    if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
+        && registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(agent_id)
+            .is_some_and(|entry| entry.last_error.is_some())
+    {
+        return;
+    }
     // Latch a workflow-bound TERMINAL completion so the `completion_nudge`
     // "report and stop" follow-up turn — which also ends in `complete` mode —
     // does NOT fire a second completion note (#904). Only the FIRST terminal

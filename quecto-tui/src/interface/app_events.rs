@@ -173,7 +173,7 @@ impl App {
     /// the message are sanitized for terminal-control sequences before display.
     fn handle_subagent_notification(&mut self, _agent_id: String, message: String) {
         // The message is already a concise, self-naming one-liner from the kernel
-        // (e.g. "Sub-agent 'poet-2' finished. Review with agent_cmd get_messages
+        // (e.g. "Sub-agent 'poet-2' ended a turn (status: idle). Inspect agent_cmd get_messages
         // when you need its output."), so we do NOT re-prefix the agent id here —
         // that just duplicated the name.
         let message = crate::interface::ansi::sanitize_control(&message);
