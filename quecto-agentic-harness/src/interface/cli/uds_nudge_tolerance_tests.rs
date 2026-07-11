@@ -9,8 +9,8 @@
 //! third), send a corrective nudge after a no-progress turn instead of the
 //! verbatim repeat, and reset the streak whenever a turn advances progress.
 
+use super::dispatch_test_env::{DispatchTestEnv, make_selected_feature_workflow};
 use super::*;
-use crate::domain::workflow::{WorkflowConfig, WorkflowEngine};
 use crate::interface::shared::WorkflowStateHandle;
 
 /// Fragment of the standard auto-continue nudge (first nudge, and any nudge
@@ -115,18 +115,10 @@ impl crate::domain::provider::LlmProvider for ScriptedProgressProvider {
     }
 }
 
-/// Owns everything a [`DispatchCtx`] borrows, with the scripted provider
-/// shared so tests can inspect calls/messages after the drain returns.
+/// Test env: the shared [`DispatchTestEnv`] plus a handle on the scripted
+/// provider so tests can inspect calls/messages after the drain returns.
 struct Env {
-    tmp: tempfile::TempDir,
-    agent: crate::application::agent_loop::AgentLoopImpl,
-    messages: Vec<crate::domain::message::Message>,
-    session: AgentSession,
-    session_key: String,
-    store: crate::infrastructure::persistence::session_store::FileSessionStore,
-    writer: tokio::io::Sink,
-    workflow: WorkflowStateHandle,
-    turn_control: crate::interface::cli::uds_cancel::TurnControlHandle,
+    inner: DispatchTestEnv,
     provider: std::sync::Arc<ScriptedProgressProvider>,
 }
 
@@ -145,97 +137,20 @@ impl Env {
     }
 
     fn build(script: Vec<bool>, toggle_forever: bool) -> Self {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let store =
-            crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
-        let workflow: WorkflowStateHandle = std::sync::Arc::new(std::sync::Mutex::new(
-            WorkflowEngine::new(WorkflowConfig::default(), false).unwrap(),
-        ));
-        workflow
-            .lock()
-            .unwrap()
-            .select_template("feature", None)
-            .unwrap();
+        let workflow = make_selected_feature_workflow();
         let provider = std::sync::Arc::new(ScriptedProgressProvider::new(
             workflow.clone(),
             script,
             toggle_forever,
         ));
-        let agent = crate::application::agent_loop::AgentLoopImpl::new(
-            crate::application::agent_loop::AgentLoopConfig {
-                provider: provider.clone(),
-                tool_registry: Box::new(
-                    crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
-                ),
-                model: "stub".into(),
-                max_tokens: 100,
-                temperature: 0.0,
-                spill_store: None,
-                session_key: "cli:test".into(),
-                context_collapse_after_tool_calls: u32::MAX,
-                max_context_tokens: 190_000,
-                progress_callback: None,
-                streaming: false,
-                effort: None,
-                system_prompt_provider: None,
-                audit_log: None,
-                pin_recent_turns: 2,
-                context_collapse_after_messages: u32::MAX,
-                model_context_window: None,
-            },
-        );
         Self {
-            tmp,
-            agent,
-            messages: Vec::new(),
-            session: AgentSession::new("stub".into(), "cli:test".into()),
-            session_key: "cli:test".to_string(),
-            store,
-            writer: tokio::io::sink(),
-            workflow,
-            turn_control: std::sync::Arc::default(),
+            inner: DispatchTestEnv::new(workflow, provider.clone()),
             provider,
         }
     }
 
     fn ctx(&mut self) -> DispatchCtx<'_> {
-        let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
-            &self.session_key,
-            &self.messages,
-        );
-        let state = self.session.state_snapshot(0, None, 0, None);
-        DispatchCtx {
-            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
-            base_dir: self.tmp.path(),
-            agent: &mut self.agent,
-            messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
-            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
-            session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
-            extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
-            busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            session: &mut self.session,
-            stdout: Some(&mut self.writer),
-            session_key: &mut self.session_key,
-            session_store: &self.store,
-            ephemeral: false,
-            system_prompt: "",
-            cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
-            turn_control: self.turn_control.clone(),
-            broadcast_tx: None,
-            ext_registry: None,
-            client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(
-            ),
-            current_client_id: 0,
-            subagent_registry: None,
-            notification_rx: None,
-            workflow_state: Some(self.workflow.clone()),
-            workflow_config: Some(WorkflowConfig::default()),
-            provider_reload: None,
-            provider_reload_inputs: None,
-            last_persisted_message_index: 0,
-            durable_prefix_dirty: false,
-        }
+        self.inner.ctx()
     }
 
     fn calls(&self) -> u32 {

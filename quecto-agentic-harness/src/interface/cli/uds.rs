@@ -383,14 +383,10 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
 
     drain_and_run_pending(ctx).await;
 
-    // Corrective variant of the auto-continue nudge, sent whenever the
-    // PREVIOUS nudged turn made no progress: literal instruction-following
-    // models (e.g. GPT-5.6) reply to the standard nudge with a bare status
-    // message and no tool calls, so a verbatim repeat just re-elicits the
-    // same stall.
-    const CORRECTIVE_NUDGE: &str = "Your last reply did not advance the workflow. If the current step is finished, check it off with the workflow tool now; otherwise continue working on it. Do not reply with only a status message.";
     // Consecutive no-progress nudged turns tolerated before giving up: two
     // corrective retries, the third consecutive no-progress turn breaks.
+    // The nudge WORDING (standard and corrective) is owned by the domain
+    // engine — this loop only decides which variant to send.
     const MAX_NO_PROGRESS_TURNS: usize = 3;
 
     let mut no_progress_turns = 0usize;
@@ -416,12 +412,12 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
             break;
         };
         let auto_continue = nudge.is_auto_continue();
-        let message = if auto_continue && no_progress_turns > 0 {
-            CORRECTIVE_NUDGE.to_owned()
-        } else {
-            nudge.into_message()
-        };
-        ctx.session.enqueue_pending(message);
+        // A stalled previous nudged turn switches the auto-continue path to
+        // its corrective wording: literal instruction-following models (e.g.
+        // GPT-5.6) reply to the standard nudge with a bare status message and
+        // no tool calls, so a verbatim repeat just re-elicits the same stall.
+        ctx.session
+            .enqueue_pending(nudge.into_message(no_progress_turns > 0));
         drain_and_run_pending(ctx).await;
         let after = workflow_progress_fingerprint(ctx);
         if after == before {
@@ -510,6 +506,9 @@ mod abort_steer_tests;
 #[cfg(test)]
 #[path = "uds_bounded_read_tests.rs"]
 mod bounded_read_tests;
+#[cfg(test)]
+#[path = "uds_dispatch_test_env.rs"]
+mod dispatch_test_env;
 #[cfg(test)]
 #[path = "uds_effort_1067_tests.rs"]
 mod effort_1067_tests;

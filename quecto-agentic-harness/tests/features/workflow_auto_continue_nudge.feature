@@ -14,3 +14,7 @@ Feature: Workflow auto-continue nudge wording
   Scenario: Auto-continue nudge instructs the model how to recover from a failed tool call
     When I request the auto-continue nudge
     Then the nudge should instruct the model how to recover from a failed tool call
+
+  Scenario: Corrective nudge demands a check-off or continued work instead of a status reply
+    When I request the corrective nudge
+    Then the corrective nudge should demand a check-off or continued work

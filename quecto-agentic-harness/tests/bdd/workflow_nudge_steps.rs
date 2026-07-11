@@ -60,6 +60,36 @@ fn then_nudge_does_not_mandate_status_reply(world: &mut QuectoWorld) {
     );
 }
 
+#[when("I request the corrective nudge")]
+fn when_request_corrective_nudge(world: &mut QuectoWorld) {
+    let engine = world
+        .workflow_nudge_engine
+        .as_ref()
+        .expect("workflow engine not set");
+    world.workflow_nudge_text = Some(
+        engine
+            .corrective_nudge()
+            .expect("active incomplete workflow yields a corrective nudge"),
+    );
+}
+
+#[then("the corrective nudge should demand a check-off or continued work")]
+fn then_corrective_nudge_demands_check_off_or_work(world: &mut QuectoWorld) {
+    let text = nudge_text(world);
+    assert!(
+        text.contains("did not advance the workflow"),
+        "corrective nudge must name the stall: {text}"
+    );
+    assert!(
+        text.contains("check it off with the workflow tool"),
+        "corrective nudge must point at the workflow tool for the check-off: {text}"
+    );
+    assert!(
+        text.contains("Do not reply with only a status message"),
+        "corrective nudge must forbid a bare status reply: {text}"
+    );
+}
+
 #[then("the nudge should instruct the model how to recover from a failed tool call")]
 fn then_nudge_carries_error_path_instruction(world: &mut QuectoWorld) {
     let text = nudge_text(world);
