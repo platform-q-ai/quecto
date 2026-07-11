@@ -239,13 +239,40 @@ impl WorkflowEngine {
     }
 
     pub fn auto_continue_nudge(&self) -> Option<String> {
-        const AUTO_CONTINUE_NUDGE: &str = "Workflow incomplete. Continue with the next incomplete step. Use the workflow tool to check off steps as you complete them. Respond with just the word DONE (no other text) when all workflow steps are checked off. Never ask for permission or stop for any other reason than the task is entirely complete.";
+        // No mandated status reply here: literal instruction-following models
+        // treated the old "Respond with just the word DONE" sentence as a
+        // status poll, answering without tool calls — a no-progress turn that
+        // silently killed auto-continue for the rest of the run.
+        const AUTO_CONTINUE_NUDGE: &str = "Workflow incomplete. Continue with the next incomplete step. Use the workflow tool to check off steps as you complete them. If a tool call failed, retry or work around it; if genuinely blocked, state which step is blocked and why. Never ask for permission or stop for any other reason than the task is entirely complete.";
 
+        self.auto_continue_gate()?;
+        Some(AUTO_CONTINUE_NUDGE.to_owned())
+    }
+
+    /// Corrective variant of [`Self::auto_continue_nudge`], sent when the
+    /// PREVIOUS nudged turn made no progress: literal instruction-following
+    /// models reply to the standard nudge with a bare status message and no
+    /// tool calls, so a verbatim repeat just re-elicits the same stall.
+    ///
+    /// Lives here (not in the interface layer) so ALL workflow nudge wording
+    /// is owned by the engine and covered by the same wording tests — a
+    /// wording pass over the sibling nudges cannot miss this one.
+    pub fn corrective_nudge(&self) -> Option<String> {
+        const CORRECTIVE_NUDGE: &str = "Your last reply did not advance the workflow. If the current step is finished, check it off with the workflow tool now; otherwise continue working on it. Do not reply with only a status message.";
+
+        self.auto_continue_gate()?;
+        Some(CORRECTIVE_NUDGE.to_owned())
+    }
+
+    /// Shared gate for the auto-continue nudges: `Some(())` only while
+    /// auto-continue is enabled, the workflow is active, and a current
+    /// (incomplete) step exists.
+    fn auto_continue_gate(&self) -> Option<()> {
         if !self.auto_continue || self.mode() != WorkflowMode::Active {
             return None;
         }
         self.current_step()?;
-        Some(AUTO_CONTINUE_NUDGE.to_owned())
+        Some(())
     }
 
     pub fn completion_nudge(&self) -> Option<String> {
