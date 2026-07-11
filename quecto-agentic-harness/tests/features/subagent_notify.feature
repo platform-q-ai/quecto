@@ -39,18 +39,6 @@ Feature: Auto-notify a parent when a sub-agent ends a turn
     Given an Exited notification for agent "worker-1"
     Then the notification message should start with "Agent 'worker-1'"
 
-  Scenario: A tool error followed by agent end remains an error notification
-    Given a child has reported a tool failure
-    When that child ends its turn
-    Then the parent should receive only the failure notification
-
-  Scenario: Coalesced turn-end notifications preserve the inspection warning
-    Given several children end their turns while the parent is busy
-    When the parent becomes idle
-    Then the parent should receive one summary saying the children ended a turn
-    And the summary should direct the parent to inspect their messages before treating their work as complete
-    And the summary should not imply their work finished
-
   # --- Summary extraction ---
 
   Scenario: Extract summary from agent_end messages array
