@@ -16,11 +16,19 @@ fn burst_of_completions_coalesces_to_single_note() {
     let out = coalesce_pending(pending);
     assert_eq!(out.len(), 1, "K>1 notes must collapse to one, got {out:?}");
     let content = out.into_iter().next().unwrap().into_message().content;
-    assert!(content.contains("5 sub-agents finished"), "got: {content}");
+    assert!(
+        content.contains("5 sub-agents ended a turn (status: idle)"),
+        "got: {content}"
+    );
     assert!(content.contains("basic-0"), "names listed, got: {content}");
     assert!(content.contains("basic-4"), "names listed, got: {content}");
-    // Informational, not imperative (#894 AC#2).
-    assert!(content.contains("get_messages"), "got: {content}");
+    // Turn-end, not task-success (#1071): require inspection before relying.
+    assert!(
+        content.contains(
+            "Inspect agent_cmd get_messages for each before treating their work as complete"
+        ),
+        "got: {content}"
+    );
     assert!(
         !content.contains("ready for inspection"),
         "must not read as a standing order, got: {content}"
@@ -34,7 +42,10 @@ fn coalesced_note_caps_name_list() {
     let out = coalesce_pending(pending);
     assert_eq!(out.len(), 1);
     let content = out.into_iter().next().unwrap().into_message().content;
-    assert!(content.contains("13 sub-agents finished"), "got: {content}");
+    assert!(
+        content.contains("13 sub-agents ended a turn (status: idle)"),
+        "got: {content}"
+    );
     assert!(content.contains("(+3 more)"), "cap tail, got: {content}");
 }
 
@@ -66,7 +77,10 @@ fn coalesced_note_cap_boundary() {
         .unwrap()
         .into_message()
         .content;
-    assert!(content.contains("10 sub-agents finished"), "got: {content}");
+    assert!(
+        content.contains("10 sub-agents ended a turn (status: idle)"),
+        "got: {content}"
+    );
     assert!(!content.contains("more)"), "no tail at cap, got: {content}");
 
     let past_cap: Vec<PendingMessage> = (0..COALESCE_NAME_CAP + 1)
@@ -78,7 +92,10 @@ fn coalesced_note_cap_boundary() {
         .unwrap()
         .into_message()
         .content;
-    assert!(content.contains("11 sub-agents finished"), "got: {content}");
+    assert!(
+        content.contains("11 sub-agents ended a turn (status: idle)"),
+        "got: {content}"
+    );
     assert!(
         content.contains("(+1 more)"),
         "tail at cap+1, got: {content}"
@@ -110,8 +127,8 @@ fn errored_notes_are_not_coalesced_into_finished() {
         })
         .expect("a coalesced completion note");
     assert!(
-        coalesced.contains("2 sub-agents finished"),
-        "failure must not inflate the finished count, got: {coalesced}"
+        coalesced.contains("2 sub-agents ended a turn (status: idle)"),
+        "failure must not inflate the completion count, got: {coalesced}"
     );
     assert!(
         !coalesced.contains("bad"),
@@ -172,5 +189,8 @@ fn user_messages_are_preserved() {
     );
     assert!(matches!(out[0], PendingMessage::User(_)));
     let content = out[1].clone().into_message().content;
-    assert!(content.contains("2 sub-agents finished"), "got: {content}");
+    assert!(
+        content.contains("2 sub-agents ended a turn (status: idle)"),
+        "got: {content}"
+    );
 }

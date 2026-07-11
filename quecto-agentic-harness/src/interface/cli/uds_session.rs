@@ -113,8 +113,8 @@ const COALESCE_NAME_CAP: usize = 10;
 /// order; the lone coalesced note takes the position of the first notification.
 ///
 /// Only SUCCESSFUL completions are coalesced. Errored/Exited notifications carry
-/// a failure signal and inline error detail that must never be laundered into a
-/// "finished" summary, so they always pass through as their own individual note
+/// a failure signal and inline error detail that must never be laundered into an
+/// idle turn-end summary, so they always pass through as their own individual note
 /// (#894). A mixed batch therefore yields one coalesced completion summary plus
 /// each failure note kept verbatim.
 pub fn coalesce_pending(pending: Vec<PendingMessage>) -> Vec<PendingMessage> {
@@ -156,9 +156,9 @@ pub fn coalesce_pending(pending: Vec<PendingMessage>) -> Vec<PendingMessage> {
     out
 }
 
-/// Build the body of a coalesced completion note: `"N sub-agents finished
-/// (a, b, c). …"`, capping the name list at [`COALESCE_NAME_CAP`] with a
-/// `(+M more)` tail (#894).
+/// Build the body of a coalesced completion note: `"N sub-agents ended a turn
+/// (status: idle) (a, b, c). …"`, capping the name list at
+/// [`COALESCE_NAME_CAP`] with a `(+M more)` tail (#894, wording per #1071).
 fn coalesced_note_text(names: &[&str]) -> String {
     let total = names.len();
     let shown = total.min(COALESCE_NAME_CAP);
@@ -167,8 +167,8 @@ fn coalesced_note_text(names: &[&str]) -> String {
         list.push_str(&format!(" (+{} more)", total - shown));
     }
     format!(
-        "{total} sub-agents finished ({list}). \
-         Review with agent_cmd get_messages when you need their output."
+        "{total} sub-agents ended a turn (status: idle) ({list}). \
+         Inspect agent_cmd get_messages for each before treating their work as complete."
     )
 }
 
