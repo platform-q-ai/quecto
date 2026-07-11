@@ -37,6 +37,7 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "get_subagents",
     "get_extensions",
     "set_model",
+    "set_effort",
     "clear_history",
     "reload_extensions",
 ];
@@ -210,6 +211,21 @@ impl AgentCmdTool {
                         return Err("set_model requires model, or provider + model_id".to_string());
                     }
                 }
+            }
+            "set_effort" => {
+                let effort = args
+                    .get("effort")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .ok_or("set_effort requires effort")?;
+                if crate::domain::provider::EffortLevel::parse(effort).is_none() {
+                    return Err(format!(
+                        "invalid effort '{effort}'; valid values: {}",
+                        crate::domain::provider::EffortLevel::VALID_VALUES
+                    ));
+                }
+                serde_json::json!({"type": "set_effort", "effort": effort, "ack": "accept"})
             }
             "clear_history" => serde_json::json!({"type": "clear_history", "ack": "accept"}),
             "get_subagents" => serde_json::json!({"type": "get_subagents"}),
@@ -395,7 +411,7 @@ impl Tool for AgentCmdTool {
                 completed turn (tagged snapshot:true / isStreaming:true), so the \
                 data may lag the in-flight turn."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_session_stats","get_subagents","get_extensions","set_model","clear_history","reload_extensions"],"description":"Command to send. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages (use count for the last N messages)."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for all; N for last N)"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds the agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_session_stats","get_subagents","get_extensions","set_model","set_effort","clear_history","reload_extensions"],"description":"Command to send. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages (use count for the last N messages)."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for all; N for last N)"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds the agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#.into(),
         }
     }
 

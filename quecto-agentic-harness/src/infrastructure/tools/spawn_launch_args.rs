@@ -63,6 +63,11 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         args.push(model.into());
     }
 
+    if let Some(ref effort) = config.effort {
+        args.push("--effort".into());
+        args.push(effort.into());
+    }
+
     // Forward --config when a custom (or inherited runtime) config applies, so
     // children share the same tool isolation defaults as the parent.
     if let Some(cfg_path) = effective_config {

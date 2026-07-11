@@ -320,6 +320,31 @@ Feature: SpawnTool — child agent process spawning
     Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
     Then the spawn tool schema should include property "model"
 
+  # --- effort passthrough (#1083) ---
+
+  Scenario: Explicit effort is forwarded to the spawned agent
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","effort":"high"}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have effort "high"
+
+  Scenario: A request without effort keeps the child's configured default
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work"}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have no effort
+
+  Scenario: An invalid spawn effort is rejected clearly
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I execute the SpawnTool with '{"task":"work","effort":"turbo"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "invalid effort"
+    And the spawn result should contain "none, low, medium, high, xhigh, max"
+
+  Scenario: Tool definition schema includes effort field
+    Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
+    Then the spawn tool schema should include property "effort"
+
   # --- read-only / disable_tools passthrough (#957) ---
 
   Scenario: Parse a request with an explicit disable_tools list

@@ -60,6 +60,10 @@ impl Footer {
         self.effort = effort;
     }
 
+    pub fn effort(&self) -> Option<&str> {
+        self.effort.as_deref()
+    }
+
     pub fn set_git_branch(&mut self, branch: Option<String>) {
         self.git_branch = branch;
     }

@@ -37,9 +37,6 @@ fn parse_disable_tools(args: &serde_json::Value) -> Result<Vec<String>, String> 
         }
     };
 
-    // `read_only` expands to write+edit first; explicit `disable_tools` unions in.
-    // A present-but-non-boolean `read_only` is an LLM-addressable error (mirroring
-    // the `disable_tools` handling) rather than a silently-dropped safety flag.
     if let Some(v) = args.get("read_only").filter(|v| !v.is_null()) {
         if v.as_bool().ok_or("read_only must be a boolean")? {
             push_unique("write", &mut tools);
@@ -247,11 +244,6 @@ impl SpawnTool {
             return Err("workflow_guards requires workflow to also be true".to_string());
         }
 
-        // Optional by-value workflow assignment. Deserialize straight into the
-        // typed domain `WorkflowSpec` (borrowing the JSON value — no clone) so a
-        // malformed spec is rejected here with a clear error rather than crashing
-        // the child, and the rest of the pipeline carries a domain type, not raw
-        // JSON.
         let workflow_spec = match args.get("workflow_spec") {
             Some(v) if !v.is_null() => {
                 use serde::Deserialize;
@@ -262,12 +254,6 @@ impl SpawnTool {
             _ => None,
         };
 
-        // Model override (#881). Accepts the same form(s) as `agent_cmd
-        // set_model`: a full `provider/model` string, or a separate `provider` +
-        // `model_id` pair — validated by the shared `parse_model_arg` so the two
-        // surfaces cannot diverge. An invalid combination is a clear spawn error
-        // here rather than a silent fall-back to the default. Precedence:
-        // explicit `model` arg > forwarded `--config` > built-in default.
         let model_arg = crate::domain::subagent::parse_model_arg(
             args.get("model").and_then(|v| v.as_str()),
             args.get("provider").and_then(|v| v.as_str()),
@@ -275,6 +261,20 @@ impl SpawnTool {
         )
         .map_err(|e| format!("invalid model: {e}"))?;
         let model = model_arg.map(|m| m.to_model_string());
+
+        let effort = match args.get("effort").and_then(|v| v.as_str()).map(str::trim) {
+            Some("") => None,
+            Some(level) => {
+                if crate::domain::provider::EffortLevel::parse(level).is_none() {
+                    return Err(format!(
+                        "invalid effort '{level}'; valid values: {}",
+                        crate::domain::provider::EffortLevel::VALID_VALUES
+                    ));
+                }
+                Some(level.to_string())
+            }
+            None => None,
+        };
 
         if let Some(ref id) = agent_id {
             super::subagent_registry::validate_agent_id_format(id)?;
@@ -301,19 +301,18 @@ impl SpawnTool {
             workflow_guards,
             workflow_spec,
             model,
+            effort,
             disable_tools,
             read_only,
         })
     }
 
-    /// Launch a child agent in UDS mode and register it.
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {
         let binary = std::env::current_exe()
             .map_err(|e| DomainError::Tool(format!("cannot find quecto binary: {e}")))?;
 
         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 
-        // Reject if this agent_id is already running.
         {
             let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             if entries.contains_key(session_name) {
@@ -328,7 +327,6 @@ impl SpawnTool {
             }
         }
 
-        // Deterministic socket path so the parent can address children by name.
         let socket_path = self
             .socket_dir
             .join(format!("quecto-agent-{session_name}.sock"));
@@ -632,7 +630,7 @@ impl Tool for SpawnTool {
                 must wait synchronously (same turn) until the child reaches \
                 idle/exited/timeout/error before continuing."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"model":{"type":"string","description":"Model for the child in provider/model form (e.g. 'openai/gpt-5.5'), same format as agent_cmd set_model. Forwarded to the child as --model at launch so its FIRST turn runs on this model. Precedence: explicit model > --config > built-in default. Invalid combinations are rejected with a clear error."},"provider":{"type":"string","description":"Provider name for the child model (alternative to model; must be paired with model_id)"},"model_id":{"type":"string","description":"Model id for the child model (used with provider)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"disable_tools":{"type":"array","items":{"type":"string"},"description":"Tool names to remove from the child's registry before its session starts (forwarded as --disable-tool per entry), e.g. [\"write\",\"edit\"]. The child model never sees the removed tools. Entries must be strings."},"read_only":{"type":"boolean","description":"Convenience that disables the 'write' and 'edit' tools in the child (equivalent to disable_tools:[\"write\",\"edit\"]); unions with any explicit disable_tools. Use to launch read-only children such as reviewers."},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}}}}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"model":{"type":"string","description":"Model for the child in provider/model form (e.g. 'openai/gpt-5.5'), same format as agent_cmd set_model. Forwarded to the child as --model at launch so its FIRST turn runs on this model. Precedence: explicit model > --config > built-in default. Invalid combinations are rejected with a clear error."},"effort":{"type":"string","description":"Reasoning effort for the child. Must be one of: none, low, medium, high, xhigh, max. Forwarded as --effort at launch. Precedence: explicit spawn effort > forwarded config > environment > provider default."},"provider":{"type":"string","description":"Provider name for the child model (alternative to model; must be paired with model_id)"},"model_id":{"type":"string","description":"Model id for the child model (used with provider)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"disable_tools":{"type":"array","items":{"type":"string"},"description":"Tool names to remove from the child's registry before its session starts (forwarded as --disable-tool per entry), e.g. [\"write\",\"edit\"]. The child model never sees the removed tools. Entries must be strings."},"read_only":{"type":"boolean","description":"Convenience that disables the 'write' and 'edit' tools in the child (equivalent to disable_tools:[\"write\",\"edit\"]); unions with any explicit disable_tools. Use to launch read-only children such as reviewers."},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}}}}"#.into(),
         }
     }
 

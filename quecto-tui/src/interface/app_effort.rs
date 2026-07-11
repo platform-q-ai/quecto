@@ -69,10 +69,20 @@ impl App {
     /// only a successful response switches it, so a rejected or failed
     /// switch visibly keeps the previous level.
     pub(super) fn send_set_effort(&mut self, effort: &str) {
-        self.send_command(Command::SetEffort {
+        let cmd = Command::SetEffort {
             id: Some("se".into()),
             effort: effort.to_string(),
-        });
+        };
+        if self.subagents.active_agent_id.is_some() {
+            if !self.send_to_active_subagent(cmd) {
+                self.notify(
+                    "Selected sub-agent is not ready for effort changes yet",
+                    NotifyLevel::Error,
+                );
+            }
+        } else {
+            self.send_command(cmd);
+        }
     }
 
     /// Apply a successful `set_effort` response: the agent echoes the level

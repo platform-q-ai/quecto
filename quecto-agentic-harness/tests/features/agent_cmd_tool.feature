@@ -147,6 +147,25 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-4-6"}'
     Then the agent_cmd should have sent command type "set_model"
 
+  Scenario: A parent changes a running child's effort
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"set_effort","effort":"high"}'
+    Then the agent_cmd should have sent command type "set_effort"
+    And the agent_cmd should have sent effort "high"
+
+  Scenario: An invalid child effort is rejected clearly
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"set_effort","effort":"turbo"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "invalid effort"
+    And the agent_cmd result should contain "none, low, medium, high, xhigh, max"
+
+  Scenario: set_effort requires an effort level
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"set_effort"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "effort"
+
   Scenario: clear_history command is built correctly
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"clear_history"}'

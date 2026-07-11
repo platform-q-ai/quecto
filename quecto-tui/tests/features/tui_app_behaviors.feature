@@ -120,6 +120,22 @@ Feature: TUI app event routing and command behaviours
     And I accept the selected effort
     Then a set effort command is sent for "xhigh"
 
+  @effort @effort-selector
+  Scenario: A selected sub-agent receives the chosen effort level
+    Given a TUI viewing sub-agent "a1"
+    And sub-agent "a1" uses model "openai-api/gpt-5.5" with effort "medium"
+    When I choose effort "high" from the effort selector
+    Then sub-agent "a1" receives effort "high"
+    And no set effort command is sent to the master
+
+  @effort @effort-selector
+  Scenario: An effort unsupported by the selected sub-agent is rejected
+    Given a TUI viewing sub-agent "a1"
+    And sub-agent "a1" uses model "anthropic-api/claude-fable-5" with effort "medium"
+    When I request effort "xhigh" for the selected sub-agent
+    Then the app reports invalid effort "xhigh" with supported levels "low, medium, high, max"
+    And no set effort command is sent
+
   @effort
   Scenario: Failed effort switch is notified and the footer keeps the previous level
     Given a fresh TUI app harness
