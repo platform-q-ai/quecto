@@ -342,7 +342,7 @@ impl App {
     /// Flush all deferred notes into the chat as passive status lines, in order
     /// (#816/#828). Counterpart to `push_or_defer_note`.
     ///
-    /// When MORE THAN ONE successful-completion note drains together at the idle
+    /// When MORE THAN ONE normal turn-end note drains together at the idle
     /// boundary, collapse them into ONE coalesced `◆` summary line listing the
     /// names (capped, with a `(+M more)` tail) — the display analogue of the
     /// context-side coalescing #894 (#900). A single completion keeps its own
@@ -386,19 +386,19 @@ impl App {
         }
     }
 
-    /// Detect a successful-completion note and extract the sub-agent name (#900).
-    /// Mirrors the kernel wording `Sub-agent '<name>' finished.` emitted by
+    /// Detect a normal turn-end note and extract the sub-agent name (#900).
+    /// Mirrors the kernel wording `Sub-agent '<name>' ended a turn (status: idle).` emitted by
     /// `SubagentNotification::Completed::to_message` (subagent_registry). Errored
     /// (`Agent '<name>' failed: …`) and exited notes do NOT match, so they fall
     /// through as their own verbatim `◆` lines.
     fn completion_note_name(message: &str) -> Option<&str> {
         let rest = message.strip_prefix("Sub-agent '")?;
-        let end = rest.find("' finished.")?;
+        let end = rest.find("' ended a turn (status: idle).")?;
         Some(&rest[..end])
     }
 
     /// Build the body of a coalesced completion summary:
-    /// `"N sub-agents finished: a, b, c (+M more)"`, capping the listed names at
+    /// `"N sub-agents ended a turn: a, b, c (+M more)"`, capping the listed names at
     /// [`COALESCE_NAME_CAP`] (#900), mirroring #894's context-side cap.
     fn coalesced_completion_summary(names: &[&str]) -> String {
         let total = names.len();
@@ -407,7 +407,9 @@ impl App {
         if total > shown {
             list.push_str(&format!(" (+{} more)", total - shown));
         }
-        format!("{total} sub-agents finished: {list}")
+        format!(
+            "{total} sub-agents ended a turn: {list}. Inspect agent_cmd get_messages before treating their work as complete."
+        )
     }
 }
 

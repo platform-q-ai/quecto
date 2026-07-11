@@ -1,16 +1,18 @@
 @done
-Feature: Auto-notify parent LLM when subagents complete or error
+Feature: Auto-notify a parent when a sub-agent ends a turn
   As a parent agent
-  I want automatic follow-up messages when child agents finish or fail
-  So that I don't have to manually poll subagent status
+  I want turn-end notifications that do not imply successful task completion
+  So that I inspect the child output before treating its work as complete
 
   # --- SubagentNotification enum ---
 
-  Scenario: Completed notification includes agent_id and summary
+  Scenario: A turn-end notification distinguishes the event from task success
     Given a Completed notification for agent "researcher" with summary "All tests pass"
     Then the notification [message] should contain "researcher"
-    And the notification [message] should contain "finished"
+    And the notification [message] should contain "ended a turn"
+    And the notification [message] should contain "status: idle"
     And the notification [message] should contain "get_messages"
+    And the notification [message] should contain "before treating its work as complete"
 
   Scenario: Errored notification includes agent_id and error
     Given an Errored notification for agent "linter" with error "rate limit exceeded"
@@ -36,6 +38,18 @@ Feature: Auto-notify parent LLM when subagents complete or error
   Scenario: Exited notification format names the agent
     Given an Exited notification for agent "worker-1"
     Then the notification message should start with "Agent 'worker-1'"
+
+  Scenario: A tool error followed by agent end remains an error notification
+    Given a child has reported a tool failure
+    When that child ends its turn
+    Then the parent should receive only the failure notification
+
+  Scenario: Coalesced turn-end notifications preserve the inspection warning
+    Given several children end their turns while the parent is busy
+    When the parent becomes idle
+    Then the parent should receive one summary saying the children ended a turn
+    And the summary should direct the parent to inspect their messages before treating their work as complete
+    And the summary should not imply their work finished
 
   # --- Summary extraction ---
 
@@ -130,11 +144,11 @@ Feature: Auto-notify parent LLM when subagents complete or error
     Then the parent should have 1 pending subagent note
     And the parent's next idle note should contain "failed"
 
-  Scenario: A spawned child's completion reaches the parent with no manual await
+  Scenario: A spawned child's turn end reaches the parent with no manual await
     Given a parent session with no pending notes
     And a monitor with notification sender
     When the monitor processes an agent_end event with messages
     And the parent drains its subagent notifications
     Then the parent should have 1 pending subagent note
     And the parent's next idle note should be delivered on the operator channel
-    And the parent's next idle note should contain "finished"
+    And the parent's next idle note should contain "ended a turn"

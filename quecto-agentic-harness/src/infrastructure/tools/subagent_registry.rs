@@ -442,7 +442,7 @@ const MAX_SUMMARY_LEN: usize = 200;
 /// The parent dispatch loop injects these as follow-up messages to the LLM.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentNotification {
-    /// Child agent finished processing a prompt successfully.
+    /// Child agent ended a turn and was observed idle; this is not a task-success verdict.
     Completed { agent_id: String, summary: String },
     /// Child agent's last tool execution returned an error.
     Errored { agent_id: String, error: String },
@@ -477,7 +477,7 @@ impl SequencedSubagentNotification {
         self.notification.to_message()
     }
 
-    /// `true` only for successful completions; failures must not coalesce (#894).
+    /// `true` only for normal idle turn ends; failures must not coalesce (#894).
     pub fn is_completion(&self) -> bool {
         matches!(self.notification, SubagentNotification::Completed { .. })
     }
@@ -491,7 +491,7 @@ impl SubagentNotification {
         // imperative (#894); #926-AC2 note-actionability DEFERRED (open design Q).
         match self {
             Self::Completed { agent_id, .. } => format!(
-                "Sub-agent '{agent_id}' finished. Review with agent_cmd get_messages when you need its output."
+                "Sub-agent '{agent_id}' ended a turn (status: idle). Inspect agent_cmd get_messages before treating its work as complete."
             ),
             Self::Errored { agent_id, error } => format!("Agent '{agent_id}' failed: {error}"),
             Self::Exited { agent_id } => format!("Agent '{agent_id}' exited unexpectedly"),

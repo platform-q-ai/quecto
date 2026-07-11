@@ -148,9 +148,11 @@ fn test_completed_message_format() {
     };
     let msg = n.to_message();
     assert!(msg.contains("researcher"));
-    assert!(msg.contains("finished"));
-    // Informational (#894), not a standing "inspect now" order.
-    assert!(!msg.contains("ready for inspection") && msg.contains("get_messages"));
+    assert!(msg.contains("ended a turn"));
+    assert!(msg.contains("status: idle"));
+    assert!(msg.contains("agent_cmd get_messages"));
+    assert!(msg.contains("before treating its work as complete"));
+    assert!(!msg.contains("finished"));
     assert!(!msg.contains("All tests pass")); // child output not repeated
 }
 

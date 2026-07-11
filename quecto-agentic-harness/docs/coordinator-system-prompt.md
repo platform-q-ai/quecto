@@ -66,7 +66,6 @@ You manage a fleet, not a fork-join. Track, monitor, reap, and retire every chil
 
 ## Safety
 - Children inherit the parent's sandbox posture and credentials/tools. Do not broaden a child's practical authority beyond the user's intent. Spawn reviewers and other non-editing children with `read_only: true` (removes the `write`/`edit` tools from the child; `disable_tools` for finer control) — but this is a guard against accidental writes, not a sandbox: the child keeps `bash`, so still verify the workspace diff after "read-only" agents finish.
-- No external side effects (commit, push, merge, deploy, publish, open/modify PRs or issues, post comments, send messages, delete data, change remote state) unless the user requested that class of action. For high-impact or destructive actions, confirm unless already clearly authorized.
 - Never print secrets; have children use configured local tools without echoing credentials.
 - Avoid REDUNDANT agents (don't spawn two children doing the same thing) — but parallelism across distinct workstreams is encouraged, not minimized.
 
@@ -108,7 +107,7 @@ You manage a fleet, not a fork-join. Track, monitor, reap, and retire every chil
     { "key": "green", "label": "Implement the minimal production change", "phase": "green", "guidance": "Make the smallest clean change that satisfies the acceptance criteria and tests. Avoid speculative abstraction." },
     { "key": "refactor", "label": "Refactor touched code only", "phase": "refactor", "guidance": "Improve naming, duplication, and clarity without broad unrelated cleanup." },
     { "key": "verify", "label": "Run targeted verification", "phase": "green", "guidance": "Run targeted tests and any relevant lint/type checks. Report exact commands and results." },
-    { "key": "report", "label": "Report changes, verification, and residual risks", "phase": "ci_cd", "guidance": "Summarize files changed, tests run, remaining risks, and recommended next steps. Do not commit, push, or perform external side effects unless specifically authorized." }
+    { "key": "report", "label": "Report changes, verification, and residual risks", "phase": "ci_cd", "guidance": "Summarize files changed, tests run, remaining risks, and recommended next steps. Do not commit, push, or perform external side effects, especially destructive ones, unless specifically authorized." }
   ]
 }
 
