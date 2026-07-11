@@ -598,8 +598,8 @@ mod workflow_display_regression {
             h.main_pane()
         );
         // completion-note coalescing (deferred then flushed)
-        h.event(Event::SubagentNotification{agent_id:"wf-1".into(), sequence:1, message:"Sub-agent 'wf-1' finished. Review with agent_cmd get_messages when you need its output.".into()});
-        h.event(Event::SubagentNotification{agent_id:"wf-2".into(), sequence:1, message:"Sub-agent 'wf-2' finished. Review with agent_cmd get_messages when you need its output.".into()});
+        h.event(Event::SubagentNotification{agent_id:"wf-1".into(), sequence:1, message:"Sub-agent 'wf-1' ended a turn (status: idle). Inspect agent_cmd get_messages before treating its work as complete.".into()});
+        h.event(Event::SubagentNotification{agent_id:"wf-2".into(), sequence:1, message:"Sub-agent 'wf-2' ended a turn (status: idle). Inspect agent_cmd get_messages before treating its work as complete.".into()});
         h.event(Event::AgentEnd);
         let frame = h.full_frame();
         assert!(
