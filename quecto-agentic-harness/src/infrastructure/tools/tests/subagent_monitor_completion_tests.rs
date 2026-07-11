@@ -188,7 +188,7 @@ async fn active_workflow_without_continuation_emits_actionable_stall() {
         &registry,
         Some(&tx),
         "worker",
-        &serde_json::json!({"type":"agent_end","messages":[]}),
+        &serde_json::json!({"type":"workflow_idle"}),
     );
 
     let note = rx
@@ -199,6 +199,176 @@ async fn active_workflow_without_continuation_emits_actionable_stall() {
     assert!(message.contains("3/7"));
     assert!(message.contains("prompt, steer, abort, or kill"));
     assert!(rx.try_recv().is_err(), "stall must be emitted exactly once");
+}
+
+#[tokio::test]
+async fn routine_agent_end_without_stable_idle_signal_stays_silent() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_state","mode":"active","progress":{"done":3,"total":7}}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"agent_end","messages":[]}),
+    );
+
+    assert!(
+        rx.try_recv().is_err(),
+        "ambiguous legacy/routine agent_end must not produce a false stall"
+    );
+}
+
+#[tokio::test]
+async fn repeated_stable_idle_in_same_stalled_state_alerts_once() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+    let workflow = serde_json::json!({
+        "type":"workflow_state",
+        "mode":"active",
+        "progress":{"done":3,"total":7}
+    });
+    let agent_end = serde_json::json!({"type":"workflow_idle"});
+
+    apply_and_notify(&registry, Some(&tx), "worker", &workflow);
+    apply_and_notify(&registry, Some(&tx), "worker", &agent_end);
+    apply_and_notify(&registry, Some(&tx), "worker", &agent_end);
+
+    assert!(matches!(
+        rx.try_recv().expect("first stall must alert").notification,
+        SubagentNotification::Stalled { .. }
+    ));
+    assert!(rx.try_recv().is_err(), "unchanged stall must not re-alert");
+}
+
+#[tokio::test]
+async fn workflow_progress_rearms_stalled_alert() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+    let agent_end = serde_json::json!({"type":"workflow_idle"});
+
+    for done in [3, 4] {
+        apply_and_notify(
+            &registry,
+            Some(&tx),
+            "worker",
+            &serde_json::json!({
+                "type":"workflow_state",
+                "mode":"active",
+                "progress":{"done":done,"total":7}
+            }),
+        );
+        apply_and_notify(&registry, Some(&tx), "worker", &agent_end);
+    }
+
+    let alerts = std::iter::from_fn(|| rx.try_recv().ok())
+        .filter(|note| matches!(note.notification, SubagentNotification::Stalled { .. }))
+        .count();
+    assert_eq!(
+        alerts, 2,
+        "new workflow progress must re-arm the stall latch"
+    );
+}
+
+#[tokio::test]
+async fn agent_start_rearms_stalled_alert() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+    let workflow = serde_json::json!({
+        "type":"workflow_state",
+        "mode":"active",
+        "progress":{"done":3,"total":7}
+    });
+    let agent_end = serde_json::json!({"type":"workflow_idle"});
+
+    apply_and_notify(&registry, Some(&tx), "worker", &workflow);
+    apply_and_notify(&registry, Some(&tx), "worker", &agent_end);
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"agent_start"}),
+    );
+    apply_and_notify(&registry, Some(&tx), "worker", &agent_end);
+
+    let alerts = std::iter::from_fn(|| rx.try_recv().ok())
+        .filter(|note| matches!(note.notification, SubagentNotification::Stalled { .. }))
+        .count();
+    assert_eq!(alerts, 2, "a new run must re-arm the stall latch");
+}
+
+#[tokio::test]
+async fn saturated_channel_retries_exact_stall_on_next_monitor_event() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    tx.try_send(
+        crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification::new(
+            99,
+            SubagentNotification::Completed {
+                agent_id: "other".to_string(),
+                summary: "occupy channel".to_string(),
+            },
+        ),
+    )
+    .expect("fill bounded channel");
+
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({
+            "type":"workflow_state",
+            "mode":"active",
+            "progress":{"done":3,"total":7}
+        }),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_idle"}),
+    );
+    let pending = registry
+        .lock()
+        .unwrap()
+        .get("worker")
+        .and_then(|entry| entry.pending_stall.clone())
+        .expect("saturated stall must remain retryable");
+    assert_eq!(pending.sequence, 2);
+
+    rx.try_recv().expect("free channel capacity");
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"tool_execution_start","toolName":"read"}),
+    );
+
+    let delivered = rx.try_recv().expect("pending stall must be retried");
+    assert_eq!(delivered, pending, "retry must preserve exact sequence");
+    assert!(matches!(
+        delivered.notification,
+        SubagentNotification::Stalled { .. }
+    ));
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("worker")
+            .is_some_and(|entry| entry.pending_stall.is_none()),
+        "accepted retry must clear pending state"
+    );
+    assert!(rx.try_recv().is_err(), "stall retry must be exactly once");
 }
 
 #[tokio::test]
@@ -216,14 +386,45 @@ async fn selecting_template_without_continuation_emits_stall() {
         &registry,
         Some(&tx),
         "worker",
-        &serde_json::json!({"type":"agent_end","messages":[]}),
+        &serde_json::json!({"type":"workflow_idle"}),
     );
-    let message = rx
+    let notification = rx
         .try_recv()
         .expect("template selection stall must alert")
-        .notification
-        .to_message();
-    assert!(message.contains("stalled"));
+        .notification;
+    assert!(matches!(
+        notification,
+        SubagentNotification::Stalled {
+            ref workflow_mode,
+            steps_completed: 0,
+            steps_total: 0,
+            ..
+        } if workflow_mode == "selecting_template"
+    ));
+}
+
+#[tokio::test]
+async fn seeded_bound_entry_does_not_complete_before_first_workflow_state() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    registry.lock().unwrap().get_mut("worker").unwrap().workflow = Some(
+        crate::infrastructure::tools::subagent_registry::WorkflowSnapshot {
+            mode: "active".to_string(),
+            steps_completed: 0,
+            steps_total: 2,
+        },
+    );
+    let (tx, mut rx) = new_notification_channel();
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"agent_end","messages":[]}),
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "spawn-seeded binding must prevent premature plain completion"
+    );
 }
 
 // AC2: a non-workflow agent emits a completion on its turn-end.

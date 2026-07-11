@@ -1,15 +1,13 @@
+pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::domain::error::DomainError;
+use crate::domain::subagent::{SubagentConfig, validate_agent_id};
+use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-use crate::domain::error::DomainError;
-use crate::domain::subagent::{SubagentConfig, validate_agent_id};
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
-
-pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 
 use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
 
@@ -428,6 +426,10 @@ impl SpawnTool {
             // Record whether this child is a read-only observer so the TUI can
             // mark it (#966); enforcement is done by disabling the tools (#957).
             entry.read_only = config.read_only;
+            super::subagent_registry::seed_bound_workflow(
+                &mut entry,
+                config.workflow_spec.as_ref(),
+            );
             register_and_broadcast(
                 &self.registry,
                 self.broadcast_tx.as_ref(),
@@ -659,6 +661,10 @@ impl Tool for SpawnTool {
                         // Record the read-only flag in stub mode too so BDD tests
                         // can assert the snapshot carries it (#966).
                         stub_entry.read_only = config.read_only;
+                        super::subagent_registry::seed_bound_workflow(
+                            &mut stub_entry,
+                            config.workflow_spec.as_ref(),
+                        );
                         register_and_broadcast(
                             &self.registry,
                             self.broadcast_tx.as_ref(),
@@ -736,7 +742,7 @@ pub fn shutdown_all(registry: &SubagentRegistry) {
 }
 
 #[cfg(test)]
-#[path = "spawn_tests.rs"]
+#[path = "tests/spawn_tests.rs"]
 mod tests;
 
 #[cfg(test)]

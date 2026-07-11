@@ -13,6 +13,7 @@ mod spawn_launch_args;
 pub mod subagent_cascade;
 pub mod subagent_monitor;
 pub mod subagent_monitor_merge;
+mod subagent_monitor_stall;
 pub mod subagent_registry;
 pub mod truncate;
 pub mod web_fetch;

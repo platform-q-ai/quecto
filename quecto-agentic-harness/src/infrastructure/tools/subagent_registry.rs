@@ -99,10 +99,30 @@ pub struct SubagentEntry {
     /// Terminal-completion latch (#904): consumed by the first `complete`-mode
     /// `agent_end`, re-armed when the workflow leaves `complete`.
     pub completion_armed: bool,
+    /// One-shot stalled-notification latch (#1076): consumed when a non-terminal
+    /// workflow stall is reported, re-armed by a new run or workflow progress.
+    pub stalled_armed: bool,
+    /// A supervision-critical stall alert retained after notification-channel
+    /// saturation and retried on the next monitor event (#1076).
+    pub pending_stall: Option<SequencedSubagentNotification>,
     /// Whether this sub-agent was spawned read-only (`write` + `edit` disabled).
     /// Surfaced through `get_subagents` so the TUI can mark it as an observer
     /// (#966). Display flag only; enforcement is #957.
     pub read_only: bool,
+}
+
+pub(super) fn seed_bound_workflow(
+    entry: &mut SubagentEntry,
+    workflow_spec: Option<&crate::domain::workflow::WorkflowSpec>,
+) {
+    let Some(spec) = workflow_spec else { return };
+    entry.workflow = Some(WorkflowSnapshot {
+        mode: crate::domain::workflow::WorkflowMode::Active
+            .wire_str()
+            .to_string(),
+        steps_completed: 0,
+        steps_total: u32::try_from(spec.template.steps.len()).unwrap_or(u32::MAX),
+    });
 }
 
 impl SubagentEntry {
@@ -123,6 +143,8 @@ impl SubagentEntry {
             workflow: None,
             completion_consumed_by_await: false,
             completion_armed: true,
+            stalled_armed: true,
+            pending_stall: None,
             read_only: false,
         }
     }

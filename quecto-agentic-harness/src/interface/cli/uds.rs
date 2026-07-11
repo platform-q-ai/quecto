@@ -378,6 +378,7 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     if ctx.turn_control.take_abort() {
         ctx.turn_control.clear_steer();
         ctx.session.drain_pending();
+        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::WorkflowIdle).await;
         return;
     }
 
@@ -400,12 +401,13 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
         if ctx.turn_control.take_abort() {
             ctx.turn_control.clear_steer();
             ctx.session.drain_pending();
+            emit_event_to_broadcast_or_writer(ctx, &AgentEvent::WorkflowIdle).await;
             return;
         }
         // #896: an explicit steer outranks the auto-continue nudge — yield so the
         // steered instruction is obeyed next instead of being overridden.
         if ctx.turn_control.is_steer_pending() {
-            break;
+            return;
         }
         let before = workflow_progress_fingerprint(ctx);
         let Some(nudge) = workflow_nudge_message(ctx) else {
@@ -448,6 +450,7 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
             no_progress_turns = 0;
         }
     }
+    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::WorkflowIdle).await;
 }
 
 async fn run_prompt_dispatch(

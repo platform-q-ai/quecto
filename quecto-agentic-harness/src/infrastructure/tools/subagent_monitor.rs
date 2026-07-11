@@ -3,6 +3,9 @@ use std::time::Instant;
 pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
 };
+use super::subagent_monitor_stall::{
+    retry_pending_stall, take_completion_armed, take_stalled_snapshot,
+};
 use super::subagent_registry::{
     NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
     extract_summary,
@@ -48,6 +51,7 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             // future terminal completion must notify again, even if a prior run's
             // completion was consumed by a manual `await`.
             entry.completion_consumed_by_await = false;
+            entry.stalled_armed = true;
             entry.updated_at = Instant::now();
         }
         "agent_end" => {
@@ -108,6 +112,14 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             // consumed, so that turn's `agent_end` stays silent.
             if mode != crate::domain::workflow::WorkflowMode::Complete.wire_str() {
                 entry.completion_armed = true;
+            }
+            let workflow_progressed = entry.workflow.as_ref().is_none_or(|previous| {
+                previous.mode != mode
+                    || previous.steps_completed != done
+                    || previous.steps_total != total
+            });
+            if workflow_progressed {
+                entry.stalled_armed = true;
             }
             entry.workflow = Some(super::subagent_registry::WorkflowSnapshot {
                 mode,
@@ -498,6 +510,7 @@ fn apply_and_notify(
     agent_id: &str,
     value: &serde_json::Value,
 ) {
+    retry_pending_stall(registry, notify_tx, agent_id);
     let sequence = update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, value));
     let workflow_mode = entry_workflow_mode(registry, agent_id);
     // A tool failure remains the observed outcome for this turn. `agent_end`
@@ -524,30 +537,28 @@ fn apply_and_notify(
     {
         return;
     }
-    if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
-        && matches!(
-            workflow_mode.as_deref(),
-            Some("active" | "selecting_template")
-        )
-    {
-        let snapshot = registry
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(agent_id)
-            .and_then(|entry| entry.workflow.clone());
+    // Only the new post-drain stable-idle signal can classify a stall. Ordinary
+    // `agent_end` is ambiguous (an auto-continued turn may follow), and older
+    // children that omit `workflow_idle` therefore remain safely silent.
+    if value.get("type").and_then(|v| v.as_str()) == Some("workflow_idle") {
+        let snapshot = take_stalled_snapshot(registry, agent_id);
         if let (Some(tx), Some(workflow)) = (notify_tx, snapshot) {
-            send_notification(
-                Some(tx),
-                super::subagent_registry::SequencedSubagentNotification::new(
-                    sequence,
-                    SubagentNotification::Stalled {
-                        agent_id: agent_id.to_string(),
-                        workflow_mode: workflow.mode,
-                        steps_completed: u64::from(workflow.steps_completed),
-                        steps_total: u64::from(workflow.steps_total),
-                    },
-                ),
+            let notification = super::subagent_registry::SequencedSubagentNotification::new(
+                sequence,
+                SubagentNotification::Stalled {
+                    agent_id: agent_id.to_string(),
+                    workflow_mode: workflow.mode,
+                    steps_completed: u64::from(workflow.steps_completed),
+                    steps_total: u64::from(workflow.steps_total),
+                },
             );
+            if let Err(notification) = tx.try_send(notification) {
+                let notification = notification.into_inner();
+                let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(entry) = entries.get_mut(agent_id) {
+                    entry.pending_stall = Some(notification);
+                }
+            }
         }
         return;
     }
@@ -558,21 +569,6 @@ fn apply_and_notify(
         value,
         workflow_mode.as_deref(),
     );
-}
-
-/// Check-and-consume the terminal-completion latch for `agent_id` (#904).
-/// Returns `true` (and clears the latch) when a completion note is still armed;
-/// `false` when already consumed or the entry is gone. Re-armed by
-/// `apply_event_parsed` when the workflow leaves `complete`.
-fn take_completion_armed(registry: &SubagentRegistry, agent_id: &str) -> bool {
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    match entries.get_mut(agent_id) {
-        Some(entry) if entry.completion_armed => {
-            entry.completion_armed = false;
-            true
-        }
-        _ => false,
-    }
 }
 
 /// Read the latest workflow mode recorded on `agent_id`'s registry entry, if it
@@ -739,7 +735,7 @@ mod tests;
 mod forward_tests;
 
 #[cfg(test)]
-#[path = "subagent_monitor_completion_tests.rs"]
+#[path = "tests/subagent_monitor_completion_tests.rs"]
 mod completion_tests;
 
 #[cfg(test)]

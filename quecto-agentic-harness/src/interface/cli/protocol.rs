@@ -283,8 +283,12 @@ pub enum StreamingBehavior {
 pub enum AgentEvent {
     /// Agent begins processing a prompt.
     AgentStart,
-    /// Agent finished processing.  Contains messages from this run as JSON values.
+    /// Agent finished processing. Contains messages from this run as JSON values.
+    /// This is a turn boundary only; workflow continuation may still follow.
     AgentEnd { messages: Vec<serde_json::Value> },
+    /// The post-turn drain made no further workflow continuation runnable.
+    /// Emitted only after pending work and automatic workflow nudges settle.
+    WorkflowIdle,
     /// An incremental text token from the LLM during streaming.
     Token { token: String },
     /// A new LLM call begins.
