@@ -171,6 +171,61 @@ async fn rerun_after_complete_notifies_again() {
     );
 }
 
+// #1076: an unfinished workflow that reaches a stable idle boundary requires
+// supervision instead of being silently treated as routine step progress.
+#[tokio::test]
+async fn active_workflow_without_continuation_emits_actionable_stall() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_state","mode":"active","progress":{"done":3,"total":7}}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"agent_end","messages":[]}),
+    );
+
+    let note = rx
+        .try_recv()
+        .expect("stable unfinished workflow must alert");
+    let message = note.notification.to_message();
+    assert!(message.contains("stalled"));
+    assert!(message.contains("3/7"));
+    assert!(message.contains("prompt, steer, abort, or kill"));
+    assert!(rx.try_recv().is_err(), "stall must be emitted exactly once");
+}
+
+#[tokio::test]
+async fn selecting_template_without_continuation_emits_stall() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_state","mode":"selecting_template","progress":{"done":0,"total":0}}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"agent_end","messages":[]}),
+    );
+    let message = rx
+        .try_recv()
+        .expect("template selection stall must alert")
+        .notification
+        .to_message();
+    assert!(message.contains("stalled"));
+}
+
 // AC2: a non-workflow agent emits a completion on its turn-end.
 #[tokio::test]
 async fn non_workflow_agent_emits_completion_on_turn_end() {

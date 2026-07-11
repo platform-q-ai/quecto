@@ -1,34 +1,17 @@
-// Persistent subagent monitor — live event stream from child agents (#522).
-//
-// Pure async monitor logic, no coupling to dispatch.
-// The monitor task connects to a child's UDS socket, reads framed JSON events,
-// and updates the SubagentEntry in the SubagentRegistry with live status.
-//
-// NOTE: This module lives in the infrastructure layer and therefore MUST NOT
-// import from `crate::interface` (architecture rule). Event JSON is parsed
-// via `serde_json::Value` instead of deserializing into `AgentEvent`.
-
 use std::time::Instant;
 
+pub use super::subagent_monitor_merge::{
+    forward_child_state_changed, merge_and_forward_state_changed,
+};
 use super::subagent_registry::{
     NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
     extract_summary,
 };
-// Re-export the split-out descendant merge/forward surface so existing call
-// sites and tests keep referring to it via this module (#904 file-cap split).
-pub use super::subagent_monitor_merge::{
-    forward_child_state_changed, merge_and_forward_state_changed,
-};
 
-/// Maximum length for a single JSON event (the shared protocol cap).
-/// Lines exceeding this are dropped to prevent OOM from misbehaving children.
 const MAX_EVENT_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
-/// Maximum length for stored tool name / error strings (256 chars).
 const MAX_STORED_STRING: usize = 256;
 
-/// Event types that can cause state transitions.
-/// Used for cheap pre-filtering before full JSON parse.
 const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"agent_start\"",
     "\"type\":\"agent_end\"",
@@ -38,11 +21,6 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"command\":\"agent_error\"",
 ];
 
-/// Apply a single JSON-line event to a SubagentEntry. Pure (no I/O / async):
-/// parses the event and updates the entry's status fields. State transitions
-/// (#522): `agent_start`→Running/clear error; `agent_end`→Idle;
-/// `tool_execution_start`→Running/update last_tool; `tool_execution_end`
-/// is_error→Error/set error else clear error; connection close/exit→Exited
 /// (via `mark_exited`).
 pub fn apply_event(entry: &mut SubagentEntry, line: &str) {
     if !STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
@@ -546,6 +524,33 @@ fn apply_and_notify(
     {
         return;
     }
+    if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
+        && matches!(
+            workflow_mode.as_deref(),
+            Some("active" | "selecting_template")
+        )
+    {
+        let snapshot = registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(agent_id)
+            .and_then(|entry| entry.workflow.clone());
+        if let (Some(tx), Some(workflow)) = (notify_tx, snapshot) {
+            send_notification(
+                Some(tx),
+                super::subagent_registry::SequencedSubagentNotification::new(
+                    sequence,
+                    SubagentNotification::Stalled {
+                        agent_id: agent_id.to_string(),
+                        workflow_mode: workflow.mode,
+                        steps_completed: u64::from(workflow.steps_completed),
+                        steps_total: u64::from(workflow.steps_total),
+                    },
+                ),
+            );
+        }
+        return;
+    }
     notify_from_parsed(
         notify_tx,
         agent_id,
@@ -724,8 +729,6 @@ fn truncate_string(s: &str, max_len: usize) -> String {
         truncated
     }
 }
-
-// ─── Unit tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 #[path = "subagent_monitor_tests.rs"]

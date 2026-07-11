@@ -444,6 +444,13 @@ const MAX_SUMMARY_LEN: usize = 200;
 pub enum SubagentNotification {
     /// Child agent ended a turn and was observed idle; this is not a task-success verdict.
     Completed { agent_id: String, summary: String },
+    /// Workflow-bound child became idle before reaching a terminal workflow state.
+    Stalled {
+        agent_id: String,
+        workflow_mode: String,
+        steps_completed: u64,
+        steps_total: u64,
+    },
     /// Child agent's last tool execution returned an error.
     Errored { agent_id: String, error: String },
     /// Child agent process exited (connection closed or process reaped).
@@ -467,6 +474,7 @@ impl SequencedSubagentNotification {
     pub fn dedupe_key(&self) -> (String, u64) {
         let agent_id = match &self.notification {
             SubagentNotification::Completed { agent_id, .. }
+            | SubagentNotification::Stalled { agent_id, .. }
             | SubagentNotification::Errored { agent_id, .. }
             | SubagentNotification::Exited { agent_id } => agent_id.clone(),
         };
@@ -492,6 +500,14 @@ impl SubagentNotification {
         match self {
             Self::Completed { agent_id, .. } => format!(
                 "Sub-agent '{agent_id}' ended a turn (status: idle). Inspect agent_cmd get_messages before treating its work as complete."
+            ),
+            Self::Stalled {
+                agent_id,
+                workflow_mode,
+                steps_completed,
+                steps_total,
+            } => format!(
+                "Agent '{agent_id}' stalled: idle with workflow still {workflow_mode} at {steps_completed}/{steps_total}. Inspect output/state, then prompt, steer, abort, or kill it."
             ),
             Self::Errored { agent_id, error } => format!("Agent '{agent_id}' failed: {error}"),
             Self::Exited { agent_id } => format!("Agent '{agent_id}' exited unexpectedly"),
