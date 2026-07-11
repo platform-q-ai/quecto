@@ -856,6 +856,10 @@ pub struct QuectoWorld {
     pub workflow_events: Option<Arc<Mutex<Vec<serde_json::Value>>>>,
     /// Workflow tool BDD: last direct tool execution result.
     pub workflow_tool_result: Option<ToolResult>,
+    /// Workflow nudge BDD: engine under test for auto-continue nudge wording.
+    pub workflow_nudge_engine: Option<quecto::domain::workflow::WorkflowEngine>,
+    /// Workflow nudge BDD: captured auto-continue nudge text.
+    pub workflow_nudge_text: Option<String>,
     // --- Audit log (#609) ---
     /// Temp dir for audit log tests (kept alive)
     pub tempdir: Option<TempDir>,
@@ -1299,6 +1303,7 @@ mod uds_framing_steps;
 mod uds_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;
+mod workflow_nudge_steps;
 mod workflow_tool_steps;
 
 // Runner

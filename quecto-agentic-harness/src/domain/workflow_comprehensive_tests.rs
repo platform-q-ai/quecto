@@ -69,8 +69,29 @@ fn auto_continue_nudge_uses_continuation_wording() {
     let nudge = engine.auto_continue_nudge().unwrap();
     assert!(nudge.contains("Workflow incomplete."));
     assert!(nudge.contains("Continue with the next incomplete step."));
-    assert!(nudge.contains("Respond with just the word DONE"));
     assert!(nudge.contains("Never ask for permission"));
+    // Literal instruction-followers (e.g. GPT-5.6) treated the old "Respond
+    // with just the word DONE" sentence as a status poll with a mandated
+    // one-word answer — a no-tool-call reply the no-progress detector then
+    // read as a stall, silently killing auto-continue mid-run.
+    assert!(
+        !nudge.contains("DONE"),
+        "nudge must not mandate a one-word DONE reply: {nudge}"
+    );
+    assert!(
+        !nudge.contains("Respond with just the word"),
+        "nudge must not mandate a one-word status reply: {nudge}"
+    );
+    // Error path: after a failed tool call the model needs an instruction
+    // other than "never stop" — retry/work around, or name the blocked step.
+    assert!(
+        nudge.contains("If a tool call failed, retry or work around it"),
+        "nudge must carry an error-path instruction: {nudge}"
+    );
+    assert!(
+        nudge.contains("state which step is blocked and why"),
+        "nudge must tell a blocked model to name the blocked step: {nudge}"
+    );
 }
 
 #[test]

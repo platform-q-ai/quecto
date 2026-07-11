@@ -363,6 +363,12 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
     false
 }
 
+/// Hard bound on nudged turns per idle drain, so a misbehaving model isn't
+/// nudged forever. With the no-progress tolerance below, this cap is the only
+/// termination guard against a model that keeps changing the fingerprint
+/// (e.g. toggling a step) without ever finishing.
+const MAX_WORKFLOW_NUDGES: usize = 128;
+
 /// Drain pending messages, then inject core workflow nudges while progress is advancing (#562).
 pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     // #895: abort = full stop. A pending abort (set by the reader before this
@@ -377,8 +383,17 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
 
     drain_and_run_pending(ctx).await;
 
-    // Bounded so a misbehaving model that ignores the workflow isn't nudged forever.
-    const MAX_WORKFLOW_NUDGES: usize = 128;
+    // Corrective variant of the auto-continue nudge, sent whenever the
+    // PREVIOUS nudged turn made no progress: literal instruction-following
+    // models (e.g. GPT-5.6) reply to the standard nudge with a bare status
+    // message and no tool calls, so a verbatim repeat just re-elicits the
+    // same stall.
+    const CORRECTIVE_NUDGE: &str = "Your last reply did not advance the workflow. If the current step is finished, check it off with the workflow tool now; otherwise continue working on it. Do not reply with only a status message.";
+    // Consecutive no-progress nudged turns tolerated before giving up: two
+    // corrective retries, the third consecutive no-progress turn breaks.
+    const MAX_NO_PROGRESS_TURNS: usize = 3;
+
+    let mut no_progress_turns = 0usize;
     for _ in 0..MAX_WORKFLOW_NUDGES {
         // #930: an abort that lands WHILE this auto-continue loop is mid-flight is
         // a full stop, exactly like one at the idle-drain entry above — discard
@@ -397,14 +412,31 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
             break;
         }
         let before = workflow_progress_fingerprint(ctx);
-        let Some(message) = workflow_nudge_message(ctx) else {
+        let Some(nudge) = workflow_nudge_message(ctx) else {
             break;
+        };
+        let auto_continue = nudge.is_auto_continue();
+        let message = if auto_continue && no_progress_turns > 0 {
+            CORRECTIVE_NUDGE.to_owned()
+        } else {
+            nudge.into_message()
         };
         ctx.session.enqueue_pending(message);
         drain_and_run_pending(ctx).await;
         let after = workflow_progress_fingerprint(ctx);
         if after == before {
-            break;
+            // The completion nudge is single-shot: it asks for a final report
+            // and a stop, which never advances the fingerprint, so retrying
+            // it would only elicit duplicate reports.
+            if !auto_continue {
+                break;
+            }
+            no_progress_turns += 1;
+            if no_progress_turns >= MAX_NO_PROGRESS_TURNS {
+                break;
+            }
+        } else {
+            no_progress_turns = 0;
         }
     }
 }
@@ -484,6 +516,9 @@ mod effort_1067_tests;
 #[cfg(test)]
 #[path = "uds_926_act_tests.rs"]
 mod issue_926_act_tests;
+#[cfg(test)]
+#[path = "uds_nudge_tolerance_tests.rs"]
+mod nudge_tolerance_tests;
 #[cfg(test)]
 #[path = "uds_parse_tests.rs"]
 mod parse_tests;

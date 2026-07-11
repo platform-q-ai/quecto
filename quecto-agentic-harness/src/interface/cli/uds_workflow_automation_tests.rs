@@ -374,11 +374,9 @@ fn workflow_nudge_message_waits_for_selected_template() {
         .unwrap()
         .select_template("feature", None)
         .unwrap();
-    assert!(
-        super::workflow_nudge_message(&ctx)
-            .unwrap()
-            .contains("Workflow incomplete")
-    );
+    let nudge = super::workflow_nudge_message(&ctx).unwrap();
+    assert!(nudge.is_auto_continue());
+    assert!(nudge.into_message().contains("Workflow incomplete"));
 }
 
 #[tokio::test]

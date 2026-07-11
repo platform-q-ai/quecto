@@ -6,9 +6,29 @@
 
 use super::uds::DispatchCtx;
 
-/// The next workflow nudge message, if auto-continue or completion nudging is
+/// A nudge to inject at an idle boundary, tagged with the automation path
+/// that produced it: the auto-continue path participates in the no-progress
+/// tolerance loop (corrective retries), the completion path is single-shot.
+pub(super) enum WorkflowNudge {
+    AutoContinue(String),
+    Completion(String),
+}
+
+impl WorkflowNudge {
+    pub(super) fn is_auto_continue(&self) -> bool {
+        matches!(self, WorkflowNudge::AutoContinue(_))
+    }
+
+    pub(super) fn into_message(self) -> String {
+        match self {
+            WorkflowNudge::AutoContinue(message) | WorkflowNudge::Completion(message) => message,
+        }
+    }
+}
+
+/// The next workflow nudge, if auto-continue or completion nudging is
 /// enabled and the engine still has something to say.
-pub(super) fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<String> {
+pub(super) fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<WorkflowNudge> {
     let (Some(ws), Some(wc)) = (&ctx.workflow_state, &ctx.workflow_config) else {
         return None;
     };
@@ -19,10 +39,12 @@ pub(super) fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<String> {
     wc.auto_continue
         .then(|| engine.auto_continue_nudge())
         .flatten()
+        .map(WorkflowNudge::AutoContinue)
         .or_else(|| {
             wc.completion_nudge
                 .then(|| engine.completion_nudge())
                 .flatten()
+                .map(WorkflowNudge::Completion)
         })
 }
 
