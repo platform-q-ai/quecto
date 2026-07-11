@@ -315,7 +315,11 @@ impl AgentSession {
     /// repeated `sequence` is ignored). Multiple still-pending completions for
     /// the SAME agent are coalesced into one note (the latest replaces the
     /// earlier) so a noisy child does not cost N extra LLM turns. Returns `true`
-    /// if a new note was enqueued, `false` if it was deduped/dropped.
+    /// if a new note was enqueued or coalesced, `false` if it was deduped as
+    /// stale OR dropped because the pending queue is full. In the full-queue
+    /// case the dedupe sequence is NOT advanced (#1082 review): the caller's
+    /// retry path (e.g. the monitor's retained-stall retry) can re-deliver the
+    /// same sequence later instead of it being permanently lost.
     pub fn enqueue_subagent_notification(
         &mut self,
         agent_id: String,
@@ -325,8 +329,13 @@ impl AgentSession {
     ) -> bool {
         // Dedupe against the monotonic per-agent sequence — the passive broadcast
         // path also records completions, so a repeated/stale sequence is dropped
-        // and the note is injected exactly once.
-        if !self.record_subagent_notification(agent_id.clone(), sequence) {
+        // and the note is injected exactly once. Peek-only here: the sequence is
+        // recorded only once the note is durably retained below.
+        if self
+            .last_subagent_notification
+            .get(&agent_id)
+            .is_some_and(|last| sequence <= *last)
+        {
             return false;
         }
         // Coalesce: if a still-pending note for this same agent has not yet been
@@ -336,21 +345,30 @@ impl AgentSession {
             PendingMessage::SubagentNotification { agent_id: id, .. } if *id == agent_id => Some(m),
             _ => None,
         }) {
-            *existing =
-                PendingMessage::subagent_notification(agent_id, sequence, content, is_completion);
+            *existing = PendingMessage::subagent_notification(
+                agent_id.clone(),
+                sequence,
+                content,
+                is_completion,
+            );
+            self.record_subagent_notification(agent_id, sequence);
             return true;
         }
-        if self.pending.len() < Self::MAX_PENDING {
-            self.pending
-                .push_back(PendingMessage::subagent_notification(
-                    agent_id,
-                    sequence,
-                    content,
-                    is_completion,
-                ));
+        if self.pending.len() >= Self::MAX_PENDING {
+            // Full and not coalescible: the note is NOT retained, so do NOT
+            // advance the dedupe state — a supervision-critical alert (e.g. a
+            // stall) must remain retryable end-to-end, not just to the first
+            // internal queue (#1082 review).
+            return false;
         }
-        // If the queue is full the dedupe state is still advanced above, so this
-        // completion is considered delivered and won't be retried.
+        self.pending
+            .push_back(PendingMessage::subagent_notification(
+                agent_id.clone(),
+                sequence,
+                content,
+                is_completion,
+            ));
+        self.record_subagent_notification(agent_id, sequence);
         true
     }
 

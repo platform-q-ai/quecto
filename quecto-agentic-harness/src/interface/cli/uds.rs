@@ -378,7 +378,15 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     if ctx.turn_control.take_abort() {
         ctx.turn_control.clear_steer();
         ctx.session.drain_pending();
-        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::WorkflowIdle).await;
+        // #1082 review: an explicit abort is a requested stop, not a stall —
+        // the reason keeps supervising monitors from raising a stall alert.
+        emit_event_to_broadcast_or_writer(
+            ctx,
+            &AgentEvent::WorkflowIdle {
+                reason: super::protocol::WorkflowIdleReason::ExplicitAbort,
+            },
+        )
+        .await;
         return;
     }
 
@@ -401,7 +409,13 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
         if ctx.turn_control.take_abort() {
             ctx.turn_control.clear_steer();
             ctx.session.drain_pending();
-            emit_event_to_broadcast_or_writer(ctx, &AgentEvent::WorkflowIdle).await;
+            emit_event_to_broadcast_or_writer(
+                ctx,
+                &AgentEvent::WorkflowIdle {
+                    reason: super::protocol::WorkflowIdleReason::ExplicitAbort,
+                },
+            )
+            .await;
             return;
         }
         // #896: an explicit steer outranks the auto-continue nudge — yield so the
@@ -450,7 +464,8 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
             no_progress_turns = 0;
         }
     }
-    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::WorkflowIdle).await;
+    let reason = super::uds_workflow_nudge::workflow_idle_reason(ctx);
+    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::WorkflowIdle { reason }).await;
 }
 
 async fn run_prompt_dispatch(

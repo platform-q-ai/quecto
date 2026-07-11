@@ -104,6 +104,14 @@ pub(super) fn take_stalled_snapshot(
 ) -> Option<WorkflowSnapshot> {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     let entry = entries.get_mut(agent_id)?;
+    // #1082 review: a run that terminated with a run-level error has already
+    // produced (or will produce) an `Errored` outcome — classifying it as a
+    // stall too would deliver contradictory lifecycle verdicts for the same
+    // run. `run_error` is cleared on the next `agent_start`, which re-arms
+    // stall classification for the new run.
+    if entry.run_error.is_some() {
+        return None;
+    }
     let workflow = entry.workflow.as_ref()?;
     if !entry.stalled_armed || !matches!(workflow.mode.as_str(), "active" | "selecting_template") {
         return None;

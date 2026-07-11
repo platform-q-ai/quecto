@@ -188,7 +188,7 @@ async fn active_workflow_without_continuation_emits_actionable_stall() {
         &registry,
         Some(&tx),
         "worker",
-        &serde_json::json!({"type":"workflow_idle"}),
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
     );
 
     let note = rx
@@ -235,7 +235,7 @@ async fn repeated_stable_idle_in_same_stalled_state_alerts_once() {
         "mode":"active",
         "progress":{"done":3,"total":7}
     });
-    let agent_end = serde_json::json!({"type":"workflow_idle"});
+    let agent_end = serde_json::json!({"type":"workflow_idle","reason":"exhausted"});
 
     apply_and_notify(&registry, Some(&tx), "worker", &workflow);
     apply_and_notify(&registry, Some(&tx), "worker", &agent_end);
@@ -253,7 +253,7 @@ async fn workflow_progress_rearms_stalled_alert() {
     let registry = new_registry();
     insert_entry(&registry, "worker");
     let (tx, mut rx) = new_notification_channel();
-    let agent_end = serde_json::json!({"type":"workflow_idle"});
+    let agent_end = serde_json::json!({"type":"workflow_idle","reason":"exhausted"});
 
     for done in [3, 4] {
         apply_and_notify(
@@ -288,7 +288,7 @@ async fn agent_start_rearms_stalled_alert() {
         "mode":"active",
         "progress":{"done":3,"total":7}
     });
-    let agent_end = serde_json::json!({"type":"workflow_idle"});
+    let agent_end = serde_json::json!({"type":"workflow_idle","reason":"exhausted"});
 
     apply_and_notify(&registry, Some(&tx), "worker", &workflow);
     apply_and_notify(&registry, Some(&tx), "worker", &agent_end);
@@ -336,7 +336,7 @@ async fn saturated_channel_retries_exact_stall_on_next_monitor_event() {
         &registry,
         Some(&tx),
         "worker",
-        &serde_json::json!({"type":"workflow_idle"}),
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
     );
     let pending = registry
         .lock()
@@ -386,7 +386,7 @@ async fn selecting_template_without_continuation_emits_stall() {
         &registry,
         Some(&tx),
         "worker",
-        &serde_json::json!({"type":"workflow_idle"}),
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
     );
     let notification = rx
         .try_recv()
@@ -490,7 +490,7 @@ async fn workflow_idle_line_from_wire_emits_stall() {
         None,
     );
     handle_monitor_line(
-        r#"{"type":"workflow_idle"}"#,
+        r#"{"type":"workflow_idle","reason":"exhausted"}"#,
         "worker",
         &registry,
         Some(&tx),
@@ -535,7 +535,7 @@ async fn saturated_stall_retried_by_another_agents_event() {
         &registry,
         Some(&tx),
         "worker",
-        &serde_json::json!({"type":"workflow_idle"}),
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
     );
     assert!(
         registry
@@ -605,7 +605,7 @@ async fn saturated_stall_delivered_by_backstop_without_any_further_events() {
         &registry,
         Some(&tx),
         "worker",
-        &serde_json::json!({"type":"workflow_idle"}),
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
     );
 
     // Drain the occupying note. No further monitor events are applied: only
@@ -630,5 +630,104 @@ async fn saturated_stall_delivered_by_backstop_without_any_further_events() {
             .get("worker")
             .is_some_and(|entry| entry.pending_stall.is_none()),
         "backstop delivery must clear pending state"
+    );
+}
+
+// #1082 review Fix 1: a `workflow_idle` with a deliberate reason (explicit
+// abort, completion) or with no reason at all must NOT be classified as a
+// stall — only `exhausted` is intervention-worthy.
+#[tokio::test]
+async fn non_exhausted_workflow_idle_reasons_stay_silent() {
+    for idle in [
+        serde_json::json!({"type":"workflow_idle","reason":"explicit_abort"}),
+        serde_json::json!({"type":"workflow_idle","reason":"completed"}),
+        serde_json::json!({"type":"workflow_idle"}), // older child, no reason
+    ] {
+        let registry = new_registry();
+        insert_entry(&registry, "worker");
+        let (tx, mut rx) = new_notification_channel();
+        apply_and_notify(
+            &registry,
+            Some(&tx),
+            "worker",
+            &serde_json::json!({"type":"workflow_state","mode":"active","progress":{"done":1,"total":3}}),
+        );
+        apply_and_notify(&registry, Some(&tx), "worker", &idle);
+        assert!(
+            rx.try_recv().is_err(),
+            "reason {:?} must not raise a stall alert",
+            idle.get("reason")
+        );
+    }
+}
+
+// #1082 review Fix 2: a run that ended in a run-level error must produce ONE
+// verdict (Errored), not a contradictory Errored + Stalled pair for the same
+// run.
+#[tokio::test]
+async fn errored_run_is_not_also_classified_as_stalled() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_state","mode":"active","progress":{"done":1,"total":3}}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"response","command":"agent_error","error":"provider exploded"}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
+    );
+    assert!(
+        !std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|n| matches!(n.notification, SubagentNotification::Stalled { .. })),
+        "an errored run must not additionally raise a stall alert"
+    );
+}
+
+// #1082 review Fix 2 (re-arm): the run_error guard is scoped to the failed
+// run — the next agent_start clears it, so a later genuine stall still alerts.
+#[tokio::test]
+async fn stall_classification_rearms_after_errored_run_restarts() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"response","command":"agent_error","error":"boom"}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"agent_start"}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_state","mode":"active","progress":{"done":2,"total":5}}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
+    );
+    assert!(
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|n| matches!(n.notification, SubagentNotification::Stalled { .. })),
+        "a new run after an errored one must stall-alert normally"
     );
 }

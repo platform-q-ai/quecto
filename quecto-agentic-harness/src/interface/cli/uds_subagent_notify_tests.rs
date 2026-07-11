@@ -314,3 +314,32 @@ fn test_forward_notification_broadcast_suppresses_when_awaited() {
     assert!(!first.contains("subagent_notification"), "got: {first}");
     assert!(first.contains("subagent_state_changed"), "got: {first}");
 }
+
+// #1082 review Fix 3: a full pending queue must NOT swallow a
+// supervision-critical note permanently. The enqueue reports failure and the
+// dedupe sequence is left untouched, so the identical sequence can be
+// retried once the queue drains.
+#[test]
+fn test_full_queue_drop_is_retryable_with_same_sequence() {
+    let mut session = AgentSession::new("m".to_string(), "k".to_string());
+    for i in 0..AgentSession::MAX_PENDING {
+        session.enqueue_pending(format!("filler {i}"));
+    }
+    // Not coalescible (no prior note for this agent) and the queue is full.
+    assert!(
+        !session.enqueue_subagent_notification(
+            "stalled".to_string(),
+            7,
+            "stall".to_string(),
+            false
+        ),
+        "full-queue drop must report failure"
+    );
+    // The sequence must not have been recorded as delivered.
+    session.drain_pending();
+    assert!(
+        session.enqueue_subagent_notification("stalled".to_string(), 7, "stall".to_string(), false),
+        "the same sequence must be deliverable after the queue drains"
+    );
+    assert_eq!(session.drain_pending().len(), 1);
+}

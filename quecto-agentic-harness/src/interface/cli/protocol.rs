@@ -288,7 +288,10 @@ pub enum AgentEvent {
     AgentEnd { messages: Vec<serde_json::Value> },
     /// The post-turn drain made no further workflow continuation runnable.
     /// Emitted only after pending work and automatic workflow nudges settle.
-    WorkflowIdle,
+    /// `reason` distinguishes intervention-worthy exhaustion from deliberate
+    /// outcomes (explicit abort, completion) so supervisors don't raise a
+    /// stall alert for a stop they requested (#1082 review).
+    WorkflowIdle { reason: WorkflowIdleReason },
     /// An incremental text token from the LLM during streaming.
     Token { token: String },
     /// A new LLM call begins.
@@ -375,6 +378,21 @@ pub enum AgentEvent {
         steps: Vec<serde_json::Value>,
         available_templates: Vec<serde_json::Value>,
     },
+}
+
+/// Why a `workflow_idle` boundary was reached (#1082 review). Only
+/// intervention-worthy reasons (`Exhausted`) should be classified as a stall
+/// by supervising monitors; deliberate stops must stay silent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowIdleReason {
+    /// Auto-continuation gave up: no-progress tolerance or nudge cap reached,
+    /// or no nudge was applicable while the workflow is still unfinished.
+    Exhausted,
+    /// The parent explicitly aborted; this stop was requested, not a stall.
+    ExplicitAbort,
+    /// The bound workflow reached a terminal state (or no workflow is bound).
+    Completed,
 }
 
 /// Snapshot of a single subagent's state, used in `get_subagents` responses

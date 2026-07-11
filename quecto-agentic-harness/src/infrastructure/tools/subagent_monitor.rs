@@ -541,7 +541,14 @@ fn apply_and_notify(
     // Only the new post-drain stable-idle signal can classify a stall. Ordinary
     // `agent_end` is ambiguous (an auto-continued turn may follow), and older
     // children that omit `workflow_idle` therefore remain safely silent.
+    // #1082 review: only an `exhausted` boundary is intervention-worthy —
+    // an `explicit_abort` was requested by the parent and a `completed`
+    // workflow is handled by the completion path. A missing/unknown reason
+    // stays silent (fail-safe: no false alerts from divergent children).
     if value.get("type").and_then(|v| v.as_str()) == Some("workflow_idle") {
+        if value.get("reason").and_then(|v| v.as_str()) != Some("exhausted") {
+            return;
+        }
         let snapshot = take_stalled_snapshot(registry, agent_id);
         if let (Some(tx), Some(workflow)) = (notify_tx, snapshot) {
             let notification = super::subagent_registry::SequencedSubagentNotification::new(
