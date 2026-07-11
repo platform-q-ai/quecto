@@ -9,7 +9,8 @@
 use super::*;
 use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::app::tui_harness::{
-    self, TuiHarness, spawn_start, spawn_subagent_socket, subagent_with_socket, subagents_changed,
+    self, TuiHarness, spawn_start, spawn_subagent_socket, spawn_subagent_socket_with_commands,
+    subagent_with_socket, subagents_changed,
 };
 use quecto_tui::interface::keys::Key;
 
@@ -157,10 +158,25 @@ fn given_tracking_two_focus_panel(world: &mut TuiWorld) {
 
 #[given(expr = "a TUI viewing sub-agent {string}")]
 fn given_viewing(world: &mut TuiWorld, id: String) {
-    init_harness(world, 1);
-    drive(world, |h| {
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let (mut h, cmd_rx) = rt.block_on(async {
+        let mut h = TuiHarness::new().await;
+        h.event(Event::AgentStart);
+        h.event(spawn_start(&id));
+        let (socket, cmd_rx) = spawn_subagent_socket_with_commands(&id);
+        h.event(subagents_changed(vec![subagent_with_socket(
+            &id,
+            "running",
+            Some(("active", 0, 3)),
+            Some(socket),
+        )]));
         h.select(Some(&id));
+        (h, cmd_rx)
     });
+    h.try_drain_commands();
+    world.tui_parity_rt = Some(rt);
+    world.tui_parity = Some(TuiParityHarness(h));
+    world.tui_subagent_commands = Some(cmd_rx);
     world.tui_viewed_agent = Some(id);
 }
 

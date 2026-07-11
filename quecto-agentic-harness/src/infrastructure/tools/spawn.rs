@@ -263,17 +263,11 @@ impl SpawnTool {
         let model = model_arg.map(|m| m.to_model_string());
 
         let effort = match args.get("effort").and_then(|v| v.as_str()).map(str::trim) {
-            Some("") => None,
-            Some(level) => {
-                if crate::domain::provider::EffortLevel::parse(level).is_none() {
-                    return Err(format!(
-                        "invalid effort '{level}'; valid values: {}",
-                        crate::domain::provider::EffortLevel::VALID_VALUES
-                    ));
-                }
-                Some(level.to_string())
-            }
-            None => None,
+            None | Some("") => None,
+            Some(level) => Some(super::spawn_launch_args::validate_effort(
+                level,
+                model.as_deref(),
+            )?),
         };
 
         if let Some(ref id) = agent_id {

@@ -534,6 +534,41 @@ fn then_subagent_receives_effort(world: &mut TuiWorld, id: String, effort: Strin
         "selected sub-agent effort should use the child connection, not the master command stream: {:?}",
         world.tui_last_commands
     );
+    let handle = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("harness runtime")
+        .handle()
+        .clone();
+    let rx = world
+        .tui_subagent_commands
+        .as_mut()
+        .expect("sub-agent command receiver");
+    let deadline = std::time::Duration::from_secs(2);
+    let commands = handle.block_on(async {
+        let mut commands = Vec::new();
+        loop {
+            match tokio::time::timeout(deadline, rx.recv()).await {
+                Ok(Some(line)) => {
+                    let is_expected = json_field(&line, "type").as_deref() == Some("set_effort");
+                    commands.push(line);
+                    if is_expected {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+        commands
+    });
+    let cmd = command_of_type(&commands, "set_effort")
+        .unwrap_or_else(|| panic!("expected sub-agent set_effort command, got {commands:?}"));
+    assert_eq!(
+        json_field(cmd, "effort").as_deref(),
+        Some(effort.as_str()),
+        "sub-agent command should carry selected effort: {cmd}"
+    );
     drive(world, |h| {
         h.route(
             &id,

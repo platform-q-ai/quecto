@@ -5,7 +5,8 @@
 use super::SEQ;
 use crate::infrastructure::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use std::sync::atomic::Ordering;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
+use tokio::sync::mpsc;
 
 /// Collapse spinner frames and digit runs so repeated renders compare equal
 /// regardless of animation phase / counters. Visible to the parent module's
@@ -43,6 +44,13 @@ pub fn subagent(id: &str, status: &str, wf: Option<(&str, u32, u32)>) -> Subagen
 /// stays live (its receiver is NOT dropped) — letting routing tests exercise
 /// the real `try_send` delivery path rather than the older-kernel `None` case.
 pub fn spawn_subagent_socket(id: &str) -> std::path::PathBuf {
+    spawn_subagent_socket_with_commands(id).0
+}
+
+/// Bind a live sub-agent socket and expose every decoded command it receives.
+pub fn spawn_subagent_socket_with_commands(
+    id: &str,
+) -> (std::path::PathBuf, mpsc::Receiver<String>) {
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
         "quecto-tui-harness-sub-{}-{}-{}",
@@ -54,17 +62,9 @@ pub fn spawn_subagent_socket(id: &str) -> std::path::PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     let socket_path = dir.join("agent.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
-    tokio::spawn(async move {
-        // Loop accepting so reselecting the same agent (teardown + reconnect)
-        // still finds a live listener.
-        while let Ok((stream, _)) = listener.accept().await {
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(stream).lines();
-                while let Ok(Some(_line)) = lines.next_line().await {}
-            });
-        }
-    });
-    socket_path
+    let (cmd_tx, cmd_rx) = mpsc::channel(64);
+    spawn_command_reader(listener, cmd_tx);
+    (socket_path, cmd_rx)
 }
 
 /// A `SubagentInfoEvent` carrying an explicit `socket_path` (live connection).

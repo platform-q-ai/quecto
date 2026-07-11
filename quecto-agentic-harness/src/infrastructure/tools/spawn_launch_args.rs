@@ -8,6 +8,30 @@ use std::path::Path;
 
 use crate::domain::subagent::SubagentConfig;
 
+/// Validate a spawn `effort` level, honoring the target model's effort
+/// vocabulary when a model is specified. Returns the normalized level string.
+///
+/// Lives here (rather than in `spawn.rs`) so the spawn tool stays under the
+/// repository file-size cap while keeping the validation unit-testable.
+pub(super) fn validate_effort(level: &str, model: Option<&str>) -> Result<String, String> {
+    use crate::domain::provider::EffortLevel;
+    let parsed = EffortLevel::parse(level).ok_or_else(|| {
+        format!(
+            "invalid effort '{level}'; valid values: {}",
+            EffortLevel::VALID_VALUES
+        )
+    })?;
+    if let Some(valid) = model.map(EffortLevel::levels_for_model) {
+        if !valid.contains(&parsed) {
+            return Err(format!(
+                "invalid effort '{level}'; valid values: {}",
+                EffortLevel::levels_list(valid)
+            ));
+        }
+    }
+    Ok(level.to_string())
+}
+
 /// Resolved launch context for a child agent: the deterministic inputs that are
 /// not carried on [`SubagentConfig`]. Grouped into a struct so the builder has a
 /// single descriptive parameter rather than a long positional list.
