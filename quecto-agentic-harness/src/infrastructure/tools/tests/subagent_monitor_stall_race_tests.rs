@@ -186,3 +186,33 @@ async fn same_event_that_invalidates_does_not_first_deliver_the_stall() {
     );
     assert_no_stall_delivered(&mut rx).await;
 }
+
+// #1082 review round 3 (High): child exit supersedes a retained stall — the
+// child is gone, so neither the event-driven retry nor the capacity backstop
+// may deliver the obsolete alert after the exit.
+#[tokio::test]
+async fn retained_stall_is_invalidated_by_child_exit_before_capacity_frees() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    insert_entry(&registry, "other");
+    let (tx, mut rx) = retain_saturated_stall(&registry);
+    // The exit happens while the channel is still full.
+    {
+        let mut guard = registry.lock().unwrap();
+        let entry = guard.get_mut("worker").expect("worker entry");
+        mark_exited(entry);
+        assert!(
+            entry.pending_stall.is_none(),
+            "exit must invalidate the retained stall"
+        );
+    }
+    rx.try_recv().expect("free channel capacity");
+    // Another agent's event drives the retry path; nothing must fire.
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "other",
+        &serde_json::json!({"type":"tool_execution_start","toolName":"read"}),
+    );
+    assert_no_stall_delivered(&mut rx).await;
+}

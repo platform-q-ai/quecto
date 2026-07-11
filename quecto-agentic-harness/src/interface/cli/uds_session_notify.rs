@@ -58,12 +58,16 @@ impl AgentSession {
     /// the SAME agent are coalesced into one note (the latest replaces the
     /// earlier) so a noisy child does not cost N extra LLM turns.
     ///
-    /// Capacity (#1082 review round 2): when `pending` is full and the note is
-    /// not coalescible it is retained in a bounded overflow buffer that
-    /// [`Self::drain_pending`] appends — so a saturated queue delays, but does
-    /// not lose, a supervision-critical note. Only if the overflow buffer is
-    /// ALSO full does the note drop, and then the dedupe sequence is left
-    /// untouched so the identical sequence stays retryable.
+    /// Capacity (#1082 review rounds 2-3): when `pending` is full and the
+    /// note is not coalescible it is retained in a bounded overflow buffer
+    /// that [`Self::drain_pending`] appends — so a saturated queue delays,
+    /// but does not lose, a note. Because coalescing guarantees at most ONE
+    /// buffered note per agent, the overflow is sized at
+    /// `MAX_DEDUPE_AGENTS` — the same bound as the dedupe map — so a drop
+    /// requires more distinct concurrent subagents than the session even
+    /// tracks. If that edge is ever hit the dedupe sequence is left
+    /// untouched, so the identical sequence stays retryable (and stall
+    /// alerts additionally have monitor-side retention).
     pub fn enqueue_subagent_notification(
         &mut self,
         agent_id: String,
@@ -124,9 +128,13 @@ impl AgentSession {
         );
         if self.pending.len() < Self::MAX_PENDING {
             self.pending.push_back(note);
-        } else if self.overflow_notifications.len() < Self::MAX_PENDING {
+        } else if self.overflow_notifications.len() < Self::MAX_DEDUPE_AGENTS {
             // Full pending queue: retain in the overflow buffer instead of
-            // dropping — drained (appended) together with `pending`.
+            // dropping — drained (appended) together with `pending`. Sized at
+            // MAX_DEDUPE_AGENTS: coalescing caps the buffers at one note per
+            // agent, so this bound cannot be exceeded by real traffic (#1082
+            // review round 3 — ordinary completion/error notes have no
+            // producer-side retry, so they must not drop here).
             self.overflow_notifications.push_back(note);
         } else {
             // Both buffers full: NOT retained, dedupe sequence NOT advanced,

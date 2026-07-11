@@ -160,6 +160,10 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
 /// Mark a SubagentEntry as Exited (connection closed or process reaped).
 pub fn mark_exited(entry: &mut SubagentEntry) {
     entry.status = SubagentStatus::Exited;
+    // #1082 review round 3: exit supersedes a retained stall — the child is
+    // gone, so an obsolete Stalled alert must not be claimable by the
+    // capacity backstop or the event-driven retry after this point.
+    entry.pending_stall = None;
     entry.updated_at = Instant::now();
 }
 

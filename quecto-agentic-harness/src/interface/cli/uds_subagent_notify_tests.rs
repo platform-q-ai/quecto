@@ -383,8 +383,9 @@ fn test_full_queue_note_is_retained_via_overflow_and_drained() {
     );
 }
 
-// #1082 review Fix 3 (round 2): only when BOTH the pending queue and the
-// overflow buffer are full does a note drop — and then the dedupe sequence is
+// #1082 review Fix 3 (rounds 2-3): only when BOTH the pending queue and the
+// overflow buffer (sized MAX_DEDUPE_AGENTS — more distinct agents than the
+// session tracks) are full does a note drop — and then the dedupe sequence is
 // left untouched so the identical sequence stays retryable after a drain.
 #[test]
 fn test_double_saturation_drop_is_retryable_with_same_sequence() {
@@ -394,7 +395,7 @@ fn test_double_saturation_drop_is_retryable_with_same_sequence() {
     }
     // Saturate the overflow buffer with distinct agents (distinct so none
     // coalesce with the probe below).
-    for i in 0..AgentSession::MAX_PENDING {
+    for i in 0..AgentSession::MAX_DEDUPE_AGENTS {
         assert_eq!(
             session.enqueue_subagent_notification(
                 format!("agent-{i}"),

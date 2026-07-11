@@ -288,7 +288,7 @@ impl AgentSession {
     /// Maximum number of pending (steer/follow_up) messages buffered at once.
     /// Prevents OOM from a flood of pending messages from a misbehaving client.
     pub const MAX_PENDING: usize = 64;
-    const MAX_DEDUPE_AGENTS: usize = 1024;
+    pub(crate) const MAX_DEDUPE_AGENTS: usize = 1024;
 
     pub fn enqueue_pending(&mut self, msg: String) {
         if self.pending.len() < Self::MAX_PENDING {
