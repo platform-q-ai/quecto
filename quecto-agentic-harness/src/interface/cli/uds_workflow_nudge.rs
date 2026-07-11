@@ -71,3 +71,25 @@ pub(super) fn workflow_progress_fingerprint(ctx: &DispatchCtx<'_>) -> Option<Str
     let snapshot = engine.snapshot(true);
     serde_json::to_string(&snapshot).ok()
 }
+
+/// The reason to attach to the terminal `workflow_idle` boundary event
+/// (#1082 review): `Completed` when no workflow is bound or the bound
+/// workflow reached a terminal state, `Exhausted` otherwise — the drain gave
+/// up (no-progress tolerance, nudge cap, or nothing runnable) with the
+/// workflow still unfinished, which is the only stall-worthy outcome. A
+/// poisoned engine lock yields `Unknown` (not `Completed`): completion
+/// cannot be established, and misreporting it would mask the fault.
+pub(super) fn workflow_idle_reason(ctx: &DispatchCtx<'_>) -> super::protocol::WorkflowIdleReason {
+    use super::protocol::WorkflowIdleReason;
+    use crate::domain::workflow::WorkflowMode;
+    let Some(ws) = ctx.workflow_state.as_ref() else {
+        return WorkflowIdleReason::Completed;
+    };
+    let Ok(engine) = ws.lock() else {
+        return WorkflowIdleReason::Unknown;
+    };
+    match engine.mode() {
+        WorkflowMode::Complete => WorkflowIdleReason::Completed,
+        WorkflowMode::Active | WorkflowMode::SelectingTemplate => WorkflowIdleReason::Exhausted,
+    }
+}

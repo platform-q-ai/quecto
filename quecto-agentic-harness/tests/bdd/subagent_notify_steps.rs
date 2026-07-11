@@ -343,8 +343,11 @@ fn when_subagent_completes(world: &mut QuectoWorld, agent_id: String, note: Stri
         .notify_parent_session
         .as_mut()
         .expect("no parent session");
-    world.notify_last_enqueued =
-        Some(session.enqueue_subagent_notification(agent_id, sequence, note, true));
+    world.notify_last_enqueued = Some(
+        session
+            .enqueue_subagent_notification(agent_id, sequence, note, true)
+            .is_retained(),
+    );
 }
 
 #[when(expr = "subagent {string} reports a newer completion with note {string}")]
@@ -362,8 +365,11 @@ fn when_subagent_same_completion(world: &mut QuectoWorld, agent_id: String) {
         .notify_parent_session
         .as_mut()
         .expect("no parent session");
-    world.notify_last_enqueued =
-        Some(session.enqueue_subagent_notification(agent_id, sequence, "done".to_string(), true));
+    world.notify_last_enqueued = Some(
+        session
+            .enqueue_subagent_notification(agent_id, sequence, "done".to_string(), true)
+            .is_retained(),
+    );
 }
 
 #[when("the parent drains its subagent notifications")]

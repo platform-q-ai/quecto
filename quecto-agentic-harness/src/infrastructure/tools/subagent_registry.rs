@@ -99,10 +99,30 @@ pub struct SubagentEntry {
     /// Terminal-completion latch (#904): consumed by the first `complete`-mode
     /// `agent_end`, re-armed when the workflow leaves `complete`.
     pub completion_armed: bool,
+    /// One-shot stalled-notification latch (#1076): consumed when a non-terminal
+    /// workflow stall is reported, re-armed by a new run or workflow progress.
+    pub stalled_armed: bool,
+    /// A supervision-critical stall alert retained after notification-channel
+    /// saturation and retried on the next monitor event (#1076).
+    pub pending_stall: Option<SequencedSubagentNotification>,
     /// Whether this sub-agent was spawned read-only (`write` + `edit` disabled).
     /// Surfaced through `get_subagents` so the TUI can mark it as an observer
     /// (#966). Display flag only; enforcement is #957.
     pub read_only: bool,
+}
+
+pub(super) fn seed_bound_workflow(
+    entry: &mut SubagentEntry,
+    workflow_spec: Option<&crate::domain::workflow::WorkflowSpec>,
+) {
+    let Some(spec) = workflow_spec else { return };
+    entry.workflow = Some(WorkflowSnapshot {
+        mode: crate::domain::workflow::WorkflowMode::Active
+            .wire_str()
+            .to_string(),
+        steps_completed: 0,
+        steps_total: u32::try_from(spec.template.steps.len()).unwrap_or(u32::MAX),
+    });
 }
 
 impl SubagentEntry {
@@ -123,6 +143,8 @@ impl SubagentEntry {
             workflow: None,
             completion_consumed_by_await: false,
             completion_armed: true,
+            stalled_armed: true,
+            pending_stall: None,
             read_only: false,
         }
     }
@@ -444,6 +466,13 @@ const MAX_SUMMARY_LEN: usize = 200;
 pub enum SubagentNotification {
     /// Child agent ended a turn and was observed idle; this is not a task-success verdict.
     Completed { agent_id: String, summary: String },
+    /// Workflow-bound child became idle before reaching a terminal workflow state.
+    Stalled {
+        agent_id: String,
+        workflow_mode: String,
+        steps_completed: u64,
+        steps_total: u64,
+    },
     /// Child agent's last tool execution returned an error.
     Errored { agent_id: String, error: String },
     /// Child agent process exited (connection closed or process reaped).
@@ -467,6 +496,7 @@ impl SequencedSubagentNotification {
     pub fn dedupe_key(&self) -> (String, u64) {
         let agent_id = match &self.notification {
             SubagentNotification::Completed { agent_id, .. }
+            | SubagentNotification::Stalled { agent_id, .. }
             | SubagentNotification::Errored { agent_id, .. }
             | SubagentNotification::Exited { agent_id } => agent_id.clone(),
         };
@@ -492,6 +522,14 @@ impl SubagentNotification {
         match self {
             Self::Completed { agent_id, .. } => format!(
                 "Sub-agent '{agent_id}' ended a turn (status: idle). Inspect agent_cmd get_messages before treating its work as complete."
+            ),
+            Self::Stalled {
+                agent_id,
+                workflow_mode,
+                steps_completed,
+                steps_total,
+            } => format!(
+                "Agent '{agent_id}' stalled: idle with workflow still {workflow_mode} at {steps_completed}/{steps_total}. Inspect output/state, then prompt, steer, abort, or kill it."
             ),
             Self::Errored { agent_id, error } => format!("Agent '{agent_id}' failed: {error}"),
             Self::Exited { agent_id } => format!("Agent '{agent_id}' exited unexpectedly"),
