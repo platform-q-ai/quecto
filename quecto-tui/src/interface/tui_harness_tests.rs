@@ -603,7 +603,7 @@ mod workflow_display_regression {
         h.event(Event::AgentEnd);
         let frame = h.full_frame();
         assert!(
-            frame.contains("2 sub-agents finished"),
+            frame.contains("2 sub-agents ended a turn"),
             "fleet: 2 completion notes must coalesce into one summary, got:\n{frame}"
         );
     }
