@@ -7,26 +7,21 @@
 // NOTE: This module lives in the infrastructure layer and therefore MUST NOT
 // import from `crate::interface` (architecture rule). Event JSON is parsed
 // via `serde_json::Value` instead of deserializing into `AgentEvent`.
-
-use std::time::Instant;
-
 use super::subagent_registry::{
     NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
     extract_summary,
 };
+use std::time::Instant;
 // Re-export the split-out descendant merge/forward surface so existing call
 // sites and tests keep referring to it via this module (#904 file-cap split).
 pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
 };
-
 /// Maximum length for a single JSON event (the shared protocol cap).
 /// Lines exceeding this are dropped to prevent OOM from misbehaving children.
 const MAX_EVENT_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
-
 /// Maximum length for stored tool name / error strings (256 chars).
 const MAX_STORED_STRING: usize = 256;
-
 /// Event types that can cause state transitions.
 /// Used for cheap pre-filtering before full JSON parse.
 const STATE_CHANGING_EVENTS: &[&str] = &[
@@ -37,7 +32,6 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"workflow_state\"",
     "\"command\":\"agent_error\"",
 ];
-
 /// Apply a single JSON-line event to a SubagentEntry. Pure (no I/O / async):
 /// parses the event and updates the entry's status fields. State transitions
 /// (#522): `agent_start`→Running/clear error; `agent_end`→Idle;
@@ -53,7 +47,6 @@ pub fn apply_event(entry: &mut SubagentEntry, line: &str) {
     };
     apply_event_parsed(entry, &value);
 }
-
 /// Apply a pre-parsed JSON event to a SubagentEntry.
 /// This avoids a second parse when the caller already has the Value.
 pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) {
@@ -154,13 +147,11 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
         _ => {}
     }
 }
-
 /// Mark a SubagentEntry as Exited (connection closed or process reaped).
 pub fn mark_exited(entry: &mut SubagentEntry) {
     entry.status = SubagentStatus::Exited;
     entry.updated_at = Instant::now();
 }
-
 /// Spawn a background monitor task that connects to a child agent's UDS socket
 /// and reads the framed JSON event stream, updating the registry in real-time.
 /// When `notify_tx` is `Some`, sends [`SubagentNotification`]s on the child's
@@ -185,7 +176,6 @@ pub fn spawn_monitor_task(
         .await;
     })
 }
-
 /// Mark the child as exited in the registry and notify listeners.
 fn notify_child_exited(
     registry: &SubagentRegistry,
@@ -203,7 +193,6 @@ fn notify_child_exited(
         ),
     );
 }
-
 /// Internal monitor loop: connect → read lines → apply events → detect close.
 async fn monitor_loop(
     agent_id: &str,
@@ -214,7 +203,6 @@ async fn monitor_loop(
     parent_id: Option<&str>,
 ) {
     use tokio::io::BufReader;
-
     // Retry connection with increasing backoff — the socket should already be
     // ready because spawn waits for it, but there's a tiny race window.
     let stream = match connect_with_retry(socket_path, 10).await {
@@ -225,7 +213,6 @@ async fn monitor_loop(
             return;
         }
     };
-
     // The monitor is otherwise listen-only, so announce framed mode with an
     // empty hello frame (ignored by the dispatch loop) — the child then
     // replies in length-prefixed frames (#1059 / ADR-0008 part 1). The write
@@ -241,11 +228,9 @@ async fn monitor_loop(
     {
         tracing::warn!(agent = %agent_id, error = %e, "monitor: framed hello not delivered");
     }
-
     // Use a smaller BufReader capacity (1 KiB) since JSON events are
     // typically well under 1 KiB. Default 8 KiB is wasteful per child.
     let mut reader = BufReader::with_capacity(1024, read_half);
-
     // Reused across the child's whole event stream so each high-volume token
     // line does not allocate (and, on the framed branch, zero-initialize) a
     // fresh Vec — matching the sibling TUI/quecto-api hot readers migrated in
@@ -271,7 +256,6 @@ async fn monitor_loop(
         }
     }
 }
-
 /// Outcome of a single monitor read: a message (now in the caller's reusable
 /// buffer), a recoverable skip (oversized frame rejected cleanly), or a
 /// closed/broken connection.
@@ -280,7 +264,6 @@ enum MonitorRead {
     Skip,
     Closed,
 }
-
 /// Read one framed-or-legacy message from the child into the reusable `buf`,
 /// classifying EOF, oversized rejection (stream stays usable), and hard read
 /// errors. Uses the buffer-reusing `_into` reader so a child's high-volume
@@ -308,7 +291,6 @@ where
         }
     }
 }
-
 /// Process one event line from a child: drop oversized lines, update the
 /// registry entry + fire notifications for state-changing events, and forward
 /// the child's workflow_state events onto the parent's stream (R-B2).
@@ -389,7 +371,6 @@ fn handle_monitor_line(
         }
     }
 }
-
 /// Whether a child event changed the registry fields mirrored by
 /// `subagent_state_changed` and should be pushed to TUI clients immediately
 /// instead of waiting for a later polling rebuild (#839). Gated to terminal
@@ -406,7 +387,6 @@ pub fn should_broadcast_state_changed_after_event(value: &serde_json::Value) -> 
         _ => false,
     }
 }
-
 /// If `line` is a child's `workflow_state` event, re-stamp it with the child's
 /// identity so it can be forwarded onto the parent's event stream (PRD Stage B
 /// / R-B2): a parent/supervisor then sees descendant workflows without polling
@@ -444,7 +424,6 @@ pub fn canonical_workflow_forward(
     });
     serde_json::to_string(&canonical).ok()
 }
-
 /// If `line` is a child's `subagent_messages_appended` event, re-stamp it with
 /// the child's identity so it can be forwarded onto the parent's event stream
 /// (#797). The child emits these with an empty `agent_id`; we force-stamp the
@@ -471,7 +450,6 @@ pub fn canonical_messages_appended_forward(
     });
     serde_json::to_string(&canonical).ok()
 }
-
 /// Line-based wrapper around [`canonical_messages_appended_forward`]: cheap
 /// substring pre-filter, then parse once. Returns `None` for non-message lines.
 pub fn forward_child_messages_appended(
@@ -485,7 +463,6 @@ pub fn forward_child_messages_appended(
     let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
     canonical_messages_appended_forward(&value, child_id, parent_id)
 }
-
 /// Line-based wrapper around [`canonical_workflow_forward`]: cheap substring
 /// pre-filter, then parse once. Returns `None` for non-`workflow_state` lines.
 pub fn forward_child_workflow_event(
@@ -499,7 +476,6 @@ pub fn forward_child_workflow_event(
     let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
     canonical_workflow_forward(&value, child_id, parent_id)
 }
-
 /// Check if a JSON event should trigger a notification and send it.
 /// Parses the line from string — use `notify_from_parsed` when you already have a Value.
 #[cfg(test)]
@@ -510,7 +486,6 @@ pub fn maybe_notify(notify_tx: Option<&NotificationTx>, agent_id: &str, line: &s
     };
     notify_from_parsed(Some(tx), agent_id, 0, &value, None);
 }
-
 /// Apply a parsed event to the registry entry and fire any notification it
 /// warrants, reading the entry's latest workflow mode AFTER the apply so the
 /// terminal-completion decision (#904) sees up-to-date state.
@@ -521,7 +496,8 @@ fn apply_and_notify(
     value: &serde_json::Value,
 ) {
     let sequence = update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, value));
-    let workflow_mode = entry_workflow_mode(registry, agent_id);
+    let workflow = entry_workflow(registry, agent_id);
+    let workflow_mode = workflow.as_ref().map(|w| w.mode.clone());
     // A tool failure remains the observed outcome for this turn. `agent_end`
     // merely closes the turn and must not follow it with a success-like idle note.
     if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
@@ -546,15 +522,8 @@ fn apply_and_notify(
     {
         return;
     }
-    notify_from_parsed(
-        notify_tx,
-        agent_id,
-        sequence,
-        value,
-        workflow_mode.as_deref(),
-    );
+    notify_from_parsed(notify_tx, agent_id, sequence, value, workflow.as_ref());
 }
-
 /// Check-and-consume the terminal-completion latch for `agent_id` (#904).
 /// Returns `true` (and clears the latch) when a completion note is still armed;
 /// `false` when already consumed or the entry is gone. Re-armed by
@@ -569,16 +538,16 @@ fn take_completion_armed(registry: &SubagentRegistry, agent_id: &str) -> bool {
         _ => false,
     }
 }
-
-/// Read the latest workflow mode recorded on `agent_id`'s registry entry, if it
-/// is workflow-bound. `None` means the agent has no workflow.
-fn entry_workflow_mode(registry: &SubagentRegistry, agent_id: &str) -> Option<String> {
-    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    entries
+fn entry_workflow(
+    registry: &SubagentRegistry,
+    agent_id: &str,
+) -> Option<super::subagent_registry::WorkflowSnapshot> {
+    registry
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .get(agent_id)
-        .and_then(|e| e.workflow.as_ref().map(|w| w.mode.clone()))
+        .and_then(|entry| entry.workflow.clone())
 }
-
 /// Whether an `agent_end` represents a TRUE terminal completion (#904), given
 /// the agent's latest workflow mode. A workflow-bound agent runs one turn per
 /// step and ends each with its own `agent_end`; only the turn that leaves the
@@ -590,7 +559,6 @@ pub fn agent_end_is_terminal(workflow_mode: Option<&str>) -> bool {
         None => true,
     }
 }
-
 /// Send a notification from a pre-parsed JSON value (avoids double parse).
 /// `workflow_mode` is the agent's latest workflow mode (`None` if not
 /// workflow-bound), used to gate the `agent_end` → `Completed` note to terminal
@@ -600,14 +568,31 @@ fn notify_from_parsed(
     agent_id: &str,
     sequence: u64,
     value: &serde_json::Value,
-    workflow_mode: Option<&str>,
+    workflow: Option<&super::subagent_registry::WorkflowSnapshot>,
 ) {
+    let workflow_mode = workflow.map(|snapshot| snapshot.mode.as_str());
     let Some(tx) = notify_tx else { return };
     let event_type = match value.get("type").and_then(|v| v.as_str()) {
         Some(t) => t,
         None => return,
     };
     let notification = match event_type {
+        "agent_end" if matches!(workflow_mode, Some("active" | "selecting_template")) => {
+            let (done, total) = workflow
+                .map(|snapshot| {
+                    (
+                        u64::from(snapshot.steps_completed),
+                        u64::from(snapshot.steps_total),
+                    )
+                })
+                .unwrap_or((0, 0));
+            Some(SubagentNotification::Stalled {
+                agent_id: agent_id.to_string(),
+                workflow_mode: workflow_mode.unwrap_or_default().to_string(),
+                done,
+                total,
+            })
+        }
         // Only a TERMINAL agent_end fires a completion note: workflow `complete`,
         // or a non-workflow turn-end. A mid-workflow step-end auto-continues and
         // must stay silent so the parent isn't driven to re-narrate per step (#904).
@@ -661,7 +646,6 @@ fn notify_from_parsed(
         );
     }
 }
-
 /// Best-effort send of a notification (non-blocking, drops if channel is full).
 fn send_notification(
     tx: Option<&NotificationTx>,
@@ -671,7 +655,6 @@ fn send_notification(
         let _ = tx.try_send(notification);
     }
 }
-
 /// Connect to the UDS socket with retries and exponential backoff.
 async fn connect_with_retry(
     socket_path: &std::path::Path,
@@ -687,7 +670,6 @@ async fn connect_with_retry(
     }
     None
 }
-
 #[cfg(test)]
 fn update_entry(registry: &SubagentRegistry, agent_id: &str, f: impl FnOnce(&mut SubagentEntry)) {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
@@ -695,7 +677,6 @@ fn update_entry(registry: &SubagentRegistry, agent_id: &str, f: impl FnOnce(&mut
         f(entry);
     }
 }
-
 /// Update an entry and allocate the next monotonic notification sequence.
 fn update_entry_next_sequence(
     registry: &SubagentRegistry,
@@ -711,7 +692,6 @@ fn update_entry_next_sequence(
         0
     }
 }
-
 /// Truncate a string to at most `max_len` characters, appending "…" if truncated.
 /// Uses char-boundary-safe slicing so multibyte UTF-8 does not panic.
 fn truncate_string(s: &str, max_len: usize) -> String {
@@ -724,21 +704,15 @@ fn truncate_string(s: &str, max_len: usize) -> String {
         truncated
     }
 }
-
-// ─── Unit tests ──────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-#[path = "subagent_monitor_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "subagent_monitor_forward_tests.rs"]
-mod forward_tests;
-
-#[cfg(test)]
-#[path = "subagent_monitor_completion_tests.rs"]
-mod completion_tests;
-
 #[cfg(test)]
 #[path = "subagent_monitor_bounded_read_tests.rs"]
 mod bounded_read_tests;
+#[cfg(test)]
+#[path = "subagent_monitor_completion_tests.rs"]
+mod completion_tests;
+#[cfg(test)]
+#[path = "subagent_monitor_forward_tests.rs"]
+mod forward_tests;
+#[cfg(test)]
+#[path = "subagent_monitor_tests.rs"]
+mod tests;

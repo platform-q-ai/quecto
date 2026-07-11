@@ -171,6 +171,61 @@ async fn rerun_after_complete_notifies_again() {
     );
 }
 
+#[tokio::test]
+async fn active_workflow_without_continuation_emits_actionable_stall() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    let (tx, mut rx) = new_notification_channel();
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_state","mode":"active","progress":{"done":1,"total":3}}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"agent_end","messages":[]}),
+    );
+
+    let notification = rx.try_recv().expect("stable active idle must alert");
+    let message = notification.to_message();
+    assert!(message.contains("idle with workflow still active"));
+    assert!(message.contains("1/3"));
+    assert!(message.contains("prompt, steer, abort, or kill"));
+    assert!(
+        rx.try_recv().is_err(),
+        "the stable outcome alerts exactly once"
+    );
+}
+
+#[tokio::test]
+async fn selecting_template_without_continuation_emits_stall() {
+    let registry = new_registry();
+    insert_entry(&registry, "selector");
+    let (tx, mut rx) = new_notification_channel();
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "selector",
+        &serde_json::json!({"type":"workflow_state","mode":"selecting_template","progress":{"done":0,"total":0}}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "selector",
+        &serde_json::json!({"type":"agent_end","messages":[]}),
+    );
+
+    let notification = rx.try_recv().expect("stable template selection must alert");
+    assert!(notification.to_message().contains("selecting_template"));
+    assert!(
+        rx.try_recv().is_err(),
+        "the stable outcome alerts exactly once"
+    );
+}
+
 // AC2: a non-workflow agent emits a completion on its turn-end.
 #[tokio::test]
 async fn non_workflow_agent_emits_completion_on_turn_end() {
