@@ -4,7 +4,7 @@ pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
 };
 use super::subagent_monitor_stall::{
-    deliver_or_retain_stall, retry_pending_stalls, take_completion_armed, take_stalled_snapshot,
+    classify_workflow_idle_stall, retry_pending_stalls, take_completion_armed,
 };
 use super::subagent_registry::{
     NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
@@ -48,6 +48,10 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             entry.status = SubagentStatus::Running;
             entry.last_error = None;
             entry.run_error = None;
+            // #1082 review round 2: a new run supersedes any stall alert
+            // retained from the previous run — dropping it here prevents the
+            // retry/backstop paths from attributing an old stall to this run.
+            entry.pending_stall = None;
             // Re-arm the auto-await dedupe (#auto-await-idle): a new run means a
             // future terminal completion must notify again, even if a prior run's
             // completion was consumed by a manual `await`.
@@ -121,6 +125,10 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             });
             if workflow_progressed {
                 entry.stalled_armed = true;
+                // #1082 review round 2: fresh progress (or completion)
+                // supersedes a stall retained under channel saturation — the
+                // retained snapshot no longer describes the current state.
+                entry.pending_stall = None;
             }
             entry.workflow = Some(super::subagent_registry::WorkflowSnapshot {
                 mode,
@@ -140,6 +148,9 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             );
             entry.last_error = Some(error.clone());
             entry.run_error = Some(error);
+            // #1082 review round 2: the run's verdict is now Errored; drop any
+            // retained stall so retry/backstop cannot also deliver Stalled.
+            entry.pending_stall = None;
             entry.updated_at = Instant::now();
         }
         _ => {}
@@ -511,8 +522,13 @@ fn apply_and_notify(
     agent_id: &str,
     value: &serde_json::Value,
 ) {
-    retry_pending_stalls(registry, notify_tx);
+    // #1082 review round 2: apply the incoming event BEFORE retrying retained
+    // stalls. An `agent_error`, `agent_start`, workflow progress or terminal
+    // completion invalidates a retained stall (see `apply_event_parsed`);
+    // retrying first would publish the obsolete alert and only then learn it
+    // was superseded.
     let sequence = update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, value));
+    retry_pending_stalls(registry, notify_tx);
     let workflow_mode = entry_workflow_mode(registry, agent_id);
     // A tool failure remains the observed outcome for this turn. `agent_end`
     // merely closes the turn and must not follow it with a success-like idle note.
@@ -538,30 +554,10 @@ fn apply_and_notify(
     {
         return;
     }
-    // Only the new post-drain stable-idle signal can classify a stall. Ordinary
-    // `agent_end` is ambiguous (an auto-continued turn may follow), and older
-    // children that omit `workflow_idle` therefore remain safely silent.
-    // #1082 review: only an `exhausted` boundary is intervention-worthy —
-    // an `explicit_abort` was requested by the parent and a `completed`
-    // workflow is handled by the completion path. A missing/unknown reason
-    // stays silent (fail-safe: no false alerts from divergent children).
+    // Stall classification on `workflow_idle` lives with the other stall
+    // logic in `subagent_monitor_stall` (#1082 review).
     if value.get("type").and_then(|v| v.as_str()) == Some("workflow_idle") {
-        if value.get("reason").and_then(|v| v.as_str()) != Some("exhausted") {
-            return;
-        }
-        let snapshot = take_stalled_snapshot(registry, agent_id);
-        if let (Some(tx), Some(workflow)) = (notify_tx, snapshot) {
-            let notification = super::subagent_registry::SequencedSubagentNotification::new(
-                sequence,
-                SubagentNotification::Stalled {
-                    agent_id: agent_id.to_string(),
-                    workflow_mode: workflow.mode,
-                    steps_completed: u64::from(workflow.steps_completed),
-                    steps_total: u64::from(workflow.steps_total),
-                },
-            );
-            deliver_or_retain_stall(registry, tx, agent_id, notification);
-        }
+        classify_workflow_idle_stall(registry, notify_tx, agent_id, sequence, value);
         return;
     }
     notify_from_parsed(
@@ -739,6 +735,10 @@ mod forward_tests;
 #[cfg(test)]
 #[path = "tests/subagent_monitor_completion_tests.rs"]
 mod completion_tests;
+
+#[cfg(test)]
+#[path = "tests/subagent_monitor_stall_race_tests.rs"]
+mod stall_race_tests;
 
 #[cfg(test)]
 #[path = "subagent_monitor_bounded_read_tests.rs"]

@@ -2,6 +2,7 @@
 /// delivery). Compiled as a `mod` inside `uds.rs`, so `super` = `uds`, which
 /// re-exports `AgentSession` via `uds_session`.
 use super::*;
+use crate::interface::cli::uds_session::{NotificationEnqueueOutcome, PendingMessage};
 
 // ─── #816: auto-await subagent completion notes (enqueue + idle delivery) ─────
 
@@ -12,12 +13,14 @@ use super::*;
 fn test_enqueue_subagent_notification_buffers_system_note() {
     use crate::domain::message::Role;
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
-    let enqueued = session.enqueue_subagent_notification(
-        "researcher".to_string(),
-        1,
-        "[subagent] Agent 'researcher' completed. Last output: all tests pass".to_string(),
-        true,
-    );
+    let enqueued = session
+        .enqueue_subagent_notification(
+            "researcher".to_string(),
+            1,
+            "[subagent] Agent 'researcher' completed. Last output: all tests pass".to_string(),
+            true,
+        )
+        .is_retained();
     assert!(enqueued, "first completion note should be enqueued");
     assert_eq!(
         session
@@ -39,13 +42,21 @@ fn test_enqueue_subagent_notification_buffers_system_note() {
 #[test]
 fn test_enqueue_subagent_notification_dedupes_same_sequence() {
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
-    assert!(session.enqueue_subagent_notification("a".to_string(), 5, "done".to_string(), true));
     assert!(
-        !session.enqueue_subagent_notification("a".to_string(), 5, "done".to_string(), true),
+        session
+            .enqueue_subagent_notification("a".to_string(), 5, "done".to_string(), true)
+            .is_retained()
+    );
+    assert!(
+        !session
+            .enqueue_subagent_notification("a".to_string(), 5, "done".to_string(), true)
+            .is_retained(),
         "re-enqueuing the same sequence must be deduped"
     );
     assert!(
-        !session.enqueue_subagent_notification("a".to_string(), 3, "stale".to_string(), true),
+        !session
+            .enqueue_subagent_notification("a".to_string(), 3, "stale".to_string(), true)
+            .is_retained(),
         "an older sequence must be deduped"
     );
     assert_eq!(
@@ -62,8 +73,16 @@ fn test_enqueue_subagent_notification_dedupes_same_sequence() {
 #[test]
 fn test_enqueue_subagent_notification_coalesces_same_agent() {
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
-    assert!(session.enqueue_subagent_notification("a".to_string(), 1, "first".to_string(), true));
-    assert!(session.enqueue_subagent_notification("a".to_string(), 2, "second".to_string(), true));
+    assert!(
+        session
+            .enqueue_subagent_notification("a".to_string(), 1, "first".to_string(), true)
+            .is_retained()
+    );
+    assert!(
+        session
+            .enqueue_subagent_notification("a".to_string(), 2, "second".to_string(), true)
+            .is_retained()
+    );
     let drained = session.drain_pending();
     assert_eq!(
         drained.len(),
@@ -81,8 +100,16 @@ fn test_enqueue_subagent_notification_coalesces_same_agent() {
 #[test]
 fn test_enqueue_subagent_notification_distinct_agents() {
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
-    assert!(session.enqueue_subagent_notification("a".to_string(), 1, "a done".to_string(), true));
-    assert!(session.enqueue_subagent_notification("b".to_string(), 1, "b done".to_string(), true));
+    assert!(
+        session
+            .enqueue_subagent_notification("a".to_string(), 1, "a done".to_string(), true)
+            .is_retained()
+    );
+    assert!(
+        session
+            .enqueue_subagent_notification("b".to_string(), 1, "b done".to_string(), true)
+            .is_retained()
+    );
     assert_eq!(session.drain_pending().len(), 2);
 }
 
@@ -91,12 +118,16 @@ fn test_enqueue_subagent_notification_distinct_agents() {
 #[test]
 fn test_enqueue_subagent_notification_carries_failure() {
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
-    assert!(session.enqueue_subagent_notification(
-        "linter".to_string(),
-        1,
-        "[subagent] Agent 'linter' errored: rate limit exceeded".to_string(),
-        false,
-    ));
+    assert!(
+        session
+            .enqueue_subagent_notification(
+                "linter".to_string(),
+                1,
+                "[subagent] Agent 'linter' errored: rate limit exceeded".to_string(),
+                false,
+            )
+            .is_retained()
+    );
     let content = session
         .drain_pending()
         .into_iter()
@@ -120,12 +151,16 @@ fn test_enqueue_subagent_notification_is_buffered_until_idle_drain() {
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
 
     // Arrival "during" the parent's active turn: only buffered.
-    assert!(session.enqueue_subagent_notification(
-        "researcher".to_string(),
-        1,
-        "researcher complete".to_string(),
-        true,
-    ));
+    assert!(
+        session
+            .enqueue_subagent_notification(
+                "researcher".to_string(),
+                1,
+                "researcher complete".to_string(),
+                true,
+            )
+            .is_retained()
+    );
     assert_eq!(
         session
             .state_snapshot(0, None, 0, None)
@@ -315,31 +350,99 @@ fn test_forward_notification_broadcast_suppresses_when_awaited() {
     assert!(first.contains("subagent_state_changed"), "got: {first}");
 }
 
-// #1082 review Fix 3: a full pending queue must NOT swallow a
-// supervision-critical note permanently. The enqueue reports failure and the
-// dedupe sequence is left untouched, so the identical sequence can be
-// retried once the queue drains.
+// #1082 review Fix 3 (round 2): a full pending queue must NOT swallow a
+// supervision-critical note. The note is retained in the overflow buffer and
+// drained together with the pending queue — saturation delays, never loses.
 #[test]
-fn test_full_queue_drop_is_retryable_with_same_sequence() {
+fn test_full_queue_note_is_retained_via_overflow_and_drained() {
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
     for i in 0..AgentSession::MAX_PENDING {
         session.enqueue_pending(format!("filler {i}"));
     }
-    // Not coalescible (no prior note for this agent) and the queue is full.
-    assert!(
-        !session.enqueue_subagent_notification(
-            "stalled".to_string(),
-            7,
-            "stall".to_string(),
-            false
-        ),
-        "full-queue drop must report failure"
-    );
-    // The sequence must not have been recorded as delivered.
-    session.drain_pending();
-    assert!(
+    // Not coalescible (no prior note for this agent) and the queue is full:
+    // retained via overflow, and the outcome says so.
+    assert_eq!(
         session.enqueue_subagent_notification("stalled".to_string(), 7, "stall".to_string(), false),
-        "the same sequence must be deliverable after the queue drains"
+        NotificationEnqueueOutcome::Retained,
+        "a full pending queue must retain the note in overflow"
+    );
+    // Retained means recorded: the same sequence is now a duplicate.
+    assert_eq!(
+        session.enqueue_subagent_notification("stalled".to_string(), 7, "stall".to_string(), false),
+        NotificationEnqueueOutcome::Duplicate,
+    );
+    // The overflow note drains together with the pending queue.
+    let drained = session.drain_pending();
+    assert_eq!(drained.len(), AgentSession::MAX_PENDING + 1);
+    assert!(
+        matches!(
+            drained.last(),
+            Some(PendingMessage::SubagentNotification { agent_id, .. }) if agent_id == "stalled"
+        ),
+        "the overflow note must drain after the pending queue"
+    );
+}
+
+// #1082 review Fix 3 (round 2): only when BOTH the pending queue and the
+// overflow buffer are full does a note drop — and then the dedupe sequence is
+// left untouched so the identical sequence stays retryable after a drain.
+#[test]
+fn test_double_saturation_drop_is_retryable_with_same_sequence() {
+    let mut session = AgentSession::new("m".to_string(), "k".to_string());
+    for i in 0..AgentSession::MAX_PENDING {
+        session.enqueue_pending(format!("filler {i}"));
+    }
+    // Saturate the overflow buffer with distinct agents (distinct so none
+    // coalesce with the probe below).
+    for i in 0..AgentSession::MAX_PENDING {
+        assert_eq!(
+            session.enqueue_subagent_notification(
+                format!("agent-{i}"),
+                1,
+                "note".to_string(),
+                true
+            ),
+            NotificationEnqueueOutcome::Retained,
+        );
+    }
+    assert_eq!(
+        session.enqueue_subagent_notification("stalled".to_string(), 7, "stall".to_string(), false),
+        NotificationEnqueueOutcome::Dropped,
+        "double saturation must report Dropped, not Duplicate"
+    );
+    session.drain_pending();
+    assert_eq!(
+        session.enqueue_subagent_notification("stalled".to_string(), 7, "stall".to_string(), false),
+        NotificationEnqueueOutcome::Retained,
+        "the same sequence must be deliverable after the queues drain"
     );
     assert_eq!(session.drain_pending().len(), 1);
+}
+
+// #1082 review round 2 (Low): if the dedupe watermark for an agent was evicted
+// at the MAX_DEDUPE_AGENTS cap, a stale (lower) sequence must not overwrite a
+// newer still-pending coalesced note — the pending note's own sequence guards.
+#[test]
+fn test_stale_sequence_cannot_overwrite_newer_pending_note() {
+    let mut session = AgentSession::new("m".to_string(), "k".to_string());
+    assert!(
+        session
+            .enqueue_subagent_notification("a".to_string(), 9, "newer".to_string(), true)
+            .is_retained()
+    );
+    // Simulate watermark eviction: bypass the map check by clearing it.
+    session.clear_subagent_notification_watermarks_for_test();
+    assert_eq!(
+        session.enqueue_subagent_notification("a".to_string(), 3, "older".to_string(), true),
+        NotificationEnqueueOutcome::Duplicate,
+        "a stale sequence must not replace a newer pending note"
+    );
+    let drained = session.drain_pending();
+    assert!(
+        matches!(
+            drained.first(),
+            Some(PendingMessage::SubagentNotification { sequence: 9, .. })
+        ),
+        "the newer note must survive"
+    );
 }

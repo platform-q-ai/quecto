@@ -42,10 +42,19 @@ fn retain_pending_stall(
         let tx = tx.clone();
         let agent_id = agent_id.to_string();
         handle.spawn(async move {
+            // Wait for capacity FIRST, without claiming (#1082 review round 2):
+            // while this task waits, a lifecycle event (agent_start,
+            // agent_error, workflow progress or completion) can still
+            // invalidate the retained stall by clearing `pending_stall`. Only
+            // once a send permit is in hand is the notification claimed — a
+            // failed claim means it was superseded or already delivered, and
+            // the permit is dropped unused. An Err from reserve means the
+            // receiver is gone (parent shutting down) and the alert is moot.
+            let Ok(permit) = tx.reserve().await else {
+                return;
+            };
             if claim_pending_stall(&registry, &agent_id, &notification) {
-                // Waits for capacity; an Err means the receiver is gone
-                // (parent shutting down) and the alert is moot.
-                let _ = tx.send(notification).await;
+                permit.send(notification);
             }
         });
     }
@@ -133,5 +142,35 @@ pub(super) fn take_completion_armed(registry: &SubagentRegistry, agent_id: &str)
             true
         }
         _ => false,
+    }
+}
+
+/// Classify a `workflow_idle` boundary event as a stall, if warranted (#1082
+/// review): only an `exhausted` boundary is intervention-worthy — an
+/// `explicit_abort` was requested by the parent and a `completed` workflow is
+/// handled by the completion path. A missing/unknown reason stays silent
+/// (fail-safe: no false alerts from divergent children).
+pub(super) fn classify_workflow_idle_stall(
+    registry: &SubagentRegistry,
+    notify_tx: Option<&NotificationTx>,
+    agent_id: &str,
+    sequence: u64,
+    value: &serde_json::Value,
+) {
+    if value.get("reason").and_then(|v| v.as_str()) != Some("exhausted") {
+        return;
+    }
+    let snapshot = take_stalled_snapshot(registry, agent_id);
+    if let (Some(tx), Some(workflow)) = (notify_tx, snapshot) {
+        let notification = super::subagent_registry::SequencedSubagentNotification::new(
+            sequence,
+            super::subagent_registry::SubagentNotification::Stalled {
+                agent_id: agent_id.to_string(),
+                workflow_mode: workflow.mode,
+                steps_completed: u64::from(workflow.steps_completed),
+                steps_total: u64::from(workflow.steps_total),
+            },
+        );
+        deliver_or_retain_stall(registry, tx, agent_id, notification);
     }
 }

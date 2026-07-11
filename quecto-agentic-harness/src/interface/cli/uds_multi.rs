@@ -366,13 +366,17 @@ async fn run_dispatch_loop(
                     // internally and returns whether this completion is new — so we
                     // don't also call `record_subagent_notification` (that would
                     // double-dedupe).
-                    let is_new = ctx.session.enqueue_subagent_notification(
+                    let outcome = ctx.session.enqueue_subagent_notification(
                         agent_id.clone(),
                         sequence,
                         notif.to_message(),
                         notif.is_completion(),
                     );
-                    if is_new {
+                    // #1082 review round 2: only a retained note is announced;
+                    // Duplicate means already delivered, Dropped means both
+                    // buffers are full — the sequence stays retryable and the
+                    // monitor-side retention re-delivers critical alerts.
+                    if outcome.is_retained() {
                         should_deliver = true;
                         let ev = AgentEvent::SubagentNotification {
                             agent_id: agent_id.clone(),

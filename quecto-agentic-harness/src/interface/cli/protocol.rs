@@ -290,8 +290,13 @@ pub enum AgentEvent {
     /// Emitted only after pending work and automatic workflow nudges settle.
     /// `reason` distinguishes intervention-worthy exhaustion from deliberate
     /// outcomes (explicit abort, completion) so supervisors don't raise a
-    /// stall alert for a stop they requested (#1082 review).
-    WorkflowIdle { reason: WorkflowIdleReason },
+    /// stall alert for a stop they requested (#1082 review). Optional for
+    /// wire back-compat: events from older producers deserialize with
+    /// `reason: None` and must never be classified as a stall.
+    WorkflowIdle {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<WorkflowIdleReason>,
+    },
     /// An incremental text token from the LLM during streaming.
     Token { token: String },
     /// A new LLM call begins.
@@ -382,7 +387,9 @@ pub enum AgentEvent {
 
 /// Why a `workflow_idle` boundary was reached (#1082 review). Only
 /// intervention-worthy reasons (`Exhausted`) should be classified as a stall
-/// by supervising monitors; deliberate stops must stay silent.
+/// by supervising monitors; deliberate stops must stay silent. `Unknown`
+/// absorbs reason strings from newer producers so typed deserialization
+/// never fails across versions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowIdleReason {
@@ -393,6 +400,10 @@ pub enum WorkflowIdleReason {
     ExplicitAbort,
     /// The bound workflow reached a terminal state (or no workflow is bound).
     Completed,
+    /// A reason this build does not recognize (newer producer). Never
+    /// classified as a stall.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Snapshot of a single subagent's state, used in `get_subagents` responses

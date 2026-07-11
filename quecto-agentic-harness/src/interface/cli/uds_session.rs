@@ -8,6 +8,10 @@ use super::protocol::{SessionState, SessionStats, TokenStats};
 // ─── Session state tracker ────────────────────────────────────────────────────
 
 /// In-memory state for an active UDS session.
+#[path = "uds_session_notify.rs"]
+mod uds_session_notify;
+pub use uds_session_notify::NotificationEnqueueOutcome;
+
 #[derive(Debug)]
 pub struct AgentSession {
     model: String,
@@ -20,6 +24,11 @@ pub struct AgentSession {
     /// `VecDeque` supports O(1) push_back (enqueue) and push_front (prepend/steer).
     pending: std::collections::VecDeque<PendingMessage>,
     last_subagent_notification: std::collections::HashMap<String, u64>,
+    /// Subagent notes that arrived while `pending` was full (#1082 review
+    /// round 2). Retained here — with their dedupe sequence recorded — and
+    /// appended by [`Self::drain_pending`], so supervision-critical notes
+    /// survive a saturated queue end-to-end instead of being dropped.
+    overflow_notifications: std::collections::VecDeque<PendingMessage>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -193,6 +202,7 @@ impl AgentSession {
             context_tokens: 0,
             pending: std::collections::VecDeque::new(),
             last_subagent_notification: std::collections::HashMap::new(),
+            overflow_notifications: std::collections::VecDeque::new(),
         }
     }
 
@@ -287,91 +297,6 @@ impl AgentSession {
         // Silently drop if the queue is full — caller already got a success ack.
     }
 
-    pub fn record_subagent_notification(&mut self, agent_id: String, sequence: u64) -> bool {
-        if self
-            .last_subagent_notification
-            .get(&agent_id)
-            .is_some_and(|last| sequence <= *last)
-        {
-            return false;
-        }
-        if self.last_subagent_notification.len() >= Self::MAX_DEDUPE_AGENTS
-            && !self.last_subagent_notification.contains_key(&agent_id)
-            && let Some(oldest) = self.last_subagent_notification.keys().next().cloned()
-        {
-            self.last_subagent_notification.remove(&oldest);
-        }
-        self.last_subagent_notification.insert(agent_id, sequence);
-        true
-    }
-
-    /// Enqueue a subagent completion note for delivery at the parent's NEXT
-    /// idle boundary (#816). The note is buffered as a
-    /// [`PendingMessage::SubagentNotification`] so it is drained as a single
-    /// `role:"system"` turn by `drain_pending_and_nudge` — never injected into
-    /// an in-flight parent turn.
-    ///
-    /// Deduped per-agent via [`Self::record_subagent_notification`] (a stale or
-    /// repeated `sequence` is ignored). Multiple still-pending completions for
-    /// the SAME agent are coalesced into one note (the latest replaces the
-    /// earlier) so a noisy child does not cost N extra LLM turns. Returns `true`
-    /// if a new note was enqueued or coalesced, `false` if it was deduped as
-    /// stale OR dropped because the pending queue is full. In the full-queue
-    /// case the dedupe sequence is NOT advanced (#1082 review): the caller's
-    /// retry path (e.g. the monitor's retained-stall retry) can re-deliver the
-    /// same sequence later instead of it being permanently lost.
-    pub fn enqueue_subagent_notification(
-        &mut self,
-        agent_id: String,
-        sequence: u64,
-        content: String,
-        is_completion: bool,
-    ) -> bool {
-        // Dedupe against the monotonic per-agent sequence — the passive broadcast
-        // path also records completions, so a repeated/stale sequence is dropped
-        // and the note is injected exactly once. Peek-only here: the sequence is
-        // recorded only once the note is durably retained below.
-        if self
-            .last_subagent_notification
-            .get(&agent_id)
-            .is_some_and(|last| sequence <= *last)
-        {
-            return false;
-        }
-        // Coalesce: if a still-pending note for this same agent has not yet been
-        // drained, replace it in place (latest wins) instead of queuing a second
-        // turn — a noisy child must not cost N extra LLM turns.
-        if let Some(existing) = self.pending.iter_mut().find_map(|m| match m {
-            PendingMessage::SubagentNotification { agent_id: id, .. } if *id == agent_id => Some(m),
-            _ => None,
-        }) {
-            *existing = PendingMessage::subagent_notification(
-                agent_id.clone(),
-                sequence,
-                content,
-                is_completion,
-            );
-            self.record_subagent_notification(agent_id, sequence);
-            return true;
-        }
-        if self.pending.len() >= Self::MAX_PENDING {
-            // Full and not coalescible: the note is NOT retained, so do NOT
-            // advance the dedupe state — a supervision-critical alert (e.g. a
-            // stall) must remain retryable end-to-end, not just to the first
-            // internal queue (#1082 review).
-            return false;
-        }
-        self.pending
-            .push_back(PendingMessage::subagent_notification(
-                agent_id.clone(),
-                sequence,
-                content,
-                is_completion,
-            ));
-        self.record_subagent_notification(agent_id, sequence);
-        true
-    }
-
     /// Prepend a message to the front of the pending queue so it runs before
     /// any earlier-enqueued follow-ups.  Used by `steer` for interrupt semantics.
     /// O(1) with `VecDeque`, unlike `Vec::insert(0)`.
@@ -381,12 +306,23 @@ impl AgentSession {
         }
     }
 
+    /// Test-only: simulate dedupe-watermark eviction at the
+    /// `MAX_DEDUPE_AGENTS` cap (#1082 review round 2).
+    #[cfg(test)]
+    pub fn clear_subagent_notification_watermarks_for_test(&mut self) {
+        self.last_subagent_notification.clear();
+    }
+
     pub fn drain_pending(&mut self) -> Vec<PendingMessage> {
         // Vec::from(VecDeque) calls make_contiguous() then ptr::copy when the
         // deque's head != 0 — O(n) in the number of elements, same as the
         // previous .into_iter().collect().  Pending queue is capped at 64
         // entries so worst case is ~64 fat-pointer copies (~1.5 KiB).
-        Vec::from(std::mem::take(&mut self.pending))
+        let mut drained = Vec::from(std::mem::take(&mut self.pending));
+        // #1082 review round 2: notes retained under a full queue drain here
+        // too, so queue saturation delays but never loses them.
+        drained.extend(std::mem::take(&mut self.overflow_notifications));
+        drained
     }
 
     /// `effort` is the agent loop's effective level (`None` = provider

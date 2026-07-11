@@ -76,7 +76,9 @@ pub(super) fn workflow_progress_fingerprint(ctx: &DispatchCtx<'_>) -> Option<Str
 /// (#1082 review): `Completed` when no workflow is bound or the bound
 /// workflow reached a terminal state, `Exhausted` otherwise — the drain gave
 /// up (no-progress tolerance, nudge cap, or nothing runnable) with the
-/// workflow still unfinished, which is the only stall-worthy outcome.
+/// workflow still unfinished, which is the only stall-worthy outcome. A
+/// poisoned engine lock yields `Unknown` (not `Completed`): completion
+/// cannot be established, and misreporting it would mask the fault.
 pub(super) fn workflow_idle_reason(ctx: &DispatchCtx<'_>) -> super::protocol::WorkflowIdleReason {
     use super::protocol::WorkflowIdleReason;
     use crate::domain::workflow::WorkflowMode;
@@ -84,7 +86,7 @@ pub(super) fn workflow_idle_reason(ctx: &DispatchCtx<'_>) -> super::protocol::Wo
         return WorkflowIdleReason::Completed;
     };
     let Ok(engine) = ws.lock() else {
-        return WorkflowIdleReason::Completed;
+        return WorkflowIdleReason::Unknown;
     };
     match engine.mode() {
         WorkflowMode::Complete => WorkflowIdleReason::Completed,

@@ -117,12 +117,15 @@ async fn test_926_single_completion_drives_a_parent_turn() {
 
     // Idle parent receives one fresh completion note (the dispatch loop enqueues
     // this just before calling drain_pending_and_nudge).
-    let is_new = env.session.enqueue_subagent_notification(
-        "researcher".to_string(),
-        1,
-        "[subagent] Agent 'researcher' completed. Last output: all tests pass".to_string(),
-        true,
-    );
+    let is_new = env
+        .session
+        .enqueue_subagent_notification(
+            "researcher".to_string(),
+            1,
+            "[subagent] Agent 'researcher' completed. Last output: all tests pass".to_string(),
+            true,
+        )
+        .is_retained();
     assert!(
         is_new,
         "first completion must be new (would drive delivery)"

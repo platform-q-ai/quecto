@@ -383,7 +383,7 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
         emit_event_to_broadcast_or_writer(
             ctx,
             &AgentEvent::WorkflowIdle {
-                reason: super::protocol::WorkflowIdleReason::ExplicitAbort,
+                reason: Some(super::protocol::WorkflowIdleReason::ExplicitAbort),
             },
         )
         .await;
@@ -412,7 +412,7 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
             emit_event_to_broadcast_or_writer(
                 ctx,
                 &AgentEvent::WorkflowIdle {
-                    reason: super::protocol::WorkflowIdleReason::ExplicitAbort,
+                    reason: Some(super::protocol::WorkflowIdleReason::ExplicitAbort),
                 },
             )
             .await;
@@ -465,7 +465,13 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
         }
     }
     let reason = super::uds_workflow_nudge::workflow_idle_reason(ctx);
-    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::WorkflowIdle { reason }).await;
+    emit_event_to_broadcast_or_writer(
+        ctx,
+        &AgentEvent::WorkflowIdle {
+            reason: Some(reason),
+        },
+    )
+    .await;
 }
 
 async fn run_prompt_dispatch(
