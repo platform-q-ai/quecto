@@ -12,6 +12,35 @@ fn args(s: &str) -> Vec<String> {
     v
 }
 
+const ETXTBSY_SPAWN_RETRIES: usize = 10;
+const ETXTBSY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(10);
+
+async fn spawn_agent_program_retry_etxtbsy(
+    program: &str,
+    flags: &CliFlags,
+) -> Result<
+    (
+        PathBuf,
+        tokio::process::Child,
+        crate::infrastructure::child_watch::StderrTail,
+        Option<u8>,
+    ),
+    String,
+> {
+    for attempt in 0..=ETXTBSY_SPAWN_RETRIES {
+        match spawn_agent_program(program, flags).await {
+            Err(error)
+                if attempt < ETXTBSY_SPAWN_RETRIES
+                    && error.contains("Text file busy (os error 26)") =>
+            {
+                tokio::time::sleep(ETXTBSY_RETRY_DELAY).await;
+            }
+            result => return result,
+        }
+    }
+    unreachable!("bounded retry loop always returns on its final attempt")
+}
+
 fn tmp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "quecto-tui-clicov-{tag}-{}-{}",
@@ -204,9 +233,10 @@ async fn spawn_agent_wires_the_post_startup_stderr_drain() {
         .expect("mark script executable");
 
     let flags = parse_flags(&args(""));
-    let (path, mut child, tail, protocol) = spawn_agent_program(script.to_str().unwrap(), &flags)
-        .await
-        .expect("spawn fake agent");
+    let (path, mut child, tail, protocol) =
+        spawn_agent_program_retry_etxtbsy(script.to_str().unwrap(), &flags)
+            .await
+            .expect("spawn fake agent");
     assert_eq!(path, sock);
     // This fake agent announces no protocol line, so the spawn must report the
     // legacy (None) framing rather than inventing a version (#1059).
@@ -261,9 +291,10 @@ async fn spawn_agent_parses_the_protocol_version_announcement() {
         .expect("mark script executable");
 
     let flags = parse_flags(&args(""));
-    let (_path, mut child, _tail, protocol) = spawn_agent_program(script.to_str().unwrap(), &flags)
-        .await
-        .expect("spawn fake agent");
+    let (_path, mut child, _tail, protocol) =
+        spawn_agent_program_retry_etxtbsy(script.to_str().unwrap(), &flags)
+            .await
+            .expect("spawn fake agent");
     assert_eq!(
         protocol,
         Some(quecto_line_io::PROTOCOL_VERSION),
