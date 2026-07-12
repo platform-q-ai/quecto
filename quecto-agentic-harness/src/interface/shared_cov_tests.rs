@@ -110,6 +110,19 @@ async fn make_oauth_refresh_fn_errors_when_no_oauth_config() {
     assert!(err.to_string().contains("no OAuth config"), "got: {err}");
 }
 
+#[test]
+fn xai_has_oauth_config_for_refresh_dispatch() {
+    // PR #1087: guards the dispatch precondition in make_oauth_refresh_fn —
+    // for_provider("xai") must exist and point at the xAI token endpoint, or
+    // the closure would fall into the "no OAuth config" branch before ever
+    // reaching the refresh_xai_token arm. Kept network-free for CI
+    // determinism; the token exchange/refresh wire behaviour is covered by
+    // oauth_xai_tests.rs against a mock server.
+    let config = crate::infrastructure::auth::oauth::OAuthConfig::for_provider("xai").unwrap();
+    assert_eq!(config.token_url, "https://auth.x.ai/oauth2/token");
+    assert!(!config.client_id.is_empty());
+}
+
 // --- make_provider_factory ---
 
 #[test]

@@ -88,6 +88,9 @@ async fn test_exchange_xai_code_success() {
         .and(body_string_contains(
             "client_id=b1a00492-073a-47ea-816f-4c329264a828",
         ))
+        .and(body_string_contains(
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A56121%2Fcallback",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "access_token": "at-1",
             "refresh_token": "rt-1",
@@ -229,6 +232,38 @@ fn test_parse_loopback_redirect_rejects_non_loopback() {
     assert!(parse_loopback_redirect("https://127.0.0.1:56121/callback").is_err());
 }
 
+#[test]
+fn test_parse_loopback_redirect_supports_ipv6() {
+    // Regression (PR #1087 follow-up): the old manual `:`-split parser made
+    // the [::1] branch unreachable. With url::Url it must work.
+    let (addr, path) = parse_loopback_redirect("http://[::1]:56121/callback").unwrap();
+    assert_eq!(addr, "[::1]:56121");
+    assert_eq!(path, "/callback");
+    // And the bind address must parse as a real SocketAddr.
+    assert!(addr.parse::<std::net::SocketAddr>().is_ok());
+}
+
+#[test]
+fn test_parse_loopback_redirect_supports_localhost() {
+    let (addr, path) = parse_loopback_redirect("http://localhost:1455/auth/callback").unwrap();
+    assert_eq!(addr, "localhost:1455");
+    assert_eq!(path, "/auth/callback");
+}
+
+#[test]
+fn test_parse_loopback_redirect_rejects_lookalike_host() {
+    // A subdomain that merely *contains* a loopback label must be rejected.
+    assert!(parse_loopback_redirect("http://127.0.0.1.attacker.example:80/callback").is_err());
+    assert!(parse_loopback_redirect("http://notlocalhost:1455/callback").is_err());
+}
+
+#[test]
+fn test_parse_loopback_redirect_rejects_malformed() {
+    assert!(parse_loopback_redirect("not a url").is_err());
+    // Missing port -> we cannot bind a listener deterministically.
+    assert!(parse_loopback_redirect("http://127.0.0.1/callback").is_err());
+}
+
 // --- Callback listener (wait_for_oauth_callback_at) ---
 
 /// Bind an ephemeral port and return (addr, join-handle resolving to the result).
@@ -251,12 +286,18 @@ fn spawn_listener(
 
 async fn send_request(addr: &str, target: &str) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = loop {
+    // Bounded retry: never hang CI if the listener lost the bind race.
+    let mut stream = None;
+    for _ in 0..200 {
         match tokio::net::TcpStream::connect(addr).await {
-            Ok(s) => break s,
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
             Err(_) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
         }
-    };
+    }
+    let mut stream = stream.expect("listener never became connectable");
     stream
         .write_all(format!("GET {} HTTP/1.1\r\nHost: x\r\n\r\n", target).as_bytes())
         .await

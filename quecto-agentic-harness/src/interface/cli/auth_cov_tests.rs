@@ -90,6 +90,65 @@ fn test_extract_code_empty_is_none() {
     assert_eq!(extract_code_from_input(""), None);
 }
 
+// --- fallback_state_rejection (PR #1087 follow-up) ---
+
+#[test]
+fn test_fallback_state_bare_code_accepted_without_state() {
+    // A bare code (no query string) cannot carry state and stays supported.
+    assert_eq!(fallback_state_rejection("ABC123", Some("expected")), None);
+}
+
+#[test]
+fn test_fallback_state_matching_url_accepted() {
+    let url = "http://127.0.0.1:56121/callback?code=ABC&state=expected";
+    assert_eq!(fallback_state_rejection(url, Some("expected")), None);
+}
+
+#[test]
+fn test_fallback_state_mismatch_url_rejected() {
+    let url = "http://127.0.0.1:56121/callback?code=ABC&state=wrong";
+    let reason = fallback_state_rejection(url, Some("expected")).unwrap();
+    assert!(reason.contains("mismatch"), "got: {}", reason);
+}
+
+#[test]
+fn test_fallback_state_url_without_state_rejected() {
+    // Regression: URL-shaped input with no state must NOT slip through.
+    let url = "http://127.0.0.1:56121/callback?code=ABC";
+    let reason = fallback_state_rejection(url, Some("expected")).unwrap();
+    assert!(reason.contains("missing the state"), "got: {}", reason);
+}
+
+#[test]
+fn test_fallback_state_url_with_empty_state_rejected() {
+    let url = "http://127.0.0.1:56121/callback?code=ABC&state=";
+    // Empty state is treated as absent -> rejected.
+    assert!(fallback_state_rejection(url, Some("expected")).is_some());
+}
+
+#[test]
+fn test_fallback_state_query_fragment_enforced() {
+    // A bare query fragment (starts with `?`) is also URL-shaped.
+    assert!(fallback_state_rejection("?code=ABC", Some("expected")).is_some());
+    assert_eq!(
+        fallback_state_rejection("?code=ABC&state=expected", Some("expected")),
+        None
+    );
+}
+
+#[test]
+fn test_fallback_state_url_decodes_before_compare() {
+    // state=exp%2Bected decodes to exp+ected and must match.
+    let url = "http://127.0.0.1:56121/callback?code=ABC&state=exp%2Bected";
+    assert_eq!(fallback_state_rejection(url, Some("exp+ected")), None);
+}
+
+#[test]
+fn test_fallback_state_no_expected_is_noop() {
+    // When no expected state is provided, nothing is enforced.
+    assert_eq!(fallback_state_rejection("?code=ABC", None), None);
+}
+
 #[test]
 fn test_capitalize() {
     assert_eq!(capitalize("openai"), "Openai");

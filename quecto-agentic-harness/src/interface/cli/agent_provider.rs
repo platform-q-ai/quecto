@@ -509,3 +509,7 @@ fn build_single_provider(
     providers::create_provider_with_client(name, api_key.to_string(), base, http_client.clone())
         .map_err(|e| format!("{} provider configuration error: {}", name, e))
 }
+
+#[cfg(test)]
+#[path = "agent_provider_xai_tests.rs"]
+mod xai_tests;

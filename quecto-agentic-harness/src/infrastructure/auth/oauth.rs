@@ -417,27 +417,52 @@ pub async fn refresh_xai_token(
 /// Parse a loopback redirect URI (e.g. `http://127.0.0.1:56121/callback`)
 /// into a bind address and exact callback path for the local listener.
 ///
-/// Rejects non-http schemes and non-loopback hosts: the local callback
-/// listener must never be derived from a URI pointing elsewhere.
+/// Uses a full URL parser so authority syntax, ports, bracketed IPv6, and
+/// path extraction are all handled correctly. Rejects non-http schemes and
+/// non-loopback hosts: the local callback listener must never be derived
+/// from a URI pointing elsewhere.
 pub fn parse_loopback_redirect(redirect_uri: &str) -> Result<(String, String), DomainError> {
-    let rest = redirect_uri.strip_prefix("http://").ok_or_else(|| {
-        DomainError::Provider(format!(
-            "redirect URI must be http:// loopback: {}",
+    let url = reqwest::Url::parse(redirect_uri)
+        .map_err(|e| DomainError::Provider(format!("invalid redirect URI: {}", e)))?;
+
+    if url.scheme() != "http" {
+        return Err(DomainError::Provider(format!(
+            "redirect URI must use http:// (loopback): {}",
             redirect_uri
-        ))
+        )));
+    }
+
+    let host = url.host_str().ok_or_else(|| {
+        DomainError::Provider(format!("redirect URI has no host: {}", redirect_uri))
     })?;
-    let (host_port, path) = match rest.find('/') {
-        Some(idx) => (&rest[..idx], &rest[idx..]),
-        None => (rest, "/"),
-    };
-    let host = host_port.split(':').next().unwrap_or("");
-    if host != "127.0.0.1" && host != "localhost" && host != "[::1]" {
+
+    // `host_str()` yields the bare address; strip IPv6 brackets if any.
+    let bare_host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    let is_loopback = bare_host == "localhost"
+        || bare_host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false);
+    if !is_loopback {
         return Err(DomainError::Provider(format!(
             "redirect URI host is not loopback: {}",
             redirect_uri
         )));
     }
-    Ok((host_port.to_string(), path.to_string()))
+
+    let port = url.port().ok_or_else(|| {
+        DomainError::Provider(format!("redirect URI has no port: {}", redirect_uri))
+    })?;
+    // Bind address keeps IPv6 brackets so it parses as a SocketAddr.
+    let addr = format!("{}:{}", host, port);
+
+    let path = url.path();
+    let path = if path.is_empty() { "/" } else { path };
+
+    Ok((addr, path.to_string()))
 }
 
 /// Start a local HTTP server to receive the OAuth callback and return the authorization code.
@@ -619,12 +644,28 @@ pub fn extract_openai_account_id(token: &str) -> Option<String> {
 ///
 /// Per RFC 6749 §5.1, `refresh_token` is OPTIONAL. Some servers omit it
 /// in refresh responses, meaning "keep using the old refresh token."
-#[derive(Debug, Deserialize)]
+///
+/// `Debug` is implemented manually to redact the bearer/refresh tokens so
+/// they can never leak into logs or error output (PR #1087 review).
+#[derive(Deserialize)]
 pub struct OAuthTokenResponse {
     pub access_token: String,
     #[serde(default)]
     pub refresh_token: Option<String>,
     pub expires_in: u64,
+}
+
+impl std::fmt::Debug for OAuthTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthTokenResponse")
+            .field("access_token", &"<redacted>")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("expires_in", &self.expires_in)
+            .finish()
+    }
 }
 
 /// Response from a device code grant request.

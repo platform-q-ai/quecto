@@ -369,9 +369,10 @@ fn cmd_auth_login_openai_oauth(
 /// Fallback: prompt user to paste code when callback fails.
 ///
 /// When `expected_state` is provided and the pasted input is a redirect URL
-/// or query fragment carrying a `state` parameter, the state must match or
-/// the input is rejected (PR #1087 review). Bare authorization codes cannot
-/// carry state and are accepted as-is (some providers display a bare code).
+/// or query fragment (i.e. it carries a query string), it MUST carry a
+/// `state` parameter that matches `expected_state`; otherwise the input is
+/// rejected (PR #1087 review). Bare authorization codes cannot carry state
+/// and are accepted as-is, because some providers display a bare code.
 pub(crate) fn extract_fallback_code(
     ctx: &CliContext,
     err: crate::domain::error::DomainError,
@@ -386,14 +387,9 @@ pub(crate) fn extract_fallback_code(
     match read_stdin_line(ctx) {
         Ok(line) => {
             let line = line.trim().to_string();
-            if let (Some(expected), Some(state)) =
-                (expected_state, extract_param_from_input(&line, "state"))
-            {
-                if state != expected {
-                    out.stderr
-                        .push_str("auth login: state mismatch in pasted redirect URL\n");
-                    return None;
-                }
+            if let Some(reason) = fallback_state_rejection(&line, expected_state) {
+                out.stderr.push_str(&format!("auth login: {}\n", reason));
+                return None;
             }
             let code = extract_code_from_input(&line);
             if code.is_none() {
@@ -406,6 +402,25 @@ pub(crate) fn extract_fallback_code(
             out.stderr.push_str(&format!("auth login: {}\n", e));
             None
         }
+    }
+}
+
+/// Returns `Some(reason)` when pasted `input` must be rejected on state
+/// grounds, or `None` when it is acceptable.
+///
+/// URL/query-shaped input (anything containing `?`) is required to carry a
+/// non-empty `state` matching `expected`. Bare codes (no query string) are
+/// exempt because they cannot carry state.
+fn fallback_state_rejection(input: &str, expected: Option<&str>) -> Option<String> {
+    let expected = expected?;
+    // Only enforce for URL/query-shaped input; a bare code has no `?`.
+    if !input.contains('?') {
+        return None;
+    }
+    match extract_param_from_input(input, "state") {
+        Some(state) if state == expected => None,
+        Some(_) => Some("state mismatch in pasted redirect URL".to_string()),
+        None => Some("pasted redirect URL is missing the state parameter".to_string()),
     }
 }
 
