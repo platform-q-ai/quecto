@@ -274,7 +274,7 @@ fn test_auth_login_bare_prompts_provider_choice() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
-        stdin_data: Some("3\n".to_string()), // invalid choice
+        stdin_data: Some("4\n".to_string()), // invalid choice
         ..Default::default()
     };
     let out = run_with_output(args("auth login"), &ctx);

@@ -90,6 +90,65 @@ fn test_extract_code_empty_is_none() {
     assert_eq!(extract_code_from_input(""), None);
 }
 
+// --- fallback_state_rejection (PR #1087 follow-up) ---
+
+#[test]
+fn test_fallback_state_bare_code_accepted_without_state() {
+    // A bare code (no query string) cannot carry state and stays supported.
+    assert_eq!(fallback_state_rejection("ABC123", Some("expected")), None);
+}
+
+#[test]
+fn test_fallback_state_matching_url_accepted() {
+    let url = "http://127.0.0.1:56121/callback?code=ABC&state=expected";
+    assert_eq!(fallback_state_rejection(url, Some("expected")), None);
+}
+
+#[test]
+fn test_fallback_state_mismatch_url_rejected() {
+    let url = "http://127.0.0.1:56121/callback?code=ABC&state=wrong";
+    let reason = fallback_state_rejection(url, Some("expected")).unwrap();
+    assert!(reason.contains("mismatch"), "got: {}", reason);
+}
+
+#[test]
+fn test_fallback_state_url_without_state_rejected() {
+    // Regression: URL-shaped input with no state must NOT slip through.
+    let url = "http://127.0.0.1:56121/callback?code=ABC";
+    let reason = fallback_state_rejection(url, Some("expected")).unwrap();
+    assert!(reason.contains("missing the state"), "got: {}", reason);
+}
+
+#[test]
+fn test_fallback_state_url_with_empty_state_rejected() {
+    let url = "http://127.0.0.1:56121/callback?code=ABC&state=";
+    // Empty state is treated as absent -> rejected.
+    assert!(fallback_state_rejection(url, Some("expected")).is_some());
+}
+
+#[test]
+fn test_fallback_state_query_fragment_enforced() {
+    // A bare query fragment (starts with `?`) is also URL-shaped.
+    assert!(fallback_state_rejection("?code=ABC", Some("expected")).is_some());
+    assert_eq!(
+        fallback_state_rejection("?code=ABC&state=expected", Some("expected")),
+        None
+    );
+}
+
+#[test]
+fn test_fallback_state_url_decodes_before_compare() {
+    // state=exp%2Bected decodes to exp+ected and must match.
+    let url = "http://127.0.0.1:56121/callback?code=ABC&state=exp%2Bected";
+    assert_eq!(fallback_state_rejection(url, Some("exp+ected")), None);
+}
+
+#[test]
+fn test_fallback_state_no_expected_is_noop() {
+    // When no expected state is provided, nothing is enforced.
+    assert_eq!(fallback_state_rejection("?code=ABC", None), None);
+}
+
 #[test]
 fn test_capitalize() {
     assert_eq!(capitalize("openai"), "Openai");
@@ -191,6 +250,54 @@ fn test_anthropic_oauth_login_exchange_failure() {
     let out = run_with_output(args("auth login --provider anthropic --oauth"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(out.stderr.contains("token exchange failed"));
+}
+
+// --- xAI (Grok) OAuth login flow (PR #1087) ---
+
+#[test]
+fn test_xai_oauth_login_success() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let uri = leak_mock(
+        "/oauth/token",
+        200,
+        serde_json::json!({
+            "access_token": "xai-access-token",
+            "refresh_token": "xai-refresh-token",
+            "expires_in": 3600
+        }),
+    );
+    let ctx = oauth_ctx(tmp.path(), uri, "the-code\n");
+    let out = run_with_output(args("auth login --provider xai --oauth"), &ctx);
+    assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
+
+    let store = CredentialStore::new(tmp.path());
+    let cred = store.get("xai").unwrap().unwrap();
+    assert_eq!(cred.token, "xai-access-token");
+    assert!(cred.account_id.is_none());
+}
+
+#[test]
+fn test_xai_oauth_login_exchange_failure() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let uri = leak_mock("/oauth/token", 401, serde_json::json!("invalid_grant"));
+    let ctx = oauth_ctx(tmp.path(), uri, "the-code\n");
+    let out = run_with_output(args("auth login --provider xai --oauth"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(out.stderr.contains("token exchange failed"));
+}
+
+#[test]
+fn test_xai_device_code_rejected() {
+    // xAI deliberately has no device_code_url: the command must refuse
+    // rather than print a code and exit 0 without logging in.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("auth login --provider xai --device-code"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(out.stderr.contains("not supported"));
 }
 
 // --- Device-code login flow ---

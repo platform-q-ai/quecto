@@ -1,11 +1,14 @@
 #[path = "auth_import.rs"]
 pub(crate) mod auth_import;
 
+#[path = "auth_xai.rs"]
+pub(crate) mod auth_xai;
+
 use super::CliContext;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 
 /// Known provider names accepted by the auth commands.
-const KNOWN_PROVIDERS: &[&str] = &["openai", "anthropic"];
+const KNOWN_PROVIDERS: &[&str] = &["openai", "anthropic", "xai"];
 
 /// Bundled output streams for auth subcommands.
 pub(crate) struct Output<'a> {
@@ -187,7 +190,7 @@ fn resolve_provider_interactive(
         None => {
             out.stdout.push_str(
                 "Choose a provider:\n  1) Anthropic (Claude Pro/Max — OAuth)\n  \
-                 2) OpenAI (OAuth)\n\nEnter 1 or 2: ",
+                 2) OpenAI (OAuth)\n  3) xAI (SuperGrok / X Premium+ — OAuth)\n\nEnter 1, 2 or 3: ",
             );
             flush_stdout(ctx, out);
             let choice = match read_stdin_line(ctx) {
@@ -200,6 +203,7 @@ fn resolve_provider_interactive(
             match choice.as_str() {
                 "1" | "anthropic" => Some("anthropic".to_string()),
                 "2" | "openai" => Some("openai".to_string()),
+                "3" | "xai" | "grok" => Some("xai".to_string()),
                 _ => {
                     out.stderr
                         .push_str(&format!("auth login: invalid choice '{}'\n", choice));
@@ -226,7 +230,7 @@ pub(crate) fn read_stdin_line(ctx: &CliContext) -> Result<String, String> {
 /// Flush buffered stdout text to the terminal immediately (for interactive prompts).
 /// In test mode (when `stdin_data` is set), we skip the flush to preserve output
 /// in the buffer for assertions.
-fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
+pub(crate) fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
     if ctx.stdin_data.is_some() || out.stdout.is_empty() {
         return;
     }
@@ -276,6 +280,10 @@ fn cmd_auth_login_oauth(ctx: &CliContext, provider: &str, out: &mut Output<'_>) 
         return cmd_auth_login_openai_oauth(ctx, &config, out);
     }
 
+    if provider == "xai" {
+        return auth_xai::cmd_auth_login_xai_oauth(ctx, &config, out);
+    }
+
     out.stdout.push_str(&format!(
         "Open this URL in your browser:\n{}\n\nWaiting for authorization...\n",
         config.authorization_url
@@ -321,14 +329,14 @@ fn cmd_auth_login_openai_oauth(
         let err = crate::domain::error::DomainError::Provider(
             "browser callback skipped in test mode".into(),
         );
-        match extract_fallback_code(ctx, err, out) {
+        match extract_fallback_code(ctx, err, Some(&state), out) {
             Some(code) => code,
             None => return 1,
         }
     } else {
         match rt.block_on(wait_for_oauth_callback(&state, 300)) {
             Ok(code) => code,
-            Err(e) => match extract_fallback_code(ctx, e, out) {
+            Err(e) => match extract_fallback_code(ctx, e, Some(&state), out) {
                 Some(code) => code,
                 None => return 1,
             },
@@ -359,9 +367,16 @@ fn cmd_auth_login_openai_oauth(
 }
 
 /// Fallback: prompt user to paste code when callback fails.
-fn extract_fallback_code(
+///
+/// When `expected_state` is provided and the pasted input is a redirect URL
+/// or query fragment (i.e. it carries a query string), it MUST carry a
+/// `state` parameter that matches `expected_state`; otherwise the input is
+/// rejected (PR #1087 review). Bare authorization codes cannot carry state
+/// and are accepted as-is, because some providers display a bare code.
+pub(crate) fn extract_fallback_code(
     ctx: &CliContext,
     err: crate::domain::error::DomainError,
+    expected_state: Option<&str>,
     out: &mut Output<'_>,
 ) -> Option<String> {
     out.stdout.push_str(&format!(
@@ -372,6 +387,10 @@ fn extract_fallback_code(
     match read_stdin_line(ctx) {
         Ok(line) => {
             let line = line.trim().to_string();
+            if let Some(reason) = fallback_state_rejection(&line, expected_state) {
+                out.stderr.push_str(&format!("auth login: {}\n", reason));
+                return None;
+            }
             let code = extract_code_from_input(&line);
             if code.is_none() {
                 out.stderr
@@ -386,15 +405,34 @@ fn extract_fallback_code(
     }
 }
 
+/// Returns `Some(reason)` when pasted `input` must be rejected on state
+/// grounds, or `None` when it is acceptable.
+///
+/// URL/query-shaped input (anything containing `?`) is required to carry a
+/// non-empty `state` matching `expected`. Bare codes (no query string) are
+/// exempt because they cannot carry state.
+fn fallback_state_rejection(input: &str, expected: Option<&str>) -> Option<String> {
+    let expected = expected?;
+    // Only enforce for URL/query-shaped input; a bare code has no `?`.
+    if !input.contains('?') {
+        return None;
+    }
+    match extract_param_from_input(input, "state") {
+        Some(state) if state == expected => None,
+        Some(_) => Some("state mismatch in pasted redirect URL".to_string()),
+        None => Some("pasted redirect URL is missing the state parameter".to_string()),
+    }
+}
+
 /// Parameters for storing an OAuth credential.
-struct OAuthStoreParams {
-    provider: String,
-    account_id: Option<String>,
-    expires_at: i64,
+pub(crate) struct OAuthStoreParams {
+    pub(crate) provider: String,
+    pub(crate) account_id: Option<String>,
+    pub(crate) expires_at: i64,
 }
 
 /// Store an OAuth credential after a successful token exchange.
-fn store_oauth_credential(
+pub(crate) fn store_oauth_credential(
     ctx: &CliContext,
     params: OAuthStoreParams,
     token_resp: &crate::infrastructure::auth::oauth::OAuthTokenResponse,
@@ -436,13 +474,8 @@ fn capitalize(s: &str) -> String {
 fn extract_code_from_input(input: &str) -> Option<String> {
     // Try as URL: http://localhost:1455/auth/callback?code=<code>&state=<state>
     if input.contains("code=") {
-        let query = input.split('?').nth(1).unwrap_or(input);
-        for param in query.split('&') {
-            if let Some(code) = param.strip_prefix("code=") {
-                if !code.is_empty() {
-                    return Some(code.to_string());
-                }
-            }
+        if let Some(code) = extract_param_from_input(input, "code") {
+            return Some(code);
         }
     }
     if !input.is_empty() {
@@ -450,6 +483,24 @@ fn extract_code_from_input(input: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Extract a URL-decoded query parameter from a pasted URL or query string.
+fn extract_param_from_input(input: &str, name: &str) -> Option<String> {
+    let query = input.split('?').nth(1).unwrap_or(input);
+    let prefix = format!("{}=", name);
+    for param in query.split('&') {
+        if let Some(value) = param.strip_prefix(prefix.as_str()) {
+            if !value.is_empty() {
+                return Some(
+                    urlencoding::decode(value)
+                        .map(|v| v.into_owned())
+                        .unwrap_or_else(|_| value.to_string()),
+                );
+            }
+        }
+    }
+    None
 }
 
 /// Anthropic OAuth login: PKCE + browser + paste authorization code.

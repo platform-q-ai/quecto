@@ -316,6 +316,13 @@ fn oauth_registry_base_url(
             "https://api.openai.com/v1",
         )
         .map(Some),
+        (ProviderApi::OpenAiCompletions, "xai") => validate_oauth_base_url(
+            &model.provider,
+            oauth_provider,
+            configured,
+            "https://api.x.ai/v1",
+        )
+        .map(Some),
         (ProviderApi::AnthropicMessages, "anthropic") => validate_oauth_base_url(
             &model.provider,
             oauth_provider,
@@ -502,3 +509,7 @@ fn build_single_provider(
     providers::create_provider_with_client(name, api_key.to_string(), base, http_client.clone())
         .map_err(|e| format!("{} provider configuration error: {}", name, e))
 }
+
+#[cfg(test)]
+#[path = "agent_provider_xai_tests.rs"]
+mod xai_tests;

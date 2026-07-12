@@ -281,6 +281,13 @@ pub async fn resolve_api_key_with_refresh_async_with_oauth_config(
                         )
                         .await
                     }
+                    "xai" => {
+                        crate::infrastructure::auth::oauth::refresh_xai_token(
+                            oauth_config,
+                            refresh_token,
+                        )
+                        .await
+                    }
                     _ => {
                         crate::infrastructure::auth::oauth::refresh_anthropic_token(
                             oauth_config,
@@ -434,6 +441,13 @@ pub fn make_oauth_refresh_fn() -> crate::infrastructure::providers::refreshable:
             let refresh_result = match provider_name.as_str() {
                 "openai" => {
                     crate::infrastructure::auth::oauth::refresh_openai_token(
+                        &oauth_config,
+                        refresh_token,
+                    )
+                    .await
+                }
+                "xai" => {
+                    crate::infrastructure::auth::oauth::refresh_xai_token(
                         &oauth_config,
                         refresh_token,
                     )
