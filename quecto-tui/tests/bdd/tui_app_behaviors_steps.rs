@@ -885,6 +885,229 @@ fn then_model_selector_visible(world: &mut TuiWorld) {
     );
 }
 
+// ── Model routing to focused sub-agent (#1085) ─────────────────────────
+
+#[given(expr = "the master uses model {string}")]
+fn given_master_uses_model(world: &mut TuiWorld, model: String) {
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("gs-master".into()),
+            command: "get_state".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "model": model,
+                "effort": "medium",
+                "effortLevels": ["none", "low", "medium", "high", "xhigh"],
+                "maxContextTokens": 100_000,
+            })),
+            error: None,
+        });
+    });
+}
+
+#[given(expr = "a TUI viewing sub-agent {string} without a ready connection")]
+fn given_viewing_subagent_without_ready_connection(world: &mut TuiWorld, id: String) {
+    // Select a tracked sub-agent that has no socket path so connect-on-select
+    // never installs `active_cmd_tx` — the same not-ready path as effort (#1084).
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let mut h = rt.block_on(async {
+        let mut h = TuiHarness::new().await;
+        h.event(Event::AgentStart);
+        h.event(quecto_tui::interface::app::tui_harness::spawn_start(&id));
+        h.event(quecto_tui::interface::app::tui_harness::subagents_changed(
+            vec![quecto_tui::interface::app::tui_harness::subagent(
+                &id, "idle", None,
+            )],
+        ));
+        h.select(Some(&id));
+        h
+    });
+    h.try_drain_commands();
+    world.tui_parity_rt = Some(rt);
+    world.tui_parity = Some(TuiParityHarness(h));
+    world.tui_subagent_commands = None;
+    world.tui_viewed_agent = Some(id);
+    world.tui_last_commands.clear();
+}
+
+#[when(expr = "I choose model {string} from the model selector")]
+fn when_choose_model_from_selector(world: &mut TuiWorld, model: String) {
+    drive(world, |h| {
+        h.press(Key::Ctrl('l'));
+    });
+    let list_cmds = drain_commands(world);
+    let request = command_of_type(&list_cmds, "list_models")
+        .unwrap_or_else(|| panic!("model selector should request list_models, got {list_cmds:?}"));
+    let id = json_field(request, "id");
+    drive(world, |h| {
+        h.event(Event::Response {
+            id,
+            command: "list_models".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "models": [
+                    { "id": model, "provider": "Test", "auth": "api" }
+                ]
+            })),
+            error: None,
+        });
+        for ch in model.chars() {
+            h.press(Key::Char(ch));
+        }
+        h.press(Key::Enter);
+    });
+    world.tui_last_commands = drive(world, |h| h.try_drain_commands());
+}
+
+#[when(expr = "sub-agent {string} acknowledges and reports model {string}")]
+fn when_subagent_acknowledges_and_reports_model(world: &mut TuiWorld, id: String, model: String) {
+    // Production set_model acks with data: None (uds.rs AgentEvent::ok). The
+    // TUI then requests get_state; that authoritative response, not the bare
+    // acknowledgement, updates the focused session's footer and selector.
+    drive(world, |h| {
+        h.route(
+            &id,
+            Event::Response {
+                id: Some("sm".into()),
+                command: "set_model".into(),
+                success: true,
+                data: None,
+                error: None,
+            },
+        );
+        h.route(
+            &id,
+            Event::Response {
+                id: Some("resync".into()),
+                command: "get_state".into(),
+                success: true,
+                data: Some(serde_json::json!({
+                    "model": model,
+                    "effort": "low",
+                    "effortLevels": ["low", "medium", "high", "max"],
+                })),
+                error: None,
+            },
+        );
+    });
+}
+
+#[when(expr = "a master model switch succeeds for {string}")]
+fn when_master_model_switch_succeeds(world: &mut TuiWorld, model: String) {
+    // Late master-stream set_model success while a child is focused — must not
+    // clobber the focused child's displayed model/footer (#1085).
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("sm-master".into()),
+            command: "set_model".into(),
+            success: true,
+            data: Some(serde_json::json!({ "model": model })),
+            error: None,
+        });
+    });
+}
+
+fn drain_subagent_commands_of_type(world: &mut TuiWorld, ty: &str) -> Vec<String> {
+    let handle = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("harness runtime")
+        .handle()
+        .clone();
+    let rx = world
+        .tui_subagent_commands
+        .as_mut()
+        .expect("sub-agent command receiver");
+    let deadline = std::time::Duration::from_secs(2);
+    handle.block_on(async {
+        let mut commands = Vec::new();
+        loop {
+            match tokio::time::timeout(deadline, rx.recv()).await {
+                Ok(Some(line)) => {
+                    let is_expected = json_field(&line, "type").as_deref() == Some(ty);
+                    commands.push(line);
+                    if is_expected {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+        commands
+    })
+}
+
+#[then(expr = "sub-agent {string} receives model {string}")]
+fn then_subagent_receives_model(world: &mut TuiWorld, _id: String, model: String) {
+    // Observe-only: assert the child UDS received set_model. Acknowledgement
+    // is a separate When step when footer/post-ack behaviour is under test.
+    assert!(
+        command_of_type(&world.tui_last_commands, "set_model").is_none(),
+        "selected sub-agent model should use the child connection, not the master command stream: {:?}",
+        world.tui_last_commands
+    );
+    let commands = drain_subagent_commands_of_type(world, "set_model");
+    let cmd = command_of_type(&commands, "set_model")
+        .unwrap_or_else(|| panic!("expected sub-agent set_model command, got {commands:?}"));
+    assert_eq!(
+        json_field(cmd, "model").as_deref(),
+        Some(model.as_str()),
+        "sub-agent command should carry selected model: {cmd}"
+    );
+}
+
+#[then("no set model command is sent to the master")]
+fn then_no_set_model_command_to_master(world: &mut TuiWorld) {
+    assert!(
+        command_of_type(&world.tui_last_commands, "set_model").is_none(),
+        "master command stream should not receive set_model: {:?}",
+        world.tui_last_commands
+    );
+}
+
+#[then("no set model command is sent")]
+fn then_no_set_model_command_sent(world: &mut TuiWorld) {
+    let mut commands = world.tui_last_commands.clone();
+    commands.extend(drive(world, |h| h.try_drain_commands()));
+    world.tui_last_commands = commands;
+    assert!(
+        command_of_type(&world.tui_last_commands, "set_model").is_none(),
+        "no set_model command should be sent, got {:?}",
+        world.tui_last_commands
+    );
+}
+
+#[then(expr = "the footer shows the sub-agent model {string}")]
+fn then_footer_shows_subagent_model(world: &mut TuiWorld, model: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&model),
+        "selected sub-agent footer should show model {model:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "the master session still shows model {string}")]
+fn then_master_session_still_shows_model(world: &mut TuiWorld, model: String) {
+    // Probe the master's OWN session footer without switching focus: while a
+    // child is focused, `current_model` tracks the active (child) session for
+    // the selector marker, so only the master session footer is authoritative.
+    let footer = drive(world, |h| h.master_footer_text());
+    assert!(
+        footer.contains(&model),
+        "master session footer must still show model {model:?}, got:\n{footer}"
+    );
+}
+
+#[then(expr = "the app notification does not include {string}")]
+fn then_notification_does_not_include(world: &mut TuiWorld, unexpected: String) {
+    let messages = drive(world, |h| h.notification_messages());
+    assert!(
+        !messages.iter().any(|m| m.contains(&unexpected)),
+        "notification must not include {unexpected:?}, got: {messages:?}"
+    );
+}
+
 // ── TUI tool execution rendering (`tui_tool_execution_rendering.feature`) ──
 
 fn tool_start(tool_call_id: &str, tool_name: &str, args: serde_json::Value) -> Event {

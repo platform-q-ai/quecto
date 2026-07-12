@@ -38,13 +38,33 @@ pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
 }
 
 impl App {
+    /// Send `set_model` over the socket. When a sub-agent is focused, route
+    /// via its own UDS connection (mirrors `send_set_effort`, #1085). Child
+    /// display state remains authoritative: it updates only from the
+    /// post-success `get_state` resync, so a rejected switch keeps the
+    /// previously active model visible.
     pub(super) fn send_set_model(&mut self, model: &str) {
-        self.send_command(Command::SetModel {
+        let cmd = Command::SetModel {
             id: Some("sm".into()),
             model: Some(model.to_string()),
             provider: None,
             model_id: None,
-        });
+        };
+        if self.subagents.active_agent_id.is_some() {
+            if !self.send_to_active_subagent(cmd) {
+                self.notify(
+                    "Selected sub-agent is not ready for model changes yet",
+                    NotifyLevel::Error,
+                );
+                return;
+            }
+            // Unlike the master path below, do not update the focused child's
+            // footer or selector marker optimistically. The child's set_model
+            // acknowledgement has no model payload, so its follow-up get_state
+            // is the authoritative point at which both values change.
+            return;
+        }
+        self.send_command(cmd);
         self.master_session.footer.set_model(model);
         self.current_model = Some(model.to_string());
         self.context_stats_requested = false;

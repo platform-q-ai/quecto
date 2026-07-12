@@ -163,27 +163,24 @@ impl App {
         if new_active == self.subagents.active_agent_id {
             return;
         }
-        // Tear down the previous sub-agent connection, if any.
         self.teardown_active_connection();
         self.subagents.active_agent_id = new_active.clone();
         self.sync_panel_selection_to_active();
-
         let Some(id) = new_active else {
+            // Restore model/effort markers from master footer (#1085).
+            self.current_model = self.master_session.footer.known_model().map(str::to_string);
             self.current_effort = self.master_session.footer.effort().map(str::to_string);
             self.effort_levels.clear();
             self.send_state_resync();
             return;
         };
         self.ensure_session(&id);
-        self.current_effort = self
-            .subagents
-            .sessions
-            .get(&id)
-            .and_then(|session| session.footer.effort())
-            .map(str::to_string);
+        let f = self.subagents.sessions.get(&id).map(|s| &s.footer);
+        self.current_model = f.and_then(|f| f.known_model()).map(str::to_string);
+        self.current_effort = f.and_then(|f| f.effort()).map(str::to_string);
         self.effort_levels.clear();
-        self.seed_session_bar_from_snapshot(&id); // main-pane bar from snapshot (#913)
-        self.open_subagent_connection(&id); // commit, not highlight (#802)
+        self.seed_session_bar_from_snapshot(&id);
+        self.open_subagent_connection(&id);
     }
 
     /// Reconcile the active/pending session when the viewed sub-agent leaves

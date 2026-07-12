@@ -113,6 +113,51 @@ impl App {
                 }
                 return;
             }
+            if command == "set_model" {
+                if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
+                    let detail = error.as_deref().unwrap_or("unknown error");
+                    self.notify(
+                        &format!("Model switch failed: {detail}"),
+                        NotifyLevel::Error,
+                    );
+                }
+                return;
+            }
+        }
+        // Production set_model acks with `data: None` (uds.rs AgentEvent::ok
+        // with no payload). Match success independently of data so toast +
+        // child get_state resync always run (#1085 review).
+        if let Event::Response {
+            command,
+            success: true,
+            data,
+            ..
+        } = &ev
+        {
+            if command == "set_model" {
+                if let Some(model) = data
+                    .as_ref()
+                    .and_then(|d| d.get("model"))
+                    .and_then(|v| v.as_str())
+                    .map(crate::interface::ansi::sanitize_control)
+                {
+                    if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
+                        session.footer.set_model(&model);
+                    }
+                    if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
+                        self.current_model = Some(model);
+                    }
+                }
+                if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
+                    self.notify("Model switched", NotifyLevel::Success);
+                    // Re-sync on the child's own connection so effort vocabulary
+                    // tracks the new model (agent resets effort to low on switch).
+                    let _ = self.send_to_active_subagent(Command::GetState {
+                        id: Some("resync".into()),
+                    });
+                }
+                return;
+            }
         }
         if let Event::Response {
             command,
@@ -138,6 +183,13 @@ impl App {
                     Self::update_session_footer(session, &ev);
                 }
                 if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
+                    if let Some(model) = data
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .map(crate::interface::ansi::sanitize_control)
+                    {
+                        self.current_model = Some(model);
+                    }
                     self.current_effort = data
                         .get("effort")
                         .and_then(|v| v.as_str())

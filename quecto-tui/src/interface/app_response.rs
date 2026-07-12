@@ -10,13 +10,12 @@ impl App {
     ) {
         match command.as_str() {
             "get_state" if success => self.handle_get_state(data),
-            "set_model" if success => {
-                self.notify("Model switched", NotifyLevel::Success);
-                // A model switch can change the provider's effort vocabulary
-                // and context window — re-sync from the agent (#1067).
-                self.send_state_resync();
+            "set_model" if success => self.handle_set_model_success(data),
+            // Late master failure must not toast over a focused child (#1085).
+            "set_model" if self.subagents.active_agent_id.is_none() => {
+                self.notify_response_error("Model switch failed", error)
             }
-            "set_model" => self.notify_response_error("Model switch failed", error),
+            "set_model" => {}
             "set_effort" if success => self.handle_set_effort_success(data),
             "set_effort" => self.notify_response_error("Effort switch failed", error),
             "set_workflow_automation" if success => self.handle_workflow_automation(data),
@@ -87,15 +86,40 @@ impl App {
         }
     }
 
+    /// Apply a successful master-stream `set_model` response. When a child is
+    /// focused, only the master's retained footer may update — never toast or
+    /// clobber the focused child's displayed model (#1085, mirrors effort).
+    fn handle_set_model_success(&mut self, data: Option<serde_json::Value>) {
+        if let Some(model) = data
+            .as_ref()
+            .and_then(|d| d.get("model"))
+            .and_then(|v| v.as_str())
+            .map(crate::interface::ansi::sanitize_control)
+        {
+            self.master_session.footer.set_model(&model);
+            if self.subagents.active_agent_id.is_none() {
+                self.current_model = Some(model);
+            }
+        }
+        if self.subagents.active_agent_id.is_none() {
+            self.notify("Model switched", NotifyLevel::Success);
+            // A model switch can change the provider's effort vocabulary
+            // and context window — re-sync from the agent (#1067).
+            self.send_state_resync();
+        }
+    }
+
     fn handle_get_state(&mut self, data: Option<serde_json::Value>) {
         let Some(data) = data else { return };
         // Shared get_state→footer mapping (model + context-window); see #805.
+        // #1067/#1085: only mirror master model/effort into the active selector
+        // when the master is selected. A late master get_state must not
+        // overwrite a focused child's level/vocabulary/model.
         if let Some(model) = self.master_session.footer.apply_get_state(&data) {
-            self.current_model = Some(model);
+            if self.subagents.active_agent_id.is_none() {
+                self.current_model = Some(model);
+            }
         }
-        // #1067: only mirror master effort state into the active selector when
-        // the master is selected. A late master get_state must not overwrite a
-        // focused child's level/vocabulary.
         if self.subagents.active_agent_id.is_none() {
             self.current_effort = data
                 .get("effort")
