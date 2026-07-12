@@ -73,10 +73,13 @@ impl App {
                     if id.is_some() && id == self.rewind.pending_open_id {
                         self.rewind.pending_open_id = None;
                         self.open_rewind_selector(&data);
-                    } else if id.as_deref() == Some(ATTACH_BACKFILL_ID) {
-                        // Attach-time backfill: prepend prior history above any
-                        // live content already streamed; never wholesale-replace
-                        // (parity with sub-agent connect-on-select, #828/#1050).
+                    } else if id.as_deref() == Some(ATTACH_BACKFILL_ID) || id.is_none() {
+                        // Attach-time backfill (dedicated id) OR unsolicited
+                        // busy-connect snapshot (id-less, see uds_snapshots):
+                        // prepend + history_backfilled guard. Id-less must not
+                        // take wholesale replace — that never latches the guard,
+                        // so a later attach-backfill would double-apply history
+                        // on mid-turn `--socket` attach (#1050 review).
                         Self::reconcile_backfill_history(&mut self.master_session, &data);
                     } else {
                         self.replace_chat_with_messages(&data);

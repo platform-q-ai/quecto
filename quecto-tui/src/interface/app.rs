@@ -632,6 +632,9 @@ fn sanitize_agent_id(id: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "app_attach_backfill_tests.rs"]
+mod app_attach_backfill_tests;
+#[cfg(test)]
 #[path = "app_clipboard_tests.rs"]
 mod app_clipboard_tests;
 #[cfg(test)]
