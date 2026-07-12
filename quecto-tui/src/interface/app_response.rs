@@ -1,5 +1,21 @@
 use super::*;
+
+/// Request id for the master attach-time history backfill (#1050). Distinct from
+/// resume (`resume-messages`) and rewind (`rewind-open-*` / `rewind-refresh`) so
+/// `handle_response` can reconcile (prepend + guard) rather than wholesale-replace.
+pub(super) const ATTACH_BACKFILL_ID: &str = "attach-backfill";
+
 impl App {
+    /// Request durable master session history after connecting (including
+    /// `--socket` attach). Uses [`ATTACH_BACKFILL_ID`] so the response path
+    /// reuses the same prepend + `history_backfilled` reconcile as sub-agent
+    /// panes (#828 / #1050).
+    pub(crate) fn request_master_attach_backfill(&mut self) {
+        self.send_command(Command::GetMessages {
+            id: Some(ATTACH_BACKFILL_ID.into()),
+        });
+    }
+
     pub(super) fn handle_response(
         &mut self,
         id: Option<String>,
@@ -57,6 +73,16 @@ impl App {
                     if id.is_some() && id == self.rewind.pending_open_id {
                         self.rewind.pending_open_id = None;
                         self.open_rewind_selector(&data);
+                    } else if id.as_deref() == Some(ATTACH_BACKFILL_ID) || id.is_none() {
+                        // Attach-time backfill (dedicated id) OR unsolicited
+                        // busy-connect snapshot (id-less, see uds_snapshots):
+                        // prepend + guard. Id-less must not take wholesale
+                        // replace — that never latches the guard, so a later
+                        // attach-backfill would double-apply history on mid-turn
+                        // `--socket` attach. Trimmed snapshots do not latch
+                        // completion so a fuller backfill can still restore
+                        // omitted older history (#1050 review).
+                        Self::reconcile_backfill_history(&mut self.master_session, &data);
                     } else {
                         self.replace_chat_with_messages(&data);
                     }

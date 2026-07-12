@@ -235,6 +235,26 @@ impl Chat {
         // the async backfill lands (#828 review).
     }
 
+    /// Replace the first `old_len` history entries with `entries` (#1050). Used
+    /// when a complete attach-backfill supersedes a prior trimmed busy-connect
+    /// snapshot so the partial tail is not left duplicated under the fuller
+    /// prefix. Live content after the prefix is preserved.
+    pub fn replace_history_prefix(&mut self, old_len: usize, entries: Vec<ChatEntry>) {
+        let remove = old_len.min(self.entries.len());
+        let n = entries.len();
+        self.entries.splice(0..remove, entries);
+        if self.render_cache.len() >= remove {
+            self.render_cache
+                .splice(0..remove, std::iter::repeat_with(|| None).take(n));
+        } else {
+            self.render_cache.clear();
+            self.render_cache.resize(self.entries.len(), None);
+        }
+        // Prefix length changed; rebuild the incremental offset table fully.
+        self.combined_width = None;
+        // Bottom-relative scroll is unchanged for content below the prefix.
+    }
+
     pub fn set_viewport_height(&mut self, height: usize) {
         self.viewport_height = Some(height);
     }

@@ -379,11 +379,21 @@ impl App {
         }
     }
 
-    /// Reconcile a connect-on-select `get_messages` backfill into a session
-    /// (#828). The prior conversation is PREPENDED above whatever live content
-    /// already streamed (never a wholesale replace that drops live tokens), and
-    /// is applied at most once so a re-delivered backfill cannot duplicate it.
-    fn reconcile_backfill_history(session: &mut SessionView, data: &serde_json::Value) {
+    /// Reconcile a connect-on-select / attach-time `get_messages` backfill into
+    /// a session (#828 master attach #1050). The prior conversation is
+    /// PREPENDED above whatever live content already streamed (never a
+    /// wholesale replace that drops live tokens), and a complete (untrimmed)
+    /// backfill is applied at most once so a re-delivered payload cannot
+    /// duplicate it. Shared by sub-agent connect-on-select and master
+    /// `--socket` attach.
+    ///
+    /// Busy-connect snapshots may set `trimmed: true` when the producer drops
+    /// oldest messages to stay under the frame budget (`uds_snapshots`). Those
+    /// partial tails are applied for immediate display but do **not** latch
+    /// `history_backfilled`; a later complete attach-backfill / get_messages
+    /// replaces the partial prefix so omitted older history is not permanently
+    /// suppressed (#1050 review).
+    pub(super) fn reconcile_backfill_history(session: &mut SessionView, data: &serde_json::Value) {
         use crate::application::session_payloads::{self, ResumedChatMessage};
         if session.history_backfilled {
             return;
@@ -413,8 +423,24 @@ impl App {
         if history.is_empty() {
             return;
         }
-        session.chat.prepend_history(history);
-        session.history_backfilled = true;
+        let history_len = history.len();
+        let trimmed = data
+            .get("trimmed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        // A prior trimmed snapshot already contributed a prefix: replace it so
+        // the fuller payload does not stack another copy of the same tail.
+        if let Some(partial_len) = session.partial_backfill_len {
+            session.chat.replace_history_prefix(partial_len, history);
+        } else {
+            session.chat.prepend_history(history);
+        }
+        if trimmed {
+            session.partial_backfill_len = Some(history_len);
+        } else {
+            session.partial_backfill_len = None;
+            session.history_backfilled = true;
+        }
     }
 
     /// Render a passive sub-agent completion note, or DEFER it while the owning

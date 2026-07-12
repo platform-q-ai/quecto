@@ -243,3 +243,48 @@ Feature: TUI app event routing and command behaviours
     When workflow state reports issue 1028 with step 1 "A very long workflow label that must be truncated by the TUI" in phase "green" out of 1
     Then every workflow frame row fits the terminal width
     And the workflow bar preserves left padding after the divider
+
+  # ── #1050: main chat history on --socket attach ───────────────────
+  # Sub-agent panes already backfill on connect-on-select (#828). The master
+  # chat must do the same when the TUI attaches to a running agent: prior
+  # durable history appears without waiting for new events, live tokens that
+  # race ahead of the backfill are preserved (prepend, never wholesale
+  # replace), empty payloads do not latch the guard, and re-delivery does not
+  # duplicate. Resume/rewind keep their existing get_messages paths.
+
+  @attach-backfill
+  Scenario: Attaching to a running agent shows prior master history
+    Given a TUI attached to a running agent
+    When the master backfill history "prior question" then "prior answer" arrives
+    Then the app master session shows "prior question"
+    And the app master session shows "prior answer"
+    And "prior question" appears above "prior answer" in the master session
+    And the app master session does not show "Session resumed"
+
+  @attach-backfill
+  Scenario: Master history backfill preserves live content already streamed
+    Given a TUI attached to a running agent
+    And the master has already streamed the live token "LIVENOW"
+    When the master backfill history "earlier question" then "earlier answer" arrives
+    Then the app master session shows "earlier question"
+    And the app master session shows "earlier answer"
+    And the app master session still shows "LIVENOW"
+    And "earlier answer" appears above "LIVENOW" in the master session
+    And the app master session does not show "Session resumed"
+
+  @attach-backfill
+  Scenario: Re-delivered master history does not duplicate chat entries
+    Given a TUI attached to a running agent
+    And the master backfill history "the question" then "the answer" has already arrived
+    When the same master backfill history arrives again
+    Then the app master session shows "the answer" exactly once
+    And the app master session does not show "Session resumed"
+
+  @attach-backfill
+  Scenario: Empty master history does not suppress a later populated history
+    Given a TUI attached to a running agent
+    And an empty master backfill history has already arrived
+    When the master backfill history "real question" then "real answer" arrives
+    Then the app master session shows "real question"
+    And the app master session shows "real answer"
+    And the app master session does not show "Session resumed"
