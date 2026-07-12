@@ -9,6 +9,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::spawn_launch_args::write_private_new;
 use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
 
 fn inherited_runtime_config_path() -> Option<PathBuf> {
@@ -70,38 +71,6 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(p)
-}
-
-/// Write `data` to `path`, creating it privately: `O_CREAT|O_EXCL` (so a
-/// pre-planted symlink at the path is rejected rather than followed) with
-/// owner-only `0600` permissions. A stale file left by a crashed prior spawn is
-/// removed and recreated once (the retry still uses `O_EXCL`). Falls back to a
-/// plain write on non-unix platforms.
-#[cfg(unix)]
-fn write_private_new(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    fn create_excl(path: &std::path::Path) -> std::io::Result<std::fs::File> {
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)
-    }
-    let mut file = match create_excl(path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            let _ = std::fs::remove_file(path);
-            create_excl(path)?
-        }
-        Err(e) => return Err(e),
-    };
-    file.write_all(data)
-}
-
-#[cfg(not(unix))]
-fn write_private_new(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, data)
 }
 
 /// Tool that spawns a child `quecto agent` process in UDS mode.
@@ -419,6 +388,10 @@ impl SpawnTool {
             // Record whether this child is a read-only observer so the TUI can
             // mark it (#966); enforcement is done by disabling the tools (#957).
             entry.read_only = config.read_only;
+            if config.task.is_none() {
+                // #1049: task-less → Idle (cascade/TUI); with-task stays Starting.
+                entry.status = super::subagent_registry::SubagentStatus::Idle;
+            }
             super::subagent_registry::seed_bound_workflow(
                 &mut entry,
                 config.workflow_spec.as_ref(),
@@ -654,6 +627,10 @@ impl Tool for SpawnTool {
                         // Record the read-only flag in stub mode too so BDD tests
                         // can assert the snapshot carries it (#966).
                         stub_entry.read_only = config.read_only;
+                        if config.task.is_none() {
+                            // #1049: task-less → Idle (mirror launch path).
+                            stub_entry.status = super::subagent_registry::SubagentStatus::Idle;
+                        }
                         super::subagent_registry::seed_bound_workflow(
                             &mut stub_entry,
                             config.workflow_spec.as_ref(),

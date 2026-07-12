@@ -2,11 +2,44 @@
 //
 // Extracted from `spawn.rs` so the exact flag set forwarded to a spawned child
 // (notably `--model`, #881) is unit-testable without spawning a real process.
+// Also hosts small launch helpers kept out of `spawn.rs` for the file-size cap.
 
 use std::ffi::OsString;
 use std::path::Path;
 
 use crate::domain::subagent::SubagentConfig;
+
+/// Write `data` to `path`, creating it privately: `O_CREAT|O_EXCL` (so a
+/// pre-planted symlink at the path is rejected rather than followed) with
+/// owner-only `0600` permissions. A stale file left by a crashed prior spawn is
+/// removed and recreated once (the retry still uses `O_EXCL`). Falls back to a
+/// plain write on non-unix platforms.
+#[cfg(unix)]
+pub(super) fn write_private_new(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    fn create_excl(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+    }
+    let mut file = match create_excl(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = std::fs::remove_file(path);
+            create_excl(path)?
+        }
+        Err(e) => return Err(e),
+    };
+    file.write_all(data)
+}
+
+#[cfg(not(unix))]
+pub(super) fn write_private_new(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, data)
+}
 
 /// Parse and validate the raw `effort` argument from spawn tool args,
 /// honoring the target model's effort vocabulary when a model is specified.

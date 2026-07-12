@@ -1,3 +1,4 @@
+use super::super::subagent_registry::SubagentStatus;
 use super::*;
 
 fn test_tool() -> SpawnTool {
@@ -262,4 +263,79 @@ fn register_and_broadcast_without_channel_still_registers() {
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
     super::register_and_broadcast(&registry, None, "worker", entry);
     assert!(registry.lock().unwrap().contains_key("worker"));
+}
+
+// ─── #1049: task-less spawn settles to Idle on registration ──────────────────
+
+#[tokio::test]
+async fn taskless_stub_spawn_registers_as_idle() {
+    // #1049: a child spawned without an initial task is socket-ready and parked;
+    // the registry must report Idle immediately (not stuck Starting forever).
+    let tool = SpawnTool::new(vec![], true);
+    tool.execute(r#"{"agent_id":"idle-worker"}"#)
+        .await
+        .expect("stub spawn must succeed");
+    let registry = tool.registry.lock().unwrap();
+    let entry = registry
+        .get("idle-worker")
+        .expect("task-less child must be registered");
+    assert_eq!(
+        entry.status,
+        SubagentStatus::Idle,
+        "#1049: task-less spawn must be Idle after socket-ready registration"
+    );
+}
+
+#[tokio::test]
+async fn taskless_stub_spawn_broadcasts_idle_state_changed() {
+    // #1049: the Idle transition must emit subagent_state_changed so ancestors
+    // can merge the child (cascade / PRD Stage B tree visibility).
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let tool = SpawnTool::new(vec![], true).with_event_forwarding(Some(tx), None);
+    tool.execute(r#"{"agent_id":"idle-worker"}"#)
+        .await
+        .expect("stub spawn must succeed");
+    let line = rx
+        .try_recv()
+        .expect("#1049: task-less registration must broadcast state_changed");
+    assert!(line.ends_with('\n') && line.matches('\n').count() == 1);
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["type"], "subagent_state_changed");
+    assert_eq!(v["subagents"][0]["agentId"], "idle-worker");
+    assert_eq!(
+        v["subagents"][0]["status"], "idle",
+        "#1049: broadcast must carry idle so cascade merges the child"
+    );
+}
+
+#[tokio::test]
+async fn with_task_stub_spawn_stays_starting() {
+    // #1049: a child WITH a task must remain Starting at registration so the
+    // monitor can move it to Running on agent_start without a false Idle race.
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let tool = SpawnTool::new(vec![], true).with_event_forwarding(Some(tx), None);
+    tool.execute(r#"{"task":"do work","agent_id":"busy-worker"}"#)
+        .await
+        .expect("stub spawn must succeed");
+    {
+        let registry = tool.registry.lock().unwrap();
+        let entry = registry
+            .get("busy-worker")
+            .expect("with-task child must be registered");
+        assert_eq!(
+            entry.status,
+            SubagentStatus::Starting,
+            "#1049: with-task spawn must stay Starting until agent_start"
+        );
+    }
+    let line = rx
+        .try_recv()
+        .expect("with-task registration must still broadcast (#866)");
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["type"], "subagent_state_changed");
+    assert_eq!(v["subagents"][0]["agentId"], "busy-worker");
+    assert_eq!(
+        v["subagents"][0]["status"], "starting",
+        "#1049: with-task broadcast must carry starting, not idle"
+    );
 }
