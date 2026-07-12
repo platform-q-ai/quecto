@@ -15,6 +15,7 @@ fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
         workflow_guards: false,
         workflow_spec: None,
         model: None,
+        effort: None,
         disable_tools: Vec::new(),
         read_only: false,
     });
@@ -33,6 +34,7 @@ fn given_parent_config_restrict(world: &mut QuectoWorld, value: String) {
         workflow_guards: false,
         workflow_spec: None,
         model: None,
+        effort: None,
         disable_tools: Vec::new(),
         read_only: false,
     });

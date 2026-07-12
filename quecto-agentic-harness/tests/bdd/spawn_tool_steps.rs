@@ -512,6 +512,34 @@ fn then_parsed_spawn_config_has_no_model(world: &mut QuectoWorld) {
     );
 }
 
+#[then(expr = "the parsed spawn config should have effort {string}")]
+fn then_parsed_spawn_config_has_effort(world: &mut QuectoWorld, expected: String) {
+    let cfg = world
+        .subagent_config
+        .as_ref()
+        .expect("subagent_config not set — was parse_args called?");
+    assert_eq!(
+        cfg.effort.as_deref(),
+        Some(expected.as_str()),
+        "expected effort {:?}, got {:?}",
+        expected,
+        cfg.effort
+    );
+}
+
+#[then("the parsed spawn config should have no effort")]
+fn then_parsed_spawn_config_has_no_effort(world: &mut QuectoWorld) {
+    let cfg = world
+        .subagent_config
+        .as_ref()
+        .expect("subagent_config not set — was parse_args called?");
+    assert!(
+        cfg.effort.is_none(),
+        "expected no effort, got {:?}",
+        cfg.effort
+    );
+}
+
 #[then(expr = "the parsed spawn config should have disable_tools {string}")]
 fn then_parsed_spawn_config_has_disable_tools(world: &mut QuectoWorld, expected: String) {
     let cfg = world

@@ -73,6 +73,37 @@ fn given_fresh_harness(world: &mut TuiWorld) {
     init_fresh(world);
 }
 
+#[given(expr = "sub-agent {string} uses model {string} with effort {string}")]
+fn given_subagent_uses_model_effort(
+    world: &mut TuiWorld,
+    id: String,
+    model: String,
+    effort: String,
+) {
+    drive(world, |h| {
+        h.route(
+            &id,
+            Event::Response {
+                id: None,
+                command: "get_state".into(),
+                success: true,
+                data: Some(serde_json::json!({
+                    "model": model,
+                    "effort": effort,
+                    "effortLevels": if model.starts_with("anthropic-api/") {
+                        serde_json::json!(["low", "medium", "high", "max"])
+                    } else {
+                        serde_json::json!(["none", "low", "medium", "high", "xhigh"])
+                    },
+                    "maxContextTokens": 100_000,
+                })),
+                error: None,
+            },
+        );
+    });
+    world.tui_last_commands.clear();
+}
+
 #[given("the master assistant is currently streaming")]
 fn given_master_streaming(world: &mut TuiWorld) {
     drive(world, |h| {
@@ -474,6 +505,120 @@ fn when_accept_selected_effort(world: &mut TuiWorld) {
         h.press(Key::Enter);
     });
     world.tui_last_commands = drain_commands(world);
+}
+
+#[when(expr = "I choose effort {string} from the effort selector")]
+fn when_choose_effort_from_selector(world: &mut TuiWorld, effort: String) {
+    drive(world, |h| {
+        h.submit("/effort");
+        for ch in effort.chars() {
+            h.press(Key::Char(ch));
+        }
+        h.press(Key::Enter);
+    });
+    world.tui_last_commands = drain_commands(world);
+}
+
+#[when(expr = "I request effort {string} for the selected sub-agent")]
+fn when_request_effort_for_selected_subagent(world: &mut TuiWorld, effort: String) {
+    drive(world, |h| {
+        h.submit(&format!("/effort {effort}"));
+    });
+    world.tui_last_commands = drive(world, |h| h.try_drain_commands());
+}
+
+#[then(expr = "sub-agent {string} receives effort {string}")]
+fn then_subagent_receives_effort(world: &mut TuiWorld, id: String, effort: String) {
+    assert!(
+        command_of_type(&world.tui_last_commands, "set_effort").is_none(),
+        "selected sub-agent effort should use the child connection, not the master command stream: {:?}",
+        world.tui_last_commands
+    );
+    let handle = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("harness runtime")
+        .handle()
+        .clone();
+    let rx = world
+        .tui_subagent_commands
+        .as_mut()
+        .expect("sub-agent command receiver");
+    let deadline = std::time::Duration::from_secs(2);
+    let commands = handle.block_on(async {
+        let mut commands = Vec::new();
+        loop {
+            match tokio::time::timeout(deadline, rx.recv()).await {
+                Ok(Some(line)) => {
+                    let is_expected = json_field(&line, "type").as_deref() == Some("set_effort");
+                    commands.push(line);
+                    if is_expected {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+        commands
+    });
+    let cmd = command_of_type(&commands, "set_effort")
+        .unwrap_or_else(|| panic!("expected sub-agent set_effort command, got {commands:?}"));
+    assert_eq!(
+        json_field(cmd, "effort").as_deref(),
+        Some(effort.as_str()),
+        "sub-agent command should carry selected effort: {cmd}"
+    );
+    drive(world, |h| {
+        h.route(
+            &id,
+            Event::Response {
+                id: Some("se".into()),
+                command: "set_effort".into(),
+                success: true,
+                data: Some(serde_json::json!({ "effort": effort })),
+                error: None,
+            },
+        );
+    });
+}
+
+#[then("no set effort command is sent to the master")]
+fn then_no_set_effort_command_to_master(world: &mut TuiWorld) {
+    assert!(
+        command_of_type(&world.tui_last_commands, "set_effort").is_none(),
+        "master command stream should not receive set_effort: {:?}",
+        world.tui_last_commands
+    );
+}
+
+#[then(expr = "the app reports invalid effort {string} with supported levels {string}")]
+fn then_app_reports_invalid_effort_for_level(
+    world: &mut TuiWorld,
+    effort: String,
+    expected_csv: String,
+) {
+    let messages = drive(world, |h| h.notification_messages());
+    let notification = messages
+        .iter()
+        .find(|m| m.contains("Invalid effort level"))
+        .unwrap_or_else(|| {
+            panic!("expected invalid effort notification for {effort}, got: {messages:?}")
+        });
+    assert!(
+        notification.contains(&format!("Invalid effort level \"{effort}\"")),
+        "notification should name rejected effort, got:\n{notification}"
+    );
+    let listed = notification
+        .split_once("valid levels:")
+        .map(|(_, rest)| rest.trim())
+        .unwrap_or_else(|| panic!("notification lists no valid levels:\n{notification}"));
+    let listed: Vec<&str> = listed.split(',').map(str::trim).collect();
+    let expected: Vec<&str> = expected_csv.split(',').map(str::trim).collect();
+    assert_eq!(
+        listed, expected,
+        "invalid effort should list selected sub-agent levels"
+    );
 }
 
 #[when("I request rewind history with two prior user turns")]

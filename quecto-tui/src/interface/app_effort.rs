@@ -69,10 +69,20 @@ impl App {
     /// only a successful response switches it, so a rejected or failed
     /// switch visibly keeps the previous level.
     pub(super) fn send_set_effort(&mut self, effort: &str) {
-        self.send_command(Command::SetEffort {
+        let cmd = Command::SetEffort {
             id: Some("se".into()),
             effort: effort.to_string(),
-        });
+        };
+        if self.subagents.active_agent_id.is_some() {
+            if !self.send_to_active_subagent(cmd) {
+                self.notify(
+                    "Selected sub-agent is not ready for effort changes yet",
+                    NotifyLevel::Error,
+                );
+            }
+        } else {
+            self.send_command(cmd);
+        }
     }
 
     /// Apply a successful `set_effort` response: the agent echoes the level
@@ -86,8 +96,15 @@ impl App {
         else {
             return;
         };
-        self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
-        self.set_current_effort(Some(level));
+        // Master responses can arrive after focus moved to a child. Preserve the
+        // master's footer, but do not replace the focused child's selector state
+        // or toast the master's level as if it were the child's (mirrors the
+        // active-only notify on the sub-agent stream side).
+        self.master_session.footer.set_effort(Some(level.clone()));
+        if self.subagents.active_agent_id.is_none() {
+            self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
+            self.current_effort = Some(level);
+        }
     }
 
     /// Re-fetch agent state after a session/model switch so session-scoped
@@ -97,11 +114,5 @@ impl App {
         self.send_command(Command::GetState {
             id: Some("resync".into()),
         });
-    }
-
-    /// Track the session's active effort and mirror it onto the footer.
-    pub(super) fn set_current_effort(&mut self, effort: Option<String>) {
-        self.master_session.footer.set_effort(effort.clone());
-        self.current_effort = effort;
     }
 }

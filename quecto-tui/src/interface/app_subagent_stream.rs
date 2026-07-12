@@ -98,6 +98,24 @@ impl App {
         // already-tracked/retained session.
         if let Event::Response {
             command,
+            success: false,
+            error,
+            ..
+        } = &ev
+        {
+            if command == "set_effort" {
+                if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
+                    let detail = error.as_deref().unwrap_or("unknown error");
+                    self.notify(
+                        &format!("Effort switch failed: {detail}"),
+                        NotifyLevel::Error,
+                    );
+                }
+                return;
+            }
+        }
+        if let Event::Response {
+            command,
             data: Some(data),
             ..
         } = &ev
@@ -118,6 +136,38 @@ impl App {
                 // context window) that the generic path applied for get_state.
                 if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
                     Self::update_session_footer(session, &ev);
+                }
+                if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
+                    self.current_effort = data
+                        .get("effort")
+                        .and_then(|v| v.as_str())
+                        .map(crate::interface::ansi::sanitize_control);
+                    if let Some(levels) = data.get("effortLevels").and_then(|v| v.as_array()) {
+                        let levels: Vec<String> = levels
+                            .iter()
+                            .filter_map(|l| l.as_str())
+                            .map(crate::interface::ansi::sanitize_control)
+                            .collect();
+                        if !levels.is_empty() {
+                            self.effort_levels = levels;
+                        }
+                    }
+                }
+                return;
+            }
+            if command == "set_effort" {
+                if let Some(level) = data
+                    .get("effort")
+                    .and_then(|v| v.as_str())
+                    .map(crate::interface::ansi::sanitize_control)
+                {
+                    if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
+                        session.footer.set_effort(Some(level.clone()));
+                    }
+                    if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
+                        self.current_effort = Some(level.clone());
+                        self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
+                    }
                 }
                 return;
             }

@@ -29,6 +29,9 @@ pub struct SubagentConfig {
     /// Resolved to the canonical `provider/model` form. When `None`, the child
     /// resolves its model from the inherited `--config` or the built-in default.
     pub model: Option<String>,
+    /// Optional reasoning effort override, forwarded to the child as `--effort <value>`.
+    /// When `None`, the child resolves effort from config, environment, or provider default.
+    pub effort: Option<String>,
     /// Tool names to remove from the child's registry before its session starts
     /// (forwarded as `--disable-tool <name>` per entry). Empty means no tools are
     /// disabled. Used to launch read-only children (e.g. reviewers) with `write`
@@ -136,6 +139,7 @@ mod tests {
             workflow_guards: false,
             workflow_spec: None,
             model: None,
+            effort: None,
             disable_tools: Vec::new(),
             read_only: false,
         };
@@ -156,6 +160,7 @@ mod tests {
             workflow_guards: false,
             workflow_spec: None,
             model: None,
+            effort: None,
             disable_tools: Vec::new(),
             read_only: false,
         };
@@ -174,6 +179,7 @@ mod tests {
             workflow_guards: true,
             workflow_spec: None,
             model: None,
+            effort: None,
             disable_tools: Vec::new(),
             read_only: false,
         };

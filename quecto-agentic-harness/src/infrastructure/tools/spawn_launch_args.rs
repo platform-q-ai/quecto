@@ -8,6 +8,52 @@ use std::path::Path;
 
 use crate::domain::subagent::SubagentConfig;
 
+/// Parse and validate the raw `effort` argument from spawn tool args,
+/// honoring the target model's effort vocabulary when a model is specified.
+///
+/// Returns `Ok(None)` when absent/null/empty, `Ok(Some(level))` for a valid
+/// level, and `Err` for a non-string value or an invalid/out-of-vocabulary
+/// level. Lives here (rather than in `spawn.rs`) so the spawn tool stays under
+/// the repository file-size cap while keeping the validation unit-testable.
+pub(super) fn parse_effort_arg(
+    arg: Option<&serde_json::Value>,
+    model: Option<&str>,
+) -> Result<Option<String>, String> {
+    use crate::domain::provider::EffortLevel;
+    match arg {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => match s.trim() {
+            "" => Ok(None),
+            level => validate_effort(level, model).map(Some),
+        },
+        Some(_) => Err(format!(
+            "effort must be a string; valid values: {}",
+            EffortLevel::VALID_VALUES
+        )),
+    }
+}
+
+/// Validate a spawn `effort` level, honoring the target model's effort
+/// vocabulary when a model is specified. Returns the normalized level string.
+pub(super) fn validate_effort(level: &str, model: Option<&str>) -> Result<String, String> {
+    use crate::domain::provider::EffortLevel;
+    let parsed = EffortLevel::parse(level).ok_or_else(|| {
+        format!(
+            "invalid effort '{level}'; valid values: {}",
+            EffortLevel::VALID_VALUES
+        )
+    })?;
+    if let Some(valid) = model.map(EffortLevel::levels_for_model) {
+        if !valid.contains(&parsed) {
+            return Err(format!(
+                "invalid effort '{level}'; valid values: {}",
+                EffortLevel::levels_list(valid)
+            ));
+        }
+    }
+    Ok(parsed.as_str().to_string())
+}
+
 /// Resolved launch context for a child agent: the deterministic inputs that are
 /// not carried on [`SubagentConfig`]. Grouped into a struct so the builder has a
 /// single descriptive parameter rather than a long positional list.
@@ -61,6 +107,11 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
     if let Some(ref model) = config.model {
         args.push("--model".into());
         args.push(model.into());
+    }
+
+    if let Some(ref effort) = config.effort {
+        args.push("--effort".into());
+        args.push(effort.into());
     }
 
     // Forward --config when a custom (or inherited runtime) config applies, so

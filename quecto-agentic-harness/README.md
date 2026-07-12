@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.91.6**.
+Current version: **0.91.7**.
 
 ## Quick Start
 
@@ -608,7 +608,7 @@ External tool binaries (`rg`, `fd`) are resolved from `PATH`; missing binaries r
 | `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
 | `recall` | Retrieve a spilled tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 | `spawn` | Spawn a background UDS-mode subagent for long-running tasks |
-| `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `await`, `get_state`, `get_messages` (optional `count` — omit for all, N for last N), `get_session_stats`, `get_subagents`, `get_extensions`, `set_model`, `clear_history`, `reload_extensions` |
+| `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `await`, `get_state`, `get_messages` (optional `count` — omit for all, N for last N), `get_session_stats`, `get_subagents`, `get_extensions`, `set_model`, `set_effort`, `clear_history`, `reload_extensions` |
 | `web_search` | Optional: search the web via Brave Search or DuckDuckGo when `tools.web.brave.enabled` or `tools.web.duckduckgo.enabled` is true |
 | `web_fetch` | Optional: fetch a URL and return readable text when `tools.web.fetch.enabled` is true (HTML stripped by default; `raw: true` returns the original body) |
 | `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards with command). Available by default in UDS as a dormant tool unless `--no-workflow`; `--workflow` starts prompt-driven mode immediately. See [Workflow docs](docs/workflow.md) |

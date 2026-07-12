@@ -5,7 +5,8 @@
 use super::SEQ;
 use crate::infrastructure::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use std::sync::atomic::Ordering;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
+use tokio::sync::mpsc;
 
 /// Collapse spinner frames and digit runs so repeated renders compare equal
 /// regardless of animation phase / counters. Visible to the parent module's
@@ -43,6 +44,17 @@ pub fn subagent(id: &str, status: &str, wf: Option<(&str, u32, u32)>) -> Subagen
 /// stays live (its receiver is NOT dropped) — letting routing tests exercise
 /// the real `try_send` delivery path rather than the older-kernel `None` case.
 pub fn spawn_subagent_socket(id: &str) -> std::path::PathBuf {
+    let (path, mut cmd_rx) = spawn_subagent_socket_with_commands(id);
+    // Keep the receiver alive and drain commands so every accepted connection
+    // exercises the real delivery path instead of closing after its first send.
+    tokio::spawn(async move { while cmd_rx.recv().await.is_some() {} });
+    path
+}
+
+/// Bind a live sub-agent socket and expose every decoded command it receives.
+pub fn spawn_subagent_socket_with_commands(
+    id: &str,
+) -> (std::path::PathBuf, mpsc::Receiver<String>) {
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
         "quecto-tui-harness-sub-{}-{}-{}",
@@ -54,17 +66,9 @@ pub fn spawn_subagent_socket(id: &str) -> std::path::PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     let socket_path = dir.join("agent.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
-    tokio::spawn(async move {
-        // Loop accepting so reselecting the same agent (teardown + reconnect)
-        // still finds a live listener.
-        while let Ok((stream, _)) = listener.accept().await {
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(stream).lines();
-                while let Ok(Some(_line)) = lines.next_line().await {}
-            });
-        }
-    });
-    socket_path
+    let (cmd_tx, cmd_rx) = mpsc::channel(64);
+    spawn_command_reader(listener, cmd_tx);
+    (socket_path, cmd_rx)
 }
 
 /// A `SubagentInfoEvent` carrying an explicit `socket_path` (live connection).
@@ -151,31 +155,34 @@ pub fn forwarded_workflow(agent_id: &str, done: u32, total: u32) -> Event {
     }
 }
 
-/// Accept one connection on `listener` and forward each decoded command to
-/// `cmd_tx`. The client speaks length-prefixed frames since #1059; commands
-/// are read via the production deprecation-window reader, skipping the empty
-/// hello frame that announces framed mode.
+/// Accept connections on `listener` and forward each decoded command to
+/// `cmd_tx`. The accept loop keeps the listener live when a test deselects and
+/// reselects the same agent. The client speaks length-prefixed frames since
+/// #1059; commands are read via the production deprecation-window reader,
+/// skipping the empty hello frame that announces framed mode.
 pub(super) fn spawn_command_reader(
     listener: tokio::net::UnixListener,
     cmd_tx: tokio::sync::mpsc::Sender<String>,
 ) {
     use quecto_line_io::{Incoming, PROTOCOL_FRAME_CAP_BYTES, read_frame_or_legacy_line};
     tokio::spawn(async move {
-        let Ok((stream, _)) = listener.accept().await else {
-            return;
-        };
-        let mut reader = BufReader::new(stream);
-        while let Ok(Some(incoming)) =
-            read_frame_or_legacy_line(&mut reader, PROTOCOL_FRAME_CAP_BYTES).await
-        {
-            let (Incoming::Frame(bytes) | Incoming::LegacyLine(bytes)) = incoming;
-            if bytes.is_empty() {
-                continue;
-            }
-            let line = String::from_utf8_lossy(&bytes).into_owned();
-            if cmd_tx.send(line).await.is_err() {
-                break;
-            }
+        while let Ok((stream, _)) = listener.accept().await {
+            let cmd_tx = cmd_tx.clone();
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stream);
+                while let Ok(Some(incoming)) =
+                    read_frame_or_legacy_line(&mut reader, PROTOCOL_FRAME_CAP_BYTES).await
+                {
+                    let (Incoming::Frame(bytes) | Incoming::LegacyLine(bytes)) = incoming;
+                    if bytes.is_empty() {
+                        continue;
+                    }
+                    let line = String::from_utf8_lossy(&bytes).into_owned();
+                    if cmd_tx.send(line).await.is_err() {
+                        break;
+                    }
+                }
+            });
         }
     });
 }

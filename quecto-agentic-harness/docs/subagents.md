@@ -56,6 +56,10 @@ connects to the child's UDS socket directly from Rust.
       "type": "string",
       "description": "Model id for the child model (used with provider)"
     },
+    "effort": {
+      "type": "string",
+      "description": "Reasoning effort for the child (one of: none, low, medium, high, xhigh, max). Forwarded as --effort at launch. Validated against the target model's vocabulary when a model is given."
+    },
     "workflow": {
       "type": "boolean",
       "description": "Start the child with --workflow (model selects a template itself)"
@@ -73,6 +77,7 @@ connects to the child's UDS socket directly from Rust.
 - Returns immediately (< 1 second) after the child's socket is ready.
 - **`workflow_spec` vs `workflow`.** `workflow: true` makes the workflow tool available so the *child* picks a template; `workflow_spec` hands the child a specific template **by value** and binds it. They are independent of `config`, which supplies the child's runtime (providers/model/default template library).
 - **`model` (optional).** Sets the child's model at launch — accepts either a full `provider/model` string (e.g. `openai/gpt-5.5`) or a `provider` + `model_id` pair, the same format(s) as `agent_cmd set_model` (and validated by the same logic). It is forwarded to the child as `--model`, so the child's **first turn** (if `task` is given) already runs on the chosen model — no follow-up `set_model` round-trip needed. **Precedence:** an explicit `model` arg wins over any model from a forwarded `--config`, which wins over the built-in default. An invalid combination (e.g. `provider` without `model_id`) is a clear spawn error rather than a silent fall-back to the default.
+- **`effort` (optional).** Sets the child's reasoning effort at launch. Must be one of `none`, `low`, `medium`, `high`, `xhigh`, `max`; when a `model` is also given, the value is additionally checked against that model's effort vocabulary (e.g. OpenAI reasoning models take `none`–`xhigh`; Anthropic 4.6 models take `low`/`medium`/`high`/`max`). Invalid or non-string values are rejected at spawn parse time with an error listing the valid levels. It is forwarded to the child as `--effort`, so the child's **first turn** already runs at the chosen effort. It can be changed on a running child with `agent_cmd set_effort` (or from the TUI effort selector while that child is focused). **Precedence:** explicit spawn `effort` > the child's forwarded `agents.defaults.effort` (from `--config`) > inherited `QUECTO_AGENTS_DEFAULTS_EFFORT` env > the provider default. A running child's effort is reset to the child's own default when its session is reset/resumed (`reset_effort_to_default`).
 
 #### Spawning read-only (`read_only` / `disable_tools`)
 
@@ -202,7 +207,7 @@ output (see [Notification model](#notification-model)).
       "enum": ["prompt", "steer", "follow_up", "abort", "kill", "await",
                "get_state", "get_messages",
                "get_session_stats", "get_subagents", "get_extensions",
-               "set_model", "clear_history", "reload_extensions"],
+               "set_model", "set_effort", "clear_history", "reload_extensions"],
       "description": "Command to send"
     },
     "message": {
@@ -242,6 +247,7 @@ output (see [Notification model](#notification-model)).
 | `get_subagents` | List subagents spawned by this agent | No |
 | `get_extensions` | List loaded extensions | No |
 | `set_model` | Change the LLM model | No |
+| `set_effort` | Change the reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the child's active model; invalid values are rejected with the valid list) | No |
 | `clear_history` | Clear conversation history | No |
 | `reload_extensions` | Hot-reload extensions | No |
 
@@ -257,6 +263,10 @@ output (see [Notification model](#notification-model)).
 
 ```json
 {"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "steer", "message": "Focus on auth vulnerabilities only"}}
+```
+
+```json
+{"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "set_effort", "effort": "high"}}
 ```
 
 ## Notification model
@@ -564,6 +574,18 @@ The interactive REPL provides commands for managing subagents:
 | `/agent edit <name>` | Edit an agent profile |
 | `/agent remove <name>` | Remove an agent profile |
 | `/agent run <name> <task>` | Run a task using an agent profile |
+
+### TUI effort selector for sub-agents
+
+In the TUI, the effort selector (`/effort <level>` to set directly, or bare `/effort` to open the
+overlay) targets the **currently focused/selected sub-agent** when one is
+active, instead of the primary session. The selected level is validated against
+that child's agent-reported effort vocabulary and sent over the same UDS runtime
+path as `agent_cmd set_effort` (`set_effort`); the footer only updates after the
+child acknowledges the change, so a rejected level visibly keeps the previous
+one. A child's session-scoped effort is reset to its own default when its
+session is reset/resumed (`reset_effort_to_default`). With no sub-agent focused,
+`/effort` continues to control the primary session.
 
 ## Architecture
 

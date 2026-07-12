@@ -158,11 +158,6 @@ impl App {
         tx.try_send(cmd).is_ok()
     }
 
-    // ── Selection / switching ──────────────────────────────────────────
-
-    /// Switch the active session. `None` selects the master; `Some(id)` selects
-    /// that sub-agent, creating/retaining its `SessionView` and opening a direct
-    /// connect-on-select connection to its live stream.
     pub(super) fn select_agent(&mut self, agent_id: Option<&str>) {
         let new_active = agent_id.map(str::to_string);
         if new_active == self.subagents.active_agent_id {
@@ -174,15 +169,21 @@ impl App {
         self.sync_panel_selection_to_active();
 
         let Some(id) = new_active else {
-            // Master selected: nothing to dial.
+            self.current_effort = self.master_session.footer.effort().map(str::to_string);
+            self.effort_levels.clear();
+            self.send_state_resync();
             return;
         };
-        // Ensure a session exists (retained for later viewing).
         self.ensure_session(&id);
+        self.current_effort = self
+            .subagents
+            .sessions
+            .get(&id)
+            .and_then(|session| session.footer.effort())
+            .map(str::to_string);
+        self.effort_levels.clear();
         self.seed_session_bar_from_snapshot(&id); // main-pane bar from snapshot (#913)
-        // Connect-on-commit: the selection only changes on an explicit commit
-        // (Enter/Tab/digit-jump), so open the connection immediately (#802).
-        self.open_subagent_connection(&id);
+        self.open_subagent_connection(&id); // commit, not highlight (#802)
     }
 
     /// Reconcile the active/pending session when the viewed sub-agent leaves
@@ -313,15 +314,15 @@ impl App {
             let Ok(mut client) = Client::connect(&path).await else {
                 return;
             };
-            // The kernel sends a connect-time get_messages snapshot of the
-            // pre-turn conversation immediately on connect (#828) — served by
-            // the accept loop, independent of the child's (possibly busy)
-            // dispatch loop — so prior history shows at once for a BUSY child,
-            // not just an idle one. This explicit get_messages is a follow-up
-            // refresh; the TUI reconciles both via `Chat::prepend_history`.
+            // Reconcile the kernel's connect-time busy-child snapshot (#828).
             let _ = client
                 .send(&Command::GetMessages {
                     id: Some("subagent-history".into()),
+                })
+                .await;
+            let _ = client
+                .send(&Command::GetState {
+                    id: Some("subagent-state".into()),
                 })
                 .await;
             loop {

@@ -93,25 +93,23 @@ impl App {
         if let Some(model) = self.master_session.footer.apply_get_state(&data) {
             self.current_model = Some(model);
         }
-        // #1067: track the session's active effort (explicit null / missing
-        // key = effective default); the footer itself is updated inside
-        // apply_get_state, shared with per-session sub-agent footers.
-        self.current_effort = data
-            .get("effort")
-            .and_then(|v| v.as_str())
-            .map(crate::interface::ansi::sanitize_control);
-        // #1067: the agent reports the provider's valid effort vocabulary in
-        // every get_state — the single source of truth for `/effort`
-        // validation and the selector. Missing/empty leaves the current
-        // (possibly empty) vocabulary untouched.
-        if let Some(levels) = data.get("effortLevels").and_then(|v| v.as_array()) {
-            let levels: Vec<String> = levels
-                .iter()
-                .filter_map(|l| l.as_str())
-                .map(crate::interface::ansi::sanitize_control)
-                .collect();
-            if !levels.is_empty() {
-                self.effort_levels = levels;
+        // #1067: only mirror master effort state into the active selector when
+        // the master is selected. A late master get_state must not overwrite a
+        // focused child's level/vocabulary.
+        if self.subagents.active_agent_id.is_none() {
+            self.current_effort = data
+                .get("effort")
+                .and_then(|v| v.as_str())
+                .map(crate::interface::ansi::sanitize_control);
+            if let Some(levels) = data.get("effortLevels").and_then(|v| v.as_array()) {
+                let levels: Vec<String> = levels
+                    .iter()
+                    .filter_map(|l| l.as_str())
+                    .map(crate::interface::ansi::sanitize_control)
+                    .collect();
+                if !levels.is_empty() {
+                    self.effort_levels = levels;
+                }
             }
         }
         if data

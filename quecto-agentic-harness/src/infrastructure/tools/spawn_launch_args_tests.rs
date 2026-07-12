@@ -16,6 +16,7 @@ fn base_config() -> SubagentConfig {
         workflow_guards: false,
         workflow_spec: None,
         model: None,
+        effort: None,
         disable_tools: Vec::new(),
         read_only: false,
     }
@@ -60,6 +61,30 @@ fn omits_model_flag_when_absent() {
     assert!(
         !strs.iter().any(|a| a == "--model"),
         "no --model expected, got {strs:?}"
+    );
+}
+
+#[test]
+fn includes_effort_flag_when_set() {
+    let mut cfg = base_config();
+    cfg.effort = Some("high".into());
+    let args = build_child_cli_args(&spec(&cfg));
+    let strs = as_strings(&args);
+    let pos = strs
+        .iter()
+        .position(|a| a == "--effort")
+        .expect("--effort should be forwarded");
+    assert_eq!(strs[pos + 1], "high");
+}
+
+#[test]
+fn omits_effort_flag_when_absent() {
+    let cfg = base_config();
+    let args = build_child_cli_args(&spec(&cfg));
+    let strs = as_strings(&args);
+    assert!(
+        !strs.iter().any(|a| a == "--effort"),
+        "no --effort expected, got {strs:?}"
     );
 }
 

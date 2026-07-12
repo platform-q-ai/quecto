@@ -245,6 +245,7 @@ fn given_subagent_inheriting_sandbox(world: &mut QuectoWorld) {
         workflow_guards: false,
         workflow_spec: None,
         model: None,
+        effort: None,
         disable_tools: Vec::new(),
         read_only: false,
     });

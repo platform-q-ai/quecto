@@ -714,6 +714,18 @@ fn then_agent_cmd_sent_ack(world: &mut QuectoWorld, expected_ack: String) {
     );
 }
 
+#[then(expr = "the agent_cmd should have sent effort {string}")]
+fn then_agent_cmd_sent_effort(world: &mut QuectoWorld, expected_effort: String) {
+    let cmd = last_agent_cmd_sent_json(world);
+    assert_eq!(
+        cmd["effort"].as_str(),
+        Some(expected_effort.as_str()),
+        "expected effort '{}', got: {}",
+        expected_effort,
+        cmd
+    );
+}
+
 // ===========================================================================
 
 #[then(expr = "the agent_cmd should have sent count {int}")]

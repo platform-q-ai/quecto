@@ -43,6 +43,7 @@ mod tests {
             workflow_guards: false,
             workflow_spec: None,
             model: None,
+            effort: None,
             disable_tools: Vec::new(),
             read_only: false,
         };
@@ -63,6 +64,7 @@ mod tests {
             workflow_guards: false,
             workflow_spec: None,
             model: None,
+            effort: None,
             disable_tools: Vec::new(),
             read_only: false,
         };
@@ -82,6 +84,7 @@ mod tests {
             workflow_guards: false,
             workflow_spec: None,
             model: None,
+            effort: None,
             disable_tools: Vec::new(),
             read_only: false,
         };
@@ -101,6 +104,7 @@ mod tests {
             workflow_guards: false,
             workflow_spec: None,
             model: None,
+            effort: None,
             disable_tools: Vec::new(),
             read_only: false,
         };
