@@ -1,6 +1,8 @@
-// xAI (Grok) OAuth wiring tests (PR #1087 follow-up):
-// - registry base-URL pinning for the `(OpenAiCompletions, "xai")` match arm
-// - refresh-dispatch selection for the `"xai"` provider in shared.rs
+// xAI (Grok) OAuth registry-wiring tests (PR #1087 follow-up):
+// - registry base-URL host-pinning for the `(OpenAiCompletions, "xai")`
+//   match arm in oauth_registry_base_url.
+// (The shared.rs refresh-dispatch precondition is covered separately in
+// shared_cov_tests.rs; refresh wire behaviour in oauth_xai_tests.rs.)
 
 use super::*;
 
@@ -24,11 +26,21 @@ fn xai_base_url_defaults_to_canonical_host() {
 
 #[test]
 fn xai_base_url_accepts_canonical_host_explicitly() {
-    // Same host/scheme/port with a different path is accepted (path is
-    // preserved from the configured value).
+    // Exact canonical origin (scheme/host/port) is accepted and the
+    // configured value is preserved verbatim.
     let model = xai_record(Some("https://api.x.ai/v1"));
     let url = oauth_registry_base_url(&model, "xai").unwrap();
     assert_eq!(url.as_deref(), Some("https://api.x.ai/v1"));
+}
+
+#[test]
+fn xai_base_url_preserves_configured_path_on_canonical_host() {
+    // Same origin, different path: the validator accepts it and preserves
+    // the configured value verbatim (host-pinning is origin-based, not
+    // path-based).
+    let model = xai_record(Some("https://api.x.ai/v2/custom"));
+    let url = oauth_registry_base_url(&model, "xai").unwrap();
+    assert_eq!(url.as_deref(), Some("https://api.x.ai/v2/custom"));
 }
 
 #[test]
