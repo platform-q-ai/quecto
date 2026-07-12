@@ -473,15 +473,20 @@ async fn stub_provider_turn_has_same_event_sequence_through_each_sink() {
 
 #[test]
 fn issue_1060_busy_reader_parses_only_un_targeted_get_message() {
+    // Un-targeted lookup: the busy reader services it from the master snapshot.
     assert_eq!(
         super::super::uds_busy_get_message::parse(
             r#"{"type":"get_message","id":"r1","messageId":"m1"}"#
         ),
         Some((Some("r1".into()), "m1".into()))
     );
+    // An agent-targeted lookup MUST fall through (None) so dispatch forwards it
+    // to the child. The wire key is snake_case `agent_id` (Command::GetMessage
+    // has no rename) — asserting against the real key guards the #1060 casing
+    // bug where the master wrongly served child ids from its own snapshot.
     assert_eq!(
         super::super::uds_busy_get_message::parse(
-            r#"{"type":"get_message","id":"r1","messageId":"m1","agentId":"child"}"#
+            r#"{"type":"get_message","id":"r1","messageId":"m1","agent_id":"child"}"#
         ),
         None
     );

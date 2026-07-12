@@ -1,8 +1,15 @@
-//! #1060 / ADR-0008 part 2 — RED unit tests for ref-based end-of-turn events.
+//! #1060 / ADR-0008 part 2 — wire-SHAPE unit tests for ref-based end-of-turn
+//! events.
 //!
-//! These pin the wire contract: end-of-turn events identify messages by
-//! non-empty stable refs, do not re-carry full content, and stay small for a
-//! real large turn. They must FAIL before the protocol change lands (RED).
+//! Scope: these pin the serde wire shape — end-of-turn events expose non-empty
+//! stable `messageRefs`, serialize an emptied `content` as `""` (not the body),
+//! and stay small because size comes from refs rather than #1047 shrink/tail.
+//! Each size test proves this with a counterfactual: the same event re-carrying
+//! the body exceeds the cap, while the ref-based event stays well under it.
+//!
+//! These do NOT drive the producer; the proof that a real large turn is
+//! *emitted* with emptied content + correct refs lives in the producer-driven
+//! `uds_cancel_1060_tests.rs` / `uds_994_tests.rs::issue_1060_*`.
 //!
 //! Loaded from `protocol.rs` via `#[path = "protocol_1060_tests.rs"]`.
 
@@ -82,10 +89,12 @@ fn turn_end_exposes_non_empty_message_refs() {
     }
 }
 
-/// #1060 AC1/AC5: turn_end must not re-carry full assistant content.
+/// #1060 AC1/AC5: the emitted turn_end serializes `content` as `""` (never the
+/// body) and identifies the turn by refs. Shape-level; the producer proof is in
+/// `uds_cancel_1060_tests.rs`.
 #[test]
 fn turn_end_does_not_re_carry_full_assistant_content() {
-    let body = "REAL-NON-EMPTY-ASSISTANT-BODY-".repeat(64);
+    // The ref-based layout the producer emits: emptied content + a stable ref.
     let ev = AgentEvent::TurnEnd {
         message: TurnMessage {
             role: "assistant".into(),
@@ -100,11 +109,10 @@ fn turn_end_does_not_re_carry_full_assistant_content() {
         tool_results: vec![],
     };
     let j = round_trip_json(&ev);
-    let content = j["message"]["content"].as_str().unwrap_or("");
-    assert!(
-        content.is_empty() || content != body.as_str(),
-        "turn_end must not re-carry the full assistant body (#1060); content len={}",
-        content.len()
+    assert_eq!(
+        j["message"]["content"].as_str(),
+        Some(""),
+        "turn_end must serialize emptied content as \"\" (never the body) (#1060); got: {j}"
     );
     assert!(
         !non_empty_refs(&j).is_empty(),
@@ -115,7 +123,6 @@ fn turn_end_does_not_re_carry_full_assistant_content() {
 /// #1060 AC7: footer metadata remains on the bounded turn_end.
 #[test]
 fn turn_end_keeps_context_and_usage_metadata_without_full_content() {
-    let body = "footer-meta-body-".repeat(32);
     let ev = AgentEvent::TurnEnd {
         message: TurnMessage {
             role: "assistant".into(),
@@ -137,10 +144,10 @@ fn turn_end_keeps_context_and_usage_metadata_without_full_content() {
     assert_eq!(j["message"]["contextTokens"], 12_000);
     assert_eq!(j["message"]["maxContextTokens"], 200_000);
     assert_eq!(j["message"]["usage"]["total"], 1700);
-    let content = j["message"]["content"].as_str().unwrap_or("");
-    assert!(
-        content.is_empty() || content != body.as_str(),
-        "metadata must remain without re-carrying full content"
+    assert_eq!(
+        j["message"]["content"].as_str(),
+        Some(""),
+        "footer metadata must remain while content serializes empty: {j}"
     );
     assert!(!non_empty_refs(&j).is_empty(), "refs required: {j}");
 }
@@ -176,13 +183,36 @@ fn agent_end_exposes_non_empty_message_refs_without_full_content() {
     }
 }
 
-/// #1060 AC1: real large turn keeps turn_end / agent_end well under the frame cap
-/// *without* relying on lossy content tailing — refs keep the event small.
+/// #1060 AC1: the ref-based end-of-turn layout keeps turn_end / agent_end well
+/// under the frame cap because size comes from refs, not #1047 shrink/tail.
+/// Proven by counterfactual: the SAME turn_end re-carrying the body blows the
+/// cap, while the emptied-content ref layout stays well under it.
 #[test]
 fn large_real_turn_end_of_turn_events_stay_well_under_frame_cap() {
-    // Real non-empty content larger than the protocol line cap. After #1060
-    // the serialized end-of-turn events must stay small via refs, not shrink.
+    // A body larger than the whole event line cap. If the producer re-carried
+    // it (the pre-#1060 layout), the event would exceed the cap outright —
+    // establishing that the body is genuinely too big to ship inline, so any
+    // smallness below is due to refs, not a small hand-built struct.
     let body = "X".repeat(EVENT_LINE_CAP_BYTES + 64 * 1024);
+    let bloated_turn_end = AgentEvent::TurnEnd {
+        message: TurnMessage {
+            role: "assistant".into(),
+            content: body.clone(),
+            message_refs: vec!["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into()],
+            usage: None,
+            stop_reason: None,
+            context_tokens: Some(180_000),
+            max_context_tokens: Some(200_000),
+            content_length: None,
+        },
+        tool_results: vec![],
+    };
+    assert!(
+        bloated_turn_end.to_json_line().len() > EVENT_LINE_CAP_BYTES,
+        "counterfactual guard: a turn_end re-carrying this body must exceed the \
+         cap, else the test proves nothing about refs"
+    );
+
     let turn_end = AgentEvent::TurnEnd {
         message: TurnMessage {
             role: "assistant".into(),
@@ -251,11 +281,12 @@ fn large_real_turn_end_of_turn_events_stay_well_under_frame_cap() {
         !non_empty_refs(&agent_j).is_empty(),
         "large-turn agent_end must still carry non-empty refs"
     );
-    // Content must be emptied/absent — not merely truncated by shrink.
+    // Content must be emptied — not merely truncated by shrink/tail.
     let turn_content = turn_j["message"]["content"].as_str().unwrap_or("");
     assert!(
-        turn_content.is_empty() || turn_content != body.as_str(),
-        "large-turn turn_end must not re-carry the full body"
+        turn_content.is_empty(),
+        "large-turn turn_end must empty content (refs, not shrink); got {} bytes",
+        turn_content.len()
     );
 }
 

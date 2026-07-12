@@ -469,3 +469,100 @@ async fn mismatched_recovery_request_id_is_ignored() {
     assert!(text.contains("keep me"));
     assert!(!text.contains("overwrite"));
 }
+
+/// #1060 review: a turn that SPAWNS a sub-agent (whose tool box is suppressed
+/// in the live transcript) must not be mistaken for an incomplete turn. The
+/// spawn's two ledger messages are counted toward ref cardinality, so the
+/// common path issues ZERO get_message fetches (before the fix, the suppressed
+/// spawn went uncounted → cardinality mismatch → needless recovery).
+#[tokio::test]
+async fn spawn_turn_does_not_trigger_recovery_fetches() {
+    let mut h = TuiHarness::new().await;
+    {
+        let a = h.app_mut();
+        a.handle_event(Event::AgentStart);
+        a.handle_event(Event::ToolExecutionStart {
+            tool_call_id: "s1".into(),
+            tool_name: "spawn".into(),
+            args: serde_json::json!({ "agent_id": "child1" }),
+        });
+        a.handle_event(Event::ToolExecutionEnd {
+            tool_call_id: "s1".into(),
+            tool_name: "spawn".into(),
+            result: serde_json::json!({"content":[{"type":"text","text":"spawned"}]}),
+            is_error: false,
+        });
+        a.handle_event(Event::Token {
+            token: "on it".into(),
+        });
+        // Three refs: spawn tool-call msg, spawn tool-result msg, final assistant.
+        a.handle_event(Event::TurnEnd {
+            message: serde_json::json!({
+                "role": "assistant",
+                "content": "",
+                "messageRefs": [
+                    "11111111-1111-1111-1111-111111111111",
+                    "22222222-2222-2222-2222-222222222222",
+                    "33333333-3333-3333-3333-333333333333"
+                ]
+            }),
+        });
+    }
+    let cmds = h.drain_commands().await;
+    assert!(
+        !cmds.iter().any(|l| is_get_message_cmd(l)),
+        "a spawn turn must not fire recovery fetches (spawn counts toward ref \
+         cardinality); got: {cmds:?}"
+    );
+}
+
+/// #1060 review: recovered entries must suppress the spawn tool box (and its
+/// result) exactly as the live stream does, so a late `replace_range` cannot
+/// resurrect a box the transcript intentionally hid.
+#[test]
+fn recovered_chat_entries_suppresses_spawn_like_live_stream() {
+    use crate::interface::app::app_events::recovered_chat_entries;
+    use crate::interface::components::chat::ChatEntry;
+    use std::collections::HashMap;
+    let refs = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+    let mut responses: HashMap<String, serde_json::Value> = HashMap::new();
+    responses.insert(
+        "a".into(),
+        serde_json::json!({
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [{"id": "s1", "name": "spawn", "arguments": "{}"}]
+        }),
+    );
+    responses.insert(
+        "b".into(),
+        serde_json::json!({ "role": "tool", "toolCallId": "s1", "content": "spawned child1" }),
+    );
+    responses.insert(
+        "c".into(),
+        serde_json::json!({ "role": "assistant", "content": "final answer" }),
+    );
+    let entries = recovered_chat_entries(&refs, &responses);
+
+    assert!(
+        !entries.iter().any(|e| matches!(
+            e,
+            ChatEntry::ToolExecution { tool_name, .. } if tool_name == "spawn"
+        )),
+        "spawn tool box must stay suppressed in recovered entries"
+    );
+    assert!(
+        !entries.iter().any(|e| matches!(
+            e,
+            ChatEntry::ToolExecution { result: Some(r), .. } if r.contains("spawned")
+        )),
+        "the spawn's tool result must not leak as a standalone box"
+    );
+    assert!(
+        entries.iter().any(|e| matches!(
+            e,
+            ChatEntry::Assistant { text, .. } if text == "final answer"
+        )),
+        "the final assistant text must still be reconstructed"
+    );
+}

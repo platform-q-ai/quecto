@@ -57,7 +57,12 @@ pub(super) async fn service(
 
 pub(super) fn parse(line: &str) -> Option<(Option<String>, String)> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
-    if value.get("type")?.as_str()? != "get_message" || value.get("agentId").is_some() {
+    // An agent-targeted lookup (`agent_id` present) must fall through to the
+    // dispatch loop, which forwards it to the child. The wire key is snake_case
+    // `agent_id` (Command::GetMessage has no rename); matching `agentId` here
+    // never fired, so the master wrongly served child ids from its own snapshot
+    // (#1060 review).
+    if value.get("type")?.as_str()? != "get_message" || value.get("agent_id").is_some() {
         return None;
     }
     let message_id = value.get("messageId")?.as_str()?.to_string();

@@ -251,10 +251,19 @@ impl App {
             return;
         };
         if !success {
+            // A ref that cannot be fetched (unknown/cancelled id) can never
+            // complete this batch; abandon it so it does not linger unfillable
+            // and leak, and drop the already-fetched siblings with it (#1060
+            // review). The turn stays as-streamed.
+            self.abandon_recovery_batch(&pending.batch_id);
             return;
         }
-        let Some(data) = data else { return };
+        let Some(data) = data else {
+            self.abandon_recovery_batch(&pending.batch_id);
+            return;
+        };
         if data.get("id").and_then(|v| v.as_str()) != Some(pending.message_id.as_str()) {
+            self.abandon_recovery_batch(&pending.batch_id);
             return;
         }
         let Some(batch) = self.message_recovery_batches.get_mut(&pending.batch_id) else {
@@ -274,6 +283,16 @@ impl App {
                 .chat
                 .replace_range(batch.target_start, batch.target_end, entries);
         }
+    }
+
+    /// Drop a recovery batch and any still-pending sibling requests that point at
+    /// it. Called when one ref of the batch cannot be resolved, so a partially
+    /// filled batch does not linger unfillable in `message_recovery_batches`
+    /// (unbounded growth under repeated failures) (#1060 review).
+    pub(super) fn abandon_recovery_batch(&mut self, batch_id: &str) {
+        self.message_recovery_batches.remove(batch_id);
+        self.pending_message_recovery
+            .retain(|_, pending| pending.batch_id != batch_id);
     }
 
     fn handle_tool_start(
@@ -298,13 +317,18 @@ impl App {
                 .map(str::to_string);
         }
         let is_spawn = tool_name == "spawn";
+        // Every model-issued tool call — even one whose box is suppressed (spawn)
+        // — appends a tool-call + tool-result message pair to the conversation
+        // ledger and therefore contributes to end-of-turn `messageRefs`. Count it
+        // regardless of display suppression, or `needs_message_recovery_for`
+        // undercounts on spawn turns and fires needless recovery (#1060 review).
+        self.tools_this_turn = self.tools_this_turn.saturating_add(1);
         if suppress_tool_box(&tool_name, &args) {
             self.master_session.chat.finalize_assistant();
         } else {
             self.master_session
                 .chat
                 .start_tool(tool_call_id, tool_name, args_str);
-            self.tools_this_turn = self.tools_this_turn.saturating_add(1);
         }
         if is_spawn {
             self.track_starting_subagent(&args);
@@ -529,6 +553,11 @@ pub(super) fn recovered_chat_entries(
     use crate::interface::components::chat::ChatEntry;
     let mut entries = Vec::new();
     let mut tools = std::collections::HashMap::<String, usize>::new();
+    // Tool calls whose box is suppressed in the live transcript (spawn) must stay
+    // suppressed here too, or `replace_range` re-materializes a box the stream
+    // intentionally hid (#1060 review). Track their ids so the matching
+    // tool-result message is dropped as well.
+    let mut suppressed_calls = std::collections::HashSet::<String>::new();
     for message_id in refs {
         let Some(data) = responses.get(message_id) else {
             continue;
@@ -552,6 +581,10 @@ pub(super) fn recovered_chat_entries(
                             .and_then(|v| v.as_str())
                             .unwrap_or("tool")
                             .to_string();
+                        if suppress_tool_box(&name, &serde_json::Value::Null) {
+                            suppressed_calls.insert(id);
+                            continue;
+                        }
                         let args = call
                             .get("arguments")
                             .map(|v| {
@@ -585,6 +618,9 @@ pub(super) fn recovered_chat_entries(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                if suppressed_calls.contains(&call_id) {
+                    continue;
+                }
                 let is_error = data
                     .get("isError")
                     .or_else(|| data.get("is_error"))
@@ -667,13 +703,20 @@ fn message_refs_from_value(v: &serde_json::Value) -> Vec<String> {
     Vec::new()
 }
 
-fn uuid_like() -> String {
+/// A process-unique token for request/batch ids. Combines a wall-clock stamp
+/// (readability in logs) with a monotonic counter so two calls in the same
+/// nanosecond — `SystemTime` is not guaranteed strictly increasing — cannot
+/// collide and clobber each other's pending-recovery entry (#1060 review).
+pub(super) fn uuid_like() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("{nanos:x}")
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos:x}-{seq:x}")
 }
 
 #[cfg(test)]

@@ -290,10 +290,11 @@ impl App {
         // streamed response is finalized below).
         let flush_notes = matches!(ev, Event::AgentEnd { .. } | Event::TurnEnd { .. });
         let recovery_refs = Self::subagent_end_of_turn_refs(&ev);
+        // `get_message` responses are handled and returned earlier in this
+        // function; only `get_messages` backfill can reach here (#1060 review).
         let early_return = matches!(
             &ev,
-            Event::Response { command, .. }
-                if command == "get_messages" || command == "get_message"
+            Event::Response { command, .. } if command == "get_messages"
         );
         Self::apply_subagent_chat_event(session, &ev);
         if early_return {
@@ -405,10 +406,7 @@ impl App {
         }
         let batch_id = format!(
             "child-recovery-{agent_id}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+            super::app_events::uuid_like()
         );
         let target_end = session.chat.entry_count();
         self.message_recovery_batches.insert(
@@ -429,13 +427,7 @@ impl App {
             {
                 continue;
             }
-            let req_id = format!(
-                "msg-recovery-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0)
-            );
+            let req_id = format!("msg-recovery-{}", super::app_events::uuid_like());
             self.pending_message_recovery.insert(
                 req_id.clone(),
                 PendingMessageRecovery {
@@ -463,10 +455,18 @@ impl App {
             return;
         };
         if !success {
+            // Unresolvable child ref: abandon the batch rather than leaving it
+            // unfillable and leaking, dropping already-fetched siblings (#1060
+            // review). The child turn stays as-streamed.
+            self.abandon_recovery_batch(&pending.batch_id);
             return;
         }
-        let Some(data) = data else { return };
+        let Some(data) = data else {
+            self.abandon_recovery_batch(&pending.batch_id);
+            return;
+        };
         if data.get("id").and_then(|v| v.as_str()) != Some(pending.message_id.as_str()) {
+            self.abandon_recovery_batch(&pending.batch_id);
             return;
         }
         let Some(batch) = self.message_recovery_batches.get_mut(&pending.batch_id) else {

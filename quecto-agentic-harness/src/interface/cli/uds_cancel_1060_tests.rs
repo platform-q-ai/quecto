@@ -12,7 +12,7 @@ use super::{EventSink, PromptOutcome, PromptRun, run_agent_message};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
 use crate::interface::cli::uds_session::AgentSession;
@@ -34,6 +34,49 @@ impl LlmProvider for ScriptedProvider {
     {
         let response = self.responses.lock().unwrap().remove(0);
         Box::pin(async move { Ok(response) })
+    }
+}
+
+/// Emits each delta as a `TextDelta` stream event (which the agent forwards as
+/// an `AgentProgressEvent::Token`, so `tokens_emitted == true`) before the
+/// assembled `Done` response. Used to prove the producer does NOT append a
+/// duplicate synthetic token on a streaming turn (#1060).
+#[derive(Debug)]
+struct StreamingProvider {
+    deltas: Vec<String>,
+    response: LlmResponse,
+}
+
+impl LlmProvider for StreamingProvider {
+    fn name(&self) -> &str {
+        "streaming-1060"
+    }
+
+    fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + '_>>
+    {
+        let resp = self.response.clone();
+        Box::pin(async move { Ok(resp) })
+    }
+
+    fn chat_stream_incremental<'a>(
+        &'a self,
+        _request: ChatRequest<'a>,
+    ) -> Pin<
+        Box<dyn std::future::Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + 'a>,
+    > {
+        let deltas = self.deltas.clone();
+        let resp = self.response.clone();
+        Box::pin(async move {
+            let (tx, rx) = tokio::sync::mpsc::channel(32);
+            for d in deltas {
+                let _ = tx.send(StreamEvent::TextDelta(d)).await;
+            }
+            let _ = tx.send(StreamEvent::Done(resp)).await;
+            rx
+        })
     }
 }
 
@@ -180,6 +223,105 @@ async fn run_turn(
         "turn must complete"
     );
     (messages, writer_bytes)
+}
+
+/// Drive one streaming turn: the provider emits `deltas` as token progress
+/// events (`tokens_emitted == true`) then an assembled response.
+async fn run_streaming_turn(deltas: Vec<&str>, response: &str, prompt: &str) -> Vec<u8> {
+    let provider = Arc::new(StreamingProvider {
+        deltas: deltas.iter().map(|d| d.to_string()).collect(),
+        response: text_response(response),
+    });
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
+        model: "stub".into(),
+        max_tokens: 100,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "cli:test-1060".into(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: true,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    });
+    let mut messages: Vec<Message> = vec![];
+    let mut session = AgentSession::new("stub".into(), "cli:test-1060".into());
+    let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    let mut notification_rx = None;
+    let subagent_registry = None;
+    let mut writer_bytes: Vec<u8> = Vec::new();
+    let outcome = {
+        let mut sink = EventSink::writer(&mut writer_bytes);
+        run_agent_message(PromptRun {
+            agent: &mut agent,
+            messages: &mut messages,
+            conversation_snapshot: None,
+            session: &mut session,
+            sink: &mut sink,
+            message: Message::user(prompt),
+            cancel_rx,
+            notification_rx: &mut notification_rx,
+            subagent_registry: &subagent_registry,
+        })
+        .await
+    };
+    assert!(
+        matches!(outcome, PromptOutcome::Success),
+        "turn must complete"
+    );
+    writer_bytes
+}
+
+/// #1060: on a STREAMING turn (`tokens_emitted == true`) the producer must NOT
+/// append a synthetic full-text token — the deltas already carried the content.
+/// A duplicate would re-ship the whole response the ref-based end-of-turn is
+/// meant to avoid re-carrying.
+#[tokio::test]
+async fn streaming_turn_emits_no_duplicate_synthetic_token() {
+    let deltas = vec!["Hello ", "streamed ", "world"];
+    let full = "Hello streamed world";
+    let bytes = run_streaming_turn(deltas.clone(), full, "say hi").await;
+    let events = event_lines(&bytes);
+
+    let token_texts: Vec<String> = events
+        .iter()
+        .filter(|e| e["type"] == "token")
+        .map(|e| e["token"].as_str().unwrap_or("").to_string())
+        .collect();
+
+    // Exactly the streamed deltas — no extra synthetic token carrying `full`.
+    assert_eq!(
+        token_texts, deltas,
+        "streaming turn must emit only the streamed deltas, with no synthetic \
+         duplicate token; got {token_texts:?}"
+    );
+    assert!(
+        !token_texts.iter().any(|t| t == full),
+        "no single token event may carry the whole assembled response (that is \
+         the synthetic-token path, which must fire only for non-streaming turns)"
+    );
+
+    // End-of-turn still ref-based (content not re-carried).
+    let turn_end = events
+        .iter()
+        .find(|e| e["type"] == "turn_end")
+        .expect("turn_end emitted");
+    assert!(
+        !non_empty_refs(turn_end).is_empty(),
+        "turn_end must carry refs"
+    );
+    assert_eq!(
+        turn_end["message"]["content"].as_str(),
+        Some(""),
+        "streaming turn_end must still empty its content: {turn_end}"
+    );
 }
 
 /// #1060 AC1/AC6: production turn_end / agent_end carry non-empty refs and

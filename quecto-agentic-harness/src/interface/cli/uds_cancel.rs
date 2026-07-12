@@ -381,8 +381,18 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             // process() has appended the completed turn to `messages`; publish
             // that ledger before refs are emitted so a concurrent reader-side
             // get_message can resolve every referenced role immediately.
+            // The pre-turn write already published the ledger through the
+            // prompt and only this agent writes the snapshot, so `messages` is
+            // append-only relative to it: extend by the new tail instead of
+            // deep-cloning the whole ledger a second time (#1060 review).
             if let Some(snapshot) = &conversation_snapshot {
-                *snapshot.write().await = messages.clone();
+                let mut guard = snapshot.write().await;
+                if messages.len() >= guard.len() {
+                    let appended = messages.len() - guard.len();
+                    guard.extend(messages[messages.len() - appended..].iter().cloned());
+                } else {
+                    *guard = messages.clone();
+                }
             }
             let message_refs: Vec<String> = agent_result
                 .appended_messages

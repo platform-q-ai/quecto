@@ -182,48 +182,6 @@ impl Chat {
             .count()
     }
 
-    /// Whether a tool call id is already represented in the chat.
-    pub fn has_tool_call(&self, tool_call_id: &str) -> bool {
-        self.entries.iter().any(|e| {
-            matches!(
-                e,
-                ChatEntry::ToolExecution {
-                    tool_call_id: id,
-                    ..
-                } if id == tool_call_id
-            )
-        })
-    }
-
-    /// #1060: replace the latest assistant bubble's text when recovering
-    /// full content for a mid-turn miss. Does not append a second bubble.
-    pub fn reconcile_assistant_text(&mut self, content: &str) {
-        if content.is_empty() {
-            return;
-        }
-        for entry in self.entries.iter_mut().rev() {
-            if let ChatEntry::Assistant { text, streaming } = entry {
-                if text.trim().is_empty()
-                    || text.trim() == "…"
-                    || text.trim() == "..."
-                    || text.len() < content.len()
-                {
-                    *text = content.to_string();
-                    *streaming = false;
-                } else {
-                    *streaming = false;
-                }
-                // Invalidate render cache for all entries (content changed).
-                self.render_cache.fill(None);
-                return;
-            }
-        }
-        self.add_entry(ChatEntry::Assistant {
-            text: content.to_string(),
-            streaming: false,
-        });
-    }
-
     /// Start a tool execution — creates a ToolExecution entry.
     pub fn start_tool(&mut self, tool_call_id: String, tool_name: String, args: String) {
         self.finalize_assistant();

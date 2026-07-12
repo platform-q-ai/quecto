@@ -210,6 +210,52 @@ mod tests {
     }
 
     #[test]
+    fn query_get_message_hit_returns_message_by_stable_id() {
+        let mut fx = Fx::new();
+        // Resolve against the stable id of the second (assistant) message.
+        let target_id = fx.messages[1].id().to_string();
+        let ctx = fx.ctx();
+        let hit = query_response_data(
+            &AgentCommand::GetMessage {
+                id: Some("r1".into()),
+                message_id: target_id.clone(),
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("get_message must resolve a present stable id");
+        assert_eq!(
+            hit["id"], target_id,
+            "resolved message carries its stable id"
+        );
+        assert_eq!(hit["role"], "assistant");
+        assert_eq!(
+            hit["content"], "two",
+            "the exact referenced body is returned"
+        );
+    }
+
+    #[test]
+    fn query_get_message_miss_returns_none_for_structured_error() {
+        let mut fx = Fx::new();
+        let ctx = fx.ctx();
+        // An unknown id must return None so dispatch emits a structured
+        // "message not found" error rather than a stale/empty hit (#1060).
+        let miss = query_response_data(
+            &AgentCommand::GetMessage {
+                id: Some("r1".into()),
+                message_id: "00000000-0000-0000-0000-000000000000".into(),
+                agent_id: None,
+            },
+            &ctx,
+        );
+        assert!(
+            miss.is_none(),
+            "unknown message id must miss (None), got {miss:?}"
+        );
+    }
+
+    #[test]
     fn query_metadata_commands_are_shaped_or_deferred() {
         let mut fx = Fx::new();
         let ctx = fx.ctx();
