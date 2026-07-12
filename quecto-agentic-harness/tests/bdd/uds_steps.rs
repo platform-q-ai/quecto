@@ -1882,8 +1882,22 @@ fn then_agent_output_contains_turn_end(world: &mut QuectoWorld, expected: String
     let events = &world.agent_events;
     let found = events.iter().any(|line| {
         if let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) {
-            ev["type"].as_str() == Some("turn_end")
-                && ev["message"]["content"].as_str() == Some(&expected)
+            if ev["type"].as_str() != Some("turn_end") {
+                false
+            } else {
+                let content = ev["message"]["content"].as_str().unwrap_or("");
+                let refs = ev
+                    .get("message")
+                    .and_then(|m| m.get("messageRefs"))
+                    .and_then(|r| r.as_array());
+                // #1060: content emptied; non-empty messageRefs identify the turn.
+                content == expected
+                    || (content.is_empty()
+                        && refs.is_some_and(|a| {
+                            !a.is_empty()
+                                && a.iter().all(|r| r.as_str().is_some_and(|s| !s.is_empty()))
+                        }))
+            }
         } else {
             false
         }

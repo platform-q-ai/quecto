@@ -193,20 +193,24 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
         .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("event JSON"))
         .find(|event| event["type"] == "agent_end")
         .expect("an agent_end event must be emitted");
-    let payload = agent_end["messages"].as_array().expect("messages array");
-    let roles: Vec<&str> = payload
-        .iter()
-        .map(|m| m["role"].as_str().unwrap_or_default())
-        .collect();
+    // #1060: AgentEnd identifies the run via messageRefs (not full content).
+    let refs = agent_end["messageRefs"]
+        .as_array()
+        .expect("messageRefs array");
     assert_eq!(
-        roles,
-        vec!["assistant", "tool", "assistant"],
-        "AgentEnd must carry exactly the messages this run appended \
-         (assistant tool call, tool result, final reply), got {payload:?}"
+        refs.len(),
+        3,
+        "AgentEnd must ref exactly the messages this run appended          (assistant tool call, tool result, final reply), got {agent_end}"
     );
-    assert_eq!(payload[0]["toolCalls"].as_array().map(Vec::len), Some(1));
-    assert_eq!(payload[1]["content"], "tool-output-payload");
-    assert_eq!(payload[2]["content"], "final answer");
+    assert!(
+        refs.iter()
+            .all(|r| r.as_str().is_some_and(|s| !s.is_empty()))
+    );
+    let payload = agent_end["messages"].as_array().expect("messages array");
+    assert!(
+        payload.is_empty(),
+        "AgentEnd must not re-carry full message content after #1060: {payload:?}"
+    );
 }
 
 /// Clean-side boundary (#1072 review, coverage finding 2), dispatch level: a
