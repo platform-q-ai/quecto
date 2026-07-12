@@ -124,6 +124,32 @@ fn classify_cancelled_variants() {
 }
 
 #[test]
+fn xai_chat_endpoint_denial_403_is_retryable_server() {
+    // xAI's transient capacity rejection arrives as a 403 but succeeds on
+    // retry — promote it from Auth to Server so RetryingProvider retries it.
+    let err = provider(
+        "HTTP 403 from OpenAI: {\"code\":\"permission-denied\",\"error\":\"Access to the chat endpoint is denied. Please ensure you're using...\"}",
+    );
+    assert_eq!(classify_provider_error(&err), ProviderErrorClass::Server);
+    assert!(classify_provider_error(&err).is_retryable());
+}
+
+#[test]
+fn genuine_403_without_denial_phrase_stays_auth() {
+    // A normal forbidden/revoked-token 403 must still fast-fail as Auth.
+    assert_eq!(
+        classify_provider_error(&provider("HTTP 403 from OpenAI: forbidden")),
+        ProviderErrorClass::Auth
+    );
+    assert_eq!(
+        classify_provider_error(&provider(
+            "HTTP 403 from OpenAI: {\"error\":\"invalid token\"}"
+        )),
+        ProviderErrorClass::Auth
+    );
+}
+
+#[test]
 fn classify_keyword_fallbacks() {
     use ProviderErrorClass::*;
     let cases = [
@@ -142,6 +168,18 @@ fn classify_keyword_fallbacks() {
         ("dns resolution failed", Network),
         ("operation timed out", Network),
         ("network is unreachable", Network),
+        // reqwest's bare top-level transport message (no source appended)
+        // must still classify as retryable Network, not Unknown.
+        (
+            "HTTP error: error sending request for url (https://api.x.ai/v1/chat/completions)",
+            Network,
+        ),
+        // With the source chain appended by `format_send_error`, the concrete
+        // cause keyword is what carries the classification.
+        (
+            "HTTP error: error sending request for url (https://api.x.ai/v1/chat/completions): connection reset by peer",
+            Network,
+        ),
         ("something completely unexpected", Unknown),
     ];
     for (msg, expected) in cases {

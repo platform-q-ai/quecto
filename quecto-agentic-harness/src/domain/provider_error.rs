@@ -69,6 +69,16 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
         if class == ProviderErrorClass::Server && declares_client_error_code(&lowered) {
             return ProviderErrorClass::Client;
         }
+        // xAI returns a 403 ("access to the chat endpoint is denied") when the
+        // OAuth-subscription inference surface transiently refuses a request
+        // under load, rather than a 429. The status code says Auth (terminal),
+        // but this particular body is a capacity rejection that succeeds on
+        // retry, so classify it as retryable `Server`. Kept deliberately narrow
+        // to this exact phrase so a genuine revoked-token / wrong-audience 403
+        // still fast-fails as `Auth`.
+        if class == ProviderErrorClass::Auth && is_transient_chat_endpoint_denial(&lowered) {
+            return ProviderErrorClass::Server;
+        }
         return class;
     }
 
@@ -165,6 +175,15 @@ fn json_field_is(lowered: &str, field: &str, value: &str) -> bool {
     false
 }
 
+/// Recognise xAI's transient 403 capacity rejection on the chat endpoint —
+/// body `"Access to the chat endpoint is denied…"`. This is a load-shedding
+/// refusal that succeeds on retry, not a terminal auth failure, so it is
+/// promoted from `Auth` to retryable `Server`. Matched on the exact phrase
+/// (already lowercased) to avoid catching genuine permission failures.
+fn is_transient_chat_endpoint_denial(lowered: &str) -> bool {
+    lowered.contains("access to the chat endpoint is denied")
+}
+
 fn classify_keyword_paths(lowered: &str) -> ProviderErrorClass {
     if lowered.contains("request cancelled") || lowered.contains("request canceled") {
         ProviderErrorClass::Cancelled
@@ -190,6 +209,12 @@ fn classify_keyword_paths(lowered: &str) -> ProviderErrorClass {
         || lowered.contains("timed out")
         || lowered.contains("network")
         || lowered.contains("dns")
+        // reqwest's top-level transport message ("error sending request for
+        // url …") carries none of the keywords above; its concrete cause lives
+        // in `source()`. `format_send_error` appends that chain, but keep this
+        // as a fallback so a transport failure with an empty/opaque source is
+        // still classified `Network` (retryable) rather than `Unknown`.
+        || lowered.contains("sending request")
     {
         ProviderErrorClass::Network
     } else {

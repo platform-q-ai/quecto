@@ -439,7 +439,10 @@ impl CodexProvider {
             Ok(r) => r,
             Err(e) => {
                 let _ = tx
-                    .send(StreamEvent::Error(format!("Codex request failed: {e}")))
+                    .send(StreamEvent::Error(format!(
+                        "Codex request failed: {}",
+                        super::sse_common::format_send_error(&e)
+                    )))
                     .await;
                 return;
             }
@@ -565,7 +568,12 @@ impl LlmProvider for CodexProvider {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| DomainError::Provider(format!("Codex request failed: {}", e)))?;
+                .map_err(|e| {
+                    DomainError::Provider(format!(
+                        "Codex request failed: {}",
+                        super::sse_common::format_send_error(&e)
+                    ))
+                })?;
 
             let status = resp.status().as_u16();
             if status != 200 {
