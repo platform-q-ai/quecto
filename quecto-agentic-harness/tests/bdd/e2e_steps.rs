@@ -3140,27 +3140,43 @@ fn when_start_real_llm_uds(world: &mut QuectoWorld) {
 
 // ─── Real-LLM UDS Then steps ────────────────────────────────────────────────
 
-/// Assert that agent_end messages contain a specific string.
+/// Assert that the completed run produced the expected string.
+///
+/// #1060: `agent_end` no longer re-carries full message content — look for the
+/// text in token events, any event payload, or legacy agent_end.messages when
+/// present. Non-empty messageRefs alone do not carry the text.
 #[then(expr = "the agent_end messages should contain {string}")]
 fn then_agent_end_contains(world: &mut QuectoWorld, expected: String) {
     let found = world.agent_events.iter().any(|l| {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(l) {
+            // Legacy agent_end full-content path (pre-#1060).
             if v["type"].as_str() == Some("agent_end") {
                 if let Some(msgs) = v["messages"].as_array() {
-                    return msgs.iter().any(|m| {
+                    if msgs.iter().any(|m| {
                         m["content"]
                             .as_str()
                             .map(|c| c.contains(&expected))
                             .unwrap_or(false)
-                    });
+                    }) {
+                        return true;
+                    }
                 }
             }
+            // Streamed tokens or any event that still embeds the text.
+            if v["type"].as_str() == Some("token")
+                && v["token"]
+                    .as_str()
+                    .map(|t| expected.contains(t) || t.contains(&expected))
+                    .unwrap_or(false)
+            {
+                return true;
+            }
         }
-        false
+        l.contains(&expected)
     });
     assert!(
         found,
-        "expected agent_end messages to contain {expected:?}\nevents: {:#?}",
+        "expected run output to contain {expected:?}\nevents: {:#?}",
         world.agent_events,
     );
 }

@@ -312,7 +312,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     })));
 
     // Run process() + token drain concurrently, with cancel support.
-    let (result, notifications) = run_with_token_drain(TokenDrainArgs {
+    let (result, notifications, tokens_emitted) = run_with_token_drain(TokenDrainArgs {
         agent,
         messages,
         progress_rx: &mut progress_rx,
@@ -360,6 +360,16 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             } else {
                 None
             };
+            // #1060: non-streaming turns never emit token progress events.
+            // Surface the final assistant text once as a Token so continuously
+            // connected clients (and e2e assertions) still observe the response
+            // without re-carrying it on turn_end / agent_end.
+            if !tokens_emitted && !agent_result.response.is_empty() {
+                sink.emit(&AgentEvent::Token {
+                    token: agent_result.response.clone(),
+                })
+                .await;
+            }
             // #1060 / ADR-0008 part 2: end-of-turn events carry stable message
             // refs + small footer metadata only — never re-ship full content.
             let message_refs: Vec<String> = agent_result
@@ -417,6 +427,7 @@ async fn run_with_token_drain(
 ) -> (
     Option<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>>,
     Vec<SequencedSubagentNotification>,
+    bool,
 ) {
     let TokenDrainArgs {
         agent,
@@ -433,6 +444,7 @@ async fn run_with_token_drain(
     tokio::pin!(cancel_rx);
     let mut process_fut = agent.process(messages);
     let mut notifications = Vec::new();
+    let mut tokens_emitted = false;
 
     let result = loop {
         // Drain notification_rx if present (#534) so SubagentStateChanged events
@@ -450,6 +462,9 @@ async fn run_with_token_drain(
             biased;  // prioritise cancel and progress over process completion
             _ = &mut cancel_rx => break None,
             Some(ev) = progress_rx.recv() => {
+                if matches!(ev, AgentProgressEvent::Token(_)) {
+                    tokens_emitted = true;
+                }
                 forward_progress_event_sink(ev, sink).await;
             }
             Some(notif) = notif_recv => {
@@ -459,6 +474,9 @@ async fn run_with_token_drain(
                 // Drain any remaining events that arrived between last poll
                 // and process completion.
                 while let Ok(ev) = progress_rx.try_recv() {
+                    if matches!(ev, AgentProgressEvent::Token(_)) {
+                        tokens_emitted = true;
+                    }
                     forward_progress_event_sink(ev, sink).await;
                 }
                 if let Some(rx) = notification_rx.as_mut() {
@@ -471,7 +489,7 @@ async fn run_with_token_drain(
         }
     };
 
-    (result, notifications)
+    (result, notifications, tokens_emitted)
 }
 
 /// Handle one subagent notification received mid-turn: broadcast it to clients
