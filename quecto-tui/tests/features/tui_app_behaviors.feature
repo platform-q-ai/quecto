@@ -79,7 +79,7 @@ Feature: TUI app event routing and command behaviours
     And the master uses model "openai-api/gpt-5.5"
     And sub-agent "a1" uses model "anthropic-api/claude-sonnet-4-6" with effort "high"
     And I have submitted the master prompt "/model anthropic-api/claude-fable-5"
-    When sub-agent "a1" acknowledges model "anthropic-api/claude-fable-5"
+    When sub-agent "a1" acknowledges and reports model "anthropic-api/claude-fable-5"
     Then the footer shows the sub-agent model "anthropic-api/claude-fable-5"
     And the master session still shows model "openai-api/gpt-5.5"
 

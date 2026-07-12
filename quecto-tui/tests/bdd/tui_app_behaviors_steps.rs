@@ -959,9 +959,11 @@ fn when_choose_model_from_selector(world: &mut TuiWorld, model: String) {
     world.tui_last_commands = drive(world, |h| h.try_drain_commands());
 }
 
-#[when(expr = "sub-agent {string} acknowledges model {string}")]
-fn when_subagent_acknowledges_model(world: &mut TuiWorld, id: String, _model: String) {
-    // Production set_model acks with data: None (uds.rs AgentEvent::ok).
+#[when(expr = "sub-agent {string} acknowledges and reports model {string}")]
+fn when_subagent_acknowledges_and_reports_model(world: &mut TuiWorld, id: String, model: String) {
+    // Production set_model acks with data: None (uds.rs AgentEvent::ok). The
+    // TUI then requests get_state; that authoritative response, not the bare
+    // acknowledgement, updates the focused session's footer and selector.
     drive(world, |h| {
         h.route(
             &id,
@@ -970,6 +972,20 @@ fn when_subagent_acknowledges_model(world: &mut TuiWorld, id: String, _model: St
                 command: "set_model".into(),
                 success: true,
                 data: None,
+                error: None,
+            },
+        );
+        h.route(
+            &id,
+            Event::Response {
+                id: Some("resync".into()),
+                command: "get_state".into(),
+                success: true,
+                data: Some(serde_json::json!({
+                    "model": model,
+                    "effort": "low",
+                    "effortLevels": ["low", "medium", "high", "max"],
+                })),
                 error: None,
             },
         );

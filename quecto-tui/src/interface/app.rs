@@ -656,6 +656,9 @@ mod app_idle_efficiency_tests;
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;
 #[cfg(test)]
+#[path = "app_model_focus_1085_tests.rs"]
+mod app_model_focus_1085_tests;
+#[cfg(test)]
 #[path = "app_rewind_response_tests.rs"]
 mod app_rewind_response_tests;
 #[cfg(test)]

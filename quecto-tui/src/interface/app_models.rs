@@ -39,9 +39,10 @@ pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
 
 impl App {
     /// Send `set_model` over the socket. When a sub-agent is focused, route
-    /// via its own UDS connection (mirrors `send_set_effort`, #1085). The
-    /// optimistic footer update targets only the focused session so a child
-    /// switch never clobbers the master's retained model.
+    /// via its own UDS connection (mirrors `send_set_effort`, #1085). Child
+    /// display state remains authoritative: it updates only from the
+    /// post-success `get_state` resync, so a rejected switch keeps the
+    /// previously active model visible.
     pub(super) fn send_set_model(&mut self, model: &str) {
         let cmd = Command::SetModel {
             id: Some("sm".into()),
@@ -57,16 +58,10 @@ impl App {
                 );
                 return;
             }
-            // Optimistic: update only the focused child's session footer +
-            // the active selector marker. Master footer/`current_model` stay
-            // as the retained master state until focus returns.
-            if let Some(id) = self.subagents.active_agent_id.clone() {
-                self.ensure_session(&id);
-                if let Some(session) = self.subagents.sessions.get_mut(&id) {
-                    session.footer.set_model(model);
-                }
-            }
-            self.current_model = Some(model.to_string());
+            // Unlike the master path below, do not update the focused child's
+            // footer or selector marker optimistically. The child's set_model
+            // acknowledgement has no model payload, so its follow-up get_state
+            // is the authoritative point at which both values change.
             return;
         }
         self.send_command(cmd);
