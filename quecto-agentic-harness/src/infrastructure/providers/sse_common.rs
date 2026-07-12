@@ -15,6 +15,32 @@ pub const MAX_SSE_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
 /// unbounded memory usage on malformed or oversized error responses.
 pub const MAX_ERROR_BODY_BYTES: usize = 4096;
 
+/// Render a `reqwest` transport error together with its source chain.
+///
+/// `reqwest::Error`'s `Display` only prints its top-level message
+/// (e.g. `"error sending request for url (…)"`); the concrete cause —
+/// `"connection refused"`, `"connection reset"`, `"dns error"`,
+/// `"operation timed out"` — lives in `source()`. Dropping it loses the one
+/// signal the retry classifier (`classify_provider_error`) needs to recognise a
+/// transient `Network` failure, so a retryable connection blip is misclassified
+/// as non-retryable `Unknown` and fails the turn without a single retry.
+///
+/// This walks the full `std::error::Error` source chain and appends each cause,
+/// so the resulting string contains the underlying keyword (`connection`,
+/// `timed out`, `dns`, …) the classifier matches on.
+pub fn format_send_error(err: &reqwest::Error) -> String {
+    use std::error::Error;
+
+    let mut out = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        out.push_str(": ");
+        out.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    out
+}
+
 /// Truncate an HTTP error body to [`MAX_ERROR_BODY_BYTES`].
 ///
 /// Returns the body unchanged if it fits. Appends `"... (truncated)"`
@@ -188,6 +214,36 @@ mod tests {
             );
         }
         map
+    }
+
+    #[tokio::test]
+    async fn format_send_error_appends_source_chain() {
+        // A refused connection to a closed loopback port yields a real
+        // `reqwest::Error` whose top-level message is "error sending request…"
+        // and whose `source()` carries the concrete cause. Port 1 on loopback
+        // is not listening, so the connect is refused deterministically.
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let err = client
+            .get("http://127.0.0.1:1/")
+            .send()
+            .await
+            .expect_err("connection to closed port must fail");
+
+        let rendered = format_send_error(&err);
+        // Top-level reqwest message is preserved…
+        assert!(
+            rendered.contains("error sending request") || rendered.contains("Connection refused"),
+            "unexpected transport error rendering: {rendered}"
+        );
+        // …and the source chain is appended (longer than the bare Display),
+        // so a keyword like "refused"/"connect" reaches the retry classifier.
+        assert!(
+            rendered.len() >= err.to_string().len(),
+            "source chain must not shorten the message: {rendered}"
+        );
     }
 
     #[test]

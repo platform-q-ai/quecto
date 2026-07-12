@@ -228,10 +228,12 @@ impl OpenAiProvider {
             .json(&body);
         let request_builder = self.apply_auth_headers(request_builder);
 
-        let response = request_builder
-            .send()
-            .await
-            .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
+        let response = request_builder.send().await.map_err(|e| {
+            DomainError::Provider(format!(
+                "HTTP error: {}",
+                super::sse_common::format_send_error(&e)
+            ))
+        })?;
 
         let status = response.status().as_u16();
         if status != 200 {
@@ -272,7 +274,10 @@ impl OpenAiProvider {
             Ok(r) => r,
             Err(e) => {
                 let _ = tx
-                    .send(StreamEvent::Error(format!("HTTP error: {e}")))
+                    .send(StreamEvent::Error(format!(
+                        "HTTP error: {}",
+                        super::sse_common::format_send_error(&e)
+                    )))
                     .await;
                 return;
             }
@@ -321,10 +326,12 @@ impl LlmProvider for OpenAiProvider {
                 .json(&body);
             let request_builder = self.apply_auth_headers(request_builder);
 
-            let response = request_builder
-                .send()
-                .await
-                .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
+            let response = request_builder.send().await.map_err(|e| {
+                DomainError::Provider(format!(
+                    "HTTP error: {}",
+                    super::sse_common::format_send_error(&e)
+                ))
+            })?;
 
             let status = response.status().as_u16();
             let retry_after = super::sse_common::retry_after_suffix(response.headers());
