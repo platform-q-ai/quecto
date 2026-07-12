@@ -368,6 +368,12 @@ async fn late_master_set_effort_success_does_not_replace_focused_child_effort() 
         h.full_frame().contains("effort: high"),
         "late master success must not replace focused child's effort"
     );
+    assert!(
+        !h.notification_messages()
+            .iter()
+            .any(|m| m.contains("Effort set to xhigh")),
+        "late master success must not toast the master's level over a focused child"
+    );
 }
 
 #[tokio::test]
