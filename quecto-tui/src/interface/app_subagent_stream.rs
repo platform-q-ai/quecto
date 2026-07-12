@@ -113,10 +113,21 @@ impl App {
                 }
                 return;
             }
+            if command == "set_model" {
+                if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
+                    let detail = error.as_deref().unwrap_or("unknown error");
+                    self.notify(
+                        &format!("Model switch failed: {detail}"),
+                        NotifyLevel::Error,
+                    );
+                }
+                return;
+            }
         }
         if let Event::Response {
             command,
             data: Some(data),
+            success,
             ..
         } = &ev
         {
@@ -138,6 +149,13 @@ impl App {
                     Self::update_session_footer(session, &ev);
                 }
                 if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
+                    if let Some(model) = data
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .map(crate::interface::ansi::sanitize_control)
+                    {
+                        self.current_model = Some(model);
+                    }
                     self.current_effort = data
                         .get("effort")
                         .and_then(|v| v.as_str())
@@ -168,6 +186,35 @@ impl App {
                         self.current_effort = Some(level.clone());
                         self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
                     }
+                }
+                return;
+            }
+            if command == "set_model" && *success {
+                // Child set_model success: update only that session's footer
+                // and (when still focused) the active model marker; re-sync
+                // child state so effort vocabulary tracks the new model (#1085).
+                if let Some(model) = data
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .map(crate::interface::ansi::sanitize_control)
+                {
+                    if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
+                        session.footer.set_model(&model);
+                    }
+                    if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
+                        self.current_model = Some(model);
+                        self.notify("Model switched", NotifyLevel::Success);
+                        // Re-sync on the child's own connection (not master).
+                        let _ = self.send_to_active_subagent(Command::GetState {
+                            id: Some("resync".into()),
+                        });
+                    }
+                } else if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
+                    // Agent may ack without echoing the model; still re-sync.
+                    self.notify("Model switched", NotifyLevel::Success);
+                    let _ = self.send_to_active_subagent(Command::GetState {
+                        id: Some("resync".into()),
+                    });
                 }
                 return;
             }

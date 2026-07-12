@@ -64,4 +64,20 @@ impl TuiHarness {
             .as_ref()
             .map(crate::interface::components::effort_selector::EffortSelector::visible_levels)
     }
+
+    /// ANSI-stripped master session footer text (#1085). Lets focus-parity
+    /// scenarios assert the master's retained model/effort without switching
+    /// away from the focused child (which would hide the child's footer).
+    pub fn master_footer_text(&mut self) -> String {
+        use crate::interface::component::Component;
+        let rendered = self.app.master_session.footer.render(200).join("\n");
+        crate::interface::ansi::strip_ansi(&rendered)
+    }
+
+    /// The App-level `current_model` tracker (#1085), used with
+    /// [`Self::master_footer_text`] to assert late master responses do not
+    /// clobber focused-child state.
+    pub fn current_model(&self) -> Option<String> {
+        self.app.current_model.clone()
+    }
 }

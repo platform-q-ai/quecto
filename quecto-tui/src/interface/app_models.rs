@@ -38,13 +38,38 @@ pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
 }
 
 impl App {
+    /// Send `set_model` over the socket. When a sub-agent is focused, route
+    /// via its own UDS connection (mirrors `send_set_effort`, #1085). The
+    /// optimistic footer update targets only the focused session so a child
+    /// switch never clobbers the master's retained model.
     pub(super) fn send_set_model(&mut self, model: &str) {
-        self.send_command(Command::SetModel {
+        let cmd = Command::SetModel {
             id: Some("sm".into()),
             model: Some(model.to_string()),
             provider: None,
             model_id: None,
-        });
+        };
+        if self.subagents.active_agent_id.is_some() {
+            if !self.send_to_active_subagent(cmd) {
+                self.notify(
+                    "Selected sub-agent is not ready for model changes yet",
+                    NotifyLevel::Error,
+                );
+                return;
+            }
+            // Optimistic: update only the focused child's session footer +
+            // the active selector marker. Master footer/`current_model` stay
+            // as the retained master state until focus returns.
+            if let Some(id) = self.subagents.active_agent_id.clone() {
+                self.ensure_session(&id);
+                if let Some(session) = self.subagents.sessions.get_mut(&id) {
+                    session.footer.set_model(model);
+                }
+            }
+            self.current_model = Some(model.to_string());
+            return;
+        }
+        self.send_command(cmd);
         self.master_session.footer.set_model(model);
         self.current_model = Some(model.to_string());
         self.context_stats_requested = false;

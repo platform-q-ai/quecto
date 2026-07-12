@@ -50,6 +50,55 @@ Feature: TUI app event routing and command behaviours
     Then the app notification includes "Could not list models: registry unavailable"
     And the model selector is visible
 
+  @model-selector
+  Scenario: A selected sub-agent receives the chosen model
+    Given a TUI viewing sub-agent "a1"
+    And sub-agent "a1" uses model "openai-api/gpt-5.5" with effort "medium"
+    When I choose model "anthropic-api/claude-fable-5" from the model selector
+    Then sub-agent "a1" receives model "anthropic-api/claude-fable-5"
+    And no set model command is sent to the master
+
+  @model-selector
+  Scenario: Explicit /model while a sub-agent is focused targets that sub-agent
+    Given a TUI viewing sub-agent "a1"
+    And sub-agent "a1" uses model "openai-api/gpt-5.5" with effort "medium"
+    When I submit the master prompt "/model anthropic-api/claude-fable-5"
+    Then sub-agent "a1" receives model "anthropic-api/claude-fable-5"
+    And no set model command is sent to the master
+
+  @model-selector
+  Scenario: /model without a focused sub-agent still targets the master
+    Given a fresh TUI app harness
+    When I submit the master prompt "/model openai-api/gpt-5.5"
+    Then a set model command is sent for "openai-api/gpt-5.5"
+    And the footer shows the master model "openai-api/gpt-5.5"
+
+  @model-selector
+  Scenario: Successful sub-agent model switch updates only that session footer
+    Given a TUI viewing sub-agent "a1"
+    And the master uses model "openai-api/gpt-5.5"
+    And sub-agent "a1" uses model "anthropic-api/claude-sonnet-4-6" with effort "high"
+    And I have submitted the master prompt "/model anthropic-api/claude-fable-5"
+    When sub-agent "a1" acknowledges model "anthropic-api/claude-fable-5"
+    Then the footer shows the sub-agent model "anthropic-api/claude-fable-5"
+    And the master session still shows model "openai-api/gpt-5.5"
+
+  @model-selector
+  Scenario: Late master model switch does not clobber a focused sub-agent footer
+    Given a TUI viewing sub-agent "a1"
+    And the master uses model "openai-api/gpt-5.5"
+    And sub-agent "a1" uses model "anthropic-api/claude-sonnet-4-6" with effort "high"
+    When a master model switch succeeds for "openai-api/gpt-5.4"
+    Then the footer shows the sub-agent model "anthropic-api/claude-sonnet-4-6"
+    And the app notification does not include "Model switched"
+
+  @model-selector
+  Scenario: Model change is refused when the focused sub-agent connection is not ready
+    Given a TUI viewing sub-agent "a1" without a ready connection
+    When I submit the master prompt "/model anthropic-api/claude-fable-5" expecting no agent command
+    Then the app notification includes "Selected sub-agent is not ready for model changes yet"
+    And no set model command is sent
+
   @effort
   Scenario: Footer shows the active effort level from agent state
     Given a fresh TUI app harness
