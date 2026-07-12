@@ -8,11 +8,33 @@ use std::path::Path;
 
 use crate::domain::subagent::SubagentConfig;
 
+/// Parse and validate the raw `effort` argument from spawn tool args,
+/// honoring the target model's effort vocabulary when a model is specified.
+///
+/// Returns `Ok(None)` when absent/null/empty, `Ok(Some(level))` for a valid
+/// level, and `Err` for a non-string value or an invalid/out-of-vocabulary
+/// level. Lives here (rather than in `spawn.rs`) so the spawn tool stays under
+/// the repository file-size cap while keeping the validation unit-testable.
+pub(super) fn parse_effort_arg(
+    arg: Option<&serde_json::Value>,
+    model: Option<&str>,
+) -> Result<Option<String>, String> {
+    use crate::domain::provider::EffortLevel;
+    match arg {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => match s.trim() {
+            "" => Ok(None),
+            level => validate_effort(level, model).map(Some),
+        },
+        Some(_) => Err(format!(
+            "effort must be a string; valid values: {}",
+            EffortLevel::VALID_VALUES
+        )),
+    }
+}
+
 /// Validate a spawn `effort` level, honoring the target model's effort
 /// vocabulary when a model is specified. Returns the normalized level string.
-///
-/// Lives here (rather than in `spawn.rs`) so the spawn tool stays under the
-/// repository file-size cap while keeping the validation unit-testable.
 pub(super) fn validate_effort(level: &str, model: Option<&str>) -> Result<String, String> {
     use crate::domain::provider::EffortLevel;
     let parsed = EffortLevel::parse(level).ok_or_else(|| {
@@ -29,7 +51,7 @@ pub(super) fn validate_effort(level: &str, model: Option<&str>) -> Result<String
             ));
         }
     }
-    Ok(level.to_string())
+    Ok(parsed.as_str().to_string())
 }
 
 /// Resolved launch context for a child agent: the deterministic inputs that are

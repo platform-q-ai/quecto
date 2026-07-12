@@ -341,6 +341,13 @@ Feature: SpawnTool — child agent process spawning
     And the spawn result should contain "invalid effort"
     And the spawn result should contain "none, low, medium, high, xhigh, max"
 
+  Scenario: A non-string spawn effort is rejected at parse time
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I execute the SpawnTool with '{"task":"work","effort":123}'
+    Then the spawn result should be an error
+    And the spawn result should contain "effort must be a string"
+    And the spawn result should contain "none, low, medium, high, xhigh, max"
+
   Scenario: Spawn effort is checked against the selected provider vocabulary
     Given a SpawnTool with empty allowlist and restrict_to_workspace true
     When I execute the SpawnTool with '{"task":"work","model":"anthropic-api/claude-fable-5","effort":"xhigh"}'
