@@ -300,6 +300,77 @@ async fn effort_validation_uses_agent_reported_vocabulary_not_a_local_copy() {
 }
 
 #[tokio::test]
+async fn late_master_get_state_does_not_replace_focused_child_effort_state() {
+    let mut h = harness().await;
+    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(super::tui_harness::spawn_start("child"));
+    h.event(super::tui_harness::subagents_changed(vec![
+        super::tui_harness::subagent("child", "idle", None),
+    ]));
+    h.select(Some("child"));
+    h.route(
+        "child",
+        Event::Response {
+            id: Some("child-state".into()),
+            command: "get_state".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "model": "anthropic-api/claude-fable-5",
+                "effort": "high",
+                "effortLevels": ["low", "medium", "high", "max"],
+            })),
+            error: None,
+        },
+    );
+
+    // A delayed master response must update only master's retained footer.
+    h.event(get_state_event("openai-api/gpt-5.5", Some("xhigh")));
+    h.submit("/effort");
+    assert_eq!(
+        h.effort_selector_entries().expect("selector should open"),
+        ["low", "medium", "high", "max"],
+        "late master state must not replace the focused child's vocabulary"
+    );
+}
+
+#[tokio::test]
+async fn late_master_set_effort_success_does_not_replace_focused_child_effort() {
+    let mut h = harness().await;
+    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(super::tui_harness::spawn_start("child"));
+    h.event(super::tui_harness::subagents_changed(vec![
+        super::tui_harness::subagent("child", "idle", None),
+    ]));
+    h.select(Some("child"));
+    h.route(
+        "child",
+        Event::Response {
+            id: Some("child-state".into()),
+            command: "get_state".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "model": "anthropic-api/claude-fable-5",
+                "effort": "high",
+                "effortLevels": ["low", "medium", "high", "max"],
+            })),
+            error: None,
+        },
+    );
+    h.event(Event::Response {
+        id: None,
+        command: "set_effort".into(),
+        success: true,
+        data: Some(serde_json::json!({ "effort": "xhigh" })),
+        error: None,
+    });
+
+    assert!(
+        h.full_frame().contains("effort: high"),
+        "late master success must not replace focused child's effort"
+    );
+}
+
+#[tokio::test]
 async fn effort_set_before_first_get_state_defers_validation_to_agent() {
     // Before any get_state lands the TUI has no vocabulary; it must not
     // block the command — the agent validates and rejects with the list.

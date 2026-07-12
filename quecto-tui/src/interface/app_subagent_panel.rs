@@ -183,7 +183,7 @@ impl App {
             .map(str::to_string);
         self.effort_levels.clear();
         self.seed_session_bar_from_snapshot(&id); // main-pane bar from snapshot (#913)
-        self.open_subagent_connection(&id);
+        self.open_subagent_connection(&id); // commit, not highlight (#802)
     }
 
     /// Reconcile the active/pending session when the viewed sub-agent leaves
@@ -314,6 +314,7 @@ impl App {
             let Ok(mut client) = Client::connect(&path).await else {
                 return;
             };
+            // Reconcile the kernel's connect-time busy-child snapshot (#828).
             let _ = client
                 .send(&Command::GetMessages {
                     id: Some("subagent-history".into()),

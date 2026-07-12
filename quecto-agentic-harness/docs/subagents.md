@@ -577,7 +577,7 @@ The interactive REPL provides commands for managing subagents:
 
 ### TUI effort selector for sub-agents
 
-In the TUI, the effort selector (`/effort`, or bare `/effort` to open the
+In the TUI, the effort selector (`/effort <level>` to set directly, or bare `/effort` to open the
 overlay) targets the **currently focused/selected sub-agent** when one is
 active, instead of the primary session. The selected level is validated against
 that child's agent-reported effort vocabulary and sent over the same UDS runtime

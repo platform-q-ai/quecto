@@ -97,7 +97,12 @@ impl App {
             return;
         };
         self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
-        self.set_current_effort(Some(level));
+        // Master responses can arrive after focus moved to a child. Preserve the
+        // master's footer, but do not replace the focused child's selector state.
+        self.master_session.footer.set_effort(Some(level.clone()));
+        if self.subagents.active_agent_id.is_none() {
+            self.current_effort = Some(level);
+        }
     }
 
     /// Re-fetch agent state after a session/model switch so session-scoped
@@ -107,11 +112,5 @@ impl App {
         self.send_command(Command::GetState {
             id: Some("resync".into()),
         });
-    }
-
-    /// Track the session's active effort and mirror it onto the footer.
-    pub(super) fn set_current_effort(&mut self, effort: Option<String>) {
-        self.master_session.footer.set_effort(effort.clone());
-        self.current_effort = effort;
     }
 }

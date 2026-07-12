@@ -37,6 +37,8 @@ fn parse_disable_tools(args: &serde_json::Value) -> Result<Vec<String>, String> 
         }
     };
 
+    // Treat a malformed read_only safety flag as an error rather than silently
+    // dropping it; valid true expands first, then unions disable_tools.
     if let Some(v) = args.get("read_only").filter(|v| !v.is_null()) {
         if v.as_bool().ok_or("read_only must be a boolean")? {
             push_unique("write", &mut tools);
@@ -244,6 +246,8 @@ impl SpawnTool {
             return Err("workflow_guards requires workflow to also be true".to_string());
         }
 
+        // Borrow-deserialize into the domain type so malformed by-value specs
+        // fail here clearly and raw JSON never leaks into the launch pipeline.
         let workflow_spec = match args.get("workflow_spec") {
             Some(v) if !v.is_null() => {
                 use serde::Deserialize;
@@ -254,6 +258,8 @@ impl SpawnTool {
             _ => None,
         };
 
+        // #881: share set_model parsing so accepted forms cannot diverge;
+        // explicit model > forwarded --config > built-in default.
         let model_arg = crate::domain::subagent::parse_model_arg(
             args.get("model").and_then(|v| v.as_str()),
             args.get("provider").and_then(|v| v.as_str()),
