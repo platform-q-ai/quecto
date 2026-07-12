@@ -11,7 +11,11 @@ impl App {
         match command.as_str() {
             "get_state" if success => self.handle_get_state(data),
             "set_model" if success => self.handle_set_model_success(data),
-            "set_model" => self.notify_response_error("Model switch failed", error),
+            // Late master failure must not toast over a focused child (#1085).
+            "set_model" if self.subagents.active_agent_id.is_none() => {
+                self.notify_response_error("Model switch failed", error)
+            }
+            "set_model" => {}
             "set_effort" if success => self.handle_set_effort_success(data),
             "set_effort" => self.notify_response_error("Effort switch failed", error),
             "set_workflow_automation" if success => self.handle_workflow_automation(data),

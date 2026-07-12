@@ -55,6 +55,16 @@ impl Footer {
         self.model = model.to_string();
     }
 
+    /// Current model id shown in this footer (#1085 select restore).
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// Model id for selector restore, or `None` when still the unset default.
+    pub fn known_model(&self) -> Option<&str> {
+        (self.model != "unknown").then_some(self.model.as_str())
+    }
+
     /// Record the active effort level; `None` shows the effective default.
     pub fn set_effort(&mut self, effort: Option<String>) {
         self.effort = effort;

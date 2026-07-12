@@ -960,7 +960,8 @@ fn when_choose_model_from_selector(world: &mut TuiWorld, model: String) {
 }
 
 #[when(expr = "sub-agent {string} acknowledges model {string}")]
-fn when_subagent_acknowledges_model(world: &mut TuiWorld, id: String, model: String) {
+fn when_subagent_acknowledges_model(world: &mut TuiWorld, id: String, _model: String) {
+    // Production set_model acks with data: None (uds.rs AgentEvent::ok).
     drive(world, |h| {
         h.route(
             &id,
@@ -968,7 +969,7 @@ fn when_subagent_acknowledges_model(world: &mut TuiWorld, id: String, model: Str
                 id: Some("sm".into()),
                 command: "set_model".into(),
                 success: true,
-                data: Some(serde_json::json!({ "model": model })),
+                data: None,
                 error: None,
             },
         );

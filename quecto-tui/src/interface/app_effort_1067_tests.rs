@@ -574,20 +574,29 @@ async fn child_set_model_success_updates_only_child_footer_and_resyncs() {
     }
     assert!(saw_set_model, "expected child set_model");
 
+    // Production set_model acks with data: None (uds.rs). Footer was already
+    // updated optimistically; the success path must still toast + resync.
     h.route(
         "child",
         Event::Response {
             id: Some("sm".into()),
             command: "set_model".into(),
             success: true,
-            data: Some(serde_json::json!({ "model": "anthropic-api/claude-fable-5" })),
+            data: None,
             error: None,
         },
     );
 
     assert!(
+        h.notification_messages()
+            .iter()
+            .any(|m| m.contains("Model switched")),
+        "child set_model success (data:None) must toast, got {:?}",
+        h.notification_messages()
+    );
+    assert!(
         h.full_frame().contains("anthropic-api/claude-fable-5"),
-        "child footer must show the new model after ack, frame:\n{}",
+        "child footer must keep the optimistic model after ack, frame:\n{}",
         h.full_frame()
     );
     assert!(
@@ -614,5 +623,93 @@ async fn child_set_model_success_updates_only_child_footer_and_resyncs() {
     assert!(
         command_of_type(&master_cmds, "get_state").is_none(),
         "child model switch must not re-sync master state: {master_cmds:?}"
+    );
+}
+
+#[tokio::test]
+async fn late_master_set_model_failure_does_not_toast_over_focused_child() {
+    let mut h = harness().await;
+    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(super::tui_harness::spawn_start("child"));
+    let (socket, mut child_rx) = super::tui_harness::spawn_subagent_socket_with_commands("child");
+    h.event(super::tui_harness::subagents_changed(vec![
+        super::tui_harness::subagent_with_socket("child", "idle", None, Some(socket)),
+    ]));
+    h.select(Some("child"));
+    h.try_drain_commands();
+    while let Ok(Some(_)) =
+        tokio::time::timeout(std::time::Duration::from_millis(20), child_rx.recv()).await
+    {}
+    h.route(
+        "child",
+        Event::Response {
+            id: Some("child-state".into()),
+            command: "get_state".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "model": "anthropic-api/claude-fable-5",
+                "effort": "high",
+                "effortLevels": ["low", "medium", "high", "max"],
+            })),
+            error: None,
+        },
+    );
+
+    h.event(Event::Response {
+        id: None,
+        command: "set_model".into(),
+        success: false,
+        data: None,
+        error: Some("registry unavailable".into()),
+    });
+
+    assert!(
+        !h.notification_messages()
+            .iter()
+            .any(|m| m.contains("Model switch failed")),
+        "late master set_model failure must not toast over focused child, got {:?}",
+        h.notification_messages()
+    );
+}
+
+#[tokio::test]
+async fn select_agent_restores_current_model_from_session_footer() {
+    let mut h = harness().await;
+    h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
+    h.event(super::tui_harness::spawn_start("child"));
+    let (socket, mut child_rx) = super::tui_harness::spawn_subagent_socket_with_commands("child");
+    h.event(super::tui_harness::subagents_changed(vec![
+        super::tui_harness::subagent_with_socket("child", "idle", None, Some(socket)),
+    ]));
+    h.select(Some("child"));
+    h.try_drain_commands();
+    while let Ok(Some(_)) =
+        tokio::time::timeout(std::time::Duration::from_millis(20), child_rx.recv()).await
+    {}
+    h.route(
+        "child",
+        Event::Response {
+            id: Some("child-state".into()),
+            command: "get_state".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "model": "anthropic-api/claude-fable-5",
+                "effort": "high",
+                "effortLevels": ["low", "medium", "high", "max"],
+            })),
+            error: None,
+        },
+    );
+    assert_eq!(
+        h.current_model().as_deref(),
+        Some("anthropic-api/claude-fable-5")
+    );
+
+    // Return to master: selector marker must restore master's model immediately.
+    h.select(None);
+    assert_eq!(
+        h.current_model().as_deref(),
+        Some("openai-api/gpt-5.5"),
+        "select_agent(None) must restore master current_model from footer"
     );
 }
