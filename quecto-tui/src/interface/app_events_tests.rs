@@ -59,7 +59,10 @@ async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idl
         "note must be deferred while the parent is streaming"
     );
     // Parent goes idle → the note is flushed after the finished response.
-    app.handle_event(Event::AgentEnd);
+    app.handle_event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec![],
+    });
     let text = app
         .master_session
         .chat
@@ -78,7 +81,10 @@ async fn handles_agent_lifecycle_and_token_events() {
         token: "hello".into(),
     });
     app.handle_event(Event::TurnStart);
-    app.handle_event(Event::AgentEnd);
+    app.handle_event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec![],
+    });
     assert!(!app.agent_state.is_running());
     assert!(app.spinner.is_none());
 }

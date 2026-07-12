@@ -192,7 +192,7 @@ fn event_unknown_type_deserializes_as_unknown() {
 fn event_deserializes_agent_end() {
     let json = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"hi"}]}"#;
     let event: Event = serde_json::from_str(json).unwrap();
-    assert!(matches!(event, Event::AgentEnd));
+    assert!(matches!(event, Event::AgentEnd { .. }));
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn agent_end_tolerates_unused_messages_payload() {
     let json = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"unused-agent-end-payload"}]}"#;
     let event: Event = serde_json::from_str(json).unwrap();
 
-    assert!(matches!(event, Event::AgentEnd));
+    assert!(matches!(event, Event::AgentEnd { .. }));
 }
 
 // ── Integration: result text extraction ─────────────────────────

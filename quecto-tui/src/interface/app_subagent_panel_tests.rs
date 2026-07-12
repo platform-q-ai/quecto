@@ -55,6 +55,11 @@ async fn with_two_subagents() -> TuiHarness {
     h
 }
 
+#[rustfmt::skip]
+fn empty_agent_end() -> Event {
+    Event::AgentEnd { messages: vec![], message_refs: vec![] }
+}
+
 #[tokio::test]
 async fn panel_always_visible_even_without_subagents() {
     // Sub-agent-first default (#820): the panel is ALWAYS on once connected,
@@ -152,7 +157,8 @@ async fn observed_idle_overrides_stale_tracked_running_status() {
         h.app_mut().active_subagent_running(),
         "mid-turn connect: running inferred from tracked status before any stream event"
     );
-    h.app_mut().route_subagent_event("worker", Event::AgentEnd);
+    h.app_mut()
+        .route_subagent_event("worker", empty_agent_end());
     assert!(
         !h.app_mut().active_subagent_running(),
         "observed agent_end wins over the stale tracked 'running' status"
@@ -610,7 +616,8 @@ async fn deferred_subagent_note_buffer_is_capped() {
     // Child goes idle: deferred notes flush into the chat. Count the resulting
     // chat entries directly (not the clipped viewport) so this asserts the
     // BUFFER cap, not the screen height.
-    h.app_mut().route_subagent_event("worker", Event::AgentEnd);
+    h.app_mut()
+        .route_subagent_event("worker", empty_agent_end());
     let entries = h
         .app_mut()
         .session_chat_entry_count("worker")
@@ -657,7 +664,7 @@ async fn master_defers_and_flushes_notes_like_a_session() {
         !mid.contains("child one done"),
         "a note must be DEFERRED while the master is mid-turn:\n{mid}"
     );
-    h.event(Event::AgentEnd);
+    h.event(empty_agent_end());
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     let resp = frame.find("master-response").expect("response present");
     let note = frame.find("child one done").expect("note flushed on idle");

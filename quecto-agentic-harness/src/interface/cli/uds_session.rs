@@ -447,7 +447,10 @@ impl serde::Serialize for MessageView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let msg = self.0;
-        let mut s = serializer.serialize_struct("Message", 5)?;
+        // 6 fields: stable id (#1060) + role/content/toolCalls/toolCallId/toolName.
+        let mut s = serializer.serialize_struct("Message", 6)?;
+        // Domain UUID as a round-trippable string key (AC6).
+        s.serialize_field("id", &msg.id().to_string())?;
         s.serialize_field("role", role_wire_name(&msg.role))?;
         s.serialize_field("content", &msg.content)?;
         s.serialize_field("toolCalls", &ToolCallsView(&msg.tool_calls))?;
@@ -620,6 +623,10 @@ mod passive_subagent_notification_tests {
 #[cfg(test)]
 #[path = "uds_session_coalesce_tests.rs"]
 mod coalesce_pending_tests;
+
+#[cfg(test)]
+#[path = "uds_session_1060_tests.rs"]
+mod uds_session_1060_tests;
 
 #[cfg(test)]
 mod rewind_collapsed_message_tests {

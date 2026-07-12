@@ -61,6 +61,13 @@ pub(super) fn query_response_data(
             let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
             Some(serde_json::json!({ "subagents": list }))
         }
+        // #1060: on-demand single-message lookup by stable id (busy-path safe).
+        // Miss returns None so dispatch_fieldless_command emits a structured error.
+        AgentCommand::GetMessage { message_id, .. } => ctx
+            .messages
+            .iter()
+            .find(|m| m.id().to_string() == *message_id)
+            .map(message_to_json),
         AgentCommand::ReloadExtensions { .. } => None,
         _ => None,
     }

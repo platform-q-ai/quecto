@@ -10,7 +10,7 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::agent::{AgentLoop, AgentProgressEvent};
 use crate::domain::message::Message;
 use crate::interface::cli::protocol::{AgentEvent, ToolResultContent, TurnMessage, TurnUsage};
-use crate::interface::cli::uds_session::{AgentSession, message_to_json};
+use crate::interface::cli::uds_session::AgentSession;
 
 /// State of the cancellation slot for the current (or next) agent run.
 pub enum CancelSlot {
@@ -360,10 +360,18 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             } else {
                 None
             };
+            // #1060 / ADR-0008 part 2: end-of-turn events carry stable message
+            // refs + small footer metadata only — never re-ship full content.
+            let message_refs: Vec<String> = agent_result
+                .appended_messages
+                .iter()
+                .map(|m| m.id().to_string())
+                .collect();
             let turn_end = AgentEvent::TurnEnd {
                 message: TurnMessage {
                     role: "assistant".to_string(),
-                    content: agent_result.response.clone(),
+                    content: String::new(),
+                    message_refs: message_refs.clone(),
                     usage,
                     stop_reason: None,
                     context_tokens: Some(agent_result.context_tokens as u64),
@@ -372,13 +380,11 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                 tool_results: vec![],
             };
             sink.emit(&turn_end).await;
-            let run_msgs: Vec<serde_json::Value> = agent_result
-                .appended_messages
-                .iter()
-                .map(message_to_json)
-                .collect();
-            sink.emit(&AgentEvent::AgentEnd { messages: run_msgs })
-                .await;
+            sink.emit(&AgentEvent::AgentEnd {
+                messages: vec![],
+                message_refs,
+            })
+            .await;
             PromptOutcome::Success
         }
         Some(Err(e)) => {
@@ -574,12 +580,13 @@ pub(crate) async fn forward_progress_event_sink(ev: AgentProgressEvent, sink: &m
             .await;
         }
         AgentProgressEvent::TurnCompleted { messages } => {
-            // Stream this turn's output (assistant + tool results) on the agent's
-            // own stream; a parent monitor re-stamps it with the child id (#797).
-            let json: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
+            // Stream this turn's output as stable refs on the agent's own stream;
+            // a parent monitor re-stamps it with the child id (#797 / #1060).
+            let message_refs: Vec<String> = messages.iter().map(|m| m.id().to_string()).collect();
             sink.emit(&AgentEvent::SubagentMessagesAppended {
                 agent_id: String::new(),
-                messages: json,
+                messages: vec![],
+                message_refs,
             })
             .await;
         }
@@ -597,6 +604,9 @@ pub(crate) async fn forward_progress_event(
     forward_progress_event_sink(ev, &mut EventSink::writer(stdout)).await;
 }
 
+#[cfg(test)]
+#[path = "uds_cancel_1060_tests.rs"]
+mod issue_1060_tests;
 #[cfg(test)]
 #[path = "uds_1072_e2e_tests.rs"]
 mod issue_1072_e2e_tests;

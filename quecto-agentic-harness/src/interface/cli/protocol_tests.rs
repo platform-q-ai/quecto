@@ -247,12 +247,13 @@ fn test_subagent_state_changed_event_serializes() {
 fn test_subagent_messages_appended_event_serializes() {
     let ev = AgentEvent::SubagentMessagesAppended {
         agent_id: String::new(),
-        messages: vec![serde_json::json!({"role": "assistant", "content": "done"})],
+        messages: vec![],
+        message_refs: vec!["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into()],
     };
     let json = ev.to_json_line();
     assert!(json.contains("\"type\":\"subagent_messages_appended\""));
     assert!(json.contains("\"agent_id\":\"\""));
-    assert!(json.contains("\"content\":\"done\""));
+    assert!(json.contains("\"messageRefs\""));
 }
 
 #[test]
@@ -422,7 +423,10 @@ fn test_agent_start_event_serializes() {
 
 #[test]
 fn test_agent_end_event_serializes() {
-    let event = AgentEvent::AgentEnd { messages: vec![] };
+    let event = AgentEvent::AgentEnd {
+        messages: vec![],
+        message_refs: vec![],
+    };
     let json = event.to_json_line();
     assert!(json.contains("\"type\":\"agent_end\""));
     assert!(json.contains("\"messages\""));

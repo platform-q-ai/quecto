@@ -18,8 +18,11 @@ impl App {
                 result,
                 is_error,
             } => self.handle_tool_end(tool_call_id, tool_name, result, is_error),
-            Event::AgentEnd if self.agent_state.end() => self.handle_agent_end(),
-            Event::AgentEnd => {}
+            Event::AgentEnd { message_refs, .. } if self.agent_state.end() => {
+                self.maybe_recover_from_refs(&message_refs);
+                self.handle_agent_end();
+            }
+            Event::AgentEnd { .. } => {}
             Event::Response {
                 id,
                 command,
@@ -82,6 +85,10 @@ impl App {
 
     fn handle_turn_end(&mut self, message: serde_json::Value) {
         self.master_session.chat.finalize_assistant();
+        // #1060: messageRefs identify the turn; fetch-on-miss only when the
+        // active-turn stream did not already deliver full content.
+        let refs = message_refs_from_value(&message);
+        self.maybe_recover_from_refs(&refs);
         // `usage` is absent on streaming OpenAI-compatible providers (e.g.
         // Fireworks) because their SSE stream does not carry token counts.
         // Don't gate context-gauge updates on it — `contextTokens` is emitted
@@ -109,6 +116,169 @@ impl App {
         } else if total > 0 && !self.context_stats_requested {
             self.context_stats_requested = true;
             self.send_session_stats_footer();
+        }
+    }
+
+    /// #1060 recovery: common streamed path = zero fetches; miss = get_message
+    /// per missing ref with request-id gating. Never blindly append-all (#1075).
+    ///
+    /// Both `turn_end` and `agent_end` may carry the same refs; skip message ids
+    /// that already have an in-flight recovery request so we never double-fetch.
+    fn maybe_recover_from_refs(&mut self, refs: &[String]) {
+        if refs.is_empty() {
+            return;
+        }
+        if !self.needs_message_recovery(refs) {
+            return;
+        }
+        for message_id in refs {
+            if self
+                .pending_message_recovery
+                .values()
+                .any(|pending| pending == message_id)
+            {
+                continue;
+            }
+            let req_id = format!("msg-recovery-{}", uuid_like());
+            self.pending_message_recovery
+                .insert(req_id.clone(), message_id.clone());
+            self.send_command(Command::GetMessage {
+                id: Some(req_id),
+                message_id: message_id.clone(),
+            });
+        }
+    }
+
+    /// True when the active turn's stream did not already deliver full content
+    /// for the end-of-turn refs (mid-turn miss / partial).
+    fn needs_message_recovery(&self, refs: &[String]) -> bool {
+        let text = self.latest_assistant_text();
+        let tool_entries = self.master_session.chat.tool_entry_count();
+        // Multi-role turn without any tool entries → missed tool_execution_*.
+        if refs.len() > 1 && tool_entries == 0 {
+            return true;
+        }
+        // Empty or placeholder-only stream → mid-turn miss of real content.
+        let trimmed = text.trim();
+        if trimmed.is_empty() || trimmed == "…" || trimmed == "..." {
+            return true;
+        }
+        // Common streamed path: we hold non-empty assistant (and tools if needed).
+        false
+    }
+
+    fn latest_assistant_text(&self) -> String {
+        self.master_session
+            .chat
+            .entries()
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                crate::interface::components::chat::ChatEntry::Assistant { text, .. } => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    /// Apply a gated get_message recovery payload: reconcile/replace at the
+    /// turn position — never blindly append (#1075).
+    pub(super) fn handle_get_message_recovery(
+        &mut self,
+        id: Option<&str>,
+        success: bool,
+        data: Option<serde_json::Value>,
+    ) {
+        let Some(req_id) = id else {
+            return;
+        };
+        let Some(expected_mid) = self.pending_message_recovery.remove(req_id) else {
+            // Wrong / unknown request id — ignore (gating).
+            return;
+        };
+        if !success {
+            return;
+        }
+        let Some(data) = data else {
+            return;
+        };
+        // Optional: verify response id matches requested message id.
+        if let Some(got) = data.get("id").and_then(|v| v.as_str()) {
+            if got != expected_mid {
+                return;
+            }
+        }
+        self.reconcile_recovered_message(&data);
+    }
+
+    fn reconcile_recovered_message(&mut self, data: &serde_json::Value) {
+        let role = data.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        let content = data
+            .get("content")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
+        match role {
+            "assistant" => {
+                if let Some(calls) = data.get("toolCalls").and_then(|t| t.as_array()) {
+                    for call in calls {
+                        let id = call
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let name = call
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("tool")
+                            .to_string();
+                        let args = call
+                            .get("arguments")
+                            .map(|a| {
+                                if a.is_string() {
+                                    a.as_str().unwrap_or("{}").to_string()
+                                } else {
+                                    a.to_string()
+                                }
+                            })
+                            .unwrap_or_else(|| "{}".into());
+                        // Reconcile: start tool if not already present.
+                        if !self.master_session.chat.has_tool_call(&id) {
+                            self.master_session.chat.start_tool(id, name, args);
+                        }
+                    }
+                }
+                if !content.is_empty() {
+                    self.master_session.chat.reconcile_assistant_text(&content);
+                }
+            }
+            "tool" => {
+                let tool_call_id = data
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let tool_name = data
+                    .get("toolName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tool")
+                    .to_string();
+                if tool_call_id.is_empty() {
+                    return;
+                }
+                if !self.master_session.chat.has_tool_call(&tool_call_id) {
+                    self.master_session.chat.start_tool(
+                        tool_call_id.clone(),
+                        tool_name.clone(),
+                        String::new(),
+                    );
+                }
+                self.master_session
+                    .chat
+                    .complete_tool(&tool_call_id, &content, false, None);
+            }
+            _ => {}
         }
     }
 
@@ -385,6 +555,40 @@ mod cursor_tests;
 #[cfg(test)]
 #[path = "app_events_readonly_tests.rs"]
 mod readonly_tests;
+
+fn message_refs_from_value(v: &serde_json::Value) -> Vec<String> {
+    let candidates = [v.get("messageRefs"), v.get("message_refs")];
+    for c in candidates.into_iter().flatten() {
+        if let Some(arr) = c.as_array() {
+            let refs: Vec<String> = arr
+                .iter()
+                .filter_map(|item| {
+                    if let Some(s) = item.as_str() {
+                        return Some(s.to_string());
+                    }
+                    item.get("id")
+                        .and_then(|id| id.as_str())
+                        .map(str::to_string)
+                })
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !refs.is_empty() {
+                return refs;
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn uuid_like() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{nanos:x}")
+}
+
 #[cfg(test)]
 #[path = "app_events_tests.rs"]
 mod tests;

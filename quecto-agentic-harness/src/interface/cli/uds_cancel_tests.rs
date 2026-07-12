@@ -298,6 +298,7 @@ fn big_turn_end(content: String) -> AgentEvent {
         message: TurnMessage {
             role: "assistant".to_string(),
             content,
+            message_refs: vec![],
             usage: None,
             stop_reason: None,
             context_tokens: Some(1),
@@ -314,7 +315,11 @@ async fn agent_end_event_line_stays_within_protocol_cap_keeping_recent_messages(
     let messages: Vec<serde_json::Value> = (0..8)
         .map(|i| serde_json::json!({"role": "assistant", "content": format!("{i}:{big}")}))
         .collect();
-    let line = emit_line(&AgentEvent::AgentEnd { messages }).await;
+    let line = emit_line(&AgentEvent::AgentEnd {
+        messages,
+        message_refs: vec![],
+    })
+    .await;
 
     assert!(
         line.len() <= EVENT_LINE_CAP_BYTES,
@@ -391,6 +396,7 @@ async fn agent_end_event_line_under_the_cap_is_emitted_unmodified() {
             "role": "assistant",
             "content": "w".repeat(1_000_000),
         })],
+        message_refs: vec![],
     };
     let uncapped = event.to_json_line();
     assert!(

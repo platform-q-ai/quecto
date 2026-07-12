@@ -122,6 +122,10 @@ pub struct App {
     /// Whether we've already requested session stats as a fallback to learn
     /// the real context window for the current session/model.
     context_stats_requested: bool,
+
+    /// #1060: request-id → message-id for in-flight get_message recovery fetches.
+    /// Gated so only the requesting client/state accepts the responses.
+    pending_message_recovery: std::collections::HashMap<String, String>,
     /// Internal notifications for asynchronous command-send failures.
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
@@ -343,6 +347,7 @@ impl App {
             git_repo,
             last_rendered_lines: Vec::new(),
             context_stats_requested: false,
+            pending_message_recovery: std::collections::HashMap::new(),
             command_send_failure_tx,
             command_send_failure_rx,
             started_at: tokio::time::Instant::now(),
@@ -656,6 +661,9 @@ mod app_effort_1067_tests;
 #[cfg(test)]
 #[path = "app_event_loop_tests.rs"]
 mod app_event_loop_tests;
+#[cfg(test)]
+#[path = "app_events_1060_tests.rs"]
+mod app_events_1060_tests;
 #[cfg(test)]
 #[path = "app_git_tests.rs"]
 mod app_git_tests;

@@ -175,29 +175,26 @@ fn message_to_json_matches_golden_wire_shape_for_all_roles() {
             arguments: "{\"path\":\"x\"}".to_string(),
         }],
     );
+    let assistant_json = message_to_json(&assistant);
+    assert_eq!(assistant_json["role"], "assistant");
+    assert_eq!(assistant_json["content"], "calling a tool");
     assert_eq!(
-        message_to_json(&assistant),
-        serde_json::json!({
-            "role": "assistant",
-            "content": "calling a tool",
-            "toolCalls": [{"id": "tc-1", "name": "read", "arguments": "{\"path\":\"x\"}"}],
-            "toolCallId": null,
-            "toolName": null,
-        })
+        assistant_json["toolCalls"],
+        serde_json::json!([{"id": "tc-1", "name": "read", "arguments": "{\"path\":\"x\"}"}])
     );
+    assert!(assistant_json["toolCallId"].is_null());
+    assert!(assistant_json["toolName"].is_null());
+    assert_eq!(assistant_json["id"], assistant.id().to_string());
 
     let mut tool = Message::tool("tc-1", "result body");
     tool.tool_name = Some("read".to_string());
-    assert_eq!(
-        message_to_json(&tool),
-        serde_json::json!({
-            "role": "tool",
-            "content": "result body",
-            "toolCalls": [],
-            "toolCallId": "tc-1",
-            "toolName": "read",
-        })
-    );
+    let tool_json = message_to_json(&tool);
+    assert_eq!(tool_json["role"], "tool");
+    assert_eq!(tool_json["content"], "result body");
+    assert_eq!(tool_json["toolCalls"], serde_json::json!([]));
+    assert_eq!(tool_json["toolCallId"], "tc-1");
+    assert_eq!(tool_json["toolName"], "read");
+    assert_eq!(tool_json["id"], tool.id().to_string());
 
     for (msg, want) in [
         (Message::system("s"), "system"),
@@ -339,6 +336,7 @@ async fn event_sink_variants_emit_identical_json_for_same_events() {
             message: TurnMessage {
                 role: "assistant".to_string(),
                 content: "done".to_string(),
+                message_refs: vec![],
                 usage: Some(TurnUsage {
                     input: 1,
                     output: 2,
@@ -358,7 +356,10 @@ async fn event_sink_variants_emit_identical_json_for_same_events() {
             },
             is_error: false,
         },
-        AgentEvent::AgentEnd { messages: vec![] },
+        AgentEvent::AgentEnd {
+            messages: vec![],
+            message_refs: vec![],
+        },
     ];
 
     let mut writer_bytes = Vec::new();

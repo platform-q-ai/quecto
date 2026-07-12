@@ -68,6 +68,13 @@ pub enum Command {
         #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
         agent_id: Option<String>,
     },
+    /// Fetch a single message by stable id for mid-turn recovery (#1060).
+    GetMessage {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "messageId")]
+        message_id: String,
+    },
     GetSessionStats {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -133,7 +140,14 @@ pub enum Command {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     AgentStart,
-    AgentEnd,
+    /// Agent finished. Full message content is not re-carried (#1060); optional
+    /// `messageRefs` identify this run's messages for fetch-on-miss recovery.
+    AgentEnd {
+        #[serde(default)]
+        messages: Vec<serde_json::Value>,
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
+    },
     Token {
         token: String,
     },
@@ -196,8 +210,12 @@ pub enum Event {
     /// (assistant + tool results), re-stamped by the parent monitor with the
     /// child's id. Lets the inspector stream output turn-by-turn (#797).
     SubagentMessagesAppended {
+        #[serde(alias = "agentId")]
         agent_id: String,
+        #[serde(default)]
         messages: Vec<serde_json::Value>,
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
     },
     /// Workflow state changed — step checked/unchecked/reset (#563).
     WorkflowState {
@@ -339,6 +357,7 @@ impl Command {
             Self::GetState { .. } => "get_state",
             Self::GetMessages { .. } => "get_messages",
             Self::GetMessagesTail { .. } => "get_messages_tail",
+            Self::GetMessage { .. } => "get_message",
             Self::GetSessionStats { .. } => "get_session_stats",
             Self::ListModels { .. } => "list_models",
             Self::ListSessions { .. } => "list_sessions",
@@ -578,6 +597,10 @@ mod client_defence_tests;
 #[cfg(test)]
 #[path = "client_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "client_1060_tests.rs"]
+mod client_1060_tests;
 
 #[cfg(test)]
 #[path = "client_legacy_tests.rs"]

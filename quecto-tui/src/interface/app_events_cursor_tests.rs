@@ -63,7 +63,10 @@ async fn master_tool_start_finalizes_streaming_assistant_cursor() {
         token: "Again".into(),
     });
     app.handle_event(Event::AgentStart);
-    app.handle_event(Event::AgentEnd);
+    app.handle_event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec![],
+    });
     plain = rendered_chat(&mut app);
     assert!(
         !plain.contains('▌'),

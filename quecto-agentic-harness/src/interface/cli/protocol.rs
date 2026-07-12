@@ -188,6 +188,16 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Fetch a single message by stable id for on-demand recovery (#1060 / ADR-0008 part 2).
+    ///
+    /// Works while the agent is busy (busy-path inspect, same as get_messages).
+    GetMessage {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// Stable domain message UUID (wire: camelCase `messageId`).
+        #[serde(rename = "messageId")]
+        message_id: String,
+    },
 }
 
 /// Tool registration payload for `register_tools`.
@@ -231,6 +241,7 @@ impl AgentCommand {
             Self::RewindTo { id, .. } => id.as_deref(),
             Self::SetWorkflowAutomation { id, .. } => id.as_deref(),
             Self::GetSubagents { id } => id.as_deref(),
+            Self::GetMessage { id, .. } => id.as_deref(),
         }
     }
 
@@ -261,6 +272,7 @@ impl AgentCommand {
             Self::RewindTo { .. } => "rewind_to",
             Self::SetWorkflowAutomation { .. } => "set_workflow_automation",
             Self::GetSubagents { .. } => "get_subagents",
+            Self::GetMessage { .. } => "get_message",
         }
     }
 }
@@ -283,9 +295,19 @@ pub enum StreamingBehavior {
 pub enum AgentEvent {
     /// Agent begins processing a prompt.
     AgentStart,
-    /// Agent finished processing. Contains messages from this run as JSON values.
-    /// This is a turn boundary only; workflow continuation may still follow.
-    AgentEnd { messages: Vec<serde_json::Value> },
+    /// Agent finished processing. Identifies this run's messages by stable refs
+    /// (#1060 / ADR-0008 part 2). Legacy full-content `messages` is emptied;
+    /// clients that already hold stream tokens need no fetch; partial observers
+    /// use `get_message` by ref. This is a turn boundary only; workflow
+    /// continuation may still follow.
+    AgentEnd {
+        /// Legacy field: always empty after #1060 (content is not re-carried).
+        #[serde(default)]
+        messages: Vec<serde_json::Value>,
+        /// Stable domain message ids for messages appended during this run.
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
+    },
     /// The post-turn drain made no further workflow continuation runnable.
     /// Emitted only after pending work and automatic workflow nudges settle.
     /// `reason` distinguishes intervention-worthy exhaustion from deliberate
@@ -365,7 +387,12 @@ pub enum AgentEvent {
     /// inspector can stream the sub-agent's output turn-by-turn (#797).
     SubagentMessagesAppended {
         agent_id: String,
+        /// Legacy field: always empty after #1060 (content is not re-carried).
+        #[serde(default)]
         messages: Vec<serde_json::Value>,
+        /// Stable domain message ids for messages appended during this child turn.
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
     },
     /// Broadcast when workflow state changes.
     #[serde(rename_all = "camelCase")]
@@ -451,7 +478,13 @@ pub struct ExtensionInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnMessage {
     pub role: String,
+    /// Legacy full content — emptied on the wire after #1060 (ADR-0008 part 2).
+    /// Clients reconstruct from stream tokens or `get_message` by ref.
+    #[serde(default)]
     pub content: String,
+    /// Stable domain message ids for messages completed in this LLM call.
+    #[serde(rename = "messageRefs", default, skip_serializing_if = "Vec::is_empty")]
+    pub message_refs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TurnUsage>,
     #[serde(rename = "stopReason", skip_serializing_if = "Option::is_none")]
@@ -665,3 +698,7 @@ mod tests;
 #[cfg(test)]
 #[path = "protocol_shape_tests.rs"]
 mod shape_tests;
+
+#[cfg(test)]
+#[path = "protocol_1060_tests.rs"]
+mod protocol_1060_tests;

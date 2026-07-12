@@ -25,6 +25,8 @@ impl App {
         error: Option<String>,
     ) {
         match command.as_str() {
+            // #1060: gated recovery for ref-based end-of-turn miss path.
+            "get_message" => self.handle_get_message_recovery(id.as_deref(), success, data),
             "get_state" if success => self.handle_get_state(data),
             "set_model" if success => self.handle_set_model_success(data),
             // Late master failure must not toast over a focused child (#1085).

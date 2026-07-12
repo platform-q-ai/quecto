@@ -298,6 +298,12 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return Some(false);
     }
+    // #1060: get_message miss — explicit error (not silent fall-through).
+    if let AgentCommand::GetMessage { message_id, .. } = cmd {
+        let ev = AgentEvent::err(id, tn, format!("message not found: {message_id}"));
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return Some(false);
+    }
     if matches!(cmd, AgentCommand::ClearHistory { .. }) {
         return Some(handle_clear_history(ctx, id, tn).await);
     }
@@ -495,7 +501,14 @@ async fn run_prompt_dispatch(
 }
 async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
     emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentStart).await;
-    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentEnd { messages: vec![] }).await;
+    emit_event_to_broadcast_or_writer(
+        ctx,
+        &AgentEvent::AgentEnd {
+            messages: vec![],
+            message_refs: vec![],
+        },
+    )
+    .await;
 }
 async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
     let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828

@@ -137,7 +137,10 @@ async fn non_token_event_renders_immediately_mid_burst() {
         h.stream_event(Event::Token { token: "x".into() });
     }
     let before = h.rendered_frames();
-    h.stream_event(Event::AgentEnd);
+    h.stream_event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec![],
+    });
     assert_eq!(
         h.rendered_frames(),
         before + 1,

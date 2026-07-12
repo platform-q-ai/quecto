@@ -451,12 +451,9 @@ pub fn canonical_workflow_forward(
     serde_json::to_string(&canonical).ok()
 }
 
-/// If `line` is a child's `subagent_messages_appended` event, re-stamp it with
-/// the child's identity so it can be forwarded onto the parent's event stream
-/// (#797). The child emits these with an empty `agent_id`; we force-stamp the
-/// authoritative child id (and `parent_id`) so the TUI can route the turn's
-/// messages to the right inspector pane. Returns the re-tagged JSON line, or
-/// `None` for any line that is not a `subagent_messages_appended` event.
+/// Re-stamp a child's `subagent_messages_appended` with child/parent ids (#797)
+/// and preserve messageRefs (#1060). Returns `None` if `value` is not that type.
+#[rustfmt::skip]
 pub fn canonical_messages_appended_forward(
     value: &serde_json::Value,
     child_id: &str,
@@ -465,21 +462,21 @@ pub fn canonical_messages_appended_forward(
     if value.get("type").and_then(|t| t.as_str()) != Some("subagent_messages_appended") {
         return None;
     }
-    let messages = value
-        .get("messages")
-        .cloned()
-        .unwrap_or_else(|| serde_json::Value::Array(vec![]));
-    let canonical = serde_json::json!({
-        "type": "subagent_messages_appended",
-        "agent_id": child_id,
-        "parent_id": parent_id,
-        "messages": messages,
-    });
-    serde_json::to_string(&canonical).ok()
+    // #1060: prefer messageRefs; drop full messages when refs present.
+    let empty = serde_json::json!([]);
+    let refs = value.get("messageRefs").cloned().unwrap_or_else(|| empty.clone());
+    let msgs = if refs.as_array().is_some_and(|a| !a.is_empty()) {
+        empty
+    } else {
+        value.get("messages").cloned().unwrap_or(empty)
+    };
+    serde_json::to_string(&serde_json::json!({
+        "type": "subagent_messages_appended", "agent_id": child_id,
+        "parent_id": parent_id, "messages": msgs, "messageRefs": refs,
+    })).ok()
 }
 
-/// Line-based wrapper around [`canonical_messages_appended_forward`]: cheap
-/// substring pre-filter, then parse once. Returns `None` for non-message lines.
+/// Line-based wrapper around [`canonical_messages_appended_forward`].
 pub fn forward_child_messages_appended(
     line: &str,
     child_id: &str,
@@ -492,8 +489,7 @@ pub fn forward_child_messages_appended(
     canonical_messages_appended_forward(&value, child_id, parent_id)
 }
 
-/// Line-based wrapper around [`canonical_workflow_forward`]: cheap substring
-/// pre-filter, then parse once. Returns `None` for non-`workflow_state` lines.
+/// Line-based wrapper around [`canonical_workflow_forward`].
 pub fn forward_child_workflow_event(
     line: &str,
     child_id: &str,
