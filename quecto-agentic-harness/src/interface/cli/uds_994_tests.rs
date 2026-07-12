@@ -345,6 +345,7 @@ async fn event_sink_variants_emit_identical_json_for_same_events() {
                 stop_reason: None,
                 context_tokens: Some(4),
                 max_context_tokens: Some(100),
+                content_length: None,
             },
             tool_results: vec![],
         },

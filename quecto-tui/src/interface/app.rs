@@ -126,6 +126,8 @@ pub struct App {
     /// #1060: request-id → message-id for in-flight get_message recovery fetches.
     /// Gated so only the requesting client/state accepts the responses.
     pending_message_recovery: std::collections::HashMap<String, String>,
+    /// Tool boxes observed since the current master AgentStart (#1060 recovery).
+    tools_this_turn: usize,
     /// Internal notifications for asynchronous command-send failures.
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
@@ -348,6 +350,7 @@ impl App {
             last_rendered_lines: Vec::new(),
             context_stats_requested: false,
             pending_message_recovery: std::collections::HashMap::new(),
+            tools_this_turn: 0,
             command_send_failure_tx,
             command_send_failure_rx,
             started_at: tokio::time::Instant::now(),

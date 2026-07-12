@@ -307,7 +307,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     agent.set_progress_callback(Some(Arc::new(move |ev| {
         // try_send: drop event if the channel is full rather than blocking
         // the synchronous callback.  Dropped tokens are acceptable — the
-        // full text is still delivered in the turn_end event.
+        // full text is recovered via messageRefs + get_message when contentLength exceeds held text (#1060).
         let _ = progress_tx.try_send(ev);
     })));
 
@@ -386,6 +386,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                     stop_reason: None,
                     context_tokens: Some(agent_result.context_tokens as u64),
                     max_context_tokens: Some(agent.max_context_tokens() as u64),
+                    content_length: Some(agent_result.response.len() as u64),
                 },
                 tool_results: vec![],
             };

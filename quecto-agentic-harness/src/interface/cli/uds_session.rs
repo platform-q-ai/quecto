@@ -447,8 +447,8 @@ impl serde::Serialize for MessageView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let msg = self.0;
-        // 6 fields: stable id (#1060) + role/content/toolCalls/toolCallId/toolName.
-        let mut s = serializer.serialize_struct("Message", 6)?;
+        // 7 fields: stable id (#1060) + role/content/tools + isError for recovery.
+        let mut s = serializer.serialize_struct("Message", 7)?;
         // Domain UUID as a round-trippable string key (AC6).
         s.serialize_field("id", &msg.id().to_string())?;
         s.serialize_field("role", role_wire_name(&msg.role))?;
@@ -456,6 +456,7 @@ impl serde::Serialize for MessageView<'_> {
         s.serialize_field("toolCalls", &ToolCallsView(&msg.tool_calls))?;
         s.serialize_field("toolCallId", &msg.tool_call_id)?;
         s.serialize_field("toolName", &msg.tool_name)?;
+        s.serialize_field("isError", &msg.is_error)?;
         s.end()
     }
 }

@@ -303,6 +303,7 @@ fn big_turn_end(content: String) -> AgentEvent {
             stop_reason: None,
             context_tokens: Some(1),
             max_context_tokens: Some(2),
+            content_length: None,
         },
         tool_results: vec![],
     }

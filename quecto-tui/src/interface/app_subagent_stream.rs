@@ -269,9 +269,57 @@ impl App {
         // Flush deferred grandchild notes once this child goes idle (after the
         // streamed response is finalized below).
         let flush_notes = matches!(ev, Event::AgentEnd { .. } | Event::TurnEnd { .. });
+        let recovery_refs = Self::subagent_end_of_turn_refs(&ev);
+        let early_return = matches!(
+            &ev,
+            Event::Response { command, .. }
+                if command == "get_messages" || command == "get_message"
+        );
+        Self::apply_subagent_chat_event(session, &ev);
+        if early_return {
+            return;
+        }
+        if flush_notes {
+            Self::flush_deferred_notes(&mut session.chat, &mut session.deferred_subagent_notes);
+        }
+        if let Some((refs, content_len)) = recovery_refs {
+            self.maybe_recover_subagent_refs(agent_id, &refs, content_len);
+        }
+    }
+
+    /// Extract non-empty end-of-turn message refs (+ optional contentLength).
+    fn subagent_end_of_turn_refs(ev: &Event) -> Option<(Vec<String>, Option<u64>)> {
+        match ev {
+            Event::AgentEnd { message_refs, .. } if !message_refs.is_empty() => {
+                Some((message_refs.clone(), None))
+            }
+            Event::TurnEnd { message } => {
+                let refs = message
+                    .get("messageRefs")
+                    .and_then(|r| r.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let len = message.get("contentLength").and_then(|v| v.as_u64());
+                if refs.is_empty() {
+                    None
+                } else {
+                    Some((refs, len))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Apply a single non-workflow child stream event to its chat.
+    fn apply_subagent_chat_event(session: &mut SessionView, ev: &Event) {
         let chat = &mut session.chat;
         match ev {
-            Event::Token { token } => chat.append_token(&token),
+            Event::Token { token } => chat.append_token(token),
             Event::AgentEnd { .. } | Event::TurnEnd { .. } => chat.finalize_assistant(),
             Event::ToolExecutionStart {
                 tool_call_id,
@@ -279,14 +327,14 @@ impl App {
                 args,
             } => {
                 let args_str = if args.is_object() || args.is_array() {
-                    serde_json::to_string(&args).unwrap_or_default()
+                    serde_json::to_string(args).unwrap_or_default()
                 } else {
                     args.to_string()
                 };
-                if super::app_events::suppress_tool_box(&tool_name, &args) {
+                if super::app_events::suppress_tool_box(tool_name, args) {
                     chat.finalize_assistant();
                 } else {
-                    chat.start_tool(tool_call_id, tool_name, args_str);
+                    chat.start_tool(tool_call_id.clone(), tool_name.clone(), args_str);
                 }
             }
             Event::ToolExecutionEnd {
@@ -295,21 +343,151 @@ impl App {
                 is_error,
                 ..
             } => {
-                let text = crate::infrastructure::client::extract_result_text(&result);
-                chat.complete_tool(&tool_call_id, &text, is_error, None);
+                let text = crate::infrastructure::client::extract_result_text(result);
+                chat.complete_tool(tool_call_id, &text, *is_error, None);
             }
             Event::Response {
                 command,
                 data: Some(data),
                 ..
             } if command == "get_messages" => {
-                Self::reconcile_backfill_history(session, &data);
-                return;
+                Self::reconcile_backfill_history(session, data);
+            }
+            Event::Response {
+                id,
+                command,
+                success,
+                data,
+                ..
+            } if command == "get_message" => {
+                Self::apply_subagent_get_message_recovery(
+                    session,
+                    id.as_deref(),
+                    *success,
+                    data.as_ref(),
+                );
             }
             _ => {}
         }
-        if flush_notes {
-            Self::flush_deferred_notes(&mut session.chat, &mut session.deferred_subagent_notes);
+    }
+
+    /// #1060: fetch missing child messages by ref on the child UDS connection.
+    fn maybe_recover_subagent_refs(
+        &mut self,
+        agent_id: &str,
+        refs: &[String],
+        expected_content_len: Option<u64>,
+    ) {
+        if refs.is_empty() {
+            return;
+        }
+        let session = match self.subagents.sessions.get(agent_id) {
+            Some(s) => s,
+            None => return,
+        };
+        let assistant_text = session
+            .chat
+            .entries()
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                crate::interface::components::chat::ChatEntry::Assistant { text, .. } => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        let tools_this_turn = session.chat.tool_entry_count(); // child session is one turn's view often
+        // Reuse master heuristic with child chat state.
+        if !self.needs_message_recovery_for(
+            refs,
+            &assistant_text,
+            tools_this_turn,
+            expected_content_len,
+        ) {
+            return;
+        }
+        for message_id in refs {
+            if self
+                .pending_message_recovery
+                .values()
+                .any(|pending| pending == message_id)
+            {
+                continue;
+            }
+            let req_id = format!("msg-recovery-{}", {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            });
+            self.pending_message_recovery
+                .insert(req_id.clone(), message_id.clone());
+            let cmd = Command::GetMessage {
+                id: Some(req_id),
+                message_id: message_id.clone(),
+                agent_id: None, // sent on the child's own socket
+            };
+            let _ = self.send_to_active_subagent(cmd);
+        }
+    }
+
+    fn apply_subagent_get_message_recovery(
+        session: &mut SessionView,
+        id: Option<&str>,
+        success: bool,
+        data: Option<&serde_json::Value>,
+    ) {
+        // Request-id gating is enforced by the caller having filtered pending map
+        // on the master path; child path accepts successful get_message payloads
+        // that carry content (child connection is single-client).
+        let _ = id;
+        if !success {
+            return;
+        }
+        let Some(data) = data else {
+            return;
+        };
+        let role = data.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        let content = data
+            .get("content")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
+        match role {
+            "assistant" if !content.is_empty() => {
+                session.chat.reconcile_assistant_text(&content);
+            }
+            "tool" => {
+                let tool_call_id = data
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let tool_name = data
+                    .get("toolName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tool")
+                    .to_string();
+                if tool_call_id.is_empty() {
+                    return;
+                }
+                if !session.chat.has_tool_call(&tool_call_id) {
+                    session
+                        .chat
+                        .start_tool(tool_call_id.clone(), tool_name, String::new());
+                }
+                let is_error = data
+                    .get("isError")
+                    .or_else(|| data.get("is_error"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                session
+                    .chat
+                    .complete_tool(&tool_call_id, &content, is_error, None);
+            }
+            _ => {}
         }
     }
 

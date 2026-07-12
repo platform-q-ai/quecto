@@ -74,6 +74,8 @@ pub enum Command {
         id: Option<String>,
         #[serde(rename = "messageId")]
         message_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
     GetSessionStats {
         #[serde(skip_serializing_if = "Option::is_none")]

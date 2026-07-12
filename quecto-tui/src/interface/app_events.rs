@@ -61,6 +61,7 @@ impl App {
 
     fn handle_agent_start(&mut self) {
         self.agent_state.start();
+        self.tools_this_turn = 0;
         // Mirror the abort-aware run state onto the master session's `running`
         // flag so the unified working indicator is driven by one per-session
         // flag for master and sub-agents alike (#828).
@@ -88,7 +89,8 @@ impl App {
         // #1060: messageRefs identify the turn; fetch-on-miss only when the
         // active-turn stream did not already deliver full content.
         let refs = message_refs_from_value(&message);
-        self.maybe_recover_from_refs(&refs);
+        let content_len = message.get("contentLength").and_then(|v| v.as_u64());
+        self.maybe_recover_from_refs_with_len(&refs, content_len);
         // `usage` is absent on streaming OpenAI-compatible providers (e.g.
         // Fireworks) because their SSE stream does not carry token counts.
         // Don't gate context-gauge updates on it — `contextTokens` is emitted
@@ -125,10 +127,23 @@ impl App {
     /// Both `turn_end` and `agent_end` may carry the same refs; skip message ids
     /// that already have an in-flight recovery request so we never double-fetch.
     fn maybe_recover_from_refs(&mut self, refs: &[String]) {
+        self.maybe_recover_from_refs_with_len(refs, None);
+    }
+
+    fn maybe_recover_from_refs_with_len(
+        &mut self,
+        refs: &[String],
+        expected_content_len: Option<u64>,
+    ) {
         if refs.is_empty() {
             return;
         }
-        if !self.needs_message_recovery(refs) {
+        if !self.needs_message_recovery_for(
+            refs,
+            &self.latest_assistant_text(),
+            self.tools_this_turn,
+            expected_content_len,
+        ) {
             return;
         }
         for message_id in refs {
@@ -145,25 +160,39 @@ impl App {
             self.send_command(Command::GetMessage {
                 id: Some(req_id),
                 message_id: message_id.clone(),
+                agent_id: None,
             });
         }
     }
 
     /// True when the active turn's stream did not already deliver full content
     /// for the end-of-turn refs (mid-turn miss / partial).
-    fn needs_message_recovery(&self, refs: &[String]) -> bool {
-        let text = self.latest_assistant_text();
-        let tool_entries = self.master_session.chat.tool_entry_count();
-        // Multi-role turn without any tool entries → missed tool_execution_*.
-        if refs.len() > 1 && tool_entries == 0 {
+    /// Shared miss heuristic for master and sub-agent chats (#1060 review).
+    /// `expected_content_len` is `turn_end.message.contentLength` when present.
+    pub(super) fn needs_message_recovery_for(
+        &self,
+        refs: &[String],
+        assistant_text: &str,
+        tools_this_turn: usize,
+        expected_content_len: Option<u64>,
+    ) -> bool {
+        if refs.is_empty() {
+            return false;
+        }
+        // Multi-role turn without any THIS-TURN tool entries → missed tool_execution_*.
+        if refs.len() > 1 && tools_this_turn == 0 {
             return true;
         }
-        // Empty or placeholder-only stream → mid-turn miss of real content.
-        let trimmed = text.trim();
+        let trimmed = assistant_text.trim();
         if trimmed.is_empty() || trimmed == "…" || trimmed == "..." {
             return true;
         }
-        // Common streamed path: we hold non-empty assistant (and tools if needed).
+        // Truncated stream: held text shorter than the turn's real body length.
+        if let Some(expected) = expected_content_len {
+            if (trimmed.len() as u64) < expected {
+                return true;
+            }
+        }
         false
     }
 
@@ -274,9 +303,14 @@ impl App {
                         String::new(),
                     );
                 }
+                let is_error = data
+                    .get("isError")
+                    .or_else(|| data.get("is_error"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 self.master_session
                     .chat
-                    .complete_tool(&tool_call_id, &content, false, None);
+                    .complete_tool(&tool_call_id, &content, is_error, None);
             }
             _ => {}
         }
@@ -310,6 +344,7 @@ impl App {
             self.master_session
                 .chat
                 .start_tool(tool_call_id, tool_name, args_str);
+            self.tools_this_turn = self.tools_this_turn.saturating_add(1);
         }
         if is_spawn {
             self.track_starting_subagent(&args);

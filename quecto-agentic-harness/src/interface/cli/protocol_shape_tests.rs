@@ -58,6 +58,7 @@ fn turn_end_matches_spec_shape() {
             stop_reason: Some("toolUse".into()),
             context_tokens: Some(1_200),
             max_context_tokens: Some(200_000),
+            content_length: None,
         },
         tool_results: vec![],
     };

@@ -197,6 +197,9 @@ pub enum AgentCommand {
         /// Stable domain message UUID (wire: camelCase `messageId`).
         #[serde(rename = "messageId")]
         message_id: String,
+        /// When set, forward lookup to a spawned child (same as get_messages).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
 }
 
@@ -496,6 +499,10 @@ pub struct TurnMessage {
     /// render context usage against it. `None` when unknown.
     #[serde(rename = "maxContextTokens", skip_serializing_if = "Option::is_none")]
     pub max_context_tokens: Option<u64>,
+    /// Byte length of the assistant text for this turn (not the body). Clients
+    /// use this to detect truncated streams without re-carrying content (#1060).
+    #[serde(rename = "contentLength", skip_serializing_if = "Option::is_none")]
+    pub content_length: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -63,6 +63,7 @@ fn turn_end_exposes_non_empty_message_refs() {
             stop_reason: None,
             context_tokens: Some(40),
             max_context_tokens: Some(100),
+            content_length: None,
         },
         tool_results: vec![],
     };
@@ -94,6 +95,7 @@ fn turn_end_does_not_re_carry_full_assistant_content() {
             stop_reason: None,
             context_tokens: Some(1_200),
             max_context_tokens: Some(200_000),
+            content_length: None,
         },
         tool_results: vec![],
     };
@@ -127,6 +129,7 @@ fn turn_end_keeps_context_and_usage_metadata_without_full_content() {
             stop_reason: Some("endTurn".into()),
             context_tokens: Some(12_000),
             max_context_tokens: Some(200_000),
+            content_length: None,
         },
         tool_results: vec![],
     };
@@ -193,6 +196,7 @@ fn large_real_turn_end_of_turn_events_stay_well_under_frame_cap() {
             stop_reason: None,
             context_tokens: Some(180_000),
             max_context_tokens: Some(200_000),
+            content_length: None,
         },
         tool_results: vec![],
     };
