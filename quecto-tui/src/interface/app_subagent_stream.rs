@@ -379,11 +379,13 @@ impl App {
         }
     }
 
-    /// Reconcile a connect-on-select `get_messages` backfill into a session
-    /// (#828). The prior conversation is PREPENDED above whatever live content
-    /// already streamed (never a wholesale replace that drops live tokens), and
-    /// is applied at most once so a re-delivered backfill cannot duplicate it.
-    fn reconcile_backfill_history(session: &mut SessionView, data: &serde_json::Value) {
+    /// Reconcile a connect-on-select / attach-time `get_messages` backfill into
+    /// a session (#828 master attach #1050). The prior conversation is
+    /// PREPENDED above whatever live content already streamed (never a
+    /// wholesale replace that drops live tokens), and is applied at most once
+    /// so a re-delivered backfill cannot duplicate it. Shared by sub-agent
+    /// connect-on-select and master `--socket` attach.
+    pub(super) fn reconcile_backfill_history(session: &mut SessionView, data: &serde_json::Value) {
         use crate::application::session_payloads::{self, ResumedChatMessage};
         if session.history_backfilled {
             return;

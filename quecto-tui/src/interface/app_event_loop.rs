@@ -109,6 +109,10 @@ impl App {
         self.send_command(Command::GetSubagents {
             id: Some("init-subagents".into()),
         });
+        // Backfill durable master history on connect so `--socket` attach (and
+        // any reconnect) shows prior session content without waiting for new
+        // events. Empty payloads do not latch the guard (#1050 / #828).
+        self.request_master_attach_backfill();
 
         // Set up SIGWINCH handler.
         let mut resize_rx = crate::infrastructure::signals::sigwinch_stream().await;

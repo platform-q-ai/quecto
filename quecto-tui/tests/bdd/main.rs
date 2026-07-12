@@ -138,6 +138,8 @@ pub struct TuiWorld {
     /// TUI Esc-abort-recovery BDD: command lines drained from the headless harness.
     pub tui_last_commands: Vec<String>,
     pub tui_subagent_commands: Option<tokio::sync::mpsc::Receiver<String>>,
+    /// Last master attach-backfill (user, assistant) pair for re-delivery steps (#1050).
+    pub tui_last_master_backfill: Option<(String, String)>,
     // ── TUI PID-safety BDD (`tui_pid_safety.feature`) ──────────────────
     pub tui_pid_input: Option<u32>,
     pub tui_pid_result: Option<Result<i32, String>>,

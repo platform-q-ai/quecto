@@ -1379,3 +1379,112 @@ fn then_workflow_bar_preserves_left_padding(world: &mut TuiWorld) {
         "workflow rule should start after the normal gutter/padding, got:\n{row}\nframe:\n{frame}"
     );
 }
+
+// ── #1050: master history backfill on --socket attach ──────────────────
+
+/// Deliver a successful master `get_messages` response with the attach-backfill
+/// request id, mirroring the kernel payload the TUI requests on socket attach.
+fn deliver_master_backfill(world: &mut TuiWorld, user: &str, assistant: &str) {
+    let data = serde_json::json!({
+        "messages": [
+            { "role": "user", "content": user },
+            { "role": "assistant", "content": assistant },
+        ]
+    });
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("attach-backfill".into()),
+            command: "get_messages".into(),
+            success: true,
+            data: Some(data),
+            error: None,
+        });
+    });
+    world.tui_last_master_backfill = Some((user.to_string(), assistant.to_string()));
+}
+
+fn deliver_empty_master_backfill(world: &mut TuiWorld) {
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("attach-backfill".into()),
+            command: "get_messages".into(),
+            success: true,
+            data: Some(serde_json::json!({ "messages": [] })),
+            error: None,
+        });
+    });
+}
+
+/// Domain Given: TUI is attached to a running agent (socket-attach posture).
+/// The outbound get_messages request is covered by unit tests; BDD drives the
+/// response path that renders prior durable history into the master session.
+#[given("a TUI attached to a running agent")]
+fn given_tui_attached_to_running_agent(world: &mut TuiWorld) {
+    init_fresh(world);
+}
+
+#[given(expr = "the master has already streamed the live token {string}")]
+fn given_master_already_streamed_live_token(world: &mut TuiWorld, token: String) {
+    drive(world, |h| {
+        h.event(Event::AgentStart);
+        h.event(Event::Token { token });
+    });
+}
+
+#[given(expr = "the master backfill history {string} then {string} has already arrived")]
+fn given_master_backfill_history_has_arrived(
+    world: &mut TuiWorld,
+    user: String,
+    assistant: String,
+) {
+    deliver_master_backfill(world, &user, &assistant);
+}
+
+#[given("an empty master backfill history has already arrived")]
+fn given_empty_master_backfill_has_arrived(world: &mut TuiWorld) {
+    deliver_empty_master_backfill(world);
+}
+
+#[when(expr = "the master backfill history {string} then {string} arrives")]
+fn when_master_backfill_history_arrives(world: &mut TuiWorld, user: String, assistant: String) {
+    deliver_master_backfill(world, &user, &assistant);
+}
+
+#[when("the same master backfill history arrives again")]
+fn when_same_master_backfill_history_arrives_again(world: &mut TuiWorld) {
+    let (user, assistant) = world
+        .tui_last_master_backfill
+        .clone()
+        .expect("a prior master backfill must have been delivered first");
+    deliver_master_backfill(world, &user, &assistant);
+}
+
+#[then(expr = "the app master session still shows {string}")]
+fn then_app_master_session_still_shows(world: &mut TuiWorld, text: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&text),
+        "master history backfill must preserve live content {text:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "{string} appears above {string} in the master session")]
+fn then_appears_above_in_master_session(world: &mut TuiWorld, upper: String, lower: String) {
+    let frame = drive(world, |h| h.full_frame());
+    let up = frame.find(&upper);
+    let lo = frame.find(&lower);
+    assert!(
+        matches!((up, lo), (Some(u), Some(l)) if u < l),
+        "history {upper:?} must render ABOVE {lower:?} in the master session, got:\n{frame}"
+    );
+}
+
+#[then(expr = "the app master session shows {string} exactly once")]
+fn then_app_master_session_shows_exactly_once(world: &mut TuiWorld, text: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert_eq!(
+        frame.matches(&text).count(),
+        1,
+        "re-delivered master history must not duplicate {text:?}, got:\n{frame}"
+    );
+}

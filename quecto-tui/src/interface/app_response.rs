@@ -1,5 +1,21 @@
 use super::*;
+
+/// Request id for the master attach-time history backfill (#1050). Distinct from
+/// resume (`resume-messages`) and rewind (`rewind-open-*` / `rewind-refresh`) so
+/// `handle_response` can reconcile (prepend + guard) rather than wholesale-replace.
+pub(super) const ATTACH_BACKFILL_ID: &str = "attach-backfill";
+
 impl App {
+    /// Request durable master session history after connecting (including
+    /// `--socket` attach). Uses [`ATTACH_BACKFILL_ID`] so the response path
+    /// reuses the same prepend + `history_backfilled` reconcile as sub-agent
+    /// panes (#828 / #1050).
+    pub(crate) fn request_master_attach_backfill(&mut self) {
+        self.send_command(Command::GetMessages {
+            id: Some(ATTACH_BACKFILL_ID.into()),
+        });
+    }
+
     pub(super) fn handle_response(
         &mut self,
         id: Option<String>,
@@ -57,6 +73,11 @@ impl App {
                     if id.is_some() && id == self.rewind.pending_open_id {
                         self.rewind.pending_open_id = None;
                         self.open_rewind_selector(&data);
+                    } else if id.as_deref() == Some(ATTACH_BACKFILL_ID) {
+                        // Attach-time backfill: prepend prior history above any
+                        // live content already streamed; never wholesale-replace
+                        // (parity with sub-agent connect-on-select, #828/#1050).
+                        Self::reconcile_backfill_history(&mut self.master_session, &data);
                     } else {
                         self.replace_chat_with_messages(&data);
                     }
