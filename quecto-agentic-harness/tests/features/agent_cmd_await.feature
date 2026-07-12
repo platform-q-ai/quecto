@@ -41,14 +41,17 @@ Feature: agent_cmd await — block until sub-agent reaches terminal state
 
   # --- Stable idle detection ---
 
-  Scenario: await returns idle with an incomplete verdict when no workflow completed
+  Scenario: await reports completed when an idle agent had no workflow to complete
+    # A plain-task agent that was never assigned a workflow and goes idle has
+    # finished cleanly — there is nothing to complete, so it must not be framed
+    # as incomplete/stalled (which previously confused parent agents).
     Given an AgentCmdTool with a mock await registry
     And the mock subagent "w1" has status "idle"
     When I execute agent_cmd with '{"agent_id":"w1","command":"await","idle_timeout":0}'
     Then the agent_cmd await result status should be "idle"
     And the agent_cmd await result reason should be "idle"
     And the agent_cmd await result agent_id should be "w1"
-    And the agent_cmd await result verdict should be "incomplete"
+    And the agent_cmd await result verdict should be "completed"
 
   Scenario: await waits through idle_timeout window before returning
     Given an AgentCmdTool with a mock await registry

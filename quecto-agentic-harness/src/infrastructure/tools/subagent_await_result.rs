@@ -128,12 +128,22 @@ impl WorkflowResult {
             total: w.steps_total,
         });
         let complete = workflow.is_some_and(|w| w.mode == WorkflowMode::Complete.wire_str());
+        // A workflow only "exists to complete" once a template with steps is
+        // bound. No snapshot at all, or a snapshot still selecting a template
+        // with zero steps, means there was nothing to complete — going idle is
+        // a clean finish, not an abandoned workflow (#…: avoids false "stalled"
+        // reads for plain-task agents that were never given a workflow).
+        let no_workflow = workflow.is_none_or(|w| w.steps_total == 0 && !complete);
         let steps = workflow.map(|w| format!("{}/{} steps", w.steps_completed, w.steps_total));
         let progress = || steps.clone().unwrap_or_else(|| "no workflow".to_string());
         let (verdict, summary): (VerdictStatus, String) = match status {
             "idle" if complete => (
                 VerdictStatus::Completed,
                 format!("workflow complete ({})", progress()),
+            ),
+            "idle" if no_workflow => (
+                VerdictStatus::Completed,
+                "went idle (no workflow assigned — nothing to complete)".to_string(),
             ),
             "idle" => (
                 VerdictStatus::Incomplete,
@@ -221,10 +231,31 @@ mod tests {
     }
 
     #[test]
-    fn verdict_incomplete_when_idle_without_workflow() {
+    fn verdict_completed_when_idle_without_workflow() {
+        // A plain-task agent (never given a workflow) that goes idle has
+        // finished cleanly — there is nothing to "complete". It must NOT be
+        // framed as incomplete/stalled, which previously confused parent agents.
         let r = WorkflowResult::derive("idle", Some("idle"), None, None);
-        assert_eq!(r.status, VerdictStatus::Incomplete);
+        assert_eq!(r.status, VerdictStatus::Completed);
         assert!(r.workflow_progress.is_none());
+        assert!(
+            !r.summary.contains("without completing"),
+            "summary must not imply a stall: {}",
+            r.summary
+        );
+    }
+
+    #[test]
+    fn verdict_completed_when_idle_with_zero_step_template() {
+        // Still selecting a template / zero steps bound == no workflow to
+        // complete; going idle is a clean finish, not an abandonment.
+        let wf = WorkflowSnapshot {
+            mode: "selecting_template".into(),
+            steps_completed: 0,
+            steps_total: 0,
+        };
+        let r = WorkflowResult::derive("idle", Some("idle"), Some(&wf), None);
+        assert_eq!(r.status, VerdictStatus::Completed);
     }
 
     #[test]
