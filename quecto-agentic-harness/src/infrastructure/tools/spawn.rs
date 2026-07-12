@@ -9,7 +9,34 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
+use super::spawn_launch_args::write_private_new;
+use super::subagent_registry::{
+    ExitSignal, ExitSignalTx, NotificationTx, SubagentStatus, new_exit_signal_channel,
+};
+
+/// Build the registry entry used at spawn registration (production after socket
+/// ready, and stub mode). Shared so the task-dependent initial status (#1049)
+/// cannot drift between branches.
+fn initial_registry_entry(
+    socket_path: PathBuf,
+    pid: u32,
+    parent_id: Option<String>,
+    config: &SubagentConfig,
+    exit_signal_tx: Option<ExitSignalTx>,
+) -> SubagentEntry {
+    let mut entry = SubagentEntry::new(socket_path, pid);
+    entry.exit_signal_tx = exit_signal_tx;
+    // Stamp the child's parent as THIS agent's own id (#820 panel tree).
+    entry.parent_id = parent_id;
+    // Record whether this child is a read-only observer (#966 / #957).
+    entry.read_only = config.read_only;
+    if config.task.is_none() {
+        // #1049: task-less → Idle (cascade/TUI); with-task stays Starting.
+        entry.status = SubagentStatus::Idle;
+    }
+    super::subagent_registry::seed_bound_workflow(&mut entry, config.workflow_spec.as_ref());
+    entry
+}
 
 fn inherited_runtime_config_path() -> Option<PathBuf> {
     std::env::var("QUECTO_RUNTIME_CONFIG_PATH")
@@ -70,38 +97,6 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(p)
-}
-
-/// Write `data` to `path`, creating it privately: `O_CREAT|O_EXCL` (so a
-/// pre-planted symlink at the path is rejected rather than followed) with
-/// owner-only `0600` permissions. A stale file left by a crashed prior spawn is
-/// removed and recreated once (the retry still uses `O_EXCL`). Falls back to a
-/// plain write on non-unix platforms.
-#[cfg(unix)]
-fn write_private_new(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    fn create_excl(path: &std::path::Path) -> std::io::Result<std::fs::File> {
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)
-    }
-    let mut file = match create_excl(path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            let _ = std::fs::remove_file(path);
-            create_excl(path)?
-        }
-        Err(e) => return Err(e),
-    };
-    file.write_all(data)
-}
-
-#[cfg(not(unix))]
-fn write_private_new(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, data)
 }
 
 /// Tool that spawns a child `quecto agent` process in UDS mode.
@@ -410,18 +405,12 @@ impl SpawnTool {
         // a terminal event — without this a child that begins a long first turn
         // stays invisible in the side panel until it finishes (#866).
         {
-            let mut entry = SubagentEntry::new(socket_path.clone(), pid);
-            entry.exit_signal_tx = Some(exit_tx.clone());
-            // Stamp the child's parent as THIS agent's own id (#820 panel tree):
-            // without it every entry's parent_id stayed None, so grandchildren
-            // could never nest under their real parent in the sub-agent panel.
-            entry.parent_id = self.parent_id.clone();
-            // Record whether this child is a read-only observer so the TUI can
-            // mark it (#966); enforcement is done by disabling the tools (#957).
-            entry.read_only = config.read_only;
-            super::subagent_registry::seed_bound_workflow(
-                &mut entry,
-                config.workflow_spec.as_ref(),
+            let entry = initial_registry_entry(
+                socket_path.clone(),
+                pid,
+                self.parent_id.clone(),
+                config,
+                Some(exit_tx.clone()),
             );
             register_and_broadcast(
                 &self.registry,
@@ -642,21 +631,15 @@ impl Tool for SpawnTool {
                     if self.base_dir.as_os_str().is_empty() {
                         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 
-                        // Register in stub mode too so BDD tests can verify registry.
-                        let mut stub_entry = SubagentEntry::new(
+                        // Stub registration uses the same entry builder as the
+                        // real post-socket-ready path so status/parent/read_only
+                        // and #1049 cannot drift (#866 broadcast still applies).
+                        let stub_entry = initial_registry_entry(
                             PathBuf::from(format!("/stub/quecto-agent-{session_name}.sock")),
                             0,
-                        );
-                        // Mirror the real path: stamp the child's parent as this
-                        // agent's own id so the panel tree nests correctly, and
-                        // broadcast the immediate registration (#866).
-                        stub_entry.parent_id = self.parent_id.clone();
-                        // Record the read-only flag in stub mode too so BDD tests
-                        // can assert the snapshot carries it (#966).
-                        stub_entry.read_only = config.read_only;
-                        super::subagent_registry::seed_bound_workflow(
-                            &mut stub_entry,
-                            config.workflow_spec.as_ref(),
+                            self.parent_id.clone(),
+                            &config,
+                            None,
                         );
                         register_and_broadcast(
                             &self.registry,

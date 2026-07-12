@@ -1,3 +1,4 @@
+use super::super::subagent_registry::SubagentStatus;
 use super::*;
 
 fn test_tool() -> SpawnTool {
@@ -262,4 +263,134 @@ fn register_and_broadcast_without_channel_still_registers() {
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
     super::register_and_broadcast(&registry, None, "worker", entry);
     assert!(registry.lock().unwrap().contains_key("worker"));
+}
+
+// ─── #1049: task-less spawn settles to Idle on registration ──────────────────
+//
+// Tests target `initial_registry_entry` (shared by production post-socket-ready
+// registration and stub mode) so the status decision cannot drift between
+// branches. Stub execute tests still exercise end-to-end registration+broadcast.
+
+fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig {
+    crate::domain::subagent::SubagentConfig {
+        task: task.map(String::from),
+        agent_id: Some("worker".into()),
+        restrict_to_workspace: true,
+        system: None,
+        config_path: None,
+        workflow: false,
+        workflow_guards: false,
+        workflow_spec: None,
+        model: None,
+        effort: None,
+        disable_tools: vec![],
+        read_only: false,
+    }
+}
+
+#[test]
+fn initial_entry_taskless_is_idle() {
+    // Shared builder used by production after socket ready (#1049).
+    let entry = super::initial_registry_entry(
+        PathBuf::from("/tmp/ready.sock"),
+        42,
+        Some("parent".into()),
+        &sample_config(None),
+        None,
+    );
+    assert_eq!(entry.status, SubagentStatus::Idle);
+    assert_eq!(entry.parent_id.as_deref(), Some("parent"));
+    assert_eq!(entry.pid, 42);
+    assert!(!entry.read_only);
+}
+
+#[test]
+fn initial_entry_with_task_stays_starting() {
+    let entry = super::initial_registry_entry(
+        PathBuf::from("/tmp/ready.sock"),
+        7,
+        None,
+        &sample_config(Some("do work")),
+        None,
+    );
+    assert_eq!(
+        entry.status,
+        SubagentStatus::Starting,
+        "#1049: with-task must stay Starting until agent_start"
+    );
+}
+
+#[test]
+fn initial_entry_taskless_broadcasts_idle_via_register() {
+    // Prove the shared entry + register_and_broadcast path carries idle in the
+    // snapshot (same event production emits after socket readiness).
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let entry = super::initial_registry_entry(
+        PathBuf::from("/tmp/ready.sock"),
+        1,
+        None,
+        &sample_config(None),
+        None,
+    );
+    super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry);
+    let line = rx
+        .try_recv()
+        .expect("#1049: registration must broadcast state_changed");
+    assert!(line.ends_with('\n') && line.matches('\n').count() == 1);
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["type"], "subagent_state_changed");
+    assert_eq!(v["subagents"][0]["agentId"], "idle-worker");
+    assert_eq!(
+        v["subagents"][0]["status"], "idle",
+        "#1049: broadcast must carry idle so cascade merges the child"
+    );
+}
+
+#[tokio::test]
+async fn taskless_stub_spawn_registers_as_idle() {
+    // End-to-end stub path still uses the shared builder.
+    let tool = SpawnTool::new(vec![], true);
+    tool.execute(r#"{"agent_id":"idle-worker"}"#)
+        .await
+        .expect("stub spawn must succeed");
+    let registry = tool.registry.lock().unwrap();
+    let entry = registry
+        .get("idle-worker")
+        .expect("task-less child must be registered");
+    assert_eq!(
+        entry.status,
+        SubagentStatus::Idle,
+        "#1049: task-less spawn must be Idle after registration"
+    );
+}
+
+#[tokio::test]
+async fn with_task_stub_spawn_stays_starting() {
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let tool = SpawnTool::new(vec![], true).with_event_forwarding(Some(tx), None);
+    tool.execute(r#"{"task":"do work","agent_id":"busy-worker"}"#)
+        .await
+        .expect("stub spawn must succeed");
+    {
+        let registry = tool.registry.lock().unwrap();
+        let entry = registry
+            .get("busy-worker")
+            .expect("with-task child must be registered");
+        assert_eq!(
+            entry.status,
+            SubagentStatus::Starting,
+            "#1049: with-task spawn must stay Starting until agent_start"
+        );
+    }
+    let line = rx
+        .try_recv()
+        .expect("with-task registration must still broadcast (#866)");
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["type"], "subagent_state_changed");
+    assert_eq!(v["subagents"][0]["agentId"], "busy-worker");
+    assert_eq!(
+        v["subagents"][0]["status"], "starting",
+        "#1049: with-task broadcast must carry starting, not idle"
+    );
 }
