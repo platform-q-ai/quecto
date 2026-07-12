@@ -6,6 +6,7 @@ pub mod provider_reload;
 #[cfg(test)]
 mod provider_reload_tests;
 pub mod uds;
+mod uds_busy_get_message;
 pub mod uds_cancel;
 mod uds_control_forward;
 mod uds_ext_protocol;
@@ -16,10 +17,12 @@ mod uds_multi;
 mod uds_multi_accept;
 mod uds_query;
 mod uds_reader;
+mod uds_reader_dispatch;
 mod uds_reload;
 pub mod uds_session;
 mod uds_snapshots;
 mod uds_socket;
+mod uds_tool_intercept;
 pub mod uds_wire;
 mod uds_workflow_nudge;
 

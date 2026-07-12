@@ -157,6 +157,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
         run_agent_message(PromptRun {
             agent: &mut agent,
             messages: &mut messages,
+            conversation_snapshot: None,
             session: &mut session,
             sink: &mut sink,
             message: Message::user("go"),
@@ -255,6 +256,7 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
         run_agent_message(PromptRun {
             agent: &mut agent,
             messages: &mut messages,
+            conversation_snapshot: None,
             session: &mut session,
             sink: &mut sink,
             message: Message::user("hi"),

@@ -233,11 +233,31 @@ impl App {
             return;
         }
         self.ensure_session(agent_id);
+        if let Event::Response {
+            id,
+            command,
+            success,
+            data,
+            ..
+        } = &ev
+            && command == "get_message"
+        {
+            self.apply_subagent_get_message_recovery(
+                agent_id,
+                id.as_deref(),
+                *success,
+                data.as_ref(),
+            );
+            return;
+        }
         let Some(session) = self.subagents.sessions.get_mut(agent_id) else {
             return;
         };
         match &ev {
             Event::AgentStart | Event::TurnStart => {
+                if !session.running {
+                    session.active_turn_start = session.chat.entry_count();
+                }
                 session.running = true;
                 session.observed_run_state = true;
                 session.footer.set_streaming(true);
@@ -353,20 +373,6 @@ impl App {
             } if command == "get_messages" => {
                 Self::reconcile_backfill_history(session, data);
             }
-            Event::Response {
-                id,
-                command,
-                success,
-                data,
-                ..
-            } if command == "get_message" => {
-                Self::apply_subagent_get_message_recovery(
-                    session,
-                    id.as_deref(),
-                    *success,
-                    data.as_ref(),
-                );
-            }
             _ => {}
         }
     }
@@ -378,12 +384,8 @@ impl App {
         refs: &[String],
         expected_content_len: Option<u64>,
     ) {
-        if refs.is_empty() {
+        let Some(session) = self.subagents.sessions.get(agent_id) else {
             return;
-        }
-        let session = match self.subagents.sessions.get(agent_id) {
-            Some(s) => s,
-            None => return,
         };
         let assistant_text = session
             .chat
@@ -397,97 +399,95 @@ impl App {
                 _ => None,
             })
             .unwrap_or_default();
-        let tools_this_turn = session.chat.tool_entry_count(); // child session is one turn's view often
-        // Reuse master heuristic with child chat state.
-        if !self.needs_message_recovery_for(
-            refs,
-            &assistant_text,
-            tools_this_turn,
-            expected_content_len,
-        ) {
+        let tools = session.chat.tool_entry_count();
+        if !self.needs_message_recovery_for(refs, &assistant_text, tools, expected_content_len) {
             return;
         }
+        let batch_id = format!(
+            "child-recovery-{agent_id}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        let target_end = session.chat.entry_count();
+        self.message_recovery_batches.insert(
+            batch_id.clone(),
+            MessageRecoveryBatch {
+                refs: refs.to_vec(),
+                responses: std::collections::HashMap::new(),
+                target_start: session.active_turn_start.min(target_end),
+                target_end,
+                agent_id: Some(agent_id.to_string()),
+            },
+        );
         for message_id in refs {
             if self
                 .pending_message_recovery
                 .values()
-                .any(|pending| pending == message_id)
+                .any(|p| p.message_id == *message_id)
             {
                 continue;
             }
-            let req_id = format!("msg-recovery-{}", {
-                use std::time::{SystemTime, UNIX_EPOCH};
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
+            let req_id = format!(
+                "msg-recovery-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_nanos())
                     .unwrap_or(0)
-            });
-            self.pending_message_recovery
-                .insert(req_id.clone(), message_id.clone());
-            let cmd = Command::GetMessage {
+            );
+            self.pending_message_recovery.insert(
+                req_id.clone(),
+                PendingMessageRecovery {
+                    message_id: message_id.clone(),
+                    batch_id: batch_id.clone(),
+                },
+            );
+            let _ = self.send_to_active_subagent(Command::GetMessage {
                 id: Some(req_id),
                 message_id: message_id.clone(),
-                agent_id: None, // sent on the child's own socket
-            };
-            let _ = self.send_to_active_subagent(cmd);
+                agent_id: None,
+            });
         }
     }
 
     fn apply_subagent_get_message_recovery(
-        session: &mut SessionView,
+        &mut self,
+        agent_id: &str,
         id: Option<&str>,
         success: bool,
         data: Option<&serde_json::Value>,
     ) {
-        // Request-id gating is enforced by the caller having filtered pending map
-        // on the master path; child path accepts successful get_message payloads
-        // that carry content (child connection is single-client).
-        let _ = id;
+        let Some(req_id) = id else { return };
+        let Some(pending) = self.pending_message_recovery.remove(req_id) else {
+            return;
+        };
         if !success {
             return;
         }
-        let Some(data) = data else {
+        let Some(data) = data else { return };
+        if data.get("id").and_then(|v| v.as_str()) != Some(pending.message_id.as_str()) {
+            return;
+        }
+        let Some(batch) = self.message_recovery_batches.get_mut(&pending.batch_id) else {
             return;
         };
-        let role = data.get("role").and_then(|r| r.as_str()).unwrap_or("");
-        let content = data
-            .get("content")
-            .and_then(|c| c.as_str())
-            .unwrap_or("")
-            .to_string();
-        match role {
-            "assistant" if !content.is_empty() => {
-                session.chat.reconcile_assistant_text(&content);
-            }
-            "tool" => {
-                let tool_call_id = data
-                    .get("toolCallId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let tool_name = data
-                    .get("toolName")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("tool")
-                    .to_string();
-                if tool_call_id.is_empty() {
-                    return;
-                }
-                if !session.chat.has_tool_call(&tool_call_id) {
-                    session
-                        .chat
-                        .start_tool(tool_call_id.clone(), tool_name, String::new());
-                }
-                let is_error = data
-                    .get("isError")
-                    .or_else(|| data.get("is_error"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                session
-                    .chat
-                    .complete_tool(&tool_call_id, &content, is_error, None);
-            }
-            _ => {}
+        if batch.agent_id.as_deref() != Some(agent_id) {
+            return;
+        }
+        batch.responses.insert(pending.message_id, data.clone());
+        if batch.responses.len() != batch.refs.len() {
+            return;
+        }
+        let batch = self
+            .message_recovery_batches
+            .remove(&pending.batch_id)
+            .unwrap();
+        let entries = super::app_events::recovered_chat_entries(&batch.refs, &batch.responses);
+        if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
+            session
+                .chat
+                .replace_range(batch.target_start, batch.target_end, entries);
         }
     }
 

@@ -1,4 +1,4 @@
-use super::*;
+use super::super::uds_tool_intercept::try_intercept_tool_result;
 
 #[test]
 fn intercepts_vanilla_tool_result() {

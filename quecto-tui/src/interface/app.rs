@@ -97,9 +97,6 @@ pub struct App {
     /// Diagnostic: when `QUECTO_TUI_RENDER_LOG` is set, every frame is appended
     /// (ANSI-stripped) to this file for frame-by-frame replay.
     render_log_path: Option<String>,
-    /// Test-only count of frames actually painted through [`App::render`],
-    /// so harness tests can assert the event-loop render helpers coalesce
-    /// bursty token paints (#972 review).
     #[cfg(any(test, feature = "test-harness"))]
     pub(super) rendered_frames: usize,
     /// Test-only switch: when set by the harness, [`App::render`] counts the
@@ -122,17 +119,35 @@ pub struct App {
     /// Whether we've already requested session stats as a fallback to learn
     /// the real context window for the current session/model.
     context_stats_requested: bool,
-
-    /// #1060: request-id → message-id for in-flight get_message recovery fetches.
-    /// Gated so only the requesting client/state accepts the responses.
-    pending_message_recovery: std::collections::HashMap<String, String>,
+    /// #1060: request-id → pending lookup for in-flight recovery fetches.
+    /// Responses are request-id gated, buffered, then applied in ref order.
+    pending_message_recovery: std::collections::HashMap<String, PendingMessageRecovery>,
+    /// Recovery batches keyed by a client-local id. A batch retains the exact
+    /// chat range of the completed turn, so a late response cannot overwrite a
+    /// newer turn (#1075 regression).
+    message_recovery_batches: std::collections::HashMap<String, MessageRecoveryBatch>,
     /// Tool boxes observed since the current master AgentStart (#1060 recovery).
     tools_this_turn: usize,
-    /// Internal notifications for asynchronous command-send failures.
+    active_turn_start: usize,
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
     /// When the TUI session started — drives the Master row's uptime timer (#820).
     started_at: tokio::time::Instant,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PendingMessageRecovery {
+    message_id: String,
+    batch_id: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct MessageRecoveryBatch {
+    refs: Vec<String>,
+    responses: std::collections::HashMap<String, serde_json::Value>,
+    target_start: usize,
+    target_end: usize,
+    agent_id: Option<String>,
 }
 
 /// Rewind flow state, grouped by owner (#997).
@@ -257,6 +272,8 @@ pub(crate) struct SessionView {
     /// Whether this session's own stream has reported run-state yet; until it has
     /// `active_subagent_running` trusts the tracked status not `running` (#834).
     observed_run_state: bool,
+    /// Chat entry index at which this child's active turn began.
+    active_turn_start: usize,
 }
 
 impl SessionView {
@@ -278,6 +295,7 @@ impl SessionView {
             history_backfilled: false,
             partial_backfill_len: None,
             observed_run_state: false,
+            active_turn_start: 0,
         }
     }
 }
@@ -350,7 +368,9 @@ impl App {
             last_rendered_lines: Vec::new(),
             context_stats_requested: false,
             pending_message_recovery: std::collections::HashMap::new(),
+            message_recovery_batches: std::collections::HashMap::new(),
             tools_this_turn: 0,
+            active_turn_start: 0,
             command_send_failure_tx,
             command_send_failure_rx,
             started_at: tokio::time::Instant::now(),

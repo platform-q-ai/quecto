@@ -259,13 +259,10 @@ fn large_real_turn_end_of_turn_events_stay_well_under_frame_cap() {
     );
 }
 
-/// #1060 AC1: large tool-call / tool-result content must not inflate agent_end.
+/// #1060 AC1 wire-shape smoke test. The production-path large tool bodies are
+/// exercised in `production_tool_turn_agent_end_refs_cover_all_roles`.
 #[test]
-fn large_tool_content_agent_end_stays_well_under_frame_cap() {
-    // Prove that even if a producer mistakenly still put large tool bodies in
-    // `messages`, the GREEN shape empties them and carries refs only.
-    let _big_args = "A".repeat(EVENT_LINE_CAP_BYTES + 4096);
-    let _big_result = "R".repeat(EVENT_LINE_CAP_BYTES + 4096);
+fn refs_only_tool_agent_end_stays_well_under_frame_cap() {
     let agent_end = AgentEvent::AgentEnd {
         messages: vec![],
         message_refs: vec![

@@ -1,0 +1,66 @@
+use super::protocol::AgentEvent;
+use super::uds_multi::ConversationSnapshot;
+
+pub(super) struct BusyCommandCtx<'a> {
+    pub line: &'a str,
+    pub snapshot: &'a ConversationSnapshot,
+    pub registry: &'a super::uds_ext_protocol::ClientToolRegistry,
+    pub client_id: u64,
+}
+
+/// Handle commands that must bypass the dispatch loop while a prompt is active.
+pub(super) async fn intercept(ctx: BusyCommandCtx<'_>) -> bool {
+    if let Some(result) = super::uds_tool_intercept::try_intercept_tool_result(ctx.line) {
+        super::uds_ext_protocol::handle_tool_result(super::uds_ext_protocol::ToolResultArgs {
+            client_id: ctx.client_id,
+            tool_call_id: &result.tool_call_id,
+            content: &result.content,
+            is_error: result.is_error,
+            registry: ctx.registry,
+        });
+        return true;
+    }
+    if let Some(parsed) = parse(ctx.line.trim()) {
+        service(parsed, ctx.snapshot, ctx.registry, ctx.client_id).await;
+        return true;
+    }
+    false
+}
+
+pub(super) async fn service(
+    parsed: (Option<String>, String),
+    snapshot: &ConversationSnapshot,
+    registry: &super::uds_ext_protocol::ClientToolRegistry,
+    client_id: u64,
+) {
+    let (request_id, message_id) = parsed;
+    let data = snapshot
+        .read()
+        .await
+        .iter()
+        .find(|message| message.id().to_string() == message_id)
+        .map(super::uds_session::message_to_json);
+    let event = match data {
+        Some(data) => AgentEvent::ok(request_id.as_deref(), "get_message", Some(data)),
+        None => AgentEvent::err(
+            request_id.as_deref(),
+            "get_message",
+            format!("message not found: {message_id}"),
+        ),
+    };
+    if let Some(tx) = super::uds_ext_protocol::client_writer_tx(registry, client_id) {
+        let mut response = serde_json::to_string(&event).unwrap_or_default();
+        response.push('\n');
+        let _ = tx.send(response).await;
+    }
+}
+
+pub(super) fn parse(line: &str) -> Option<(Option<String>, String)> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if value.get("type")?.as_str()? != "get_message" || value.get("agentId").is_some() {
+        return None;
+    }
+    let message_id = value.get("messageId")?.as_str()?.to_string();
+    let request_id = value.get("id").and_then(|v| v.as_str()).map(str::to_string);
+    Some((request_id, message_id))
+}

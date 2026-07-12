@@ -490,6 +490,7 @@ async fn run_prompt_dispatch(
     run_agent_message(PromptRun {
         agent: ctx.agent,
         messages: ctx.messages,
+        conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
         session: ctx.session,
         sink: &mut sink,
         message: Message::user(message),
@@ -542,6 +543,7 @@ async fn run_drained_message(ctx: &mut DispatchCtx<'_>, msg: Message) {
     run_agent_message(PromptRun {
         agent: ctx.agent,
         messages: ctx.messages,
+        conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
         session: ctx.session,
         sink: &mut sink,
         message: msg,

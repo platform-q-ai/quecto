@@ -165,6 +165,7 @@ async fn run_turn(
         run_agent_message(PromptRun {
             agent: &mut agent,
             messages: &mut messages,
+            conversation_snapshot: None,
             session: &mut session,
             sink: &mut sink,
             message: Message::user(prompt),
@@ -276,18 +277,23 @@ async fn production_large_turn_end_of_turn_events_use_refs_not_full_content() {
 /// #1060 AC6: tool-using turn refs cover assistant tool-call + tool-result roles.
 #[tokio::test]
 async fn production_tool_turn_agent_end_refs_cover_all_roles() {
+    // Real large tool arguments/results must flow through production. If the
+    // producer ever re-carries either body, the emitted-size assertions below
+    // fail rather than merely measuring a hand-constructed empty event.
+    let large_args = "A".repeat(EVENT_LINE_CAP_BYTES + 4096);
+    let large_result = "R".repeat(EVENT_LINE_CAP_BYTES + 4096);
+    let mut tool_response = tool_call_response("bulk");
+    tool_response.tool_calls[0].arguments =
+        serde_json::json!({ "payload": large_args }).to_string();
     let (messages, bytes) = run_turn(
-        vec![
-            tool_call_response("bulk"),
-            text_response("final answer body"),
-        ],
+        vec![tool_response, text_response("final answer body")],
         vec![(
             ToolDefinition {
                 name: "bulk".to_string().into(),
                 description: "bulk".to_string().into(),
                 parameters_schema: r#"{"type":"object"}"#.to_string().into(),
             },
-            "tool-output-payload".to_string(),
+            large_result.clone(),
         )],
         "run a tool",
     )
@@ -299,6 +305,10 @@ async fn production_tool_turn_agent_end_refs_cover_all_roles() {
         .find(|e| e["type"] == "agent_end")
         .expect("agent_end");
     let refs = non_empty_refs(agent_end);
+    assert!(
+        serde_json::to_vec(agent_end).unwrap().len() < EVENT_LINE_CAP_BYTES / 4,
+        "production agent_end must stay bounded despite large real tool args/results"
+    );
     assert!(
         refs.len() >= 3,
         "tool turn agent_end must ref assistant tool-call, tool result, and final text \
@@ -326,7 +336,7 @@ async fn production_tool_turn_agent_end_refs_cover_all_roles() {
         for m in msgs {
             let c = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
             assert!(
-                c.is_empty() || (c != "final answer body" && c != "tool-output-payload"),
+                c.is_empty() || (c != "final answer body" && c != large_result),
                 "agent_end must not re-carry full tool-turn content"
             );
         }

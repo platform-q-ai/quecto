@@ -246,6 +246,8 @@ pub enum PromptOutcome {
 pub(crate) struct PromptRun<'a, 's> {
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
+    /// Shared live ledger used by busy-path get_message readers.
+    pub conversation_snapshot: Option<super::uds_multi::ConversationSnapshot>,
     pub session: &'a mut AgentSession,
     /// Sink the streamed events are delivered to (writer XOR broadcast).
     pub sink: &'a mut EventSink<'s>,
@@ -285,6 +287,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     let PromptRun {
         agent,
         messages,
+        conversation_snapshot,
         session: agent_session,
         sink,
         message,
@@ -299,6 +302,9 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
 
     let prompt_id = message.id();
     messages.push(message);
+    if let Some(snapshot) = &conversation_snapshot {
+        *snapshot.write().await = messages.clone();
+    }
 
     // Install a progress callback that forwards events to a bounded channel.
     // Capacity 256 limits back-pressure from a slow UDS consumer while being
@@ -372,6 +378,12 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             }
             // #1060 / ADR-0008 part 2: end-of-turn events carry stable message
             // refs + small footer metadata only — never re-ship full content.
+            // process() has appended the completed turn to `messages`; publish
+            // that ledger before refs are emitted so a concurrent reader-side
+            // get_message can resolve every referenced role immediately.
+            if let Some(snapshot) = &conversation_snapshot {
+                *snapshot.write().await = messages.clone();
+            }
             let message_refs: Vec<String> = agent_result
                 .appended_messages
                 .iter()

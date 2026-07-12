@@ -62,6 +62,7 @@ impl App {
     fn handle_agent_start(&mut self) {
         self.agent_state.start();
         self.tools_this_turn = 0;
+        self.active_turn_start = self.master_session.chat.entry_count();
         // Mirror the abort-aware run state onto the master session's `running`
         // flag so the unified working indicator is driven by one per-session
         // flag for master and sub-agents alike (#828).
@@ -146,17 +147,43 @@ impl App {
         ) {
             return;
         }
+        // turn_end and agent_end may carry the same refs. The first event owns
+        // the batch; do not create an unfillable duplicate with zero requests.
+        if refs.iter().any(|message_id| {
+            self.pending_message_recovery
+                .values()
+                .any(|pending| pending.message_id == *message_id)
+        }) {
+            return;
+        }
+        let batch_id = format!("recovery-batch-{}", uuid_like());
+        let target_end = self.master_session.chat.entry_count();
+        self.message_recovery_batches.insert(
+            batch_id.clone(),
+            MessageRecoveryBatch {
+                refs: refs.to_vec(),
+                responses: std::collections::HashMap::new(),
+                target_start: self.active_turn_start.min(target_end),
+                target_end,
+                agent_id: None,
+            },
+        );
         for message_id in refs {
             if self
                 .pending_message_recovery
                 .values()
-                .any(|pending| pending == message_id)
+                .any(|pending| pending.message_id == *message_id)
             {
                 continue;
             }
             let req_id = format!("msg-recovery-{}", uuid_like());
-            self.pending_message_recovery
-                .insert(req_id.clone(), message_id.clone());
+            self.pending_message_recovery.insert(
+                req_id.clone(),
+                PendingMessageRecovery {
+                    message_id: message_id.clone(),
+                    batch_id: batch_id.clone(),
+                },
+            );
             self.send_command(Command::GetMessage {
                 id: Some(req_id),
                 message_id: message_id.clone(),
@@ -165,10 +192,10 @@ impl App {
         }
     }
 
-    /// True when the active turn's stream did not already deliver full content
-    /// for the end-of-turn refs (mid-turn miss / partial).
-    /// Shared miss heuristic for master and sub-agent chats (#1060 review).
-    /// `expected_content_len` is `turn_end.message.contentLength` when present.
+    /// Conservative completeness check. A text-only turn can be proven complete
+    /// from contentLength. A multi-message/tool turn cannot: event delivery has
+    /// no stable IDs, so fetch refs and reconcile the exact turn range. This
+    /// avoids treating "one of two tools observed" as complete.
     pub(super) fn needs_message_recovery_for(
         &self,
         refs: &[String],
@@ -179,21 +206,20 @@ impl App {
         if refs.is_empty() {
             return false;
         }
-        // Multi-role turn without any THIS-TURN tool entries → missed tool_execution_*.
-        if refs.len() > 1 && tools_this_turn == 0 {
-            return true;
-        }
         let trimmed = assistant_text.trim();
         if trimmed.is_empty() || trimmed == "…" || trimmed == "..." {
             return true;
         }
-        // Truncated stream: held text shorter than the turn's real body length.
-        if let Some(expected) = expected_content_len {
-            if (trimmed.len() as u64) < expected {
-                return true;
-            }
+        if let Some(expected) = expected_content_len
+            && (assistant_text.len() as u64) < expected
+        {
+            return true;
         }
-        false
+        // A fully observed tool call contributes one assistant tool-call
+        // message and one tool-result message; the final assistant contributes
+        // one more. Any other cardinality proves at least one role was missed.
+        let expected_refs = tools_this_turn.saturating_mul(2).saturating_add(1);
+        refs.len() != expected_refs
     }
 
     fn latest_assistant_text(&self) -> String {
@@ -211,108 +237,42 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Apply a gated get_message recovery payload: reconcile/replace at the
-    /// turn position — never blindly append (#1075).
+    /// Buffer a gated response and atomically replace the original turn once all
+    /// refs arrive. Unknown, stale, failed, or mismatched responses never mutate
+    /// chat state.
     pub(super) fn handle_get_message_recovery(
         &mut self,
         id: Option<&str>,
         success: bool,
         data: Option<serde_json::Value>,
     ) {
-        let Some(req_id) = id else {
-            return;
-        };
-        let Some(expected_mid) = self.pending_message_recovery.remove(req_id) else {
-            // Wrong / unknown request id — ignore (gating).
+        let Some(req_id) = id else { return };
+        let Some(pending) = self.pending_message_recovery.remove(req_id) else {
             return;
         };
         if !success {
             return;
         }
-        let Some(data) = data else {
+        let Some(data) = data else { return };
+        if data.get("id").and_then(|v| v.as_str()) != Some(pending.message_id.as_str()) {
+            return;
+        }
+        let Some(batch) = self.message_recovery_batches.get_mut(&pending.batch_id) else {
             return;
         };
-        // Optional: verify response id matches requested message id.
-        if let Some(got) = data.get("id").and_then(|v| v.as_str()) {
-            if got != expected_mid {
-                return;
-            }
+        batch.responses.insert(pending.message_id, data);
+        if batch.responses.len() != batch.refs.len() {
+            return;
         }
-        self.reconcile_recovered_message(&data);
-    }
-
-    fn reconcile_recovered_message(&mut self, data: &serde_json::Value) {
-        let role = data.get("role").and_then(|r| r.as_str()).unwrap_or("");
-        let content = data
-            .get("content")
-            .and_then(|c| c.as_str())
-            .unwrap_or("")
-            .to_string();
-        match role {
-            "assistant" => {
-                if let Some(calls) = data.get("toolCalls").and_then(|t| t.as_array()) {
-                    for call in calls {
-                        let id = call
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let name = call
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("tool")
-                            .to_string();
-                        let args = call
-                            .get("arguments")
-                            .map(|a| {
-                                if a.is_string() {
-                                    a.as_str().unwrap_or("{}").to_string()
-                                } else {
-                                    a.to_string()
-                                }
-                            })
-                            .unwrap_or_else(|| "{}".into());
-                        // Reconcile: start tool if not already present.
-                        if !self.master_session.chat.has_tool_call(&id) {
-                            self.master_session.chat.start_tool(id, name, args);
-                        }
-                    }
-                }
-                if !content.is_empty() {
-                    self.master_session.chat.reconcile_assistant_text(&content);
-                }
-            }
-            "tool" => {
-                let tool_call_id = data
-                    .get("toolCallId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let tool_name = data
-                    .get("toolName")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("tool")
-                    .to_string();
-                if tool_call_id.is_empty() {
-                    return;
-                }
-                if !self.master_session.chat.has_tool_call(&tool_call_id) {
-                    self.master_session.chat.start_tool(
-                        tool_call_id.clone(),
-                        tool_name.clone(),
-                        String::new(),
-                    );
-                }
-                let is_error = data
-                    .get("isError")
-                    .or_else(|| data.get("is_error"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                self.master_session
-                    .chat
-                    .complete_tool(&tool_call_id, &content, is_error, None);
-            }
-            _ => {}
+        let batch = self
+            .message_recovery_batches
+            .remove(&pending.batch_id)
+            .unwrap();
+        let entries = recovered_chat_entries(&batch.refs, &batch.responses);
+        if batch.agent_id.is_none() {
+            self.master_session
+                .chat
+                .replace_range(batch.target_start, batch.target_end, entries);
         }
     }
 
@@ -562,14 +522,106 @@ fn spawn_args_are_read_only(args: &serde_json::Value) -> bool {
             })
 }
 
-/// Whether a tool's chat box should be hidden. Only `spawn` is suppressed —
-/// its effect is shown in the sub-agent panel / status bar instead. Every
-/// model-issued `agent_cmd` command renders a normal tool box (#871), including
-/// the read-only queries (#865) and the control/destructive commands
-/// (`prompt`/`steer`/`abort`/`kill`/…), so the transcript stays complete and it
-/// is clear why a sub-agent stopped. The TUI's OWN internal `get_state`/stats
-/// polling flows through `app_response.rs` (Response events), not this path, so
-/// it stays box-free regardless.
+pub(super) fn recovered_chat_entries(
+    refs: &[String],
+    responses: &std::collections::HashMap<String, serde_json::Value>,
+) -> Vec<crate::interface::components::chat::ChatEntry> {
+    use crate::interface::components::chat::ChatEntry;
+    let mut entries = Vec::new();
+    let mut tools = std::collections::HashMap::<String, usize>::new();
+    for message_id in refs {
+        let Some(data) = responses.get(message_id) else {
+            continue;
+        };
+        let role = data.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        match role {
+            "assistant" => {
+                if let Some(calls) = data.get("toolCalls").and_then(|v| v.as_array()) {
+                    for call in calls {
+                        let id = call
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if id.is_empty() {
+                            continue;
+                        }
+                        let name = call
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("tool")
+                            .to_string();
+                        let args = call
+                            .get("arguments")
+                            .map(|v| {
+                                v.as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| v.to_string())
+                            })
+                            .unwrap_or_else(|| "{}".into());
+                        tools.insert(id.clone(), entries.len());
+                        entries.push(ChatEntry::ToolExecution {
+                            tool_call_id: id,
+                            tool_name: name,
+                            parsed_args: serde_json::from_str(&args).ok(),
+                            args,
+                            result: None,
+                            is_error: false,
+                            duration_ms: None,
+                        });
+                    }
+                }
+                if !content.is_empty() {
+                    entries.push(ChatEntry::Assistant {
+                        text: content.to_string(),
+                        streaming: false,
+                    });
+                }
+            }
+            "tool" => {
+                let call_id = data
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let is_error = data
+                    .get("isError")
+                    .or_else(|| data.get("is_error"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if let Some(index) = tools.get(&call_id).copied() {
+                    if let Some(ChatEntry::ToolExecution {
+                        result,
+                        is_error: entry_error,
+                        ..
+                    }) = entries.get_mut(index)
+                    {
+                        *result = Some(content.to_string());
+                        *entry_error = is_error;
+                    }
+                } else if !call_id.is_empty() {
+                    entries.push(ChatEntry::ToolExecution {
+                        tool_call_id: call_id,
+                        tool_name: data
+                            .get("toolName")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("tool")
+                            .to_string(),
+                        args: String::new(),
+                        parsed_args: None,
+                        result: Some(content.to_string()),
+                        is_error,
+                        duration_ms: None,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    entries
+}
+
 pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> bool {
     // #871: every model-issued `agent_cmd` invocation renders as a normal tool
     // call, including the control/destructive commands (`prompt`/`steer`/

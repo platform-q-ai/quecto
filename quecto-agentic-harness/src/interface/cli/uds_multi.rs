@@ -501,6 +501,9 @@ pub(super) struct ClientHandlerArgs {
     pub(super) client_id: u64,
     /// For in-reader handling of `tool_result` — see handle_client.
     pub(super) client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
+    /// Live conversation ledger. Updated as messages are appended during a turn,
+    /// allowing read-only get_message lookups to bypass the blocked dispatcher.
+    pub(super) conversation_snapshot: ConversationSnapshot,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     pub(super) _guard: ClientGuard,
 }
@@ -515,6 +518,7 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
         turn_control,
         client_id,
         client_tool_registry,
+        conversation_snapshot,
         _guard,
     } = args;
     use tokio::io::BufReader;
@@ -621,49 +625,15 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
             }
             fire_cancel(&cancel_handle);
         }
-        // Intercept `tool_result` inline — the dispatch loop is
-        // single-threaded and is blocked waiting for the agent's
-        // in-flight prompt (which in turn is waiting for *this* very
-        // tool_result). Routing through cmd_tx would deadlock. We
-        // resolve the pending oneshot directly against the shared
-        // tool registry; the agent's UdsTool::execute wakes and the
-        // turn resumes.
-        if let Some(parsed) = try_intercept_tool_result(&line) {
-            super::uds_ext_protocol::handle_tool_result(super::uds_ext_protocol::ToolResultArgs {
-                client_id,
-                tool_call_id: &parsed.tool_call_id,
-                content: &parsed.content,
-                is_error: parsed.is_error,
-                registry: &client_tool_registry,
-            });
-            continue;
-        }
-        // Non-blocking control forward (#876): an `agent_cmd` prompt/steer/
-        // follow_up/abort marked `"ack":"accept"`. Ack acceptance IMMEDIATELY on
-        // this connection (so the parent's turn isn't frozen for the child's
-        // turn), then hand the transformed work to the dispatch loop — which
-        // runs it now if idle or queues it for the next turn if busy. The cancel
-        // for steer/abort already fired above.
-        if let Some(ctrl) = super::uds_control_forward::intercept_control_forward(&line) {
-            if let Some(forward_line) = super::uds_ext_protocol::ack_accepted_control(
-                &client_tool_registry,
-                client_id,
-                ctrl,
-            )
-            .await
-            {
-                let msg = ClientMessage::Command(ClientCommand {
-                    line: forward_line,
-                    client_id,
-                });
-                if cmd_tx.send(msg).await.is_err() {
-                    break;
-                }
-            }
-            continue;
-        }
-        let msg = ClientMessage::Command(ClientCommand { line, client_id });
-        if cmd_tx.send(msg).await.is_err() {
+        if !super::uds_reader_dispatch::dispatch(super::uds_reader_dispatch::ReaderDispatchCtx {
+            line,
+            snapshot: &conversation_snapshot,
+            registry: &client_tool_registry,
+            client_id,
+            cmd_tx: &cmd_tx,
+        })
+        .await
+        {
             break;
         }
     }
@@ -675,9 +645,6 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
 
 // ─── Broadcast prompt execution ───────────────────────────────────────────────
 
-#[path = "uds_tool_intercept.rs"]
-mod uds_tool_intercept;
-use uds_tool_intercept::try_intercept_tool_result;
 // Re-exported for the auto-await dedupe unit tests (uds_subagent_notify_tests).
 #[cfg(test)]
 pub(in crate::interface::cli) use super::uds_cancel::forward_notification_broadcast;

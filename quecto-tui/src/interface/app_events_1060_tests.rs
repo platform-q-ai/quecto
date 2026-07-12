@@ -362,3 +362,110 @@ async fn streamed_tool_turn_renders_without_message_fetches_at_end_of_turn() {
         "streamed tool common path must issue ZERO get_message fetches; got: {cmds:?}"
     );
 }
+
+/// #1060/#1075: a late response for turn A must not overwrite turn B.
+#[tokio::test]
+async fn late_recovery_replaces_original_turn_not_latest_assistant() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    a.handle_event(Event::AgentStart);
+    a.handle_event(Event::Token {
+        token: "partial A".into(),
+    });
+    // contentLength proves the active client missed part of turn A.
+    a.handle_event(Event::TurnEnd {
+        message: serde_json::json!({
+            "role": "assistant", "content": "",
+            "messageRefs": ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
+            "contentLength": 10
+        }),
+    });
+    a.handle_event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec!["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".into()],
+    });
+    let commands = h.drain_commands().await;
+    let request_id = get_message_ids(&commands)
+        .into_iter()
+        .next()
+        .expect("recovery request");
+
+    let a = h.app_mut();
+    a.handle_event(Event::AgentStart);
+    a.handle_event(Event::Token {
+        token: "complete B".into(),
+    });
+    a.handle_event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec!["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb".into()],
+    });
+    a.handle_event(Event::Response {
+        id: Some(request_id), command: "get_message".into(), success: true,
+        data: Some(serde_json::json!({
+            "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "role": "assistant", "content": "complete A"
+        })), error: None,
+    });
+    let text = chat_text(a);
+    assert!(
+        text.contains("complete A"),
+        "original turn must converge: {text}"
+    );
+    assert!(
+        text.contains("complete B"),
+        "later turn must remain untouched: {text}"
+    );
+}
+
+/// #1060/#1075: one observed tool does not prove a two-tool turn complete.
+#[tokio::test]
+async fn partial_multi_tool_turn_fetches_unresolved_refs() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    a.handle_event(Event::AgentStart);
+    a.handle_event(Event::ToolExecutionStart {
+        tool_call_id: "call-1".into(),
+        tool_name: "first".into(),
+        args: "{}".into(),
+    });
+    a.handle_event(Event::ToolExecutionEnd {
+        tool_call_id: "call-1".into(),
+        tool_name: "first".into(),
+        result: "one".into(),
+        is_error: false,
+    });
+    a.handle_event(Event::Token {
+        token: "done".into(),
+    });
+    a.handle_event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: (0..5)
+            .map(|n| format!("00000000-0000-0000-0000-00000000000{n}"))
+            .collect(),
+    });
+    assert_eq!(
+        get_message_ids(&h.drain_commands().await).len(),
+        5,
+        "five refs encode two tool-call/result pairs plus final assistant; one observed tool is incomplete"
+    );
+}
+
+/// #1060: unknown response ids are gated and cannot alter the transcript.
+#[tokio::test]
+async fn mismatched_recovery_request_id_is_ignored() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    a.handle_event(Event::AgentStart);
+    a.handle_event(Event::Token {
+        token: "keep me".into(),
+    });
+    a.handle_event(Event::Response {
+        id: Some("not-pending".into()),
+        command: "get_message".into(),
+        success: true,
+        data: Some(serde_json::json!({"id":"evil", "role":"assistant", "content":"overwrite"})),
+        error: None,
+    });
+    let text = chat_text(a);
+    assert!(text.contains("keep me"));
+    assert!(!text.contains("overwrite"));
+}

@@ -409,6 +409,7 @@ async fn run_stub_turn_event_types_with_sink(
     let outcome = run_agent_message(PromptRun {
         agent: &mut agent,
         messages: &mut messages,
+        conversation_snapshot: None,
         session: &mut session,
         sink,
         message: Message::user("hello"),
@@ -467,5 +468,21 @@ async fn stub_provider_turn_has_same_event_sequence_through_each_sink() {
             "turn_end",
             "agent_end"
         ]
+    );
+}
+
+#[test]
+fn issue_1060_busy_reader_parses_only_un_targeted_get_message() {
+    assert_eq!(
+        super::super::uds_busy_get_message::parse(
+            r#"{"type":"get_message","id":"r1","messageId":"m1"}"#
+        ),
+        Some((Some("r1".into()), "m1".into()))
+    );
+    assert_eq!(
+        super::super::uds_busy_get_message::parse(
+            r#"{"type":"get_message","id":"r1","messageId":"m1","agentId":"child"}"#
+        ),
+        None
     );
 }
