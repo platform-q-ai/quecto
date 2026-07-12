@@ -76,10 +76,12 @@ impl App {
                     } else if id.as_deref() == Some(ATTACH_BACKFILL_ID) || id.is_none() {
                         // Attach-time backfill (dedicated id) OR unsolicited
                         // busy-connect snapshot (id-less, see uds_snapshots):
-                        // prepend + history_backfilled guard. Id-less must not
-                        // take wholesale replace — that never latches the guard,
-                        // so a later attach-backfill would double-apply history
-                        // on mid-turn `--socket` attach (#1050 review).
+                        // prepend + guard. Id-less must not take wholesale
+                        // replace — that never latches the guard, so a later
+                        // attach-backfill would double-apply history on mid-turn
+                        // `--socket` attach. Trimmed snapshots do not latch
+                        // completion so a fuller backfill can still restore
+                        // omitted older history (#1050 review).
                         Self::reconcile_backfill_history(&mut self.master_session, &data);
                     } else {
                         self.replace_chat_with_messages(&data);

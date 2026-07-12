@@ -240,8 +240,14 @@ pub(crate) struct SessionView {
     footer: Footer,
     /// Grandchild completion notes buffered while mid-turn; flushed at idle (#816).
     deferred_subagent_notes: std::collections::VecDeque<String>,
-    /// Whether the history backfill was applied (#828) — guards re-delivery.
+    /// Whether a complete (untrimmed) history backfill was applied (#828) —
+    /// guards re-delivery. Trimmed busy-connect snapshots do not set this
+    /// (#1050 review).
     history_backfilled: bool,
+    /// When a trimmed busy-connect snapshot was applied, the number of chat
+    /// entries it prepended so a later complete backfill can replace that
+    /// partial prefix without duplicating the tail (#1050 review).
+    partial_backfill_len: Option<usize>,
     /// Whether this session's own stream has reported run-state yet; until it has
     /// `active_subagent_running` trusts the tracked status not `running` (#834).
     observed_run_state: bool,
@@ -264,6 +270,7 @@ impl SessionView {
             footer,
             deferred_subagent_notes: std::collections::VecDeque::new(),
             history_backfilled: false,
+            partial_backfill_len: None,
             observed_run_state: false,
         }
     }

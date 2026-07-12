@@ -359,3 +359,53 @@ fn prepend_history_after_eviction_renders_prepended_content() {
         "prepend + scrollback must keep the render cache bounded"
     );
 }
+
+#[test]
+fn replace_history_prefix_supersedes_partial_without_disturbing_live_tail() {
+    // #1050: a trimmed busy-connect snapshot is later replaced by a fuller
+    // attach-backfill; the prefix swap must keep the live stream intact.
+    let mut chat = Chat::new();
+    chat.add_entry(ChatEntry::User {
+        text: "partial only".into(),
+    });
+    chat.add_entry(ChatEntry::Assistant {
+        text: "partial reply".into(),
+        streaming: false,
+    });
+    chat.append_token("LIVE_TAIL");
+    chat.set_viewport_height(8);
+    let _ = render_plain(&mut chat, 80);
+
+    chat.replace_history_prefix(
+        2,
+        vec![
+            ChatEntry::User {
+                text: "oldest restored".into(),
+            },
+            ChatEntry::Assistant {
+                text: "oldest reply".into(),
+                streaming: false,
+            },
+            ChatEntry::User {
+                text: "partial only".into(),
+            },
+            ChatEntry::Assistant {
+                text: "partial reply".into(),
+                streaming: false,
+            },
+        ],
+    );
+
+    assert_eq!(chat.entry_count(), 5, "prefix grows; live token stays");
+    let frame = render_plain(&mut chat, 80);
+    assert!(
+        frame.contains("LIVE_TAIL"),
+        "live tail must survive prefix replace: {frame}"
+    );
+    chat.scroll_up(10_000);
+    let top = render_plain(&mut chat, 80);
+    assert!(
+        top.contains("oldest restored"),
+        "fuller prefix must render at the top: {top}"
+    );
+}

@@ -251,6 +251,77 @@ async fn busy_connect_idless_snapshot_then_attach_backfill_does_not_duplicate() 
     );
 }
 
+/// Oversized busy-connect snapshots set `trimmed: true` and omit the oldest
+/// messages (`uds_snapshots` frame budget). That partial tail must NOT latch
+/// completion — the later full attach-backfill must restore omitted history
+/// exactly once without duplicating the snapshot tail (#1050 review).
+#[tokio::test]
+async fn trimmed_busy_connect_snapshot_then_full_attach_backfill_restores_older_history() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.handle_event(Event::AgentStart);
+    a.handle_event(Event::Token {
+        token: "LIVE_AFTER_TRIMMED".into(),
+    });
+    // Unsolicited busy-connect snapshot: only the newest tail, marked trimmed.
+    let mut snapshot = attach_backfill_data(&[("recent question", "recent answer")]);
+    if let Some(obj) = snapshot.as_object_mut() {
+        obj.insert("snapshot".into(), serde_json::json!(true));
+        obj.insert("trimmed".into(), serde_json::json!(true));
+    }
+    respond(a, None, "get_messages", true, Some(snapshot), None);
+
+    // Intermediate frame: partial tail is visible while we wait for full history.
+    let mid = chat_text(a);
+    assert!(
+        mid.contains("recent answer") && mid.contains("LIVE_AFTER_TRIMMED"),
+        "trimmed snapshot must still render its tail + live tokens:\n{mid}"
+    );
+    assert!(
+        !mid.contains("oldest question"),
+        "trimmed snapshot must not invent omitted older history:\n{mid}"
+    );
+
+    // Solicited attach-backfill: full durable history (older + recent).
+    respond(
+        a,
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        Some(attach_backfill_data(&[
+            ("oldest question", "oldest answer"),
+            ("recent question", "recent answer"),
+        ])),
+        None,
+    );
+
+    let frame = chat_text(a);
+    assert!(
+        frame.contains("oldest question") && frame.contains("oldest answer"),
+        "complete attach-backfill must restore history omitted by trimmed snapshot:\n{frame}"
+    );
+    assert_eq!(
+        frame.matches("recent answer").count(),
+        1,
+        "full backfill must replace the partial prefix, not duplicate the tail:\n{frame}"
+    );
+    assert!(
+        frame.contains("LIVE_AFTER_TRIMMED"),
+        "trimmed→full path must preserve live tokens:\n{frame}"
+    );
+    assert!(
+        !frame.contains("Session resumed"),
+        "trimmed→full path must reconcile, not wholesale-replace:\n{frame}"
+    );
+    let oldest = frame.find("oldest answer").expect("oldest present");
+    let recent = frame.find("recent answer").expect("recent present");
+    let live = frame.find("LIVE_AFTER_TRIMMED").expect("live present");
+    assert!(
+        oldest < recent && recent < live,
+        "full history must stay ordered above live content:\n{frame}"
+    );
+}
+
 #[tokio::test]
 async fn attach_backfill_into_idle_master_renders_full_history_in_order() {
     let mut h = harness().await;
