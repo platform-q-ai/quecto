@@ -316,6 +316,13 @@ fn oauth_registry_base_url(
             "https://api.openai.com/v1",
         )
         .map(Some),
+        (ProviderApi::OpenAiCompletions, "xai") => validate_oauth_base_url(
+            &model.provider,
+            oauth_provider,
+            configured,
+            "https://api.x.ai/v1",
+        )
+        .map(Some),
         (ProviderApi::AnthropicMessages, "anthropic") => validate_oauth_base_url(
             &model.provider,
             oauth_provider,

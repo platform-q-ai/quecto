@@ -1,11 +1,14 @@
 #[path = "auth_import.rs"]
 pub(crate) mod auth_import;
 
+#[path = "auth_xai.rs"]
+pub(crate) mod auth_xai;
+
 use super::CliContext;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 
 /// Known provider names accepted by the auth commands.
-const KNOWN_PROVIDERS: &[&str] = &["openai", "anthropic"];
+const KNOWN_PROVIDERS: &[&str] = &["openai", "anthropic", "xai"];
 
 /// Bundled output streams for auth subcommands.
 pub(crate) struct Output<'a> {
@@ -187,7 +190,7 @@ fn resolve_provider_interactive(
         None => {
             out.stdout.push_str(
                 "Choose a provider:\n  1) Anthropic (Claude Pro/Max — OAuth)\n  \
-                 2) OpenAI (OAuth)\n\nEnter 1 or 2: ",
+                 2) OpenAI (OAuth)\n  3) xAI (SuperGrok / X Premium+ — OAuth)\n\nEnter 1, 2 or 3: ",
             );
             flush_stdout(ctx, out);
             let choice = match read_stdin_line(ctx) {
@@ -200,6 +203,7 @@ fn resolve_provider_interactive(
             match choice.as_str() {
                 "1" | "anthropic" => Some("anthropic".to_string()),
                 "2" | "openai" => Some("openai".to_string()),
+                "3" | "xai" | "grok" => Some("xai".to_string()),
                 _ => {
                     out.stderr
                         .push_str(&format!("auth login: invalid choice '{}'\n", choice));
@@ -226,7 +230,7 @@ pub(crate) fn read_stdin_line(ctx: &CliContext) -> Result<String, String> {
 /// Flush buffered stdout text to the terminal immediately (for interactive prompts).
 /// In test mode (when `stdin_data` is set), we skip the flush to preserve output
 /// in the buffer for assertions.
-fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
+pub(crate) fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
     if ctx.stdin_data.is_some() || out.stdout.is_empty() {
         return;
     }
@@ -274,6 +278,10 @@ fn cmd_auth_login_oauth(ctx: &CliContext, provider: &str, out: &mut Output<'_>) 
 
     if provider == "openai" {
         return cmd_auth_login_openai_oauth(ctx, &config, out);
+    }
+
+    if provider == "xai" {
+        return auth_xai::cmd_auth_login_xai_oauth(ctx, &config, out);
     }
 
     out.stdout.push_str(&format!(
@@ -359,7 +367,7 @@ fn cmd_auth_login_openai_oauth(
 }
 
 /// Fallback: prompt user to paste code when callback fails.
-fn extract_fallback_code(
+pub(crate) fn extract_fallback_code(
     ctx: &CliContext,
     err: crate::domain::error::DomainError,
     out: &mut Output<'_>,
@@ -387,14 +395,14 @@ fn extract_fallback_code(
 }
 
 /// Parameters for storing an OAuth credential.
-struct OAuthStoreParams {
-    provider: String,
-    account_id: Option<String>,
-    expires_at: i64,
+pub(crate) struct OAuthStoreParams {
+    pub(crate) provider: String,
+    pub(crate) account_id: Option<String>,
+    pub(crate) expires_at: i64,
 }
 
 /// Store an OAuth credential after a successful token exchange.
-fn store_oauth_credential(
+pub(crate) fn store_oauth_credential(
     ctx: &CliContext,
     params: OAuthStoreParams,
     token_resp: &crate::infrastructure::auth::oauth::OAuthTokenResponse,

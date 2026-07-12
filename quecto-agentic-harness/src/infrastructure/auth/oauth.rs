@@ -46,6 +46,18 @@ impl OAuthConfig {
                 redirect_uri: "http://localhost:1455/auth/callback".into(),
                 scopes: "openid profile email offline_access".into(),
             }),
+            // xAI (Grok) — SuperGrok / X Premium+ subscription OAuth.
+            // Endpoints from https://auth.x.ai/.well-known/openid-configuration;
+            // client_id and scopes ported from the pi-grok / Hermes xai-oauth
+            // reference implementations (same flow as the official Grok CLI).
+            "xai" => Some(Self {
+                authorization_url: "https://auth.x.ai/oauth2/authorize".into(),
+                device_code_url: "https://auth.x.ai/oauth2/device/code".into(),
+                token_url: "https://auth.x.ai/oauth2/token".into(),
+                client_id: "b1a00492-073a-47ea-816f-4c329264a828".into(),
+                redirect_uri: "http://127.0.0.1:56121/callback".into(),
+                scopes: "openid profile email offline_access grok-cli:access api:access".into(),
+            }),
             "anthropic" => Some(Self {
                 authorization_url: "https://claude.ai/oauth/authorize".into(),
                 device_code_url: String::new(), // Anthropic doesn't use device code
@@ -226,6 +238,31 @@ pub fn build_openai_auth_url(config: &OAuthConfig, pkce: &PkceCodes, state: &str
     format!("{}?{}", config.authorization_url, query.join("&"))
 }
 
+/// Build the xAI OAuth authorization URL with PKCE.
+///
+/// xAI is a standard OIDC authorization-code + PKCE flow. `plan=generic`
+/// opts into xAI's generic OAuth plan tier (ported from pi-grok).
+pub fn build_xai_auth_url(config: &OAuthConfig, pkce: &PkceCodes, state: &str) -> String {
+    let params = [
+        ("response_type", "code"),
+        ("client_id", &config.client_id),
+        ("redirect_uri", &config.redirect_uri),
+        ("scope", &config.scopes),
+        ("code_challenge", &pkce.challenge),
+        ("code_challenge_method", "S256"),
+        ("state", state),
+        ("plan", "generic"),
+        ("referrer", "quecto"),
+    ];
+
+    let query: Vec<String> = params
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
+        .collect();
+
+    format!("{}?{}", config.authorization_url, query.join("&"))
+}
+
 /// Generate a random hex state string for OAuth.
 pub fn generate_state() -> String {
     use rand::RngCore;
@@ -303,6 +340,76 @@ pub async fn refresh_openai_token(
         .map_err(|e| DomainError::Provider(format!("failed to parse refresh response: {}", e)))
 }
 
+/// Exchange an authorization code for xAI OAuth tokens.
+///
+/// xAI uses standard `application/x-www-form-urlencoded` token exchange
+/// (RFC 6749) — the same wire shape as OpenAI.
+pub async fn exchange_xai_code(
+    config: &OAuthConfig,
+    code: &str,
+    pkce_verifier: &str,
+) -> Result<OAuthTokenResponse, DomainError> {
+    let client = oauth_http_client()?;
+
+    let resp = client
+        .post(&config.token_url)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", &config.client_id),
+            ("code", code),
+            ("code_verifier", pkce_verifier),
+            ("redirect_uri", &config.redirect_uri),
+        ])
+        .send()
+        .await
+        .map_err(|e| DomainError::Provider(format!("token exchange request failed: {}", e)))?;
+
+    let status = resp.status().as_u16();
+    if status != 200 {
+        let _ = discard_error_body(resp).await;
+        return Err(DomainError::Provider(format!(
+            "xAI token exchange failed ({})",
+            status
+        )));
+    }
+
+    resp.json::<OAuthTokenResponse>()
+        .await
+        .map_err(|e| DomainError::Provider(format!("failed to parse token response: {}", e)))
+}
+
+/// Refresh an xAI OAuth access token using a refresh token.
+pub async fn refresh_xai_token(
+    config: &OAuthConfig,
+    refresh_token: &str,
+) -> Result<OAuthTokenResponse, DomainError> {
+    let client = oauth_http_client()?;
+
+    let resp = client
+        .post(&config.token_url)
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", &config.client_id),
+        ])
+        .send()
+        .await
+        .map_err(|e| DomainError::Provider(format!("token refresh request failed: {}", e)))?;
+
+    let status = resp.status().as_u16();
+    if status != 200 {
+        let _ = discard_error_body(resp).await;
+        return Err(DomainError::Provider(format!(
+            "xAI token refresh failed ({})",
+            status
+        )));
+    }
+
+    resp.json::<OAuthTokenResponse>()
+        .await
+        .map_err(|e| DomainError::Provider(format!("failed to parse refresh response: {}", e)))
+}
+
 /// Start a local HTTP server to receive the OAuth callback and return the authorization code.
 ///
 /// Listens on `127.0.0.1:1455` and waits up to 5 minutes for the callback.
@@ -311,10 +418,29 @@ pub async fn wait_for_oauth_callback(
     expected_state: &str,
     timeout_secs: u64,
 ) -> Result<String, DomainError> {
+    wait_for_oauth_callback_at(
+        "127.0.0.1:1455",
+        "/auth/callback",
+        expected_state,
+        timeout_secs,
+    )
+    .await
+}
+
+/// Start a local HTTP server on `addr` to receive an OAuth callback on
+/// `callback_path` and return the authorization code. Generalised variant of
+/// [`wait_for_oauth_callback`] for providers with different registered
+/// redirect URIs (e.g. xAI's `127.0.0.1:56121/callback`).
+pub async fn wait_for_oauth_callback_at(
+    addr: &str,
+    callback_path: &str,
+    expected_state: &str,
+    timeout_secs: u64,
+) -> Result<String, DomainError> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    let listener = TcpListener::bind("127.0.0.1:1455")
+    let listener = TcpListener::bind(addr)
         .await
         .map_err(|e| DomainError::Provider(format!("failed to bind callback server: {}", e)))?;
 
@@ -346,7 +472,7 @@ pub async fn wait_for_oauth_callback(
         let first_line = request.lines().next().unwrap_or("");
         let path = first_line.split_whitespace().nth(1).unwrap_or("");
 
-        if !path.starts_with("/auth/callback") {
+        if !path.starts_with(callback_path) {
             let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot found";
             let _ = stream.write_all(resp.as_bytes()).await;
             continue;
