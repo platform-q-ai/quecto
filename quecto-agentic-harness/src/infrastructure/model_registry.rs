@@ -169,6 +169,12 @@ impl ModelRegistry {
                     cache_read: 0.0,
                     cache_write: 0.0,
                 };
+            } else if id == "grok-4.3" {
+                // Deliberate: xAI has not published authoritative limits or
+                // pricing for grok-4.3 on the subscription OAuth surface, so
+                // only capabilities we are confident of are set; context
+                // window and cost keep conservative registry defaults.
+                record.reasoning = true;
             }
             r.upsert(record);
         }

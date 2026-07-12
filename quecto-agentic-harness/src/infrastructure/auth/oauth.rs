@@ -1,4 +1,4 @@
-// OAuth: OAuth 2.0 and device-code login flows for OpenAI and Anthropic.
+// OAuth: OAuth 2.0 and device-code login flows for OpenAI, Anthropic and xAI.
 
 use crate::domain::error::DomainError;
 use serde::Deserialize;
@@ -52,7 +52,11 @@ impl OAuthConfig {
             // reference implementations (same flow as the official Grok CLI).
             "xai" => Some(Self {
                 authorization_url: "https://auth.x.ai/oauth2/authorize".into(),
-                device_code_url: "https://auth.x.ai/oauth2/device/code".into(),
+                // Intentionally empty: the generic device-code command does
+                // not yet poll for tokens or persist credentials, so exposing
+                // it would report success without logging in (PR #1087
+                // review). Use the browser PKCE flow instead.
+                device_code_url: String::new(),
                 token_url: "https://auth.x.ai/oauth2/token".into(),
                 client_id: "b1a00492-073a-47ea-816f-4c329264a828".into(),
                 redirect_uri: "http://127.0.0.1:56121/callback".into(),
@@ -410,6 +414,32 @@ pub async fn refresh_xai_token(
         .map_err(|e| DomainError::Provider(format!("failed to parse refresh response: {}", e)))
 }
 
+/// Parse a loopback redirect URI (e.g. `http://127.0.0.1:56121/callback`)
+/// into a bind address and exact callback path for the local listener.
+///
+/// Rejects non-http schemes and non-loopback hosts: the local callback
+/// listener must never be derived from a URI pointing elsewhere.
+pub fn parse_loopback_redirect(redirect_uri: &str) -> Result<(String, String), DomainError> {
+    let rest = redirect_uri.strip_prefix("http://").ok_or_else(|| {
+        DomainError::Provider(format!(
+            "redirect URI must be http:// loopback: {}",
+            redirect_uri
+        ))
+    })?;
+    let (host_port, path) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, "/"),
+    };
+    let host = host_port.split(':').next().unwrap_or("");
+    if host != "127.0.0.1" && host != "localhost" && host != "[::1]" {
+        return Err(DomainError::Provider(format!(
+            "redirect URI host is not loopback: {}",
+            redirect_uri
+        )));
+    }
+    Ok((host_port.to_string(), path.to_string()))
+}
+
 /// Start a local HTTP server to receive the OAuth callback and return the authorization code.
 ///
 /// Listens on `127.0.0.1:1455` and waits up to 5 minutes for the callback.
@@ -464,15 +494,28 @@ pub async fn wait_for_oauth_callback_at(
             }
         };
 
+        // Apply the overall deadline to the request read as well: a client
+        // that connects and sends no bytes must not block login forever
+        // (PR #1087 review).
         let mut buf = vec![0u8; 4096];
-        let n = stream.read(&mut buf).await.unwrap_or(0);
+        let n = match tokio::time::timeout_at(deadline, stream.read(&mut buf)).await {
+            Ok(read) => read.unwrap_or(0),
+            Err(_) => {
+                return Err(DomainError::Provider(
+                    "OAuth callback timed out".to_string(),
+                ));
+            }
+        };
         let request = String::from_utf8_lossy(&buf[..n]);
 
-        // Parse the GET /auth/callback?code=...&state=... line
+        // Parse the GET <callback_path>?code=...&state=... line
         let first_line = request.lines().next().unwrap_or("");
         let path = first_line.split_whitespace().nth(1).unwrap_or("");
 
-        if !path.starts_with(callback_path) {
+        // Exact path match on the registered redirect path (no prefixes
+        // like /callbackevil or /callback/extra).
+        let request_path = path.split('?').next().unwrap_or("");
+        if request_path != callback_path {
             let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot found";
             let _ = stream.write_all(resp.as_bytes()).await;
             continue;
@@ -498,6 +541,27 @@ pub async fn wait_for_oauth_callback_at(
             let resp = "HTTP/1.1 400 Bad Request\r\nContent-Length: 14\r\n\r\nState mismatch";
             let _ = stream.write_all(resp.as_bytes()).await;
             continue;
+        }
+
+        // Standard OAuth error callback (e.g. the user denied consent):
+        // terminate immediately instead of waiting out the timeout.
+        // Sanitize: only pass through short alphanumeric/underscore codes.
+        if let Some(err) = params.get("error") {
+            let sanitized: String = err
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .take(64)
+                .collect();
+            let resp = "HTTP/1.1 400 Bad Request\r\nContent-Length: 12\r\n\r\nAuth failure";
+            let _ = stream.write_all(resp.as_bytes()).await;
+            return Err(DomainError::Provider(format!(
+                "OAuth authorization failed: {}",
+                if sanitized.is_empty() {
+                    "unknown_error"
+                } else {
+                    &sanitized
+                }
+            )));
         }
 
         if code.is_empty() {
@@ -632,3 +696,7 @@ mod tests;
 #[cfg(test)]
 #[path = "oauth_error_body_tests.rs"]
 mod error_body_tests;
+
+#[cfg(test)]
+#[path = "oauth_xai_tests.rs"]
+mod xai_tests;

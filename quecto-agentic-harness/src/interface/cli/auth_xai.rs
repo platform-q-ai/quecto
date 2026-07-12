@@ -16,7 +16,7 @@ pub(crate) fn cmd_auth_login_xai_oauth(
 ) -> i32 {
     use crate::infrastructure::auth::oauth::{
         build_xai_auth_url, exchange_xai_code, generate_pkce, generate_state,
-        wait_for_oauth_callback_at,
+        parse_loopback_redirect, wait_for_oauth_callback_at,
     };
 
     let pkce = generate_pkce();
@@ -46,19 +46,24 @@ pub(crate) fn cmd_auth_login_xai_oauth(
         let err = crate::domain::error::DomainError::Provider(
             "browser callback skipped in test mode".into(),
         );
-        match extract_fallback_code(ctx, err, out) {
+        match extract_fallback_code(ctx, err, Some(&state), out) {
             Some(code) => code,
             None => return 1,
         }
     } else {
-        match rt.block_on(wait_for_oauth_callback_at(
-            "127.0.0.1:56121",
-            "/callback",
-            &state,
-            300,
-        )) {
+        // Derive the listener address/path from the registered redirect URI
+        // so they cannot drift apart (PR #1087 review).
+        let (addr, path) = match parse_loopback_redirect(&config.redirect_uri) {
+            Ok(v) => v,
+            Err(e) => {
+                out.stderr
+                    .push_str(&format!("auth login: invalid redirect URI: {}\n", e));
+                return 1;
+            }
+        };
+        match rt.block_on(wait_for_oauth_callback_at(&addr, &path, &state, 300)) {
             Ok(code) => code,
-            Err(e) => match extract_fallback_code(ctx, e, out) {
+            Err(e) => match extract_fallback_code(ctx, e, Some(&state), out) {
                 Some(code) => code,
                 None => return 1,
             },

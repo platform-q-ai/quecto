@@ -588,3 +588,28 @@ fn model_limits_from_base_dir_reads_context_window_from_models_json() {
         "a listed model without a declared window must not clamp"
     );
 }
+
+// --- xAI (Grok) builtin models (PR #1087) ---
+
+#[test]
+fn builtin_xai_grok_45_is_oauth_openai_completions() {
+    let registry = ModelRegistry::builtin();
+    let model = registry.find("xai", "grok-4.5").expect("grok-4.5 builtin");
+    assert_eq!(model.api, ProviderApi::OpenAiCompletions);
+    assert_eq!(model.auth, AuthMode::OAuth);
+    assert_eq!(model.oauth_provider.as_deref(), Some("xai"));
+    assert_eq!(model.context_window, 500_000);
+    assert!(model.reasoning);
+    assert!(model.input.iter().any(|m| m == "image"));
+    assert_eq!(model.cost.input, 2.0);
+    assert_eq!(model.cost.output, 6.0);
+}
+
+#[test]
+fn builtin_xai_grok_43_present_with_conservative_defaults() {
+    let registry = ModelRegistry::builtin();
+    let model = registry.find("xai", "grok-4.3").expect("grok-4.3 builtin");
+    assert_eq!(model.oauth_provider.as_deref(), Some("xai"));
+    assert_eq!(model.auth, AuthMode::OAuth);
+    assert!(model.reasoning);
+}

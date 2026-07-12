@@ -329,14 +329,14 @@ fn cmd_auth_login_openai_oauth(
         let err = crate::domain::error::DomainError::Provider(
             "browser callback skipped in test mode".into(),
         );
-        match extract_fallback_code(ctx, err, out) {
+        match extract_fallback_code(ctx, err, Some(&state), out) {
             Some(code) => code,
             None => return 1,
         }
     } else {
         match rt.block_on(wait_for_oauth_callback(&state, 300)) {
             Ok(code) => code,
-            Err(e) => match extract_fallback_code(ctx, e, out) {
+            Err(e) => match extract_fallback_code(ctx, e, Some(&state), out) {
                 Some(code) => code,
                 None => return 1,
             },
@@ -367,9 +367,15 @@ fn cmd_auth_login_openai_oauth(
 }
 
 /// Fallback: prompt user to paste code when callback fails.
+///
+/// When `expected_state` is provided and the pasted input is a redirect URL
+/// or query fragment carrying a `state` parameter, the state must match or
+/// the input is rejected (PR #1087 review). Bare authorization codes cannot
+/// carry state and are accepted as-is (some providers display a bare code).
 pub(crate) fn extract_fallback_code(
     ctx: &CliContext,
     err: crate::domain::error::DomainError,
+    expected_state: Option<&str>,
     out: &mut Output<'_>,
 ) -> Option<String> {
     out.stdout.push_str(&format!(
@@ -380,6 +386,15 @@ pub(crate) fn extract_fallback_code(
     match read_stdin_line(ctx) {
         Ok(line) => {
             let line = line.trim().to_string();
+            if let (Some(expected), Some(state)) =
+                (expected_state, extract_param_from_input(&line, "state"))
+            {
+                if state != expected {
+                    out.stderr
+                        .push_str("auth login: state mismatch in pasted redirect URL\n");
+                    return None;
+                }
+            }
             let code = extract_code_from_input(&line);
             if code.is_none() {
                 out.stderr
@@ -444,13 +459,8 @@ fn capitalize(s: &str) -> String {
 fn extract_code_from_input(input: &str) -> Option<String> {
     // Try as URL: http://localhost:1455/auth/callback?code=<code>&state=<state>
     if input.contains("code=") {
-        let query = input.split('?').nth(1).unwrap_or(input);
-        for param in query.split('&') {
-            if let Some(code) = param.strip_prefix("code=") {
-                if !code.is_empty() {
-                    return Some(code.to_string());
-                }
-            }
+        if let Some(code) = extract_param_from_input(input, "code") {
+            return Some(code);
         }
     }
     if !input.is_empty() {
@@ -458,6 +468,24 @@ fn extract_code_from_input(input: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Extract a URL-decoded query parameter from a pasted URL or query string.
+fn extract_param_from_input(input: &str, name: &str) -> Option<String> {
+    let query = input.split('?').nth(1).unwrap_or(input);
+    let prefix = format!("{}=", name);
+    for param in query.split('&') {
+        if let Some(value) = param.strip_prefix(prefix.as_str()) {
+            if !value.is_empty() {
+                return Some(
+                    urlencoding::decode(value)
+                        .map(|v| v.into_owned())
+                        .unwrap_or_else(|_| value.to_string()),
+                );
+            }
+        }
+    }
+    None
 }
 
 /// Anthropic OAuth login: PKCE + browser + paste authorization code.

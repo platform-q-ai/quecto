@@ -193,6 +193,54 @@ fn test_anthropic_oauth_login_exchange_failure() {
     assert!(out.stderr.contains("token exchange failed"));
 }
 
+// --- xAI (Grok) OAuth login flow (PR #1087) ---
+
+#[test]
+fn test_xai_oauth_login_success() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let uri = leak_mock(
+        "/oauth/token",
+        200,
+        serde_json::json!({
+            "access_token": "xai-access-token",
+            "refresh_token": "xai-refresh-token",
+            "expires_in": 3600
+        }),
+    );
+    let ctx = oauth_ctx(tmp.path(), uri, "the-code\n");
+    let out = run_with_output(args("auth login --provider xai --oauth"), &ctx);
+    assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
+
+    let store = CredentialStore::new(tmp.path());
+    let cred = store.get("xai").unwrap().unwrap();
+    assert_eq!(cred.token, "xai-access-token");
+    assert!(cred.account_id.is_none());
+}
+
+#[test]
+fn test_xai_oauth_login_exchange_failure() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let uri = leak_mock("/oauth/token", 401, serde_json::json!("invalid_grant"));
+    let ctx = oauth_ctx(tmp.path(), uri, "the-code\n");
+    let out = run_with_output(args("auth login --provider xai --oauth"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(out.stderr.contains("token exchange failed"));
+}
+
+#[test]
+fn test_xai_device_code_rejected() {
+    // xAI deliberately has no device_code_url: the command must refuse
+    // rather than print a code and exit 0 without logging in.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("auth login --provider xai --device-code"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(out.stderr.contains("not supported"));
+}
+
 // --- Device-code login flow ---
 
 #[test]
