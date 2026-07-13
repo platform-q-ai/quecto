@@ -145,3 +145,29 @@ async fn rewind_to_drops_pending_recovery_so_late_response_is_ignored() {
         "late recovery after rewind_to must be ignored:\n{frame}"
     );
 }
+
+#[tokio::test]
+async fn new_session_drops_pending_recovery_so_late_response_is_ignored() {
+    let mut h = TuiHarness::new().await;
+    let ref_id = "eeeeeeee-eeee-eeee-eeee-111111111111";
+    let recovery_id = pending_recovery_id(&mut h, ref_id).await;
+
+    // The REAL /clear and /new user path lands in reset_session (the wired
+    // clear_history response arm only fires from a test-only sender).
+    h.app_mut().reset_session("New session started");
+
+    h.app_mut().handle_event(Event::Response {
+        id: Some(recovery_id),
+        command: "get_message".into(),
+        success: true,
+        data: Some(serde_json::json!({
+            "id": ref_id, "role": "assistant", "content": "STALE_RECOVERY_AFTER_NEW"
+        })),
+        error: None,
+    });
+    let frame = chat_text(h.app_mut());
+    assert!(
+        !frame.contains("STALE_RECOVERY_AFTER_NEW"),
+        "late recovery after /new (reset_session) must be ignored:\n{frame}"
+    );
+}

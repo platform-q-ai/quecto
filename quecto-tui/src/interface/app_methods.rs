@@ -626,6 +626,9 @@ impl App {
     pub(super) fn reset_session(&mut self, message: &str) {
         self.send_new_session();
         self.master_session.chat.clear();
+        // Invalidate in-flight ref recovery so a late get_message from the OLD
+        // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
+        self.clear_message_recovery();
         self.master_session.footer.set_context(None, 0);
         self.context_stats_requested = false;
         // The agent resets session-scoped state (e.g. the effort override,

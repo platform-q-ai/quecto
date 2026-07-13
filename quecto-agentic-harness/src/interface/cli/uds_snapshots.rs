@@ -64,6 +64,17 @@ impl ConversationSnapshotData {
         self.ledger.clear();
     }
 
+    /// Reset the snapshot to exactly `messages`: drop the whole prior ledger
+    /// (so refs from a replaced/truncated conversation stop resolving) and then
+    /// re-seed live + ledger from the new set. Used by history-identity ops that
+    /// REPLACE or TRUNCATE the conversation — new_session, resume_session,
+    /// rewind_to — so old refs cannot leak full content out-of-band while the
+    /// surviving/loaded messages stay resolvable (#1060 review round 4).
+    pub fn reset_to(&mut self, messages: &[Message]) {
+        self.ledger.clear();
+        self.publish(messages);
+    }
+
     /// Seed a snapshot from an initial conversation (test/lifecycle convenience).
     pub fn from_messages(messages: Vec<Message>) -> Self {
         let mut s = Self::default();

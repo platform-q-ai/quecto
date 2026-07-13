@@ -829,11 +829,7 @@ fn then_agent_end_refs_cover_tool_roles(world: &mut QuectoWorld) {
         has_assistant && has_tool,
         "agent_end message refs must cover assistant tool-call and tool-result roles; roles={roles:?} refs={refs:?}"
     );
-    // With only refs, require at least two distinct refs (assistant+tool).
-    assert!(
-        refs.len() >= 2,
-        "need >=2 messageRefs for assistant tool-call + tool-result"
-    );
+    // (refs.len() >= 2 already asserted above; has_assistant && has_tool implies it.)
 }
 
 // ─── Then: get_messages id parity ─────────────────────────────────────────────
@@ -1004,6 +1000,18 @@ fn then_every_get_message_succeeds_full(world: &mut QuectoWorld) {
         assert!(
             !content.is_empty() || tool_calls || data.get("toolCallId").is_some(),
             "get_message must return full message content for its ref: {resp}"
+        );
+    }
+    // Beyond per-ref resolvability, at least one resolved message must carry the
+    // exact mock body — proving real content round-trips, not just non-emptiness.
+    if let Some(expected) = &world._bounded_expected_body {
+        assert!(
+            responses.iter().any(|resp| resp
+                .get("data")
+                .and_then(|d| d.get("content"))
+                .and_then(|c| c.as_str())
+                .is_some_and(|content| content.contains(expected.as_str()))),
+            "at least one get_message must return the expected body {expected:?}"
         );
     }
 }

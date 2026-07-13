@@ -364,6 +364,9 @@ pub(super) async fn handle_new_session(
         return false;
     }
     clear_conversation(ctx.messages);
+    // Drop the stable-ref lookup ledger so a client holding an old messageRef
+    // cannot recover the prior session's content after /new (#1060 review r4).
+    ctx.conversation_snapshot.write().await.clear();
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.drain_pending();
@@ -462,6 +465,12 @@ pub(super) async fn handle_resume_session(
     ctx.last_persisted_message_index = ctx.messages.len();
     set_workflow_run(ctx, workflow_run);
     inject_system_prompt(ctx.messages, ctx.system_prompt);
+    // Reset the stable-ref ledger to the resumed conversation so refs from the
+    // PREVIOUS session no longer resolve via get_message (#1060 review r4).
+    ctx.conversation_snapshot
+        .write()
+        .await
+        .reset_to(ctx.messages);
     let ev = AgentEvent::ok(
         id,
         type_name,
@@ -624,6 +633,13 @@ pub(super) async fn handle_rewind_to(
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.drain_pending();
+    // Reset the stable-ref ledger to the truncated conversation so a rewound-away
+    // message is no longer recoverable via get_message (same intent as the spill
+    // clear below — truncated content must not be recallable) (#1060 review r4).
+    ctx.conversation_snapshot
+        .write()
+        .await
+        .reset_to(ctx.messages);
     // Clear spill store and remove retained spill references so stale truncated
     // tool output is not recallable or re-injected.
     if let Some(spill) = ctx.agent.spill_store() {
