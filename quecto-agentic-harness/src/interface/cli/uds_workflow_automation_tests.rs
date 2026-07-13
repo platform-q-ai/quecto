@@ -162,7 +162,7 @@ async fn drain_refreshes_busy_state_snapshot_per_turn() {
     // just get_state — a regression dropping any of those refresh calls is caught.
     let convo = ctx.conversation_snapshot.read().await;
     assert_eq!(
-        convo.len(),
+        convo.messages.len(),
         expected_count,
         "busy conversation snapshot must advance with the conversation, not stay empty"
     );

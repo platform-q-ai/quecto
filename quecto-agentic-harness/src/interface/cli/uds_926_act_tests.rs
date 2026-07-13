@@ -75,7 +75,9 @@ impl ActEnv {
             base_dir: self.tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
+            )),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),

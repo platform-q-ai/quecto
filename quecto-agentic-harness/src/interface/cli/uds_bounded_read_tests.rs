@@ -59,7 +59,9 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
         base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
-        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
+        )),
         state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
             session.state_snapshot(0, None, 0, None),
         )),

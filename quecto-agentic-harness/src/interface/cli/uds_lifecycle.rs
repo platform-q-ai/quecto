@@ -210,7 +210,9 @@ async fn single_client_loop(
             base_dir,
             agent: &mut { agent },
             messages: &mut messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+                super::uds_snapshots::ConversationSnapshotData::default(),
+            )),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 agent_session.state_snapshot(0, None, max_context_tokens, initial_effort),
             )),

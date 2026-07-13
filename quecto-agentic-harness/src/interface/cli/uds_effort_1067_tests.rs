@@ -83,7 +83,9 @@ impl EffortFx {
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
+            )),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),

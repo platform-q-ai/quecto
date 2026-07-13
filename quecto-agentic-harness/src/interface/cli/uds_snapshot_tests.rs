@@ -11,6 +11,47 @@ use crate::interface::cli::protocol::SessionState;
 use crate::interface::cli::uds_multi::{
     BusyFlag, BusyGuard, ConversationSnapshot, build_get_messages_line, build_get_state_line,
 };
+use crate::interface::cli::uds_snapshots::ConversationSnapshotData;
+
+/// #1060 review 1a: the id-addressable ledger keeps a ref resolvable after the
+/// live conversation drops or collapses the referenced message.
+#[test]
+fn ledger_resolves_refs_after_prune_and_collapse() {
+    let a = Message::assistant("full answer A", vec![]);
+    let b = Message::assistant("full answer B", vec![]);
+    let (a_id, b_id) = (a.id().to_string(), b.id().to_string());
+
+    let mut snap = ConversationSnapshotData::default();
+    snap.publish(&[a.clone(), b.clone()]);
+    assert!(snap.resolve(&a_id).is_some() && snap.resolve(&b_id).is_some());
+
+    // The ladder DROPS A from the live conversation (publish without it).
+    snap.publish(std::slice::from_ref(&b));
+    assert!(
+        snap.resolve(&a_id).is_some(),
+        "a dropped ref must still resolve via the ledger"
+    );
+
+    // The ladder COLLAPSES B in place (same id, stub content). publish must not
+    // clobber the full copy already in the ledger.
+    let mut b_stub = b.clone();
+    b_stub.content = "recall(spilled)".to_string();
+    snap.publish(&[b_stub.clone()]);
+    assert_eq!(
+        snap.resolve(&b_id).map(|m| m.content.as_str()),
+        Some("full answer B"),
+        "the ledger's full copy must win over a collapsed live stub"
+    );
+
+    // record_full overwrites with an authoritative full copy (un-demoted).
+    let mut snap2 = ConversationSnapshotData::default();
+    snap2.publish(std::slice::from_ref(&b_stub));
+    snap2.record_full(std::slice::from_ref(&b));
+    assert_eq!(
+        snap2.resolve(&b_id).map(|m| m.content.as_str()),
+        Some("full answer B")
+    );
+}
 
 /// The connect-time line is a `get_messages`-shaped success Response carrying the
 /// prior conversation, byte-for-byte consumable by the TUI's existing
@@ -108,10 +149,12 @@ fn build_get_messages_line_drops_single_oversized_message() {
 /// once rather than mid-sentence-only.
 #[tokio::test]
 async fn snapshot_readable_while_turn_holds_messages_mut() {
-    let snapshot: ConversationSnapshot = std::sync::Arc::new(tokio::sync::RwLock::new(vec![
-        Message::user("q1"),
-        Message::assistant("a1", vec![]),
-    ]));
+    let snapshot: ConversationSnapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
+        crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(vec![
+            Message::user("q1"),
+            Message::assistant("a1", vec![]),
+        ]),
+    ));
 
     // Own a separate `messages` buffer mutably for the whole "turn", mirroring
     // `agent.process(messages)` holding `&mut messages` across the turn.
@@ -131,7 +174,7 @@ async fn snapshot_readable_while_turn_holds_messages_mut() {
     // Mid-turn: the accept-loop read path still serves prior history.
     let line = {
         let snap = snapshot.read().await;
-        build_get_messages_line(&snap)
+        build_get_messages_line(&snap.messages)
     };
     assert!(line.contains("q1"), "prior history served mid-turn: {line}");
     assert!(line.contains("a1"), "prior history served mid-turn: {line}");

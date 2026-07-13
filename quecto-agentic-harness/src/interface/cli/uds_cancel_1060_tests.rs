@@ -171,6 +171,7 @@ async fn run_turn(
     responses: Vec<LlmResponse>,
     tools: Vec<(ToolDefinition, String)>,
     prompt: &str,
+    snapshot: Option<crate::interface::cli::uds_snapshots::ConversationSnapshot>,
 ) -> (Vec<Message>, Vec<u8>) {
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     for (def, output) in tools {
@@ -208,7 +209,7 @@ async fn run_turn(
         run_agent_message(PromptRun {
             agent: &mut agent,
             messages: &mut messages,
-            conversation_snapshot: None,
+            conversation_snapshot: snapshot,
             session: &mut session,
             sink: &mut sink,
             message: Message::user(prompt),
@@ -334,8 +335,13 @@ async fn production_large_turn_end_of_turn_events_use_refs_not_full_content() {
         "REAL-LARGE-ASSISTANT-RESPONSE-{}",
         "Z".repeat(EVENT_LINE_CAP_BYTES / 2)
     );
-    let (messages, bytes) =
-        run_turn(vec![text_response(&body)], vec![], "write a long answer").await;
+    let (messages, bytes) = run_turn(
+        vec![text_response(&body)],
+        vec![],
+        "write a long answer",
+        None,
+    )
+    .await;
 
     let events = event_lines(&bytes);
     let turn_end = events
@@ -438,6 +444,7 @@ async fn production_tool_turn_agent_end_refs_cover_all_roles() {
             large_result.clone(),
         )],
         "run a tool",
+        None,
     )
     .await;
 
@@ -482,5 +489,43 @@ async fn production_tool_turn_agent_end_refs_cover_all_roles() {
                 "agent_end must not re-carry full tool-turn content"
             );
         }
+    }
+}
+
+/// #1060 review 1a: the refs a turn emits must resolve via the id-addressable
+/// ledger even after the live conversation is pruned. Drives the producer with a
+/// real snapshot, then clears the live messages (extreme prune) and asserts every
+/// emitted ref still resolves — proving the producer records full copies before
+/// emitting refs.
+#[tokio::test]
+async fn emitted_refs_resolve_via_ledger_after_pruning() {
+    use crate::interface::cli::uds_snapshots::{ConversationSnapshot, ConversationSnapshotData};
+    let snapshot: ConversationSnapshot =
+        Arc::new(tokio::sync::RwLock::new(ConversationSnapshotData::default()));
+    let (_messages, bytes) = run_turn(
+        vec![text_response("a real full assistant answer body")],
+        vec![],
+        "go",
+        Some(snapshot.clone()),
+    )
+    .await;
+
+    let events = event_lines(&bytes);
+    let agent_end = events
+        .iter()
+        .find(|e| e["type"] == "agent_end")
+        .expect("agent_end emitted");
+    let refs = non_empty_refs(agent_end);
+    assert!(!refs.is_empty(), "agent_end must carry refs");
+
+    // The ladder later drops the entire live conversation.
+    snapshot.write().await.messages.clear();
+
+    let snap = snapshot.read().await;
+    for r in &refs {
+        assert!(
+            snap.resolve(r).is_some(),
+            "emitted ref {r} must still resolve via the ledger after pruning"
+        );
     }
 }

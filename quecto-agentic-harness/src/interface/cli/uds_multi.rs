@@ -182,7 +182,9 @@ pub(super) async fn multi_client_loop(
     // boundary, and read by the accept loop to serve newly-connected clients
     // immediately — even while the dispatch loop is busy mid-turn.
     let conversation_snapshot: ConversationSnapshot =
-        std::sync::Arc::new(tokio::sync::RwLock::new(messages.clone()));
+        std::sync::Arc::new(tokio::sync::RwLock::new(
+            super::uds_snapshots::ConversationSnapshotData::from_messages(messages.clone()),
+        ));
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
     let initial_state = agent_session.state_snapshot(

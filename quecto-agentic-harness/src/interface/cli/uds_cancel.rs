@@ -303,7 +303,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     let prompt_id = message.id();
     messages.push(message);
     if let Some(snapshot) = &conversation_snapshot {
-        *snapshot.write().await = messages.clone();
+        snapshot.write().await.publish(messages);
     }
 
     // Install a progress callback that forwards events to a bounded channel.
@@ -381,13 +381,15 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             // process() has appended the completed turn to `messages`; publish
             // that ledger before refs are emitted so a concurrent reader-side
             // get_message can resolve every referenced role immediately.
-            // Full clone (not a length-based tail extend): `process()` may PRUNE
-            // earlier entries while appending new ones, so `messages` is not an
-            // append-only extension of the pre-turn snapshot — a length-based
-            // extend would keep stale dropped entries and omit live current-run
-            // messages (#1060 review 1b).
+            // Publish the live (post-prune) conversation for get_messages, and
+            // record FULL copies of this run's appended messages into the
+            // id-addressable ledger so the refs emitted below resolve via
+            // get_message even after the ladder later prunes/collapses them
+            // (#1060 review 1a; 1b: full publish, not a length-based extend).
             if let Some(snapshot) = &conversation_snapshot {
-                *snapshot.write().await = messages.clone();
+                let mut snap = snapshot.write().await;
+                snap.publish(messages);
+                snap.record_full(&agent_result.appended_messages);
             }
             let message_refs: Vec<String> = agent_result
                 .appended_messages

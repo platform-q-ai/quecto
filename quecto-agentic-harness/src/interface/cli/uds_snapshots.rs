@@ -7,7 +7,65 @@ use super::uds::DispatchCtx;
 use super::uds_session::{MessageView, compute_session_stats_with_usage};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
-pub(crate) type ConversationSnapshot = std::sync::Arc<tokio::sync::RwLock<Vec<Message>>>;
+
+/// The busy-path conversation snapshot: the live (post-prune) conversation for
+/// `get_messages` inspection, PLUS an accumulating id→message ledger.
+///
+/// #1060 review 1a: end-of-turn `messageRefs` are the ids of the run's
+/// `appended_messages` — full copies the context ladder never demotes. The live
+/// conversation, however, can drop or collapse-in-place those messages to fit
+/// the LLM budget, so a bare `get_message` against it can return "not found" or
+/// a stub for a ref that was just emitted. The ledger keeps a full copy of every
+/// message ever appended so a ref stays resolvable across pruning and turns.
+#[derive(Default)]
+pub(crate) struct ConversationSnapshotData {
+    /// Live conversation as last published (may be pruned/collapsed).
+    pub messages: Vec<Message>,
+    /// id → full message, never shrinking, authoritative for `get_message`.
+    pub ledger: std::collections::HashMap<String, Message>,
+}
+
+impl ConversationSnapshotData {
+    /// Replace the live view and fold its messages into the ledger WITHOUT
+    /// overwriting existing entries — a full copy recorded earlier must survive
+    /// a later in-place collapse of the live message.
+    pub fn publish(&mut self, messages: &[Message]) {
+        for m in messages {
+            self.ledger
+                .entry(m.id().to_string())
+                .or_insert_with(|| m.clone());
+        }
+        self.messages = messages.to_vec();
+    }
+
+    /// Record authoritative FULL copies (the run's un-demoted `appended_messages`),
+    /// overwriting any earlier possibly-collapsed entry.
+    pub fn record_full(&mut self, messages: &[Message]) {
+        for m in messages {
+            self.ledger.insert(m.id().to_string(), m.clone());
+        }
+    }
+
+    /// Resolve a message id to its full copy: the ledger wins over the live
+    /// conversation (which may hold only a collapsed stub).
+    pub fn resolve(&self, message_id: &str) -> Option<&Message> {
+        self.ledger.get(message_id).or_else(|| {
+            self.messages
+                .iter()
+                .find(|m| m.id().to_string() == message_id)
+        })
+    }
+
+    /// Seed a snapshot from an initial conversation (test/lifecycle convenience).
+    pub fn from_messages(messages: Vec<Message>) -> Self {
+        let mut s = Self::default();
+        s.publish(&messages);
+        s
+    }
+}
+
+pub(crate) type ConversationSnapshot =
+    std::sync::Arc<tokio::sync::RwLock<ConversationSnapshotData>>;
 pub(crate) type SessionStatsSnapshot =
     std::sync::Arc<tokio::sync::RwLock<crate::interface::cli::protocol::SessionStats>>;
 
@@ -26,8 +84,10 @@ pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
 }
 
 pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
-    let mut snap = ctx.conversation_snapshot.write().await;
-    *snap = ctx.messages.clone();
+    ctx.conversation_snapshot
+        .write()
+        .await
+        .publish(ctx.messages);
 }
 
 pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
@@ -217,8 +277,8 @@ pub(crate) async fn busy_connect_snapshot_lines(
         build_get_state_line_live(&snap, workflow_state, true)
     };
     let messages_line = {
-        let messages = conversation_snapshot.read().await;
-        build_get_messages_line(&messages)
+        let snap = conversation_snapshot.read().await;
+        build_get_messages_line(&snap.messages)
     };
     let stats_line = {
         let stats = session_stats_snapshot.read().await;
