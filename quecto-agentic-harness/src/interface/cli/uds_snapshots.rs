@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use crate::domain::message::Message;
+use crate::domain::session::ContextSpillStore;
 
 use serde_json::value::RawValue;
 
@@ -62,6 +65,13 @@ pub(crate) struct ConversationSnapshotData {
     ledger_order: std::collections::VecDeque<String>,
     /// Running byte total of `ledger` (content + per-entry overhead).
     ledger_bytes: usize,
+    /// Spill store used as a best-effort backstop when a live message only has
+    /// a collapsed recall stub and its full ledger copy has already been
+    /// evicted. This is captured in the shared snapshot so the busy reader path
+    /// can resolve refs while the main dispatch loop is blocked (#1093).
+    spill_store: Option<Arc<dyn ContextSpillStore>>,
+    /// Session key paired with [`spill_store`].
+    spill_session_key: String,
 }
 
 impl ConversationSnapshotData {
@@ -115,15 +125,55 @@ impl ConversationSnapshotData {
         }
     }
 
+    /// Attach a spill store for best-effort recall of live collapsed messages
+    /// whose full ledger copy is no longer available.
+    pub fn set_spill_store(
+        &mut self,
+        spill_store: Option<Arc<dyn ContextSpillStore>>,
+        session_key: String,
+    ) {
+        self.spill_store = spill_store;
+        self.spill_session_key = session_key;
+    }
+
     /// Resolve a message id to its full copy: the ledger wins over the live
     /// conversation (which may hold only a collapsed stub). `None` when the ref
     /// is neither in the (bounded) ledger nor the live conversation.
+    #[cfg(test)]
     pub fn resolve(&self, message_id: &str) -> Option<&Message> {
         self.ledger.get(message_id).or_else(|| {
             self.messages
                 .iter()
                 .find(|m| m.id().to_string() == message_id)
         })
+    }
+
+    /// Prepare a `get_message` lookup result. Collapsed messages that carry a
+    /// spill id are returned as a deferred recall so callers do not hold the
+    /// snapshot read lock across spill-store I/O.
+    pub fn resolve_for_get_message(&self, message_id: &str) -> GetMessageResolution {
+        let Some(msg) = self.ledger.get(message_id).or_else(|| {
+            self.messages
+                .iter()
+                .find(|m| m.id().to_string() == message_id)
+        }) else {
+            return GetMessageResolution::NotFound;
+        };
+        if !msg.is_collapsed {
+            return GetMessageResolution::Found(msg.clone());
+        }
+        let Some(spill_id) = msg.spill_id.clone() else {
+            return GetMessageResolution::Found(msg.clone());
+        };
+        let Some(spill_store) = self.spill_store.clone() else {
+            return GetMessageResolution::Found(msg.clone());
+        };
+        GetMessageResolution::Recall {
+            stub: msg.clone(),
+            spill_store,
+            session_key: self.spill_session_key.clone(),
+            spill_id,
+        }
     }
 
     /// Clear both the live snapshot and the full-message lookup ledger. Explicit
@@ -155,6 +205,42 @@ impl ConversationSnapshotData {
     }
 }
 
+pub(crate) enum GetMessageResolution {
+    Found(Message),
+    Recall {
+        stub: Message,
+        spill_store: Arc<dyn ContextSpillStore>,
+        session_key: String,
+        spill_id: String,
+    },
+    NotFound,
+}
+
+impl GetMessageResolution {
+    /// Finish the best-effort lookup outside the snapshot read-lock. Spill
+    /// misses/errors gracefully fall back to the live collapsed stub.
+    pub async fn into_message(self) -> Option<Message> {
+        match self {
+            Self::Found(message) => Some(message),
+            Self::Recall {
+                mut stub,
+                spill_store,
+                session_key,
+                spill_id,
+            } => match spill_store.recall(&session_key, &spill_id).await {
+                Ok(Some(entry)) => {
+                    stub.content = entry.content;
+                    stub.is_collapsed = false;
+                    stub.spill_id = None;
+                    Some(stub)
+                }
+                Ok(None) | Err(_) => Some(stub),
+            },
+            Self::NotFound => None,
+        }
+    }
+}
+
 pub(crate) type ConversationSnapshot =
     std::sync::Arc<tokio::sync::RwLock<ConversationSnapshotData>>;
 pub(crate) type SessionStatsSnapshot =
@@ -175,10 +261,9 @@ pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
 }
 
 pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
-    ctx.conversation_snapshot
-        .write()
-        .await
-        .publish(ctx.messages);
+    let mut snap = ctx.conversation_snapshot.write().await;
+    snap.set_spill_store(ctx.agent.spill_store().cloned(), ctx.session_key.clone());
+    snap.publish(ctx.messages);
 }
 
 pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {

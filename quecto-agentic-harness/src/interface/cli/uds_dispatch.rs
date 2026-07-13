@@ -698,6 +698,9 @@ mod lifecycle_1060_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_masked_pruning_tests.rs"]
 mod masked_pruning_tests;
+#[cfg(test)]
+#[path = "uds_dispatch_1093_tests.rs"]
+mod tests_1093;
 
 #[cfg(test)]
 #[path = "uds_dispatch_935_clamp_tests.rs"]

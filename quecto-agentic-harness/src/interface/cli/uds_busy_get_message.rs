@@ -37,11 +37,11 @@ pub(super) async fn service(
     // Resolve against the id-addressable ledger (full copies) first, falling
     // back to the live snapshot — a ref pruned/collapsed from the live
     // conversation still resolves to its full content (#1060 review 1a).
-    let data = snapshot
-        .read()
+    let resolution = snapshot.read().await.resolve_for_get_message(&message_id);
+    let data = resolution
+        .into_message()
         .await
-        .resolve(&message_id)
-        .map(super::uds_session::message_to_json);
+        .map(|msg| super::uds_session::message_to_json(&msg));
     let event = match data {
         Some(data) => AgentEvent::ok(request_id.as_deref(), "get_message", Some(data)),
         None => AgentEvent::err(

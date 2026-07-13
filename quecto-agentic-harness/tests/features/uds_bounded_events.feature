@@ -152,6 +152,39 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
     Then client 2 should have received a successful get_message response for the requested ref
     And the get_message response should carry full content for the requested ref
 
+  @issue-1093 @adr-0008-part2 @persist
+  @done
+  Scenario: get_message recalls full content for a collapsed message after the agent is idle
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And a completed turn with a collapsed message whose full content was spilled
+    When I request the collapsed message by its stable ref via get_message
+    Then the get_message response should carry the full spilled content for the requested ref
+    And the get_message response should not carry a recall stub for the requested ref
+
+  @issue-1093 @adr-0008-part2 @multi-client @persist
+  @done
+  Scenario: get_message recalls full content for a collapsed message while a later turn is in flight
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM will delay its response by 3 seconds
+    And a completed turn with a collapsed message whose full content was spilled
+    When client 1 starts a later turn
+    And client 2 requests the collapsed message by its stable ref while the agent is busy
+    Then client 2 should have received a successful get_message response for the requested ref
+    And the get_message response should carry the full spilled content for the requested ref
+    And the get_message response should not carry a recall stub for the requested ref
+
+  @issue-1093 @adr-0008-part2 @persist
+  @done
+  Scenario: get_message still returns a collapsed stub when spilled content is unavailable
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And a completed turn with a collapsed message whose spilled content is unavailable
+    When I request the collapsed message by its stable ref via get_message
+    Then the get_message response should succeed for the requested ref
+    And the get_message response should carry a recall stub for the requested ref
+
   # ─── Footer metadata preserved (AC7) ───────────────────────────────────────
 
   @issue-1060 @adr-0008-part2
