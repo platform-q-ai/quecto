@@ -1,8 +1,8 @@
 # ADR-0009 — Binary Payload Encoding for the UDS Protocol
 
-**Status:** Proposed.
+**Status:** Rejected — superseded by ADR-0011 (Stay JSON on the Wire).
 
-**Implementation status:** Not implemented.
+**Implementation status:** Not implemented (and will not be — see ADR-0011).
 
 ## Context
 

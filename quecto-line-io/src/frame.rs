@@ -2,7 +2,8 @@
 //! negotiation for quecto's UDS protocol. Re-exported from the crate root so
 //! consumers use `quecto_line_io::write_frame` etc.
 //!
-//! Wire layout (behaviour is the contract, not the byte layout — ADR-0010):
+//! Wire layout (behaviour is the contract, not the byte layout — ADR-0011,
+//! retaining the test-design principle from superseded ADR-0010):
 //! each frame is a 4-byte big-endian payload-byte-length prefix followed by
 //! exactly that many bytes of UTF-8 JSON. Because the frame cap is far below
 //! 2^24, the first byte of every legal frame is `0x00`, which is what the

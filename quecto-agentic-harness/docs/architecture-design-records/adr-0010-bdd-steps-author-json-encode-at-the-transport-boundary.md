@@ -1,8 +1,8 @@
 # ADR-0010 — BDD Steps Author JSON; Encoding Happens at the Transport Boundary
 
-**Status:** Proposed (companion to ADR-0008/ADR-0009).
+**Status:** Rejected — superseded by ADR-0011 (Stay JSON on the Wire).
 
-**Implementation status:** Not implemented.
+**Implementation status:** Not implemented (and will not be — see ADR-0011).
 
 ## Context
 

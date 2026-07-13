@@ -61,8 +61,9 @@ async fn multiple_frames_read_in_sequence_then_eof() {
 #[tokio::test]
 async fn over_limit_frame_is_rejected_with_declared_size() {
     // Author the oversized frame against the real writer at a large cap,
-    // then read it back under a small cap (ADR-0010 build_oversized_frame
-    // pattern: malformed input constructed against the real format).
+    // then read it back under a small cap (ADR-0011 build_oversized_frame
+    // pattern, retained from superseded ADR-0010: malformed input constructed
+    // against the real format).
     let big = vec![b'x'; 64];
     let mut wire = Vec::new();
     write_frame(&mut wire, &big, 1024).await.unwrap();

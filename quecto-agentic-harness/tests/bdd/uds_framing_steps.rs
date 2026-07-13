@@ -1,6 +1,7 @@
 //! UDS framing / version-negotiation steps (ADR-0008 part 1, #1059).
 //!
-//! Scenarios pin protocol behaviour, not byte layout (ADR-0010): the scripted
+//! Scenarios pin protocol behaviour, not byte layout (ADR-0011, retaining the
+//! principle from superseded ADR-0010): the scripted
 //! client's bytes are authored through `quecto_line_io`'s PRODUCTION frame
 //! writer, and the agent's framed replies are decoded through the production
 //! frame reader — steps author plain JSON and encode only at this transport
@@ -62,7 +63,7 @@ pub fn build_wire_client_bytes(world: &QuectoWorld) -> Vec<u8> {
                 for cmd in &world.uds_commands {
                     if cmd == OVER_LIMIT_MARKER {
                         // Author the over-cap frame against the REAL writer at
-                        // a larger cap (ADR-0010 pattern), so the declared
+                        // a larger cap (ADR-0011 pattern), so the declared
                         // size — not any hand-rolled byte layout — is what
                         // exceeds the agent's limit.
                         let oversized = vec![b'x'; PROTOCOL_FRAME_CAP_BYTES + 1];
