@@ -316,6 +316,10 @@ pub enum ClientError {
     Io(std::io::Error),
     Json(serde_json::Error),
     Disconnected,
+    /// The ordered command channel is momentarily full — the writer task has
+    /// not drained fast enough. Transient (unlike [`Self::Disconnected`]); the
+    /// command was not enqueued. See [`CommandSender::try_send`].
+    Backpressure,
 }
 
 impl std::fmt::Display for ClientError {
@@ -324,6 +328,7 @@ impl std::fmt::Display for ClientError {
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Json(e) => write!(f, "JSON error: {e}"),
             Self::Disconnected => write!(f, "disconnected from agent"),
+            Self::Backpressure => write!(f, "command queue full"),
         }
     }
 }
@@ -393,6 +398,30 @@ impl CommandSender {
             .await
             .map_err(|_| ClientError::Disconnected)
     }
+
+    /// Enqueue a command onto the ordered writer channel WITHOUT awaiting.
+    ///
+    /// A sequence of `try_send` calls from a single caller preserves its call
+    /// order on the wire, because the enqueue happens synchronously in order
+    /// and the writer task drains the channel FIFO. This is the ordering the
+    /// recovery/reset batches rely on (e.g. `new_session` before the
+    /// `get_state` that must observe the fresh session). Dispatching each
+    /// command from an independent `tokio::spawn` does NOT preserve order:
+    /// the detached tasks race to reach `send`, so a burst can arrive
+    /// reordered or, to an early observer, incomplete.
+    ///
+    /// Returns [`ClientError::Backpressure`] if the channel is momentarily
+    /// full (the command was not enqueued) or [`ClientError::Disconnected`]
+    /// if the writer has gone away.
+    pub fn try_send(&self, cmd: &Command) -> Result<(), ClientError> {
+        use mpsc::error::TrySendError;
+        self.tx
+            .try_send(serialize_command(cmd)?)
+            .map_err(|e| match e {
+                TrySendError::Full(_) => ClientError::Backpressure,
+                TrySendError::Closed(_) => ClientError::Disconnected,
+            })
+    }
 }
 
 /// A UDS client connection to a quecto agent.
@@ -439,7 +468,14 @@ impl Client {
         // in the negotiated framing. In framed mode an empty hello frame
         // announces the framing up front so the agent replies framed even
         // before the first command (#1059).
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(64);
+        //
+        // The bound gives comfortable headroom for a recovery/reset batch that
+        // enqueues synchronously (via `CommandSender::try_send`) before the
+        // writer is scheduled — e.g. a heavy multi-tool turn fetching one
+        // `get_message` per ref. Sized well above any realistic single-turn
+        // message count so ordered `try_send` never hits backpressure in
+        // practice.
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(1024);
         tokio::spawn(async move {
             if mode == WireMode::Framed
                 && write_message(&mut write_half, b"", mode, MAX_LINE_BYTES)

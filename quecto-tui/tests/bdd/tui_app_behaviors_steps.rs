@@ -753,7 +753,12 @@ fn then_no_session_stats_notification(world: &mut TuiWorld) {
 
 #[then(expr = "the app notification includes {string}")]
 fn then_notification_includes(world: &mut TuiWorld, expected: String) {
-    let notification = drive(world, |h| h.notification_text());
+    // Assert against the raw notification messages, not the rendered popup:
+    // `notification_text()` respects the 3s display lifetime, so under
+    // concurrent-scenario scheduling delays the popup can expire between the
+    // When that raises it and this Then, yielding a spurious empty match
+    // (#1067). `notification_messages()` is expiry-independent.
+    let notification = drive(world, |h| h.notification_messages().join("\n"));
     assert!(
         notification.contains(&expected),
         "notification should include {expected:?}, got:\n{notification}"

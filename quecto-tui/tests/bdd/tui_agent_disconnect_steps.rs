@@ -61,7 +61,10 @@ fn left_panel_remains_visible(world: &mut TuiWorld) {
 
 #[then("the TUI should show a disconnect notification")]
 fn tui_shows_disconnect_notification(world: &mut TuiWorld) {
-    let text = harness(world).notification_text();
+    // Expiry-independent content check: the rendered popup respects the 3s
+    // display lifetime, which can elapse before this assertion under
+    // concurrent-scenario scheduling delays (#1067).
+    let text = harness(world).notification_messages().join("\n");
     assert!(
         text.contains("Agent disconnected"),
         "expected a disconnect notification, got: {text}"
@@ -125,7 +128,10 @@ fn tui_spawned_agent_child_with_panicky_stderr(world: &mut TuiWorld) {
 
 #[then("the disconnect diagnostics should include the panic message from stderr")]
 fn disconnect_diagnostics_include_panic_message(world: &mut TuiWorld) {
-    let text = harness(world).notification_text();
+    // Expiry-independent content check: the rendered popup respects the 3s
+    // display lifetime, which can elapse before this assertion under
+    // concurrent-scenario scheduling delays (#1067).
+    let text = harness(world).notification_messages().join("\n");
     assert!(
         text.contains("boom-panic"),
         "the disconnect notification must carry the agent's last stderr line (#1047), got: {text}"
@@ -153,7 +159,10 @@ fn agent_child_aborts_with_signal(world: &mut TuiWorld) {
 
 #[then("the disconnect notification should include the child's exit detail")]
 fn disconnect_notification_includes_exit_detail(world: &mut TuiWorld) {
-    let text = harness(world).notification_text();
+    // Expiry-independent content check: the rendered popup respects the 3s
+    // display lifetime, which can elapse before this assertion under
+    // concurrent-scenario scheduling delays (#1067).
+    let text = harness(world).notification_messages().join("\n");
     assert!(
         text.contains("signal 6 (SIGABRT)"),
         "the disconnect notification must diagnose the child's abort (#1047), got: {text}"
