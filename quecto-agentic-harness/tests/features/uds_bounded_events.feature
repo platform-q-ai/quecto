@@ -19,7 +19,7 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
   # ─── Bounded end-of-turn size (AC1, AC5) ───────────────────────────────────
 
   @issue-1060 @adr-0008-part2
-  @wip
+  @done
   Scenario: A large real assistant turn keeps end-of-turn events well under the frame size limit
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -33,7 +33,7 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
     And the agent_end event should stay under the hard event line cap
 
   @issue-1060 @adr-0008-part2
-  @wip
+  @done
   Scenario: End-of-turn events do not re-carry full assistant content for a large turn
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -47,13 +47,14 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
     And the agent_end event should identify the run messages by non-empty message refs
 
   @issue-1060 @adr-0008-part2
-  @wip
+  @done
   Scenario: A large tool-using turn keeps end-of-turn events well under the frame size limit
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a tool call with arguments larger than the event line cap then a text response
     When I start the UDS agent with no [session]
     And I send prompt "run a bulk tool"
+    And I send command "get_messages" with id "gm-tool-roles-large"
     And I close the UDS connection
     Then the agent_end event should stay well under the frame size limit
     And the agent_end event should not re-carry full message content
@@ -63,7 +64,7 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
   # ─── Stable message references (AC6) ───────────────────────────────────────
 
   @issue-1060 @adr-0008-part2
-  @wip
+  @done
   Scenario: A completed text turn emits non-empty message refs on end-of-turn events
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -75,20 +76,21 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
     And the agent_end event should identify the run messages by non-empty message refs
 
   @issue-1060 @adr-0008-part2
-  @wip
+  @done
   Scenario: A tool-using turn emits refs for assistant tool-call and tool-result messages
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a tool call then a text response "done"
     When I start the UDS agent with no [session]
     And I send prompt "run a tool"
+    And I send command "get_messages" with id "gm-tool-roles"
     And I close the UDS connection
     Then the agent_end event should identify the run messages by non-empty message refs
     And the agent_end message refs should cover assistant tool-call and tool-result roles
     And the agent_end event should not re-carry full message content
 
   @issue-1060 @adr-0008-part2
-  @wip
+  @done
   Scenario: get_messages exposes the same stable message identifiers as end-of-turn refs
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -102,7 +104,7 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
     And the get_messages message identifiers should match the end-of-turn message refs
 
   @issue-1060 @adr-0008-part2 @multi-client @persist
-  @wip
+  @done
   Scenario: Busy-connect snapshot message identifiers match end-of-turn refs
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -121,7 +123,7 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
   # ─── On-demand lookup (AC4) ────────────────────────────────────────────────
 
   @issue-1060 @adr-0008-part2 @persist
-  @wip
+  @done
   Scenario: A consumer can fetch full message content by stable message ref
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -132,7 +134,7 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
     And every get_message response should round-trip the requested message identifier
 
   @issue-1060 @adr-0008-part2 @multi-client @persist
-  @wip
+  @done
   Scenario: get_message returns full content for a prior message while a later turn is in flight
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -153,7 +155,7 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
   # ─── Footer metadata preserved (AC7) ───────────────────────────────────────
 
   @issue-1060 @adr-0008-part2
-  @wip
+  @done
   Scenario: turn_end still carries context and usage footer metadata
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -168,7 +170,7 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
   # ─── Sub-agent re-stamped path (AC3) ───────────────────────────────────────
 
   @issue-1060 @adr-0008-part2
-  @wip
+  @done
   Scenario: Parent stream identifies child turn messages by refs without full content
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -182,7 +184,7 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
   # ─── Streaming common path (AC2 wire side) ─────────────────────────────────
 
   @issue-1060 @adr-0008-part2 @token-streaming
-  @wip
+  @done
   Scenario: A streamed turn completes with tokens and non-empty refs without re-carrying content
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server

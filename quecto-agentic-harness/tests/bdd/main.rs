@@ -842,6 +842,31 @@ pub struct QuectoWorld {
     pub mc_auto_replies: HashMap<u32, Vec<(String, String)>>,
     /// Multi-client UDS: clients to connect after all others have disconnected (#348)
     pub _mc_reconnect_clients: Vec<u32>,
+    // --- #1060 bounded end-of-turn events (uds_bounded_events.feature) ---
+    /// Stable message refs captured from end-of-turn events.
+    pub _bounded_message_refs: Vec<String>,
+    /// Single recorded ref for busy-path get_message scenarios.
+    pub _bounded_recorded_ref: Option<String>,
+    /// get_messages ids captured for parity assertions.
+    pub _bounded_get_messages_ids: Vec<String>,
+    /// Busy-connect snapshot message ids.
+    pub _bounded_snapshot_ids: Vec<String>,
+    /// Collected get_message response events.
+    pub _bounded_get_message_responses: Vec<serde_json::Value>,
+    /// Expected assistant body from mock text response (for content asserts).
+    pub _bounded_expected_body: Option<String>,
+    /// Delay seconds requested for busy multi-turn mock stacking.
+    pub _bounded_delay_secs: Option<u64>,
+    /// Whether a subagent_messages_appended event was injected/observed.
+    pub _bounded_subagent_appended: bool,
+    /// Live multi-client: socket path while agent is kept up across steps.
+    pub _mc_live_socket: Option<std::path::PathBuf>,
+    /// Live multi-client: agent thread handle.
+    pub _mc_live_handle: Option<std::thread::JoinHandle<i32>>,
+    /// Live multi-client: open client streams.
+    pub _mc_live_streams: std::collections::HashMap<u32, std::os::unix::net::UnixStream>,
+    /// Live multi-client: use phased live driver instead of batch execute.
+    pub _mc_live_busy: bool,
     /// Real-LLM UDS mode: use real credentials and real socket bind with sequential prompts
     pub _real_llm_uds: bool,
     /// Workflow V2: when true, register WorkflowEngine + WorkflowTool + WorkflowGuard
@@ -1295,6 +1320,7 @@ mod tool_empty_args_steps;
 mod truncate_steps;
 mod tui_architecture_steps;
 mod tui_context_usage_steps;
+mod uds_bounded_events_steps;
 mod uds_framing_steps;
 mod uds_steps;
 mod web_fetch_steps;

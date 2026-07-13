@@ -1,6 +1,7 @@
 //! #997 grouped-state probes: drive real App paths, observe the owner groups.
 
 use super::TuiHarness;
+use crate::interface::components::chat::ChatEntry;
 
 impl TuiHarness {
     /// Issue a rewind correlation id through the real idle double-Escape path.
@@ -79,5 +80,21 @@ impl TuiHarness {
     /// clobber focused-child state.
     pub fn current_model(&self) -> Option<String> {
         self.app.current_model.clone()
+    }
+
+    /// Master chat tool entries in transcript order: `(name, result)`.
+    pub fn master_tool_entries(&self) -> Vec<(String, Option<String>)> {
+        self.app
+            .master_session
+            .chat
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                ChatEntry::ToolExecution {
+                    tool_name, result, ..
+                } => Some((tool_name.clone(), result.clone())),
+                _ => None,
+            })
+            .collect()
     }
 }

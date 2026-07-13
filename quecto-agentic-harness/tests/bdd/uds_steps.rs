@@ -656,6 +656,7 @@ fn then_fireworks_received_request(world: &mut QuectoWorld) {
 /// `steer` command to arrive and cancel it.
 #[given(expr = "the mock LLM will delay its response by {int} seconds")]
 fn given_mock_llm_delayed_response(world: &mut QuectoWorld, delay_secs: u64) {
+    world._bounded_delay_secs = Some(delay_secs);
     assert!(
         world._wiremock_server_uri.is_some(),
         "mock server URI not set — add 'And a config file with an OpenAI provider pointing at a mock server' first"
@@ -2016,6 +2017,10 @@ fn when_new_client_connects_after_disconnect(world: &mut QuectoWorld, client_id:
 /// Close all multi-client connections and wait for the agent to exit.
 #[when("I close all UDS clients")]
 fn when_close_all_uds_clients(world: &mut QuectoWorld) {
+    if world._mc_live_busy || world._mc_live_socket.is_some() {
+        uds_bounded_events_steps::finalize_mc_live_pub(world);
+        return;
+    }
     execute_multi_client_uds(world);
 }
 
@@ -2028,7 +2033,7 @@ fn when_close_all_uds_clients(world: &mut QuectoWorld) {
 /// 5. Handle disconnections
 /// 6. Close remaining clients
 /// 7. Collect events per-client
-fn execute_multi_client_uds(world: &mut QuectoWorld) {
+pub(crate) fn execute_multi_client_uds(world: &mut QuectoWorld) {
     if world.mc_exit_code.is_some() {
         return;
     }

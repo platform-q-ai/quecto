@@ -1,4 +1,4 @@
-@tui @issue-1060 @adr-0008-part2
+@tui @issue-1060 @adr-0008-part2 @done
 Feature: TUI conversation rendering with ref-based end-of-turn events
   As a TUI operator watching a live agent turn
   I want the chat to look identical whether end-of-turn events carry full content or only message refs
@@ -15,7 +15,7 @@ Feature: TUI conversation rendering with ref-based end-of-turn events
 
   # ─── Common streamed path (AC2) ────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: A fully streamed text turn renders without fetching messages at end-of-turn
     Given a fresh TUI app harness connected for the active turn
     And the assistant has streamed tokens "Hello" then " world"
@@ -24,7 +24,7 @@ Feature: TUI conversation rendering with ref-based end-of-turn events
     And the app master session shows "Hello world" exactly once
     And the TUI issues no on-demand message fetches for the completed turn
 
-  @wip
+  @done
   Scenario: A fully streamed tool turn renders tool calls and results without end-of-turn fetches
     Given a fresh TUI app harness connected for the active turn
     And the assistant has streamed a tool call for "bash" with result "ok"
@@ -34,7 +34,7 @@ Feature: TUI conversation rendering with ref-based end-of-turn events
     And the app master session shows "done"
     And the TUI issues no on-demand message fetches for the completed turn
 
-  @wip
+  @done
   Scenario: Footer context gauges still update from ref-based turn_end metadata
     Given a fresh TUI app harness connected for the active turn
     And the assistant has streamed tokens "ok"
@@ -43,7 +43,7 @@ Feature: TUI conversation rendering with ref-based end-of-turn events
 
   # ─── Mid-turn connect / miss recovery (AC2) ────────────────────────────────
 
-  @wip
+  @done
   Scenario: Connecting mid-turn converges to full content via refs and fetch-on-miss
     Given a TUI that connected mid-turn and missed early tokens of the active turn
     When a turn_end arrives that identifies the turn messages by non-empty refs
@@ -52,7 +52,7 @@ Feature: TUI conversation rendering with ref-based end-of-turn events
     Then the app master session shows the full assistant content for the active turn
     And the app master session shows that content exactly once
 
-  @wip
+  @done
   Scenario: Mid-turn recovery reconstructs tool-call and tool-result messages in order
     Given a TUI that connected mid-turn and missed tool_execution events of the active turn
     When a turn_end arrives that identifies assistant tool-call and tool-result messages by non-empty refs
@@ -61,7 +61,7 @@ Feature: TUI conversation rendering with ref-based end-of-turn events
     Then the app master session shows the tool call and tool result in order
     And the app master session shows the final assistant text for the active turn exactly once
 
-  @wip
+  @done
   Scenario: A recovery response for a different request id is ignored
     Given a TUI that connected mid-turn and missed early tokens of the active turn
     And a turn_end has arrived that identifies the turn messages by non-empty refs
@@ -72,19 +72,19 @@ Feature: TUI conversation rendering with ref-based end-of-turn events
 
   # ─── Sub-agent monitoring (AC3) ────────────────────────────────────────────
 
-  @wip
-  Scenario: Sub-agent pane reflects child conversation from ref-based parent events without fetches
+  @done
+  Scenario: Sub-agent pane reflects child conversation from ref-based child turn_end without fetches
     Given a TUI viewing sub-agent "worker"
     And sub-agent "worker" has already streamed "partial" for the active child turn
-    When a subagent_messages_appended event arrives identifying those messages by refs only
+    When a child turn_end arrives identifying those messages by refs only
     Then the sub-agent's session shows "partial"
     And the sub-agent's session shows "partial" exactly once
     And the TUI issues no on-demand message fetches for the completed child turn
 
-  @wip
-  Scenario: Sub-agent pane recovers missing child content after mid-turn connect
+  @done
+  Scenario: Sub-agent pane recovers missing child content from child turn_end after mid-turn connect
     Given a TUI viewing sub-agent "worker" that connected mid-turn
-    When a subagent_messages_appended event arrives identifying the child messages by non-empty refs
+    When a child turn_end arrives identifying the child messages by non-empty refs
     Then the TUI requests only the missing child message content for those refs
     When the matching recovery responses arrive for those requests
     Then the sub-agent's session shows the full child turn content

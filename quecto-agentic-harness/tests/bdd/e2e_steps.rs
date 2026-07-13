@@ -56,6 +56,7 @@ fn configure_mock_provider_workspace(world: &mut QuectoWorld, provider: &str) {
 
 #[given(expr = "the mock LLM returns a text response {string}")]
 fn given_mock_llm_text_response(world: &mut QuectoWorld, content: String) {
+    world._bounded_expected_body = Some(content.clone());
     // Verify a mock server was previously configured (from the config step).
     assert!(
         world._wiremock_server_uri.is_some(),
