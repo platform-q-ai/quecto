@@ -233,23 +233,10 @@ impl App {
             return;
         }
         self.ensure_session(agent_id);
-        if let Event::Response {
-            id,
-            command,
-            success,
-            data,
-            ..
-        } = &ev
-            && command == "get_message"
-        {
-            self.apply_subagent_get_message_recovery(
-                agent_id,
-                id.as_deref(),
-                *success,
-                data.as_ref(),
-            );
-            return;
-        }
+        // Child recovery `get_message` no longer travels the child socket — it
+        // is routed through the master (F1), so its Response arrives on the
+        // master stream and is applied by `handle_get_message_recovery`, not
+        // here.
         let Some(session) = self.subagents.sessions.get_mut(agent_id) else {
             return;
         };
@@ -257,6 +244,9 @@ impl App {
             Event::AgentStart | Event::TurnStart => {
                 if !session.running {
                     session.active_turn_start = session.chat.entry_count();
+                    // New turn: reset the per-turn tool count that drives
+                    // end-of-turn ref-cardinality recovery (#1060 review, F2).
+                    session.tools_this_turn = 0;
                 }
                 session.running = true;
                 session.observed_run_state = true;
@@ -338,6 +328,11 @@ impl App {
 
     /// Apply a single non-workflow child stream event to its chat.
     fn apply_subagent_chat_event(session: &mut SessionView, ev: &Event) {
+        // Count every tool start (incl. suppressed spawn) toward this turn's
+        // ref cardinality before borrowing `chat`, mirroring master (#1060, F2).
+        if matches!(ev, Event::ToolExecutionStart { .. }) {
+            session.tools_this_turn = session.tools_this_turn.saturating_add(1);
+        }
         let chat = &mut session.chat;
         match ev {
             Event::Token { token } => chat.append_token(token),
@@ -400,8 +395,20 @@ impl App {
                 _ => None,
             })
             .unwrap_or_default();
-        let tools = session.chat.tool_entry_count();
+        // Per-turn tool count, not session-lifetime `tool_entry_count()`, which
+        // over-counts on later turns and forces false-positive recovery (F2).
+        let tools = session.tools_this_turn;
         if !self.needs_message_recovery_for(refs, &assistant_text, tools, expected_content_len) {
+            return;
+        }
+        // If any ref is already being recovered, the batch that owns it will
+        // fill; creating a second batch here would issue zero fresh requests and
+        // linger unfillable (F4 — mirrors the master guard).
+        if refs.iter().any(|message_id| {
+            self.pending_message_recovery
+                .values()
+                .any(|pending| pending.message_id == *message_id)
+        }) {
             return;
         }
         let batch_id = format!(
@@ -420,13 +427,6 @@ impl App {
             },
         );
         for message_id in refs {
-            if self
-                .pending_message_recovery
-                .values()
-                .any(|p| p.message_id == *message_id)
-            {
-                continue;
-            }
             let req_id = format!("msg-recovery-{}", super::app_events::uuid_like());
             self.pending_message_recovery.insert(
                 req_id.clone(),
@@ -435,59 +435,17 @@ impl App {
                     batch_id: batch_id.clone(),
                 },
             );
-            let _ = self.send_to_active_subagent(Command::GetMessage {
+            // Route via the MASTER connection with the ending child's id: the
+            // master forwards get_message to that child regardless of TUI
+            // selection. `send_to_active_subagent` only reached the *selected*
+            // child, so background children never recovered and the failure was
+            // silently discarded (F1). The response returns on the master stream
+            // and is applied by `handle_get_message_recovery` via batch.agent_id.
+            self.send_command(Command::GetMessage {
                 id: Some(req_id),
                 message_id: message_id.clone(),
-                agent_id: None,
+                agent_id: Some(agent_id.to_string()),
             });
-        }
-    }
-
-    fn apply_subagent_get_message_recovery(
-        &mut self,
-        agent_id: &str,
-        id: Option<&str>,
-        success: bool,
-        data: Option<&serde_json::Value>,
-    ) {
-        let Some(req_id) = id else { return };
-        let Some(pending) = self.pending_message_recovery.remove(req_id) else {
-            return;
-        };
-        if !success {
-            // Unresolvable child ref: abandon the batch rather than leaving it
-            // unfillable and leaking, dropping already-fetched siblings (#1060
-            // review). The child turn stays as-streamed.
-            self.abandon_recovery_batch(&pending.batch_id);
-            return;
-        }
-        let Some(data) = data else {
-            self.abandon_recovery_batch(&pending.batch_id);
-            return;
-        };
-        if data.get("id").and_then(|v| v.as_str()) != Some(pending.message_id.as_str()) {
-            self.abandon_recovery_batch(&pending.batch_id);
-            return;
-        }
-        let Some(batch) = self.message_recovery_batches.get_mut(&pending.batch_id) else {
-            return;
-        };
-        if batch.agent_id.as_deref() != Some(agent_id) {
-            return;
-        }
-        batch.responses.insert(pending.message_id, data.clone());
-        if batch.responses.len() != batch.refs.len() {
-            return;
-        }
-        let batch = self
-            .message_recovery_batches
-            .remove(&pending.batch_id)
-            .unwrap();
-        let entries = super::app_events::recovered_chat_entries(&batch.refs, &batch.responses);
-        if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
-            session
-                .chat
-                .replace_range(batch.target_start, batch.target_end, entries);
         }
     }
 

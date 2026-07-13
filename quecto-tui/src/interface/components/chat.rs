@@ -174,14 +174,6 @@ impl Chat {
         self.scroll_offset = 0;
     }
 
-    /// Count of tool-execution entries currently in the chat.
-    pub fn tool_entry_count(&self) -> usize {
-        self.entries
-            .iter()
-            .filter(|e| matches!(e, ChatEntry::ToolExecution { .. }))
-            .count()
-    }
-
     /// Start a tool execution — creates a ToolExecution entry.
     pub fn start_tool(&mut self, tool_call_id: String, tool_name: String, args: String) {
         self.finalize_assistant();

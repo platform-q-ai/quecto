@@ -278,10 +278,25 @@ impl App {
             .remove(&pending.batch_id)
             .unwrap();
         let entries = recovered_chat_entries(&batch.refs, &batch.responses);
-        if batch.agent_id.is_none() {
-            self.master_session
-                .chat
-                .replace_range(batch.target_start, batch.target_end, entries);
+        // Apply to the session the batch was created for. Child recovery is
+        // routed through the master (agent_id set), so a completed child batch
+        // is applied to that child's chat here — not only the master's (#1060
+        // review, F1). A child evicted mid-recovery drops silently.
+        match &batch.agent_id {
+            None => {
+                self.master_session.chat.replace_range(
+                    batch.target_start,
+                    batch.target_end,
+                    entries,
+                );
+            }
+            Some(child) => {
+                if let Some(session) = self.subagents.sessions.get_mut(child) {
+                    session
+                        .chat
+                        .replace_range(batch.target_start, batch.target_end, entries);
+                }
+            }
         }
     }
 

@@ -1880,31 +1880,42 @@ fn then_agent_output_contains_token(world: &mut QuectoWorld, expected: String) {
 fn then_agent_output_contains_turn_end(world: &mut QuectoWorld, expected: String) {
     execute_uds(world);
     let events = &world.agent_events;
+    // Reconstruct the streamed assistant text so the "content emptied" branch is
+    // tied to the expected body actually being OBSERVED — not merely to any refs
+    // existing, which greened every expected string (#1060 review). A
+    // non-streaming turn emits a synthetic token carrying the full text.
+    let streamed: String = events
+        .iter()
+        .filter_map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).ok()?;
+            (v["type"].as_str() == Some("token"))
+                .then(|| v["token"].as_str().unwrap_or("").to_string())
+        })
+        .collect();
     let found = events.iter().any(|line| {
-        if let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) {
-            if ev["type"].as_str() != Some("turn_end") {
-                false
-            } else {
-                let content = ev["message"]["content"].as_str().unwrap_or("");
-                let refs = ev
-                    .get("message")
-                    .and_then(|m| m.get("messageRefs"))
-                    .and_then(|r| r.as_array());
-                // #1060: content emptied; non-empty messageRefs identify the turn.
-                content == expected
-                    || (content.is_empty()
-                        && refs.is_some_and(|a| {
-                            !a.is_empty()
-                                && a.iter().all(|r| r.as_str().is_some_and(|s| !s.is_empty()))
-                        }))
-            }
-        } else {
-            false
+        let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) else {
+            return false;
+        };
+        if ev["type"].as_str() != Some("turn_end") {
+            return false;
         }
+        let content = ev["message"]["content"].as_str().unwrap_or("");
+        let bounded_refs = ev
+            .get("message")
+            .and_then(|m| m.get("messageRefs"))
+            .and_then(|r| r.as_array())
+            .is_some_and(|a| {
+                !a.is_empty() && a.iter().all(|r| r.as_str().is_some_and(|s| !s.is_empty()))
+            });
+        // Legacy: body still carried. #1060: body emptied, identified by refs,
+        // AND the expected text was observed in the run's token stream.
+        content == expected || (content.is_empty() && bounded_refs && streamed.contains(&expected))
     });
     assert!(
         found,
-        "expected a turn_end event with content {expected:?} in events:\n{events:#?}"
+        "expected a turn_end event with content {expected:?} \
+         (emptied-content path requires the text in the token stream: {streamed:?}) \
+         in events:\n{events:#?}"
     );
 }
 

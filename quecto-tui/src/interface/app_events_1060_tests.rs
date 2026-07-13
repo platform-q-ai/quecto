@@ -566,3 +566,8 @@ fn recovered_chat_entries_suppresses_spawn_like_live_stream() {
         "the final assistant text must still be reconstructed"
     );
 }
+
+// Child-path recovery + coverage tests live in a sibling file to respect the
+// 750-line cap (#1060 review additions).
+#[path = "app_events_1060_child_tests.rs"]
+mod child_tests;

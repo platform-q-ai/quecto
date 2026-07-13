@@ -195,18 +195,54 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
         .find(|event| event["type"] == "agent_end")
         .expect("an agent_end event must be emitted");
     // #1060: AgentEnd identifies the run via messageRefs (not full content).
-    let refs = agent_end["messageRefs"]
+    let refs: Vec<String> = agent_end["messageRefs"]
         .as_array()
-        .expect("messageRefs array");
+        .expect("messageRefs array")
+        .iter()
+        .map(|r| r.as_str().expect("ref is a string").to_string())
+        .collect();
     assert_eq!(
         refs.len(),
         3,
-        "AgentEnd must ref exactly the messages this run appended          (assistant tool call, tool result, final reply), got {agent_end}"
+        "AgentEnd must ref exactly the messages this run appended \
+         (assistant tool call, tool result, final reply), got {agent_end}"
     );
     assert!(
-        refs.iter()
-            .all(|r| r.as_str().is_some_and(|s| !s.is_empty()))
+        refs.iter().all(|s| !s.is_empty()),
+        "refs must be non-empty stable ids"
     );
+
+    // Cardinality alone does not prove identity/order. Resolve each ref against
+    // the run's ledger and assert the exact assistant-tool-call -> tool-result
+    // -> final-assistant sequence the refs are meant to denote (#1060 review).
+    use crate::domain::message::Role;
+    let resolved: Vec<&Message> = refs
+        .iter()
+        .map(|id| {
+            messages
+                .iter()
+                .find(|m| m.id().to_string() == *id)
+                .unwrap_or_else(|| panic!("ref {id} must resolve to a ledger message"))
+        })
+        .collect();
+    assert!(
+        matches!(resolved[0].role, Role::Assistant) && !resolved[0].tool_calls.is_empty(),
+        "first ref must be the assistant tool-call message; got role {:?}, {} tool_calls",
+        resolved[0].role,
+        resolved[0].tool_calls.len()
+    );
+    assert!(
+        matches!(resolved[1].role, Role::Tool),
+        "second ref must be the tool-result message; got role {:?}",
+        resolved[1].role
+    );
+    assert!(
+        matches!(resolved[2].role, Role::Assistant)
+            && resolved[2].tool_calls.is_empty()
+            && resolved[2].content.contains("final answer"),
+        "third ref must be the final assistant reply carrying the response"
+    );
+
     let payload = agent_end["messages"].as_array().expect("messages array");
     assert!(
         payload.is_empty(),
