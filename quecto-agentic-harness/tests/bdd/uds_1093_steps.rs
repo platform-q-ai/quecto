@@ -2,8 +2,11 @@
 
 use super::*;
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use quecto::domain::message::Message;
-use quecto::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry};
+use quecto::domain::agent::AgentLoop;
+use quecto::domain::error::DomainError;
+use quecto::domain::message::{LlmResponse, Message};
+use quecto::domain::provider::{ChatRequest, LlmProvider};
+use quecto::domain::session::{ContextSpillStore, Session, SessionStore};
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
@@ -13,14 +16,40 @@ use quecto::interface::cli::build_agent_provider;
 use quecto::interface::cli::provider_reload::{ProviderReloadInputs, seeded_provider_reload};
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::future::Future;
+use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const ISSUE_1093_SESSION: &str = "issue-1093";
 const ISSUE_1093_SPILL_ID: &str = "turn1:msg:assistant";
 const ISSUE_1093_FULL: &str = "full spilled content for issue 1093";
+
+#[derive(Debug)]
+struct Issue1093SeedProvider;
+
+impl LlmProvider for Issue1093SeedProvider {
+    fn name(&self) -> &str {
+        "issue-1093-seed"
+    }
+
+    fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        Box::pin(async {
+            Ok(LlmResponse {
+                content: Some(ISSUE_1093_FULL.into()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            })
+        })
+    }
+}
 
 #[given("a completed turn with a collapsed message whose full content was spilled")]
 fn given_collapsed_message_with_spill(world: &mut QuectoWorld) {
@@ -43,15 +72,40 @@ fn when_request_collapsed_message(world: &mut QuectoWorld) {
 
 #[when("client 1 starts a later turn")]
 fn when_client_1_starts_later_turn(world: &mut QuectoWorld) {
+    let start = issue_1093_event_count(world, 1);
     let cmd = serde_json::json!({"type": "prompt", "message": "later slow turn"});
     write_command(world, 1, &cmd);
-    std::thread::sleep(Duration::from_millis(200));
+    wait_for_issue_1093_event_since(
+        world,
+        1,
+        start,
+        Duration::from_secs(5),
+        "the later turn_start event",
+        |event| event.get("type").and_then(|v| v.as_str()) == Some("turn_start"),
+    );
 }
 
 #[when("client 2 requests the collapsed message by its stable ref while the agent is busy")]
 fn when_client_2_requests_collapsed_message_while_busy(world: &mut QuectoWorld) {
     connect_issue_1093_client(world, 2);
-    drain_issue_1093_client(world, 2, Duration::from_millis(400));
+    // The accept loop emits this unsolicited snapshot only after observing the
+    // shared BusyGuard flag, so this is a deterministic busy-path barrier (not
+    // a scheduler-dependent sleep).
+    wait_for_issue_1093_event(
+        world,
+        2,
+        Duration::from_secs(5),
+        "the busy-connect get_messages snapshot",
+        |event| {
+            event.get("type").and_then(|v| v.as_str()) == Some("response")
+                && event.get("command").and_then(|v| v.as_str()) == Some("get_messages")
+                && event
+                    .get("data")
+                    .and_then(|d| d.get("snapshot"))
+                    .and_then(|v| v.as_bool())
+                    == Some(true)
+        },
+    );
     send_get_message_for_recorded_ref(world, 2, "gm-1093-busy");
 }
 
@@ -126,43 +180,70 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
         .clone()
         .expect("no base dir — add 'Given a temp base directory'");
     let session_key = Session::build_key("cli", ISSUE_1093_SESSION);
-    let spill_id = ISSUE_1093_SPILL_ID;
-    let stub =
-        format!("[assistant: \"full spilled content...\" (5 tokens) — recall(\"{spill_id}\")]");
-    let mut msg = Message::assistant(stub, vec![]);
-    msg.turn = Some(1);
-    msg.is_collapsed = true;
-    msg.spill_id = Some(spill_id.into());
-
     let store = FileSessionStore::new(&base);
-    let session = Session {
-        key: session_key.clone(),
-        messages: vec![msg],
-        workflow_run: None,
-    };
+    let spill_store = Arc::new(FileContextSpillStore::new(base.clone()));
     let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        store.save(&session).await.expect("save seeded session");
-        let spill_store = FileContextSpillStore::new(base.clone());
+    let messages = rt.block_on(async {
         spill_store
             .clear(&session_key)
             .await
             .expect("clear prior spill");
-        if include_spill {
+
+        // Run the real agent-loop spill + count-collapse path. No test-created
+        // spill id, entry, or collapsed shape: production assigns the id,
+        // persists the full content under the active key, and emits the stub.
+        let agent = AgentLoopImpl::new(AgentLoopConfig {
+            provider: Arc::new(Issue1093SeedProvider),
+            tool_registry: Box::new(ToolRegistryImpl::new()),
+            model: "issue-1093-seed".into(),
+            max_tokens: 100,
+            temperature: 0.0,
+            spill_store: Some(spill_store.clone()),
+            session_key: session_key.clone(),
+            context_collapse_after_tool_calls: u32::MAX,
+            max_context_tokens: 190_000,
+            progress_callback: None,
+            streaming: false,
+            effort: None,
+            system_prompt_provider: None,
+            audit_log: None,
+            pin_recent_turns: 0,
+            context_collapse_after_messages: 0,
+            model_context_window: None,
+        });
+        let mut messages = vec![Message::user("seed issue 1093")];
+        agent
+            .process(&mut messages)
+            .await
+            .expect("production seed turn");
+        // Collapse is applied before a provider request, so run a second turn
+        // to collapse the first turn's creation-time-spilled assistant reply.
+        messages.push(Message::user("collapse the prior reply"));
+        agent
+            .process(&mut messages)
+            .await
+            .expect("production collapse turn");
+
+        let collapsed = messages
+            .iter()
+            .find(|m| m.is_collapsed && m.spill_id.as_deref() == Some(ISSUE_1093_SPILL_ID))
+            .expect("production must collapse the first spilled assistant reply");
+        assert!(collapsed.content.contains("recall("));
+        if !include_spill {
             spill_store
-                .append(
-                    &session_key,
-                    &SpillEntry {
-                        id: spill_id.into(),
-                        tool: "message".into(),
-                        input_preview: String::new(),
-                        tokens: 5,
-                        content: ISSUE_1093_FULL.into(),
-                    },
-                )
+                .clear(&session_key)
                 .await
-                .expect("append spill entry");
+                .expect("remove seeded spills for fallback scenario");
         }
+        messages
+    });
+    let session = Session {
+        key: session_key.clone(),
+        messages,
+        workflow_run: None,
+    };
+    rt.block_on(async {
+        store.save(&session).await.expect("save seeded session");
     });
     world.no_session = false;
     world.session_name = Some(ISSUE_1093_SESSION.into());
@@ -283,21 +364,17 @@ fn connect_issue_1093_client(world: &mut QuectoWorld, client_id: u32) {
 fn record_collapsed_ref_from_get_messages(world: &mut QuectoWorld, client_id: u32) {
     let cmd = serde_json::json!({"type": "get_messages", "id": "gm-1093-list"});
     write_command(world, client_id, &cmd);
-    drain_issue_1093_client(world, client_id, Duration::from_secs(2));
-    let events = world
-        .mc_client_events
-        .get(&client_id)
-        .cloned()
-        .unwrap_or_default();
-    let response = events
-        .iter()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|v| {
-            v.get("type").and_then(|t| t.as_str()) == Some("response")
-                && v.get("command").and_then(|c| c.as_str()) == Some("get_messages")
-                && v.get("id").and_then(|id| id.as_str()) == Some("gm-1093-list")
-        })
-        .unwrap_or_else(|| panic!("no get_messages response; events: {events:#?}"));
+    let response = wait_for_issue_1093_event(
+        world,
+        client_id,
+        Duration::from_secs(5),
+        "the seeded get_messages response",
+        |event| {
+            event.get("type").and_then(|t| t.as_str()) == Some("response")
+                && event.get("command").and_then(|c| c.as_str()) == Some("get_messages")
+                && event.get("id").and_then(|id| id.as_str()) == Some("gm-1093-list")
+        },
+    );
     let messages = response
         .get("data")
         .and_then(|d| d.get("messages"))
@@ -306,9 +383,10 @@ fn record_collapsed_ref_from_get_messages(world: &mut QuectoWorld, client_id: u3
     let msg = messages
         .iter()
         .find(|m| {
-            m.get("content")
-                .and_then(|c| c.as_str())
-                .is_some_and(|c| c.contains("recall("))
+            m.get("role").and_then(|r| r.as_str()) == Some("assistant")
+                && m.get("content")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|c| c.contains("recall("))
         })
         .unwrap_or_else(|| panic!("no collapsed message in get_messages response: {response}"));
     world._bounded_recorded_ref = Some(
@@ -326,21 +404,17 @@ fn send_get_message_for_recorded_ref(world: &mut QuectoWorld, client_id: u32, re
         .expect("no recorded collapsed ref");
     let cmd = serde_json::json!({"type": "get_message", "id": request_id, "messageId": message_id});
     write_command(world, client_id, &cmd);
-    drain_issue_1093_client(world, client_id, Duration::from_secs(3));
-    let events = world
-        .mc_client_events
-        .get(&client_id)
-        .cloned()
-        .unwrap_or_default();
-    let response = events
-        .iter()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|v| {
-            v.get("type").and_then(|t| t.as_str()) == Some("response")
-                && v.get("command").and_then(|c| c.as_str()) == Some("get_message")
-                && v.get("id").and_then(|id| id.as_str()) == Some(request_id)
-        })
-        .unwrap_or_else(|| panic!("no get_message response {request_id}; events: {events:#?}"));
+    let response = wait_for_issue_1093_event(
+        world,
+        client_id,
+        Duration::from_secs(5),
+        "the requested get_message response",
+        |event| {
+            event.get("type").and_then(|t| t.as_str()) == Some("response")
+                && event.get("command").and_then(|c| c.as_str()) == Some("get_message")
+                && event.get("id").and_then(|id| id.as_str()) == Some(request_id)
+        },
+    );
     world._bounded_get_message_responses = vec![response];
 }
 
@@ -353,33 +427,100 @@ fn write_command(world: &mut QuectoWorld, client_id: u32, cmd: &serde_json::Valu
     stream.flush().expect("flush UDS command");
 }
 
-fn drain_issue_1093_client(world: &mut QuectoWorld, client_id: u32, budget: Duration) {
-    let Some(stream) = world._mc_live_streams.get(&client_id) else {
-        return;
-    };
-    let reader_stream = stream.try_clone().expect("clone client stream");
-    reader_stream
-        .set_read_timeout(Some(Duration::from_millis(50)))
-        .ok();
-    let mut reader = BufReader::new(reader_stream);
-    let deadline = Instant::now() + budget;
-    let events = world.mc_client_events.entry(client_id).or_default();
-    while Instant::now() < deadline {
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                let line = line.trim_end().to_string();
-                if !line.is_empty() {
-                    events.push(line);
+fn issue_1093_event_count(world: &QuectoWorld, client_id: u32) -> usize {
+    world.mc_client_events.get(&client_id).map_or(0, Vec::len)
+}
+
+fn wait_for_issue_1093_event<F>(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    timeout: Duration,
+    description: &str,
+    predicate: F,
+) -> serde_json::Value
+where
+    F: FnMut(&serde_json::Value) -> bool,
+{
+    let start = issue_1093_event_count(world, client_id);
+    wait_for_issue_1093_event_since(world, client_id, start, timeout, description, predicate)
+}
+
+fn wait_for_issue_1093_event_since<F>(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    start: usize,
+    timeout: Duration,
+    description: &str,
+    mut predicate: F,
+) -> serde_json::Value
+where
+    F: FnMut(&serde_json::Value) -> bool,
+{
+    let deadline = Instant::now() + timeout;
+    let mut cursor = start;
+    loop {
+        if let Some(events) = world.mc_client_events.get(&client_id) {
+            while cursor < events.len() {
+                let parsed = serde_json::from_str::<serde_json::Value>(&events[cursor]).ok();
+                cursor += 1;
+                if let Some(event) = parsed
+                    && predicate(&event)
+                {
+                    return event;
                 }
             }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timeout waiting for {description} on client {client_id}; events: {:#?}",
+            world.mc_client_events.get(&client_id)
+        );
+        read_one_issue_1093_line(world, client_id, Duration::from_millis(100));
+    }
+}
+
+/// Read exactly one line without a temporary `BufReader`: a dropped buffered
+/// reader can consume subsequent event bytes as read-ahead and make barriers
+/// flaky. Reading a byte at a time is acceptable for this focused BDD harness.
+fn read_one_issue_1093_line(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    timeout: Duration,
+) -> Option<String> {
+    let stream = world
+        ._mc_live_streams
+        .get_mut(&client_id)
+        .unwrap_or_else(|| panic!("client {client_id} is not connected"));
+    stream.set_read_timeout(Some(timeout)).ok();
+    let mut bytes = Vec::new();
+    let mut byte = [0_u8; 1];
+    loop {
+        match stream.read(&mut byte) {
+            Ok(0) => return None,
+            Ok(_) if byte[0] == b'\n' => break,
+            Ok(_) => bytes.push(byte[0]),
             Err(err)
                 if matches!(
                     err.kind(),
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
-            Err(_) => break,
+                ) =>
+            {
+                return None;
+            }
+            Err(_) => return None,
         }
     }
+    if bytes.last() == Some(&b'\r') {
+        bytes.pop();
+    }
+    let line = String::from_utf8(bytes).expect("UDS output is UTF-8 JSON");
+    if line.is_empty() {
+        return None;
+    }
+    world
+        .mc_client_events
+        .entry(client_id)
+        .or_default()
+        .push(line.clone());
+    Some(line)
 }

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
-use crate::domain::session::{ContextSpillStore, SpillEntry, SpillIndex};
+use crate::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
@@ -15,15 +15,22 @@ use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
 
 #[derive(Debug, Default)]
 struct MemSpillStore {
-    entries: Mutex<HashMap<String, SpillEntry>>,
-    recalls: Mutex<Vec<String>>,
+    entries: Mutex<HashMap<(String, String), SpillEntry>>,
+    recalls: Mutex<Vec<(String, String)>>,
     recall_error: bool,
 }
 
 impl MemSpillStore {
     fn with_entry(entry: SpillEntry) -> Self {
+        Self::with_session_entry("cli:test", entry)
+    }
+
+    fn with_session_entry(session_key: &str, entry: SpillEntry) -> Self {
         Self {
-            entries: Mutex::new(HashMap::from([(entry.id.clone(), entry)])),
+            entries: Mutex::new(HashMap::from([(
+                (session_key.to_string(), entry.id.clone()),
+                entry,
+            )])),
             recalls: Mutex::new(Vec::new()),
             recall_error: false,
         }
@@ -40,12 +47,16 @@ impl MemSpillStore {
     fn recall_count(&self) -> usize {
         self.recalls.lock().unwrap().len()
     }
+
+    fn recalled(&self) -> Vec<(String, String)> {
+        self.recalls.lock().unwrap().clone()
+    }
 }
 
 impl ContextSpillStore for MemSpillStore {
     fn append(
         &self,
-        _session_key: &str,
+        session_key: &str,
         entry: &SpillEntry,
     ) -> std::pin::Pin<
         Box<
@@ -57,13 +68,13 @@ impl ContextSpillStore for MemSpillStore {
         self.entries
             .lock()
             .unwrap()
-            .insert(entry.id.clone(), entry.clone());
+            .insert((session_key.to_string(), entry.id.clone()), entry.clone());
         Box::pin(async { Ok(()) })
     }
 
     fn recall(
         &self,
-        _session_key: &str,
+        session_key: &str,
         id: &str,
     ) -> std::pin::Pin<
         Box<
@@ -73,13 +84,21 @@ impl ContextSpillStore for MemSpillStore {
                 + '_,
         >,
     > {
-        self.recalls.lock().unwrap().push(id.to_string());
+        self.recalls
+            .lock()
+            .unwrap()
+            .push((session_key.to_string(), id.to_string()));
         if self.recall_error {
             return Box::pin(async {
                 Err(crate::domain::error::DomainError::Other("boom".into()))
             });
         }
-        let hit = self.entries.lock().unwrap().get(id).cloned();
+        let hit = self
+            .entries
+            .lock()
+            .unwrap()
+            .get(&(session_key.to_string(), id.to_string()))
+            .cloned();
         Box::pin(async move { Ok(hit) })
     }
 
@@ -326,8 +345,8 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
     assert_eq!(response["data"]["content"], full);
     assert_eq!(
         spill_store.recall_count(),
-        1,
-        "cached lookup should not rescan spill store"
+        2,
+        "each lookup should consult the authoritative session-scoped store"
     );
 }
 
@@ -363,6 +382,95 @@ async fn assert_idle_stub_fallback(spill_id: &str, store: Arc<MemSpillStore>) {
         store.recall_count(),
         1,
         "fallback should happen after one recall attempt"
+    );
+}
+
+#[tokio::test]
+async fn get_message_uses_the_snapshot_session_key_for_spill_recall() {
+    let spill_id = "turn1:msg:assistant";
+    let store = Arc::new(MemSpillStore::with_session_entry(
+        "cli:resumed",
+        spill_entry(spill_id, "resumed session content"),
+    ));
+    let collapsed = collapsed_message(spill_id);
+    let message_id = collapsed.id().to_string();
+    let mut snapshot_data =
+        crate::interface::cli::uds_snapshots::ConversationSnapshotData::default();
+    snapshot_data.reset_to_with_spill_store(
+        std::slice::from_ref(&collapsed),
+        Some(store.clone()),
+        "cli:resumed".into(),
+    );
+    let snapshot = Arc::new(tokio::sync::RwLock::new(snapshot_data));
+
+    let resolved =
+        crate::interface::cli::uds_snapshots::resolve_get_message(&snapshot, &message_id)
+            .await
+            .expect("collapsed message resolves");
+
+    assert_eq!(resolved.content, "resumed session content");
+    assert_eq!(
+        store.recalled(),
+        vec![("cli:resumed".into(), spill_id.into())],
+        "the store fake is session-aware and must observe the resumed key"
+    );
+}
+
+#[tokio::test]
+async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
+    let spill_id = "turn1:msg:assistant";
+    let store = Arc::new(MemSpillStore::with_session_entry(
+        "cli:saved",
+        spill_entry(spill_id, "content from resumed session"),
+    ));
+    let mut fx = Fixture::new(Some(store.clone()));
+    let collapsed = collapsed_message(spill_id);
+    fx.store
+        .save(&Session {
+            key: "cli:saved".into(),
+            messages: vec![collapsed],
+            workflow_run: None,
+        })
+        .await
+        .unwrap();
+    let snapshot = {
+        let ctx = fx.ctx(None);
+        ctx.conversation_snapshot.clone()
+    };
+
+    {
+        let (tx, _rx) = tokio::sync::broadcast::channel(8);
+        let mut ctx = fx.ctx(Some(tx));
+        ctx.conversation_snapshot = snapshot.clone();
+        assert!(
+            !super::handle_resume_session(
+                &mut ctx,
+                Some("resume"),
+                "resume_session",
+                "saved".into(),
+            )
+            .await
+        );
+    }
+
+    let message_id = snapshot
+        .read()
+        .await
+        .messages
+        .iter()
+        .find(|message| message.is_collapsed)
+        .expect("resumed snapshot contains collapsed message")
+        .id()
+        .to_string();
+    let resolved =
+        crate::interface::cli::uds_snapshots::resolve_get_message(&snapshot, &message_id)
+            .await
+            .expect("resumed collapsed message resolves");
+    assert_eq!(resolved.content, "content from resumed session");
+    assert_eq!(
+        store.recalled(),
+        vec![("cli:saved".into(), spill_id.into())],
+        "resume must publish the loaded history with its new key in one update"
     );
 }
 

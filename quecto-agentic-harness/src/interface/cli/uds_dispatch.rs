@@ -364,9 +364,6 @@ pub(super) async fn handle_new_session(
         return false;
     }
     clear_conversation(ctx.messages);
-    // Drop the stable-ref lookup ledger so a client holding an old messageRef
-    // cannot recover the prior session's content after /new (#1060 review r4).
-    ctx.conversation_snapshot.write().await.clear();
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.drain_pending();
@@ -375,6 +372,13 @@ pub(super) async fn handle_new_session(
     ctx.session_key.push_str(&key);
     ctx.session.set_session_key(key.clone());
     ctx.agent.set_session_key(key.clone());
+    // Replace history and its spill namespace in one snapshot write so busy
+    // readers can observe neither old refs under the new key nor new history
+    // under the old key.
+    ctx.conversation_snapshot
+        .write()
+        .await
+        .reset_to_with_spill_store(ctx.messages, ctx.agent.spill_store().cloned(), key.clone());
     // Session-scoped effort must not leak into the fresh session (#1067).
     ctx.agent.reset_effort_to_default();
     set_workflow_run(ctx, None);
@@ -465,12 +469,17 @@ pub(super) async fn handle_resume_session(
     ctx.last_persisted_message_index = ctx.messages.len();
     set_workflow_run(ctx, workflow_run);
     inject_system_prompt(ctx.messages, ctx.system_prompt);
-    // Reset the stable-ref ledger to the resumed conversation so refs from the
-    // PREVIOUS session no longer resolve via get_message (#1060 review r4).
+    // Atomically reset history AND spill namespace to the resumed session so
+    // refs from the previous session cannot resolve and collapsed refs from the
+    // resumed session never query the previous session key.
     ctx.conversation_snapshot
         .write()
         .await
-        .reset_to(ctx.messages);
+        .reset_to_with_spill_store(
+            ctx.messages,
+            ctx.agent.spill_store().cloned(),
+            new_key.clone(),
+        );
     let ev = AgentEvent::ok(
         id,
         type_name,
