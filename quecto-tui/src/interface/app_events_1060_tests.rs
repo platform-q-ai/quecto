@@ -567,6 +567,42 @@ fn recovered_chat_entries_suppresses_spawn_like_live_stream() {
     );
 }
 
+/// #1060 review 3: a dropped ToolExecutionEnd must force recovery even when ref
+/// cardinality and content look complete, so the tool result is fetched rather
+/// than left as a permanently-pending box.
+#[tokio::test]
+async fn dropped_tool_end_forces_recovery_despite_satisfied_cardinality() {
+    let mut h = TuiHarness::new().await;
+    {
+        let a = h.app_mut();
+        a.handle_event(Event::AgentStart);
+        a.handle_event(Event::ToolExecutionStart {
+            tool_call_id: "c1".into(),
+            tool_name: "bash".into(),
+            args: serde_json::json!({}),
+        });
+        // ToolExecutionEnd is DROPPED (never delivered) — open_tool_calls stays 1.
+        a.handle_event(Event::Token {
+            token: "done".into(),
+        });
+        // Cardinality looks complete: 1 tool ⇒ expected 2*1+1 = 3 refs, present.
+        a.handle_event(Event::TurnEnd {
+            message: serde_json::json!({
+                "role":"assistant","content":"","messageRefs":[
+                    "11111111-1111-1111-1111-111111111111",
+                    "22222222-2222-2222-2222-222222222222",
+                    "33333333-3333-3333-3333-333333333333"
+                ]
+            }),
+        });
+    }
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter().any(|l| is_get_message_cmd(l)),
+        "a dropped tool-end must force recovery despite satisfied cardinality: {cmds:?}"
+    );
+}
+
 // Child-path recovery + coverage tests live in a sibling file to respect the
 // 750-line cap (#1060 review additions).
 #[path = "app_events_1060_child_tests.rs"]

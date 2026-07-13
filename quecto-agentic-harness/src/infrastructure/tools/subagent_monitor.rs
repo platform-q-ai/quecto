@@ -8,7 +8,6 @@ use super::subagent_monitor_stall::{
 };
 use super::subagent_registry::{
     NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
-    extract_summary,
 };
 
 const MAX_EVENT_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
@@ -611,13 +610,12 @@ fn notify_from_parsed(
         // or a non-workflow turn-end. A mid-workflow step-end auto-continues and
         // must stay silent so the parent isn't driven to re-narrate per step (#904).
         "agent_end" if agent_end_is_terminal(workflow_mode) => {
-            // Use a reference to avoid cloning the entire messages array.
-            let empty = serde_json::Value::Array(vec![]);
-            let messages = value.get("messages").unwrap_or(&empty);
-            let summary = extract_summary(messages);
+            // #1060: the completion NOTE is a fixed "inspect via get_messages"
+            // pointer (see SubagentNotification::to_message) — no per-child
+            // summary is derived or displayed, so agent_end.messages being
+            // empty (refs-based) is fine here.
             Some(SubagentNotification::Completed {
                 agent_id: agent_id.to_string(),
-                summary,
             })
         }
         "tool_execution_end" => {

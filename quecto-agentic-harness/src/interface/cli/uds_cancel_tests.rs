@@ -52,7 +52,6 @@ fn make_notif(seq: u64) -> SequencedSubagentNotification {
         seq,
         SubagentNotification::Completed {
             agent_id: "worker".to_string(),
-            summary: "done".to_string(),
         },
     )
 }

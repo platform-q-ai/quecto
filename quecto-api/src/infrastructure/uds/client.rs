@@ -219,6 +219,18 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
         AgentCommand::GetMessagesTail { count } => {
             serde_json::json!({"type": "get_messages_tail", "id": id, "count": count})
         }
+        AgentCommand::GetMessage {
+            message_id,
+            agent_id,
+        } => {
+            let mut v = serde_json::json!({
+                "type": "get_message", "id": id, "messageId": message_id
+            });
+            if let Some(agent_id) = agent_id {
+                v["agent_id"] = serde_json::Value::String(agent_id);
+            }
+            v
+        }
         AgentCommand::GetSessionStats => {
             serde_json::json!({"type": "get_session_stats", "id": id})
         }
@@ -420,5 +432,67 @@ mod tests {
     #[test]
     fn max_line_bytes_matches_documented_protocol_limit() {
         assert_eq!(MAX_LINE_BYTES, 1_048_576);
+    }
+
+    // ── #1060 lockstep: refs preserved through the API event model ──────────
+
+    #[test]
+    fn get_message_command_serializes_to_wire() {
+        let v = command_to_json(
+            AgentCommand::GetMessage {
+                message_id: "m1".into(),
+                agent_id: None,
+            },
+            "req1",
+        );
+        assert_eq!(v["type"], "get_message");
+        assert_eq!(v["messageId"], "m1");
+        assert_eq!(v["id"], "req1");
+        assert!(v.get("agent_id").is_none());
+
+        let child = command_to_json(
+            AgentCommand::GetMessage {
+                message_id: "m2".into(),
+                agent_id: Some("worker".into()),
+            },
+            "req2",
+        );
+        assert_eq!(child["agent_id"], "worker");
+    }
+
+    #[test]
+    fn agent_end_preserves_message_refs_round_trip() {
+        // The harness emits agent_end refs-based (empty messages) after #1060.
+        let wire = r#"{"type":"agent_end","messages":[],"messageRefs":["a","b"]}"#;
+        let ev: AgentEvent = serde_json::from_str(wire).expect("parse agent_end");
+        match &ev {
+            AgentEvent::AgentEnd { message_refs, .. } => {
+                assert_eq!(message_refs, &vec!["a".to_string(), "b".to_string()]);
+            }
+            other => panic!("expected AgentEnd, got {other:?}"),
+        }
+        // Re-serialized to a WS client, the refs must survive (not be dropped).
+        let out = serde_json::to_value(&ev).unwrap();
+        assert_eq!(out["messageRefs"], serde_json::json!(["a", "b"]));
+    }
+
+    #[test]
+    fn subagent_messages_appended_is_modeled_not_unknown() {
+        let wire = r#"{"type":"subagent_messages_appended","agent_id":"worker","messages":[],"messageRefs":["x"]}"#;
+        let ev: AgentEvent = serde_json::from_str(wire).expect("parse");
+        match &ev {
+            AgentEvent::SubagentMessagesAppended {
+                agent_id,
+                message_refs,
+                ..
+            } => {
+                assert_eq!(agent_id, "worker");
+                assert_eq!(message_refs, &vec!["x".to_string()]);
+            }
+            other => panic!("expected SubagentMessagesAppended, not Unknown; got {other:?}"),
+        }
+        let out = serde_json::to_value(&ev).unwrap();
+        assert_eq!(out["type"], "subagent_messages_appended");
+        assert_eq!(out["messageRefs"], serde_json::json!(["x"]));
     }
 }

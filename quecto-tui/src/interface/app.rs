@@ -68,25 +68,21 @@ pub struct App {
     /// published by [`crate::infrastructure::child_watch`] when the child is
     /// reaped. `None` when the TUI attached to an external socket.
     child_exit_watch: Option<crate::infrastructure::child_watch::ChildWatch>,
-    /// How many oversized-event drops have already been surfaced as a
-    /// notification, so each drop is reported exactly once (#1047).
+    /// Oversized-event drops already surfaced as a notification, so each is
+    /// reported exactly once (#1047).
     surfaced_oversized_drops: u64,
     current_model: Option<String>,
-    /// Connected agent's own id (from get_state sessionKey); distinguishes its
-    /// own workflow_state from descendants' forwarded events. None when unnamed.
+    /// Connected agent's own id (get_state sessionKey), vs descendants' (#997).
     connected_agent_id: Option<String>,
     /// The model selector component (created on demand, pushed onto overlay stack).
     model_selector: Option<ModelSelector>,
     model_registry: ModelRegistry,
     /// The effort selector overlay (#1067), opened by bare `/effort`.
     effort_selector: Option<EffortSelector>,
-    /// The session's active effort level (`None` = effective default),
-    /// tracked for the selector's current-marker and footer fallback (#1067).
+    /// Active effort level (`None` = default), for selector marker + footer (#1067).
     current_effort: Option<String>,
-    /// The effort vocabulary valid for the active model's provider, as
-    /// reported by the agent in `get_state` (`effortLevels`). Empty until the
-    /// first `get_state` lands; the agent is the single source of truth —
-    /// the TUI never re-derives the provider→levels rule locally (#1067).
+    /// Effort vocabulary for the active provider, reported by the agent in
+    /// `get_state` (`effortLevels`) — never re-derived locally (#1067).
     effort_levels: Vec<String>,
     /// Session resume selector shown after `/resume` lists persisted sessions.
     resume_selector: Option<SelectList>,
@@ -94,14 +90,12 @@ pub struct App {
     rewind: RewindFlow,
     /// Sub-agent / multi-session UI state (#997).
     subagents: SubagentUi,
-    /// Diagnostic: when `QUECTO_TUI_RENDER_LOG` is set, every frame is appended
-    /// (ANSI-stripped) to this file for frame-by-frame replay.
+    /// Diagnostic: with `QUECTO_TUI_RENDER_LOG` set, frames are appended here.
     render_log_path: Option<String>,
     #[cfg(any(test, feature = "test-harness"))]
     pub(super) rendered_frames: usize,
-    /// Test-only switch: when set by the harness, [`App::render`] counts the
-    /// frame but skips writing to the real stdout so headless tests don't
-    /// garble the test runner's terminal.
+    /// Test-only: when set, [`App::render`] counts the frame but skips real
+    /// stdout so headless tests don't garble the runner's terminal.
     #[cfg(any(test, feature = "test-harness"))]
     pub(super) suppress_paint: bool,
     /// Active mouse text selection (#528).
@@ -116,18 +110,20 @@ pub struct App {
     git_repo: Option<PathBuf>,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
-    /// Whether we've already requested session stats as a fallback to learn
-    /// the real context window for the current session/model.
+    /// Whether session stats were already requested as a fallback to learn the
+    /// real context window for the current session/model.
     context_stats_requested: bool,
-    /// #1060: request-id → pending lookup for in-flight recovery fetches.
-    /// Responses are request-id gated, buffered, then applied in ref order.
+    /// #1060: request-id → pending lookup for in-flight recovery fetches
+    /// (request-id gated, buffered, applied in ref order).
     pending_message_recovery: std::collections::HashMap<String, PendingMessageRecovery>,
-    /// Recovery batches keyed by a client-local id. A batch retains the exact
-    /// chat range of the completed turn, so a late response cannot overwrite a
-    /// newer turn (#1075 regression).
+    /// Recovery batches keyed by a client-local id, each retaining the exact
+    /// chat range of its turn so a late response cannot overwrite a newer one.
     message_recovery_batches: std::collections::HashMap<String, MessageRecoveryBatch>,
     /// Tool boxes observed since the current master AgentStart (#1060 recovery).
     tools_this_turn: usize,
+    /// Tool starts not yet matched by an end; > 0 forces recovery on a dropped
+    /// tool-result event (#1060 review 3).
+    open_tool_calls: usize,
     active_turn_start: usize,
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
@@ -273,6 +269,8 @@ pub(crate) struct SessionView {
     active_turn_start: usize,
     /// Tool starts in THIS child turn (reset each turn); drives recovery (#1060 F2).
     tools_this_turn: usize,
+    /// Child tool starts not yet ended; forces recovery on a dropped end (review 3).
+    open_tool_calls: usize,
 }
 
 impl SessionView {
@@ -296,6 +294,7 @@ impl SessionView {
             observed_run_state: false,
             active_turn_start: 0,
             tools_this_turn: 0,
+            open_tool_calls: 0,
         }
     }
 }
@@ -370,6 +369,7 @@ impl App {
             pending_message_recovery: std::collections::HashMap::new(),
             message_recovery_batches: std::collections::HashMap::new(),
             tools_this_turn: 0,
+            open_tool_calls: 0,
             active_turn_start: 0,
             command_send_failure_tx,
             command_send_failure_rx,

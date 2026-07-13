@@ -247,6 +247,7 @@ impl App {
                     // New turn: reset the per-turn tool count that drives
                     // end-of-turn ref-cardinality recovery (#1060 review, F2).
                     session.tools_this_turn = 0;
+                    session.open_tool_calls = 0;
                 }
                 session.running = true;
                 session.observed_run_state = true;
@@ -328,10 +329,14 @@ impl App {
 
     /// Apply a single non-workflow child stream event to its chat.
     fn apply_subagent_chat_event(session: &mut SessionView, ev: &Event) {
-        // Count every tool start (incl. suppressed spawn) toward this turn's
-        // ref cardinality before borrowing `chat`, mirroring master (#1060, F2).
+        // Maintain the per-turn tool count (ref cardinality, F2) and the
+        // open-tool-call count (dropped tool-end recovery, review 3) before
+        // borrowing `chat`, mirroring the master path (#1060).
         if matches!(ev, Event::ToolExecutionStart { .. }) {
             session.tools_this_turn = session.tools_this_turn.saturating_add(1);
+            session.open_tool_calls = session.open_tool_calls.saturating_add(1);
+        } else if matches!(ev, Event::ToolExecutionEnd { .. }) {
+            session.open_tool_calls = session.open_tool_calls.saturating_sub(1);
         }
         let chat = &mut session.chat;
         match ev {
@@ -398,7 +403,12 @@ impl App {
         // Per-turn tool count, not session-lifetime `tool_entry_count()`, which
         // over-counts on later turns and forces false-positive recovery (F2).
         let tools = session.tools_this_turn;
-        if !self.needs_message_recovery_for(refs, &assistant_text, tools, expected_content_len) {
+        // A dropped child tool-end leaves a result unresolved; force recovery
+        // even when cardinality looks complete (#1060 review 3).
+        let force = session.open_tool_calls > 0;
+        if !force
+            && !self.needs_message_recovery_for(refs, &assistant_text, tools, expected_content_len)
+        {
             return;
         }
         // If any ref is already being recovered, the batch that owns it will

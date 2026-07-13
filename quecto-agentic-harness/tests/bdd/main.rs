@@ -759,10 +759,6 @@ pub struct QuectoWorld {
     // --- Subagent notify (#523) ---
     /// Formatted notification message for BDD assertions
     pub notify_message: Option<String>,
-    /// JSON messages array for summary extraction scenarios
-    pub notify_messages_json: Option<serde_json::Value>,
-    /// Extracted summary from agent_end messages
-    pub notify_extracted_summary: Option<String>,
     /// Notification channel sender for BDD
     pub notify_tx: Option<quecto::infrastructure::tools::subagent_registry::NotificationTx>,
     /// Notification channel receiver for BDD

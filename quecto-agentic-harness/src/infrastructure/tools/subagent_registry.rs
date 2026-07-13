@@ -455,9 +455,6 @@ pub fn new_active_awaits() -> ActiveAwaits {
 
 // ─── Subagent notifications (#523) ───────────────────────────────────────────
 
-/// Maximum summary length for notification messages (chars).
-const MAX_SUMMARY_LEN: usize = 200;
-
 /// A notification from a child agent to the parent dispatch loop (#523).
 ///
 /// Sent by the monitor task when a child reaches a terminal or notable state.
@@ -465,7 +462,7 @@ const MAX_SUMMARY_LEN: usize = 200;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentNotification {
     /// Child agent ended a turn and was observed idle; this is not a task-success verdict.
-    Completed { agent_id: String, summary: String },
+    Completed { agent_id: String },
     /// Workflow-bound child became idle before reaching a terminal workflow state.
     Stalled {
         agent_id: String,
@@ -549,46 +546,6 @@ pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 64;
 /// Create a new bounded notification channel.
 pub fn new_notification_channel() -> (NotificationTx, NotificationRx) {
     tokio::sync::mpsc::channel(NOTIFICATION_CHANNEL_CAPACITY)
-}
-
-/// Extract a summary string from the `messages` array of an `agent_end` event.
-///
-/// Looks for the last assistant message's content text and truncates to
-/// [`MAX_SUMMARY_LEN`] characters. Returns `"(no output)"` if no assistant
-/// text is found.
-pub fn extract_summary(messages: &serde_json::Value) -> String {
-    let default = "(no output)".to_string();
-    let Some(arr) = messages.as_array() else {
-        return default;
-    };
-    // Walk backwards to find the last assistant message with content.
-    for msg in arr.iter().rev() {
-        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
-        if role == "assistant" {
-            if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
-                if !content.is_empty() {
-                    return truncate_summary(content);
-                }
-            }
-        }
-    }
-    default
-}
-
-/// Truncate a string to [`MAX_SUMMARY_LEN`] characters, appending "..." if truncated.
-/// Uses char boundary-safe slicing to avoid panics on multi-byte UTF-8.
-fn truncate_summary(s: &str) -> String {
-    if s.chars().count() <= MAX_SUMMARY_LEN {
-        s.to_string()
-    } else {
-        let end = s
-            .char_indices()
-            .nth(MAX_SUMMARY_LEN)
-            .map_or(s.len(), |(i, _)| i);
-        let mut truncated = s[..end].to_string();
-        truncated.push_str("...");
-        truncated
-    }
 }
 
 /// Validate an agent_id string for format (shared between spawn and agent_cmd).

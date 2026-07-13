@@ -248,11 +248,8 @@ async fn test_notify_on_agent_end() {
     maybe_notify(Some(&tx), "worker", line);
     let notif = rx.try_recv().unwrap();
     match notif.notification {
-        SubagentNotification::Completed {
-            agent_id, summary, ..
-        } => {
+        SubagentNotification::Completed { agent_id } => {
             assert_eq!(agent_id, "worker");
-            assert_eq!(summary, "Done");
         }
         _ => panic!("expected Completed"),
     }
@@ -345,11 +342,8 @@ async fn test_maybe_notify_agent_end() {
     maybe_notify(Some(&tx), "worker", line);
     let notif = rx.try_recv().unwrap();
     match notif.notification {
-        SubagentNotification::Completed {
-            agent_id, summary, ..
-        } => {
+        SubagentNotification::Completed { agent_id } => {
             assert_eq!(agent_id, "worker");
-            assert!(summary.contains("done"));
         }
         _ => panic!("expected Completed"),
     }

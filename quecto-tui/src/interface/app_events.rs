@@ -62,6 +62,7 @@ impl App {
     fn handle_agent_start(&mut self) {
         self.agent_state.start();
         self.tools_this_turn = 0;
+        self.open_tool_calls = 0;
         self.active_turn_start = self.master_session.chat.entry_count();
         // Mirror the abort-aware run state onto the master session's `running`
         // flag so the unified working indicator is driven by one per-session
@@ -139,12 +140,19 @@ impl App {
         if refs.is_empty() {
             return;
         }
-        if !self.needs_message_recovery_for(
-            refs,
-            &self.latest_assistant_text(),
-            self.tools_this_turn,
-            expected_content_len,
-        ) {
+        // A tool call whose end-event never arrived (e.g. a dropped
+        // ToolExecutionEnd on the bounded progress channel) leaves its box
+        // unresolved even when ref cardinality + contentLength look complete;
+        // force recovery so the missing result is fetched (#1060 review 3).
+        let force = self.open_tool_calls > 0;
+        if !force
+            && !self.needs_message_recovery_for(
+                refs,
+                &self.latest_assistant_text(),
+                self.tools_this_turn,
+                expected_content_len,
+            )
+        {
             return;
         }
         // turn_end and agent_end may carry the same refs. The first event owns
@@ -338,6 +346,7 @@ impl App {
         // regardless of display suppression, or `needs_message_recovery_for`
         // undercounts on spawn turns and fires needless recovery (#1060 review).
         self.tools_this_turn = self.tools_this_turn.saturating_add(1);
+        self.open_tool_calls = self.open_tool_calls.saturating_add(1);
         if suppress_tool_box(&tool_name, &args) {
             self.master_session.chat.finalize_assistant();
         } else {
@@ -439,6 +448,7 @@ impl App {
         is_error: bool,
     ) {
         let result_text = crate::infrastructure::client::extract_result_text(&result);
+        self.open_tool_calls = self.open_tool_calls.saturating_sub(1);
         self.master_session
             .chat
             .complete_tool(&tool_call_id, &result_text, is_error, None);

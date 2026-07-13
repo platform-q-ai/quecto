@@ -271,7 +271,6 @@ fn test_subagent_notification_summary_is_single_line() {
     let notes = [
         SubagentNotification::Completed {
             agent_id: "worker".to_string(),
-            summary: "all tests pass".to_string(),
         }
         .to_message(),
         SubagentNotification::Errored {
@@ -311,7 +310,6 @@ fn test_forward_notification_broadcast_emits_when_not_awaited() {
         1,
         SubagentNotification::Completed {
             agent_id: "worker".to_string(),
-            summary: "done".to_string(),
         },
     );
     assert!(forward_notification_broadcast(notif, &tx, &Some(registry)));
@@ -341,7 +339,6 @@ fn test_forward_notification_broadcast_suppresses_when_awaited() {
         1,
         SubagentNotification::Completed {
             agent_id: "worker".to_string(),
-            summary: "done".to_string(),
         },
     );
     assert!(!forward_notification_broadcast(notif, &tx, &Some(registry)));
