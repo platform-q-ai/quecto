@@ -65,6 +65,10 @@ pub(crate) struct ConversationSnapshotData {
     ledger_order: std::collections::VecDeque<String>,
     /// Running byte total of `ledger` (content + per-entry overhead).
     ledger_bytes: usize,
+    /// Positive spill recall cache keyed by spill id. This keeps repeated
+    /// `get_message` lookups from re-scanning the spill store for the same
+    /// collapsed live ref.
+    recalled_spills: std::collections::HashMap<String, String>,
     /// Spill store used as a best-effort backstop when a live message only has
     /// a collapsed recall stub and its full ledger copy has already been
     /// evicted. This is captured in the shared snapshot so the busy reader path
@@ -165,6 +169,13 @@ impl ConversationSnapshotData {
         let Some(spill_id) = msg.spill_id.clone() else {
             return GetMessageResolution::Found(msg.clone());
         };
+        if let Some(content) = self.recalled_spills.get(&spill_id) {
+            let mut recalled = msg.clone();
+            recalled.content = content.clone();
+            recalled.is_collapsed = false;
+            recalled.spill_id = None;
+            return GetMessageResolution::Found(recalled);
+        }
         let Some(spill_store) = self.spill_store.clone() else {
             return GetMessageResolution::Found(msg.clone());
         };
@@ -176,6 +187,12 @@ impl ConversationSnapshotData {
         }
     }
 
+    /// Cache a successful spill recall so later `get_message` calls for the same
+    /// collapsed live ref do not repeat spill-store I/O.
+    pub fn cache_recalled_spill(&mut self, spill_id: String, content: String) {
+        self.recalled_spills.insert(spill_id, content);
+    }
+
     /// Clear both the live snapshot and the full-message lookup ledger. Explicit
     /// history lifecycle operations (for example `clear_history`) must make old
     /// refs unresolvable rather than retaining full content out-of-band.
@@ -184,6 +201,7 @@ impl ConversationSnapshotData {
         self.ledger.clear();
         self.ledger_order.clear();
         self.ledger_bytes = 0;
+        self.recalled_spills.clear();
     }
 
     /// Reset the snapshot to exactly `messages`: drop the whole prior ledger
@@ -218,10 +236,14 @@ pub(crate) enum GetMessageResolution {
 
 impl GetMessageResolution {
     /// Finish the best-effort lookup outside the snapshot read-lock. Spill
-    /// misses/errors gracefully fall back to the live collapsed stub.
-    pub async fn into_message(self) -> Option<Message> {
+    /// misses/errors gracefully fall back to the live collapsed stub. Returns a
+    /// cache entry when a spill recall succeeded.
+    pub async fn into_message(self) -> ResolvedGetMessage {
         match self {
-            Self::Found(message) => Some(message),
+            Self::Found(message) => ResolvedGetMessage {
+                message: Some(message),
+                recalled_spill: None,
+            },
             Self::Recall {
                 mut stub,
                 spill_store,
@@ -229,16 +251,31 @@ impl GetMessageResolution {
                 spill_id,
             } => match spill_store.recall(&session_key, &spill_id).await {
                 Ok(Some(entry)) => {
-                    stub.content = entry.content;
+                    let content = entry.content;
+                    stub.content = content.clone();
                     stub.is_collapsed = false;
                     stub.spill_id = None;
-                    Some(stub)
+                    ResolvedGetMessage {
+                        message: Some(stub),
+                        recalled_spill: Some((spill_id, content)),
+                    }
                 }
-                Ok(None) | Err(_) => Some(stub),
+                Ok(None) | Err(_) => ResolvedGetMessage {
+                    message: Some(stub),
+                    recalled_spill: None,
+                },
             },
-            Self::NotFound => None,
+            Self::NotFound => ResolvedGetMessage {
+                message: None,
+                recalled_spill: None,
+            },
         }
     }
+}
+
+pub(crate) struct ResolvedGetMessage {
+    pub message: Option<Message>,
+    pub recalled_spill: Option<(String, String)>,
 }
 
 pub(crate) type ConversationSnapshot =

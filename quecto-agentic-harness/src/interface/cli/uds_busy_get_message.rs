@@ -38,9 +38,15 @@ pub(super) async fn service(
     // back to the live snapshot — a ref pruned/collapsed from the live
     // conversation still resolves to its full content (#1060 review 1a).
     let resolution = snapshot.read().await.resolve_for_get_message(&message_id);
-    let data = resolution
-        .into_message()
-        .await
+    let resolved = resolution.into_message().await;
+    if let Some((spill_id, content)) = &resolved.recalled_spill {
+        snapshot
+            .write()
+            .await
+            .cache_recalled_spill(spill_id.clone(), content.clone());
+    }
+    let data = resolved
+        .message
         .map(|msg| super::uds_session::message_to_json(&msg));
     let event = match data {
         Some(data) => AgentEvent::ok(request_id.as_deref(), "get_message", Some(data)),

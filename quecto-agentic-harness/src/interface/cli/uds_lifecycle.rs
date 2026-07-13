@@ -173,7 +173,7 @@ async fn single_client_loop(
     session_store: &dyn SessionStore,
 ) -> i32 {
     let SingleClientArgs {
-        agent,
+        mut agent,
         base_dir,
         mut messages,
         model,
@@ -202,16 +202,20 @@ async fn single_client_loop(
     let max_context_tokens = agent.max_context_tokens();
     let initial_effort = agent.effort().map(|l| l.as_str().to_string());
     let initial_stats = super::uds_session::compute_session_stats(&session_key, &messages);
+    let mut initial_conversation_snapshot =
+        super::uds_snapshots::ConversationSnapshotData::from_messages(messages.clone());
+    initial_conversation_snapshot
+        .set_spill_store(agent.spill_store().cloned(), session_key.clone());
 
     run_command_loop(
         reader,
         &mut DispatchCtx {
             wire_mode,
             base_dir,
-            agent: &mut { agent },
+            agent: &mut agent,
             messages: &mut messages,
             conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
-                super::uds_snapshots::ConversationSnapshotData::default(),
+                initial_conversation_snapshot,
             )),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 agent_session.state_snapshot(0, None, max_context_tokens, initial_effort),

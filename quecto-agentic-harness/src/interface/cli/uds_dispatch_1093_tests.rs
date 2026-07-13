@@ -16,6 +16,7 @@ use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
 #[derive(Debug, Default)]
 struct MemSpillStore {
     entries: Mutex<HashMap<String, SpillEntry>>,
+    recalls: Mutex<Vec<String>>,
     recall_error: bool,
 }
 
@@ -23,6 +24,7 @@ impl MemSpillStore {
     fn with_entry(entry: SpillEntry) -> Self {
         Self {
             entries: Mutex::new(HashMap::from([(entry.id.clone(), entry)])),
+            recalls: Mutex::new(Vec::new()),
             recall_error: false,
         }
     }
@@ -30,8 +32,13 @@ impl MemSpillStore {
     fn with_recall_error() -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
+            recalls: Mutex::new(Vec::new()),
             recall_error: true,
         }
+    }
+
+    fn recall_count(&self) -> usize {
+        self.recalls.lock().unwrap().len()
     }
 }
 
@@ -66,6 +73,7 @@ impl ContextSpillStore for MemSpillStore {
                 + '_,
         >,
     > {
+        self.recalls.lock().unwrap().push(id.to_string());
         if self.recall_error {
             return Box::pin(async {
                 Err(crate::domain::error::DomainError::Other("boom".into()))
@@ -223,9 +231,8 @@ async fn next_response(rx: &mut tokio::sync::broadcast::Receiver<String>) -> ser
 async fn get_message_idle_recalls_full_content_for_collapsed_live_message() {
     let spill_id = "turn1:msg:assistant";
     let full = "full assistant body from spill";
-    let mut fx = Fixture::new(Some(Arc::new(MemSpillStore::with_entry(spill_entry(
-        spill_id, full,
-    )))));
+    let store = Arc::new(MemSpillStore::with_entry(spill_entry(spill_id, full)));
+    let mut fx = Fixture::new(Some(store.clone()));
     let collapsed = collapsed_message(spill_id);
     let message_id = collapsed.id().to_string();
     fx.messages.push(collapsed);
@@ -252,6 +259,11 @@ async fn get_message_idle_recalls_full_content_for_collapsed_live_message() {
             .contains("recall("),
         "full recall content should replace the collapsed recall stub: {response}"
     );
+    assert_eq!(
+        store.recall_count(),
+        1,
+        "spill store should be consulted once"
+    );
 }
 
 #[tokio::test]
@@ -265,14 +277,14 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
             collapsed,
         ]);
     let spill_store = Arc::new(MemSpillStore::with_entry(spill_entry(spill_id, full)));
-    snapshot_data.set_spill_store(Some(spill_store), "cli:test".into());
+    snapshot_data.set_spill_store(Some(spill_store.clone()), "cli:test".into());
     let snapshot = Arc::new(tokio::sync::RwLock::new(snapshot_data));
     let registry = new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     crate::interface::cli::uds_ext_protocol::register_client_writer(&registry, 7, tx);
 
     crate::interface::cli::uds_busy_get_message::service(
-        (Some("busy-collapsed".into()), message_id),
+        (Some("busy-collapsed".into()), message_id.clone()),
         &snapshot,
         &registry,
         7,
@@ -293,10 +305,34 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
             .contains("recall("),
         "full recall content should replace the collapsed recall stub: {response}"
     );
+    assert_eq!(
+        spill_store.recall_count(),
+        1,
+        "first lookup should consult spill store"
+    );
+
+    crate::interface::cli::uds_busy_get_message::service(
+        (Some("busy-collapsed-cached".into()), message_id),
+        &snapshot,
+        &registry,
+        7,
+    )
+    .await;
+    let line = rx
+        .recv()
+        .await
+        .expect("cached busy resolver emits a response");
+    let response: serde_json::Value = serde_json::from_str(&line).expect("response is json");
+    assert_eq!(response["data"]["content"], full);
+    assert_eq!(
+        spill_store.recall_count(),
+        1,
+        "cached lookup should not rescan spill store"
+    );
 }
 
-async fn assert_idle_stub_fallback(spill_id: &str, store: MemSpillStore) {
-    let mut fx = Fixture::new(Some(Arc::new(store)));
+async fn assert_idle_stub_fallback(spill_id: &str, store: Arc<MemSpillStore>) {
+    let mut fx = Fixture::new(Some(store.clone()));
     let collapsed = collapsed_message(spill_id);
     let stub = collapsed.content.clone();
     let message_id = collapsed.id().to_string();
@@ -323,14 +359,23 @@ async fn assert_idle_stub_fallback(spill_id: &str, store: MemSpillStore) {
             .unwrap()
             .contains("recall(")
     );
+    assert_eq!(
+        store.recall_count(),
+        1,
+        "fallback should happen after one recall attempt"
+    );
 }
 
 #[tokio::test]
 async fn get_message_idle_keeps_collapsed_stub_when_spill_entry_is_missing() {
-    assert_idle_stub_fallback("missing-spill-entry", MemSpillStore::default()).await;
+    assert_idle_stub_fallback("missing-spill-entry", Arc::new(MemSpillStore::default())).await;
 }
 
 #[tokio::test]
 async fn get_message_idle_keeps_collapsed_stub_when_spill_recall_errors() {
-    assert_idle_stub_fallback("erroring-spill-entry", MemSpillStore::with_recall_error()).await;
+    assert_idle_stub_fallback(
+        "erroring-spill-entry",
+        Arc::new(MemSpillStore::with_recall_error()),
+    )
+    .await;
 }

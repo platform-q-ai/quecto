@@ -303,9 +303,15 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
             .read()
             .await
             .resolve_for_get_message(message_id);
-        let resolved = resolution
-            .into_message()
-            .await
+        let resolved = resolution.into_message().await;
+        if let Some((spill_id, content)) = &resolved.recalled_spill {
+            ctx.conversation_snapshot
+                .write()
+                .await
+                .cache_recalled_spill(spill_id.clone(), content.clone());
+        }
+        let resolved = resolved
+            .message
             .map(|msg| super::uds_session::message_to_json(&msg));
         let ev = match resolved.or_else(|| query_response_data(cmd, ctx)) {
             Some(data) => AgentEvent::ok(id, tn, Some(data)),
