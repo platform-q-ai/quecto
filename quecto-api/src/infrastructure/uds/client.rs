@@ -20,7 +20,7 @@ use crate::domain::error::ApiError;
 use crate::domain::event::AgentEvent;
 use uuid::Uuid;
 
-/// Maximum line size (1 MiB, matching quecto's protocol limit).
+/// Maximum line size (8 MiB, matching quecto's protocol limit).
 const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
 /// Broadcast channel capacity — how many events can be buffered for slow subscribers.
@@ -431,7 +431,8 @@ mod tests {
 
     #[test]
     fn max_line_bytes_matches_documented_protocol_limit() {
-        assert_eq!(MAX_LINE_BYTES, 1_048_576);
+        // 8 MiB interim cap (#1094); derives from the shared line-io constant.
+        assert_eq!(MAX_LINE_BYTES, 8 * 1_048_576);
     }
 
     // ── #1060 lockstep: refs preserved through the API event model ──────────

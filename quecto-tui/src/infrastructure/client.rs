@@ -16,7 +16,7 @@ use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
 /// Maximum line size from the agent — derived from the shared protocol cap
-/// (`quecto_line_io::PROTOCOL_LINE_CAP_BYTES`, 1 MiB) so the harness emitter
+/// (`quecto_line_io::PROTOCOL_LINE_CAP_BYTES`, 8 MiB) so the harness emitter
 /// and this reader can never disagree (#1047 review).
 ///
 /// Public so out-of-crate tests (the harness BDD suite) can build boundary
@@ -544,7 +544,7 @@ impl Client {
     }
 
     /// Test-only: simulate the reader recording `n` oversized-line drops, so
-    /// UI-surfacing tests don't need to stream a >1 MiB frame.
+    /// UI-surfacing tests don't need to stream a >8 MiB frame.
     #[cfg(any(test, feature = "test-harness"))]
     pub fn record_dropped_oversized_for_tests(&self, n: u64) {
         self.dropped_oversized

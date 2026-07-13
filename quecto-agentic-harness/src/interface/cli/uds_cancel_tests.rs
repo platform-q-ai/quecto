@@ -261,10 +261,11 @@ fn fire_then_arm_resets_to_idle() {
     assert!(result2.is_some(), "should arm after Fired was consumed");
 }
 
-// --- #1047: outbound event lines must never exceed the 1 MiB protocol cap ---
+// --- #1047: outbound event lines must never exceed the protocol cap ---
 //
-// The TUI client drops any event line above 1 MiB (`MAX_FRAME_PAYLOAD_BYTES` in
-// quecto-tui). Near a full context window a turn's messages can exceed that,
+// The TUI client drops any event line above the protocol frame cap
+// (`MAX_FRAME_PAYLOAD_BYTES` in quecto-tui). Near a full context window a
+// turn's messages can exceed that,
 // so `EventSink::emit` must tail/cap the payload instead of emitting an
 // un-receivable line — otherwise the TUI silently loses `turn_end`/`agent_end`
 // and the session appears frozen/disconnected.
@@ -310,8 +311,8 @@ fn big_turn_end(content: String) -> AgentEvent {
 
 #[tokio::test]
 async fn agent_end_event_line_stays_within_protocol_cap_keeping_recent_messages() {
-    // ~2 MiB of run messages — well beyond the cap.
-    let big = "x".repeat(256 * 1024);
+    // Run messages totalling well beyond the cap so tailing must kick in.
+    let big = "x".repeat(EVENT_LINE_CAP_BYTES / 4);
     let messages: Vec<serde_json::Value> = (0..8)
         .map(|i| serde_json::json!({"role": "assistant", "content": format!("{i}:{big}")}))
         .collect();
@@ -346,7 +347,10 @@ async fn agent_end_event_line_stays_within_protocol_cap_keeping_recent_messages(
 
 #[tokio::test]
 async fn turn_end_event_line_stays_within_protocol_cap_keeping_content_tail() {
-    let original = format!("{}FINAL-ANSWER-TAIL", "y".repeat(2 * 1024 * 1024));
+    let original = format!(
+        "{}FINAL-ANSWER-TAIL",
+        "y".repeat(EVENT_LINE_CAP_BYTES + 1024 * 1024)
+    );
     let line = emit_line(&big_turn_end(original.clone())).await;
 
     assert!(

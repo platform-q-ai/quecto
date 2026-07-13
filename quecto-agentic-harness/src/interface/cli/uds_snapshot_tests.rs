@@ -146,25 +146,28 @@ fn build_get_messages_line_marks_snapshot() {
 /// tailed so the call yields a useful (trimmed) answer instead of erroring (#842).
 #[test]
 fn build_get_messages_line_trims_oversized_history() {
-    // Each message ~10 KiB; 200 of them (~2 MiB) exceeds the 1 MiB line cap.
-    let big = "x".repeat(10 * 1024);
-    let messages: Vec<Message> = (0..200)
+    // Size the history relative to the CURRENT protocol cap so this pins trimming
+    // regardless of the cap value: ~64 KiB messages, enough to exceed the cap.
+    let cap = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
+    let big = "x".repeat(64 * 1024);
+    let count = cap / (64 * 1024) + 20;
+    let messages: Vec<Message> = (0..count)
         .map(|i| Message::assistant(format!("{i}-{big}"), vec![]))
         .collect();
     let line = build_get_messages_line(&messages);
     assert!(
-        line.len() <= 1024 * 1024,
-        "line must fit under the 1 MiB cap, got {} bytes",
+        line.len() <= cap,
+        "line must fit under the cap ({cap}), got {} bytes",
         line.len()
     );
     let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(v["data"]["trimmed"], true, "trimmed marker present");
     let msgs = v["data"]["messages"].as_array().unwrap();
     assert!(!msgs.is_empty(), "keeps the most recent messages");
-    // The newest message (index 199) must be retained (tail, not head).
+    // The newest message must be retained (tail, not head).
     let kept_last = msgs.last().unwrap()["content"].as_str().unwrap();
     assert!(
-        kept_last.starts_with("199-"),
+        kept_last.starts_with(&format!("{}-", count - 1)),
         "newest message kept: {kept_last}"
     );
 }
@@ -174,12 +177,13 @@ fn build_get_messages_line_trims_oversized_history() {
 /// snapshot rather than erroring or panicking (#842).
 #[test]
 fn build_get_messages_line_drops_single_oversized_message() {
-    // One ~2 MiB message exceeds the 1 MiB line cap on its own.
-    let huge = "x".repeat(2 * 1024 * 1024);
+    // One message larger than the whole cap on its own.
+    let cap = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
+    let huge = "x".repeat(cap + 1024 * 1024);
     let line = build_get_messages_line(&[Message::assistant(huge, vec![])]);
     assert!(
-        line.len() <= 1024 * 1024,
-        "line must fit under the 1 MiB cap, got {} bytes",
+        line.len() <= cap,
+        "line must fit under the cap ({cap}), got {} bytes",
         line.len()
     );
     let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();

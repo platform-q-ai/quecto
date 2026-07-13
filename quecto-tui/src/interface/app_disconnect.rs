@@ -106,9 +106,9 @@ impl App {
         let new = dropped - self.surfaced_oversized_drops;
         self.surfaced_oversized_drops = dropped;
         let message = if new == 1 {
-            "Dropped an oversized agent event (>1 MiB) — some output may be missing".to_string()
+            "Dropped an oversized agent event — some output may be missing".to_string()
         } else {
-            format!("Dropped {new} oversized agent events (>1 MiB) — some output may be missing")
+            format!("Dropped {new} oversized agent events — some output may be missing")
         };
         self.notify(&message, NotifyLevel::Warning);
         true

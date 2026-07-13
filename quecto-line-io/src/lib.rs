@@ -22,7 +22,7 @@
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 
 /// Single source of truth for quecto's UDS protocol payload cap
-/// (1 MiB, INCLUDING the trailing `\n`).
+/// (8 MiB, INCLUDING the trailing `\n`).
 ///
 /// Every reader bound and emitter cap in the workspace derives from this
 /// constant (`quecto-tui`'s `MAX_LINE_BYTES`, the harness's
@@ -30,7 +30,14 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 /// client bound), so an emitter can never legally produce a line a reader
 /// drops unread (#1047). Hand-pinning the value in a dependent crate instead
 /// of referencing this constant reintroduces that failure mode.
-pub const PROTOCOL_LINE_CAP_BYTES: usize = 1_048_576;
+///
+/// Raised 1 MiB → 8 MiB as an INTERIM so `get_message` can deliver single
+/// messages that exceed the old cap (a >cap message is otherwise unrecoverable
+/// because a single message's content is not shrinkable/pageable today). The
+/// complete fix is chunked/paged `get_message` transfer — see #1094 — after
+/// which this can drop back. The bound stays finite (readers still reject
+/// larger frames before buffering, preserving ADR-0008's anti-OOM guarantee).
+pub const PROTOCOL_LINE_CAP_BYTES: usize = 8 * 1_048_576;
 
 /// A single `\n`-terminated (or EOF-terminated final) line, capped to at most
 /// `max_bytes` of content.
@@ -108,7 +115,7 @@ where
 {
     // Reserve a modest amount up front to avoid repeated small reallocs on the
     // common short-line path, but never eagerly allocate the full `max_bytes`
-    // (which can be 1 MiB) for what is usually a tiny line.
+    // (which can be several MiB) for what is usually a tiny line.
     let mut buf: Vec<u8> = Vec::with_capacity(max_bytes.min(INITIAL_CAPACITY));
     // `read_bounded_line`'s historical contract excludes the trailing newline
     // from `max_bytes`, while `read_bounded_line_into` caps the raw framed

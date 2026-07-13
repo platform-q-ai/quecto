@@ -262,9 +262,14 @@ fn get_messages_snapshot_line_matches_agent_event_envelope() {
 fn trimmed_get_messages_snapshot_line_matches_agent_event_envelope() {
     use crate::interface::cli::protocol::AgentEvent;
     use crate::interface::cli::uds_session::message_to_json;
-    use crate::interface::cli::uds_snapshots::build_get_messages_line;
+    use crate::interface::cli::uds_snapshots::{
+        SNAPSHOT_MESSAGES_BUDGET_BYTES, build_get_messages_line,
+    };
 
-    let messages = vec![Message::user("x".repeat(2 * 1024 * 1024))];
+    // One message larger than the snapshot budget so it is dropped (trimmed).
+    let messages = vec![Message::user(
+        "x".repeat(SNAPSHOT_MESSAGES_BUDGET_BYTES + 1024 * 1024),
+    )];
 
     let line = build_get_messages_line(&messages);
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
@@ -285,7 +290,7 @@ fn trimmed_get_messages_snapshot_line_matches_agent_event_envelope() {
     assert_eq!(got["data"]["snapshot"], true);
     assert_eq!(got["data"]["messages"].as_array().unwrap().len(), 0);
     assert_eq!(got["data"]["trimmed"], true);
-    assert!(line.len() <= 1024 * 1024);
+    assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
 
     let would_not_trim = AgentEvent::ok(
         None,
@@ -314,7 +319,7 @@ fn under_budget_get_messages_snapshot_stays_untrimmed() {
     let line = build_get_messages_line(&messages);
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
 
-    assert!(line.len() <= 1024 * 1024);
+    assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
     assert_ne!(
         got["data"]["trimmed"], true,
         "a half-budget message must not be trimmed"

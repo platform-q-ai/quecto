@@ -132,8 +132,10 @@ mod tests {
     /// emitted oversized for the client to drop unread.
     #[test]
     fn response_messages_are_tailed_under_the_cap() {
-        let messages: Vec<_> = (0..40)
-            .map(|i| msg(&format!("{i}-{}", "x".repeat(64 * 1024))))
+        let chunk = 64 * 1024;
+        let count = EVENT_LINE_JSON_BUDGET / chunk + 8;
+        let messages: Vec<_> = (0..count)
+            .map(|i| msg(&format!("{i}-{}", "x".repeat(chunk))))
             .collect();
         let line = serde_json::to_string(&serde_json::json!({
             "type": "response",
@@ -149,7 +151,10 @@ mod tests {
         let kept = v["data"]["messages"].as_array().unwrap();
         assert!(!kept.is_empty(), "the most recent messages must survive");
         let last = kept.last().unwrap()["content"].as_str().unwrap();
-        assert!(last.starts_with("39-"), "the newest message must be kept");
+        assert!(
+            last.starts_with(&format!("{}-", count - 1)),
+            "the newest message must be kept"
+        );
     }
 
     /// #1051 review: capping a many-message payload must size the dropped
@@ -157,8 +162,10 @@ mod tests {
     /// lands under budget instead of one full re-serialization per message.
     #[test]
     fn oversized_messages_array_is_bulk_dropped_in_one_shrink_call() {
-        let messages: Vec<_> = (0..2000)
-            .map(|i| msg(&format!("{i}-{}", "y".repeat(1024))))
+        let chunk = 1024;
+        let count = EVENT_LINE_JSON_BUDGET / chunk + 100;
+        let messages: Vec<_> = (0..count)
+            .map(|i| msg(&format!("{i}-{}", "y".repeat(chunk))))
             .collect();
         let mut v = serde_json::json!({ "type": "agent_end", "messages": messages });
         let len = serde_json::to_string(&v).unwrap().len();
@@ -176,7 +183,7 @@ mod tests {
             kept.last().unwrap()["content"]
                 .as_str()
                 .unwrap()
-                .starts_with("1999-"),
+                .starts_with(&format!("{}-", count - 1)),
             "the newest messages must be kept"
         );
     }

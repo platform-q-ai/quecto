@@ -222,7 +222,7 @@ pub(super) async fn refresh_extension_snapshot(ctx: &DispatchCtx<'_>) {
 }
 
 /// Byte budget for a connect-time `get_messages` snapshot line. Kept just under
-/// the parent's per-line read cap (`SUBAGENT_RESPONSE_MAX_FRAME_PAYLOAD_BYTES` = 1 MiB in
+/// the parent's per-line read cap (`SUBAGENT_RESPONSE_MAX_FRAME_PAYLOAD_BYTES` = 8 MiB in
 /// `subagent_registry`) with headroom for the response envelope, so an oversized
 /// history is tailed to fit rather than making the parent's whole call error
 /// ("line exceeded size limit") on a busy child (#842).

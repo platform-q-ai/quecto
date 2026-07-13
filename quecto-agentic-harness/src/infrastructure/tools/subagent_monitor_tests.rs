@@ -494,7 +494,7 @@ fn handle_monitor_line_drops_oversized_line() {
         .insert("child".to_string(), test_entry());
     let big = format!(
         r#"{{"type":"workflow_state","x":"{}"}}"#,
-        "z".repeat(2_000_000)
+        "z".repeat(quecto_line_io::PROTOCOL_LINE_CAP_BYTES + 1024 * 1024)
     );
     super::handle_monitor_line(&big, "child", &registry, None, None, None);
     assert!(
