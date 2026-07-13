@@ -8,18 +8,30 @@ use super::uds_session::{MessageView, compute_session_stats_with_usage};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 
-/// Memory budget (content bytes) for the id-addressable ledger. Quecto sessions
-/// run for weeks, so the ledger must NOT grow without bound — full copies are
-/// retained only up to this budget, evicting the OLDEST first. A ref whose full
-/// copy has been evicted resolves best-effort (get_message returns "not found",
-/// or a collapsed stub if the message is still live); end-of-turn refs point at
-/// recent messages that clients resolve promptly, so eviction is invisible in
-/// practice (#1060 review r4, finding 2 — unbounded ledger).
+/// Memory budgets for the id-addressable ledger. Quecto sessions run for weeks,
+/// so the ledger must NOT grow without bound. Eviction (oldest-first) triggers
+/// on WHICHEVER cap is hit: a content-byte budget for large-payload messages,
+/// AND an entry-count cap so a flood of tiny/empty/tool-metadata messages — each
+/// of which adds little content but a real per-entry cost (two id-string copies
+/// for the map key + order deque, plus the cloned Message/ToolCall structs) —
+/// cannot accumulate unbounded. A ref whose full copy has been evicted resolves
+/// best-effort (get_message returns "not found", or a collapsed stub if the
+/// message is still live); end-of-turn refs point at recent messages that
+/// clients resolve promptly, so eviction is invisible in practice (#1060 review
+/// r4, finding 2 — unbounded ledger).
 const LEDGER_MAX_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const LEDGER_MAX_ENTRIES: usize = 8192;
 
-/// Approximate in-memory content size of a message, for ledger byte-budgeting.
+/// Fixed per-entry overhead folded into the byte budget so a zero/tiny-content
+/// message still consumes budget: it covers the id `String` stored twice (map
+/// key + order deque, ~2×UUID) plus the owned Message/ToolCall struct footprint.
+const LEDGER_ENTRY_OVERHEAD: usize = 256;
+
+/// Approximate owned in-memory size of a ledger entry, for byte-budgeting —
+/// content + tool payloads + the fixed per-entry overhead above.
 fn message_bytes(m: &Message) -> usize {
-    m.content.len()
+    LEDGER_ENTRY_OVERHEAD
+        + m.content.len()
         + m.tool_calls
             .iter()
             .map(|tc| tc.arguments.len() + tc.name.len() + tc.id.len())
@@ -36,17 +48,19 @@ fn message_bytes(m: &Message) -> usize {
 /// conversation, however, can drop or collapse-in-place those messages to fit
 /// the LLM budget, so a bare `get_message` against it can return "not found" or
 /// a stub for a ref that was just emitted. The ledger keeps full copies so a ref
-/// stays resolvable across pruning — but capped at [`LEDGER_MAX_BYTES`],
-/// oldest-first, so it cannot grow unbounded over a weeks-long session.
+/// stays resolvable across pruning — but capped by [`LEDGER_MAX_BYTES`] AND
+/// [`LEDGER_MAX_ENTRIES`], oldest-first, so it cannot grow unbounded over a
+/// weeks-long session.
 #[derive(Default)]
 pub(crate) struct ConversationSnapshotData {
     /// Live conversation as last published (may be pruned/collapsed).
     pub messages: Vec<Message>,
-    /// id → full message, byte-bounded, authoritative for `get_message`.
+    /// id → full message, bounded by byte + entry caps, authoritative for
+    /// `get_message`.
     ledger: std::collections::HashMap<String, Message>,
-    /// Insertion order (front = oldest) driving byte-budget eviction.
+    /// Insertion order (front = oldest) driving eviction.
     ledger_order: std::collections::VecDeque<String>,
-    /// Running content-byte total of `ledger`.
+    /// Running byte total of `ledger` (content + per-entry overhead).
     ledger_bytes: usize,
 }
 
@@ -70,7 +84,10 @@ impl ConversationSnapshotData {
             self.ledger_order.push_back(id);
         }
         self.ledger_bytes += new_sz;
-        while self.ledger_bytes > LEDGER_MAX_BYTES {
+        // Evict oldest-first while EITHER cap is exceeded — the byte budget
+        // bounds large-payload content, the entry cap bounds a flood of
+        // tiny/empty messages whose per-entry cost the byte total under-counts.
+        while self.ledger_bytes > LEDGER_MAX_BYTES || self.ledger.len() > LEDGER_MAX_ENTRIES {
             let Some(old_id) = self.ledger_order.pop_front() else {
                 break;
             };

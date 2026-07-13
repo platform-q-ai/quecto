@@ -77,6 +77,31 @@ fn ledger_is_byte_bounded_and_evicts_oldest() {
     );
 }
 
+/// #1060 review r4 finding 2 (follow-up): the ledger must ALSO cap entry count,
+/// so a flood of tiny/empty/tool-metadata messages — which add little content
+/// but real per-entry cost (id copies + struct clones) — cannot grow it without
+/// bound even though the byte budget is far from full.
+#[test]
+fn ledger_is_entry_bounded_for_tiny_messages() {
+    use crate::interface::cli::uds_snapshots::LEDGER_MAX_ENTRIES;
+    let mut snap = ConversationSnapshotData::default();
+    // Zero-content messages, more than the entry cap.
+    let msgs: Vec<Message> = (0..LEDGER_MAX_ENTRIES + 100)
+        .map(|_| Message::assistant("", vec![]))
+        .collect();
+    let ids: Vec<String> = msgs.iter().map(|m| m.id().to_string()).collect();
+    snap.record_full(&msgs);
+
+    assert!(
+        snap.resolve(&ids[0]).is_none(),
+        "the oldest tiny messages must be evicted by the entry-count cap"
+    );
+    assert!(
+        snap.resolve(ids.last().unwrap()).is_some(),
+        "the most recent message must still resolve"
+    );
+}
+
 /// The connect-time line is a `get_messages`-shaped success Response carrying the
 /// prior conversation, byte-for-byte consumable by the TUI's existing
 /// `route_subagent_event` get_messages handler.
