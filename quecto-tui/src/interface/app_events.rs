@@ -18,8 +18,11 @@ impl App {
                 result,
                 is_error,
             } => self.handle_tool_end(tool_call_id, tool_name, result, is_error),
-            Event::AgentEnd if self.agent_state.end() => self.handle_agent_end(),
-            Event::AgentEnd => {}
+            Event::AgentEnd { message_refs, .. } if self.agent_state.end() => {
+                self.maybe_recover_from_refs(&message_refs);
+                self.handle_agent_end();
+            }
+            Event::AgentEnd { .. } => {}
             Event::Response {
                 id,
                 command,
@@ -31,9 +34,7 @@ impl App {
             Event::SubagentNotification {
                 agent_id, message, ..
             } => self.handle_subagent_notification(agent_id, message),
-            // Parent-forwarded per-turn appends (#797) are superseded by the
-            // direct connect-on-select stream (#800); the active sub-agent's own
-            // connection now carries its live content. Ignored here.
+            // Superseded by connect-on-select direct child streaming (#797/#800).
             Event::SubagentMessagesAppended { .. } => {}
             Event::WorkflowState {
                 agent_id,
@@ -58,6 +59,9 @@ impl App {
 
     fn handle_agent_start(&mut self) {
         self.agent_state.start();
+        self.tools_this_turn = 0;
+        self.open_tool_calls = 0;
+        self.active_turn_start = self.master_session.chat.entry_count();
         // Mirror the abort-aware run state onto the master session's `running`
         // flag so the unified working indicator is driven by one per-session
         // flag for master and sub-agents alike (#828).
@@ -82,6 +86,11 @@ impl App {
 
     fn handle_turn_end(&mut self, message: serde_json::Value) {
         self.master_session.chat.finalize_assistant();
+        // #1060: messageRefs identify the turn; fetch-on-miss only when the
+        // active-turn stream did not already deliver full content.
+        let refs = message_refs_from_value(&message);
+        let content_len = message.get("contentLength").and_then(|v| v.as_u64());
+        self.maybe_recover_from_refs_with_len(&refs, content_len);
         // `usage` is absent on streaming OpenAI-compatible providers (e.g.
         // Fireworks) because their SSE stream does not carry token counts.
         // Don't gate context-gauge updates on it — `contextTokens` is emitted
@@ -112,6 +121,204 @@ impl App {
         }
     }
 
+    /// #1060 recovery: common streamed path = zero fetches; miss = get_message
+    /// per missing ref with request-id gating. Never blindly append-all (#1075).
+    ///
+    /// Both `turn_end` and `agent_end` may carry the same refs; skip message ids
+    /// that already have an in-flight recovery request so we never double-fetch.
+    fn maybe_recover_from_refs(&mut self, refs: &[String]) {
+        self.maybe_recover_from_refs_with_len(refs, None);
+    }
+
+    fn maybe_recover_from_refs_with_len(
+        &mut self,
+        refs: &[String],
+        expected_content_len: Option<u64>,
+    ) {
+        if refs.is_empty() {
+            return;
+        }
+        // A tool call whose end-event never arrived (e.g. a dropped
+        // ToolExecutionEnd on the bounded progress channel) leaves its box
+        // unresolved even when ref cardinality + contentLength look complete;
+        // force recovery so the missing result is fetched (#1060 review 3).
+        let force = self.open_tool_calls > 0;
+        if !force
+            && !self.needs_message_recovery_for(
+                refs,
+                &self.latest_assistant_text(),
+                self.tools_this_turn,
+                expected_content_len,
+            )
+        {
+            return;
+        }
+        // turn_end and agent_end may carry the same refs. The first event owns
+        // the batch; do not create an unfillable duplicate with zero requests.
+        if refs.iter().any(|message_id| {
+            self.pending_message_recovery
+                .values()
+                .any(|pending| pending.message_id == *message_id)
+        }) {
+            return;
+        }
+        let batch_id = format!("recovery-batch-{}", uuid_like());
+        let target_end = self.master_session.chat.entry_count();
+        self.message_recovery_batches.insert(
+            batch_id.clone(),
+            MessageRecoveryBatch {
+                refs: refs.to_vec(),
+                responses: std::collections::HashMap::new(),
+                target_start: self.active_turn_start.min(target_end),
+                target_end,
+                agent_id: None,
+            },
+        );
+        for message_id in refs {
+            if self
+                .pending_message_recovery
+                .values()
+                .any(|pending| pending.message_id == *message_id)
+            {
+                continue;
+            }
+            let req_id = format!("msg-recovery-{}", uuid_like());
+            self.pending_message_recovery.insert(
+                req_id.clone(),
+                PendingMessageRecovery {
+                    message_id: message_id.clone(),
+                    batch_id: batch_id.clone(),
+                },
+            );
+            self.send_command(Command::GetMessage {
+                id: Some(req_id),
+                message_id: message_id.clone(),
+                agent_id: None,
+            });
+        }
+    }
+
+    /// Conservative completeness check. A text-only turn can be proven complete
+    /// from contentLength. A multi-message/tool turn cannot: event delivery has
+    /// no stable IDs, so fetch refs and reconcile the exact turn range. This
+    /// avoids treating "one of two tools observed" as complete.
+    pub(super) fn needs_message_recovery_for(
+        &self,
+        refs: &[String],
+        assistant_text: &str,
+        tools_this_turn: usize,
+        expected_content_len: Option<u64>,
+    ) -> bool {
+        if refs.is_empty() {
+            return false;
+        }
+        let trimmed = assistant_text.trim();
+        if trimmed.is_empty() || trimmed == "…" || trimmed == "..." {
+            return true;
+        }
+        if let Some(expected) = expected_content_len
+            && (assistant_text.len() as u64) < expected
+        {
+            return true;
+        }
+        // A fully observed tool call contributes one assistant tool-call
+        // message and one tool-result message; the final assistant contributes
+        // one more. Any other cardinality proves at least one role was missed.
+        let expected_refs = tools_this_turn.saturating_mul(2).saturating_add(1);
+        refs.len() != expected_refs
+    }
+
+    fn latest_assistant_text(&self) -> String {
+        self.master_session
+            .chat
+            .entries()
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                crate::interface::components::chat::ChatEntry::Assistant { text, .. } => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    /// Buffer a gated response and atomically replace the original turn once all
+    /// refs arrive. Unknown, stale, failed, or mismatched responses never mutate
+    /// chat state.
+    pub(super) fn handle_get_message_recovery(
+        &mut self,
+        id: Option<&str>,
+        success: bool,
+        data: Option<serde_json::Value>,
+    ) {
+        let Some(req_id) = id else { return };
+        let Some(pending) = self.pending_message_recovery.remove(req_id) else {
+            return;
+        };
+        if !success {
+            // A ref that cannot be fetched (unknown/cancelled id) can never
+            // complete this batch; abandon it so it does not linger unfillable
+            // and leak, and drop the already-fetched siblings with it (#1060
+            // review). The turn stays as-streamed.
+            self.abandon_recovery_batch(&pending.batch_id);
+            return;
+        }
+        let Some(data) = data else {
+            self.abandon_recovery_batch(&pending.batch_id);
+            return;
+        };
+        if data.get("id").and_then(|v| v.as_str()) != Some(pending.message_id.as_str()) {
+            self.abandon_recovery_batch(&pending.batch_id);
+            return;
+        }
+        let Some(batch) = self.message_recovery_batches.get_mut(&pending.batch_id) else {
+            return;
+        };
+        batch.responses.insert(pending.message_id, data);
+        if batch.responses.len() != batch.refs.len() {
+            return;
+        }
+        let batch = self
+            .message_recovery_batches
+            .remove(&pending.batch_id)
+            .unwrap();
+        let entries = recovered_chat_entries(&batch.refs, &batch.responses);
+        // Apply to the session the batch was created for. Child recovery is
+        // routed through the master (agent_id set), so a completed child batch
+        // is applied to that child's chat here — not only the master's (#1060
+        // review, F1). A child evicted mid-recovery drops silently.
+        match &batch.agent_id {
+            None => {
+                self.master_session.chat.replace_range(
+                    batch.target_start,
+                    batch.target_end,
+                    entries,
+                );
+            }
+            Some(child) => {
+                if let Some(session) = self.subagents.sessions.get_mut(child) {
+                    session
+                        .chat
+                        .replace_range(batch.target_start, batch.target_end, entries);
+                }
+            }
+        }
+    }
+
+    /// Drop a recovery batch and pending sibling requests when one ref cannot
+    /// be resolved, so partially filled batches do not linger (#1060 review).
+    pub(super) fn abandon_recovery_batch(&mut self, batch_id: &str) {
+        self.message_recovery_batches.remove(batch_id);
+        self.pending_message_recovery
+            .retain(|_, pending| pending.batch_id != batch_id);
+    }
+
+    pub(super) fn clear_message_recovery(&mut self) {
+        self.message_recovery_batches.clear();
+        self.pending_message_recovery.clear();
+    }
+
     fn handle_tool_start(
         &mut self,
         tool_call_id: String,
@@ -134,6 +341,13 @@ impl App {
                 .map(str::to_string);
         }
         let is_spawn = tool_name == "spawn";
+        // Every model-issued tool call — even one whose box is suppressed (spawn)
+        // — appends a tool-call + tool-result message pair to the conversation
+        // ledger and therefore contributes to end-of-turn `messageRefs`. Count it
+        // regardless of display suppression, or `needs_message_recovery_for`
+        // undercounts on spawn turns and fires needless recovery (#1060 review).
+        self.tools_this_turn = self.tools_this_turn.saturating_add(1);
+        self.open_tool_calls = self.open_tool_calls.saturating_add(1);
         if suppress_tool_box(&tool_name, &args) {
             self.master_session.chat.finalize_assistant();
         } else {
@@ -235,6 +449,7 @@ impl App {
         is_error: bool,
     ) {
         let result_text = crate::infrastructure::client::extract_result_text(&result);
+        self.open_tool_calls = self.open_tool_calls.saturating_sub(1);
         self.master_session
             .chat
             .complete_tool(&tool_call_id, &result_text, is_error, None);
@@ -357,14 +572,118 @@ fn spawn_args_are_read_only(args: &serde_json::Value) -> bool {
             })
 }
 
-/// Whether a tool's chat box should be hidden. Only `spawn` is suppressed —
-/// its effect is shown in the sub-agent panel / status bar instead. Every
-/// model-issued `agent_cmd` command renders a normal tool box (#871), including
-/// the read-only queries (#865) and the control/destructive commands
-/// (`prompt`/`steer`/`abort`/`kill`/…), so the transcript stays complete and it
-/// is clear why a sub-agent stopped. The TUI's OWN internal `get_state`/stats
-/// polling flows through `app_response.rs` (Response events), not this path, so
-/// it stays box-free regardless.
+pub(super) fn recovered_chat_entries(
+    refs: &[String],
+    responses: &std::collections::HashMap<String, serde_json::Value>,
+) -> Vec<crate::interface::components::chat::ChatEntry> {
+    use crate::interface::components::chat::ChatEntry;
+    let mut entries = Vec::new();
+    let mut tools = std::collections::HashMap::<String, usize>::new();
+    // Tool calls whose box is suppressed in the live transcript (spawn) must stay
+    // suppressed here too, or `replace_range` re-materializes a box the stream
+    // intentionally hid (#1060 review). Track their ids so the matching
+    // tool-result message is dropped as well.
+    let mut suppressed_calls = std::collections::HashSet::<String>::new();
+    for message_id in refs {
+        let Some(data) = responses.get(message_id) else {
+            continue;
+        };
+        let role = data.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        match role {
+            "assistant" => {
+                if let Some(calls) = data.get("toolCalls").and_then(|v| v.as_array()) {
+                    for call in calls {
+                        let id = call
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if id.is_empty() {
+                            continue;
+                        }
+                        let name = call
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("tool")
+                            .to_string();
+                        if suppress_tool_box(&name, &serde_json::Value::Null) {
+                            suppressed_calls.insert(id);
+                            continue;
+                        }
+                        let args = call
+                            .get("arguments")
+                            .map(|v| {
+                                v.as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| v.to_string())
+                            })
+                            .unwrap_or_else(|| "{}".into());
+                        tools.insert(id.clone(), entries.len());
+                        entries.push(ChatEntry::ToolExecution {
+                            tool_call_id: id,
+                            tool_name: name,
+                            parsed_args: serde_json::from_str(&args).ok(),
+                            args,
+                            result: None,
+                            is_error: false,
+                            duration_ms: None,
+                        });
+                    }
+                }
+                if !content.is_empty() {
+                    entries.push(ChatEntry::Assistant {
+                        text: content.to_string(),
+                        streaming: false,
+                    });
+                }
+            }
+            "tool" => {
+                let call_id = data
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if suppressed_calls.contains(&call_id) {
+                    continue;
+                }
+                let is_error = data
+                    .get("isError")
+                    .or_else(|| data.get("is_error"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if let Some(index) = tools.get(&call_id).copied() {
+                    if let Some(ChatEntry::ToolExecution {
+                        result,
+                        is_error: entry_error,
+                        ..
+                    }) = entries.get_mut(index)
+                    {
+                        *result = Some(content.to_string());
+                        *entry_error = is_error;
+                    }
+                } else if !call_id.is_empty() {
+                    entries.push(ChatEntry::ToolExecution {
+                        tool_call_id: call_id,
+                        tool_name: data
+                            .get("toolName")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("tool")
+                            .to_string(),
+                        args: String::new(),
+                        parsed_args: None,
+                        result: Some(content.to_string()),
+                        is_error,
+                        duration_ms: None,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    entries
+}
+
 pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> bool {
     // #871: every model-issued `agent_cmd` invocation renders as a normal tool
     // call, including the control/destructive commands (`prompt`/`steer`/
@@ -385,6 +704,47 @@ mod cursor_tests;
 #[cfg(test)]
 #[path = "app_events_readonly_tests.rs"]
 mod readonly_tests;
+
+fn message_refs_from_value(v: &serde_json::Value) -> Vec<String> {
+    let candidates = [v.get("messageRefs"), v.get("message_refs")];
+    for c in candidates.into_iter().flatten() {
+        if let Some(arr) = c.as_array() {
+            let refs: Vec<String> = arr
+                .iter()
+                .filter_map(|item| {
+                    if let Some(s) = item.as_str() {
+                        return Some(s.to_string());
+                    }
+                    item.get("id")
+                        .and_then(|id| id.as_str())
+                        .map(str::to_string)
+                })
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !refs.is_empty() {
+                return refs;
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// A process-unique token for request/batch ids. Combines a wall-clock stamp
+/// (readability in logs) with a monotonic counter so two calls in the same
+/// nanosecond — `SystemTime` is not guaranteed strictly increasing — cannot
+/// collide and clobber each other's pending-recovery entry (#1060 review).
+pub(super) fn uuid_like() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos:x}-{seq:x}")
+}
+
 #[cfg(test)]
 #[path = "app_events_tests.rs"]
 mod tests;

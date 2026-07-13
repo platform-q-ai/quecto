@@ -16,7 +16,7 @@ use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
 /// Maximum line size from the agent — derived from the shared protocol cap
-/// (`quecto_line_io::PROTOCOL_LINE_CAP_BYTES`, 1 MiB) so the harness emitter
+/// (`quecto_line_io::PROTOCOL_LINE_CAP_BYTES`, 8 MiB) so the harness emitter
 /// and this reader can never disagree (#1047 review).
 ///
 /// Public so out-of-crate tests (the harness BDD suite) can build boundary
@@ -66,6 +66,15 @@ pub enum Command {
         /// When set, fetch this spawned sub-agent's message tail instead of the
         /// connected agent's own history (#795).
         #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+    },
+    /// Fetch a single message by stable id for mid-turn recovery (#1060).
+    GetMessage {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "messageId")]
+        message_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         agent_id: Option<String>,
     },
     GetSessionStats {
@@ -133,7 +142,14 @@ pub enum Command {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     AgentStart,
-    AgentEnd,
+    /// Agent finished. Full message content is not re-carried (#1060); optional
+    /// `messageRefs` identify this run's messages for fetch-on-miss recovery.
+    AgentEnd {
+        #[serde(default)]
+        messages: Vec<serde_json::Value>,
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
+    },
     Token {
         token: String,
     },
@@ -196,8 +212,12 @@ pub enum Event {
     /// (assistant + tool results), re-stamped by the parent monitor with the
     /// child's id. Lets the inspector stream output turn-by-turn (#797).
     SubagentMessagesAppended {
+        #[serde(alias = "agentId")]
         agent_id: String,
+        #[serde(default)]
         messages: Vec<serde_json::Value>,
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
     },
     /// Workflow state changed — step checked/unchecked/reset (#563).
     WorkflowState {
@@ -296,6 +316,10 @@ pub enum ClientError {
     Io(std::io::Error),
     Json(serde_json::Error),
     Disconnected,
+    /// The ordered command channel is momentarily full — the writer task has
+    /// not drained fast enough. Transient (unlike [`Self::Disconnected`]); the
+    /// command was not enqueued. See [`CommandSender::try_send`].
+    Backpressure,
 }
 
 impl std::fmt::Display for ClientError {
@@ -304,6 +328,7 @@ impl std::fmt::Display for ClientError {
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Json(e) => write!(f, "JSON error: {e}"),
             Self::Disconnected => write!(f, "disconnected from agent"),
+            Self::Backpressure => write!(f, "command queue full"),
         }
     }
 }
@@ -339,6 +364,7 @@ impl Command {
             Self::GetState { .. } => "get_state",
             Self::GetMessages { .. } => "get_messages",
             Self::GetMessagesTail { .. } => "get_messages_tail",
+            Self::GetMessage { .. } => "get_message",
             Self::GetSessionStats { .. } => "get_session_stats",
             Self::ListModels { .. } => "list_models",
             Self::ListSessions { .. } => "list_sessions",
@@ -371,6 +397,30 @@ impl CommandSender {
             .send(serialize_command(cmd)?)
             .await
             .map_err(|_| ClientError::Disconnected)
+    }
+
+    /// Enqueue a command onto the ordered writer channel WITHOUT awaiting.
+    ///
+    /// A sequence of `try_send` calls from a single caller preserves its call
+    /// order on the wire, because the enqueue happens synchronously in order
+    /// and the writer task drains the channel FIFO. This is the ordering the
+    /// recovery/reset batches rely on (e.g. `new_session` before the
+    /// `get_state` that must observe the fresh session). Dispatching each
+    /// command from an independent `tokio::spawn` does NOT preserve order:
+    /// the detached tasks race to reach `send`, so a burst can arrive
+    /// reordered or, to an early observer, incomplete.
+    ///
+    /// Returns [`ClientError::Backpressure`] if the channel is momentarily
+    /// full (the command was not enqueued) or [`ClientError::Disconnected`]
+    /// if the writer has gone away.
+    pub fn try_send(&self, cmd: &Command) -> Result<(), ClientError> {
+        use mpsc::error::TrySendError;
+        self.tx
+            .try_send(serialize_command(cmd)?)
+            .map_err(|e| match e {
+                TrySendError::Full(_) => ClientError::Backpressure,
+                TrySendError::Closed(_) => ClientError::Disconnected,
+            })
     }
 }
 
@@ -418,7 +468,14 @@ impl Client {
         // in the negotiated framing. In framed mode an empty hello frame
         // announces the framing up front so the agent replies framed even
         // before the first command (#1059).
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(64);
+        //
+        // The bound gives comfortable headroom for a recovery/reset batch that
+        // enqueues synchronously (via `CommandSender::try_send`) before the
+        // writer is scheduled — e.g. a heavy multi-tool turn fetching one
+        // `get_message` per ref. Sized well above any realistic single-turn
+        // message count so ordered `try_send` never hits backpressure in
+        // practice.
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(1024);
         tokio::spawn(async move {
             if mode == WireMode::Framed
                 && write_message(&mut write_half, b"", mode, MAX_LINE_BYTES)
@@ -523,7 +580,7 @@ impl Client {
     }
 
     /// Test-only: simulate the reader recording `n` oversized-line drops, so
-    /// UI-surfacing tests don't need to stream a >1 MiB frame.
+    /// UI-surfacing tests don't need to stream a >8 MiB frame.
     #[cfg(any(test, feature = "test-harness"))]
     pub fn record_dropped_oversized_for_tests(&self, n: u64) {
         self.dropped_oversized
@@ -578,6 +635,10 @@ mod client_defence_tests;
 #[cfg(test)]
 #[path = "client_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "client_1060_tests.rs"]
+mod client_1060_tests;
 
 #[cfg(test)]
 #[path = "client_legacy_tests.rs"]

@@ -293,6 +293,24 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
         emit_event_to_broadcast_or_writer(ctx, &event).await;
         return Some(false);
     }
+    // #1060 review 1a: resolve get_message against the id-addressable ledger
+    // (full copies) before the live conversation, so a ref pruned/collapsed
+    // from `ctx.messages` still resolves to full content. The ledger wins over
+    // a possibly-collapsed live entry.
+    if let AgentCommand::GetMessage { message_id, .. } = cmd {
+        let resolved = ctx
+            .conversation_snapshot
+            .read()
+            .await
+            .resolve(message_id)
+            .map(super::uds_session::message_to_json);
+        let ev = match resolved.or_else(|| query_response_data(cmd, ctx)) {
+            Some(data) => AgentEvent::ok(id, tn, Some(data)),
+            None => AgentEvent::err(id, tn, format!("message not found: {message_id}")),
+        };
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return Some(false);
+    }
     if let Some(data) = query_response_data(cmd, ctx) {
         let ev = AgentEvent::ok(id, tn, Some(data));
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
@@ -484,6 +502,7 @@ async fn run_prompt_dispatch(
     run_agent_message(PromptRun {
         agent: ctx.agent,
         messages: ctx.messages,
+        conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
         session: ctx.session,
         sink: &mut sink,
         message: Message::user(message),
@@ -495,7 +514,14 @@ async fn run_prompt_dispatch(
 }
 async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
     emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentStart).await;
-    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentEnd { messages: vec![] }).await;
+    emit_event_to_broadcast_or_writer(
+        ctx,
+        &AgentEvent::AgentEnd {
+            messages: vec![],
+            message_refs: vec![],
+        },
+    )
+    .await;
 }
 async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
     let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828
@@ -529,6 +555,7 @@ async fn run_drained_message(ctx: &mut DispatchCtx<'_>, msg: Message) {
     run_agent_message(PromptRun {
         agent: ctx.agent,
         messages: ctx.messages,
+        conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
         session: ctx.session,
         sink: &mut sink,
         message: msg,

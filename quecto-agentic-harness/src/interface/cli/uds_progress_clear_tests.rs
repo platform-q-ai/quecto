@@ -90,9 +90,15 @@ async fn test_forward_progress_event_emits_subagent_messages_appended() {
         output.contains("\"agent_id\":\"\""),
         "child emits empty agent_id, got: {output}"
     );
+    // #1060: content is not re-carried; stable messageRefs identify the turn.
     assert!(
-        output.contains("turn output") && output.contains("tool result body"),
-        "turn messages must be carried, got: {output}"
+        output.contains("messageRefs") && !output.contains("turn output"),
+        "turn must be identified by non-empty messageRefs without full content, got: {output}"
+    );
+    let v: serde_json::Value = serde_json::from_str(output.lines().next().unwrap()).unwrap();
+    assert!(
+        v["messageRefs"].as_array().is_some_and(|a| a.len() == 2),
+        "expected two message refs, got: {output}"
     );
 }
 

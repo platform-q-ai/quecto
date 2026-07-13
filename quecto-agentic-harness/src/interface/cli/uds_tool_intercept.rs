@@ -70,7 +70,10 @@ mod tests {
         let line = rx.try_recv().expect("an event should be broadcast");
         assert!(line.contains("subagent_messages_appended"), "got: {line}");
         assert!(line.contains("\"agent_id\":\"\""), "got: {line}");
-        assert!(line.contains("hello from turn"), "got: {line}");
-        assert!(line.contains("tool body"), "got: {line}");
+        // #1060: refs only — no full content re-carry.
+        assert!(line.contains("messageRefs"), "got: {line}");
+        assert!(!line.contains("hello from turn"), "got: {line}");
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["messageRefs"].as_array().map(|a| a.len()), Some(2));
     }
 }

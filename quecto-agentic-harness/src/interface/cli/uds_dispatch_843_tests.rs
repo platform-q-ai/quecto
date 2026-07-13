@@ -5,7 +5,7 @@
 //!
 //! Self-contained (own minimal `DispatchCtx`) so it stays independent of the
 //! larger `cov_tests` fixture and keeps each file within the size budget.
-use super::{dispatch_command, forward_subagent_get_messages};
+use super::{dispatch_command, forward_subagent_get_message, forward_subagent_get_messages};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
@@ -73,7 +73,9 @@ impl Fx {
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
+            )),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),
@@ -251,6 +253,35 @@ async fn forward_tail_unknown_agent_is_error_event() {
     let ev =
         forward_subagent_get_messages(&ctx, Some("id1"), "get_messages_tail", "ghost", Some(3))
             .await;
+    let json = serde_json::to_value(&ev).unwrap();
+    let err = json.get("error").and_then(|v| v.as_str()).unwrap_or("");
+    assert!(
+        err.contains("not found"),
+        "unknown agent must report not-found: {json}"
+    );
+}
+
+// #1060: the singular `forward_subagent_get_message` (child ref lookup) must
+// share the plural's error semantics. The happy path needs a live child socket
+// (covered by the @wip cross-process BDD); its error paths are unit-testable.
+#[tokio::test]
+async fn forward_get_message_no_registry_is_error_event() {
+    let mut fx = Fx::new();
+    let ctx = fx.ctx(); // subagent_registry: None
+    let ev = forward_subagent_get_message(&ctx, Some("id1"), "get_message", "worker", "m1").await;
+    let json = serde_json::to_value(&ev).unwrap();
+    assert!(
+        json.get("error").is_some(),
+        "missing registry must surface an error: {json}"
+    );
+}
+
+#[tokio::test]
+async fn forward_get_message_unknown_agent_is_error_event() {
+    let mut fx = Fx::new();
+    let mut ctx = fx.ctx();
+    ctx.subagent_registry = Some(new_registry());
+    let ev = forward_subagent_get_message(&ctx, Some("id1"), "get_message", "ghost", "m1").await;
     let json = serde_json::to_value(&ev).unwrap();
     let err = json.get("error").and_then(|v| v.as_str()).unwrap_or("");
     assert!(

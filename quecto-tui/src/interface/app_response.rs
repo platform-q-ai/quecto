@@ -25,6 +25,8 @@ impl App {
         error: Option<String>,
     ) {
         match command.as_str() {
+            // #1060: gated recovery for ref-based end-of-turn miss path.
+            "get_message" => self.handle_get_message_recovery(id.as_deref(), success, data),
             "get_state" if success => self.handle_get_state(data),
             "set_model" if success => self.handle_set_model_success(data),
             // Late master failure must not toast over a focused child (#1085).
@@ -66,7 +68,10 @@ impl App {
                 }
             }
             "list_sessions" => self.notify_response_error("Could not list sessions", error),
-            "resume_session" if success => self.handle_resume_success(data),
+            "resume_session" if success => {
+                self.clear_message_recovery();
+                self.handle_resume_success(data);
+            }
             "resume_session" => self.notify_response_error("Resume failed", error),
             "get_messages" if success => {
                 if let Some(data) = data {
@@ -90,6 +95,7 @@ impl App {
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id && success => {
                 self.rewind.pending_apply_id = None;
+                self.clear_message_recovery();
                 self.notify("Rewound conversation", NotifyLevel::Success);
                 self.send_command(Command::GetMessages {
                     id: Some("rewind-refresh".into()),
@@ -101,6 +107,7 @@ impl App {
             }
             "rewind_to" => {}
             "clear_history" if success => {
+                self.clear_message_recovery();
                 // #897: history and workflow are orthogonal — clearing the
                 // conversation deliberately retains the workflow engine state.
                 // Signal both so the distinction is never silently entangled.

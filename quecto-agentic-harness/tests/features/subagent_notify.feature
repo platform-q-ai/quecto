@@ -39,28 +39,6 @@ Feature: Auto-notify a parent when a sub-agent ends a turn
     Given an Exited notification for agent "worker-1"
     Then the notification message should start with "Agent 'worker-1'"
 
-  # --- Summary extraction ---
-
-  Scenario: Extract summary from agent_end messages array
-    Given an agent_end event with messages containing assistant text "The analysis is complete"
-    When I extract the summary
-    Then the extracted summary should be "The analysis is complete"
-
-  Scenario: Extract summary truncates long text to 200 chars
-    Given an agent_end event with assistant text of 300 characters
-    When I extract the summary
-    Then the extracted summary should be at most 203 characters
-
-  Scenario: Extract summary from empty messages returns default
-    Given an agent_end event with empty messages array
-    When I extract the summary
-    Then the extracted summary should be "(no output)"
-
-  Scenario: Extract summary from messages with no assistant text returns default
-    Given an agent_end event with only tool messages
-    When I extract the summary
-    Then the extracted summary should be "(no output)"
-
   # --- Channel behavior ---
 
   Scenario: Notification channel is bounded

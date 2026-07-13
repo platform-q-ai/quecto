@@ -28,6 +28,7 @@ pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
         .route("/state", get(state_handler::<G>))
         .route("/messages", get(messages_handler::<G>))
         .route("/messages/tail", get(messages_tail_handler::<G>))
+        .route("/messages/{id}", get(message_handler::<G>))
         .route("/audit/events", get(audit_events_handler))
         .route("/stats", get(stats_handler::<G>))
         .route("/ws", get(ws_handler::<G>))
@@ -121,6 +122,37 @@ async fn messages_handler<G: AgentGateway>(
             .into_response();
     }
     match state.gateway.send(AgentCommand::GetMessages).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct MessageQuery {
+    /// Forward the lookup to a spawned child agent by id (#1060).
+    agent_id: Option<String>,
+}
+
+/// #1060: resolve a single message by its stable id — the on-demand lookup for
+/// refs carried on `agent_end` / `turn_end`, so a WS/REST client that only holds
+/// refs can fetch the full content.
+async fn message_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Query(params): Query<MessageQuery>,
+) -> impl IntoResponse {
+    if !state.gateway.is_connected() {
+        return api_error_response(crate::domain::error::ApiError::AgentNotConnected)
+            .into_response();
+    }
+    match state
+        .gateway
+        .send(AgentCommand::GetMessage {
+            message_id: id,
+            agent_id: params.agent_id,
+        })
+        .await
+    {
         Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
         Err(e) => api_error_response(e).into_response(),
     }

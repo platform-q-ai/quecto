@@ -10,7 +10,13 @@ use serde::{Deserialize, Serialize};
 pub enum AgentEvent {
     AgentStart,
     AgentEnd {
+        /// Legacy field: empty after harness #1060 (content is not re-carried).
+        #[serde(default)]
         messages: Vec<serde_json::Value>,
+        /// #1060: stable domain message ids identifying the run's messages.
+        /// Preserved so WS/API clients can resolve them via `get_message`.
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
     },
     Token {
         token: String,
@@ -46,6 +52,17 @@ pub enum AgentEvent {
         data: Option<serde_json::Value>,
         #[serde(default)]
         error: Option<String>,
+    },
+    /// A spawned child appended messages this turn (#1060: refs-based, so the
+    /// full content is not re-carried). Preserved rather than falling through to
+    /// `Unknown` so clients keep the child's message identity.
+    SubagentMessagesAppended {
+        #[serde(rename = "agent_id", alias = "agentId")]
+        agent_id: String,
+        #[serde(default)]
+        messages: Vec<serde_json::Value>,
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
     },
     /// Catch-all for unknown/future event types.
     #[serde(other)]

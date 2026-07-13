@@ -233,16 +233,27 @@ impl App {
             return;
         }
         self.ensure_session(agent_id);
+        // Child recovery `get_message` no longer travels the child socket — it
+        // is routed through the master (F1), so its Response arrives on the
+        // master stream and is applied by `handle_get_message_recovery`, not
+        // here.
         let Some(session) = self.subagents.sessions.get_mut(agent_id) else {
             return;
         };
         match &ev {
             Event::AgentStart | Event::TurnStart => {
+                if !session.running {
+                    session.active_turn_start = session.chat.entry_count();
+                    // New turn: reset the per-turn tool count that drives
+                    // end-of-turn ref-cardinality recovery (#1060 review, F2).
+                    session.tools_this_turn = 0;
+                    session.open_tool_calls = 0;
+                }
                 session.running = true;
                 session.observed_run_state = true;
                 session.footer.set_streaming(true);
             }
-            Event::AgentEnd | Event::TurnEnd { .. } => {
+            Event::AgentEnd { .. } | Event::TurnEnd { .. } => {
                 session.running = false;
                 session.observed_run_state = true;
                 session.footer.set_streaming(false);
@@ -268,25 +279,83 @@ impl App {
         }
         // Flush deferred grandchild notes once this child goes idle (after the
         // streamed response is finalized below).
-        let flush_notes = matches!(ev, Event::AgentEnd | Event::TurnEnd { .. });
+        let flush_notes = matches!(ev, Event::AgentEnd { .. } | Event::TurnEnd { .. });
+        let recovery_refs = Self::subagent_end_of_turn_refs(&ev);
+        // `get_message` responses are handled and returned earlier in this
+        // function; only `get_messages` backfill can reach here (#1060 review).
+        let early_return = matches!(
+            &ev,
+            Event::Response { command, .. } if command == "get_messages"
+        );
+        Self::apply_subagent_chat_event(session, &ev);
+        if early_return {
+            return;
+        }
+        if flush_notes {
+            Self::flush_deferred_notes(&mut session.chat, &mut session.deferred_subagent_notes);
+        }
+        if let Some((refs, content_len)) = recovery_refs {
+            self.maybe_recover_subagent_refs(agent_id, &refs, content_len);
+        }
+    }
+
+    /// Extract non-empty end-of-turn message refs (+ optional contentLength).
+    fn subagent_end_of_turn_refs(ev: &Event) -> Option<(Vec<String>, Option<u64>)> {
+        match ev {
+            Event::AgentEnd { message_refs, .. } if !message_refs.is_empty() => {
+                Some((message_refs.clone(), None))
+            }
+            Event::TurnEnd { message } => {
+                let refs = message
+                    .get("messageRefs")
+                    .and_then(|r| r.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let len = message.get("contentLength").and_then(|v| v.as_u64());
+                if refs.is_empty() {
+                    None
+                } else {
+                    Some((refs, len))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Apply a single non-workflow child stream event to its chat.
+    fn apply_subagent_chat_event(session: &mut SessionView, ev: &Event) {
+        // Maintain the per-turn tool count (ref cardinality, F2) and the
+        // open-tool-call count (dropped tool-end recovery, review 3) before
+        // borrowing `chat`, mirroring the master path (#1060).
+        if matches!(ev, Event::ToolExecutionStart { .. }) {
+            session.tools_this_turn = session.tools_this_turn.saturating_add(1);
+            session.open_tool_calls = session.open_tool_calls.saturating_add(1);
+        } else if matches!(ev, Event::ToolExecutionEnd { .. }) {
+            session.open_tool_calls = session.open_tool_calls.saturating_sub(1);
+        }
         let chat = &mut session.chat;
         match ev {
-            Event::Token { token } => chat.append_token(&token),
-            Event::AgentEnd | Event::TurnEnd { .. } => chat.finalize_assistant(),
+            Event::Token { token } => chat.append_token(token),
+            Event::AgentEnd { .. } | Event::TurnEnd { .. } => chat.finalize_assistant(),
             Event::ToolExecutionStart {
                 tool_call_id,
                 tool_name,
                 args,
             } => {
                 let args_str = if args.is_object() || args.is_array() {
-                    serde_json::to_string(&args).unwrap_or_default()
+                    serde_json::to_string(args).unwrap_or_default()
                 } else {
                     args.to_string()
                 };
-                if super::app_events::suppress_tool_box(&tool_name, &args) {
+                if super::app_events::suppress_tool_box(tool_name, args) {
                     chat.finalize_assistant();
                 } else {
-                    chat.start_tool(tool_call_id, tool_name, args_str);
+                    chat.start_tool(tool_call_id.clone(), tool_name.clone(), args_str);
                 }
             }
             Event::ToolExecutionEnd {
@@ -295,21 +364,98 @@ impl App {
                 is_error,
                 ..
             } => {
-                let text = crate::infrastructure::client::extract_result_text(&result);
-                chat.complete_tool(&tool_call_id, &text, is_error, None);
+                let text = crate::infrastructure::client::extract_result_text(result);
+                chat.complete_tool(tool_call_id, &text, *is_error, None);
             }
             Event::Response {
                 command,
                 data: Some(data),
                 ..
             } if command == "get_messages" => {
-                Self::reconcile_backfill_history(session, &data);
-                return;
+                Self::reconcile_backfill_history(session, data);
             }
             _ => {}
         }
-        if flush_notes {
-            Self::flush_deferred_notes(&mut session.chat, &mut session.deferred_subagent_notes);
+    }
+
+    /// #1060: fetch missing child messages by ref on the child UDS connection.
+    fn maybe_recover_subagent_refs(
+        &mut self,
+        agent_id: &str,
+        refs: &[String],
+        expected_content_len: Option<u64>,
+    ) {
+        let Some(session) = self.subagents.sessions.get(agent_id) else {
+            return;
+        };
+        let assistant_text = session
+            .chat
+            .entries()
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                crate::interface::components::chat::ChatEntry::Assistant { text, .. } => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        // Per-turn tool count, not session-lifetime `tool_entry_count()`, which
+        // over-counts on later turns and forces false-positive recovery (F2).
+        let tools = session.tools_this_turn;
+        // A dropped child tool-end leaves a result unresolved; force recovery
+        // even when cardinality looks complete (#1060 review 3).
+        let force = session.open_tool_calls > 0;
+        if !force
+            && !self.needs_message_recovery_for(refs, &assistant_text, tools, expected_content_len)
+        {
+            return;
+        }
+        // If any ref is already being recovered, the batch that owns it will
+        // fill; creating a second batch here would issue zero fresh requests and
+        // linger unfillable (F4 — mirrors the master guard).
+        if refs.iter().any(|message_id| {
+            self.pending_message_recovery
+                .values()
+                .any(|pending| pending.message_id == *message_id)
+        }) {
+            return;
+        }
+        let batch_id = format!(
+            "child-recovery-{agent_id}-{}",
+            super::app_events::uuid_like()
+        );
+        let target_end = session.chat.entry_count();
+        self.message_recovery_batches.insert(
+            batch_id.clone(),
+            MessageRecoveryBatch {
+                refs: refs.to_vec(),
+                responses: std::collections::HashMap::new(),
+                target_start: session.active_turn_start.min(target_end),
+                target_end,
+                agent_id: Some(agent_id.to_string()),
+            },
+        );
+        for message_id in refs {
+            let req_id = format!("msg-recovery-{}", super::app_events::uuid_like());
+            self.pending_message_recovery.insert(
+                req_id.clone(),
+                PendingMessageRecovery {
+                    message_id: message_id.clone(),
+                    batch_id: batch_id.clone(),
+                },
+            );
+            // Route via the MASTER connection with the ending child's id: the
+            // master forwards get_message to that child regardless of TUI
+            // selection. `send_to_active_subagent` only reached the *selected*
+            // child, so background children never recovered and the failure was
+            // silently discarded (F1). The response returns on the master stream
+            // and is applied by `handle_get_message_recovery` via batch.agent_id.
+            self.send_command(Command::GetMessage {
+                id: Some(req_id),
+                message_id: message_id.clone(),
+                agent_id: Some(agent_id.to_string()),
+            });
         }
     }
 

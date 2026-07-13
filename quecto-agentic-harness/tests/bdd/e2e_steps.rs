@@ -56,6 +56,7 @@ fn configure_mock_provider_workspace(world: &mut QuectoWorld, provider: &str) {
 
 #[given(expr = "the mock LLM returns a text response {string}")]
 fn given_mock_llm_text_response(world: &mut QuectoWorld, content: String) {
+    world._bounded_expected_body = Some(content.clone());
     // Verify a mock server was previously configured (from the config step).
     assert!(
         world._wiremock_server_uri.is_some(),
@@ -3140,27 +3141,42 @@ fn when_start_real_llm_uds(world: &mut QuectoWorld) {
 
 // ─── Real-LLM UDS Then steps ────────────────────────────────────────────────
 
-/// Assert that agent_end messages contain a specific string.
+/// Assert that the completed run produced the expected string.
+///
+/// #1060: `agent_end` no longer re-carries full message content — look for the
+/// text in token events, any event payload, or legacy agent_end.messages when
+/// present. Non-empty messageRefs alone do not carry the text.
 #[then(expr = "the agent_end messages should contain {string}")]
 fn then_agent_end_contains(world: &mut QuectoWorld, expected: String) {
-    let found = world.agent_events.iter().any(|l| {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(l) {
-            if v["type"].as_str() == Some("agent_end") {
-                if let Some(msgs) = v["messages"].as_array() {
-                    return msgs.iter().any(|m| {
-                        m["content"]
-                            .as_str()
-                            .map(|c| c.contains(&expected))
-                            .unwrap_or(false)
-                    });
-                }
-            }
-        }
-        false
+    // Reconstruct the assistant text from the token stream, in order. After
+    // #1060 agent_end does not re-carry content, so the concatenated tokens
+    // (including the synthetic token a non-streaming turn emits) are the source
+    // of truth. Concatenating — rather than substring-matching a single token
+    // fragment or grepping every event line — avoids greening on prompt text,
+    // tool args, or a lone token that is merely a substring of `expected`
+    // (#1060 review).
+    let streamed: String = world
+        .agent_events
+        .iter()
+        .filter_map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).ok()?;
+            (v["type"].as_str() == Some("token"))
+                .then(|| v["token"].as_str().unwrap_or("").to_string())
+        })
+        .collect();
+    // Legacy pre-#1060 path: agent_end may still carry full message content.
+    let legacy_hit = world.agent_events.iter().any(|l| {
+        serde_json::from_str::<serde_json::Value>(l).is_ok_and(|v| {
+            v["type"].as_str() == Some("agent_end")
+                && v["messages"].as_array().is_some_and(|msgs| {
+                    msgs.iter()
+                        .any(|m| m["content"].as_str().is_some_and(|c| c.contains(&expected)))
+                })
+        })
     });
     assert!(
-        found,
-        "expected agent_end messages to contain {expected:?}\nevents: {:#?}",
+        streamed.contains(&expected) || legacy_hit,
+        "expected run output to contain {expected:?}\nstreamed tokens: {streamed:?}\nevents: {:#?}",
         world.agent_events,
     );
 }

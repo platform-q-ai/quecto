@@ -22,6 +22,13 @@ pub enum AgentCommand {
     GetMessagesTail {
         count: usize,
     },
+    /// #1060: resolve a single message by its stable id (the on-demand lookup
+    /// path for refs carried on end-of-turn events). `agent_id` forwards the
+    /// lookup to a spawned child.
+    GetMessage {
+        message_id: String,
+        agent_id: Option<String>,
+    },
     GetSessionStats,
     SetModel {
         model: Option<String>,

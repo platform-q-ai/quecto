@@ -626,6 +626,9 @@ impl App {
     pub(super) fn reset_session(&mut self, message: &str) {
         self.send_new_session();
         self.master_session.chat.clear();
+        // Invalidate in-flight ref recovery so a late get_message from the OLD
+        // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
+        self.clear_message_recovery();
         self.master_session.footer.set_context(None, 0);
         self.context_stats_requested = false;
         // The agent resets session-scoped state (e.g. the effort override,
@@ -648,19 +651,19 @@ impl App {
     // ── Command sending ───────────────────────────────────────────────
 
     pub(super) fn send_command(&mut self, cmd: Command) {
-        let mut sender = self.client.clone_sender();
-        let failure_tx = self.command_send_failure_tx.clone();
+        // Enqueue synchronously, in call order, onto the client's FIFO writer
+        // channel. A previous `tokio::spawn` per command let detached tasks
+        // race to enqueue, so recovery/reset bursts could reach the agent
+        // reordered — or look incomplete to an observer draining mid-batch
+        // (#1060 review).
         let command_kind = cmd.kind();
-        tokio::spawn(async move {
-            if let Err(e) = sender.send(&cmd).await {
-                let _ = failure_tx
-                    .send(CommandSendFailure {
-                        command_kind,
-                        error: e.to_string(),
-                    })
-                    .await;
-            }
-        });
+        if let Err(e) = self.client.clone_sender().try_send(&cmd) {
+            // Report without blocking the loop (a dropped notice is acceptable).
+            let _ = self.command_send_failure_tx.try_send(CommandSendFailure {
+                command_kind,
+                error: e.to_string(),
+            });
+        }
     }
 
     pub(super) fn handle_command_send_failure(&mut self, failure: CommandSendFailure) {

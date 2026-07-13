@@ -22,7 +22,6 @@ async fn test_926_idle_parent_wakes_on_single_completion() {
             1,
             SubagentNotification::Completed {
                 agent_id: "researcher".to_string(),
-                summary: "all tests pass".to_string(),
             },
         ))
         .await

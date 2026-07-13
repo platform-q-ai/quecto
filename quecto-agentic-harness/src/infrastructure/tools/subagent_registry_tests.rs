@@ -144,7 +144,6 @@ fn consume_await_dedupe_consumes_pending_flag_once() {
 fn test_completed_message_format() {
     let n = SubagentNotification::Completed {
         agent_id: "researcher".into(),
-        summary: "All tests pass".into(),
     };
     let msg = n.to_message();
     assert!(msg.contains("researcher"));
@@ -153,7 +152,6 @@ fn test_completed_message_format() {
     assert!(msg.contains("agent_cmd get_messages"));
     assert!(msg.contains("before treating its work as complete"));
     assert!(!msg.contains("finished"));
-    assert!(!msg.contains("All tests pass")); // child output not repeated
 }
 
 #[test]
@@ -176,69 +174,6 @@ fn test_exited_message_format() {
     let msg = n.to_message();
     assert!(msg.contains("formatter"));
     assert!(msg.contains("exited"));
-}
-
-// --- extract_summary ---
-
-#[test]
-fn test_extract_summary_from_assistant_message() {
-    let messages = serde_json::json!([
-        {"role": "user", "content": "Do something"},
-        {"role": "assistant", "content": "The analysis is complete"}
-    ]);
-    assert_eq!(extract_summary(&messages), "The analysis is complete");
-}
-
-#[test]
-fn test_extract_summary_truncates_long_text() {
-    let long = "x".repeat(300);
-    let messages = serde_json::json!([
-        {"role": "assistant", "content": long}
-    ]);
-    let summary = extract_summary(&messages);
-    assert!(summary.len() <= 203); // 200 + "..."
-    assert!(summary.ends_with("..."));
-}
-
-#[test]
-fn test_extract_summary_empty_messages() {
-    let messages = serde_json::json!([]);
-    assert_eq!(extract_summary(&messages), "(no output)");
-}
-
-#[test]
-fn test_extract_summary_no_assistant() {
-    let messages = serde_json::json!([
-        {"role": "tool", "content": "tool output"}
-    ]);
-    assert_eq!(extract_summary(&messages), "(no output)");
-}
-
-#[test]
-fn test_extract_summary_truncates_multibyte_utf8() {
-    // Each emoji is 4 bytes. 201 emojis = 804 bytes but 201 chars.
-    let emojis = "🦀".repeat(201);
-    let messages = serde_json::json!([{"role": "assistant", "content": emojis}]);
-    let summary = extract_summary(&messages);
-    assert!(summary.chars().count() <= 203); // 200 chars + "..."
-    assert!(summary.ends_with("..."));
-    // Should not panic on multi-byte boundary
-}
-
-#[test]
-fn test_extract_summary_non_array() {
-    let messages = serde_json::json!("not an array");
-    assert_eq!(extract_summary(&messages), "(no output)");
-}
-
-#[test]
-fn test_extract_summary_last_assistant() {
-    let messages = serde_json::json!([
-        {"role": "assistant", "content": "First response"},
-        {"role": "user", "content": "Another question"},
-        {"role": "assistant", "content": "Second response"}
-    ]);
-    assert_eq!(extract_summary(&messages), "Second response");
 }
 
 // --- capped line reader (#795 security review) ---
@@ -440,7 +375,6 @@ async fn test_notification_channel_bounded() {
     for i in 0..NOTIFICATION_CHANNEL_CAPACITY {
         let n = SubagentNotification::Completed {
             agent_id: format!("bot-{}", i),
-            summary: "done".into(),
         };
         assert!(
             tx.try_send(SequencedSubagentNotification::new(i as u64 + 1, n))

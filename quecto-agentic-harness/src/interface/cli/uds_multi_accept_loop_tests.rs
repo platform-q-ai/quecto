@@ -42,7 +42,11 @@ fn make_args(
         turn_control: Arc::default(),
         live_clients: Arc::new(AtomicU32::new(0)),
         client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(),
-        conversation_snapshot: Arc::new(tokio::sync::RwLock::new(vec![Message::user("hello")])),
+        conversation_snapshot: Arc::new(tokio::sync::RwLock::new(
+            crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(vec![
+                Message::user("hello"),
+            ]),
+        )),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(SessionState {
             model: "mock-model".into(),
             is_streaming: true,

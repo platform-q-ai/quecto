@@ -206,7 +206,12 @@ fn agent_reports_completion_with_undisplayed_details(world: &mut TuiWorld) {
     let stream = world.tui_defence_stream.as_mut().expect("stream");
     for event in events {
         match event {
-            Event::AgentEnd => stream.completion_agent_end = Some(Event::AgentEnd),
+            Event::AgentEnd { .. } => {
+                stream.completion_agent_end = Some(Event::AgentEnd {
+                    messages: vec![],
+                    message_refs: vec![],
+                })
+            }
             Event::TurnEnd { .. } => stream.completion_turn_end = Some(event),
             _ => {}
         }
@@ -258,7 +263,10 @@ fn tui_receives_event(world: &mut TuiWorld) {
 #[then("completion is shown as before")]
 fn completion_is_shown_as_before(world: &mut TuiWorld) {
     let stream = world.tui_defence_stream.as_ref().expect("stream");
-    assert!(matches!(stream.completion_agent_end, Some(Event::AgentEnd)));
+    assert!(matches!(
+        stream.completion_agent_end,
+        Some(Event::AgentEnd { .. })
+    ));
     match &stream.completion_turn_end {
         Some(Event::TurnEnd { message }) => {
             assert_eq!(message["content"], "visible");

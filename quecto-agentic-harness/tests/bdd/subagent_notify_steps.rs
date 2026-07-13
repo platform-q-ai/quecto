@@ -1,8 +1,8 @@
 use super::*;
 use quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task;
 use quecto::infrastructure::tools::subagent_registry::{
-    SequencedSubagentNotification, SubagentEntry, SubagentNotification, extract_summary,
-    new_notification_channel, new_registry,
+    SequencedSubagentNotification, SubagentEntry, SubagentNotification, new_notification_channel,
+    new_registry,
 };
 use quecto::interface::cli::uds_session::AgentSession;
 use tokio::io::AsyncWriteExt;
@@ -60,8 +60,11 @@ fn drive_monitor_with_lines(
 // --- Given ---
 
 #[given(expr = "a Completed notification for agent {string} with summary {string}")]
-fn given_completed_notification(world: &mut QuectoWorld, agent_id: String, summary: String) {
-    let notif = SubagentNotification::Completed { agent_id, summary };
+fn given_completed_notification(world: &mut QuectoWorld, agent_id: String, _summary: String) {
+    // #1060: the completion note is a fixed "inspect via get_messages" pointer;
+    // the summary is no longer carried or displayed (kept in the step text for
+    // the existing scenarios that assert the note omits child output).
+    let notif = SubagentNotification::Completed { agent_id };
     world.notify_message = Some(notif.to_message());
 }
 
@@ -75,33 +78,6 @@ fn given_errored_notification(world: &mut QuectoWorld, agent_id: String, error: 
 fn given_exited_notification(world: &mut QuectoWorld, agent_id: String) {
     let notif = SubagentNotification::Exited { agent_id };
     world.notify_message = Some(notif.to_message());
-}
-
-#[given(expr = "an agent_end event with messages containing assistant text {string}")]
-fn given_agent_end_with_text(world: &mut QuectoWorld, text: String) {
-    world.notify_messages_json = Some(serde_json::json!([
-        {"role": "assistant", "content": text}
-    ]));
-}
-
-#[given("an agent_end event with assistant text of 300 characters")]
-fn given_agent_end_long_text(world: &mut QuectoWorld) {
-    let long = "x".repeat(300);
-    world.notify_messages_json = Some(serde_json::json!([
-        {"role": "assistant", "content": long}
-    ]));
-}
-
-#[given("an agent_end event with empty messages array")]
-fn given_agent_end_empty_messages(world: &mut QuectoWorld) {
-    world.notify_messages_json = Some(serde_json::json!([]));
-}
-
-#[given("an agent_end event with only tool messages")]
-fn given_agent_end_tool_only(world: &mut QuectoWorld) {
-    world.notify_messages_json = Some(serde_json::json!([
-        {"role": "tool", "content": "tool output"}
-    ]));
 }
 
 #[given(expr = "a SubagentNotification channel with capacity {int}")]
@@ -134,15 +110,6 @@ fn given_monitor_with_sender(world: &mut QuectoWorld) {
 }
 
 // --- When ---
-
-#[when("I extract the summary")]
-fn when_extract_summary(world: &mut QuectoWorld) {
-    let json = world
-        .notify_messages_json
-        .as_ref()
-        .expect("no messages json");
-    world.notify_extracted_summary = Some(extract_summary(json));
-}
 
 #[when("I drain all notifications")]
 fn when_drain_notifications(world: &mut QuectoWorld) {
@@ -205,30 +172,6 @@ fn then_notify_message_starts_with(world: &mut QuectoWorld, expected: String) {
     );
 }
 
-#[then(expr = "the extracted summary should be {string}")]
-fn then_extracted_summary(world: &mut QuectoWorld, expected: String) {
-    let summary = world
-        .notify_extracted_summary
-        .as_ref()
-        .expect("no extracted summary");
-    assert_eq!(summary, &expected);
-}
-
-#[then(expr = "the extracted summary should be at most {int} characters")]
-fn then_extracted_summary_max_len(world: &mut QuectoWorld, max_len: i32) {
-    let summary = world
-        .notify_extracted_summary
-        .as_ref()
-        .expect("no extracted summary");
-    assert!(
-        summary.len() <= max_len as usize,
-        "expected at most {} chars, got {} ({})",
-        max_len,
-        summary.len(),
-        summary
-    );
-}
-
 #[then(expr = "sending {int} notifications should succeed")]
 fn then_sending_n_notifications(world: &mut QuectoWorld, count: i32) {
     let tx = world.notify_tx.as_ref().expect("no notify tx");
@@ -237,7 +180,6 @@ fn then_sending_n_notifications(world: &mut QuectoWorld, count: i32) {
             i as u64,
             SubagentNotification::Completed {
                 agent_id: format!("bot-{}", i),
-                summary: "done".into(),
             },
         ));
         assert!(result.is_ok(), "send {} failed: {:?}", i, result);

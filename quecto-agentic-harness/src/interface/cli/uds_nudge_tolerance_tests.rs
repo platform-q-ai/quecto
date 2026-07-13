@@ -334,7 +334,6 @@ async fn unrelated_pending_turn_progress_is_not_attributed_to_the_nudge() {
             1,
             crate::infrastructure::tools::subagent_registry::SubagentNotification::Completed {
                 agent_id: "child-1".into(),
-                summary: "child finished".into(),
             },
         ),
     )

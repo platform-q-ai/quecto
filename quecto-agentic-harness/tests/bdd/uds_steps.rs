@@ -656,6 +656,7 @@ fn then_fireworks_received_request(world: &mut QuectoWorld) {
 /// `steer` command to arrive and cancel it.
 #[given(expr = "the mock LLM will delay its response by {int} seconds")]
 fn given_mock_llm_delayed_response(world: &mut QuectoWorld, delay_secs: u64) {
+    world._bounded_delay_secs = Some(delay_secs);
     assert!(
         world._wiremock_server_uri.is_some(),
         "mock server URI not set — add 'And a config file with an OpenAI provider pointing at a mock server' first"
@@ -1880,17 +1881,42 @@ fn then_agent_output_contains_token(world: &mut QuectoWorld, expected: String) {
 fn then_agent_output_contains_turn_end(world: &mut QuectoWorld, expected: String) {
     execute_uds(world);
     let events = &world.agent_events;
+    // Reconstruct the streamed assistant text so the "content emptied" branch is
+    // tied to the expected body actually being OBSERVED — not merely to any refs
+    // existing, which greened every expected string (#1060 review). A
+    // non-streaming turn emits a synthetic token carrying the full text.
+    let streamed: String = events
+        .iter()
+        .filter_map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).ok()?;
+            (v["type"].as_str() == Some("token"))
+                .then(|| v["token"].as_str().unwrap_or("").to_string())
+        })
+        .collect();
     let found = events.iter().any(|line| {
-        if let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) {
-            ev["type"].as_str() == Some("turn_end")
-                && ev["message"]["content"].as_str() == Some(&expected)
-        } else {
-            false
+        let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) else {
+            return false;
+        };
+        if ev["type"].as_str() != Some("turn_end") {
+            return false;
         }
+        let content = ev["message"]["content"].as_str().unwrap_or("");
+        let bounded_refs = ev
+            .get("message")
+            .and_then(|m| m.get("messageRefs"))
+            .and_then(|r| r.as_array())
+            .is_some_and(|a| {
+                !a.is_empty() && a.iter().all(|r| r.as_str().is_some_and(|s| !s.is_empty()))
+            });
+        // Legacy: body still carried. #1060: body emptied, identified by refs,
+        // AND the expected text was observed in the run's token stream.
+        content == expected || (content.is_empty() && bounded_refs && streamed.contains(&expected))
     });
     assert!(
         found,
-        "expected a turn_end event with content {expected:?} in events:\n{events:#?}"
+        "expected a turn_end event with content {expected:?} \
+         (emptied-content path requires the text in the token stream: {streamed:?}) \
+         in events:\n{events:#?}"
     );
 }
 
@@ -1991,6 +2017,10 @@ fn when_new_client_connects_after_disconnect(world: &mut QuectoWorld, client_id:
 /// Close all multi-client connections and wait for the agent to exit.
 #[when("I close all UDS clients")]
 fn when_close_all_uds_clients(world: &mut QuectoWorld) {
+    if world._mc_live_busy || world._mc_live_socket.is_some() {
+        uds_bounded_events_steps::finalize_mc_live_pub(world);
+        return;
+    }
     execute_multi_client_uds(world);
 }
 
@@ -2003,7 +2033,7 @@ fn when_close_all_uds_clients(world: &mut QuectoWorld) {
 /// 5. Handle disconnections
 /// 6. Close remaining clients
 /// 7. Collect events per-client
-fn execute_multi_client_uds(world: &mut QuectoWorld) {
+pub(crate) fn execute_multi_client_uds(world: &mut QuectoWorld) {
     if world.mc_exit_code.is_some() {
         return;
     }

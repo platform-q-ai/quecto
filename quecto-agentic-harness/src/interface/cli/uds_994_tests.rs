@@ -80,7 +80,9 @@ impl Fixture {
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            conversation_snapshot: Arc::new(tokio::sync::RwLock::new(
+                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
+            )),
             state_snapshot: Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),
@@ -175,29 +177,26 @@ fn message_to_json_matches_golden_wire_shape_for_all_roles() {
             arguments: "{\"path\":\"x\"}".to_string(),
         }],
     );
+    let assistant_json = message_to_json(&assistant);
+    assert_eq!(assistant_json["role"], "assistant");
+    assert_eq!(assistant_json["content"], "calling a tool");
     assert_eq!(
-        message_to_json(&assistant),
-        serde_json::json!({
-            "role": "assistant",
-            "content": "calling a tool",
-            "toolCalls": [{"id": "tc-1", "name": "read", "arguments": "{\"path\":\"x\"}"}],
-            "toolCallId": null,
-            "toolName": null,
-        })
+        assistant_json["toolCalls"],
+        serde_json::json!([{"id": "tc-1", "name": "read", "arguments": "{\"path\":\"x\"}"}])
     );
+    assert!(assistant_json["toolCallId"].is_null());
+    assert!(assistant_json["toolName"].is_null());
+    assert_eq!(assistant_json["id"], assistant.id().to_string());
 
     let mut tool = Message::tool("tc-1", "result body");
     tool.tool_name = Some("read".to_string());
-    assert_eq!(
-        message_to_json(&tool),
-        serde_json::json!({
-            "role": "tool",
-            "content": "result body",
-            "toolCalls": [],
-            "toolCallId": "tc-1",
-            "toolName": "read",
-        })
-    );
+    let tool_json = message_to_json(&tool);
+    assert_eq!(tool_json["role"], "tool");
+    assert_eq!(tool_json["content"], "result body");
+    assert_eq!(tool_json["toolCalls"], serde_json::json!([]));
+    assert_eq!(tool_json["toolCallId"], "tc-1");
+    assert_eq!(tool_json["toolName"], "read");
+    assert_eq!(tool_json["id"], tool.id().to_string());
 
     for (msg, want) in [
         (Message::system("s"), "system"),
@@ -263,9 +262,14 @@ fn get_messages_snapshot_line_matches_agent_event_envelope() {
 fn trimmed_get_messages_snapshot_line_matches_agent_event_envelope() {
     use crate::interface::cli::protocol::AgentEvent;
     use crate::interface::cli::uds_session::message_to_json;
-    use crate::interface::cli::uds_snapshots::build_get_messages_line;
+    use crate::interface::cli::uds_snapshots::{
+        SNAPSHOT_MESSAGES_BUDGET_BYTES, build_get_messages_line,
+    };
 
-    let messages = vec![Message::user("x".repeat(2 * 1024 * 1024))];
+    // One message larger than the snapshot budget so it is dropped (trimmed).
+    let messages = vec![Message::user(
+        "x".repeat(SNAPSHOT_MESSAGES_BUDGET_BYTES + 1024 * 1024),
+    )];
 
     let line = build_get_messages_line(&messages);
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
@@ -286,7 +290,7 @@ fn trimmed_get_messages_snapshot_line_matches_agent_event_envelope() {
     assert_eq!(got["data"]["snapshot"], true);
     assert_eq!(got["data"]["messages"].as_array().unwrap().len(), 0);
     assert_eq!(got["data"]["trimmed"], true);
-    assert!(line.len() <= 1024 * 1024);
+    assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
 
     let would_not_trim = AgentEvent::ok(
         None,
@@ -315,7 +319,7 @@ fn under_budget_get_messages_snapshot_stays_untrimmed() {
     let line = build_get_messages_line(&messages);
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
 
-    assert!(line.len() <= 1024 * 1024);
+    assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
     assert_ne!(
         got["data"]["trimmed"], true,
         "a half-budget message must not be trimmed"
@@ -339,6 +343,7 @@ async fn event_sink_variants_emit_identical_json_for_same_events() {
             message: TurnMessage {
                 role: "assistant".to_string(),
                 content: "done".to_string(),
+                message_refs: vec![],
                 usage: Some(TurnUsage {
                     input: 1,
                     output: 2,
@@ -347,6 +352,7 @@ async fn event_sink_variants_emit_identical_json_for_same_events() {
                 stop_reason: None,
                 context_tokens: Some(4),
                 max_context_tokens: Some(100),
+                content_length: None,
             },
             tool_results: vec![],
         },
@@ -358,7 +364,10 @@ async fn event_sink_variants_emit_identical_json_for_same_events() {
             },
             is_error: false,
         },
-        AgentEvent::AgentEnd { messages: vec![] },
+        AgentEvent::AgentEnd {
+            messages: vec![],
+            message_refs: vec![],
+        },
     ];
 
     let mut writer_bytes = Vec::new();
@@ -407,6 +416,7 @@ async fn run_stub_turn_event_types_with_sink(
     let outcome = run_agent_message(PromptRun {
         agent: &mut agent,
         messages: &mut messages,
+        conversation_snapshot: None,
         session: &mut session,
         sink,
         message: Message::user("hello"),
@@ -454,8 +464,37 @@ async fn stub_provider_turn_has_same_event_sequence_through_each_sink() {
 
     assert_eq!(broadcast_event_types, writer_event_types);
     assert_eq!(broadcast_message_roles, writer_message_roles);
+    // #1060: non-streaming stub turns surface the assistant text once as a
+    // Token before the ref-based turn_end / agent_end (no content re-carry).
     assert_eq!(
         writer_event_types,
-        vec!["agent_start", "turn_start", "turn_end", "agent_end"]
+        vec![
+            "agent_start",
+            "turn_start",
+            "token",
+            "turn_end",
+            "agent_end"
+        ]
+    );
+}
+
+#[test]
+fn issue_1060_busy_reader_parses_only_un_targeted_get_message() {
+    // Un-targeted lookup: the busy reader services it from the master snapshot.
+    assert_eq!(
+        super::super::uds_busy_get_message::parse(
+            r#"{"type":"get_message","id":"r1","messageId":"m1"}"#
+        ),
+        Some((Some("r1".into()), "m1".into()))
+    );
+    // An agent-targeted lookup MUST fall through (None) so dispatch forwards it
+    // to the child. The wire key is snake_case `agent_id` (Command::GetMessage
+    // has no rename) — asserting against the real key guards the #1060 casing
+    // bug where the master wrongly served child ids from its own snapshot.
+    assert_eq!(
+        super::super::uds_busy_get_message::parse(
+            r#"{"type":"get_message","id":"r1","messageId":"m1","agent_id":"child"}"#
+        ),
+        None
     );
 }

@@ -157,6 +157,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
         run_agent_message(PromptRun {
             agent: &mut agent,
             messages: &mut messages,
+            conversation_snapshot: None,
             session: &mut session,
             sink: &mut sink,
             message: Message::user("go"),
@@ -193,20 +194,60 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
         .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("event JSON"))
         .find(|event| event["type"] == "agent_end")
         .expect("an agent_end event must be emitted");
-    let payload = agent_end["messages"].as_array().expect("messages array");
-    let roles: Vec<&str> = payload
+    // #1060: AgentEnd identifies the run via messageRefs (not full content).
+    let refs: Vec<String> = agent_end["messageRefs"]
+        .as_array()
+        .expect("messageRefs array")
         .iter()
-        .map(|m| m["role"].as_str().unwrap_or_default())
+        .map(|r| r.as_str().expect("ref is a string").to_string())
         .collect();
     assert_eq!(
-        roles,
-        vec!["assistant", "tool", "assistant"],
-        "AgentEnd must carry exactly the messages this run appended \
-         (assistant tool call, tool result, final reply), got {payload:?}"
+        refs.len(),
+        3,
+        "AgentEnd must ref exactly the messages this run appended \
+         (assistant tool call, tool result, final reply), got {agent_end}"
     );
-    assert_eq!(payload[0]["toolCalls"].as_array().map(Vec::len), Some(1));
-    assert_eq!(payload[1]["content"], "tool-output-payload");
-    assert_eq!(payload[2]["content"], "final answer");
+    assert!(
+        refs.iter().all(|s| !s.is_empty()),
+        "refs must be non-empty stable ids"
+    );
+
+    // Cardinality alone does not prove identity/order. Resolve each ref against
+    // the run's ledger and assert the exact assistant-tool-call -> tool-result
+    // -> final-assistant sequence the refs are meant to denote (#1060 review).
+    use crate::domain::message::Role;
+    let resolved: Vec<&Message> = refs
+        .iter()
+        .map(|id| {
+            messages
+                .iter()
+                .find(|m| m.id().to_string() == *id)
+                .unwrap_or_else(|| panic!("ref {id} must resolve to a ledger message"))
+        })
+        .collect();
+    assert!(
+        matches!(resolved[0].role, Role::Assistant) && !resolved[0].tool_calls.is_empty(),
+        "first ref must be the assistant tool-call message; got role {:?}, {} tool_calls",
+        resolved[0].role,
+        resolved[0].tool_calls.len()
+    );
+    assert!(
+        matches!(resolved[1].role, Role::Tool),
+        "second ref must be the tool-result message; got role {:?}",
+        resolved[1].role
+    );
+    assert!(
+        matches!(resolved[2].role, Role::Assistant)
+            && resolved[2].tool_calls.is_empty()
+            && resolved[2].content.contains("final answer"),
+        "third ref must be the final assistant reply carrying the response"
+    );
+
+    let payload = agent_end["messages"].as_array().expect("messages array");
+    assert!(
+        payload.is_empty(),
+        "AgentEnd must not re-carry full message content after #1060: {payload:?}"
+    );
 }
 
 /// Clean-side boundary (#1072 review, coverage finding 2), dispatch level: a
@@ -251,6 +292,7 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
         run_agent_message(PromptRun {
             agent: &mut agent,
             messages: &mut messages,
+            conversation_snapshot: None,
             session: &mut session,
             sink: &mut sink,
             message: Message::user("hi"),

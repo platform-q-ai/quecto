@@ -155,6 +155,25 @@ impl Chat {
         }
     }
 
+    /// Immutable view of entries (recovery / tests).
+    pub fn entries(&self) -> &[ChatEntry] {
+        &self.entries
+    }
+
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn replace_range(&mut self, start: usize, end: usize, entries: Vec<ChatEntry>) {
+        let start = start.min(self.entries.len());
+        let end = end.max(start).min(self.entries.len());
+        self.entries.splice(start..end, entries);
+        self.render_cache = (0..self.entries.len()).map(|_| None).collect();
+        self.combined_offsets.clear();
+        self.combined_width = None;
+        self.scroll_offset = 0;
+    }
+
     /// Start a tool execution — creates a ToolExecution entry.
     pub fn start_tool(&mut self, tool_call_id: String, tool_name: String, args: String) {
         self.finalize_assistant();
@@ -271,12 +290,6 @@ impl Chat {
 
     pub fn scroll_down(&mut self, amount: usize) {
         self.scroll_offset = self.scroll_offset.saturating_sub(amount);
-    }
-
-    /// Number of chat entries (tests/harness only — production never reads this).
-    #[cfg(any(test, feature = "test-harness"))]
-    pub fn entry_count(&self) -> usize {
-        self.entries.len()
     }
 
     /// Number of retained rendered lines (tests/harness only — production never reads this).

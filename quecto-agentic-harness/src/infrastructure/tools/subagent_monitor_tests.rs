@@ -248,11 +248,8 @@ async fn test_notify_on_agent_end() {
     maybe_notify(Some(&tx), "worker", line);
     let notif = rx.try_recv().unwrap();
     match notif.notification {
-        SubagentNotification::Completed {
-            agent_id, summary, ..
-        } => {
+        SubagentNotification::Completed { agent_id } => {
             assert_eq!(agent_id, "worker");
-            assert_eq!(summary, "Done");
         }
         _ => panic!("expected Completed"),
     }
@@ -345,11 +342,8 @@ async fn test_maybe_notify_agent_end() {
     maybe_notify(Some(&tx), "worker", line);
     let notif = rx.try_recv().unwrap();
     match notif.notification {
-        SubagentNotification::Completed {
-            agent_id, summary, ..
-        } => {
+        SubagentNotification::Completed { agent_id } => {
             assert_eq!(agent_id, "worker");
-            assert!(summary.contains("done"));
         }
         _ => panic!("expected Completed"),
     }
@@ -500,7 +494,7 @@ fn handle_monitor_line_drops_oversized_line() {
         .insert("child".to_string(), test_entry());
     let big = format!(
         r#"{{"type":"workflow_state","x":"{}"}}"#,
-        "z".repeat(2_000_000)
+        "z".repeat(quecto_line_io::PROTOCOL_LINE_CAP_BYTES + 1024 * 1024)
     );
     super::handle_monitor_line(&big, "child", &registry, None, None, None);
     assert!(

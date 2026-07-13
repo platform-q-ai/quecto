@@ -316,7 +316,6 @@ async fn saturated_channel_retries_exact_stall_on_next_monitor_event() {
             99,
             SubagentNotification::Completed {
                 agent_id: "other".to_string(),
-                summary: "occupy channel".to_string(),
             },
         ),
     )
@@ -519,7 +518,6 @@ async fn saturated_stall_retried_by_another_agents_event() {
             99,
             SubagentNotification::Completed {
                 agent_id: "other".to_string(),
-                summary: "occupy channel".to_string(),
             },
         ),
     )
@@ -589,7 +587,6 @@ async fn saturated_stall_delivered_by_backstop_without_any_further_events() {
             99,
             SubagentNotification::Completed {
                 agent_id: "other".to_string(),
-                summary: "occupy channel".to_string(),
             },
         ),
     )

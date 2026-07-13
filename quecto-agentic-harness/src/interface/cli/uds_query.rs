@@ -61,6 +61,13 @@ pub(super) fn query_response_data(
             let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
             Some(serde_json::json!({ "subagents": list }))
         }
+        // #1060: on-demand single-message lookup by stable id (busy-path safe).
+        // Miss returns None so dispatch_fieldless_command emits a structured error.
+        AgentCommand::GetMessage { message_id, .. } => ctx
+            .messages
+            .iter()
+            .find(|m| m.id().to_string() == *message_id)
+            .map(message_to_json),
         AgentCommand::ReloadExtensions { .. } => None,
         _ => None,
     }
@@ -134,7 +141,9 @@ mod tests {
                 base_dir: self._tmp.path(),
                 agent: &mut self.agent,
                 messages: &mut self.messages,
-                conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+                conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+                    crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
+                )),
                 state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                     self.session.state_snapshot(0, None, 0, None),
                 )),
@@ -200,6 +209,52 @@ mod tests {
 
         let stats = query_response_data(&AgentCommand::GetSessionStats { id: None }, &ctx).unwrap();
         assert_eq!(stats["sessionKey"], "cli:test");
+    }
+
+    #[test]
+    fn query_get_message_hit_returns_message_by_stable_id() {
+        let mut fx = Fx::new();
+        // Resolve against the stable id of the second (assistant) message.
+        let target_id = fx.messages[1].id().to_string();
+        let ctx = fx.ctx();
+        let hit = query_response_data(
+            &AgentCommand::GetMessage {
+                id: Some("r1".into()),
+                message_id: target_id.clone(),
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("get_message must resolve a present stable id");
+        assert_eq!(
+            hit["id"], target_id,
+            "resolved message carries its stable id"
+        );
+        assert_eq!(hit["role"], "assistant");
+        assert_eq!(
+            hit["content"], "two",
+            "the exact referenced body is returned"
+        );
+    }
+
+    #[test]
+    fn query_get_message_miss_returns_none_for_structured_error() {
+        let mut fx = Fx::new();
+        let ctx = fx.ctx();
+        // An unknown id must return None so dispatch emits a structured
+        // "message not found" error rather than a stale/empty hit (#1060).
+        let miss = query_response_data(
+            &AgentCommand::GetMessage {
+                id: Some("r1".into()),
+                message_id: "00000000-0000-0000-0000-000000000000".into(),
+                agent_id: None,
+            },
+            &ctx,
+        );
+        assert!(
+            miss.is_none(),
+            "unknown message id must miss (None), got {miss:?}"
+        );
     }
 
     #[test]

@@ -35,7 +35,6 @@ fn retain_saturated_stall(
             99,
             SubagentNotification::Completed {
                 agent_id: "other".to_string(),
-                summary: "occupy channel".to_string(),
             },
         ),
     )

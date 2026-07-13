@@ -318,6 +318,7 @@ mod tui_chat_spacing_steps;
 mod tui_cold_start_steps;
 mod tui_ctrl_c_clear_steps;
 mod tui_ctrl_d_exit_steps;
+mod tui_end_of_turn_refs_steps;
 mod tui_esc_abort_recovery_steps;
 mod tui_file_mention_steps;
 mod tui_foundation_steps;

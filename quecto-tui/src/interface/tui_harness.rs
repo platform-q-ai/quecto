@@ -691,16 +691,32 @@ impl TuiHarness {
     }
 
     pub async fn drain_commands(&mut self) -> Vec<String> {
-        // `send_command` dispatches via a fire-and-forget spawn that may run on
-        // another worker thread under load; poll (bounded) for it so sharded
-        // runs aren't flaky, returning as soon as a command arrives.
+        // A command reaches this channel only after several async hops (writer
+        // task → socket → reader task → channel), so a multi-command batch is
+        // not all visible at once. Returning on the FIRST arrival would observe
+        // a scheduler-dependent subset — the source of the flaky recovery
+        // assertions. Instead, wait for the stream to go QUIET: keep polling
+        // until no new command has arrived for a short settle window, so the
+        // whole batch is collected (in wire order, which `send_command` now
+        // makes deterministic). Bounded overall so a genuinely empty stream
+        // still returns.
+        const SETTLE_POLLS: usize = 15;
+        const MAX_POLLS: usize = 400;
         let mut out = Vec::new();
-        for _ in 0..400 {
+        let mut idle = 0;
+        for _ in 0..MAX_POLLS {
+            let mut got = false;
             while let Ok(line) = self.cmd_rx.try_recv() {
                 out.push(line);
+                got = true;
             }
-            if !out.is_empty() {
-                break;
+            if got {
+                idle = 0;
+            } else if !out.is_empty() {
+                idle += 1;
+                if idle >= SETTLE_POLLS {
+                    break;
+                }
             }
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }

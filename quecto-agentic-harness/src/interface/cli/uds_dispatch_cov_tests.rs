@@ -195,7 +195,9 @@ impl Fixture {
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
+            )),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 self.session.state_snapshot(0, None, 0, None),
             )),
@@ -463,8 +465,7 @@ async fn resume_updates_session_aware_tools() {
 
 #[tokio::test]
 async fn resume_loads_chat_session_by_full_key() {
-    // Regression: the /resume picker selects a user chat by its full `chat-…`
-    // key; the handler must load it directly, not re-prefix it to `cli:chat-…`.
+    // Regression: /resume must load a user chat by its full `chat-…` key directly.
     let mut fx = Fixture::new();
     let key = "chat-1750000000-abc".to_string();
     let saved = Session {
@@ -542,8 +543,7 @@ async fn dispatch_routes_prompt_runs_agent() {
 
 #[tokio::test]
 async fn prompt_persists_session_after_turn() {
-    // Regression: a completed prompt turn must persist the session so it is
-    // durable without /new or a clean shutdown and appears in /resume.
+    // Regression: a completed prompt turn must persist the session immediately.
     let mut fx = Fixture::new();
     let cmd = AgentCommand::Prompt {
         id: Some("p".into()),
@@ -739,12 +739,12 @@ async fn refresh_conversation_snapshot_clones_current_messages() {
     fx.messages = vec![Message::user("hello"), Message::assistant("hi", vec![])];
     let ctx = fx.ctx();
     assert!(
-        ctx.conversation_snapshot.read().await.is_empty(),
+        ctx.conversation_snapshot.read().await.messages.is_empty(),
         "starts empty"
     );
     crate::interface::cli::uds_snapshots::refresh_conversation_snapshot(&ctx).await;
     let snap = ctx.conversation_snapshot.read().await;
-    assert_eq!(snap.len(), 2, "snapshot now mirrors the current messages");
+    assert_eq!(snap.messages.len(), 2, "snapshot mirrors current messages");
     crate::interface::cli::uds_snapshots::refresh_state_snapshot(&ctx).await;
     assert_eq!(ctx.state_snapshot.read().await.message_count, 2);
 }

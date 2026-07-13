@@ -10,7 +10,7 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::agent::{AgentLoop, AgentProgressEvent};
 use crate::domain::message::Message;
 use crate::interface::cli::protocol::{AgentEvent, ToolResultContent, TurnMessage, TurnUsage};
-use crate::interface::cli::uds_session::{AgentSession, message_to_json};
+use crate::interface::cli::uds_session::AgentSession;
 
 /// State of the cancellation slot for the current (or next) agent run.
 pub enum CancelSlot {
@@ -180,7 +180,7 @@ pub(crate) enum EventSink<'a> {
 impl<'a> EventSink<'a> {
     /// Build a writer sink from a borrowed async writer. Writes legacy NDJSON
     /// (non-negotiating test paths that assert on raw writer bytes).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn writer(w: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)) -> Self {
         Self::writer_with_mode(w, super::uds_wire::ConnectionWireMode::legacy())
     }
@@ -246,6 +246,8 @@ pub enum PromptOutcome {
 pub(crate) struct PromptRun<'a, 's> {
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
+    /// Shared live ledger used by busy-path get_message readers.
+    pub conversation_snapshot: Option<super::uds_multi::ConversationSnapshot>,
     pub session: &'a mut AgentSession,
     /// Sink the streamed events are delivered to (writer XOR broadcast).
     pub sink: &'a mut EventSink<'s>,
@@ -285,6 +287,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     let PromptRun {
         agent,
         messages,
+        conversation_snapshot,
         session: agent_session,
         sink,
         message,
@@ -299,6 +302,9 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
 
     let prompt_id = message.id();
     messages.push(message);
+    if let Some(snapshot) = &conversation_snapshot {
+        snapshot.write().await.publish(messages);
+    }
 
     // Install a progress callback that forwards events to a bounded channel.
     // Capacity 256 limits back-pressure from a slow UDS consumer while being
@@ -307,12 +313,12 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     agent.set_progress_callback(Some(Arc::new(move |ev| {
         // try_send: drop event if the channel is full rather than blocking
         // the synchronous callback.  Dropped tokens are acceptable — the
-        // full text is still delivered in the turn_end event.
+        // full text is recovered via messageRefs + get_message when contentLength exceeds held text (#1060).
         let _ = progress_tx.try_send(ev);
     })));
 
     // Run process() + token drain concurrently, with cancel support.
-    let (result, notifications) = run_with_token_drain(TokenDrainArgs {
+    let (result, notifications, tokens_emitted) = run_with_token_drain(TokenDrainArgs {
         agent,
         messages,
         progress_rx: &mut progress_rx,
@@ -360,25 +366,55 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             } else {
                 None
             };
+            // #1060: non-streaming turns never emit token progress events.
+            // Surface the final assistant text once as a Token so continuously
+            // connected clients (and e2e assertions) still observe the response
+            // without re-carrying it on turn_end / agent_end.
+            if !tokens_emitted && !agent_result.response.is_empty() {
+                sink.emit(&AgentEvent::Token {
+                    token: agent_result.response.clone(),
+                })
+                .await;
+            }
+            // #1060 / ADR-0008 part 2: end-of-turn events carry stable message
+            // refs + small footer metadata only — never re-ship full content.
+            // process() has appended the completed turn to `messages`; publish
+            // that ledger before refs are emitted so a concurrent reader-side
+            // get_message can resolve every referenced role immediately.
+            // Publish the live (post-prune) conversation for get_messages, and
+            // record FULL copies of this run's appended messages into the
+            // id-addressable ledger so the refs emitted below resolve via
+            // get_message even after the ladder later prunes/collapses them
+            // (#1060 review 1a; 1b: full publish, not a length-based extend).
+            if let Some(snapshot) = &conversation_snapshot {
+                let mut snap = snapshot.write().await;
+                snap.publish(messages);
+                snap.record_full(&agent_result.appended_messages);
+            }
+            let message_refs: Vec<String> = agent_result
+                .appended_messages
+                .iter()
+                .map(|m| m.id().to_string())
+                .collect();
             let turn_end = AgentEvent::TurnEnd {
                 message: TurnMessage {
                     role: "assistant".to_string(),
-                    content: agent_result.response.clone(),
+                    content: String::new(),
+                    message_refs: message_refs.clone(),
                     usage,
                     stop_reason: None,
                     context_tokens: Some(agent_result.context_tokens as u64),
                     max_context_tokens: Some(agent.max_context_tokens() as u64),
+                    content_length: Some(agent_result.response.len() as u64),
                 },
                 tool_results: vec![],
             };
             sink.emit(&turn_end).await;
-            let run_msgs: Vec<serde_json::Value> = agent_result
-                .appended_messages
-                .iter()
-                .map(message_to_json)
-                .collect();
-            sink.emit(&AgentEvent::AgentEnd { messages: run_msgs })
-                .await;
+            sink.emit(&AgentEvent::AgentEnd {
+                messages: vec![],
+                message_refs,
+            })
+            .await;
             PromptOutcome::Success
         }
         Some(Err(e)) => {
@@ -411,6 +447,7 @@ async fn run_with_token_drain(
 ) -> (
     Option<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>>,
     Vec<SequencedSubagentNotification>,
+    bool,
 ) {
     let TokenDrainArgs {
         agent,
@@ -427,6 +464,7 @@ async fn run_with_token_drain(
     tokio::pin!(cancel_rx);
     let mut process_fut = agent.process(messages);
     let mut notifications = Vec::new();
+    let mut tokens_emitted = false;
 
     let result = loop {
         // Drain notification_rx if present (#534) so SubagentStateChanged events
@@ -444,6 +482,9 @@ async fn run_with_token_drain(
             biased;  // prioritise cancel and progress over process completion
             _ = &mut cancel_rx => break None,
             Some(ev) = progress_rx.recv() => {
+                if matches!(ev, AgentProgressEvent::Token(_)) {
+                    tokens_emitted = true;
+                }
                 forward_progress_event_sink(ev, sink).await;
             }
             Some(notif) = notif_recv => {
@@ -453,6 +494,9 @@ async fn run_with_token_drain(
                 // Drain any remaining events that arrived between last poll
                 // and process completion.
                 while let Ok(ev) = progress_rx.try_recv() {
+                    if matches!(ev, AgentProgressEvent::Token(_)) {
+                        tokens_emitted = true;
+                    }
                     forward_progress_event_sink(ev, sink).await;
                 }
                 if let Some(rx) = notification_rx.as_mut() {
@@ -465,7 +509,7 @@ async fn run_with_token_drain(
         }
     };
 
-    (result, notifications)
+    (result, notifications, tokens_emitted)
 }
 
 /// Handle one subagent notification received mid-turn: broadcast it to clients
@@ -574,12 +618,13 @@ pub(crate) async fn forward_progress_event_sink(ev: AgentProgressEvent, sink: &m
             .await;
         }
         AgentProgressEvent::TurnCompleted { messages } => {
-            // Stream this turn's output (assistant + tool results) on the agent's
-            // own stream; a parent monitor re-stamps it with the child id (#797).
-            let json: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
+            // Stream this turn's output as stable refs on the agent's own stream;
+            // a parent monitor re-stamps it with the child id (#797 / #1060).
+            let message_refs: Vec<String> = messages.iter().map(|m| m.id().to_string()).collect();
             sink.emit(&AgentEvent::SubagentMessagesAppended {
                 agent_id: String::new(),
-                messages: json,
+                messages: vec![],
+                message_refs,
             })
             .await;
         }
@@ -589,14 +634,17 @@ pub(crate) async fn forward_progress_event_sink(ev: AgentProgressEvent, sink: &m
 
 /// Thin `Writer`-sink adapter for progress events, retained for unit tests that
 /// assert on raw writer bytes.
-#[cfg(test)]
-pub(crate) async fn forward_progress_event(
+#[cfg(any(test, feature = "test-support"))]
+pub async fn forward_progress_event(
     ev: AgentProgressEvent,
     stdout: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
 ) {
     forward_progress_event_sink(ev, &mut EventSink::writer(stdout)).await;
 }
 
+#[cfg(test)]
+#[path = "uds_cancel_1060_tests.rs"]
+mod issue_1060_tests;
 #[cfg(test)]
 #[path = "uds_1072_e2e_tests.rs"]
 mod issue_1072_e2e_tests;
