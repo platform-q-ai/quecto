@@ -34,9 +34,7 @@ impl App {
             Event::SubagentNotification {
                 agent_id, message, ..
             } => self.handle_subagent_notification(agent_id, message),
-            // Parent-forwarded per-turn appends (#797) are superseded by the
-            // direct connect-on-select stream (#800); the active sub-agent's own
-            // connection now carries its live content. Ignored here.
+            // Superseded by connect-on-select direct child streaming (#797/#800).
             Event::SubagentMessagesAppended { .. } => {}
             Event::WorkflowState {
                 agent_id,
@@ -308,14 +306,17 @@ impl App {
         }
     }
 
-    /// Drop a recovery batch and any still-pending sibling requests that point at
-    /// it. Called when one ref of the batch cannot be resolved, so a partially
-    /// filled batch does not linger unfillable in `message_recovery_batches`
-    /// (unbounded growth under repeated failures) (#1060 review).
+    /// Drop a recovery batch and pending sibling requests when one ref cannot
+    /// be resolved, so partially filled batches do not linger (#1060 review).
     pub(super) fn abandon_recovery_batch(&mut self, batch_id: &str) {
         self.message_recovery_batches.remove(batch_id);
         self.pending_message_recovery
             .retain(|_, pending| pending.batch_id != batch_id);
+    }
+
+    pub(super) fn clear_message_recovery(&mut self) {
+        self.message_recovery_batches.clear();
+        self.pending_message_recovery.clear();
     }
 
     fn handle_tool_start(

@@ -583,6 +583,7 @@ pub(super) async fn handle_clear_history(
         return false;
     }
     clear_conversation(ctx.messages);
+    ctx.conversation_snapshot.write().await.clear();
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.drain_pending();
@@ -675,6 +676,9 @@ pub(super) async fn dispatch_ext_command(
 #[cfg(test)]
 #[path = "uds_dispatch_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "uds_dispatch_1060_lifecycle_tests.rs"]
+mod lifecycle_1060_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_masked_pruning_tests.rs"]
 mod masked_pruning_tests;

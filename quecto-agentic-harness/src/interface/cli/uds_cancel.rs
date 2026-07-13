@@ -180,7 +180,7 @@ pub(crate) enum EventSink<'a> {
 impl<'a> EventSink<'a> {
     /// Build a writer sink from a borrowed async writer. Writes legacy NDJSON
     /// (non-negotiating test paths that assert on raw writer bytes).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn writer(w: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)) -> Self {
         Self::writer_with_mode(w, super::uds_wire::ConnectionWireMode::legacy())
     }
@@ -634,8 +634,8 @@ pub(crate) async fn forward_progress_event_sink(ev: AgentProgressEvent, sink: &m
 
 /// Thin `Writer`-sink adapter for progress events, retained for unit tests that
 /// assert on raw writer bytes.
-#[cfg(test)]
-pub(crate) async fn forward_progress_event(
+#[cfg(any(test, feature = "test-support"))]
+pub async fn forward_progress_event(
     ev: AgentProgressEvent,
     stdout: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
 ) {

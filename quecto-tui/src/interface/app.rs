@@ -651,13 +651,9 @@ fn is_subagent_tool(tool_name: &str) -> bool {
     tool_name == "spawn" || tool_name == "agent_cmd"
 }
 
-/// Status string for exited subagents — used in multiple comparisons (#540).
 const STATUS_EXITED: &str = "exited";
-
-/// Grace period before exited subagent bars are auto-removed (#540).
 const EXITED_SUBAGENT_GRACE: Duration = Duration::from_secs(5);
 
-/// Strip control characters from an agent_id for safe use as a map key.
 fn sanitize_workflow_status_text(text: &str, max_chars: usize) -> String {
     crate::interface::utils::sanitize_truncate_chars_with_ellipsis(text, max_chars, "…")
 }
@@ -684,6 +680,9 @@ mod app_effort_1067_tests;
 #[cfg(test)]
 #[path = "app_event_loop_tests.rs"]
 mod app_event_loop_tests;
+#[cfg(test)]
+#[path = "app_events_1060_lifecycle_tests.rs"]
+mod app_events_1060_lifecycle_tests;
 #[cfg(test)]
 #[path = "app_events_1060_tests.rs"]
 mod app_events_1060_tests;

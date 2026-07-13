@@ -56,6 +56,14 @@ impl ConversationSnapshotData {
         })
     }
 
+    /// Clear both the live snapshot and the full-message lookup ledger. Explicit
+    /// history lifecycle operations (for example `clear_history`) must make old
+    /// refs unresolvable rather than retaining full content out-of-band.
+    pub fn clear(&mut self) {
+        self.messages.clear();
+        self.ledger.clear();
+    }
+
     /// Seed a snapshot from an initial conversation (test/lifecycle convenience).
     pub fn from_messages(messages: Vec<Message>) -> Self {
         let mut s = Self::default();

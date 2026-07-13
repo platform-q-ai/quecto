@@ -513,32 +513,74 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
         );
         let (tx, mut rx) = tokio::sync::broadcast::channel(8);
         let monitor = quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task(
-            "worker".into(), socket, registry, None, Some(tx), None,
+            "worker".into(),
+            socket,
+            registry,
+            None,
+            Some(tx),
+            None,
         );
         let (child, _) = listener.accept().await.expect("monitor connected");
         let (read_half, mut write_half) = child.into_split();
         let mut child_reader = tokio::io::BufReader::new(read_half);
         let _ = quecto_line_io::read_frame(&mut child_reader, PROTOCOL_FRAME_CAP_BYTES)
-            .await.expect("monitor hello");
-        let ref_id = uuid::Uuid::new_v4().to_string();
-        let child_event = serde_json::json!({
-            "type": "subagent_messages_appended",
-            "messages": [{"role":"assistant","content": world._bounded_expected_body.clone().unwrap_or_default()}],
-            "messageRefs": [ref_id]
-        });
+            .await
+            .expect("monitor hello");
+        // Drive the child-side production emitter rather than fabricating the
+        // event shape: TurnCompleted messages are converted to refs-only
+        // subagent_messages_appended on the child's own stream, then the monitor
+        // re-stamps that real child event onto the parent broadcast path.
+        let body = world
+            ._bounded_expected_body
+            .clone()
+            .unwrap_or_else(|| "child turn body".to_string());
+        let child_messages = vec![quecto::domain::message::Message::assistant(&body, vec![])];
+        let mut child_bytes = Vec::new();
+        quecto::interface::cli::uds_cancel::forward_progress_event(
+            quecto::domain::agent::AgentProgressEvent::TurnCompleted {
+                messages: child_messages.into(),
+            },
+            &mut child_bytes,
+        )
+        .await;
+        let child_line = String::from_utf8(child_bytes)
+            .expect("child event utf8")
+            .lines()
+            .find(|line| line.contains("\"type\":\"subagent_messages_appended\""))
+            .expect("production child subagent_messages_appended")
+            .to_string();
+        let child_json: serde_json::Value = serde_json::from_str(&child_line).unwrap();
+        let produced_refs = non_empty_refs(&child_json);
+        assert!(
+            !produced_refs.is_empty(),
+            "production child event must carry refs: {child_line}"
+        );
+        assert!(
+            !content_re_carried(&child_json),
+            "child event must be refs-only: {child_line}"
+        );
         quecto_line_io::write_frame(
             &mut write_half,
-            serde_json::to_string(&child_event).unwrap().as_bytes(),
+            child_line.as_bytes(),
             PROTOCOL_FRAME_CAP_BYTES,
-        ).await.expect("write child event");
+        )
+        .await
+        .expect("write child event");
         let line = tokio::time::timeout(Duration::from_secs(3), async {
             loop {
                 let line = rx.recv().await.expect("parent broadcast");
-                if serde_json::from_str::<serde_json::Value>(&line).ok()
+                if serde_json::from_str::<serde_json::Value>(&line)
+                    .ok()
                     .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_owned))
-                    .as_deref() == Some("subagent_messages_appended") { break line; }
+                    .as_deref()
+                    == Some("subagent_messages_appended")
+                {
+                    break line;
+                }
             }
-        }).await.expect("forwarded child event");
+        })
+        .await
+        .expect("forwarded child event");
         monitor.abort();
         line
     });
