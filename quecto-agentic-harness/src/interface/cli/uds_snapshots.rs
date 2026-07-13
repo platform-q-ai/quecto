@@ -8,32 +8,84 @@ use super::uds_session::{MessageView, compute_session_stats_with_usage};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 
+/// Memory budget (content bytes) for the id-addressable ledger. Quecto sessions
+/// run for weeks, so the ledger must NOT grow without bound — full copies are
+/// retained only up to this budget, evicting the OLDEST first. A ref whose full
+/// copy has been evicted resolves best-effort (get_message returns "not found",
+/// or a collapsed stub if the message is still live); end-of-turn refs point at
+/// recent messages that clients resolve promptly, so eviction is invisible in
+/// practice (#1060 review r4, finding 2 — unbounded ledger).
+const LEDGER_MAX_BYTES: usize = 16 * 1024 * 1024;
+
+/// Approximate in-memory content size of a message, for ledger byte-budgeting.
+fn message_bytes(m: &Message) -> usize {
+    m.content.len()
+        + m.tool_calls
+            .iter()
+            .map(|tc| tc.arguments.len() + tc.name.len() + tc.id.len())
+            .sum::<usize>()
+        + m.tool_call_id.as_ref().map_or(0, |s| s.len())
+        + m.tool_name.as_ref().map_or(0, |s| s.len())
+}
+
 /// The busy-path conversation snapshot: the live (post-prune) conversation for
-/// `get_messages` inspection, PLUS an accumulating id→message ledger.
+/// `get_messages` inspection, PLUS a BYTE-BOUNDED id→message ledger.
 ///
 /// #1060 review 1a: end-of-turn `messageRefs` are the ids of the run's
 /// `appended_messages` — full copies the context ladder never demotes. The live
 /// conversation, however, can drop or collapse-in-place those messages to fit
 /// the LLM budget, so a bare `get_message` against it can return "not found" or
-/// a stub for a ref that was just emitted. The ledger keeps a full copy of every
-/// message ever appended so a ref stays resolvable across pruning and turns.
+/// a stub for a ref that was just emitted. The ledger keeps full copies so a ref
+/// stays resolvable across pruning — but capped at [`LEDGER_MAX_BYTES`],
+/// oldest-first, so it cannot grow unbounded over a weeks-long session.
 #[derive(Default)]
 pub(crate) struct ConversationSnapshotData {
     /// Live conversation as last published (may be pruned/collapsed).
     pub messages: Vec<Message>,
-    /// id → full message, never shrinking, authoritative for `get_message`.
-    pub ledger: std::collections::HashMap<String, Message>,
+    /// id → full message, byte-bounded, authoritative for `get_message`.
+    ledger: std::collections::HashMap<String, Message>,
+    /// Insertion order (front = oldest) driving byte-budget eviction.
+    ledger_order: std::collections::VecDeque<String>,
+    /// Running content-byte total of `ledger`.
+    ledger_bytes: usize,
 }
 
 impl ConversationSnapshotData {
+    /// Fold one message into the ledger under the byte budget. `overwrite`
+    /// replaces an existing (possibly collapsed) entry with a full copy; without
+    /// it, an earlier full copy is kept (publish must not clobber it).
+    fn remember(&mut self, m: &Message, overwrite: bool) {
+        let id = m.id().to_string();
+        let already = self.ledger.contains_key(&id);
+        if already && !overwrite {
+            return;
+        }
+        let new_sz = message_bytes(m);
+        if already {
+            let old_sz = self.ledger.get(&id).map(message_bytes).unwrap_or(0);
+            self.ledger_bytes = self.ledger_bytes.saturating_sub(old_sz);
+            self.ledger.insert(id, m.clone()); // keeps its original age in `ledger_order`
+        } else {
+            self.ledger.insert(id.clone(), m.clone());
+            self.ledger_order.push_back(id);
+        }
+        self.ledger_bytes += new_sz;
+        while self.ledger_bytes > LEDGER_MAX_BYTES {
+            let Some(old_id) = self.ledger_order.pop_front() else {
+                break;
+            };
+            if let Some(old) = self.ledger.remove(&old_id) {
+                self.ledger_bytes = self.ledger_bytes.saturating_sub(message_bytes(&old));
+            }
+        }
+    }
+
     /// Replace the live view and fold its messages into the ledger WITHOUT
     /// overwriting existing entries — a full copy recorded earlier must survive
     /// a later in-place collapse of the live message.
     pub fn publish(&mut self, messages: &[Message]) {
         for m in messages {
-            self.ledger
-                .entry(m.id().to_string())
-                .or_insert_with(|| m.clone());
+            self.remember(m, false);
         }
         self.messages = messages.to_vec();
     }
@@ -42,12 +94,13 @@ impl ConversationSnapshotData {
     /// overwriting any earlier possibly-collapsed entry.
     pub fn record_full(&mut self, messages: &[Message]) {
         for m in messages {
-            self.ledger.insert(m.id().to_string(), m.clone());
+            self.remember(m, true);
         }
     }
 
     /// Resolve a message id to its full copy: the ledger wins over the live
-    /// conversation (which may hold only a collapsed stub).
+    /// conversation (which may hold only a collapsed stub). `None` when the ref
+    /// is neither in the (bounded) ledger nor the live conversation.
     pub fn resolve(&self, message_id: &str) -> Option<&Message> {
         self.ledger.get(message_id).or_else(|| {
             self.messages
@@ -62,6 +115,8 @@ impl ConversationSnapshotData {
     pub fn clear(&mut self) {
         self.messages.clear();
         self.ledger.clear();
+        self.ledger_order.clear();
+        self.ledger_bytes = 0;
     }
 
     /// Reset the snapshot to exactly `messages`: drop the whole prior ledger
@@ -71,7 +126,7 @@ impl ConversationSnapshotData {
     /// rewind_to — so old refs cannot leak full content out-of-band while the
     /// surviving/loaded messages stay resolvable (#1060 review round 4).
     pub fn reset_to(&mut self, messages: &[Message]) {
-        self.ledger.clear();
+        self.clear();
         self.publish(messages);
     }
 

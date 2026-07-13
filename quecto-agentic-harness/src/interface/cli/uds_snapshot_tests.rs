@@ -53,6 +53,30 @@ fn ledger_resolves_refs_after_prune_and_collapse() {
     );
 }
 
+/// #1060 review r4 finding 2: the ledger is byte-bounded and evicts oldest-first,
+/// so a weeks-long session cannot grow it without limit. The oldest refs stop
+/// resolving once the budget is exceeded; the most recent still resolve.
+#[test]
+fn ledger_is_byte_bounded_and_evicts_oldest() {
+    // Each message ~6 MiB of content; the 16 MiB budget holds ~2. Recording 4
+    // in order must evict the two oldest.
+    let big = || Message::assistant("X".repeat(6 * 1024 * 1024), vec![]);
+    let msgs: Vec<Message> = (0..4).map(|_| big()).collect();
+    let ids: Vec<String> = msgs.iter().map(|m| m.id().to_string()).collect();
+
+    let mut snap = ConversationSnapshotData::default();
+    snap.record_full(&msgs);
+
+    assert!(
+        snap.resolve(&ids[0]).is_none() && snap.resolve(&ids[1]).is_none(),
+        "the oldest refs must be evicted once the ledger byte budget is exceeded"
+    );
+    assert!(
+        snap.resolve(&ids[3]).is_some(),
+        "the most recent ref must still resolve"
+    );
+}
+
 /// The connect-time line is a `get_messages`-shaped success Response carrying the
 /// prior conversation, byte-for-byte consumable by the TUI's existing
 /// `route_subagent_event` get_messages handler.
