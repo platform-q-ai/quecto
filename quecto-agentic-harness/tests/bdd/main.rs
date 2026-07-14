@@ -1320,6 +1320,7 @@ mod tool_empty_args_steps;
 mod truncate_steps;
 mod tui_architecture_steps;
 mod tui_context_usage_steps;
+mod uds_1093_steps;
 mod uds_bounded_events_steps;
 mod uds_framing_steps;
 mod uds_steps;

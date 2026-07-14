@@ -298,12 +298,10 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
     // from `ctx.messages` still resolves to full content. The ledger wins over
     // a possibly-collapsed live entry.
     if let AgentCommand::GetMessage { message_id, .. } = cmd {
-        let resolved = ctx
-            .conversation_snapshot
-            .read()
-            .await
-            .resolve(message_id)
-            .map(super::uds_session::message_to_json);
+        let resolved =
+            super::uds_snapshots::resolve_get_message(&ctx.conversation_snapshot, message_id)
+                .await
+                .map(|msg| super::uds_session::message_to_json(&msg));
         let ev = match resolved.or_else(|| query_response_data(cmd, ctx)) {
             Some(data) => AgentEvent::ok(id, tn, Some(data)),
             None => AgentEvent::err(id, tn, format!("message not found: {message_id}")),

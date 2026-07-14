@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use crate::domain::message::Message;
+use crate::domain::session::ContextSpillStore;
 
 use serde_json::value::RawValue;
 
@@ -62,6 +65,18 @@ pub(crate) struct ConversationSnapshotData {
     ledger_order: std::collections::VecDeque<String>,
     /// Running byte total of `ledger` (content + per-entry overhead).
     ledger_bytes: usize,
+    /// Spill store used as a best-effort backstop when a live message only has
+    /// a collapsed recall stub and its full ledger copy has already been
+    /// evicted. This is captured in the shared snapshot so the busy reader path
+    /// can resolve refs while the main dispatch loop is blocked (#1093).
+    spill_store: Option<Arc<dyn ContextSpillStore>>,
+    /// Session key paired with [`spill_store`].
+    spill_session_key: String,
+    /// Monotonic identity/version for the published history. Deferred spill
+    /// reads capture this value and may only complete while it is unchanged,
+    /// preventing an old session/rewind lookup from crossing a lifecycle
+    /// replacement while the snapshot lock is released for I/O.
+    generation: u64,
 }
 
 impl ConversationSnapshotData {
@@ -115,15 +130,82 @@ impl ConversationSnapshotData {
         }
     }
 
-    /// Resolve a message id to its full copy: the ledger wins over the live
+    /// Attach a spill store for best-effort recall of live collapsed messages
+    /// whose full ledger copy is no longer available.
+    pub fn set_spill_store(
+        &mut self,
+        spill_store: Option<Arc<dyn ContextSpillStore>>,
+        session_key: String,
+    ) {
+        // A changed namespace invalidates any deferred read prepared against
+        // the previous spill store/session identity. `Arc::ptr_eq` avoids
+        // advancing the generation during ordinary per-turn refreshes, which
+        // re-publish the same store handle.
+        let store_changed = match (&self.spill_store, &spill_store) {
+            (Some(current), Some(next)) => !Arc::ptr_eq(current, next),
+            (None, None) => false,
+            _ => true,
+        };
+        if self.spill_session_key != session_key || store_changed {
+            self.generation = self.generation.wrapping_add(1);
+        }
+        self.spill_store = spill_store;
+        self.spill_session_key = session_key;
+    }
+
+    /// Look a message id up by its full copy: the ledger wins over the live
     /// conversation (which may hold only a collapsed stub). `None` when the ref
-    /// is neither in the (bounded) ledger nor the live conversation.
-    pub fn resolve(&self, message_id: &str) -> Option<&Message> {
+    /// is neither in the (bounded) ledger nor the live conversation. Shared by
+    /// every resolver so the ledger-then-live precedence stays in one place.
+    fn lookup(&self, message_id: &str) -> Option<&Message> {
         self.ledger.get(message_id).or_else(|| {
             self.messages
                 .iter()
                 .find(|m| m.id().to_string() == message_id)
         })
+    }
+
+    /// Resolve a message id to its full copy. See [`Self::lookup`].
+    #[cfg(test)]
+    pub fn resolve(&self, message_id: &str) -> Option<&Message> {
+        self.lookup(message_id)
+    }
+
+    /// Prepare a `get_message` lookup result. Collapsed messages that carry a
+    /// spill id are returned as a deferred recall so callers do not hold the
+    /// snapshot read lock across spill-store I/O.
+    pub fn resolve_for_get_message(&self, message_id: &str) -> GetMessageResolution {
+        let Some(msg) = self.lookup(message_id) else {
+            return GetMessageResolution::NotFound;
+        };
+        if !msg.is_collapsed {
+            return GetMessageResolution::Found(msg.clone());
+        }
+        let Some(spill_id) = msg.spill_id.clone() else {
+            return GetMessageResolution::Found(msg.clone());
+        };
+        let Some(spill_store) = self.spill_store.clone() else {
+            return GetMessageResolution::Found(msg.clone());
+        };
+        GetMessageResolution::Recall {
+            stub: msg.clone(),
+            spill_store,
+            session_key: self.spill_session_key.clone(),
+            spill_id,
+            generation: self.generation,
+        }
+    }
+
+    /// Whether a deferred spill result still belongs to the currently
+    /// published history. The message id + spill id checks matter even within
+    /// one session: rewind/history replacement can reuse session-local spill
+    /// identifiers while changing which stable message owns them.
+    pub fn recall_is_current(&self, recall: &RecallIdentity) -> bool {
+        self.generation == recall.generation
+            && self.spill_session_key == recall.session_key
+            && self.lookup(&recall.message_id).is_some_and(|m| {
+                m.is_collapsed && m.spill_id.as_deref() == Some(recall.spill_id.as_str())
+            })
     }
 
     /// Clear both the live snapshot and the full-message lookup ledger. Explicit
@@ -134,16 +216,33 @@ impl ConversationSnapshotData {
         self.ledger.clear();
         self.ledger_order.clear();
         self.ledger_bytes = 0;
+        self.generation = self.generation.wrapping_add(1);
     }
 
     /// Reset the snapshot to exactly `messages`: drop the whole prior ledger
     /// (so refs from a replaced/truncated conversation stop resolving) and then
-    /// re-seed live + ledger from the new set. Used by history-identity ops that
-    /// REPLACE or TRUNCATE the conversation — new_session, resume_session,
-    /// rewind_to — so old refs cannot leak full content out-of-band while the
-    /// surviving/loaded messages stay resolvable (#1060 review round 4).
+    /// re-seed live + ledger from the new set. Used by same-session TRUNCATE ops
+    /// (rewind_to) so old refs cannot leak full content out-of-band while the
+    /// surviving messages stay resolvable (#1060 review round 4). Ops that also
+    /// change the spill namespace (new_session, resume_session) use
+    /// [`Self::reset_to_with_spill_store`] instead.
     pub fn reset_to(&mut self, messages: &[Message]) {
         self.clear();
+        self.publish(messages);
+    }
+
+    /// Atomically replace both history and the namespace used to recall its
+    /// collapsed messages. Resume/new-session paths must not expose new
+    /// messages paired with the previous session's spill key, even briefly.
+    pub fn reset_to_with_spill_store(
+        &mut self,
+        messages: &[Message],
+        spill_store: Option<Arc<dyn ContextSpillStore>>,
+        session_key: String,
+    ) {
+        self.clear();
+        self.spill_store = spill_store;
+        self.spill_session_key = session_key;
         self.publish(messages);
     }
 
@@ -155,8 +254,117 @@ impl ConversationSnapshotData {
     }
 }
 
+pub(crate) enum GetMessageResolution {
+    Found(Message),
+    Recall {
+        stub: Message,
+        spill_store: Arc<dyn ContextSpillStore>,
+        session_key: String,
+        spill_id: String,
+        generation: u64,
+    },
+    NotFound,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecallIdentity {
+    pub message_id: String,
+    pub session_key: String,
+    pub spill_id: String,
+    pub generation: u64,
+}
+
+impl GetMessageResolution {
+    /// Finish the best-effort lookup outside the snapshot read-lock. Spill
+    /// misses/errors gracefully fall back to the live collapsed stub. A
+    /// successful read carries its captured identity so the caller can reject
+    /// it if a concurrent lifecycle operation replaced the history.
+    pub async fn into_message(self) -> ResolvedGetMessage {
+        match self {
+            Self::Found(message) => ResolvedGetMessage {
+                message: Some(message),
+                recalled: None,
+            },
+            Self::Recall {
+                mut stub,
+                spill_store,
+                session_key,
+                spill_id,
+                generation,
+            } => {
+                let identity = RecallIdentity {
+                    message_id: stub.id().to_string(),
+                    session_key: session_key.clone(),
+                    spill_id: spill_id.clone(),
+                    generation,
+                };
+                match spill_store.recall(&session_key, &spill_id).await {
+                    Ok(Some(entry)) => {
+                        stub.content = entry.content;
+                        stub.is_collapsed = false;
+                        stub.spill_id = None;
+                        ResolvedGetMessage {
+                            message: Some(stub),
+                            recalled: Some(identity),
+                        }
+                    }
+                    Ok(None) | Err(_) => ResolvedGetMessage {
+                        message: Some(stub),
+                        recalled: Some(identity),
+                    },
+                }
+            }
+            Self::NotFound => ResolvedGetMessage {
+                message: None,
+                recalled: None,
+            },
+        }
+    }
+}
+
+pub(crate) struct ResolvedGetMessage {
+    pub message: Option<Message>,
+    pub recalled: Option<RecallIdentity>,
+}
+
 pub(crate) type ConversationSnapshot =
     std::sync::Arc<tokio::sync::RwLock<ConversationSnapshotData>>;
+
+/// Resolve a message without holding the snapshot lock across spill I/O. If a
+/// lifecycle operation changes the history during that I/O, discard the stale
+/// result and retry against the new snapshot. This validation applies to both
+/// hits and fallback stubs: neither may be returned from an old session.
+///
+/// Lifecycle ops are serialized on the dispatch loop, so at most a handful of
+/// replacements can race one lookup; the retry cap only backstops pathological
+/// churn. On exhausting it we resolve once more against the *current* snapshot
+/// and return its live view WITHOUT another spill read — never a stale result,
+/// since that view is read directly from the now-current history.
+pub(crate) async fn resolve_get_message(
+    snapshot: &ConversationSnapshot,
+    message_id: &str,
+) -> Option<Message> {
+    const MAX_RECALL_RETRIES: usize = 8;
+    for _ in 0..MAX_RECALL_RETRIES {
+        let resolution = { snapshot.read().await.resolve_for_get_message(message_id) };
+        let resolved = resolution.into_message().await;
+        let Some(recall) = &resolved.recalled else {
+            return resolved.message;
+        };
+        if snapshot.read().await.recall_is_current(recall) {
+            return resolved.message;
+        }
+    }
+    // Final fallback: return the current live message (the collapsed stub if it
+    // is still present) without deferring another recall, guaranteeing both
+    // termination and current-session correctness.
+    match snapshot.read().await.resolve_for_get_message(message_id) {
+        GetMessageResolution::Found(message) => Some(message),
+        GetMessageResolution::Recall { stub, .. } => Some(stub),
+        GetMessageResolution::NotFound => None,
+    }
+}
+
 pub(crate) type SessionStatsSnapshot =
     std::sync::Arc<tokio::sync::RwLock<crate::interface::cli::protocol::SessionStats>>;
 
@@ -175,10 +383,9 @@ pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
 }
 
 pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
-    ctx.conversation_snapshot
-        .write()
-        .await
-        .publish(ctx.messages);
+    let mut snap = ctx.conversation_snapshot.write().await;
+    snap.set_spill_store(ctx.agent.spill_store().cloned(), ctx.session_key.clone());
+    snap.publish(ctx.messages);
 }
 
 pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {

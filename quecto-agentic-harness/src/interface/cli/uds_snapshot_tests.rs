@@ -11,7 +11,8 @@ use crate::interface::cli::protocol::SessionState;
 use crate::interface::cli::uds_multi::{
     BusyFlag, BusyGuard, ConversationSnapshot, build_get_messages_line, build_get_state_line,
 };
-use crate::interface::cli::uds_snapshots::ConversationSnapshotData;
+use crate::interface::cli::uds_snapshots::{ConversationSnapshotData, resolve_get_message};
+use std::time::Duration;
 
 /// #1060 review 1a: the id-addressable ledger keeps a ref resolvable after the
 /// live conversation drops or collapses the referenced message.
@@ -99,6 +100,147 @@ fn ledger_is_entry_bounded_for_tiny_messages() {
     assert!(
         snap.resolve(ids.last().unwrap()).is_some(),
         "the most recent message must still resolve"
+    );
+}
+
+#[derive(Debug)]
+struct BlockingSpillStore {
+    entry: crate::domain::session::SpillEntry,
+    started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    release: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+}
+
+impl crate::domain::session::ContextSpillStore for BlockingSpillStore {
+    fn append(
+        &self,
+        _session_key: &str,
+        _entry: &crate::domain::session::SpillEntry,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn recall(
+        &self,
+        _session_key: &str,
+        _id: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        Option<crate::domain::session::SpillEntry>,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        let started = self.started.lock().unwrap().take();
+        let release = self.release.lock().unwrap().take();
+        let entry = self.entry.clone();
+        Box::pin(async move {
+            if let Some(started) = started {
+                let _ = started.send(());
+            }
+            if let Some(release) = release {
+                let _ = release.await;
+            }
+            Ok(Some(entry))
+        })
+    }
+
+    fn list_entries(
+        &self,
+        _session_key: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        std::sync::Arc<Vec<crate::domain::session::SpillIndex>>,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Ok(std::sync::Arc::new(Vec::new())) })
+    }
+
+    fn clear(
+        &self,
+        _session_key: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn collapsed_snapshot_message(spill_id: &str) -> Message {
+    let mut message = Message::assistant(format!("recall(\"{spill_id}\")"), vec![]);
+    message.is_collapsed = true;
+    message.spill_id = Some(spill_id.into());
+    message
+}
+
+/// Deferred recall must not hold the snapshot read lock, and a result captured
+/// before lifecycle replacement must be discarded rather than leaking old
+/// session content into the response.
+#[tokio::test]
+async fn spill_recall_retries_after_concurrent_snapshot_replacement() {
+    use crate::domain::session::SpillEntry;
+    use std::sync::Arc;
+
+    let old = collapsed_snapshot_message("same-spill");
+    let message_id = old.id().to_string();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let old_store = Arc::new(BlockingSpillStore {
+        entry: SpillEntry {
+            id: "same-spill".into(),
+            tool: "message".into(),
+            input_preview: String::new(),
+            tokens: 1,
+            content: "old secret".into(),
+        },
+        started: std::sync::Mutex::new(Some(started_tx)),
+        release: std::sync::Mutex::new(Some(release_rx)),
+    });
+    let mut data = ConversationSnapshotData::from_messages(vec![old]);
+    data.set_spill_store(Some(old_store), "cli:old".into());
+    let snapshot: ConversationSnapshot = Arc::new(tokio::sync::RwLock::new(data));
+
+    let resolving = tokio::spawn({
+        let snapshot = snapshot.clone();
+        let message_id = message_id.clone();
+        async move { resolve_get_message(&snapshot, &message_id).await }
+    });
+    started_rx.await.expect("old spill recall starts");
+
+    // A write lock is obtainable while recall is blocked: no snapshot guard is
+    // held across store I/O. Replace the complete history + namespace.
+    tokio::time::timeout(Duration::from_millis(250), async {
+        snapshot
+            .write()
+            .await
+            .reset_to_with_spill_store(&[], None, "cli:new".into());
+    })
+    .await
+    .expect("snapshot replacement must not wait for spill I/O");
+    release_tx.send(()).expect("release old spill read");
+
+    assert!(
+        resolving.await.unwrap().is_none(),
+        "old-session recall must be discarded and retried against new history"
     );
 }
 

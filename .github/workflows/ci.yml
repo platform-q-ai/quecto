@@ -87,27 +87,33 @@ jobs:
       - name: Non-real BDD tests
         run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 5m
 
-  provider-smoke:
-    name: Provider Smoke Tests
-    runs-on: blacksmith-32vcpu-ubuntu-2404
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Provider smoke tests
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          if [ -z "${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}" ]; then
-            echo "Skipping provider smoke tests: no provider API key secret configured"
-            exit 0
-          fi
-          QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test -p quecto-agentic-harness --no-fail-fast --features test-support --test bdd
+  # ─── TEMPORARILY DISABLED (2026-07-14) ──────────────────────────────────────
+  # Provider Smoke Tests disabled while the OpenAI account quota is topped up
+  # (real-provider calls were failing with HTTP 429 insufficient_quota).
+  # TO RESTORE: uncomment the job below AND re-add "Provider Smoke Tests" to the
+  # required status checks on the `master` branch protection rule (it was removed
+  # at the same time so PRs don't hang waiting on a check that never reports).
+  # provider-smoke:
+  #   name: Provider Smoke Tests
+  #   runs-on: blacksmith-32vcpu-ubuntu-2404
+  #   timeout-minutes: 10
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         components: rustfmt, clippy
+  #
+  #     - uses: Swatinem/rust-cache@v2
+  #
+  #     - name: Provider smoke tests
+  #       env:
+  #         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  #         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  #       run: |
+  #         if [ -z "${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}" ]; then
+  #           echo "Skipping provider smoke tests: no provider API key secret configured"
+  #           exit 0
+  #         fi
+  #         QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test -p quecto-agentic-harness --no-fail-fast --features test-support --test bdd
