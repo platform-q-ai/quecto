@@ -165,6 +165,7 @@ async fn dispatch_uncounted_agent_targeted_get_messages_forwards_to_child() {
         let cmd = AgentCommand::GetMessages {
             id: Some("q1".into()),
             count: None,
+            before: None,
             agent_id: Some("worker".into()),
         };
         assert!(!dispatch_command(cmd, &mut ctx).await);
@@ -191,6 +192,41 @@ async fn dispatch_uncounted_agent_targeted_get_messages_forwards_to_child() {
 }
 
 #[tokio::test]
+async fn dispatch_agent_targeted_get_messages_forwards_before_cursor_to_child() {
+    let (sock, received, _dir, handle) = spawn_recording_child("OLDER_CHILD_HISTORY").await;
+    let registry = new_registry();
+    register_child(&registry, "worker", sock);
+
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let mut fx = Fx::new();
+    fx.messages.push(Message::user("PARENT_ONLY"));
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry = Some(registry);
+        ctx.broadcast_tx = Some(tx);
+        let cmd = AgentCommand::GetMessages {
+            id: Some("q-before".into()),
+            count: None,
+            before: Some("child-cursor".into()),
+            agent_id: Some("worker".into()),
+        };
+        assert!(!dispatch_command(cmd, &mut ctx).await);
+    }
+    handle.await.unwrap();
+
+    let emitted = rx.try_recv().expect("a response event should be emitted");
+    assert!(emitted.contains("OLDER_CHILD_HISTORY"), "got: {emitted}");
+    assert!(!emitted.contains("PARENT_ONLY"), "got: {emitted}");
+    let fwd = received.lock().await.clone();
+    let fwd_json: serde_json::Value = serde_json::from_str(&fwd).unwrap();
+    assert_eq!(fwd_json["type"], "get_messages");
+    assert_eq!(
+        fwd_json["before"], "child-cursor",
+        "targeted older-page request must preserve the child cursor, got: {fwd}"
+    );
+}
+
+#[tokio::test]
 async fn dispatch_counted_agent_targeted_get_messages_forwards_count_to_child() {
     // Regression twin of the uncounted case: a `count: Some(n)` agent-targeted
     // request must forward `{"type":"get_messages","count":n}` to the child and
@@ -209,6 +245,7 @@ async fn dispatch_counted_agent_targeted_get_messages_forwards_count_to_child() 
         let cmd = AgentCommand::GetMessages {
             id: Some("q1".into()),
             count: Some(7),
+            before: None,
             agent_id: Some("worker".into()),
         };
         assert!(!dispatch_command(cmd, &mut ctx).await);
@@ -237,7 +274,8 @@ async fn dispatch_counted_agent_targeted_get_messages_forwards_count_to_child() 
 async fn forward_uncounted_no_registry_is_error_event() {
     let mut fx = Fx::new();
     let ctx = fx.ctx(); // subagent_registry: None
-    let ev = forward_subagent_get_messages(&ctx, Some("id1"), "get_messages", "worker", None).await;
+    let ev = forward_subagent_get_messages(&ctx, Some("id1"), "get_messages", "worker", None, None)
+        .await;
     let json = serde_json::to_value(&ev).unwrap();
     assert!(
         json.get("error").is_some(),
@@ -250,9 +288,15 @@ async fn forward_tail_unknown_agent_is_error_event() {
     let mut fx = Fx::new();
     let mut ctx = fx.ctx();
     ctx.subagent_registry = Some(new_registry());
-    let ev =
-        forward_subagent_get_messages(&ctx, Some("id1"), "get_messages_tail", "ghost", Some(3))
-            .await;
+    let ev = forward_subagent_get_messages(
+        &ctx,
+        Some("id1"),
+        "get_messages_tail",
+        "ghost",
+        Some(3),
+        None,
+    )
+    .await;
     let json = serde_json::to_value(&ev).unwrap();
     let err = json.get("error").and_then(|v| v.as_str()).unwrap_or("");
     assert!(

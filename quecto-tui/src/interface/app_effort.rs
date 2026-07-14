@@ -116,3 +116,7 @@ impl App {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "app_effort_1067_tests.rs"]
+mod app_effort_1067_tests;

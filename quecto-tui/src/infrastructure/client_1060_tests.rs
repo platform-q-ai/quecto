@@ -133,7 +133,10 @@ fn get_message_command_is_available_for_on_demand_lookup() {
     // Adding GetMessage is the GREEN for this pin.
     let recoverable: Vec<Command> = vec![
         Command::GetState { id: None },
-        Command::GetMessages { id: None },
+        Command::GetMessages {
+            id: None,
+            before: None,
+        },
         Command::GetMessagesTail {
             id: None,
             count: 1,

@@ -315,6 +315,7 @@ impl App {
             let _ = client
                 .send(&Command::GetMessages {
                     id: Some("subagent-history".into()),
+                    before: None,
                 })
                 .await;
             let _ = client

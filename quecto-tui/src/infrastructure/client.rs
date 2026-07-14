@@ -58,6 +58,8 @@ pub enum Command {
     GetMessages {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
     },
     GetMessagesTail {
         #[serde(skip_serializing_if = "Option::is_none")]

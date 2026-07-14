@@ -13,6 +13,7 @@ impl App {
     pub(crate) fn request_master_attach_backfill(&mut self) {
         self.send_command(Command::GetMessages {
             id: Some(ATTACH_BACKFILL_ID.into()),
+            before: None,
         });
     }
 
@@ -78,15 +79,34 @@ impl App {
                     if id.is_some() && id == self.rewind.pending_open_id {
                         self.rewind.pending_open_id = None;
                         self.open_rewind_selector(&data);
-                    } else if id.as_deref() == Some(ATTACH_BACKFILL_ID) || id.is_none() {
-                        // Attach-time backfill (dedicated id) OR unsolicited
-                        // busy-connect snapshot (id-less, see uds_snapshots):
-                        // prepend + guard. Id-less must not take wholesale
-                        // replace — that never latches the guard, so a later
-                        // attach-backfill would double-apply history on mid-turn
-                        // `--socket` attach. Trimmed snapshots do not latch
-                        // completion so a fuller backfill can still restore
-                        // omitted older history (#1050 review).
+                    } else if id.as_deref() == Some("resume-messages")
+                        && data.get("messages").and_then(|v| v.as_array()).is_some()
+                        && (data
+                            .get("hasMoreBefore")
+                            .and_then(|v| v.as_bool())
+                            .is_some()
+                            || data.get("before").is_some())
+                    {
+                        self.replace_master_chat_with_history_page(&data);
+                    } else if id.as_deref() == Some(ATTACH_BACKFILL_ID)
+                        || id
+                            .as_deref()
+                            .is_some_and(|id| id.starts_with("history-page-"))
+                        || id.is_none()
+                    {
+                        // Attach/resume backfill, explicit older-page fetches,
+                        // OR unsolicited busy-connect snapshot (id-less, see
+                        // uds_snapshots): prepend + cursor reconciliation.
+                        if id
+                            .as_deref()
+                            .is_some_and(|id| id.starts_with("history-page-"))
+                        {
+                            // Older pages extend the existing prefix. The
+                            // partial-prefix replacement path is only for a
+                            // fuller initial backfill superseding a trimmed
+                            // busy-connect snapshot.
+                            self.master_session.partial_backfill_len = None;
+                        }
                         Self::reconcile_backfill_history(&mut self.master_session, &data);
                     } else {
                         self.replace_chat_with_messages(&data);
@@ -99,6 +119,7 @@ impl App {
                 self.notify("Rewound conversation", NotifyLevel::Success);
                 self.send_command(Command::GetMessages {
                     id: Some("rewind-refresh".into()),
+                    before: None,
                 });
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id => {
@@ -238,6 +259,7 @@ impl App {
         self.notify(&format!("Resumed session {session}"), NotifyLevel::Success);
         self.send_command(Command::GetMessages {
             id: Some("resume-messages".into()),
+            before: None,
         });
         self.send_session_stats();
         // The agent resets session-scoped state (e.g. the effort override,

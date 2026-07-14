@@ -243,13 +243,9 @@ impl SubagentUi {
     }
 }
 
-/// Per-session state for the multi-session UI (#800/#802). The master (#828)
-/// and every sub-agent are modeled identically: own chat transcript, own
-/// workflow/phase bar, a running flag driving the per-session working indicator,
-/// and own footer. The editor and overlays stay single-instance on `App`.
+/// Per-session state for the multi-session UI (#800/#802/#828).
 pub(crate) struct SessionView {
     chat: Chat,
-    /// The child's own workflow/phase bar, fed by its forwarded `workflow_state`.
     workflow_bar: workflow_bar::WorkflowBarState,
     /// Whether the child is mid-turn — drives a per-session working indicator.
     running: bool,
@@ -260,8 +256,11 @@ pub(crate) struct SessionView {
     /// Whether a complete (untrimmed) history backfill was applied (#828),
     /// guarding re-delivery. Trimmed busy-connect snapshots do not set it (#1050).
     history_backfilled: bool,
-    /// Chat entries a trimmed busy-connect snapshot prepended (#1050 review).
     partial_backfill_len: Option<usize>,
+    history_before_cursor: Option<String>,
+    history_has_more_before: bool,
+    history_page_seq: u64,
+    history_pending_before_cursor: Option<String>,
     /// Until this session's own stream reports run-state, `active_subagent_running`
     /// trusts the tracked status not `running` (#834).
     observed_run_state: bool,
@@ -291,6 +290,10 @@ impl SessionView {
             deferred_subagent_notes: std::collections::VecDeque::new(),
             history_backfilled: false,
             partial_backfill_len: None,
+            history_before_cursor: None,
+            history_has_more_before: false,
+            history_page_seq: 0,
+            history_pending_before_cursor: None,
             observed_run_state: false,
             active_turn_start: 0,
             tools_this_turn: 0,
@@ -442,6 +445,8 @@ mod app_idle_efficiency;
 mod app_methods;
 #[path = "app_models.rs"]
 mod app_models;
+#[path = "app_paged_history.rs"]
+mod app_paged_history;
 #[path = "app_response.rs"]
 mod app_response;
 #[path = "app_rewind.rs"]
@@ -675,9 +680,6 @@ mod app_cov_tests;
 #[path = "app_disconnect_tests.rs"]
 mod app_disconnect_tests;
 #[cfg(test)]
-#[path = "app_effort_1067_tests.rs"]
-mod app_effort_1067_tests;
-#[cfg(test)]
 #[path = "app_event_loop_tests.rs"]
 mod app_event_loop_tests;
 #[cfg(test)]
@@ -696,8 +698,8 @@ mod app_idle_efficiency_tests;
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;
 #[cfg(test)]
-#[path = "app_model_focus_1085_tests.rs"]
-mod app_model_focus_1085_tests;
+#[path = "app_paged_history_tests.rs"]
+mod app_paged_history_tests;
 #[cfg(test)]
 #[path = "app_rewind_response_tests.rs"]
 mod app_rewind_response_tests;
@@ -737,7 +739,6 @@ mod subagent_selection_tests;
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
-// Headless render harness, also exposed (read-only) to the workspace `bdd` integration target via `test-harness` (#805).
 #[cfg(any(test, feature = "test-harness"))]
 #[path = "tui_harness.rs"]
 pub mod tui_harness;

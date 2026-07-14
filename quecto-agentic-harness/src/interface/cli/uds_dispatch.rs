@@ -10,12 +10,21 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     // return the connected/parent agent's own conversation (#843).
     if let AgentCommand::GetMessages {
         count,
+        before,
         agent_id: Some(agent_id),
         id,
     } = &cmd
     {
         let tn = cmd.type_name();
-        let ev = forward_subagent_get_messages(ctx, id.as_deref(), tn, agent_id, *count).await;
+        let ev = forward_subagent_get_messages(
+            ctx,
+            id.as_deref(),
+            tn,
+            agent_id,
+            *count,
+            before.as_deref(),
+        )
+        .await;
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
@@ -27,7 +36,8 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     {
         let tn = cmd.type_name();
         let ev =
-            forward_subagent_get_messages(ctx, id.as_deref(), tn, agent_id, Some(*count)).await;
+            forward_subagent_get_messages(ctx, id.as_deref(), tn, agent_id, Some(*count), None)
+                .await;
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
@@ -161,6 +171,7 @@ async fn forward_subagent_get_messages(
     tn: &str,
     agent_id: &str,
     count: Option<usize>,
+    before: Option<&str>,
 ) -> AgentEvent {
     use crate::infrastructure::tools::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, lookup_subagent_socket, send_subagent_uds_command_with_timeout,
@@ -174,11 +185,14 @@ async fn forward_subagent_get_messages(
     };
     // Omit `count` entirely when None so the child returns its FULL history; a
     // present count requests just the tail (#843).
-    let cmd = match count {
-        Some(count) => serde_json::json!({ "type": "get_messages", "count": count }),
-        None => serde_json::json!({ "type": "get_messages" }),
+    let mut cmd = serde_json::json!({ "type": "get_messages" });
+    if let Some(count) = count {
+        cmd["count"] = serde_json::json!(count);
     }
-    .to_string();
+    if let Some(before) = before {
+        cmd["before"] = serde_json::json!(before);
+    }
+    let cmd = cmd.to_string();
     // This forward is awaited inline in the single shared dispatch loop, so it
     // uses the short interactive timeout — a slow/hung sub-agent must not stall
     // steer/abort/new-message for any client for the full agent_cmd 300s (#795).

@@ -2,9 +2,8 @@
 use std::sync::Arc;
 
 use super::{
-    dispatch_command, dispatch_ext_command, forward_subagent_get_messages, handle_abort,
-    handle_clear_history, handle_new_session, handle_resume_session, handle_rewind_to,
-    handle_steer, persist_current_session,
+    dispatch_command, dispatch_ext_command, handle_abort, handle_clear_history, handle_new_session,
+    handle_resume_session, handle_rewind_to, handle_steer, persist_current_session,
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
@@ -717,20 +716,6 @@ async fn dispatch_agent_targeted_tail_without_registry_emits_error() {
     };
     // subagent_registry is None: the early intercept still handles it.
     assert!(!dispatch_command(cmd, &mut fx.ctx()).await);
-}
-
-#[tokio::test]
-async fn forward_tail_no_registry_is_error_event() {
-    let mut fx = Fixture::new();
-    let ctx = fx.ctx();
-    let ev =
-        forward_subagent_get_messages(&ctx, Some("id1"), "get_messages_tail", "worker", Some(3))
-            .await;
-    let json = serde_json::to_value(&ev).unwrap();
-    assert!(
-        json.get("error").is_some(),
-        "missing registry must surface an error: {json}"
-    );
 }
 
 #[tokio::test]

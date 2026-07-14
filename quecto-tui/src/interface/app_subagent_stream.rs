@@ -562,6 +562,17 @@ impl App {
                 },
             })
             .collect();
+        let before = data
+            .get("before")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned);
+        let has_more_before = data
+            .get("hasMoreBefore")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        session.history_pending_before_cursor = None;
+        session.history_before_cursor = before;
+        session.history_has_more_before = has_more_before;
         // Only mark the backfill applied once it actually carried content: an
         // empty/filtered payload must not latch the guard and permanently
         // suppress a later populated backfill (reconnect / response racing ahead
@@ -581,8 +592,9 @@ impl App {
         } else {
             session.chat.prepend_history(history);
         }
-        if trimmed {
+        if trimmed || has_more_before {
             session.partial_backfill_len = Some(history_len);
+            session.history_backfilled = false;
         } else {
             session.partial_backfill_len = None;
             session.history_backfilled = true;

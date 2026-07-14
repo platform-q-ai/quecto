@@ -400,11 +400,34 @@ pub fn compute_session_stats_with_usage(
     }
 }
 
+/// Authoritative protocol page size for paged conversation history (#1061).
+pub(crate) const HISTORY_PAGE_SIZE: usize = 64;
+
+/// Return a JSON value containing the selected history window in chronological order.
+pub fn messages_page_json(
+    messages: &[Message],
+    count: usize,
+    before: Option<&str>,
+) -> serde_json::Value {
+    let end = before
+        .and_then(|cursor| messages.iter().position(|m| m.id().to_string() == cursor))
+        .unwrap_or(messages.len());
+    let page_len = count.min(HISTORY_PAGE_SIZE);
+    let start = end.saturating_sub(page_len);
+    let msgs_json: Vec<serde_json::Value> =
+        messages[start..end].iter().map(message_to_json).collect();
+    let has_more_before = page_len > 0 && start > 0;
+    let before_cursor = has_more_before.then(|| messages[start].id().to_string());
+    serde_json::json!({
+        "messages": msgs_json,
+        "before": before_cursor,
+        "hasMoreBefore": has_more_before,
+    })
+}
+
 /// Return a JSON value containing the last `count` messages in chronological order.
 pub fn messages_tail_json(messages: &[Message], count: usize) -> serde_json::Value {
-    let skip = messages.len().saturating_sub(count);
-    let msgs_json: Vec<serde_json::Value> = messages[skip..].iter().map(message_to_json).collect();
-    serde_json::json!({ "messages": msgs_json })
+    messages_page_json(messages, count, None)
 }
 
 /// Static wire name for a role — no per-message throwaway `String` allocation

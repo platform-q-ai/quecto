@@ -307,7 +307,10 @@ fn command_set_workflow_automation_serializes() {
 
 #[test]
 fn command_get_messages_serializes() {
-    let cmd = Command::GetMessages { id: None };
+    let cmd = Command::GetMessages {
+        id: None,
+        before: None,
+    };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"get_messages\""));
 }

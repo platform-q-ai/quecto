@@ -23,7 +23,10 @@ impl App {
             self.rewind.last_idle_escape = None;
             let id = self.next_rewind_request_id("open");
             self.rewind.pending_open_id = Some(id.clone());
-            self.send_command(Command::GetMessages { id: Some(id) });
+            self.send_command(Command::GetMessages {
+                id: Some(id),
+                before: None,
+            });
         } else {
             self.rewind.last_idle_escape = Some(now);
             self.notify(

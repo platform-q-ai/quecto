@@ -636,6 +636,7 @@ impl App {
             }
             Key::ScrollUp => {
                 self.active_chat_mut().scroll_up(MOUSE_SCROLL_LINES);
+                self.request_active_older_history_page();
                 return;
             }
             Key::ScrollDown => {
@@ -644,6 +645,7 @@ impl App {
             }
             Key::PageUp => {
                 self.active_chat_mut().scroll_up(10);
+                self.request_active_older_history_page();
                 return;
             }
             Key::PageDown => {

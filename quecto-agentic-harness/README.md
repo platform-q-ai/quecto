@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.91.9**.
+Current version: **0.92.0**.
 
 ## Quick Start
 
@@ -298,7 +298,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `follow_up` | `message`, optional `id` | Queue message for after current run completes; if idle, run it immediately |
 | `abort` | optional `id` | Cancel the current agent run |
 | `get_state` | optional `id` | Return session state (model, streaming, message count, and workflow snapshot when enabled) |
-| `get_messages` | optional `count`, optional `id` | Return conversation history (omit `count` for all, `N` for the last N messages) |
+| `get_messages` | optional `count`, optional `before`, optional `agent_id`, optional `id` | Return newest bounded history page; `count` requests an older-client newest slice, `before` pages backward, and `agent_id` targets a sub-agent. Responses include `messages`, `before`, and `hasMoreBefore` so older history is explicitly reachable. |
 | `get_session_stats` | optional `id` | Return token usage and cost statistics |
 | `list_sessions` | optional `id` | Return persisted CLI sessions available for resume |
 | `resume_session` | `session`, optional `id` | Switch the active UDS conversation to a persisted CLI session |

@@ -1,6 +1,9 @@
 use super::protocol::AgentCommand;
 use super::uds::DispatchCtx;
-use super::uds_session::{compute_session_stats_with_usage, message_to_json, messages_tail_json};
+use super::uds_session::{
+    HISTORY_PAGE_SIZE, compute_session_stats_with_usage, message_to_json, messages_page_json,
+    messages_tail_json,
+};
 
 pub(super) fn query_response_data(
     cmd: &AgentCommand,
@@ -32,14 +35,11 @@ pub(super) fn query_response_data(
             );
             Some(serde_json::to_value(&state).unwrap_or_default())
         }
-        AgentCommand::GetMessages { count, .. } => match count {
-            Some(count) => Some(messages_tail_json(ctx.messages, *count)),
-            None => {
-                let msgs: Vec<serde_json::Value> =
-                    ctx.messages.iter().map(message_to_json).collect();
-                Some(serde_json::json!({ "messages": msgs }))
-            }
-        },
+        AgentCommand::GetMessages { count, before, .. } => Some(messages_page_json(
+            ctx.messages,
+            count.unwrap_or(HISTORY_PAGE_SIZE),
+            before.as_deref(),
+        )),
         AgentCommand::GetMessagesTail { count, .. } => {
             Some(messages_tail_json(ctx.messages, *count))
         }
@@ -176,6 +176,15 @@ mod tests {
         }
     }
 
+    fn message_contents(data: &serde_json::Value) -> Vec<String> {
+        data["messages"]
+            .as_array()
+            .expect("messages array")
+            .iter()
+            .map(|m| m["content"].as_str().expect("content string").to_string())
+            .collect()
+    }
+
     #[test]
     fn query_get_state_messages_and_stats_are_shaped() {
         let mut fx = Fx::new();
@@ -189,17 +198,22 @@ mod tests {
             &AgentCommand::GetMessages {
                 id: None,
                 count: None,
+                before: None,
                 agent_id: None,
             },
             &ctx,
         )
         .unwrap();
-        assert_eq!(all["messages"].as_array().unwrap().len(), 2);
+        let all_messages = all["messages"].as_array().unwrap();
+        assert_eq!(all_messages.len(), 2);
+        assert_eq!(all["hasMoreBefore"], false);
+        assert_eq!(all["before"], serde_json::Value::Null);
 
         let tail = query_response_data(
             &AgentCommand::GetMessages {
                 id: None,
                 count: Some(1),
+                before: None,
                 agent_id: None,
             },
             &ctx,
@@ -209,6 +223,219 @@ mod tests {
 
         let stats = query_response_data(&AgentCommand::GetSessionStats { id: None }, &ctx).unwrap();
         assert_eq!(stats["sessionKey"], "cli:test");
+    }
+
+    fn assert_page_metadata(data: &serde_json::Value, has_more: bool) {
+        assert_eq!(data["hasMoreBefore"], has_more);
+        if has_more {
+            assert!(
+                data["before"].as_str().is_some(),
+                "older cursor should be present"
+            );
+        } else {
+            assert_eq!(data["before"], serde_json::Value::Null);
+        }
+        assert_ne!(data["trimmed"], true);
+    }
+
+    #[test]
+    fn query_get_messages_without_count_returns_newest_bounded_page_with_cursor() {
+        let mut fx = Fx::new();
+        fx.messages = (0..(HISTORY_PAGE_SIZE * 3))
+            .map(|i| Message::user(format!("msg-{i:03}")))
+            .collect();
+        let ctx = fx.ctx();
+
+        let page = query_response_data(
+            &AgentCommand::GetMessages {
+                id: None,
+                count: None,
+                before: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("get_messages returns a page");
+        let contents = message_contents(&page);
+
+        assert_eq!(
+            contents.len(),
+            HISTORY_PAGE_SIZE,
+            "attach/resume must be bounded by the protocol history page size"
+        );
+        assert_eq!(contents.last().map(String::as_str), Some("msg-191"));
+        assert_eq!(contents.first().map(String::as_str), Some("msg-128"));
+        assert_page_metadata(&page, true);
+    }
+
+    #[test]
+    fn query_get_messages_exact_page_has_no_older_cursor() {
+        let mut fx = Fx::new();
+        fx.messages = (0..HISTORY_PAGE_SIZE)
+            .map(|i| Message::user(format!("msg-{i:03}")))
+            .collect();
+        let ctx = fx.ctx();
+
+        let page = query_response_data(
+            &AgentCommand::GetMessages {
+                id: None,
+                count: None,
+                before: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("exact page returns data");
+
+        assert_eq!(message_contents(&page).len(), HISTORY_PAGE_SIZE);
+        assert_page_metadata(&page, false);
+    }
+
+    #[test]
+    fn query_get_messages_just_over_page_keeps_oldest_reachable() {
+        let mut fx = Fx::new();
+        fx.messages = (0..(HISTORY_PAGE_SIZE + 1))
+            .map(|i| Message::user(format!("msg-{i:03}")))
+            .collect();
+        let ctx = fx.ctx();
+
+        let newest = query_response_data(
+            &AgentCommand::GetMessages {
+                id: None,
+                count: None,
+                before: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("newest page returns data");
+        assert_eq!(message_contents(&newest).len(), HISTORY_PAGE_SIZE);
+        assert_eq!(
+            message_contents(&newest).first().map(String::as_str),
+            Some("msg-001")
+        );
+        assert_page_metadata(&newest, true);
+
+        let older = query_response_data(
+            &AgentCommand::GetMessages {
+                id: None,
+                count: None,
+                before: newest["before"].as_str().map(str::to_owned),
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("oldest omitted message is reachable");
+        assert_eq!(message_contents(&older), ["msg-000"]);
+        assert_page_metadata(&older, false);
+    }
+
+    #[test]
+    fn query_get_messages_before_cursor_returns_adjacent_older_page() {
+        let mut fx = Fx::new();
+        fx.messages = (0..(HISTORY_PAGE_SIZE * 2))
+            .map(|i| Message::user(format!("msg-{i:03}")))
+            .collect();
+        let cursor = fx.messages[80].id().to_string();
+        let cmd: AgentCommand = serde_json::from_value(serde_json::json!({
+            "type": "get_messages",
+            "before": cursor,
+        }))
+        .expect("paged get_messages command parses");
+        let ctx = fx.ctx();
+
+        let page = query_response_data(&cmd, &ctx).expect("older page returns data");
+        let contents = message_contents(&page);
+
+        assert_eq!(contents.len(), HISTORY_PAGE_SIZE);
+        assert_eq!(contents.last().map(String::as_str), Some("msg-079"));
+        assert_eq!(contents.first().map(String::as_str), Some("msg-016"));
+        assert!(contents.iter().all(|content| content.as_str() < "msg-080"));
+    }
+
+    #[test]
+    fn query_get_messages_pages_to_start_without_gap_or_duplicate() {
+        let mut fx = Fx::new();
+        fx.messages = (0..(HISTORY_PAGE_SIZE * 2 + 1))
+            .map(|i| Message::user(format!("msg-{i:03}")))
+            .collect();
+        let ctx = fx.ctx();
+        let mut before = None;
+        let mut collected = Vec::new();
+
+        loop {
+            let page = query_response_data(
+                &AgentCommand::GetMessages {
+                    id: None,
+                    count: None,
+                    before: before.clone(),
+                    agent_id: None,
+                },
+                &ctx,
+            )
+            .expect("page returns data");
+            let mut contents = message_contents(&page);
+            contents.extend(collected);
+            collected = contents;
+            if page["hasMoreBefore"] == false {
+                break;
+            }
+            before = page["before"].as_str().map(str::to_owned);
+        }
+
+        assert_eq!(collected.len(), HISTORY_PAGE_SIZE * 2 + 1);
+        assert_eq!(collected.first().map(String::as_str), Some("msg-000"));
+        assert_eq!(collected.last().map(String::as_str), Some("msg-128"));
+        let unique = collected.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            unique.len(),
+            collected.len(),
+            "collected messages must be exact-once"
+        );
+    }
+
+    #[test]
+    fn query_get_messages_count_is_older_client_newest_slice_with_page_metadata() {
+        let mut fx = Fx::new();
+        fx.messages = (0..10).map(|i| Message::user(format!("msg-{i}"))).collect();
+        let ctx = fx.ctx();
+
+        let page = query_response_data(
+            &AgentCommand::GetMessages {
+                id: None,
+                count: Some(3),
+                before: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("compat get_messages count returns data");
+        let contents = message_contents(&page);
+
+        assert_eq!(contents, ["msg-7", "msg-8", "msg-9"]);
+        assert_page_metadata(&page, true);
+    }
+
+    #[test]
+    fn query_get_messages_count_at_or_beyond_total_has_no_older_cursor() {
+        let mut fx = Fx::new();
+        fx.messages = (0..3).map(|i| Message::user(format!("msg-{i}"))).collect();
+        let ctx = fx.ctx();
+
+        for count in [3, 10] {
+            let page = query_response_data(
+                &AgentCommand::GetMessages {
+                    id: None,
+                    count: Some(count),
+                    before: None,
+                    agent_id: None,
+                },
+                &ctx,
+            )
+            .expect("compat page returns data");
+            assert_eq!(message_contents(&page), ["msg-0", "msg-1", "msg-2"]);
+            assert_page_metadata(&page, false);
+        }
     }
 
     #[test]
