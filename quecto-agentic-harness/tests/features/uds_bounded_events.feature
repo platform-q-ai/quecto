@@ -155,6 +155,29 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
     Then client 2 should have received a successful get_message response for the requested ref
     And the get_message response should carry full content for the requested ref
 
+  # Acceptance checklist for #1094:
+  #   - Messages larger than the protocol frame cap round-trip completely via get_message.
+  #   - Both idle and busy UDS get_message paths deliver the content in bounded responses.
+  #   - Every response frame stays within the protocol cap and clients remain connected.
+  #   - TUI and API/WebSocket readers can request all ranges and present the reassembled body.
+
+  @done @issue-1094 @adr-0008-part2 @persist
+  Scenario: An oversized prior message is recoverable after the agent is idle
+    Given an idle persisted agent session containing an oversized prior assistant message
+    When I request the oversized message by its stable reference
+    Then every oversized-message response fragment should stay within the protocol frame cap
+    And the response fragments should reassemble the full message content
+    And the UDS client connection should remain open
+
+  @done @issue-1094 @adr-0008-part2 @multi-client @persist
+  Scenario: An oversized prior message is recoverable while a later turn is in flight
+    Given a persisted agent session contains an oversized prior assistant message
+    And the agent is processing a later turn
+    When another client requests the oversized message by its stable reference
+    Then every oversized-message response fragment received by that client should stay within the protocol frame cap
+    And that client should reassemble the full oversized message content
+    And that client should remain connected while the agent is busy
+
   @issue-1093 @adr-0008-part2 @persist
   @done
   Scenario: get_message recalls full content for a collapsed message after the agent is idle

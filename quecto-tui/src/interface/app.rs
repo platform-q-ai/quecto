@@ -36,6 +36,7 @@ const MAX_ESCAPE_RETRIES: usize = 5;
 #[path = "app_commands.rs"]
 mod app_commands;
 use app_commands::builtin_commands;
+use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
 
 /// Application state.
 pub struct App {
@@ -124,21 +125,6 @@ pub struct App {
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
     /// When the TUI session started — drives the Master row's uptime timer (#820).
     started_at: tokio::time::Instant,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PendingMessageRecovery {
-    message_id: String,
-    batch_id: String,
-}
-
-#[derive(Debug)]
-pub(crate) struct MessageRecoveryBatch {
-    refs: Vec<String>,
-    responses: std::collections::HashMap<String, serde_json::Value>,
-    target_start: usize,
-    target_end: usize,
-    agent_id: Option<String>,
 }
 
 /// Rewind flow state, grouped by owner (#997).
@@ -438,6 +424,8 @@ mod app_git;
 pub const GIT_BRANCH_POLL_INTERVAL: std::time::Duration = app_git::GIT_BRANCH_POLL_INTERVAL;
 #[path = "app_idle_efficiency.rs"]
 mod app_idle_efficiency;
+#[path = "app_message_recovery.rs"]
+mod app_message_recovery;
 #[path = "app_methods.rs"]
 mod app_methods;
 #[path = "app_models.rs"]

@@ -392,6 +392,44 @@ Each message contains:
 
 ---
 
+### `get_message`
+
+Return one stable message by id. For oversized content, clients pass byte-range
+fields and walk the response cursor until `hasMoreContent` is `false`; every
+ranged response is capped to fit the UDS frame limit (#1094).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"get_message"` | yes | |
+| `id` | string | no | Correlation ID |
+| `messageId` | string | yes | Stable message id from `get_messages`, `turn_end.messageRefs`, or `agent_end.messageRefs` |
+| `offset` | integer | no | Content byte offset to start the returned range; omit only when the caller knows the full message fits in one frame |
+| `limit` | integer | no | Requested maximum content bytes for this page; the server may return fewer bytes to preserve the frame cap |
+| `agent_id` | string | no | Forward the lookup to a spawned child agent |
+
+**Response data:** the message fields above plus range metadata when `offset` or
+`limit` is present:
+
+| Field | Type | Description |
+|---|---|---|
+| `content` | string | Returned content slice for this page |
+| `offset` | integer | Byte offset of `content` in the full message |
+| `nextOffset` | integer | Offset to request next; equals `contentLength` on the final page |
+| `contentLength` | integer | Full message content length in bytes |
+| `hasMoreContent` | boolean | `true` when the client should request another page using `nextOffset` |
+
+Example page walk:
+
+```json
+{"type":"get_message","id":"m-page-0","messageId":"...","offset":0,"limit":65536}
+```
+
+```json
+{"content":"...","offset":0,"nextOffset":65536,"contentLength":131072,"hasMoreContent":true}
+```
+
+---
+
 ### `get_session_stats`
 
 Return token usage and cost statistics for the current session.

@@ -13,6 +13,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::application::ports::agent_gateway::{AgentCommand, AgentGateway};
 use crate::application::use_cases;
+use crate::domain::event::AgentEvent;
 
 /// Shared application state, injected into every handler.
 pub struct AppState<G: AgentGateway> {
@@ -71,6 +72,18 @@ struct PromptRequest {
     streaming_behavior: Option<String>,
     #[serde(rename = "waitForCompletion", default = "default_wait_for_completion")]
     wait_for_completion: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WsCommandRequest {
+    GetMessage {
+        #[serde(rename = "messageId")]
+        message_id: String,
+        agent_id: Option<String>,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    },
 }
 
 fn default_wait_for_completion() -> bool {
@@ -148,6 +161,10 @@ async fn messages_handler<G: AgentGateway>(
 struct MessageQuery {
     /// Forward the lookup to a spawned child agent by id (#1060).
     agent_id: Option<String>,
+    /// Byte offset into message content for bounded recovery (#1094).
+    offset: Option<usize>,
+    /// Maximum content bytes to return for bounded recovery (#1094).
+    limit: Option<usize>,
 }
 
 /// #1060: resolve a single message by its stable id — the on-demand lookup for
@@ -167,6 +184,8 @@ async fn message_handler<G: AgentGateway>(
         .send(AgentCommand::GetMessage {
             message_id: id,
             agent_id: params.agent_id,
+            offset: params.offset,
+            limit: params.limit,
         })
         .await
     {
@@ -321,10 +340,34 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
     // We use a channel to coordinate: the reader task sends incoming messages,
     // and the main loop forwards events back to the client.
     let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel::<String>(32);
+    let (command_event_tx, mut command_event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(32);
 
     let gateway = state.gateway.clone();
     let cmd_task = tokio::spawn(async move {
         while let Some(text) = incoming_rx.recv().await {
+            if let Ok(req) = serde_json::from_str::<WsCommandRequest>(&text) {
+                match req {
+                    WsCommandRequest::GetMessage {
+                        message_id,
+                        agent_id,
+                        offset,
+                        limit,
+                    } => {
+                        if let Ok(event) = gateway
+                            .send(AgentCommand::GetMessage {
+                                message_id,
+                                agent_id,
+                                offset,
+                                limit,
+                            })
+                            .await
+                        {
+                            let _ = command_event_tx.send(event).await;
+                        }
+                    }
+                }
+                continue;
+            }
             if let Ok(req) = serde_json::from_str::<PromptRequest>(&text) {
                 if !req.message.is_empty() {
                     let _ = gateway
@@ -341,6 +384,19 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
     // Main loop: concurrently read from WS and write agent events.
     loop {
         tokio::select! {
+            // Direct command response → WS
+            event = command_event_rx.recv() => {
+                match event {
+                    Some(ev) => {
+                        if let Ok(json) = serde_json::to_string(&ev) {
+                            if socket.send(Message::Text(json.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    None => break,
+                }
+            }
             // Agent event → WS
             event = subscriber.recv() => {
                 match event {
@@ -395,4 +451,114 @@ fn api_error_response(
         }
     };
     (status, Json(serde_json::json!({"error": message})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::error::ApiError;
+    use crate::domain::event::AgentEvent;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct MockGateway {
+        commands: Arc<Mutex<Vec<AgentCommand>>>,
+        connected: bool,
+    }
+
+    struct EmptySubscriber;
+
+    impl crate::application::ports::agent_gateway::EventSubscriber for EmptySubscriber {
+        fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<AgentEvent>> + Send + '_>> {
+            Box::pin(async { None })
+        }
+    }
+
+    impl AgentGateway for MockGateway {
+        fn send(
+            &self,
+            cmd: AgentCommand,
+        ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
+            self.commands.lock().unwrap().push(cmd);
+            Box::pin(async {
+                Ok(AgentEvent::Response {
+                    id: Some("req".into()),
+                    command: "get_message".into(),
+                    success: true,
+                    data: Some(serde_json::json!({"ok": true})),
+                    error: None,
+                })
+            })
+        }
+
+        fn enqueue(
+            &self,
+            cmd: AgentCommand,
+        ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
+            self.send(cmd)
+        }
+
+        fn subscribe(
+            &self,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<
+                            Box<dyn crate::application::ports::agent_gateway::EventSubscriber>,
+                            ApiError,
+                        >,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async { Ok(Box::new(EmptySubscriber) as _) })
+        }
+
+        fn is_connected(&self) -> bool {
+            self.connected
+        }
+    }
+
+    #[tokio::test]
+    async fn message_handler_forwards_range_query_to_gateway() {
+        let gateway = MockGateway {
+            connected: true,
+            ..MockGateway::default()
+        };
+        let state = Arc::new(AppState {
+            gateway: gateway.clone(),
+        });
+
+        let response = message_handler(
+            State(state),
+            axum::extract::Path("msg-1".to_string()),
+            Query(MessageQuery {
+                agent_id: Some("worker".into()),
+                offset: Some(4096),
+                limit: Some(8192),
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let commands = gateway.commands.lock().unwrap();
+        assert_eq!(commands.len(), 1);
+        match &commands[0] {
+            AgentCommand::GetMessage {
+                message_id,
+                agent_id,
+                offset,
+                limit,
+            } => {
+                assert_eq!(message_id, "msg-1");
+                assert_eq!(agent_id.as_deref(), Some("worker"));
+                assert_eq!(*offset, Some(4096));
+                assert_eq!(*limit, Some(8192));
+            }
+            other => panic!("expected ranged get_message command, got {other:?}"),
+        }
+    }
 }

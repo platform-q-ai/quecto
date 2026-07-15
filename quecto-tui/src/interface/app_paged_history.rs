@@ -6,7 +6,11 @@ use super::*;
 pub(crate) struct StubRecall {
     pub(super) agent_id: Option<String>,
     pub(super) message_id: String,
+    pub(super) content: String,
+    pub(super) offset: usize,
 }
+
+pub(super) const GET_MESSAGE_PAGE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 4;
 
 /// This session's in-flight older-page request (#1061 review). Responses are
 /// applied only when their id matches `request_id` EXACTLY: `get_messages`
@@ -158,12 +162,16 @@ impl App {
                 StubRecall {
                     agent_id: agent_id.clone(),
                     message_id: message_id.clone(),
+                    content: String::new(),
+                    offset: 0,
                 },
             );
             self.send_command(Command::GetMessage {
                 id: Some(req_id),
                 message_id,
                 agent_id: agent_id.clone(),
+                offset: Some(0),
+                limit: Some(GET_MESSAGE_PAGE_BYTES),
             });
         }
     }
@@ -220,10 +228,70 @@ impl App {
             self.failed_stub_recalls.insert(recall_key);
             return true;
         };
+        let response_offset = data
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(0);
+        if response_offset != recall.offset {
+            self.failed_stub_recalls.insert(recall_key);
+            return true;
+        }
+        let mut accumulated = recall.content;
+        accumulated.push_str(content);
+        let content_len = data
+            .get("contentLength")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(accumulated.len());
+        let has_more = data
+            .get("hasMoreContent")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if has_more {
+            let Some(next_offset) = data
+                .get("nextOffset")
+                .and_then(|v| v.as_u64())
+                .and_then(|n| usize::try_from(n).ok())
+            else {
+                self.failed_stub_recalls.insert(recall_key);
+                return true;
+            };
+            if next_offset <= response_offset
+                || next_offset > content_len
+                || accumulated.len() > content_len
+            {
+                self.failed_stub_recalls.insert(recall_key);
+                return true;
+            }
+            let req_id = format!("stub-recall-{}", super::app_events::uuid_like());
+            self.pending_stub_recall.insert(
+                req_id.clone(),
+                StubRecall {
+                    agent_id: recall.agent_id.clone(),
+                    message_id: recall.message_id.clone(),
+                    content: accumulated,
+                    offset: next_offset,
+                },
+            );
+            self.send_command(Command::GetMessage {
+                id: Some(req_id),
+                message_id: recall.message_id,
+                agent_id: recall.agent_id,
+                offset: Some(next_offset),
+                limit: Some(GET_MESSAGE_PAGE_BYTES),
+            });
+            return true;
+        }
+        if accumulated.len() != content_len {
+            self.failed_stub_recalls.insert(recall_key);
+            return true;
+        }
         // Untrusted transcript text (especially sub-agents): strip control
-        // sequences before rendering, matching the backfill path (#828 security).
-        let content = crate::interface::ansi::sanitize_control_keep_newlines(content);
-        if !chat.recall_stub(&recall.message_id, &content) {
+        // sequences once after all pages are reassembled, so split ANSI/control
+        // sequences are interpreted identically to the original message.
+        let accumulated = crate::interface::ansi::sanitize_control_keep_newlines(&accumulated);
+        if !chat.recall_stub(&recall.message_id, &accumulated) {
             self.failed_stub_recalls.insert(recall_key);
         }
         true

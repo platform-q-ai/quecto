@@ -326,11 +326,17 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
     // (full copies) before the live conversation, so a ref pruned/collapsed
     // from `ctx.messages` still resolves to full content. The ledger wins over
     // a possibly-collapsed live entry.
-    if let AgentCommand::GetMessage { message_id, .. } = cmd {
+    if let AgentCommand::GetMessage {
+        message_id,
+        offset,
+        limit,
+        ..
+    } = cmd
+    {
         let resolved =
             super::uds_snapshots::resolve_get_message(&ctx.conversation_snapshot, message_id)
                 .await
-                .map(|msg| super::uds_session::message_to_json(&msg));
+                .map(|msg| super::uds_session::message_to_json_range(&msg, *offset, *limit));
         let ev = match resolved.or_else(|| query_response_data(cmd, ctx)) {
             Some(data) => AgentEvent::ok(id, tn, Some(data)),
             None => AgentEvent::err(id, tn, format!("message not found: {message_id}")),
@@ -363,6 +369,8 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
 
 #[path = "uds_dispatch.rs"]
 mod uds_dispatch;
+#[path = "uds_dispatch_get_message_forward.rs"]
+mod uds_dispatch_get_message_forward;
 #[path = "uds_forward_response.rs"]
 mod uds_forward_response;
 pub(crate) use uds_dispatch::dispatch_command;

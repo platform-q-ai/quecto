@@ -1,8 +1,8 @@
 use super::protocol::AgentCommand;
 use super::uds::DispatchCtx;
 use super::uds_session::{
-    HISTORY_PAGE_SIZE, compute_session_stats_with_usage, message_to_json, messages_page_json,
-    messages_tail_json, position_by_wire_id,
+    HISTORY_PAGE_SIZE, compute_session_stats_with_usage, messages_page_json, messages_tail_json,
+    position_by_wire_id,
 };
 
 pub(super) fn query_response_data(
@@ -63,9 +63,13 @@ pub(super) fn query_response_data(
         }
         // #1060: on-demand single-message lookup by stable id (busy-path safe).
         // Miss returns None so dispatch_fieldless_command emits a structured error.
-        AgentCommand::GetMessage { message_id, .. } => {
-            position_by_wire_id(ctx.messages, message_id).map(|i| message_to_json(&ctx.messages[i]))
-        }
+        AgentCommand::GetMessage {
+            message_id,
+            offset,
+            limit,
+            ..
+        } => position_by_wire_id(ctx.messages, message_id)
+            .map(|i| super::uds_session::message_to_json_range(&ctx.messages[i], *offset, *limit)),
         AgentCommand::ReloadExtensions { .. } => None,
         _ => None,
     }
@@ -493,6 +497,8 @@ mod tests {
                 id: Some("r1".into()),
                 message_id: target_id.clone(),
                 agent_id: None,
+                offset: None,
+                limit: None,
             },
             &ctx,
         )
@@ -519,6 +525,8 @@ mod tests {
                 id: Some("r1".into()),
                 message_id: "00000000-0000-0000-0000-000000000000".into(),
                 agent_id: None,
+                offset: None,
+                limit: None,
             },
             &ctx,
         );

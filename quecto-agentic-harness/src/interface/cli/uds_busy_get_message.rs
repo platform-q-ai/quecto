@@ -27,19 +27,32 @@ pub(super) async fn intercept(ctx: BusyCommandCtx<'_>) -> bool {
     false
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ParsedGetMessage {
+    pub(super) request_id: Option<String>,
+    pub(super) message_id: String,
+    pub(super) offset: Option<usize>,
+    pub(super) limit: Option<usize>,
+}
+
 pub(super) async fn service(
-    parsed: (Option<String>, String),
+    parsed: ParsedGetMessage,
     snapshot: &ConversationSnapshot,
     registry: &super::uds_ext_protocol::ClientToolRegistry,
     client_id: u64,
 ) {
-    let (request_id, message_id) = parsed;
+    let ParsedGetMessage {
+        request_id,
+        message_id,
+        offset,
+        limit,
+    } = parsed;
     // Resolve against the id-addressable ledger (full copies) first, falling
     // back to the live snapshot — a ref pruned/collapsed from the live
     // conversation still resolves to its full content (#1060 review 1a).
     let data = super::uds_snapshots::resolve_get_message(snapshot, &message_id)
         .await
-        .map(|msg| super::uds_session::message_to_json(&msg));
+        .map(|msg| super::uds_session::message_to_json_range(&msg, offset, limit));
     let event = match data {
         Some(data) => AgentEvent::ok(request_id.as_deref(), "get_message", Some(data)),
         None => AgentEvent::err(
@@ -71,7 +84,7 @@ pub(super) async fn service(
     }
 }
 
-pub(super) fn parse(line: &str) -> Option<(Option<String>, String)> {
+pub(super) fn parse(line: &str) -> Option<ParsedGetMessage> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
     // An agent-targeted lookup (`agent_id` present) must fall through to the
     // dispatch loop, which forwards it to the child. The wire key is snake_case
@@ -83,5 +96,18 @@ pub(super) fn parse(line: &str) -> Option<(Option<String>, String)> {
     }
     let message_id = value.get("messageId")?.as_str()?.to_string();
     let request_id = value.get("id").and_then(|v| v.as_str()).map(str::to_string);
-    Some((request_id, message_id))
+    let offset = value
+        .get("offset")
+        .and_then(|v| v.as_u64())
+        .and_then(|n| usize::try_from(n).ok());
+    let limit = value
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .and_then(|n| usize::try_from(n).ok());
+    Some(ParsedGetMessage {
+        request_id,
+        message_id,
+        offset,
+        limit,
+    })
 }

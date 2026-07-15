@@ -206,3 +206,112 @@ async fn idless_snapshot_after_paging_replaces_whole_prefix_without_duplication(
         "paging must restart from the snapshot's cursor; commands={commands:?}"
     );
 }
+
+#[tokio::test]
+async fn oversized_stub_recall_requests_each_page_and_reassembles_body() {
+    let mut h = harness().await;
+    respond(
+        h.app_mut(),
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        serde_json::json!({
+            "messages": [{
+                "id": "oversized-stub",
+                "role": "assistant",
+                "content": "[assistant stub — recall available]",
+                "collapsed": true,
+                "contentLength": 26,
+            }],
+            "hasMoreBefore": false,
+            "before": null,
+        }),
+    );
+    let _ = h.drain_commands().await;
+
+    prime_active_viewport(h.app_mut());
+    h.app_mut().handle_key(Key::PageUp);
+    let commands = h.drain_commands().await;
+    let first = commands
+        .iter()
+        .find_map(|line| {
+            let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("get_message")).then_some(cmd)
+        })
+        .expect("visible oversized stub must issue first ranged recall");
+    assert_eq!(
+        first.get("messageId").and_then(|v| v.as_str()),
+        Some("oversized-stub")
+    );
+    assert_eq!(first.get("offset").and_then(|v| v.as_u64()), Some(0));
+    assert!(
+        first.get("limit").and_then(|v| v.as_u64()).is_some(),
+        "oversized recall must request a bounded page: {first}"
+    );
+    let first_req = first
+        .get("id")
+        .and_then(|v| v.as_str())
+        .expect("first recall request carries a correlation id")
+        .to_string();
+
+    respond(
+        h.app_mut(),
+        Some(&first_req),
+        "get_message",
+        true,
+        serde_json::json!({
+            "id": "oversized-stub",
+            "role": "assistant",
+            "content": "abcdefghijkl",
+            "offset": 0,
+            "nextOffset": 12,
+            "contentLength": 26,
+            "hasMoreContent": true,
+        }),
+    );
+    let commands = h.drain_commands().await;
+    let second = commands
+        .iter()
+        .find_map(|line| {
+            let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("get_message")).then_some(cmd)
+        })
+        .expect("partial recall response must request the next range");
+    assert_eq!(
+        second.get("messageId").and_then(|v| v.as_str()),
+        Some("oversized-stub")
+    );
+    assert_eq!(second.get("offset").and_then(|v| v.as_u64()), Some(12));
+    let second_req = second
+        .get("id")
+        .and_then(|v| v.as_str())
+        .expect("second recall request carries a correlation id")
+        .to_string();
+
+    respond(
+        h.app_mut(),
+        Some(&second_req),
+        "get_message",
+        true,
+        serde_json::json!({
+            "id": "oversized-stub",
+            "role": "assistant",
+            "content": "mnopqrstuvwxyz",
+            "offset": 12,
+            "nextOffset": 26,
+            "contentLength": 26,
+            "hasMoreContent": false,
+        }),
+    );
+
+    h.app_mut().active_chat_mut().scroll_down(1000);
+    let frame = chat_text(h.app_mut());
+    assert!(
+        frame.contains("abcdefghijklmnopqrstuvwxyz"),
+        "all recalled pages must replace the stub as one complete body: {frame}"
+    );
+    assert!(
+        !frame.contains("recall available"),
+        "stub body must be gone after paged recall completes: {frame}"
+    );
+}

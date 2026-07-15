@@ -33,6 +33,8 @@ pub enum AgentCommand {
     GetMessage {
         message_id: String,
         agent_id: Option<String>,
+        offset: Option<usize>,
+        limit: Option<usize>,
     },
     GetSessionStats,
     SetModel {

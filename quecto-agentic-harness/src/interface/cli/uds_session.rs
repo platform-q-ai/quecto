@@ -507,6 +507,10 @@ pub fn message_to_json(msg: &Message) -> serde_json::Value {
     serde_json::to_value(MessageView(msg)).unwrap_or_default()
 }
 
+#[path = "uds_session_message_range.rs"]
+mod uds_session_message_range;
+pub use uds_session_message_range::message_to_json_range;
+
 /// Clear conversation history, preserving only the injected system prompt (non-manifest).
 /// Uses `truncate` instead of `clone+clear` to avoid copying the system message.
 pub fn clear_conversation(messages: &mut Vec<Message>) {
@@ -583,7 +587,6 @@ fn remove_spill_references(messages: &mut Vec<Message>) {
 #[cfg(test)]
 mod subagent_notification_dedupe_tests {
     use super::*;
-
     #[test]
     fn same_monotonic_subagent_notification_is_recorded_once() {
         let mut session = AgentSession::new("m".into(), "s".into());
@@ -620,7 +623,6 @@ mod subagent_notification_dedupe_tests {
 #[cfg(test)]
 mod pending_message_provenance_tests {
     use super::*;
-
     #[test]
     fn subagent_pending_message_renders_as_system_with_provenance() {
         let pending = PendingMessage::subagent_notification(
@@ -642,7 +644,6 @@ mod pending_message_provenance_tests {
 #[cfg(test)]
 mod subagent_notification_escape_tests {
     use super::*;
-
     #[test]
     fn subagent_notification_body_escapes_closing_tag() {
         let msg = PendingMessage::subagent_notification(
@@ -661,7 +662,6 @@ mod subagent_notification_escape_tests {
 #[cfg(test)]
 mod passive_subagent_notification_tests {
     use super::*;
-
     #[test]
     fn subagent_notification_recording_does_not_enqueue_pending_prompt() {
         let mut session = AgentSession::new("m".into(), "k".into());
@@ -689,7 +689,6 @@ mod uds_session_1060_tests;
 #[cfg(test)]
 mod rewind_collapsed_message_tests {
     use super::*;
-
     /// PR #1048 follow-up (#1046 hint: "is_collapsed currently implies
     /// role == Tool in places"): rewinding past count-collapsed/ladder-stubbed
     /// conversation messages must not blank them into empty user/assistant

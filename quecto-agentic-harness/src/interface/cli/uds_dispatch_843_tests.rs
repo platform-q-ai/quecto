@@ -5,7 +5,10 @@
 //!
 //! Self-contained (own minimal `DispatchCtx`) so it stays independent of the
 //! larger `cov_tests` fixture and keeps each file within the size budget.
-use super::{dispatch_command, forward_subagent_get_message, forward_subagent_get_messages};
+use super::{
+    ForwardGetMessage, dispatch_command, forward_subagent_get_message,
+    forward_subagent_get_messages,
+};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
@@ -391,7 +394,18 @@ async fn forward_tail_unknown_agent_is_error_event() {
 async fn forward_get_message_no_registry_is_error_event() {
     let mut fx = Fx::new();
     let ctx = fx.ctx(); // subagent_registry: None
-    let ev = forward_subagent_get_message(&ctx, Some("id1"), "get_message", "worker", "m1").await;
+    let ev = forward_subagent_get_message(
+        &ctx,
+        Some("id1"),
+        "get_message",
+        ForwardGetMessage {
+            agent_id: "worker",
+            message_id: "m1",
+            offset: None,
+            limit: None,
+        },
+    )
+    .await;
     let json = serde_json::to_value(&ev).unwrap();
     assert!(
         json.get("error").is_some(),
@@ -404,7 +418,18 @@ async fn forward_get_message_unknown_agent_is_error_event() {
     let mut fx = Fx::new();
     let mut ctx = fx.ctx();
     ctx.subagent_registry = Some(new_registry());
-    let ev = forward_subagent_get_message(&ctx, Some("id1"), "get_message", "ghost", "m1").await;
+    let ev = forward_subagent_get_message(
+        &ctx,
+        Some("id1"),
+        "get_message",
+        ForwardGetMessage {
+            agent_id: "ghost",
+            message_id: "m1",
+            offset: None,
+            limit: None,
+        },
+    )
+    .await;
     let json = serde_json::to_value(&ev).unwrap();
     let err = json.get("error").and_then(|v| v.as_str()).unwrap_or("");
     assert!(

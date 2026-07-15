@@ -71,3 +71,11 @@ Feature: TUI history backfill through paged UDS history
     Given the TUI is attached to a session containing a stubbed long message
     When the operator requests the full content for that history message
     Then the recalled content should replace the stubbed history entry
+
+  @done @issue-1094 @adr-0008-part2 @persist
+  Scenario: Expanding oversized history content reassembles all bounded pages
+    Given the TUI is attached to a session containing an oversized history message
+    When the operator requests the full content for that history message
+    Then the TUI should retrieve the oversized history message without disconnecting
+    And the recalled content should replace the history entry with the complete oversized body
+    And the TUI should keep the session connection open

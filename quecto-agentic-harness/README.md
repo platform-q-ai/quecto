@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.92.1**.
+Current version: **0.92.2**.
 
 ## Quick Start
 
@@ -184,7 +184,7 @@ The UDS agent is the sole integration point for external consumers (TUIs, IDE pl
 
 | Module | Responsibility |
 |---|---|
-| `protocol.rs` | `AgentCommand` enum (18 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages` (optional `count`/`before`), `get_session_stats`, `list_sessions`, `resume_session`, `set_model`, `get_extensions`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `set_workflow_automation`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`, `subagent_notification`, `subagent_state_changed`, `workflow_state`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands except `tool_result` carry optional `id` for request/response correlation |
+| `protocol.rs` | `AgentCommand` enum (19 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages` (optional `count`/`before`), `get_message` (`messageId` plus optional `offset`/`limit` for bounded single-message paging), `get_session_stats`, `list_sessions`, `resume_session`, `set_model`, `get_extensions`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `set_workflow_automation`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`, `subagent_notification`, `subagent_state_changed`, `workflow_state`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands except `tool_result` carry optional `id` for request/response correlation |
 | `uds.rs` | Entry point (`run_uds_loop`), socket binding (`chmod 0600`), stale socket reaping, single-client backward-compatible path, shared dispatch loop (`dispatch_command`), system prompt injection/removal |
 | `uds_multi.rs` | Multi-client accept loop (Docker-style event bus). `tokio::sync::broadcast` delivers events to all connected clients. `tokio::sync::mpsc` merges commands from all clients into a single dispatch loop (no concurrent session mutation). Max 64 clients. Agent shuts down when all clients disconnect. RAII `ClientGuard` tracks client count. Lagged clients receive a re-sync notification |
 | `uds_session.rs` | `AgentSession` — in-memory state tracker (model, streaming flag, pending message queue with `VecDeque`, max 64 pending). `compute_session_stats()`, `message_to_json()`, `messages_tail_json()` |
@@ -299,6 +299,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `abort` | optional `id` | Cancel the current agent run |
 | `get_state` | optional `id` | Return session state (model, streaming, message count, and workflow snapshot when enabled) |
 | `get_messages` | optional `count`, optional `before`, optional `agent_id`, optional `id` | Return newest bounded history page; `count` requests an older-client newest slice, `before` pages backward, and `agent_id` targets a sub-agent. Responses include `messages`, `before`, and `hasMoreBefore` so older history is explicitly reachable. |
+| `get_message` | `messageId`, optional `offset`, optional `limit`, optional `agent_id`, optional `id` | Return one stable message by id. With `offset`/`limit`, returns a bounded content byte range plus `nextOffset`, `contentLength`, and `hasMoreContent` so oversized messages can be paged without exceeding the frame cap; `agent_id` targets a sub-agent. |
 | `get_session_stats` | optional `id` | Return token usage and cost statistics |
 | `list_sessions` | optional `id` | Return persisted CLI sessions available for resume |
 | `resume_session` | `session`, optional `id` | Switch the active UDS conversation to a persisted CLI session |
