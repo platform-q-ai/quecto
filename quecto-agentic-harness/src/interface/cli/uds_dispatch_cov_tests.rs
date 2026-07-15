@@ -1,6 +1,4 @@
 //! Exercises `dispatch_command`/`handle_*` routing with an in-memory ctx and sink writer.
-use std::sync::Arc;
-
 use super::{
     dispatch_command, dispatch_ext_command, handle_abort, handle_clear_history, handle_new_session,
     handle_resume_session, handle_rewind_to, handle_steer, persist_current_session,
@@ -15,12 +13,11 @@ use crate::interface::cli::uds::DispatchCtx;
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::{ClientToolRegistry, new_client_tool_registry};
 use crate::interface::cli::uds_session::AgentSession;
-
+use std::sync::Arc;
 #[derive(Debug, Default)]
 struct RecordingSpillStore {
     cleared: std::sync::Mutex<Vec<String>>,
 }
-
 impl ContextSpillStore for RecordingSpillStore {
     fn append(
         &self,
@@ -35,7 +32,6 @@ impl ContextSpillStore for RecordingSpillStore {
     > {
         Box::pin(async { Ok(()) })
     }
-
     fn recall(
         &self,
         _session_key: &str,
@@ -50,7 +46,6 @@ impl ContextSpillStore for RecordingSpillStore {
     > {
         Box::pin(async { Ok(None) })
     }
-
     fn list_entries(
         &self,
         _session_key: &str,
@@ -64,7 +59,6 @@ impl ContextSpillStore for RecordingSpillStore {
     > {
         Box::pin(async { Ok(Arc::new(Vec::new())) })
     }
-
     fn clear(
         &self,
         session_key: &str,
@@ -79,12 +73,10 @@ impl ContextSpillStore for RecordingSpillStore {
         Box::pin(async { Ok(()) })
     }
 }
-
 #[derive(Debug, Default)]
 struct SessionAwareTool {
     seen: std::sync::Mutex<Vec<String>>,
 }
-
 impl Tool for SessionAwareTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -710,6 +702,24 @@ async fn dispatch_ext_command_unregister_unknown_noop() {
 }
 
 // ─── agent-targeted get_messages_tail forwarding (#795) ──────────────────────
+
+#[tokio::test]
+async fn dispatch_unknown_history_cursor_is_rejected() {
+    let mut fx = Fixture::new();
+    fx.messages = vec![Message::user("newest")];
+    assert!(
+        !dispatch_command(
+            AgentCommand::GetMessages {
+                id: Some("stale-page".into()),
+                count: None,
+                before: Some("unknown-message-id".into()),
+                agent_id: None,
+            },
+            &mut fx.ctx(),
+        )
+        .await
+    );
+}
 
 #[tokio::test]
 async fn dispatch_agent_targeted_tail_without_registry_emits_error() {

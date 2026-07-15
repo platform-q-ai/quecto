@@ -412,7 +412,9 @@ pub fn messages_page_json(
     let end = before
         .and_then(|cursor| messages.iter().position(|m| m.id().to_string() == cursor))
         .unwrap_or(messages.len());
-    let page_len = count.min(HISTORY_PAGE_SIZE);
+    // The default caller supplies HISTORY_PAGE_SIZE, while an explicit `count`
+    // retains the legacy "last N" contract (including counts above one page).
+    let page_len = count;
     let start = end.saturating_sub(page_len);
     let msgs_json: Vec<serde_json::Value> =
         messages[start..end].iter().map(message_to_json).collect();

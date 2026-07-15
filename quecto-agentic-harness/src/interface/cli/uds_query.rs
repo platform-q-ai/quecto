@@ -417,6 +417,32 @@ mod tests {
     }
 
     #[test]
+    fn query_get_messages_explicit_count_above_page_size_is_preserved() {
+        let mut fx = Fx::new();
+        fx.messages = (0..100)
+            .map(|i| Message::user(format!("msg-{i:03}")))
+            .collect();
+        let ctx = fx.ctx();
+
+        let page = query_response_data(
+            &AgentCommand::GetMessages {
+                id: None,
+                count: Some(80),
+                before: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("explicit count returns data");
+
+        assert_eq!(message_contents(&page).len(), 80);
+        assert_eq!(
+            message_contents(&page).first().map(String::as_str),
+            Some("msg-020")
+        );
+    }
+
+    #[test]
     fn query_get_messages_count_at_or_beyond_total_has_no_older_cursor() {
         let mut fx = Fx::new();
         fx.messages = (0..3).map(|i| Message::user(format!("msg-{i}"))).collect();

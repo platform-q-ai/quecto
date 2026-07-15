@@ -6,15 +6,30 @@
 use super::{Chat, ChatEntry};
 
 impl Chat {
-    /// Stable ids of history entries still rendered as recallable stubs. Drives
-    /// auto-recall-on-scroll: each id is fetched once and swapped for its full
-    /// body when it arrives.
-    pub fn stub_message_ids(&self) -> Vec<String> {
+    /// Stable ids of recallable stubs intersecting the current viewport. This
+    /// keeps scroll-triggered recall lazy instead of fetching every loaded stub.
+    pub fn visible_stub_message_ids(&self) -> Vec<String> {
+        let Some(height) = self.viewport_height else {
+            return Vec::new();
+        };
+        let full_lines = self.combined_offsets.last().copied().unwrap_or(0);
+        let max_scroll = full_lines.saturating_sub(height);
+        let effective_scroll = self.scroll_offset.min(max_scroll);
+        let end = full_lines.saturating_sub(effective_scroll);
+        let start = end.saturating_sub(height);
         self.entries
             .iter()
-            .filter_map(|entry| match entry {
-                ChatEntry::Stub { id, .. } => Some(id.clone()),
-                _ => None,
+            .enumerate()
+            .filter_map(|(idx, entry)| {
+                let entry_start = *self.combined_offsets.get(idx)?;
+                let entry_end = *self.combined_offsets.get(idx + 1)?;
+                if entry_end <= start || entry_start >= end {
+                    return None;
+                }
+                match entry {
+                    ChatEntry::Stub { id, .. } => Some(id.clone()),
+                    _ => None,
+                }
             })
             .collect()
     }

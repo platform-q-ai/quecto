@@ -58,6 +58,12 @@ fn child_chat_text(app: &mut App, agent_id: &str) -> String {
         .join("\n")
 }
 
+fn prime_active_viewport(app: &mut App) {
+    let chat = app.active_chat_mut();
+    chat.set_viewport_height(1);
+    let _ = chat.render(120);
+}
+
 async fn drained_get_messages_commands(h: &mut TuiHarness) -> Vec<serde_json::Value> {
     h.drain_commands()
         .await
@@ -81,6 +87,7 @@ async fn attach_backfill_requests_next_older_page_when_scrolled_to_top() {
         );
     }
     let _ = h.drain_commands().await;
+    prime_active_viewport(h.app_mut());
 
     h.app_mut().handle_key(Key::PageUp);
     let commands = drained_get_messages_commands(&mut h).await;
@@ -108,8 +115,10 @@ async fn older_history_request_is_deduped_while_cursor_is_in_flight() {
         page(&[("m3", "newest-page")], Some("m3"), true),
     );
     let _ = h.drain_commands().await;
+    prime_active_viewport(h.app_mut());
 
     h.app_mut().handle_key(Key::PageUp);
+    prime_active_viewport(h.app_mut());
     h.app_mut().handle_key(Key::PageUp);
     let commands = drained_get_messages_commands(&mut h).await;
 
@@ -145,6 +154,12 @@ async fn subagent_older_history_request_targets_active_child_session() {
         let session = h.app_mut().active_session_mut();
         session.history_has_more_before = true;
         session.history_before_cursor = Some("child-cursor".into());
+        session.chat.add_entry(ChatEntry::User {
+            text: "child".into(),
+        });
+        session.chat.set_viewport_height(1);
+        let _ = session.chat.render(120);
+        session.chat.scroll_up(usize::MAX);
     }
 
     let request = h
@@ -187,6 +202,7 @@ async fn paged_resume_replaces_stale_chat_before_preserving_cursor() {
         !frame.contains("stale session A"),
         "paged resume must replace the prior session transcript, not prepend into it: {frame}"
     );
+    prime_active_viewport(h.app_mut());
     h.app_mut().handle_key(Key::PageUp);
     let commands = drained_get_messages_commands(&mut h).await;
     assert!(
@@ -258,6 +274,7 @@ async fn resumed_paged_history_keeps_older_page_reachable() {
         page(&[("m2", "resumed newest")], Some("m2"), true),
     );
 
+    prime_active_viewport(h.app_mut());
     h.app_mut().handle_key(Key::PageUp);
     let commands = drained_get_messages_commands(&mut h).await;
 
@@ -293,6 +310,7 @@ async fn stubbed_history_message_is_recalled_and_replaced_on_scroll() {
 
     // Scrolling back auto-recalls the stub's full content through the production
     // key path — no test-only entry point.
+    prime_active_viewport(h.app_mut());
     h.app_mut().handle_key(Key::PageUp);
     let commands = h.drain_commands().await;
     let get_message = commands
@@ -422,6 +440,7 @@ async fn failed_older_page_clears_cursor_and_allows_retry() {
     );
     let _ = h.drain_commands().await;
 
+    prime_active_viewport(h.app_mut());
     h.app_mut().handle_key(Key::PageUp);
     let first = drained_get_messages_commands(&mut h).await;
     assert_eq!(first.len(), 1, "one older-page request should be in flight");
@@ -437,6 +456,7 @@ async fn failed_older_page_clears_cursor_and_allows_retry() {
 
     // A subsequent scroll must be able to retry the SAME cursor (the failed
     // request must not leave it permanently in flight).
+    prime_active_viewport(h.app_mut());
     h.app_mut().handle_key(Key::PageUp);
     let retry = drained_get_messages_commands(&mut h).await;
     assert!(

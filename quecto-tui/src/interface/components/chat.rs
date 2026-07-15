@@ -294,6 +294,15 @@ impl Chat {
         self.scroll_offset
     }
 
+    /// Whether the viewport has reached the oldest currently loaded line.
+    /// Paging may fetch another prefix only at this boundary.
+    pub fn is_at_oldest_loaded_history(&self) -> bool {
+        let Some(height) = self.viewport_height else {
+            return false;
+        };
+        self.scroll_offset >= self.last_render_line_count.saturating_sub(height)
+    }
+
     pub fn scroll_up(&mut self, amount: usize) {
         self.scroll_offset = self.scroll_offset.saturating_add(amount);
     }
@@ -717,6 +726,9 @@ mod cache_tests;
 mod chat_render_tests;
 #[path = "chat_stub.rs"]
 mod chat_stub;
+#[cfg(test)]
+#[path = "chat_stub_tests.rs"]
+mod chat_stub_tests;
 #[cfg(test)]
 #[path = "chat_integration_tests.rs"]
 mod integration_tests;

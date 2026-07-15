@@ -311,6 +311,19 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return Some(false);
     }
+    // A supplied paging cursor is a stable message id. Treat a stale/unknown
+    // id as an error instead of silently restarting at the newest page, which a
+    // client would otherwise prepend and duplicate as "older" history.
+    if let AgentCommand::GetMessages {
+        before: Some(cursor),
+        ..
+    } = cmd
+        && !ctx.messages.iter().any(|m| m.id().to_string() == *cursor)
+    {
+        let ev = AgentEvent::err(id, tn, format!("history cursor not found: {cursor}"));
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return Some(false);
+    }
     if let Some(data) = query_response_data(cmd, ctx) {
         let ev = AgentEvent::ok(id, tn, Some(data));
         emit_event_to_broadcast_or_writer(ctx, &ev).await;

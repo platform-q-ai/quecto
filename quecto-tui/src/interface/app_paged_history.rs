@@ -33,7 +33,7 @@ impl App {
     pub(super) fn next_history_page_request(&mut self) -> Option<(String, String, bool)> {
         let target_child = self.subagents.active_agent_id.is_some();
         let session = self.active_session_mut();
-        if !session.history_has_more_before {
+        if !session.history_has_more_before || !session.chat.is_at_oldest_loaded_history() {
             return None;
         }
         let before = session.history_before_cursor.clone()?;
@@ -58,7 +58,7 @@ impl App {
     /// the child's chat.
     pub(super) fn request_active_visible_stub_recalls(&mut self) {
         let agent_id = self.subagents.active_agent_id.clone();
-        let stub_ids = self.active_session().chat.stub_message_ids();
+        let stub_ids = self.active_session().chat.visible_stub_message_ids();
         for message_id in stub_ids {
             if self
                 .pending_stub_recall
