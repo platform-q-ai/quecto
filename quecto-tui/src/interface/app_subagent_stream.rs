@@ -370,24 +370,31 @@ impl App {
             Event::Response {
                 command, data, id, ..
             } if command == "get_messages" => {
+                let own_page = session.is_pending_history_page(id.as_deref());
                 if let Some(data) = data {
-                    // Older explicit pages EXTEND the existing prefix; only a fuller
-                    // initial backfill superseding a trimmed busy-connect snapshot
-                    // replaces it. Mirror the master path (#1061 review): the initial
-                    // page sets `partial_backfill_len`, so without clearing it here for
-                    // `history-page-*` the child reconciler would REPLACE the newest
-                    // page with each older page instead of prepending it.
-                    if id
+                    if own_page {
+                        // Older explicit pages EXTEND the existing prefix; only a
+                        // fuller initial backfill superseding a trimmed busy-connect
+                        // snapshot replaces it. Mirror the master path (#1061 review):
+                        // the initial page sets `partial_backfill_len`, so without
+                        // clearing it the child reconciler would REPLACE the newest
+                        // page with each older page instead of prepending it.
+                        session.partial_backfill_len = None;
+                        Self::reconcile_backfill_history(session, data);
+                    } else if id
                         .as_deref()
                         .is_some_and(|i| i.starts_with("history-page-"))
                     {
-                        session.partial_backfill_len = None;
+                        // Another client's older page (responses are broadcast) or
+                        // one orphaned by a session swap: applying it here would
+                        // prepend history at the wrong depth. Drop it.
+                    } else {
+                        Self::reconcile_backfill_history(session, data);
                     }
-                    Self::reconcile_backfill_history(session, data);
-                } else {
-                    // Failed / no-data page fetch: clear the in-flight cursor so the
+                } else if own_page {
+                    // Failed / no-data page fetch: clear the in-flight request so the
                     // same older page can be retried on the next scroll (#1061 review).
-                    session.history_pending_before_cursor = None;
+                    session.clear_pending_history_page();
                 }
             }
             _ => {}
@@ -605,7 +612,7 @@ impl App {
             .get("hasMoreBefore")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        session.history_pending_before_cursor = None;
+        session.history_pending_page = None;
         session.history_before_cursor = before;
         session.history_has_more_before = has_more_before;
         // Only mark the backfill applied once it actually carried content: an

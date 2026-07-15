@@ -36,6 +36,11 @@ impl App {
         }
     }
 
+    /// Build the rewind selector from a `get_messages` response. With paged
+    /// history (#1061) that response is the newest bounded page, so only user
+    /// turns within it are offered as rewind targets — a deliberate trade
+    /// against misapplying page-local positions to the full conversation.
+    /// Paging inside the selector is a possible follow-up.
     pub(super) fn open_rewind_selector(&mut self, data: &serde_json::Value) {
         let Some(messages) = data.get("messages").and_then(|v| v.as_array()) else {
             self.notify("No conversation history to rewind", NotifyLevel::Info);

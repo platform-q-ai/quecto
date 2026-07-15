@@ -159,9 +159,8 @@ impl ConversationSnapshotData {
     /// every resolver so the ledger-then-live precedence stays in one place.
     fn lookup(&self, message_id: &str) -> Option<&Message> {
         self.ledger.get(message_id).or_else(|| {
-            self.messages
-                .iter()
-                .find(|m| m.id().to_string() == message_id)
+            super::uds_session::position_by_wire_id(&self.messages, message_id)
+                .map(|i| &self.messages[i])
         })
     }
 

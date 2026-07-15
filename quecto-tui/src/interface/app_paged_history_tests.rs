@@ -64,6 +64,14 @@ fn prime_active_viewport(app: &mut App) {
     let _ = chat.render(120);
 }
 
+/// Undo `prime_active_viewport` so `chat_text` captures the whole transcript
+/// again (a 1-line scroll viewport would otherwise render a single line).
+fn widen_active_viewport(app: &mut App) {
+    let chat = app.active_chat_mut();
+    chat.set_viewport_height(200);
+    chat.scroll_down(usize::MAX);
+}
+
 async fn drained_get_messages_commands(h: &mut TuiHarness) -> Vec<serde_json::Value> {
     h.drain_commands()
         .await
@@ -216,9 +224,8 @@ async fn paged_resume_replaces_stale_chat_before_preserving_cursor() {
 #[tokio::test]
 async fn older_history_page_prepends_without_gap_or_duplicate() {
     let mut h = harness().await;
-    let a = h.app_mut();
     respond(
-        a,
+        h.app_mut(),
         Some(ATTACH_BACKFILL_ID),
         "get_messages",
         true,
@@ -228,7 +235,15 @@ async fn older_history_page_prepends_without_gap_or_duplicate() {
             true,
         ),
     );
+    // Issue the older-page request through the production scroll path: a page
+    // response is only applied when it matches the client's own in-flight
+    // request id exactly (#1061 review).
+    let _ = h.drain_commands().await;
+    prime_active_viewport(h.app_mut());
+    h.app_mut().handle_key(Key::PageUp);
+    let _ = h.drain_commands().await;
 
+    let a = h.app_mut();
     respond(
         a,
         Some("history-page-1"),
@@ -240,6 +255,7 @@ async fn older_history_page_prepends_without_gap_or_duplicate() {
             false,
         ),
     );
+    widen_active_viewport(a);
     let frame = chat_text(a);
 
     let first = frame.find("first message").expect("oldest page rendered");
@@ -512,6 +528,20 @@ async fn subagent_older_history_page_prepends_without_replacing_newest() {
             error: None,
         },
     );
+    // Register the older-page request through the production request builder so
+    // the response below correlates with the child's own in-flight id (#1061
+    // review: uncorrelated pages are dropped).
+    {
+        let session = h.app_mut().active_session_mut();
+        session.chat.set_viewport_height(1);
+        let _ = session.chat.render(120);
+        session.chat.scroll_up(usize::MAX);
+    }
+    let request = h
+        .app_mut()
+        .next_history_page_request()
+        .expect("child older-page request is available");
+    assert_eq!(request.0, "history-page-1");
     // The explicitly-requested older page must PREPEND, not replace the newest
     // page (regression: the child reconciler used replace_history_prefix).
     h.route(
@@ -589,3 +619,102 @@ async fn failed_older_page_clears_cursor_and_allows_retry() {
         "a failed older page must be retryable on the next scroll; commands={retry:?}"
     );
 }
+
+#[tokio::test]
+async fn history_page_with_foreign_correlation_id_is_dropped() {
+    // get_messages responses are broadcast to every connected client: another
+    // client's older page is paged from a DIFFERENT depth, so applying it here
+    // would create an interior gap (#1061 review).
+    let mut h = harness().await;
+    respond(
+        h.app_mut(),
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        page(
+            &[("m3", "third message"), ("m4", "fourth message")],
+            Some("m3"),
+            true,
+        ),
+    );
+    let _ = h.drain_commands().await;
+    prime_active_viewport(h.app_mut());
+    h.app_mut().handle_key(Key::PageUp); // our in-flight id: history-page-1
+    let _ = h.drain_commands().await;
+
+    respond(
+        h.app_mut(),
+        Some("history-page-9"),
+        "get_messages",
+        true,
+        page(&[("x1", "foreign client page")], None, false),
+    );
+    widen_active_viewport(h.app_mut());
+    let frame = chat_text(h.app_mut());
+    assert!(
+        !frame.contains("foreign client page"),
+        "a page that does not match our in-flight request id must be dropped:\n{frame}"
+    );
+
+    // Our own in-flight page must still apply after the foreign one was dropped.
+    respond(
+        h.app_mut(),
+        Some("history-page-1"),
+        "get_messages",
+        true,
+        page(&[("m1", "first message")], None, false),
+    );
+    widen_active_viewport(h.app_mut());
+    let frame = chat_text(h.app_mut());
+    assert!(
+        frame.contains("first message"),
+        "our own correlated page must still prepend:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn history_page_in_flight_across_resume_is_not_applied() {
+    let mut h = harness().await;
+    respond(
+        h.app_mut(),
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        page(&[("m9", "old session newest")], Some("m9"), true),
+    );
+    let _ = h.drain_commands().await;
+    prime_active_viewport(h.app_mut());
+    h.app_mut().handle_key(Key::PageUp); // in flight when the resume lands
+    let _ = h.drain_commands().await;
+
+    respond(
+        h.app_mut(),
+        Some("resume-messages"),
+        "get_messages",
+        true,
+        page(&[("r1", "resumed newest")], None, false),
+    );
+    // The old conversation's page arrives late: it must not prepend into the
+    // resumed transcript (#1061 review).
+    respond(
+        h.app_mut(),
+        Some("history-page-1"),
+        "get_messages",
+        true,
+        page(&[("m8", "old session older")], None, false),
+    );
+
+    widen_active_viewport(h.app_mut());
+    let frame = chat_text(h.app_mut());
+    assert!(
+        frame.contains("resumed newest"),
+        "resumed page renders: {frame}"
+    );
+    assert!(
+        !frame.contains("old session older"),
+        "a page orphaned by resume must not prepend into the new transcript:\n{frame}"
+    );
+}
+
+// The rewind-refresh paging-state reset (#1061 review) is covered in
+// `app_rewind_response_tests::rewind_refresh_replaces_transcript_and_resets_paging_state`.

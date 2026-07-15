@@ -318,7 +318,7 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
         before: Some(cursor),
         ..
     } = cmd
-        && !ctx.messages.iter().any(|m| m.id().to_string() == *cursor)
+        && super::uds_session::position_by_wire_id(ctx.messages, cursor).is_none()
     {
         let ev = AgentEvent::err(id, tn, format!("history cursor not found: {cursor}"));
         emit_event_to_broadcast_or_writer(ctx, &ev).await;

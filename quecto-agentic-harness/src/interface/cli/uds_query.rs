@@ -2,7 +2,7 @@ use super::protocol::AgentCommand;
 use super::uds::DispatchCtx;
 use super::uds_session::{
     HISTORY_PAGE_SIZE, compute_session_stats_with_usage, message_to_json, messages_page_json,
-    messages_tail_json,
+    messages_tail_json, position_by_wire_id,
 };
 
 pub(super) fn query_response_data(
@@ -63,11 +63,9 @@ pub(super) fn query_response_data(
         }
         // #1060: on-demand single-message lookup by stable id (busy-path safe).
         // Miss returns None so dispatch_fieldless_command emits a structured error.
-        AgentCommand::GetMessage { message_id, .. } => ctx
-            .messages
-            .iter()
-            .find(|m| m.id().to_string() == *message_id)
-            .map(message_to_json),
+        AgentCommand::GetMessage { message_id, .. } => {
+            position_by_wire_id(ctx.messages, message_id).map(|i| message_to_json(&ctx.messages[i]))
+        }
         AgentCommand::ReloadExtensions { .. } => None,
         _ => None,
     }
@@ -79,6 +77,7 @@ mod tests {
     use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
     use crate::domain::message::Message;
     use crate::infrastructure::persistence::session_store::FileSessionStore;
+    use crate::infrastructure::test_support::message_contents;
     use crate::interface::cli::protocol::AgentCommand;
     use crate::interface::cli::uds_cancel::CancelSlot;
     use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
@@ -174,15 +173,6 @@ mod tests {
                 durable_prefix_dirty: false,
             }
         }
-    }
-
-    fn message_contents(data: &serde_json::Value) -> Vec<String> {
-        data["messages"]
-            .as_array()
-            .expect("messages array")
-            .iter()
-            .map(|m| m["content"].as_str().expect("content string").to_string())
-            .collect()
     }
 
     #[test]
@@ -462,6 +452,34 @@ mod tests {
             assert_eq!(message_contents(&page), ["msg-0", "msg-1", "msg-2"]);
             assert_page_metadata(&page, false);
         }
+    }
+
+    #[test]
+    fn query_get_messages_count_with_before_returns_bounded_slice_before_cursor() {
+        let mut fx = Fx::new();
+        fx.messages = (0..20)
+            .map(|i| Message::user(format!("msg-{i:02}")))
+            .collect();
+        let cursor = fx.messages[10].id().to_string();
+        let ctx = fx.ctx();
+
+        let page = query_response_data(
+            &AgentCommand::GetMessages {
+                id: None,
+                count: Some(4),
+                before: Some(cursor),
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("count combined with before returns data");
+
+        assert_eq!(
+            message_contents(&page),
+            ["msg-06", "msg-07", "msg-08", "msg-09"],
+            "an explicit count pages that many messages strictly before the cursor"
+        );
+        assert_page_metadata(&page, true);
     }
 
     #[test]

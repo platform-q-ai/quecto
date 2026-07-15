@@ -471,3 +471,105 @@ async fn response_agent_error_without_message_uses_default() {
     respond(a, None, "agent_error", false, None, None);
     assert!(chat_text(a).contains("unknown error"));
 }
+
+fn history_page(messages: &[(&str, &str)], before: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "messages": messages
+            .iter()
+            .map(|(id, content)| serde_json::json!({
+                "id": id, "role": "user", "content": content,
+            }))
+            .collect::<Vec<_>>(),
+        "before": before,
+        "hasMoreBefore": before.is_some(),
+    })
+}
+
+#[tokio::test]
+async fn rewind_refresh_replaces_transcript_and_resets_paging_state() {
+    let mut h = harness().await;
+    // Long attached history: the paging cursor refers to the PRE-rewind
+    // conversation (#1061 review — it must not survive the rewind).
+    respond(
+        h.app_mut(),
+        None,
+        "get_messages",
+        true,
+        Some(history_page(&[("m9", "pre-rewind newest")], Some("m9"))),
+        None,
+    );
+    let _ = h.drain_commands().await;
+
+    h.app_mut().rewind.pending_apply_id = Some("rw".into());
+    respond(h.app_mut(), Some("rw"), "rewind_to", true, None, None);
+    respond(
+        h.app_mut(),
+        Some("rewind-refresh"),
+        "get_messages",
+        true,
+        Some(history_page(&[("m2", "kept turn")], Some("m2"))),
+        None,
+    );
+
+    let frame = chat_text(h.app_mut());
+    assert!(
+        frame.contains("kept turn"),
+        "refreshed page renders: {frame}"
+    );
+    assert!(
+        !frame.contains("pre-rewind newest"),
+        "rewind must replace the pre-rewind transcript, not prepend into it:\n{frame}"
+    );
+    assert!(
+        frame.contains("Conversation rewound"),
+        "rewind refresh should announce itself, not claim a resume:\n{frame}"
+    );
+
+    // Scroll-back must page with the POST-rewind cursor, never the stale one
+    // (which the server would reject as "history cursor not found" forever).
+    let _ = h.drain_commands().await;
+    {
+        let chat = h.app_mut().active_chat_mut();
+        chat.set_viewport_height(1);
+        let _ = chat.render(120);
+    }
+    h.app_mut().handle_key(Key::PageUp);
+    let commands: Vec<serde_json::Value> = h
+        .drain_commands()
+        .await
+        .into_iter()
+        .filter_map(|line| serde_json::from_str(&line).ok())
+        .filter(|cmd: &serde_json::Value| {
+            cmd.get("type").and_then(|v| v.as_str()) == Some("get_messages")
+        })
+        .collect();
+    assert!(
+        commands
+            .iter()
+            .any(|cmd| cmd.get("before").and_then(|v| v.as_str()) == Some("m2")),
+        "post-rewind paging must use the refreshed cursor; commands={commands:?}"
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|cmd| cmd.get("before").and_then(|v| v.as_str()) == Some("m9")),
+        "the pre-rewind cursor must not survive the rewind; commands={commands:?}"
+    );
+}
+
+#[tokio::test]
+async fn rewind_success_clears_failed_stub_recall_state() {
+    // A recall marked permanently failed belongs to the PRE-rewind
+    // conversation; after a rewind the same stub id may be recallable again
+    // (#1061 review — clear_message_recovery must reset stub-recall state).
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.failed_stub_recalls.insert((None, "stub-1".to_string()));
+    a.rewind.pending_apply_id = Some("rw".into());
+    respond(a, Some("rw"), "rewind_to", true, None, None);
+    assert!(
+        a.failed_stub_recalls.is_empty(),
+        "rewind must reset failed stub-recall markers"
+    );
+    assert!(a.pending_stub_recall.is_empty());
+}

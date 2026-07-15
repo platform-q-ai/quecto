@@ -258,7 +258,7 @@ pub(crate) struct SessionView {
     history_before_cursor: Option<String>,
     history_has_more_before: bool,
     history_page_seq: u64,
-    history_pending_before_cursor: Option<String>,
+    history_pending_page: Option<app_paged_history::PendingHistoryPage>,
     /// Until this session's own stream reports run-state, `active_subagent_running`
     /// trusts the tracked status not `running` (#834).
     observed_run_state: bool,
@@ -291,7 +291,7 @@ impl SessionView {
             history_before_cursor: None,
             history_has_more_before: false,
             history_page_seq: 0,
-            history_pending_before_cursor: None,
+            history_pending_page: None,
             observed_run_state: false,
             active_turn_start: 0,
             tools_this_turn: 0,

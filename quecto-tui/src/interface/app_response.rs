@@ -82,51 +82,59 @@ impl App {
             }
             "resume_session" => self.notify_response_error("Resume failed", error),
             "get_messages" if success => {
+                let own_page = self.master_session.is_pending_history_page(id.as_deref());
                 if let Some(data) = data {
                     if id.is_some() && id == self.rewind.pending_open_id {
                         self.rewind.pending_open_id = None;
                         self.open_rewind_selector(&data);
-                    } else if id.as_deref() == Some("resume-messages")
-                        && data.get("messages").and_then(|v| v.as_array()).is_some()
-                        && (data
-                            .get("hasMoreBefore")
-                            .and_then(|v| v.as_bool())
-                            .is_some()
-                            || data.get("before").is_some())
+                    } else if matches!(
+                        id.as_deref(),
+                        Some("resume-messages") | Some("rewind-refresh")
+                    ) && Self::is_history_page_payload(&data)
                     {
-                        self.replace_master_chat_with_history_page(&data);
-                    } else if id.as_deref() == Some(ATTACH_BACKFILL_ID)
-                        || id
-                            .as_deref()
-                            .is_some_and(|id| id.starts_with("history-page-"))
-                        || id.is_none()
+                        // Resume/rewind swapped or truncated the server-side
+                        // conversation: replace the transcript AND the paging
+                        // cursors, which refer to the old conversation (#1061
+                        // review — a stale cursor after a rewind would loop on
+                        // "history cursor not found" forever).
+                        let status = if id.as_deref() == Some("rewind-refresh") {
+                            "Conversation rewound"
+                        } else {
+                            "Session resumed"
+                        };
+                        self.replace_master_chat_with_history_page(&data, status);
+                    } else if own_page {
+                        // Older pages extend the existing prefix. The
+                        // partial-prefix replacement path is only for a
+                        // fuller initial backfill superseding a trimmed
+                        // busy-connect snapshot.
+                        self.master_session.partial_backfill_len = None;
+                        Self::reconcile_backfill_history(&mut self.master_session, &data);
+                    } else if id
+                        .as_deref()
+                        .is_some_and(|id| id.starts_with("history-page-"))
                     {
-                        // Attach/resume backfill, explicit older-page fetches,
-                        // OR unsolicited busy-connect snapshot (id-less, see
-                        // uds_snapshots): prepend + cursor reconciliation.
-                        if id
-                            .as_deref()
-                            .is_some_and(|id| id.starts_with("history-page-"))
-                        {
-                            // Older pages extend the existing prefix. The
-                            // partial-prefix replacement path is only for a
-                            // fuller initial backfill superseding a trimmed
-                            // busy-connect snapshot.
-                            self.master_session.partial_backfill_len = None;
-                        }
+                        // Another client's older page (get_messages responses
+                        // are broadcast to every client) or one orphaned by a
+                        // resume: it is paged from a DIFFERENT depth, so
+                        // prepending it would create an interior gap. Drop it.
+                    } else if id.as_deref() == Some(ATTACH_BACKFILL_ID) || id.is_none() {
+                        // Attach backfill OR unsolicited busy-connect snapshot
+                        // (id-less, see uds_snapshots): prepend + cursor
+                        // reconciliation.
                         Self::reconcile_backfill_history(&mut self.master_session, &data);
                     } else {
                         self.replace_chat_with_messages(&data);
                     }
-                } else {
-                    // Success but no data: clear the in-flight cursor so the same
+                } else if own_page {
+                    // Success but no data: clear the in-flight request so the same
                     // older page can be retried on the next scroll (#1061 review).
-                    self.master_session.history_pending_before_cursor = None;
+                    self.master_session.clear_pending_history_page();
                 }
             }
             // Failed page fetch: same retry-unblock as the no-data case above.
-            "get_messages" => {
-                self.master_session.history_pending_before_cursor = None;
+            "get_messages" if self.master_session.is_pending_history_page(id.as_deref()) => {
+                self.master_session.clear_pending_history_page();
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id && success => {
                 self.rewind.pending_apply_id = None;

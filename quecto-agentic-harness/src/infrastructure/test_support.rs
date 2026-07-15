@@ -36,6 +36,18 @@ where
     Some(message)
 }
 
+/// Message contents of a `get_messages`-shaped payload, in wire order. Shared
+/// by the paged-history test suites (#1061) so page assertions and their panic
+/// messages read identically everywhere.
+pub fn message_contents(data: &serde_json::Value) -> Vec<String> {
+    data["messages"]
+        .as_array()
+        .expect("messages array")
+        .iter()
+        .map(|m| m["content"].as_str().expect("content string").to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -115,13 +115,18 @@ fn newest_cursor(messages: &[(String, String)], page_size: usize) -> Option<Stri
     (messages.len() > page_size).then(|| messages[messages.len() - page_size].0.clone())
 }
 
-fn find_older_request(cmds: &[String]) -> Option<String> {
+/// Latest older-page request as (correlation id, before cursor). The reply must
+/// echo the request's OWN id: the client applies a page only when the response
+/// id matches its in-flight request exactly (#1061 review).
+fn find_older_request(cmds: &[String]) -> Option<(String, String)> {
     cmds.iter().rev().find_map(|line| {
         let v: serde_json::Value = serde_json::from_str(line).ok()?;
         if v.get("type").and_then(|t| t.as_str()) != Some("get_messages") {
             return None;
         }
-        v.get("before").and_then(|b| b.as_str()).map(str::to_string)
+        let before = v.get("before").and_then(|b| b.as_str())?.to_string();
+        let id = v.get("id").and_then(|i| i.as_str())?.to_string();
+        Some((id, before))
     })
 }
 
@@ -142,9 +147,9 @@ fn scroll_master_to_beginning(world: &mut TuiWorld) {
         });
         let cmds = drain(world);
         match find_older_request(&cmds) {
-            Some(cursor) => {
+            Some((request_id, cursor)) => {
                 world.tui_paged.requested_older = true;
-                deliver_master_page(world, "history-page-1", Some(&cursor));
+                deliver_master_page(world, &request_id, Some(&cursor));
             }
             None => break,
         }

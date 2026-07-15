@@ -403,6 +403,15 @@ pub fn compute_session_stats_with_usage(
 /// Authoritative protocol page size for paged conversation history (#1061).
 pub(crate) const HISTORY_PAGE_SIZE: usize = 64;
 
+/// Locate a message by its stable wire id (a stringified UUID). Parses the id
+/// ONCE and compares typed UUIDs, instead of allocating a `to_string` per
+/// candidate message on every cursor lookup (#1061 review). A non-UUID id can
+/// match no message, so it resolves to `None`.
+pub(crate) fn position_by_wire_id(messages: &[Message], wire_id: &str) -> Option<usize> {
+    let target = uuid::Uuid::parse_str(wire_id).ok()?;
+    messages.iter().position(|m| m.id() == target)
+}
+
 /// Return a JSON value containing the selected history window in chronological order.
 pub fn messages_page_json(
     messages: &[Message],
@@ -410,7 +419,7 @@ pub fn messages_page_json(
     before: Option<&str>,
 ) -> serde_json::Value {
     let end = before
-        .and_then(|cursor| messages.iter().position(|m| m.id().to_string() == cursor))
+        .and_then(|cursor| position_by_wire_id(messages, cursor))
         .unwrap_or(messages.len());
     // The default caller supplies HISTORY_PAGE_SIZE, while an explicit `count`
     // retains the legacy "last N" contract (including counts above one page).
@@ -522,10 +531,7 @@ pub fn resolve_rewind_target(
     message_index: Option<usize>,
 ) -> Result<usize, &'static str> {
     match (message_id, message_index) {
-        (Some(mid), _) => messages
-            .iter()
-            .position(|m| m.id().to_string() == mid)
-            .ok_or("rewind target not found"),
+        (Some(mid), _) => position_by_wire_id(messages, mid).ok_or("rewind target not found"),
         (None, Some(idx)) => Ok(idx),
         (None, None) => Err("rewind requires messageId or messageIndex"),
     }

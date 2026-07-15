@@ -1,15 +1,7 @@
 use super::*;
 use crate::domain::message::Message;
+use crate::infrastructure::test_support::message_contents;
 use crate::interface::cli::uds_session::HISTORY_PAGE_SIZE;
-
-fn message_contents(data: &serde_json::Value) -> Vec<String> {
-    data["messages"]
-        .as_array()
-        .expect("messages array")
-        .iter()
-        .map(|m| m["content"].as_str().expect("content string").to_string())
-        .collect()
-}
 
 fn snapshot_for(size: usize) -> serde_json::Value {
     let messages: Vec<Message> = (0..size)

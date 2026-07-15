@@ -8,6 +8,35 @@ pub(crate) struct StubRecall {
     pub(super) message_id: String,
 }
 
+/// This session's in-flight older-page request (#1061 review). Responses are
+/// applied only when their id matches `request_id` EXACTLY: `get_messages`
+/// responses are broadcast to every connected client, so a prefix match would
+/// let another client's page (at a different paging depth) — or our own page
+/// still in flight across a resume — prepend history at the wrong depth,
+/// silently creating an interior gap.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingHistoryPage {
+    pub(super) request_id: String,
+    pub(super) before: String,
+}
+
+impl SessionView {
+    /// Whether `id` correlates to this session's own in-flight older-page request.
+    pub(super) fn is_pending_history_page(&self, id: Option<&str>) -> bool {
+        id.is_some()
+            && id
+                == self
+                    .history_pending_page
+                    .as_ref()
+                    .map(|p| p.request_id.as_str())
+    }
+
+    /// Unblock retry after a failed/no-data older-page response (#1061 review).
+    pub(super) fn clear_pending_history_page(&mut self) {
+        self.history_pending_page = None;
+    }
+}
+
 impl App {
     pub(super) fn request_active_older_history_page(&mut self) {
         let Some((id, before, target_child)) = self.next_history_page_request() else {
@@ -19,7 +48,7 @@ impl App {
         };
         if target_child {
             if !self.send_to_active_subagent(cmd) {
-                self.active_session_mut().history_pending_before_cursor = None;
+                self.active_session_mut().history_pending_page = None;
                 self.notify(
                     "Selected sub-agent is not ready for history backfill yet",
                     NotifyLevel::Warning,
@@ -37,16 +66,20 @@ impl App {
             return None;
         }
         let before = session.history_before_cursor.clone()?;
-        if session.history_pending_before_cursor.as_deref() == Some(before.as_str()) {
+        if session
+            .history_pending_page
+            .as_ref()
+            .is_some_and(|p| p.before == before)
+        {
             return None;
         }
-        session.history_pending_before_cursor = Some(before.clone());
         session.history_page_seq = session.history_page_seq.wrapping_add(1);
-        Some((
-            format!("history-page-{}", session.history_page_seq),
-            before,
-            target_child,
-        ))
+        let request_id = format!("history-page-{}", session.history_page_seq);
+        session.history_pending_page = Some(PendingHistoryPage {
+            request_id: request_id.clone(),
+            before: before.clone(),
+        });
+        Some((request_id, before, target_child))
     }
 
     /// Auto-recall (#1061): request full content for any demoted history stub
@@ -146,13 +179,48 @@ impl App {
         true
     }
 
-    pub(super) fn replace_master_chat_with_history_page(&mut self, data: &serde_json::Value) {
+    /// Drop cross-conversation fetch state — #1060 recovery batches AND #1061
+    /// stub recalls — when the server-side conversation is swapped or truncated
+    /// (resume, rewind, clear history). In-flight responses would target
+    /// messages that no longer exist, and stale entries must not suppress
+    /// recall in the new conversation: a pending recall whose response was lost
+    /// (e.g. disconnect mid-flight) would otherwise dedupe that stub forever.
+    pub(super) fn clear_message_recovery(&mut self) {
+        self.message_recovery_batches.clear();
+        self.pending_message_recovery.clear();
+        self.pending_stub_recall.clear();
+        self.failed_stub_recalls.clear();
+    }
+
+    /// Whether a `get_messages` payload carries paged-history metadata. #1061
+    /// servers always attach it; a legacy payload without it falls back to the
+    /// wholesale-replacement path.
+    pub(super) fn is_history_page_payload(data: &serde_json::Value) -> bool {
+        data.get("messages").and_then(|v| v.as_array()).is_some()
+            && (data
+                .get("hasMoreBefore")
+                .and_then(|v| v.as_bool())
+                .is_some()
+                || data.get("before").is_some())
+    }
+
+    /// Replace the master transcript with a fresh newest page and reconcile the
+    /// paging cursors from it. Used when the server-side conversation was
+    /// swapped or truncated (resume, rewind): the pre-existing cursor state
+    /// refers to the OLD conversation and must not survive (#1061 review — a
+    /// stale cursor after a rewind loops on "history cursor not found").
+    pub(super) fn replace_master_chat_with_history_page(
+        &mut self,
+        data: &serde_json::Value,
+        status: &str,
+    ) {
         self.master_session.chat.clear();
         self.master_session.history_backfilled = false;
         self.master_session.partial_backfill_len = None;
+        // The cursors themselves are reconciled from `data` below.
         Self::reconcile_backfill_history(&mut self.master_session, data);
         self.master_session.chat.add_entry(ChatEntry::Status {
-            text: "Session resumed".to_string(),
+            text: status.to_string(),
         });
     }
 }
