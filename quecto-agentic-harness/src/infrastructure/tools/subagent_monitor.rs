@@ -339,13 +339,19 @@ fn handle_monitor_line(
             // stream so the TUI inspector updates turn-by-turn (#797). Not a
             // status change, so it bypasses the state-changing path below.
             if let Some(fwd) = forward_child_messages_appended(line, agent_id, parent_id) {
-                // Re-stamping a child line already capped near the limit
-                // (empty `agent_id` → real id, added `parent_id`) can grow it
-                // past the cap; re-cap so the TUI never drops the forwarded
-                // line unread (#1047 review).
-                let mut fwd = crate::infrastructure::line_cap::cap_line(fwd);
-                fwd.push('\n');
-                let _ = tx.send(fwd);
+                // Re-stamping adds identity metadata and can cross the shared
+                // frame cap. That is an invariant violation, not permission to
+                // trim the child payload: reject the forwarded event whole.
+                if fwd.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+                    tracing::warn!(
+                        agent = %agent_id,
+                        len = fwd.len(),
+                        cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
+                        "monitor: dropping oversized forwarded event"
+                    );
+                    return;
+                }
+                let _ = tx.send(format!("{fwd}\n"));
                 return;
             }
             // Descendant sub-agent state (a grandchild, or deeper) must reach the
@@ -361,24 +367,17 @@ fn handle_monitor_line(
             }
         }
     }
-    // Cheap substring pre-filter: any line that isn't a tracked event type
-    // (including high-volume `token` lines) is skipped before the JSON parse.
     if !STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
         return;
     }
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return;
     };
-    // A forwarded descendant `workflow_state` carries a foreign inner `agent_id`
-    // (a grandchild's). It must update only that descendant's snapshot, never the
-    // immediate child's registry entry, so a grandchild's progress never
-    // overwrites the parent's panel row (#869c). The forward below still runs.
     let foreign_workflow = value.get("type").and_then(|t| t.as_str()) == Some("workflow_state")
         && value
             .get("agent_id")
             .and_then(|v| v.as_str())
             .is_some_and(|a| !a.is_empty() && a != agent_id);
-    // Parse once; reuse for the registry update, notification, and forwarding.
     if !foreign_workflow {
         apply_and_notify(registry, notify_tx, agent_id, &value);
     }
@@ -388,9 +387,14 @@ fn handle_monitor_line(
             let event = super::subagent_cascade::build_state_changed_event(registry);
             let _ = tx.send(event);
         }
-        if let Some(mut fwd) = canonical_workflow_forward(&value, agent_id, parent_id) {
-            fwd.push('\n');
-            let _ = tx.send(fwd);
+        if let Some(fwd) = canonical_workflow_forward(&value, agent_id, parent_id) {
+            if fwd.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+                tracing::warn!(agent = %agent_id, len = fwd.len(),
+                    cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
+                    "monitor: dropping oversized forwarded workflow event");
+                return;
+            }
+            let _ = tx.send(format!("{fwd}\n"));
         }
     }
 }

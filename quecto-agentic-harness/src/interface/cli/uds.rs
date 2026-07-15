@@ -188,6 +188,33 @@ pub(super) async fn emit_event_to_broadcast_or_writer(
     ctx.event_sink().emit(event).await;
 }
 
+/// Emit a command response, replacing an over-cap success payload with a small,
+/// correlated error. Normal events reaching the cap are invariant violations;
+/// responses can instead tell callers how to retry without silently hanging.
+async fn emit_response_or_frame_limit_error(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    command: &str,
+    event: AgentEvent,
+) {
+    // Serialize exactly once: the length check reuses the same line the sink
+    // delivers (multi-MiB pages are not serialized twice).
+    let line = event.to_json_line();
+    if line.len() > super::protocol::EVENT_LINE_JSON_BUDGET {
+        // "Request a smaller page" is only actionable for paged commands;
+        // a single-message lookup has no smaller unit to retry with.
+        let advice = if command == "get_message" {
+            "message exceeds the protocol frame limit and cannot be returned whole"
+        } else {
+            "response exceeds the protocol frame limit; request a smaller page"
+        };
+        let err = AgentEvent::err(id, command, advice);
+        emit_event_to_broadcast_or_writer(ctx, &err).await;
+    } else {
+        ctx.event_sink().emit_serialized(line).await;
+    }
+}
+
 fn resolve_set_model_target(
     model: Option<String>,
     provider: Option<String>,
@@ -308,7 +335,7 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
             Some(data) => AgentEvent::ok(id, tn, Some(data)),
             None => AgentEvent::err(id, tn, format!("message not found: {message_id}")),
         };
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        emit_response_or_frame_limit_error(ctx, id, tn, ev).await;
         return Some(false);
     }
     // A supplied paging cursor is a stable message id. Treat a stale/unknown
@@ -325,8 +352,7 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
         return Some(false);
     }
     if let Some(data) = query_response_data(cmd, ctx) {
-        let ev = AgentEvent::ok(id, tn, Some(data));
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        emit_response_or_frame_limit_error(ctx, id, tn, AgentEvent::ok(id, tn, Some(data))).await;
         return Some(false);
     }
     if matches!(cmd, AgentCommand::ClearHistory { .. }) {

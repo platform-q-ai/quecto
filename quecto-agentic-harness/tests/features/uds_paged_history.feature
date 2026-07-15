@@ -37,8 +37,8 @@ Feature: Paged history on connect and resume (ADR-0008 part 3)
     And the client should know the beginning of history has been reached
 
   @done @issue-1061 @adr-0008-part3 @persist
-  Scenario: Oversized live pages remain bounded and gap-free
-    Given a persisted UDS session whose newest history slice exceeds the wire limit
+  Scenario: Near-limit live pages remain bounded and gap-free
+    Given a persisted UDS session whose newest history slice is near the wire limit
     When a client pages backward to the beginning of the session
     Then every history slice should join to the next slice without an interior gap
     And the collected history should contain each session message exactly once

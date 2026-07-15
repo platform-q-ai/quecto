@@ -120,8 +120,8 @@ fn agent_then_sends_valid_token(world: &mut TuiWorld) {
     stream.received_events = events;
 }
 
-#[then("the TUI client should record one dropped oversized event")]
-fn tui_client_records_one_dropped_oversized_event(world: &mut TuiWorld) {
+#[then("the TUI reports one oversized agent event was dropped")]
+fn tui_reports_one_oversized_agent_event_was_dropped(world: &mut TuiWorld) {
     let stream = world.tui_defence_stream.as_ref().expect("stream");
     assert_eq!(
         stream.dropped_oversized,

@@ -2,6 +2,7 @@
 //! `collect_notification` arm (#994 review follow-up).
 
 use super::*;
+use crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES as SHARED_EVENT_LINE_CAP_BYTES;
 use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentNotification, mark_completion_consumed_by_await, new_registry,
 };
@@ -261,20 +262,24 @@ fn fire_then_arm_resets_to_idle() {
     assert!(result2.is_some(), "should arm after Fired was consumed");
 }
 
-// --- #1047: outbound event lines must never exceed the protocol cap ---
+// --- #1062: the outbound frame cap is a should-never-fire invariant ---
 //
-// The TUI client drops any event line above the protocol frame cap
-// (`MAX_FRAME_PAYLOAD_BYTES` in quecto-tui). Near a full context window a
-// turn's messages can exceed that,
-// so `EventSink::emit` must tail/cap the payload instead of emitting an
-// un-receivable line — otherwise the TUI silently loses `turn_end`/`agent_end`
-// and the session appears frozen/disconnected.
+// Legitimate events are bounded by construction (#1060/#1061). An oversized
+// event therefore signals a defect: reject it whole rather than silently
+// tailing the user's content, while keeping the sink usable for later events.
 
-// Bound under test: `protocol::EVENT_LINE_CAP_BYTES`, whose value is pinned to
-// the TUI client's `quecto-tui::infrastructure::client::MAX_FRAME_PAYLOAD_BYTES` (see
-// the constant's doc comment in protocol.rs). If the client cap ever changes,
-// change the protocol constant — these tests follow it automatically.
-use crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
+// Bound under test comes directly from the shared line-I/O protocol constant,
+// not a local test-only value.
+use crate::interface::cli::protocol::{EVENT_LINE_CAP_BYTES, EVENT_LINE_JSON_BUDGET};
+
+#[test]
+fn event_cap_is_the_shared_protocol_bound() {
+    assert_eq!(EVENT_LINE_CAP_BYTES, SHARED_EVENT_LINE_CAP_BYTES);
+    assert_eq!(
+        EVENT_LINE_CAP_BYTES,
+        quecto_line_io::PROTOCOL_LINE_CAP_BYTES
+    );
+}
 
 /// Emit `event` through a broadcast sink and return the emitted line
 /// (including its trailing newline).
@@ -310,67 +315,31 @@ fn big_turn_end(content: String) -> AgentEvent {
 }
 
 #[tokio::test]
-async fn agent_end_event_line_stays_within_protocol_cap_keeping_recent_messages() {
-    // Run messages totalling well beyond the cap so tailing must kick in.
-    let big = "x".repeat(EVENT_LINE_CAP_BYTES / 4);
-    let messages: Vec<serde_json::Value> = (0..8)
-        .map(|i| serde_json::json!({"role": "assistant", "content": format!("{i}:{big}")}))
-        .collect();
-    let line = emit_line(&AgentEvent::AgentEnd {
-        messages,
-        message_refs: vec![],
-    })
-    .await;
+async fn oversized_event_is_rejected_whole_and_a_later_event_is_emitted() {
+    let oversized = big_turn_end("y".repeat(EVENT_LINE_CAP_BYTES + 1024));
+    let later = big_turn_end("later event survives".to_string());
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let mut sink = EventSink::Broadcast(tx);
 
-    assert!(
-        line.len() <= EVENT_LINE_CAP_BYTES,
-        "agent_end event line must be tailed to the protocol cap so the \
-         TUI can receive it (#1047); got {} bytes",
-        line.len()
-    );
-    let v = parse_event_line(&line, "agent_end");
-    // Tailing must keep the MOST RECENT message, not delete content wholesale:
-    // the final answer (message "7:…") is what the user is waiting on.
-    let kept = v["messages"].as_array().expect("messages array");
-    assert!(!kept.is_empty(), "capped agent_end must retain messages");
-    let last = kept.last().unwrap()["content"].as_str().expect("content");
-    assert!(
-        last.ends_with(&"x".repeat(1024)),
-        "capped agent_end must preserve the tail of the most recent message"
-    );
-    assert!(
-        last.starts_with("7:"),
-        "capped agent_end must keep the newest message (got prefix {:?})",
-        &last[..8.min(last.len())]
-    );
-}
+    sink.emit(&oversized).await;
+    sink.emit(&later).await;
 
-#[tokio::test]
-async fn turn_end_event_line_stays_within_protocol_cap_keeping_content_tail() {
-    let original = format!(
-        "{}FINAL-ANSWER-TAIL",
-        "y".repeat(EVENT_LINE_CAP_BYTES + 1024 * 1024)
+    let line = rx
+        .recv()
+        .await
+        .expect("later in-bound event should be emitted");
+    assert_eq!(
+        line,
+        format!("{}\n", later.to_json_line()),
+        "an over-cap event must be rejected whole, without reshaping its payload"
     );
-    let line = emit_line(&big_turn_end(original.clone())).await;
-
+    parse_event_line(&line, "turn_end");
     assert!(
-        line.len() <= EVENT_LINE_CAP_BYTES,
-        "turn_end event line must be capped to the protocol cap so the \
-         TUI can receive it (#1047); got {} bytes",
-        line.len()
-    );
-    let v = parse_event_line(&line, "turn_end");
-    let content = v["message"]["content"].as_str().expect("content string");
-    // Tailing keeps the END of the message — the conclusion of the answer.
-    assert!(
-        content.ends_with(&original[original.len() - 1024..]),
-        "capped turn_end must preserve the tail of the original content"
-    );
-    assert!(
-        content.len() > EVENT_LINE_CAP_BYTES / 2,
-        "capped turn_end should keep most of the budget's worth of content, \
-         not delete it wholesale; kept {} bytes",
-        content.len()
+        matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ),
+        "the rejected oversized event must not be delivered before or after the later event"
     );
 }
 
@@ -417,10 +386,26 @@ async fn agent_end_event_line_under_the_cap_is_emitted_unmodified() {
 }
 
 #[tokio::test]
-async fn turn_end_event_line_just_over_the_cap_is_tailed() {
-    // The other side of the boundary: barely over the cap must trigger
-    // tailing (a blanket truncate-everything implementation would also pass
-    // the far-over tests; this pins the boundary itself).
+async fn event_at_the_json_budget_is_emitted_unmodified() {
+    let mut event = big_turn_end(String::new());
+    let base_len = event.to_json_line().len();
+    if let AgentEvent::TurnEnd { message, .. } = &mut event {
+        message
+            .content
+            .push_str(&"x".repeat(EVENT_LINE_JSON_BUDGET - base_len));
+    }
+    assert_eq!(event.to_json_line().len(), EVENT_LINE_JSON_BUDGET);
+
+    let line = emit_line(&event).await;
+    assert_eq!(
+        line,
+        format!("{}\n", event.to_json_line()),
+        "the exact JSON budget remains valid after adding the wire newline"
+    );
+}
+
+#[tokio::test]
+async fn event_just_over_the_cap_is_rejected_without_partial_delivery() {
     let mut event = big_turn_end("z".repeat(1_000_000));
     let base_len = event.to_json_line().len();
     let over_by = (EVENT_LINE_CAP_BYTES - 1) - base_len + 1;
@@ -429,11 +414,14 @@ async fn turn_end_event_line_just_over_the_cap_is_tailed() {
     }
     assert!(event.to_json_line().len() > EVENT_LINE_CAP_BYTES - 1);
 
-    let line = emit_line(&event).await;
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let mut sink = EventSink::Broadcast(tx);
+    sink.emit(&event).await;
     assert!(
-        line.len() <= EVENT_LINE_CAP_BYTES,
-        "just-over-cap turn_end must be tailed under the cap; got {} bytes",
-        line.len()
+        matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ),
+        "a boundary-crossing event must be rejected rather than tailed into a partial event"
     );
-    parse_event_line(&line, "turn_end");
 }
