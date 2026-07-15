@@ -379,6 +379,37 @@ fn forwarded_grandchild_workflow_does_not_overwrite_child_entry() {
 // cascade_remove_and_state_changed tests moved to `subagent_cascade_tests.rs`
 // alongside the extracted `subagent_cascade` module (#831).
 
+#[test]
+fn handle_monitor_line_rejects_oversized_restamped_workflow_state() {
+    let registry = super::super::subagent_registry::new_registry();
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+    let overhead = r#"{"type":"workflow_state","agent_id":"child-agent-0123456789","parent_id":"root","mode":"active","progress":{"note":""}}"#.len();
+    let note = "x".repeat(MAX_EVENT_PAYLOAD_BYTES - overhead + 1);
+    let line = format!(
+        r#"{{"type":"workflow_state","agent_id":"","mode":"active","progress":{{"note":"{note}"}}}}"#
+    );
+    assert!(
+        line.len() <= MAX_EVENT_PAYLOAD_BYTES,
+        "child line passes size gate"
+    );
+
+    super::handle_monitor_line(
+        &line,
+        "child-agent-0123456789",
+        &registry,
+        None,
+        Some(&tx),
+        Some("root"),
+    );
+    assert!(
+        matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ),
+        "the over-cap re-stamped workflow event must be rejected whole"
+    );
+}
+
 /// #1062: identity re-stamping must reject an over-cap child event whole,
 /// rather than tailoring its messages to make it fit.
 #[test]

@@ -1014,13 +1014,12 @@ Feature: UDS mode for headless agent operation
     And client 1 should have received an execute_tool for tool "weather"
     And client 2 should not have received an execute_tool for tool "weather"
 
-  # ─── Event line size cap (#1047) ─────────────────────────────────────────────
-  # The TUI client drops event lines above the event line cap; near a full
-  # context window a turn's messages can exceed that, so the harness must tail
-  # the payload rather than emit an un-receivable line.
+  # ─── Event line size cap (#1047, #1062) ──────────────────────────────────────
+  # End-of-turn schemas keep legitimate large turns below the shared cap. An
+  # over-cap outbound event is rejected whole; it is never tailed to fit.
 
-  @done @issue-1047
-  Scenario: Agent events remain receivable when a response exceeds the event line cap
+  @done @issue-1047 @issue-1062 @adr-0008-part4
+  Scenario: Agent events remain receivable when a response is larger than the event line cap
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response larger than the event line cap
