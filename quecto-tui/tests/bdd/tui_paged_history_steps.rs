@@ -9,7 +9,8 @@
 use super::*;
 use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::app::tui_harness::{
-    TuiHarness, spawn_start, spawn_subagent_socket, subagent_with_socket, subagents_changed,
+    TuiHarness, spawn_start, spawn_subagent_socket_with_commands, subagent_with_socket,
+    subagents_changed,
 };
 use quecto_tui::interface::keys::Key;
 
@@ -23,6 +24,8 @@ pub struct PagedHistoryState {
     page_size: usize,
     /// Whether a scroll-back step observed an older-history request.
     requested_older: bool,
+    /// Commands decoded by the active child's real Unix socket.
+    child_commands: Option<tokio::sync::mpsc::Receiver<String>>,
     stub_id: Option<String>,
     stub_full: Option<String>,
 }
@@ -201,18 +204,21 @@ fn given_viewing_subagent(world: &mut TuiWorld) {
         page_size: 3,
         ..Default::default()
     };
-    drive(world, |h| {
+    let (socket, child_commands) = drive(world, |h| {
         h.event(Event::AgentStart);
         h.event(spawn_start(CHILD));
-        let socket = spawn_subagent_socket(CHILD);
+        let (socket, commands) = spawn_subagent_socket_with_commands(CHILD);
         h.event(subagents_changed(vec![subagent_with_socket(
             CHILD,
             "running",
             Some(("active", 0, 3)),
-            Some(socket),
+            Some(socket.clone()),
         )]));
         h.select(Some(CHILD));
+        (socket, commands)
     });
+    assert!(socket.exists(), "recording child socket should be bound");
+    world.tui_paged.child_commands = Some(child_commands);
     // Newest child page, with older history advertised.
     let page = page_json(&world.tui_paged.messages, world.tui_paged.page_size, None);
     drive(world, |h| {
@@ -276,14 +282,53 @@ fn when_scroll_child_until_beginning(world: &mut TuiWorld) {
     let page_size = world.tui_paged.page_size;
     let mut cursor = newest_cursor(&messages, page_size);
     while let Some(current) = cursor {
-        // The operator scrolls; the older-history request is routed to the child
-        // socket. We then deliver the page the child would return.
+        // Drive the production key/routing path, then require the real child
+        // socket to observe the exact request before returning a page.
         drive(world, |h| {
             h.press(Key::PageUp);
         });
+        let mut commands = world
+            .tui_paged
+            .child_commands
+            .take()
+            .expect("recording child command receiver");
+        let handle = world
+            .tui_parity_rt
+            .as_ref()
+            .expect("harness runtime")
+            .handle()
+            .clone();
+        let expected = current.clone();
+        let command = handle.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    let line = commands.recv().await.expect("child command socket closed");
+                    let value: serde_json::Value =
+                        serde_json::from_str(&line).expect("child command is JSON");
+                    if value.get("type").and_then(|v| v.as_str()) == Some("get_messages")
+                        && value.get("before").and_then(|v| v.as_str()) == Some(expected.as_str())
+                    {
+                        break value;
+                    }
+                }
+            })
+            .await
+            .expect("TUI did not route the expected history page request to the child socket")
+        });
+        world.tui_paged.child_commands = Some(commands);
+        let request_id = command
+            .get("id")
+            .and_then(|v| v.as_str())
+            .expect("child history request carries a correlation id")
+            .to_string();
+        assert!(
+            request_id.starts_with("history-page-"),
+            "unexpected child history request id: {request_id}"
+        );
+
         let page = page_json(&messages, page_size, Some(&current));
         drive(world, |h| {
-            h.route(CHILD, get_messages_response("history-page-1", page));
+            h.route(CHILD, get_messages_response(&request_id, page));
         });
         world.tui_paged.requested_older = true;
         let end = messages.iter().position(|(id, _)| *id == current).unwrap();

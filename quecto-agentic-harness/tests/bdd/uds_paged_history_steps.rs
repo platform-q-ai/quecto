@@ -337,16 +337,12 @@ fn then_receive_full_content(world: &mut QuectoWorld) {
 
 // ── seeding helpers ─────────────────────────────────────────────────────────
 
-/// Write a valid (mock-backed) provider config so the served loop's
-/// `build_agent_provider` succeeds. We never call the LLM (only get_messages /
-/// get_message), so the mock server is a leaked no-op just satisfying config.
-fn ensure_mock_provider_config(world: &mut QuectoWorld) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let server = rt.block_on(wiremock::MockServer::start());
-    let uri = server.uri();
-    super::e2e_steps::rewrite_config_to_uri(world, &uri);
-    std::mem::forget(server);
-    std::mem::forget(rt);
+/// Write a syntactically valid provider config so `build_agent_provider`
+/// succeeds. These scenarios only issue history queries and never call the LLM,
+/// so an intentionally unreachable loopback endpoint avoids leaking a mock
+/// server and Tokio runtime per scenario.
+fn ensure_query_only_provider_config(world: &mut QuectoWorld) {
+    super::e2e_steps::rewrite_config_to_uri(world, "http://127.0.0.1:9");
 }
 
 fn active_session_name(world: &QuectoWorld) -> &'static str {
@@ -360,7 +356,7 @@ fn active_session_name(world: &QuectoWorld) -> &'static str {
 
 fn seed_plain_session(world: &mut QuectoWorld, n: usize) {
     ensure_temp_dir(world);
-    ensure_mock_provider_config(world);
+    ensure_query_only_provider_config(world);
     let base = base_path(world);
     let session_key = Session::build_key("cli", PAGED_SESSION);
     let store = FileSessionStore::new(&base);
@@ -411,7 +407,7 @@ impl LlmProvider for StubSeedProvider {
 /// proven #1093 seeding so the served loop resolves recall against the spill.
 fn seed_stub_session(world: &mut QuectoWorld) {
     ensure_temp_dir(world);
-    ensure_mock_provider_config(world);
+    ensure_query_only_provider_config(world);
     let base = base_path(world);
     let session_key = Session::build_key("cli", STUB_SESSION);
     let store = FileSessionStore::new(&base);
