@@ -461,6 +461,19 @@ pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
     };
     let mut line =
         serde_json::to_string(&line_body).expect("get_messages snapshot is always serializable");
+    if line.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+        tracing::warn!(
+            len = line.len(),
+            cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
+            "rejecting oversized busy get_messages snapshot"
+        );
+        line = AgentEvent::err(
+            None,
+            "get_messages",
+            "history page exceeds the protocol frame limit; request a smaller page",
+        )
+        .to_json_line();
+    }
     line.push('\n');
     line
 }

@@ -310,6 +310,27 @@ fn build_get_messages_line_pages_history_without_trimming() {
     );
 }
 
+#[test]
+fn build_get_messages_line_rejects_an_oversized_page_with_a_small_error() {
+    let body = "x".repeat(quecto_line_io::PROTOCOL_LINE_CAP_BYTES / HISTORY_PAGE_SIZE + 1024);
+    let messages: Vec<Message> = (0..HISTORY_PAGE_SIZE)
+        .map(|_| Message::assistant(body.clone(), vec![]))
+        .collect();
+
+    let line = build_get_messages_line(&messages);
+    assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
+    let response: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(response["type"], "response");
+    assert_eq!(response["command"], "get_messages");
+    assert_eq!(response["success"], false);
+    assert!(
+        response["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("frame limit")),
+        "an oversized snapshot must be rejected explicitly: {response}"
+    );
+}
+
 /// The snapshot is independent of the dispatch loop's exclusive `&mut messages`
 /// borrow: while a simulated turn holds `messages` mutably for its whole
 /// duration, a concurrent reader (the accept loop) can still read the snapshot

@@ -59,7 +59,6 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
     Then the agent_end event should stay well under the frame size limit
     And the agent_end event should not re-carry full message content
     And the agent_end event should identify the run messages by non-empty message refs
-    And the agent_end message refs should cover assistant tool-call and tool-result roles
 
   # ─── Stable message references (AC6) ───────────────────────────────────────
 

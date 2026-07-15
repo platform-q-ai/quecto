@@ -188,6 +188,27 @@ pub(super) async fn emit_event_to_broadcast_or_writer(
     ctx.event_sink().emit(event).await;
 }
 
+/// Emit a command response, replacing an over-cap success payload with a small,
+/// correlated error. Normal events reaching the cap are invariant violations;
+/// responses can instead tell callers how to retry without silently hanging.
+async fn emit_response_or_frame_limit_error(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    command: &str,
+    event: AgentEvent,
+) {
+    if event.to_json_line().len() > super::protocol::EVENT_LINE_JSON_BUDGET {
+        let err = AgentEvent::err(
+            id,
+            command,
+            "response exceeds the protocol frame limit; request a smaller page",
+        );
+        emit_event_to_broadcast_or_writer(ctx, &err).await;
+    } else {
+        emit_event_to_broadcast_or_writer(ctx, &event).await;
+    }
+}
+
 fn resolve_set_model_target(
     model: Option<String>,
     provider: Option<String>,
@@ -308,7 +329,7 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
             Some(data) => AgentEvent::ok(id, tn, Some(data)),
             None => AgentEvent::err(id, tn, format!("message not found: {message_id}")),
         };
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        emit_response_or_frame_limit_error(ctx, id, tn, ev).await;
         return Some(false);
     }
     // A supplied paging cursor is a stable message id. Treat a stale/unknown
@@ -325,8 +346,7 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
         return Some(false);
     }
     if let Some(data) = query_response_data(cmd, ctx) {
-        let ev = AgentEvent::ok(id, tn, Some(data));
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        emit_response_or_frame_limit_error(ctx, id, tn, AgentEvent::ok(id, tn, Some(data))).await;
         return Some(false);
     }
     if matches!(cmd, AgentCommand::ClearHistory { .. }) {
