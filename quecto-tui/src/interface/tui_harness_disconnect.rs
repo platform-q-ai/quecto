@@ -6,6 +6,11 @@
 use super::TuiHarness;
 
 impl TuiHarness {
+    /// Start a new master conversation through the production reset path.
+    pub fn reset_master_session(&mut self) {
+        self.app.reset_session("New session started");
+    }
+
     /// Replace the master agent client with a disconnected command channel.
     pub fn disconnect_master_commands(&mut self) {
         self.app.client = crate::infrastructure::client::Client::disconnected_for_tests();

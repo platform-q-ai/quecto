@@ -217,6 +217,16 @@ impl App {
         self.pending_message_recovery.clear();
         self.pending_stub_recall.clear();
         self.failed_stub_recalls.clear();
+        // Every caller is a master-conversation lifecycle boundary (new,
+        // resume, rewind, or clear). Invalidate paging correlation and cursors
+        // with the message refs so a late page from the prior conversation
+        // cannot prepend into the replacement transcript, and the new
+        // conversation cannot request the prior cursor.
+        self.master_session.history_pending_page = None;
+        self.master_session.history_before_cursor = None;
+        self.master_session.history_has_more_before = false;
+        self.master_session.partial_backfill_len = None;
+        self.master_session.history_backfilled = false;
     }
 
     /// Whether a `get_messages` payload carries paged-history metadata. #1061

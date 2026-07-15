@@ -30,6 +30,8 @@ pub struct PagedHistoryState {
     stub_full: Option<String>,
     expected_send_failures: usize,
     observed_send_failures: usize,
+    stale_page_request_id: Option<String>,
+    stale_page_cursor: Option<String>,
 }
 
 // ── harness plumbing ────────────────────────────────────────────────────────
@@ -277,6 +279,20 @@ fn given_disconnected_with_older_history(world: &mut TuiWorld) {
     });
 }
 
+#[given("the TUI has an older history page in flight")]
+fn given_older_page_in_flight(world: &mut TuiWorld) {
+    given_attached_enough_history(world);
+    let _ = drain(world);
+    drive(world, |h| {
+        h.press(Key::PageUp);
+    });
+    let commands = drain(world);
+    let (request_id, cursor) = find_older_request(&commands)
+        .expect("scrolling paged history should issue an older-page request");
+    world.tui_paged.stale_page_request_id = Some(request_id);
+    world.tui_paged.stale_page_cursor = Some(cursor);
+}
+
 #[given("the TUI master command channel disconnects with a visible history stub")]
 fn given_disconnected_with_stub(world: &mut TuiWorld) {
     world.tui_paged = PagedHistoryState {
@@ -434,6 +450,23 @@ fn when_retry_stub_after_enqueue_failure(world: &mut TuiWorld) {
     }
 }
 
+#[when("the operator starts a new conversation before that page arrives")]
+fn when_new_conversation_before_page_arrives(world: &mut TuiWorld) {
+    drive(world, |h| h.reset_master_session());
+    let _ = drain(world);
+    let request_id = world
+        .tui_paged
+        .stale_page_request_id
+        .clone()
+        .expect("stale page request id");
+    let cursor = world
+        .tui_paged
+        .stale_page_cursor
+        .clone()
+        .expect("stale page cursor");
+    deliver_master_page(world, &request_id, Some(&cursor));
+}
+
 #[when("the operator requests the full content for that history message")]
 fn when_request_stub_full(world: &mut TuiWorld) {
     let _ = drain(world);
@@ -586,6 +619,33 @@ fn then_both_retries_reach_failure_handling(world: &mut TuiWorld) {
     assert_eq!(
         world.tui_paged.observed_send_failures, world.tui_paged.expected_send_failures,
         "each retry must enqueue independently and report its own send failure"
+    );
+}
+
+#[then("the late older page should not appear in the new conversation")]
+fn then_late_page_absent(world: &mut TuiWorld) {
+    let frame = active_chat_text(world);
+    assert!(
+        !frame.contains("message 0") && !frame.contains("message 1"),
+        "late history from the old conversation must be ignored:\n{frame}"
+    );
+}
+
+#[then("scrolling the new conversation should not request the old history cursor")]
+fn then_old_cursor_not_requested(world: &mut TuiWorld) {
+    let _ = drain(world);
+    drive(world, |h| {
+        h.press(Key::PageUp);
+    });
+    let commands = drain(world);
+    let old_cursor = world
+        .tui_paged
+        .stale_page_cursor
+        .as_deref()
+        .expect("stale cursor");
+    assert!(
+        find_older_request(&commands).is_none_or(|(_, cursor)| cursor != old_cursor),
+        "new conversation must not page with old cursor {old_cursor}; commands={commands:?}"
     );
 }
 

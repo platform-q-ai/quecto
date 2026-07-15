@@ -60,6 +60,13 @@ Feature: TUI history backfill through paged UDS history
     Then both stub recall attempts should reach command failure handling
 
   @done @issue-1061 @adr-0008-part3 @persist
+  Scenario: Starting a new conversation invalidates an in-flight older page
+    Given the TUI has an older history page in flight
+    When the operator starts a new conversation before that page arrives
+    Then the late older page should not appear in the new conversation
+    And scrolling the new conversation should not request the old history cursor
+
+  @done @issue-1061 @adr-0008-part3 @persist
   Scenario: Expanding stubbed history replaces the stub with full content
     Given the TUI is attached to a session containing a stubbed long message
     When the operator requests the full content for that history message
