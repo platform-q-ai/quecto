@@ -48,6 +48,18 @@ Feature: TUI history backfill through paged UDS history
     And older resumed messages should be reachable by scrolling back
 
   @done @issue-1061 @adr-0008-part3 @persist
+  Scenario: A failed master page enqueue can be retried
+    Given the TUI master command channel disconnects with older history available
+    When the operator retries scroll back after the page enqueue fails
+    Then both older history attempts should reach command failure handling
+
+  @done @issue-1061 @adr-0008-part3 @persist
+  Scenario: A failed master stub enqueue can be retried
+    Given the TUI master command channel disconnects with a visible history stub
+    When the operator retries stub recall after the enqueue fails
+    Then both stub recall attempts should reach command failure handling
+
+  @done @issue-1061 @adr-0008-part3 @persist
   Scenario: Expanding stubbed history replaces the stub with full content
     Given the TUI is attached to a session containing a stubbed long message
     When the operator requests the full content for that history message

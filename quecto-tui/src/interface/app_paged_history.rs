@@ -38,6 +38,24 @@ impl SessionView {
 }
 
 impl App {
+    pub(super) fn rollback_failed_history_command(&mut self, command: &Command) {
+        match command {
+            Command::GetMessages { id: Some(id), .. }
+                if self
+                    .master_session
+                    .history_pending_page
+                    .as_ref()
+                    .is_some_and(|pending| pending.request_id == *id) =>
+            {
+                self.master_session.clear_pending_history_page();
+            }
+            Command::GetMessage { id: Some(id), .. } => {
+                self.pending_stub_recall.remove(id);
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn request_active_older_history_page(&mut self) {
         let Some((id, before, target_child)) = self.next_history_page_request() else {
             return;

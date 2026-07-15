@@ -652,22 +652,20 @@ impl App {
         // race to enqueue, so recovery/reset bursts could reach the agent
         // reordered — or look incomplete to an observer draining mid-batch
         // (#1060 review).
-        let command_kind = cmd.kind();
         if let Err(e) = self.client.clone_sender().try_send(&cmd) {
             // Report without blocking the loop (a dropped notice is acceptable).
             let _ = self.command_send_failure_tx.try_send(CommandSendFailure {
-                command_kind,
+                command: cmd,
                 error: e.to_string(),
             });
         }
     }
 
     pub(super) fn handle_command_send_failure(&mut self, failure: CommandSendFailure) {
+        let command_kind = failure.command.kind();
+        self.rollback_failed_history_command(&failure.command);
         self.notify(
-            &format!(
-                "Failed to send {} command: {}",
-                failure.command_kind, failure.error
-            ),
+            &format!("Failed to send {} command: {}", command_kind, failure.error),
             NotifyLevel::Error,
         );
     }

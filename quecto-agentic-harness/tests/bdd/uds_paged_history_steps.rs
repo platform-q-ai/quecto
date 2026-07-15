@@ -59,6 +59,14 @@ fn given_multiple_slices(world: &mut QuectoWorld) {
     seed_plain_session(world, PAGE * 2 + 1);
 }
 
+#[given("a persisted UDS session whose newest history slice exceeds the wire limit")]
+fn given_oversized_live_page(world: &mut QuectoWorld) {
+    // Two pages where every message is large enough that a count-bounded page
+    // exceeds the protocol frame cap. The server must preserve reachability,
+    // not silently tail messages out of the requested page.
+    seed_plain_session_with_body(world, PAGE * 2, 140 * 1024);
+}
+
 #[given("a persisted UDS session containing a stubbed long message")]
 fn given_stubbed_session(world: &mut QuectoWorld) {
     seed_stub_session(world);
@@ -355,13 +363,18 @@ fn active_session_name(world: &QuectoWorld) -> &'static str {
 }
 
 fn seed_plain_session(world: &mut QuectoWorld, n: usize) {
+    seed_plain_session_with_body(world, n, 0);
+}
+
+fn seed_plain_session_with_body(world: &mut QuectoWorld, n: usize, body_len: usize) {
     ensure_temp_dir(world);
     ensure_query_only_provider_config(world);
     let base = base_path(world);
     let session_key = Session::build_key("cli", PAGED_SESSION);
     let store = FileSessionStore::new(&base);
+    let body = "x".repeat(body_len);
     let messages: Vec<Message> = (0..n)
-        .map(|i| Message::user(format!("paged-msg-{i:04}")))
+        .map(|i| Message::user(format!("paged-msg-{i:04}-{body}")))
         .collect();
     world._paged_seeded = messages.iter().map(|m| m.content.clone()).collect();
     let session = Session {

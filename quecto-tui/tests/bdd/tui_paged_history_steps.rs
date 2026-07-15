@@ -28,6 +28,8 @@ pub struct PagedHistoryState {
     child_commands: Option<tokio::sync::mpsc::Receiver<String>>,
     stub_id: Option<String>,
     stub_full: Option<String>,
+    expected_send_failures: usize,
+    observed_send_failures: usize,
 }
 
 // ── harness plumbing ────────────────────────────────────────────────────────
@@ -259,6 +261,48 @@ fn given_attached_stub(world: &mut TuiWorld) {
     });
 }
 
+#[given("the TUI master command channel disconnects with older history available")]
+fn given_disconnected_with_older_history(world: &mut TuiWorld) {
+    world.tui_paged = PagedHistoryState {
+        messages: build_messages(2),
+        page_size: 1,
+        expected_send_failures: 2,
+        ..Default::default()
+    };
+    init_harness(world);
+    let page = page_json(&world.tui_paged.messages, 1, None);
+    drive(world, |h| {
+        h.event(get_messages_response("attach-backfill", page));
+        h.disconnect_master_commands();
+    });
+}
+
+#[given("the TUI master command channel disconnects with a visible history stub")]
+fn given_disconnected_with_stub(world: &mut TuiWorld) {
+    world.tui_paged = PagedHistoryState {
+        stub_id: Some("retry-stub".into()),
+        expected_send_failures: 2,
+        ..Default::default()
+    };
+    init_harness(world);
+    drive(world, |h| {
+        h.event(get_messages_response(
+            "attach-backfill",
+            serde_json::json!({
+                "messages": [{
+                    "id": "retry-stub",
+                    "role": "assistant",
+                    "content": "[assistant stub — recall available]",
+                    "collapsed": true,
+                }],
+                "before": null,
+                "hasMoreBefore": false,
+            }),
+        ));
+        h.disconnect_master_commands();
+    });
+}
+
 // ── When ────────────────────────────────────────────────────────────────────
 
 #[when("the TUI attaches to the session socket")]
@@ -348,6 +392,46 @@ fn when_resume(world: &mut TuiWorld) {
     drive(world, |h| {
         h.event(get_messages_response("resume-messages", page));
     });
+}
+
+#[when("the operator retries scroll back after the page enqueue fails")]
+fn when_retry_page_after_enqueue_failure(world: &mut TuiWorld) {
+    let handle = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("runtime")
+        .handle()
+        .clone();
+    for _ in 0..2 {
+        drive(world, |h| {
+            h.press(Key::PageUp);
+        });
+        let handled = {
+            let h = &mut world.tui_parity.as_mut().expect("harness").0;
+            handle.block_on(h.handle_next_command_send_failure())
+        };
+        world.tui_paged.observed_send_failures += usize::from(handled);
+    }
+}
+
+#[when("the operator retries stub recall after the enqueue fails")]
+fn when_retry_stub_after_enqueue_failure(world: &mut TuiWorld) {
+    let handle = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("runtime")
+        .handle()
+        .clone();
+    for _ in 0..2 {
+        drive(world, |h| {
+            h.press(Key::PageUp);
+        });
+        let handled = {
+            let h = &mut world.tui_parity.as_mut().expect("harness").0;
+            handle.block_on(h.handle_next_command_send_failure())
+        };
+        world.tui_paged.observed_send_failures += usize::from(handled);
+    }
 }
 
 #[when("the operator requests the full content for that history message")]
@@ -493,6 +577,15 @@ fn then_older_resumed_reachable(world: &mut TuiWorld) {
     assert!(
         frame.contains(&oldest),
         "older resumed history '{oldest}' must be reachable by scrolling back:\n{frame}"
+    );
+}
+
+#[then("both older history attempts should reach command failure handling")]
+#[then("both stub recall attempts should reach command failure handling")]
+fn then_both_retries_reach_failure_handling(world: &mut TuiWorld) {
+    assert_eq!(
+        world.tui_paged.observed_send_failures, world.tui_paged.expected_send_failures,
+        "each retry must enqueue independently and report its own send failure"
     );
 }
 

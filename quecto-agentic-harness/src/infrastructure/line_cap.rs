@@ -63,9 +63,40 @@ fn shrink_event_payload(v: &mut serde_json::Value, excess: usize) -> bool {
         // `get_messages` near a full context window) grows without bound just
         // like `agent_end`; tail its messages array the same way instead of
         // emitting a line the client drops unread (#1047 review).
-        Some("response") => shrink_messages_array(v.pointer_mut("/data/messages"), excess),
+        Some("response") => shrink_response_messages(v, excess),
         _ => false,
     }
+}
+
+/// Shrink a response's message payload while preserving paging reachability.
+///
+/// A capped `get_messages` page must advertise a cursor for anything removed
+/// here. Otherwise clients believe they received the complete requested page
+/// and the dropped prefix becomes unreachable. The first retained message's
+/// stable wire id is exactly the cursor expected by the next backward request.
+fn shrink_response_messages(v: &mut serde_json::Value, excess: usize) -> bool {
+    let changed = shrink_messages_array(v.pointer_mut("/data/messages"), excess);
+    if !changed {
+        return false;
+    }
+    let first_id = v
+        .pointer("/data/messages/0/id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    if let Some(data) = v
+        .pointer_mut("/data")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        if let Some(id) = first_id {
+            data.insert("before".into(), serde_json::Value::String(id));
+            data.insert("hasMoreBefore".into(), serde_json::Value::Bool(true));
+        } else {
+            // A lone over-budget message can be reduced in-place or dropped,
+            // but neither operation preserves the authoritative full content.
+            data.insert("trimmed".into(), serde_json::Value::Bool(true));
+        }
+    }
+    true
 }
 
 /// Drop roughly `excess` bytes of the OLDEST messages from a conversation

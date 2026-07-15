@@ -315,7 +315,7 @@ const SUBAGENT_PANEL_WIDTH: usize = 30;
 const MAX_RETAINED_SESSIONS: usize = 16;
 
 struct CommandSendFailure {
-    command_kind: &'static str,
+    command: Command,
     error: String,
 }
 
