@@ -99,6 +99,18 @@ fn uds_docs_document_paged_history_not_unbounded() {
         getting_started.contains("hasMoreBefore"),
         "getting-started re-sync example should point at the paging cursor"
     );
+
+    // sessions.md documents the same command surface; its UDS inspection
+    // examples must not promise unbounded history either.
+    let sessions = read_repo_file("docs/sessions.md");
+    assert!(
+        !sessions.contains("Returns the full conversation history"),
+        "sessions.md must not promise unbounded get_messages history (#1061 paging)"
+    );
+    assert!(
+        sessions.contains("hasMoreBefore"),
+        "sessions.md should point at the paging cursor"
+    );
 }
 
 #[test]

@@ -313,8 +313,11 @@ Return conversation history as bounded pages (#1061). Omit `count` and
 `before` for the newest page (up to the protocol page size of 64 messages);
 pass `count: N` for the last N messages; pass `before: <messageId>` (a message
 id from a prior response's `before` field) to fetch the adjacent older page.
-History is never returned unbounded — walk `before` cursors until
-`hasMoreBefore` is `false` to reach the beginning of the session.
+Without an explicit `count`, history is never returned unbounded — walk
+`before` cursors until `hasMoreBefore` is `false` to reach the beginning of
+the session. An explicit `count` keeps the legacy last-N contract (it may
+exceed one page); every response line is still byte-capped on the wire, with a
+cursor advertised for anything the cap removes.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -359,9 +362,10 @@ Page metadata:
 | Field | Type | Description |
 |---|---|---|
 | `before` | string \| null | Cursor for the adjacent older page (the oldest message included in this page); `null` when the beginning of history is reached |
-| `hasMoreBefore` | boolean | Whether older history exists before this page |
+| `hasMoreBefore` | boolean | Whether older history exists before this page. Legacy corner: an explicit `count: 0` returns an empty page reporting `hasMoreBefore: false` with no cursor (an empty window has no oldest-included message to anchor one) |
 
-To page back to the beginning of the session:
+To page back to the beginning of the session (`request` = send the command,
+then read events until the `response` whose `id` matches):
 
 ```python
 resp = request(sock, {"type": "get_messages", "id": "page-0"})

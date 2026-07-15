@@ -439,6 +439,13 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &messages_snapshot,
         r#"{"type":"get_messages","count":1,"agent_id":"grandchild"}"#
     ));
+    // #1061: a `before` cursor must never be answered by the connect-time
+    // snapshot — it is always the NEWEST page, so it would echo the caller's
+    // own cursor back and the paging loop would spin without advancing.
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &messages_snapshot,
+        r#"{"type":"get_messages","before":"some-cursor"}"#
+    ));
 
     let state_snapshot = serde_json::json!({
         "type": "response",
@@ -617,6 +624,51 @@ fn finalize_snapshot_answer_tails_to_count() {
             .len(),
         3
     );
+}
+
+#[test]
+fn finalize_snapshot_answer_count_slice_repoints_page_cursor() {
+    // #1061 review follow-up: slicing to last-N drops older snapshot messages,
+    // so the page metadata must be recomputed — `before` names the oldest
+    // message still INCLUDED and older history now definitely exists. A stale
+    // cursor would make a caller skip the dropped span.
+    let snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_messages",
+        "data": { "messages": [
+            {"id": "id-1", "role": "user", "content": "m1"},
+            {"id": "id-2", "role": "assistant", "content": "m2"},
+            {"id": "id-3", "role": "user", "content": "m3"},
+        ], "snapshot": true, "hasMoreBefore": false }
+    });
+    let line = subagent_snapshot::finalize_snapshot_answer(
+        snapshot.to_string(),
+        snapshot.clone(),
+        r#"{"type":"get_messages","count":2}"#,
+    );
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(
+        v.pointer("/data/before"),
+        Some(&serde_json::json!("id-2")),
+        "cursor must point at the oldest INCLUDED message: {v}"
+    );
+    assert_eq!(
+        v.pointer("/data/hasMoreBefore"),
+        Some(&serde_json::json!(true))
+    );
+
+    // An unsliced answer keeps the snapshot's own metadata untouched.
+    let line = subagent_snapshot::finalize_snapshot_answer(
+        snapshot.to_string(),
+        snapshot,
+        r#"{"type":"get_messages","count":99}"#,
+    );
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(
+        v.pointer("/data/hasMoreBefore"),
+        Some(&serde_json::json!(false))
+    );
+    assert_eq!(v.pointer("/data/before"), None);
 }
 
 #[test]
