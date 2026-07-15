@@ -25,6 +25,7 @@ pub fn run(args: Vec<String>) -> i32 {
     apply_workflow_defaults(&mut flags);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2) // #1099: avoid one-per-core idle threads
         .enable_all()
         .build()
         .expect("failed to create tokio runtime");
