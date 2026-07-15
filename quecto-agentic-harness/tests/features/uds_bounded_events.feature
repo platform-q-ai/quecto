@@ -59,6 +59,10 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
     Then the agent_end event should stay well under the frame size limit
     And the agent_end event should not re-carry full message content
     And the agent_end event should identify the run messages by non-empty message refs
+    # Role coverage of the refs is asserted in the small tool-call scenario
+    # below; here the oversized tool-call message exceeds the frame budget, so
+    # get_messages/get_message cannot return it whole (#1062) and the refs
+    # cannot be resolved to roles over the wire.
 
   # ─── Stable message references (AC6) ───────────────────────────────────────
 
@@ -166,7 +170,7 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
   Scenario: get_message recalls full content for a collapsed message while a later turn is in flight
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And the mock LLM will delay its response by 3 seconds
+    And the mock LLM will delay its response by 8 seconds
     And a completed turn with a collapsed message whose full content was spilled
     When client 1 starts a later turn
     And client 2 requests the collapsed message by its stable ref while the agent is busy

@@ -431,29 +431,77 @@ pub(super) async fn refresh_extension_snapshot(ctx: &DispatchCtx<'_>) {
 ///
 /// The `data.snapshot` marker tells callers the data may lag the in-flight turn
 /// (a live dispatch-loop reply has no such marker) (#842). History is bounded
-/// structurally by a count page and a reachable cursor; it is never silently
-/// tailed or trimmed to satisfy the transport cap (#1062).
+/// structurally by a count page and a reachable cursor; message CONTENT is
+/// never tailed or trimmed to satisfy the transport cap (#1062). When the
+/// default page overflows the frame budget, the page COUNT shrinks — whole
+/// messages move behind the advertised `before` cursor, staying reachable by
+/// normal backward paging. Only a single message too large to frame at all
+/// yields an explicit error.
 pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
     // Serialize every message in the newest count-bounded page exactly once and
     // embed those raw values directly in the response (#994).
-    let page_start = messages.len().saturating_sub(HISTORY_PAGE_SIZE);
+    let default_start = messages.len().saturating_sub(HISTORY_PAGE_SIZE);
     let raws: Vec<Box<RawValue>> = messages
         .iter()
-        .skip(page_start)
+        .skip(default_start)
         .map(|m| {
             serde_json::value::to_raw_value(&MessageView(m)).unwrap_or_else(|_| {
                 RawValue::from_string("null".to_string()).expect("null literal")
             })
         })
         .collect();
+    // Structural page shrink: keep the newest suffix whose serialized page fits
+    // the frame budget. Everything dropped remains reachable via the cursor —
+    // whole messages are re-paged, no content is reshaped (#1062). The suffix
+    // is sized in ONE pass from each raw value's exact serialized length
+    // (element bytes embed verbatim; +1 per array separator), so the page is
+    // serialized once, not once per dropped message.
+    const ENVELOPE_HEADROOM: usize = 512; // response envelope + cursor fields
+    let budget =
+        crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET.saturating_sub(ENVELOPE_HEADROOM);
+    let mut total = 0usize;
+    let mut keep_from = raws.len();
+    for (i, rv) in raws.iter().enumerate().rev() {
+        let sz = rv.get().len() + 1;
+        if total + sz > budget {
+            break;
+        }
+        total += sz;
+        keep_from = i;
+    }
+    let page_start = default_start + keep_from;
+    let kept = &raws[keep_from..];
+    if kept.is_empty() && !messages.is_empty() {
+        // A lone message too large to frame at all: fail explicitly rather
+        // than reshape its content (#1062).
+        tracing::warn!(
+            cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
+            "rejecting oversized busy get_messages snapshot"
+        );
+        let mut line = AgentEvent::err(
+            None,
+            "get_messages",
+            "history page exceeds the protocol frame limit; request a smaller page",
+        )
+        .to_json_line();
+        line.push('\n');
+        return line;
+    }
+    if keep_from > 0 {
+        tracing::warn!(
+            dropped = keep_from,
+            kept = kept.len(),
+            "busy get_messages snapshot page shrunk to fit the frame budget; \
+             older messages remain reachable via the before cursor"
+        );
+    }
     let has_more_before = page_start > 0;
     let before = has_more_before.then(|| messages[page_start].id().to_string());
-
     let line_body = GetMessagesSnapshot::Response {
         command: "get_messages",
         success: true,
         data: GetMessagesData {
-            messages: &raws,
+            messages: kept,
             snapshot: true,
             before: before.as_deref(),
             has_more_before,
@@ -461,19 +509,7 @@ pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
     };
     let mut line =
         serde_json::to_string(&line_body).expect("get_messages snapshot is always serializable");
-    if line.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
-        tracing::warn!(
-            len = line.len(),
-            cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
-            "rejecting oversized busy get_messages snapshot"
-        );
-        line = AgentEvent::err(
-            None,
-            "get_messages",
-            "history page exceeds the protocol frame limit; request a smaller page",
-        )
-        .to_json_line();
-    }
+    debug_assert!(line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
     line.push('\n');
     line
 }

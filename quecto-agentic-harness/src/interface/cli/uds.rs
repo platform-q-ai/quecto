@@ -197,15 +197,21 @@ async fn emit_response_or_frame_limit_error(
     command: &str,
     event: AgentEvent,
 ) {
-    if event.to_json_line().len() > super::protocol::EVENT_LINE_JSON_BUDGET {
-        let err = AgentEvent::err(
-            id,
-            command,
-            "response exceeds the protocol frame limit; request a smaller page",
-        );
+    // Serialize exactly once: the length check reuses the same line the sink
+    // delivers (multi-MiB pages are not serialized twice).
+    let line = event.to_json_line();
+    if line.len() > super::protocol::EVENT_LINE_JSON_BUDGET {
+        // "Request a smaller page" is only actionable for paged commands;
+        // a single-message lookup has no smaller unit to retry with.
+        let advice = if command == "get_message" {
+            "message exceeds the protocol frame limit and cannot be returned whole"
+        } else {
+            "response exceeds the protocol frame limit; request a smaller page"
+        };
+        let err = AgentEvent::err(id, command, advice);
         emit_event_to_broadcast_or_writer(ctx, &err).await;
     } else {
-        emit_event_to_broadcast_or_writer(ctx, &event).await;
+        ctx.event_sink().emit_serialized(line).await;
     }
 }
 

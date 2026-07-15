@@ -50,6 +50,22 @@ pub(super) async fn service(
     };
     if let Some(tx) = super::uds_ext_protocol::client_writer_tx(registry, client_id) {
         let mut response = serde_json::to_string(&event).unwrap_or_default();
+        // Same frame-cap discipline as the dispatch-loop path (#1062): an
+        // over-budget line would be dropped unread by the client's bounded
+        // reader, so replace it with a small correlated error instead.
+        if response.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+            tracing::warn!(
+                len = response.len(),
+                cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
+                "rejecting oversized busy get_message response"
+            );
+            response = serde_json::to_string(&AgentEvent::err(
+                request_id.as_deref(),
+                "get_message",
+                "message exceeds the protocol frame limit and cannot be returned whole",
+            ))
+            .unwrap_or_default();
+        }
         response.push('\n');
         let _ = tx.send(response).await;
     }

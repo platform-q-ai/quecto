@@ -199,7 +199,14 @@ impl<'a> EventSink<'a> {
     /// Event payloads are bounded by construction. An over-cap event is an
     /// invariant violation, so reject it whole rather than reshaping content.
     pub(crate) async fn emit(&mut self, event: &AgentEvent) {
-        let mut line = event.to_json_line();
+        self.emit_serialized(event.to_json_line()).await;
+    }
+
+    /// Deliver an ALREADY-SERIALIZED event line (without trailing newline),
+    /// applying the same over-cap rejection as [`EventSink::emit`]. Callers
+    /// that must inspect the serialized length themselves (e.g. the response
+    /// frame-limit guard) use this to avoid serializing twice.
+    pub(crate) async fn emit_serialized(&mut self, mut line: String) {
         if line.len() > super::protocol::EVENT_LINE_JSON_BUDGET {
             tracing::warn!(
                 len = line.len(),

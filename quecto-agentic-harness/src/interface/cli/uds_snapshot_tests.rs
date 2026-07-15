@@ -311,13 +311,41 @@ fn build_get_messages_line_pages_history_without_trimming() {
 }
 
 #[test]
-fn build_get_messages_line_rejects_an_oversized_page_with_a_small_error() {
+fn build_get_messages_line_shrinks_the_page_structurally_when_over_budget() {
+    // Each message is large enough that a full default page exceeds the frame
+    // budget; the snapshot must shrink the page COUNT (whole messages behind
+    // the cursor) rather than reshape content or fail the call.
     let body = "x".repeat(quecto_line_io::PROTOCOL_LINE_CAP_BYTES / HISTORY_PAGE_SIZE + 1024);
     let messages: Vec<Message> = (0..HISTORY_PAGE_SIZE)
-        .map(|_| Message::assistant(body.clone(), vec![]))
+        .map(|i| Message::assistant(format!("{i}-{body}"), vec![]))
         .collect();
 
     let line = build_get_messages_line(&messages);
+    assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
+    let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(v["success"], true);
+    let page = v["data"]["messages"].as_array().unwrap();
+    assert!(!page.is_empty(), "the newest messages must be served");
+    assert!(
+        page.len() < HISTORY_PAGE_SIZE,
+        "the page must shrink structurally"
+    );
+    // Newest message retained whole — content is never reshaped.
+    let last = page.last().unwrap()["content"].as_str().unwrap();
+    assert_eq!(last, format!("{}-{body}", HISTORY_PAGE_SIZE - 1));
+    // Every omitted older message stays reachable via the advertised cursor.
+    assert_eq!(v["data"]["hasMoreBefore"], true);
+    let first_kept = HISTORY_PAGE_SIZE - page.len();
+    assert_eq!(v["data"]["before"], messages[first_kept].id().to_string());
+    assert!(v["data"].get("trimmed").is_none());
+}
+
+#[test]
+fn build_get_messages_line_rejects_a_lone_unframeable_message_with_a_small_error() {
+    // A single message that alone exceeds the frame budget has no smaller
+    // structural page; the call must fail explicitly, never reshape content.
+    let huge = "x".repeat(quecto_line_io::PROTOCOL_LINE_CAP_BYTES + 1024 * 1024);
+    let line = build_get_messages_line(&[Message::assistant(huge, vec![])]);
     assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
     let response: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(response["type"], "response");
@@ -327,7 +355,7 @@ fn build_get_messages_line_rejects_an_oversized_page_with_a_small_error() {
         response["error"]
             .as_str()
             .is_some_and(|message| message.contains("frame limit")),
-        "an oversized snapshot must be rejected explicitly: {response}"
+        "an unframeable snapshot must be rejected explicitly: {response}"
     );
 }
 
