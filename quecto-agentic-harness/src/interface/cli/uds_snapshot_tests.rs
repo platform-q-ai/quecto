@@ -303,7 +303,14 @@ fn build_get_messages_line_trims_oversized_history() {
         line.len()
     );
     let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-    assert_eq!(v["data"]["trimmed"], true, "trimmed marker present");
+    assert_eq!(
+        v["data"]["hasMoreBefore"], true,
+        "older history is explicitly reachable by paging"
+    );
+    assert_ne!(
+        v["data"]["trimmed"], true,
+        "page-size backfill is reachable, not silently trimmed"
+    );
     let msgs = v["data"]["messages"].as_array().unwrap();
     assert!(!msgs.is_empty(), "keeps the most recent messages");
     // The newest message must be retained (tail, not head).

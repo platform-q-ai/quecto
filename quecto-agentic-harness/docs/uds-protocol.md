@@ -309,14 +309,22 @@ Return the current session state.
 
 ### `get_messages`
 
-Return the conversation history. Omit `count` to return the full history, or
-pass `count: N` to return only the last N messages (the recent-context tail).
+Return conversation history as bounded pages (#1061). Omit `count` and
+`before` for the newest page (up to the protocol page size of 64 messages);
+pass `count: N` for the last N messages; pass `before: <messageId>` (a message
+id from a prior response's `before` field) to fetch the adjacent older page.
+Without an explicit `count`, history is never returned unbounded — walk
+`before` cursors until `hasMoreBefore` is `false` to reach the beginning of
+the session. An explicit `count` keeps the legacy last-N contract (it may
+exceed one page); every response line is still byte-capped on the wire, with a
+cursor advertised for anything the cap removes.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"get_messages"` | yes | |
 | `id` | string | no | Correlation ID |
-| `count` | integer | no | Maximum number of trailing messages to return (omit for all) |
+| `count` | integer | no | Maximum number of trailing messages to return (omit for the newest page) |
+| `before` | string | no | Paging cursor: return messages strictly before this message id. An unknown/stale cursor is an error, not a silent restart |
 
 **Response data:**
 
@@ -324,32 +332,63 @@ pass `count: N` to return only the last N messages (the recent-context tail).
 {
   "messages": [
     {
+      "id": "8f14e45f-ceea-4670-9f5c-2f1a72f1a72f",
       "role": "user",
       "content": "Hello",
       "toolCalls": [],
       "toolCallId": null,
-      "toolName": null
+      "toolName": null,
+      "isError": false,
+      "collapsed": false
     },
     {
+      "id": "9b74e45f-ceea-4670-9f5c-2f1a72f1a730",
       "role": "assistant",
       "content": "Hi! How can I help?",
       "toolCalls": [],
       "toolCallId": null,
-      "toolName": null
+      "toolName": null,
+      "isError": false,
+      "collapsed": false
     }
-  ]
+  ],
+  "before": "8f14e45f-ceea-4670-9f5c-2f1a72f1a72f",
+  "hasMoreBefore": true
 }
+```
+
+Page metadata:
+
+| Field | Type | Description |
+|---|---|---|
+| `before` | string \| null | Cursor for the adjacent older page (the oldest message included in this page); `null` when the beginning of history is reached |
+| `hasMoreBefore` | boolean | Whether older history exists before this page. Legacy corner: an explicit `count: 0` returns an empty page reporting `hasMoreBefore: false` with no cursor (an empty window has no oldest-included message to anchor one) |
+
+To page back to the beginning of the session (`request` = send the command,
+then read events until the `response` whose `id` matches):
+
+```python
+resp = request(sock, {"type": "get_messages", "id": "page-0"})
+while resp["data"]["hasMoreBefore"]:
+    resp = request(sock, {
+        "type": "get_messages",
+        "id": "page-" + resp["data"]["before"],
+        "before": resp["data"]["before"],
+    })
 ```
 
 Each message contains:
 
 | Field | Type | Description |
 |---|---|---|
+| `id` | string | Stable message id (#1060) — usable as a `before` cursor, a `get_message` lookup key, or a `rewind_to` target |
 | `role` | `"system"` \| `"user"` \| `"assistant"` \| `"tool"` | Message author |
-| `content` | string | Message text |
+| `content` | string | Message text (a ladder-demoted stub when `collapsed` is true) |
 | `toolCalls` | array | Tool calls made by the assistant (each with `id`, `name`, `arguments`) |
 | `toolCallId` | string \| null | For `tool` messages: which tool call this is a result for |
 | `toolName` | string \| null | For `tool` messages: name of the tool that produced this result |
+| `isError` | boolean | Whether a `tool` message carries an error result |
+| `collapsed` | boolean | `true` when the context ladder demoted this message to a stub — recall the full body on demand via `get_message` with this `id` (#1061) |
 
 ---
 

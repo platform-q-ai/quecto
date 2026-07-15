@@ -696,7 +696,7 @@ async fn handle_key_routes_to_model_selector_when_active() {
 async fn handle_key_routes_to_rewind_selector_when_active() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn"}]});
+    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn", "id": "u1"}]});
     a.open_rewind_selector(&data);
     assert!(a.rewind.selector.is_some());
     a.handle_key(Key::Escape);

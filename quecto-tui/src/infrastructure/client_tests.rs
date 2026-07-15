@@ -307,7 +307,10 @@ fn command_set_workflow_automation_serializes() {
 
 #[test]
 fn command_get_messages_serializes() {
-    let cmd = Command::GetMessages { id: None };
+    let cmd = Command::GetMessages {
+        id: None,
+        before: None,
+    };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"get_messages\""));
 }
@@ -387,11 +390,11 @@ fn command_clear_history_serializes() {
 fn command_rewind_to_serializes() {
     let cmd = Command::RewindTo {
         id: Some("rw".into()),
-        message_index: 2,
+        message_id: "m2".into(),
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"rewind_to\""));
-    assert!(json.contains("\"messageIndex\":2"));
+    assert!(json.contains("\"messageId\":\"m2\""));
 }
 
 #[test]

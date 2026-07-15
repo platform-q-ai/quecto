@@ -182,6 +182,12 @@ impl AgentCmdTool {
                 if let Some(count) = args.get("count").and_then(|v| v.as_u64()) {
                     cmd["count"] = serde_json::json!(count);
                 }
+                // Paged history (#1061): follow a response's `before` cursor to
+                // the adjacent older page — an uncounted request returns only
+                // the newest bounded page, never the full history.
+                if let Some(before) = args.get("before").and_then(|v| v.as_str()) {
+                    cmd["before"] = serde_json::json!(before);
+                }
                 cmd
             }
             "get_messages_tail" => {
@@ -402,16 +408,18 @@ impl Tool for AgentCmdTool {
                 turn, so await is OPTIONAL. Use await only when you must BLOCK \
                 synchronously until the sub-agent reaches idle, exited, timeout, or \
                 error before continuing within the SAME turn; awaiting a completion \
-                suppresses its duplicate auto-note. Either way, read the child's full \
-                output explicitly with get_messages (optionally with count for the \
-                last N messages) — the note/await summary is one line, not the result. \
+                suppresses its duplicate auto-note. Either way, read the child's \
+                output explicitly with get_messages — it returns the NEWEST bounded \
+                history page (count for the last N); when the response reports \
+                hasMoreBefore:true, pass its before cursor to page older history — \
+                the note/await summary is one line, not the result. \
                 get_state reports live status/model/message counts; get_session_stats \
                 reports token/cost accounting. While a child is BUSY mid-turn, \
                 get_messages/get_state are served from a snapshot of its last \
                 completed turn (tagged snapshot:true / isStreaming:true), so the \
                 data may lag the in-flight turn."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_session_stats","get_subagents","get_extensions","set_model","set_effort","clear_history","reload_extensions"],"description":"Command to send. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages (use count for the last N messages)."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for all; N for last N)"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds the agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_session_stats","get_subagents","get_extensions","set_model","set_effort","clear_history","reload_extensions"],"description":"Command to send. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages (use count for the last N messages)."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds the agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#.into(),
         }
     }
 

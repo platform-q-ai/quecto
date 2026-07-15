@@ -73,6 +73,47 @@ fn readme_uds_protocol_lists_current_commands_and_events() {
 }
 
 #[test]
+fn uds_docs_document_paged_history_not_unbounded() {
+    // #1061 review follow-up: an uncounted `get_messages` returns the newest
+    // bounded page, never the full history. The user-facing UDS docs must
+    // describe the paging contract (`before`/`hasMoreBefore`) and must not
+    // resurrect the pre-paging "full history" promise.
+    let protocol = read_repo_file("docs/uds-protocol.md");
+    for field in ["`before`", "`hasMoreBefore`"] {
+        assert!(
+            protocol.contains(field),
+            "docs/uds-protocol.md must document the {field} paging field"
+        );
+    }
+    assert!(
+        !protocol.to_lowercase().contains("return the full history"),
+        "docs/uds-protocol.md must not promise unbounded history (#1061 paging)"
+    );
+
+    let getting_started = read_repo_file("docs/getting-started.md");
+    assert!(
+        !getting_started.contains("Full history returned"),
+        "getting-started re-sync example must not promise full history (#1061 paging)"
+    );
+    assert!(
+        getting_started.contains("hasMoreBefore"),
+        "getting-started re-sync example should point at the paging cursor"
+    );
+
+    // sessions.md documents the same command surface; its UDS inspection
+    // examples must not promise unbounded history either.
+    let sessions = read_repo_file("docs/sessions.md");
+    assert!(
+        !sessions.contains("Returns the full conversation history"),
+        "sessions.md must not promise unbounded get_messages history (#1061 paging)"
+    );
+    assert!(
+        sessions.contains("hasMoreBefore"),
+        "sessions.md should point at the paging cursor"
+    );
+}
+
+#[test]
 fn agent_cmd_docs_match_tool_schema() {
     // #844: the docs' agent_cmd command surface must match the shipped tool
     // schema. After the #841 consolidation `get_messages_tail` is no longer a
@@ -128,8 +169,8 @@ fn agent_cmd_docs_match_tool_schema() {
 
     // Converse: every backtick-wrapped token on the row must be a supported
     // command (no stale/removed extras), so a future drift can't slip through.
-    // `count` is a documented parameter of `get_messages`, not a command.
-    const ROW_NON_COMMAND_TOKENS: &[&str] = &["count"];
+    // `count`/`before` are documented parameters of `get_messages`, not commands.
+    const ROW_NON_COMMAND_TOKENS: &[&str] = &["count", "before"];
     let command_list = row
         .split_once("subagents:")
         .map(|(_, rest)| rest)
@@ -157,20 +198,21 @@ fn agent_cmd_docs_match_tool_schema() {
         subagents.contains("get_messages"),
         "docs/subagents.md should document get_messages"
     );
-    // The AC requires documenting the optional `count` semantics (omit = all,
-    // N = last N), not merely the command name.
+    // The AC requires documenting the optional `count` semantics (omit = newest
+    // page post-#1061, N = last N), not merely the command name.
     let subagents_lower = subagents.to_lowercase();
     assert!(
         subagents.contains("count"),
         "docs/subagents.md must document the optional `count` parameter of get_messages"
     );
-    // Anchor on the documented phrasing rather than bare "all"/"last" substrings
-    // (which occur inside common words like "actually"/"call"), so removing the
-    // semantics sentence actually fails this guard. The doc reads:
-    // "omit `count` for all; pass `count` for the last N messages".
+    // Anchor on the documented phrasing rather than bare substrings (which occur
+    // inside common words), so removing the semantics sentence actually fails
+    // this guard. Post-#1061 an uncounted get_messages returns the newest
+    // bounded page, and the doc reads: "omit `count` for the newest history
+    // page; pass `count` for the last N messages".
     assert!(
-        subagents_lower.contains("omit") && subagents_lower.contains("for all"),
-        "docs/subagents.md must explain that omitting count returns all messages"
+        subagents_lower.contains("omit") && subagents_lower.contains("newest history page"),
+        "docs/subagents.md must explain that omitting count returns the newest history page"
     );
     assert!(
         subagents_lower.contains("last n"),

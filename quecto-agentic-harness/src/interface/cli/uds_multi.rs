@@ -665,5 +665,8 @@ mod issue_926_wake_tests;
 #[path = "uds_994_tests.rs"]
 mod issue_994_tests;
 #[cfg(test)]
+#[path = "uds_paged_history_tests.rs"]
+mod paged_history_tests;
+#[cfg(test)]
 #[path = "uds_snapshot_tests.rs"]
 mod snapshot_tests;

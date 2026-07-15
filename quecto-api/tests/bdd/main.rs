@@ -48,12 +48,21 @@ impl AgentGateway for MockGateway {
             if !connected {
                 return Err(ApiError::AgentNotConnected);
             }
-            // Return a successful response for any command.
+            // Return a successful response for any command. GetMessages echoes
+            // its paging cursor so scenarios can pin that the router actually
+            // propagates `?before=` to the gateway (#1061 review follow-up) —
+            // without the echo, dropping the cursor would still return 200.
+            let mut data = serde_json::json!({"mock": true});
             let command_name = match cmd {
                 AgentCommand::Prompt { .. } => "prompt",
                 AgentCommand::Abort => "abort",
                 AgentCommand::GetState => "get_state",
-                AgentCommand::GetMessages => "get_messages",
+                AgentCommand::GetMessages { before } => {
+                    if let Some(before) = before {
+                        data["cursorEcho"] = serde_json::Value::String(before);
+                    }
+                    "get_messages"
+                }
                 AgentCommand::GetMessagesTail { .. } => "get_messages_tail",
                 AgentCommand::GetMessage { .. } => "get_message",
                 AgentCommand::GetSessionStats => "get_session_stats",
@@ -64,7 +73,7 @@ impl AgentGateway for MockGateway {
                 id: Some("mock-id".to_string()),
                 command: command_name.to_string(),
                 success: true,
-                data: Some(serde_json::json!({"mock": true})),
+                data: Some(data),
                 error: None,
             })
         })
@@ -83,7 +92,7 @@ impl AgentGateway for MockGateway {
                 AgentCommand::Prompt { .. } => "prompt",
                 AgentCommand::Abort => "abort",
                 AgentCommand::GetState => "get_state",
-                AgentCommand::GetMessages => "get_messages",
+                AgentCommand::GetMessages { .. } => "get_messages",
                 AgentCommand::GetMessagesTail { .. } => "get_messages_tail",
                 AgentCommand::GetMessage { .. } => "get_message",
                 AgentCommand::GetSessionStats => "get_session_stats",

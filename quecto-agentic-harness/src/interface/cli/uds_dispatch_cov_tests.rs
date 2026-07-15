@@ -1,10 +1,7 @@
 //! Exercises `dispatch_command`/`handle_*` routing with an in-memory ctx and sink writer.
-use std::sync::Arc;
-
 use super::{
-    dispatch_command, dispatch_ext_command, forward_subagent_get_messages, handle_abort,
-    handle_clear_history, handle_new_session, handle_resume_session, handle_rewind_to,
-    handle_steer, persist_current_session,
+    dispatch_command, dispatch_ext_command, handle_abort, handle_clear_history, handle_new_session,
+    handle_resume_session, handle_rewind_to, handle_steer, persist_current_session,
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
@@ -16,12 +13,11 @@ use crate::interface::cli::uds::DispatchCtx;
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::{ClientToolRegistry, new_client_tool_registry};
 use crate::interface::cli::uds_session::AgentSession;
-
+use std::sync::Arc;
 #[derive(Debug, Default)]
 struct RecordingSpillStore {
     cleared: std::sync::Mutex<Vec<String>>,
 }
-
 impl ContextSpillStore for RecordingSpillStore {
     fn append(
         &self,
@@ -36,7 +32,6 @@ impl ContextSpillStore for RecordingSpillStore {
     > {
         Box::pin(async { Ok(()) })
     }
-
     fn recall(
         &self,
         _session_key: &str,
@@ -51,7 +46,6 @@ impl ContextSpillStore for RecordingSpillStore {
     > {
         Box::pin(async { Ok(None) })
     }
-
     fn list_entries(
         &self,
         _session_key: &str,
@@ -65,7 +59,6 @@ impl ContextSpillStore for RecordingSpillStore {
     > {
         Box::pin(async { Ok(Arc::new(Vec::new())) })
     }
-
     fn clear(
         &self,
         session_key: &str,
@@ -80,12 +73,10 @@ impl ContextSpillStore for RecordingSpillStore {
         Box::pin(async { Ok(()) })
     }
 }
-
 #[derive(Debug, Default)]
 struct SessionAwareTool {
     seen: std::sync::Mutex<Vec<String>>,
 }
-
 impl Tool for SessionAwareTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -304,14 +295,14 @@ async fn rewind_blocked_while_streaming() {
     let mut fx = Fixture::new();
     fx.session.set_streaming(true);
     let mut ctx = fx.ctx();
-    assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", 0).await);
+    assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", Some(0), None).await);
 }
 
 #[tokio::test]
 async fn rewind_invalid_target() {
     let mut fx = Fixture::new();
     let mut ctx = fx.ctx();
-    assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", 999).await);
+    assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", Some(999), None).await);
 }
 
 #[tokio::test]
@@ -321,7 +312,7 @@ async fn rewind_valid_truncates_and_persists() {
     fx.messages.push(Message::assistant("answer", vec![]));
     {
         let mut ctx = fx.ctx();
-        assert!(!handle_rewind_to(&mut ctx, None, "rewind_to", 0).await);
+        assert!(!handle_rewind_to(&mut ctx, None, "rewind_to", Some(0), None).await);
     }
     assert!(fx.messages.is_empty());
 }
@@ -338,7 +329,7 @@ async fn rewind_valid_clears_spill_store_for_current_key() {
     fx.messages.push(Message::assistant("answer", vec![]));
     {
         let mut ctx = fx.ctx();
-        assert!(!handle_rewind_to(&mut ctx, None, "rewind_to", 0).await);
+        assert!(!handle_rewind_to(&mut ctx, None, "rewind_to", Some(0), None).await);
     }
 
     assert_eq!(
@@ -346,6 +337,10 @@ async fn rewind_valid_clears_spill_store_for_current_key() {
         &["cli:test".to_string()]
     );
 }
+
+// #1061 blocker: rewind-by-messageId resolution is unit-tested directly on
+// `resolve_rewind_target` in uds_progress_clear_tests (a paged client's window
+// index is never valid against the full conversation).
 
 // ─── handle_new_session ──────────────────────────────────────────────────────
 
@@ -581,7 +576,8 @@ async fn dispatch_routes_rewind_to() {
     let mut fx = Fixture::new();
     let cmd = AgentCommand::RewindTo {
         id: Some("r".into()),
-        message_index: 5,
+        message_index: Some(5),
+        message_id: None,
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_command(cmd, &mut ctx).await);
@@ -708,6 +704,24 @@ async fn dispatch_ext_command_unregister_unknown_noop() {
 // ─── agent-targeted get_messages_tail forwarding (#795) ──────────────────────
 
 #[tokio::test]
+async fn dispatch_unknown_history_cursor_is_rejected() {
+    let mut fx = Fixture::new();
+    fx.messages = vec![Message::user("newest")];
+    assert!(
+        !dispatch_command(
+            AgentCommand::GetMessages {
+                id: Some("stale-page".into()),
+                count: None,
+                before: Some("unknown-message-id".into()),
+                agent_id: None,
+            },
+            &mut fx.ctx(),
+        )
+        .await
+    );
+}
+
+#[tokio::test]
 async fn dispatch_agent_targeted_tail_without_registry_emits_error() {
     let mut fx = Fixture::new();
     let cmd = AgentCommand::GetMessagesTail {
@@ -717,20 +731,6 @@ async fn dispatch_agent_targeted_tail_without_registry_emits_error() {
     };
     // subagent_registry is None: the early intercept still handles it.
     assert!(!dispatch_command(cmd, &mut fx.ctx()).await);
-}
-
-#[tokio::test]
-async fn forward_tail_no_registry_is_error_event() {
-    let mut fx = Fixture::new();
-    let ctx = fx.ctx();
-    let ev =
-        forward_subagent_get_messages(&ctx, Some("id1"), "get_messages_tail", "worker", Some(3))
-            .await;
-    let json = serde_json::to_value(&ev).unwrap();
-    assert!(
-        json.get("error").is_some(),
-        "missing registry must surface an error: {json}"
-    );
 }
 
 #[tokio::test]

@@ -61,8 +61,8 @@ fn parse_resume_sessions_extracts_selector_metadata() {
 fn parse_resumed_messages_keeps_only_displayable_chat_messages() {
     let messages = parse_resumed_messages(&json!({
         "messages": [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "world"},
+            {"role": "user", "content": "hello", "id": "u1"},
+            {"role": "assistant", "content": "world", "id": "a1", "collapsed": true},
             {"role": "assistant", "content": ""},
             {"role": "tool", "content": "hidden"}
         ]
@@ -72,8 +72,16 @@ fn parse_resumed_messages_keeps_only_displayable_chat_messages() {
     assert_eq!(
         messages,
         vec![
-            ResumedChatMessage::User("hello".to_string()),
-            ResumedChatMessage::Assistant("world".to_string()),
+            ResumedChatMessage::User {
+                text: "hello".to_string(),
+                id: Some("u1".to_string()),
+                stub: false,
+            },
+            ResumedChatMessage::Assistant {
+                text: "world".to_string(),
+                id: Some("a1".to_string()),
+                stub: true,
+            },
         ]
     );
 }

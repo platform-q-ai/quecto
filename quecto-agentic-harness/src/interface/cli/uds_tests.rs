@@ -393,13 +393,24 @@ fn test_messages_tail_json_count_zero() {
     let messages: Vec<Message> = (0..3).map(|i| Message::user(format!("m{i}"))).collect();
     let data = messages_tail_json(&messages, 0);
     assert!(data["messages"].as_array().unwrap().is_empty());
+    // Documented count=0 contract (#1061): an empty window carries no cursor —
+    // the cursor names the oldest INCLUDED message, which it lacks.
+    assert_eq!(data["hasMoreBefore"], false);
+    assert_eq!(data["before"], serde_json::Value::Null);
 }
 
 #[test]
-fn test_messages_tail_json_count_exceeds_history() {
-    let messages: Vec<Message> = (0..2).map(|i| Message::user(format!("m{i}"))).collect();
-    let data = messages_tail_json(&messages, 100);
-    assert_eq!(data["messages"].as_array().unwrap().len(), 2);
+fn test_messages_tail_json_count_exceeds_page_size() {
+    let messages: Vec<Message> = (0..100).map(|i| Message::user(format!("m{i}"))).collect();
+    let data = messages_tail_json(&messages, 80);
+    let returned = data["messages"].as_array().unwrap();
+    assert_eq!(
+        returned.len(),
+        80,
+        "explicit tail count must not be page-clamped"
+    );
+    assert_eq!(returned.first().unwrap()["content"], "m20");
+    assert_eq!(returned.last().unwrap()["content"], "m99");
 }
 
 // ─── system prompt injection ─────────────────────────────────────────────────

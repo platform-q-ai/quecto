@@ -2,20 +2,27 @@ use super::*;
 use crate::interface::cli::uds_ext_protocol;
 
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
-    // Agent-targeted message tail forwards to the named sub-agent's own UDS
-    // before the local-history fast path can answer it (#795/#837).
-    // Forward whenever an agent_id is set — with OR without a count. An uncounted
-    // agent-targeted request asks for the child's FULL history; it must never fall
-    // through to the local fast path, which ignores agent_id and would silently
-    // return the connected/parent agent's own conversation (#843).
+    // Agent-targeted get_messages/tail forwards to the named sub-agent's own UDS
+    // (with OR without a count) before the local fast path — which ignores
+    // agent_id and would return the parent's history — can answer it
+    // (#795/#837/#843).
     if let AgentCommand::GetMessages {
         count,
+        before,
         agent_id: Some(agent_id),
         id,
     } = &cmd
     {
         let tn = cmd.type_name();
-        let ev = forward_subagent_get_messages(ctx, id.as_deref(), tn, agent_id, *count).await;
+        let ev = forward_subagent_get_messages(
+            ctx,
+            id.as_deref(),
+            tn,
+            agent_id,
+            *count,
+            before.as_deref(),
+        )
+        .await;
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
@@ -27,7 +34,8 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     {
         let tn = cmd.type_name();
         let ev =
-            forward_subagent_get_messages(ctx, id.as_deref(), tn, agent_id, Some(*count)).await;
+            forward_subagent_get_messages(ctx, id.as_deref(), tn, agent_id, Some(*count), None)
+                .await;
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
@@ -75,9 +83,11 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             handle_follow_up(ctx, id.as_deref(), &type_name, message).await
         }
         AgentCommand::Abort { .. } => handle_abort(ctx, id.as_deref(), &type_name).await,
-        AgentCommand::RewindTo { message_index, .. } => {
-            handle_rewind_to(ctx, id.as_deref(), &type_name, message_index).await
-        }
+        AgentCommand::RewindTo {
+            message_index,
+            message_id,
+            ..
+        } => handle_rewind_to(ctx, id.as_deref(), &type_name, message_index, message_id).await,
         AgentCommand::SetWorkflowAutomation {
             auto_continue,
             completion_nudge,
@@ -161,6 +171,7 @@ async fn forward_subagent_get_messages(
     tn: &str,
     agent_id: &str,
     count: Option<usize>,
+    before: Option<&str>,
 ) -> AgentEvent {
     use crate::infrastructure::tools::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, lookup_subagent_socket, send_subagent_uds_command_with_timeout,
@@ -174,25 +185,25 @@ async fn forward_subagent_get_messages(
     };
     // Omit `count` entirely when None so the child returns its FULL history; a
     // present count requests just the tail (#843).
-    let cmd = match count {
-        Some(count) => serde_json::json!({ "type": "get_messages", "count": count }),
-        None => serde_json::json!({ "type": "get_messages" }),
+    let mut cmd = serde_json::json!({ "type": "get_messages" });
+    if let Some(count) = count {
+        cmd["count"] = serde_json::json!(count);
     }
-    .to_string();
+    if let Some(before) = before {
+        cmd["before"] = serde_json::json!(before);
+    }
+    let cmd = cmd.to_string();
     // This forward is awaited inline in the single shared dispatch loop, so it
     // uses the short interactive timeout — a slow/hung sub-agent must not stall
     // steer/abort/new-message for any client for the full agent_cmd 300s (#795).
     match send_subagent_uds_command_with_timeout(&socket_path, &cmd, INSPECTOR_RESPONSE_TIMEOUT)
         .await
     {
-        Ok(line) => {
-            // The sub-agent replies with a full `response` event; unwrap its
-            // `data` payload so the caller sees the tail in the usual shape.
-            let data = serde_json::from_str::<serde_json::Value>(&line)
-                .ok()
-                .and_then(|v| v.get("data").cloned());
-            AgentEvent::ok(id, tn, data)
-        }
+        // Preserve child failures instead of rewriting them as parent success.
+        Ok(line) => match super::uds_forward_response::parse_forwarded_get_messages(&line) {
+            Ok(data) => AgentEvent::ok(id, tn, Some(data)),
+            Err(error) => AgentEvent::err(id, tn, error),
+        },
         Err(e) => AgentEvent::err(id, tn, e.to_string()),
     }
 }
@@ -625,13 +636,25 @@ pub(super) async fn handle_rewind_to(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     tn: &str,
-    message_index: usize,
+    message_index: Option<usize>,
+    message_id: Option<String>,
 ) -> bool {
     if ctx.session.is_streaming() {
         let ev = AgentEvent::err(id, tn, "cannot rewind while agent is running");
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
+
+    // Prefer the stable `messageId`, resolved against the full conversation (#1061).
+    let message_index =
+        match resolve_rewind_target(ctx.messages, message_id.as_deref(), message_index) {
+            Ok(idx) => idx,
+            Err(msg) => {
+                let ev = AgentEvent::err(id, tn, msg);
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                return false;
+            }
+        };
 
     if !rewind_to_message_index(ctx.messages, message_index) {
         let ev = AgentEvent::err(id, tn, "invalid rewind target");

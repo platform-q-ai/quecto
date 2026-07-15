@@ -6,7 +6,9 @@ use super::uds_cancel::{
     disarm_cancel, run_agent_message,
 };
 use super::uds_query::query_response_data;
-use super::uds_session::{AgentSession, clear_conversation, rewind_to_message_index};
+use super::uds_session::{
+    AgentSession, clear_conversation, resolve_rewind_target, rewind_to_message_index,
+};
 #[cfg(test)]
 use super::uds_session::{
     compute_session_stats, compute_session_stats_with_usage, messages_tail_json,
@@ -309,6 +311,19 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return Some(false);
     }
+    // A supplied paging cursor is a stable message id. Treat a stale/unknown
+    // id as an error instead of silently restarting at the newest page, which a
+    // client would otherwise prepend and duplicate as "older" history.
+    if let AgentCommand::GetMessages {
+        before: Some(cursor),
+        ..
+    } = cmd
+        && super::uds_session::position_by_wire_id(ctx.messages, cursor).is_none()
+    {
+        let ev = AgentEvent::err(id, tn, format!("history cursor not found: {cursor}"));
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return Some(false);
+    }
     if let Some(data) = query_response_data(cmd, ctx) {
         let ev = AgentEvent::ok(id, tn, Some(data));
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
@@ -322,6 +337,8 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
 
 #[path = "uds_dispatch.rs"]
 mod uds_dispatch;
+#[path = "uds_forward_response.rs"]
+mod uds_forward_response;
 pub(crate) use uds_dispatch::dispatch_command;
 use uds_dispatch::handle_clear_history;
 

@@ -640,10 +640,10 @@ fn when_request_rewind_history(world: &mut TuiWorld) {
             success: true,
             data: Some(serde_json::json!({
                 "messages": [
-                    { "role": "user", "content": "first prompt" },
-                    { "role": "assistant", "content": "first answer" },
-                    { "role": "user", "content": "most recent prompt" },
-                    { "role": "assistant", "content": "most recent answer" }
+                    { "id": "u1", "role": "user", "content": "first prompt" },
+                    { "id": "a1", "role": "assistant", "content": "first answer" },
+                    { "id": "u2", "role": "user", "content": "most recent prompt" },
+                    { "id": "a2", "role": "assistant", "content": "most recent answer" }
                 ]
             })),
             error: None,
@@ -774,10 +774,16 @@ fn then_rewind_command_sent(world: &mut TuiWorld) {
         )
     });
     let value: serde_json::Value = serde_json::from_str(rewind).expect("rewind command json");
+    // #1061: rewind targets the message's STABLE id, not a page-local index. The
+    // most recent user turn ("most recent prompt") is id "u2".
     assert_eq!(
-        value.get("messageIndex").and_then(|v| v.as_u64()),
-        Some(2),
+        value.get("messageId").and_then(|v| v.as_str()),
+        Some("u2"),
         "the default selected target should be the most recent user turn: {rewind}"
+    );
+    assert!(
+        value.get("messageIndex").is_none(),
+        "rewind must not send a page-local index: {rewind}"
     );
 }
 

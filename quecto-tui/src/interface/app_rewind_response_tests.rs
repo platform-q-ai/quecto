@@ -93,9 +93,9 @@ async fn open_rewind_selector_builds_turns_in_reverse() {
     let mut h = harness().await;
     let data = serde_json::json!({
         "messages": [
-            {"role": "user", "content": "one"},
-            {"role": "assistant", "content": "ans"},
-            {"role": "user", "content": "two"}
+            {"role": "user", "content": "one", "id": "u1"},
+            {"role": "assistant", "content": "ans", "id": "a1"},
+            {"role": "user", "content": "two", "id": "u2"}
         ]
     });
     let a = h.app_mut();
@@ -116,12 +116,44 @@ async fn open_rewind_selector_no_user_turns_notifies() {
 #[tokio::test]
 async fn rewind_selector_enter_requests_rewind() {
     let mut h = harness().await;
-    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn"}]});
+    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn", "id": "u1"}]});
     let a = h.app_mut();
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Enter);
     assert!(a.rewind.selector.is_none());
     assert!(a.rewind.pending_apply_id.is_some());
+}
+
+#[tokio::test]
+async fn rewind_selector_enter_sends_stable_message_id_not_page_local_index() {
+    // #1061 blocker: with paged history the selector holds only a bounded
+    // window, so it must target the message's STABLE id — never a page-local
+    // array index that the server would misapply to the full conversation.
+    let mut h = harness().await;
+    {
+        let a = h.app_mut();
+        let data = serde_json::json!({"messages": [
+            {"role": "user", "content": "turn", "id": "msg-42"}
+        ]});
+        a.open_rewind_selector(&data);
+        a.handle_rewind_selector_key(&Key::Enter);
+    }
+    let commands = h.drain_commands().await;
+    let rewind = commands
+        .iter()
+        .find_map(|line| {
+            let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("rewind_to")).then_some(cmd)
+        })
+        .expect("a rewind_to command must be sent");
+    assert_eq!(
+        rewind.get("messageId").and_then(|v| v.as_str()),
+        Some("msg-42")
+    );
+    assert!(
+        rewind.get("messageIndex").is_none(),
+        "must not send a page-local index; command={rewind}"
+    );
 }
 
 #[tokio::test]
@@ -136,30 +168,12 @@ async fn rewind_selector_escape_cancels() {
 }
 
 #[tokio::test]
-async fn rewind_selector_invalid_value_notifies_error() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.rewind.selector = Some(SelectList::new(
-        vec![SelectItem {
-            value: "not-a-number".into(),
-            label: "bad".into(),
-            description: None,
-        }],
-        10,
-    ));
-    a.handle_rewind_selector_key(&Key::Enter);
-    assert!(a.rewind.selector.is_none());
-    assert!(a.rewind.pending_apply_id.is_none());
-    assert!(!a.notifications.is_empty());
-}
-
-#[tokio::test]
 async fn rewind_selector_pending_keeps_open() {
     let mut h = harness().await;
     let data = serde_json::json!({
         "messages": [
-            {"role": "user", "content": "a"},
-            {"role": "user", "content": "b"}
+            {"role": "user", "content": "a", "id": "u1"},
+            {"role": "user", "content": "b", "id": "u2"}
         ]
     });
     let a = h.app_mut();
@@ -181,7 +195,7 @@ async fn rewind_request_ids_are_monotonically_increasing() {
     let seq_after_open = a.rewind.request_seq;
     assert_eq!(seq_after_open, seq_before.wrapping_add(1));
     // Now simulate a rewind apply (open selector, press Enter).
-    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn"}]});
+    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn", "id": "u1"}]});
     a.rewind.pending_open_id = None; // simulate response clearing it
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Enter);
@@ -335,7 +349,7 @@ async fn response_get_messages_opens_rewind_when_id_matches() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.rewind.pending_open_id = Some("rid".into());
-    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn"}]});
+    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn", "id": "u1"}]});
     respond(a, Some("rid"), "get_messages", true, Some(data), None);
     assert!(a.rewind.selector.is_some());
     assert!(a.rewind.pending_open_id.is_none());
@@ -456,4 +470,106 @@ async fn response_agent_error_without_message_uses_default() {
     let a = h.app_mut();
     respond(a, None, "agent_error", false, None, None);
     assert!(chat_text(a).contains("unknown error"));
+}
+
+fn history_page(messages: &[(&str, &str)], before: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "messages": messages
+            .iter()
+            .map(|(id, content)| serde_json::json!({
+                "id": id, "role": "user", "content": content,
+            }))
+            .collect::<Vec<_>>(),
+        "before": before,
+        "hasMoreBefore": before.is_some(),
+    })
+}
+
+#[tokio::test]
+async fn rewind_refresh_replaces_transcript_and_resets_paging_state() {
+    let mut h = harness().await;
+    // Long attached history: the paging cursor refers to the PRE-rewind
+    // conversation (#1061 review — it must not survive the rewind).
+    respond(
+        h.app_mut(),
+        None,
+        "get_messages",
+        true,
+        Some(history_page(&[("m9", "pre-rewind newest")], Some("m9"))),
+        None,
+    );
+    let _ = h.drain_commands().await;
+
+    h.app_mut().rewind.pending_apply_id = Some("rw".into());
+    respond(h.app_mut(), Some("rw"), "rewind_to", true, None, None);
+    respond(
+        h.app_mut(),
+        Some("rewind-refresh"),
+        "get_messages",
+        true,
+        Some(history_page(&[("m2", "kept turn")], Some("m2"))),
+        None,
+    );
+
+    let frame = chat_text(h.app_mut());
+    assert!(
+        frame.contains("kept turn"),
+        "refreshed page renders: {frame}"
+    );
+    assert!(
+        !frame.contains("pre-rewind newest"),
+        "rewind must replace the pre-rewind transcript, not prepend into it:\n{frame}"
+    );
+    assert!(
+        frame.contains("Conversation rewound"),
+        "rewind refresh should announce itself, not claim a resume:\n{frame}"
+    );
+
+    // Scroll-back must page with the POST-rewind cursor, never the stale one
+    // (which the server would reject as "history cursor not found" forever).
+    let _ = h.drain_commands().await;
+    {
+        let chat = h.app_mut().active_chat_mut();
+        chat.set_viewport_height(1);
+        let _ = chat.render(120);
+    }
+    h.app_mut().handle_key(Key::PageUp);
+    let commands: Vec<serde_json::Value> = h
+        .drain_commands()
+        .await
+        .into_iter()
+        .filter_map(|line| serde_json::from_str(&line).ok())
+        .filter(|cmd: &serde_json::Value| {
+            cmd.get("type").and_then(|v| v.as_str()) == Some("get_messages")
+        })
+        .collect();
+    assert!(
+        commands
+            .iter()
+            .any(|cmd| cmd.get("before").and_then(|v| v.as_str()) == Some("m2")),
+        "post-rewind paging must use the refreshed cursor; commands={commands:?}"
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|cmd| cmd.get("before").and_then(|v| v.as_str()) == Some("m9")),
+        "the pre-rewind cursor must not survive the rewind; commands={commands:?}"
+    );
+}
+
+#[tokio::test]
+async fn rewind_success_clears_failed_stub_recall_state() {
+    // A recall marked permanently failed belongs to the PRE-rewind
+    // conversation; after a rewind the same stub id may be recallable again
+    // (#1061 review — clear_message_recovery must reset stub-recall state).
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.failed_stub_recalls.insert((None, "stub-1".to_string()));
+    a.rewind.pending_apply_id = Some("rw".into());
+    respond(a, Some("rw"), "rewind_to", true, None, None);
+    assert!(
+        a.failed_stub_recalls.is_empty(),
+        "rewind must reset failed stub-recall markers"
+    );
+    assert!(a.pending_stub_recall.is_empty());
 }

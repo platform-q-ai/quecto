@@ -120,7 +120,7 @@ async fn rewind_to_drops_rewound_away_message_ref() {
     {
         let mut ctx = fx.ctx();
         ctx.conversation_snapshot = snapshot.clone();
-        assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", 2).await);
+        assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", Some(2), None).await);
     }
     let snap = snapshot.read().await;
     assert!(

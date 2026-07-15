@@ -314,10 +314,8 @@ impl App {
             .retain(|_, pending| pending.batch_id != batch_id);
     }
 
-    pub(super) fn clear_message_recovery(&mut self) {
-        self.message_recovery_batches.clear();
-        self.pending_message_recovery.clear();
-    }
+    // clear_message_recovery lives in app_paged_history.rs: it also resets the
+    // #1061 stub-recall state, which is defined there.
 
     fn handle_tool_start(
         &mut self,

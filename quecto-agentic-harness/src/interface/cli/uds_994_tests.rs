@@ -250,7 +250,11 @@ fn get_messages_snapshot_line_matches_agent_event_envelope() {
     let canonical = AgentEvent::ok(
         None,
         "get_messages",
-        Some(serde_json::json!({ "messages": msgs_json, "snapshot": true })),
+        Some(serde_json::json!({
+            "messages": msgs_json,
+            "snapshot": true,
+            "hasMoreBefore": false,
+        })),
     );
     let want: serde_json::Value =
         serde_json::from_str(&canonical.to_json_line()).expect("canonical event is JSON");
@@ -281,6 +285,7 @@ fn trimmed_get_messages_snapshot_line_matches_agent_event_envelope() {
             "messages": Vec::<serde_json::Value>::new(),
             "snapshot": true,
             "trimmed": true,
+            "hasMoreBefore": false,
         })),
     );
     let want: serde_json::Value =

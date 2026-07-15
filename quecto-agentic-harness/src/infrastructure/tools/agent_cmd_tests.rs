@@ -111,6 +111,47 @@ fn test_parse_get_messages_count_builds_tail_json() {
 }
 
 #[test]
+fn test_parse_get_messages_before_cursor_reaches_child_command() {
+    // Paged history (#1061): the tool must forward the paging cursor so a
+    // caller can walk older pages beyond the newest bounded one.
+    let tool = empty_tool();
+    let (_, cmd, _) = tool
+        .parse_and_build(
+            r#"{"agent_id":"w1","command":"get_messages","before":"11111111-2222-3333-4444-555555555555"}"#,
+        )
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+    assert_eq!(parsed["type"], "get_messages");
+    assert_eq!(parsed["before"], "11111111-2222-3333-4444-555555555555");
+    assert!(
+        parsed.get("count").is_none(),
+        "cursor-only paging must not invent a count: {parsed}"
+    );
+
+    // count combined with before forwards both.
+    let (_, cmd, _) = tool
+        .parse_and_build(
+            r#"{"agent_id":"w1","command":"get_messages","count":4,"before":"cursor-id"}"#,
+        )
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+    assert_eq!(parsed["count"], 4);
+    assert_eq!(parsed["before"], "cursor-id");
+}
+
+#[test]
+fn test_agent_cmd_schema_declares_before_cursor() {
+    let def = empty_tool().definition();
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    assert_eq!(schema["properties"]["before"]["type"], "string");
+    let description = schema["properties"]["before"]["description"].as_str();
+    assert!(
+        description.is_some_and(|d| d.contains("older page")),
+        "schema must explain the cursor pages older history: {schema}"
+    );
+}
+
+#[test]
 fn test_parse_get_messages_tail_aliases_to_get_messages_count() {
     let tool = empty_tool();
     let (_, cmd, _) = tool

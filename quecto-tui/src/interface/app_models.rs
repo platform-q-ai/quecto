@@ -352,3 +352,7 @@ mod tests {
         assert!(entries[3].auth.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "app_model_focus_1085_tests.rs"]
+mod app_model_focus_1085_tests;

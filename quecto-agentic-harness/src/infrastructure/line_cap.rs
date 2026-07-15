@@ -63,9 +63,57 @@ fn shrink_event_payload(v: &mut serde_json::Value, excess: usize) -> bool {
         // `get_messages` near a full context window) grows without bound just
         // like `agent_end`; tail its messages array the same way instead of
         // emitting a line the client drops unread (#1047 review).
-        Some("response") => shrink_messages_array(v.pointer_mut("/data/messages"), excess),
+        Some("response") => shrink_response_messages(v, excess),
         _ => false,
     }
+}
+
+/// Shrink a response's message payload while preserving paging reachability.
+///
+/// A capped `get_messages` page must advertise a cursor for anything removed
+/// here. Otherwise clients believe they received the complete requested page
+/// and the dropped prefix becomes unreachable. The first retained message's
+/// stable wire id is exactly the cursor expected by the next backward request.
+fn shrink_response_messages(v: &mut serde_json::Value, excess: usize) -> bool {
+    let len_before = v
+        .pointer("/data/messages")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    if !shrink_messages_array(v.pointer_mut("/data/messages"), excess) {
+        return false;
+    }
+    let len_after = v
+        .pointer("/data/messages")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    let first_id = v
+        .pointer("/data/messages/0/id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    if let Some(data) = v
+        .pointer_mut("/data")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        match first_id {
+            // A dropped prefix stays reachable: the first retained message's
+            // stable wire id is exactly the cursor the next backward request
+            // expects, so advertise it.
+            Some(id) if len_after < len_before => {
+                data.insert("before".into(), serde_json::Value::String(id));
+                data.insert("hasMoreBefore".into(), serde_json::Value::Bool(true));
+            }
+            // A lone over-budget message was tailed in place or dropped whole:
+            // the lost bytes are NOT reachable by paging, so flag the loss
+            // instead of fabricating a cursor to the message's own id (#1061
+            // review follow-up). Any `before`/`hasMoreBefore` already present —
+            // from the page builder or an earlier shrink iteration that dropped
+            // a prefix — still point at reachable history and stay untouched.
+            _ => {
+                data.insert("trimmed".into(), serde_json::Value::Bool(true));
+            }
+        }
+    }
+    true
 }
 
 /// Drop roughly `excess` bytes of the OLDEST messages from a conversation
@@ -185,6 +233,109 @@ mod tests {
                 .unwrap()
                 .starts_with(&format!("{}-", count - 1)),
             "the newest messages must be kept"
+        );
+    }
+
+    /// #1061 review follow-up: a capped page whose prefix was dropped must
+    /// advertise the first retained message's id as the backward cursor so the
+    /// dropped messages stay reachable.
+    #[test]
+    fn capped_response_prefix_advertises_first_retained_cursor() {
+        let chunk = 256 * 1024;
+        let count = EVENT_LINE_JSON_BUDGET / chunk + 8;
+        let messages: Vec<_> = (0..count)
+            .map(|i| {
+                serde_json::json!({
+                    "id": format!("id-{i}"),
+                    "role": "user",
+                    "content": format!("{i}-{}", "x".repeat(chunk)),
+                })
+            })
+            .collect();
+        let line = serde_json::to_string(&serde_json::json!({
+            "type": "response",
+            "command": "get_messages",
+            "success": true,
+            "data": { "messages": messages, "hasMoreBefore": false, "before": null },
+        }))
+        .unwrap();
+        assert!(line.len() > EVENT_LINE_JSON_BUDGET);
+        let capped = cap_line(line);
+        assert!(capped.len() <= EVENT_LINE_JSON_BUDGET);
+        let v: serde_json::Value = serde_json::from_str(&capped).unwrap();
+        let kept = v["data"]["messages"].as_array().unwrap();
+        assert!(!kept.is_empty());
+        assert_eq!(
+            v["data"]["before"], kept[0]["id"],
+            "cursor must point at the first retained message"
+        );
+        assert_eq!(v["data"]["hasMoreBefore"], true);
+    }
+
+    /// #1061 review follow-up: a lone over-budget message tailed IN PLACE loses
+    /// bytes that no cursor can reach — the response must be flagged `trimmed`,
+    /// never given a fabricated `before` cursor to the message's own id (which
+    /// would claim reachable older history that does not exist).
+    #[test]
+    fn lone_overbudget_response_message_is_marked_trimmed_not_paged() {
+        let huge = "z".repeat(EVENT_LINE_JSON_BUDGET + 4096);
+        let line = serde_json::to_string(&serde_json::json!({
+            "type": "response",
+            "command": "get_messages",
+            "success": true,
+            "data": {
+                "messages": [{ "id": "only-msg", "role": "user", "content": huge }],
+                "hasMoreBefore": false,
+                "before": null,
+            },
+        }))
+        .unwrap();
+        let capped = cap_line(line);
+        assert!(capped.len() <= EVENT_LINE_JSON_BUDGET);
+        let v: serde_json::Value = serde_json::from_str(&capped).unwrap();
+        assert_eq!(v["data"]["trimmed"], true, "in-place loss must be flagged");
+        assert_ne!(
+            v["data"]["hasMoreBefore"], true,
+            "must not fabricate reachable older history"
+        );
+        assert!(
+            v["data"]["before"].is_null(),
+            "must not advertise a cursor to the message's own id: {}",
+            v["data"]
+        );
+    }
+
+    /// Drain-then-tail across cap iterations: the prefix drop advertises a
+    /// cursor (older history IS reachable), a later iteration tails the lone
+    /// survivor in place and adds `trimmed` — both markers coexist and both
+    /// are accurate.
+    #[test]
+    fn drained_then_tailed_response_carries_cursor_and_trimmed() {
+        let big = "b".repeat(EVENT_LINE_JSON_BUDGET);
+        let line = serde_json::to_string(&serde_json::json!({
+            "type": "response",
+            "command": "get_messages",
+            "success": true,
+            "data": { "messages": [
+                { "id": "older", "role": "user", "content": big },
+                { "id": "newest", "role": "user", "content": big },
+            ]},
+        }))
+        .unwrap();
+        let capped = cap_line(line);
+        assert!(capped.len() <= EVENT_LINE_JSON_BUDGET);
+        let v: serde_json::Value = serde_json::from_str(&capped).unwrap();
+        let kept = v["data"]["messages"].as_array().unwrap();
+        assert_eq!(kept.len(), 1, "prefix dropped to the newest survivor");
+        assert_eq!(kept[0]["id"], "newest");
+        assert_eq!(
+            v["data"]["before"], "newest",
+            "dropped prefix must stay reachable via the survivor cursor"
+        );
+        assert_eq!(v["data"]["hasMoreBefore"], true);
+        assert_eq!(
+            v["data"]["trimmed"], true,
+            "the survivor's in-place tail loss must also be flagged"
         );
     }
 

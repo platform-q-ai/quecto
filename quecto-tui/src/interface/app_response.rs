@@ -13,6 +13,7 @@ impl App {
     pub(crate) fn request_master_attach_backfill(&mut self) {
         self.send_command(Command::GetMessages {
             id: Some(ATTACH_BACKFILL_ID.into()),
+            before: None,
         });
     }
 
@@ -25,8 +26,15 @@ impl App {
         error: Option<String>,
     ) {
         match command.as_str() {
-            // #1060: gated recovery for ref-based end-of-turn miss path.
-            "get_message" => self.handle_get_message_recovery(id.as_deref(), success, data),
+            // #1061 auto-recall of a demoted history stub takes precedence. The
+            // guard applies the stub recall as a side effect; only when this
+            // response is NOT a stub recall does it fall through to #1060's gated
+            // ref-based end-of-turn miss recovery (a stub recall lands in `_`).
+            "get_message"
+                if !self.handle_stub_recall_response(id.as_deref(), success, data.as_ref()) =>
+            {
+                self.handle_get_message_recovery(id.as_deref(), success, data);
+            }
             "get_state" if success => self.handle_get_state(data),
             "set_model" if success => self.handle_set_model_success(data),
             // Late master failure must not toast over a focused child (#1085).
@@ -74,24 +82,55 @@ impl App {
             }
             "resume_session" => self.notify_response_error("Resume failed", error),
             "get_messages" if success => {
+                let own_page = self.master_session.is_pending_history_page(id.as_deref());
                 if let Some(data) = data {
                     if id.is_some() && id == self.rewind.pending_open_id {
                         self.rewind.pending_open_id = None;
                         self.open_rewind_selector(&data);
+                    } else if matches!(
+                        id.as_deref(),
+                        Some("resume-messages") | Some("rewind-refresh")
+                    ) && Self::is_history_page_payload(&data)
+                    {
+                        // Resume/rewind swapped or truncated the server-side
+                        // conversation: replace the transcript AND the paging
+                        // cursors, which refer to the old conversation (#1061
+                        // review — a stale cursor after a rewind would loop on
+                        // "history cursor not found" forever).
+                        let status = if id.as_deref() == Some("rewind-refresh") {
+                            "Conversation rewound"
+                        } else {
+                            "Session resumed"
+                        };
+                        self.replace_master_chat_with_history_page(&data, status);
+                    } else if own_page {
+                        // This client's own older page extends the loaded prefix.
+                        Self::reconcile_backfill_history(&mut self.master_session, &data, true);
+                    } else if id
+                        .as_deref()
+                        .is_some_and(|id| id.starts_with("history-page-"))
+                    {
+                        // Another client's older page (get_messages responses
+                        // are broadcast to every client) or one orphaned by a
+                        // resume: it is paged from a DIFFERENT depth, so
+                        // prepending it would create an interior gap. Drop it.
                     } else if id.as_deref() == Some(ATTACH_BACKFILL_ID) || id.is_none() {
-                        // Attach-time backfill (dedicated id) OR unsolicited
-                        // busy-connect snapshot (id-less, see uds_snapshots):
-                        // prepend + guard. Id-less must not take wholesale
-                        // replace — that never latches the guard, so a later
-                        // attach-backfill would double-apply history on mid-turn
-                        // `--socket` attach. Trimmed snapshots do not latch
-                        // completion so a fuller backfill can still restore
-                        // omitted older history (#1050 review).
-                        Self::reconcile_backfill_history(&mut self.master_session, &data);
+                        // Attach backfill OR unsolicited busy-connect snapshot
+                        // (id-less, see uds_snapshots): replace any loaded
+                        // partial prefix (or prepend) + cursor reconciliation.
+                        Self::reconcile_backfill_history(&mut self.master_session, &data, false);
                     } else {
                         self.replace_chat_with_messages(&data);
                     }
+                } else if own_page {
+                    // Success but no data: clear the in-flight request so the same
+                    // older page can be retried on the next scroll (#1061 review).
+                    self.master_session.clear_pending_history_page();
                 }
+            }
+            // Failed page fetch: same retry-unblock as the no-data case above.
+            "get_messages" if self.master_session.is_pending_history_page(id.as_deref()) => {
+                self.master_session.clear_pending_history_page();
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id && success => {
                 self.rewind.pending_apply_id = None;
@@ -99,6 +138,7 @@ impl App {
                 self.notify("Rewound conversation", NotifyLevel::Success);
                 self.send_command(Command::GetMessages {
                     id: Some("rewind-refresh".into()),
+                    before: None,
                 });
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id => {
@@ -238,6 +278,7 @@ impl App {
         self.notify(&format!("Resumed session {session}"), NotifyLevel::Success);
         self.send_command(Command::GetMessages {
             id: Some("resume-messages".into()),
+            before: None,
         });
         self.send_session_stats();
         // The agent resets session-scoped state (e.g. the effort override,

@@ -315,7 +315,8 @@ send(sock, {"type": "abort"})
 ```python
 # Received: {"type":"error","message":"dropped 12 events — use get_messages to re-sync"}
 send(sock, {"type": "get_messages"})
-# Full history returned
+# Newest bounded history page returned (#1061). The response carries
+# `hasMoreBefore`/`before`; pass `before` to page older history on demand.
 ```
 
 ## Lifecycle management

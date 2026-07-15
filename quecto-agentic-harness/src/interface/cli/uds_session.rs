@@ -400,11 +400,45 @@ pub fn compute_session_stats_with_usage(
     }
 }
 
+pub(crate) use super::protocol::HISTORY_PAGE_SIZE;
+
+/// Locate a message by its stable wire id (a stringified UUID). Parses the id
+/// ONCE and compares typed UUIDs instead of allocating a `to_string` per
+/// candidate (#1061 review). A non-UUID id matches nothing, so `None`.
+pub(crate) fn position_by_wire_id(messages: &[Message], wire_id: &str) -> Option<usize> {
+    let target = uuid::Uuid::parse_str(wire_id).ok()?;
+    messages.iter().position(|m| m.id() == target)
+}
+
+/// Return a JSON value containing the selected history window in chronological order.
+///
+/// `count: 0` keeps the legacy empty-page contract and reports no cursor (the
+/// cursor names the oldest INCLUDED message, which an empty window lacks).
+pub fn messages_page_json(
+    messages: &[Message],
+    count: usize,
+    before: Option<&str>,
+) -> serde_json::Value {
+    let end = before
+        .and_then(|cursor| position_by_wire_id(messages, cursor))
+        .unwrap_or(messages.len());
+    // Default callers supply HISTORY_PAGE_SIZE; an explicit `count` retains the
+    // legacy "last N" contract (including counts above one page).
+    let start = end.saturating_sub(count);
+    let msgs_json: Vec<serde_json::Value> =
+        messages[start..end].iter().map(message_to_json).collect();
+    let has_more_before = count > 0 && start > 0;
+    let before_cursor = has_more_before.then(|| messages[start].id().to_string());
+    serde_json::json!({
+        "messages": msgs_json,
+        "before": before_cursor,
+        "hasMoreBefore": has_more_before,
+    })
+}
+
 /// Return a JSON value containing the last `count` messages in chronological order.
 pub fn messages_tail_json(messages: &[Message], count: usize) -> serde_json::Value {
-    let skip = messages.len().saturating_sub(count);
-    let msgs_json: Vec<serde_json::Value> = messages[skip..].iter().map(message_to_json).collect();
-    serde_json::json!({ "messages": msgs_json })
+    messages_page_json(messages, count, None)
 }
 
 /// Static wire name for a role — no per-message throwaway `String` allocation
@@ -447,8 +481,9 @@ impl serde::Serialize for MessageView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let msg = self.0;
-        // 7 fields: stable id (#1060) + role/content/tools + isError for recovery.
-        let mut s = serializer.serialize_struct("Message", 7)?;
+        // 8 fields: stable id (#1060) + role/content/tools + isError + collapsed
+        // (a demoted stub the client recalls by id; #1061 / ADR-0008 part 3).
+        let mut s = serializer.serialize_struct("Message", 8)?;
         // Domain UUID as a round-trippable string key (AC6).
         s.serialize_field("id", &msg.id().to_string())?;
         s.serialize_field("role", role_wire_name(&msg.role))?;
@@ -457,6 +492,8 @@ impl serde::Serialize for MessageView<'_> {
         s.serialize_field("toolCallId", &msg.tool_call_id)?;
         s.serialize_field("toolName", &msg.tool_name)?;
         s.serialize_field("isError", &msg.is_error)?;
+        // Ladder-collapsed stub: rendered in place, full body recallable by id.
+        s.serialize_field("collapsed", &msg.is_collapsed)?;
         s.end()
     }
 }
@@ -480,6 +517,26 @@ pub fn clear_conversation(messages: &mut Vec<Message>) {
         messages.truncate(1);
     } else {
         messages.clear();
+    }
+}
+
+/// Resolve a rewind target to a full-vector index. A stable `message_id` is
+/// resolved against the full conversation. The legacy `message_index` (#1059)
+/// is honoured only while the conversation fits in ONE history page: beyond
+/// that a pre-paging client's index is page-local and applying it absolutely
+/// would destructively truncate a much older turn (#1061 review follow-up).
+pub fn resolve_rewind_target(
+    messages: &[Message],
+    message_id: Option<&str>,
+    message_index: Option<usize>,
+) -> Result<usize, &'static str> {
+    match (message_id, message_index) {
+        (Some(mid), _) => position_by_wire_id(messages, mid).ok_or("rewind target not found"),
+        (None, Some(_)) if messages.len() > HISTORY_PAGE_SIZE => {
+            Err("messageIndex is ambiguous beyond one history page; rewind requires messageId")
+        }
+        (None, Some(idx)) => Ok(idx),
+        (None, None) => Err("rewind requires messageId or messageIndex"),
     }
 }
 

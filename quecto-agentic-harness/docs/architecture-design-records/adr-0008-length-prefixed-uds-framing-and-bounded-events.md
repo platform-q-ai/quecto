@@ -3,8 +3,13 @@
 **Status:** Accepted.
 
 **Implementation status:** Part 1 (length-prefixed framing with version
-negotiation, #1059) is implemented; parts 2–3 (bounded events, cap as
-invariant) are not yet implemented.
+negotiation, #1059) is implemented. Part 2 (bounded events) is substantially
+implemented: end-of-turn events reference messages by id (#1060); history is
+paged via `get_messages` cursors and the wire inherits the demotion ladder
+(#1061). Residual `data.trimmed` emissions remain where the byte-budget cap
+reduces a page or a lone message in place — they disappear with Part 3 (cap as
+invariant — deleting the PR #1051 shrink machinery), which is not yet
+implemented.
 
 ## Context
 

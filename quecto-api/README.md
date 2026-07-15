@@ -11,7 +11,7 @@ Connects to a running `quecto agent --mode uds` process via Unix domain socket a
 | `GET` | `/health` | Health check (200 connected, 503 disconnected) |
 | `POST` | `/prompt` | Send a prompt to the agent |
 | `GET` | `/state` | Get current agent state |
-| `GET` | `/messages` | Get full message history |
+| `GET` | `/messages` | Get the newest history page; `?before=<messageId>` pages backward. Response `data` carries `before`/`hasMoreBefore` cursors (paged per #1061) |
 | `GET` | `/messages/tail?n=N` | Get last N messages |
 | `GET` | `/stats` | Get session statistics |
 | `WS` | `/ws` | WebSocket event stream (tokens, tool executions) |

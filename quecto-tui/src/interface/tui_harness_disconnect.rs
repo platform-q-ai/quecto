@@ -6,6 +6,30 @@
 use super::TuiHarness;
 
 impl TuiHarness {
+    /// Start a new master conversation through the production reset path.
+    pub fn reset_master_session(&mut self) {
+        self.app.reset_session("New session started");
+    }
+
+    /// Replace the master agent client with a disconnected command channel.
+    pub fn disconnect_master_commands(&mut self) {
+        self.app.client = crate::infrastructure::client::Client::disconnected_for_tests();
+    }
+
+    /// Drain one command-send failure through the production handler.
+    pub async fn handle_next_command_send_failure(&mut self) -> bool {
+        let Ok(Some(failure)) = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            self.app.command_send_failure_rx.recv(),
+        )
+        .await
+        else {
+            return false;
+        };
+        self.app.handle_command_send_failure(failure);
+        true
+    }
+
     /// Whether any notification is currently visible, rendered to text via the
     /// real notification stack so tests can assert the message content.
     pub fn notification_text(&mut self) -> String {

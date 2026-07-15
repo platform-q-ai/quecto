@@ -859,6 +859,13 @@ pub struct QuectoWorld {
     pub _bounded_delay_secs: Option<u64>,
     /// Whether a subagent_messages_appended event was injected/observed.
     pub _bounded_subagent_appended: bool,
+    // --- #1061 paged history (uds_paged_history.feature) ---
+    /// Seeded message contents in chronological order.
+    pub _paged_seeded: Vec<String>,
+    /// The newest-slice get_messages response captured on attach.
+    pub _paged_response: Option<serde_json::Value>,
+    /// Message contents collected while paging backward to the beginning.
+    pub _paged_collected: Vec<String>,
     /// Live multi-client: socket path while agent is kept up across steps.
     pub _mc_live_socket: Option<std::path::PathBuf>,
     /// Live multi-client: agent thread handle.
@@ -1323,6 +1330,7 @@ mod tui_context_usage_steps;
 mod uds_1093_steps;
 mod uds_bounded_events_steps;
 mod uds_framing_steps;
+mod uds_paged_history_steps;
 mod uds_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;

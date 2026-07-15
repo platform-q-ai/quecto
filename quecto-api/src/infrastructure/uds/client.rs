@@ -215,7 +215,13 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
         }
         AgentCommand::Abort => serde_json::json!({"type": "abort", "id": id}),
         AgentCommand::GetState => serde_json::json!({"type": "get_state", "id": id}),
-        AgentCommand::GetMessages => serde_json::json!({"type": "get_messages", "id": id}),
+        AgentCommand::GetMessages { before } => {
+            let mut v = serde_json::json!({"type": "get_messages", "id": id});
+            if let Some(before) = before {
+                v["before"] = serde_json::Value::String(before);
+            }
+            v
+        }
         AgentCommand::GetMessagesTail { count } => {
             serde_json::json!({"type": "get_messages_tail", "id": id, "count": count})
         }
@@ -433,6 +439,26 @@ mod tests {
     fn max_line_bytes_matches_documented_protocol_limit() {
         // 8 MiB interim cap (#1094); derives from the shared line-io constant.
         assert_eq!(MAX_LINE_BYTES, 8 * 1_048_576);
+    }
+
+    // ── #1061 lockstep: paged history cursor reaches the wire ────────────────
+
+    #[test]
+    fn get_messages_command_serializes_optional_before_cursor() {
+        let newest = command_to_json(AgentCommand::GetMessages { before: None }, "req1");
+        assert_eq!(newest["type"], "get_messages");
+        assert!(
+            newest.get("before").is_none(),
+            "no cursor field when unset: {newest}"
+        );
+
+        let older = command_to_json(
+            AgentCommand::GetMessages {
+                before: Some("cursor-id".into()),
+            },
+            "req2",
+        );
+        assert_eq!(older["before"], "cursor-id");
     }
 
     // ── #1060 lockstep: refs preserved through the API event model ──────────

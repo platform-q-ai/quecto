@@ -29,10 +29,8 @@ use tokio::sync::mpsc;
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 pub(super) const STREAM_RENDER_INTERVAL: Duration = Duration::from_millis(33);
 const MOUSE_SCROLL_LINES: usize = 3;
-
-/// Maximum retry iterations for reassembling multi-fragment escape sequences.
-/// Handles up to 5-fragment CSI splits on slow SSH/serial connections.
-/// Total max wait = MAX_ESCAPE_RETRIES × escape_timeout (10ms) = 50ms.
+/// Retry cap for reassembling multi-fragment escape sequences (5-fragment CSI
+/// splits on slow SSH/serial); max wait = 5 × escape_timeout (10ms) = 50ms.
 const MAX_ESCAPE_RETRIES: usize = 5;
 
 #[path = "app_commands.rs"]
@@ -61,12 +59,10 @@ pub struct App {
     agent_connected: bool,
     /// Pin: once the left panel has shown for a connected agent it must not
     /// vanish when the agent dies (#1047) — the user keeps the session /
-    /// sub-agent context needed to diagnose the failure. Stays `true` after
-    /// `agent_connected` drops on disconnect.
+    /// sub-agent context to diagnose the failure. Stays `true` on disconnect.
     agent_ever_connected: bool,
-    /// Exit-diagnosis watch handle for the TUI-owned agent child (#1047),
-    /// published by [`crate::infrastructure::child_watch`] when the child is
-    /// reaped. `None` when the TUI attached to an external socket.
+    /// Exit-diagnosis watch for the TUI-owned agent child (#1047), published by
+    /// [`crate::infrastructure::child_watch`]. `None` for external sockets.
     child_exit_watch: Option<crate::infrastructure::child_watch::ChildWatch>,
     /// Oversized-event drops already surfaced as a notification, so each is
     /// reported exactly once (#1047).
@@ -110,19 +106,18 @@ pub struct App {
     git_repo: Option<PathBuf>,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
-    /// Whether session stats were already requested as a fallback to learn the
-    /// real context window for the current session/model.
+    /// Whether session stats were already requested as a fallback to learn
+    /// the real context window for the current session/model.
     context_stats_requested: bool,
-    /// #1060: request-id → pending lookup for in-flight recovery fetches
-    /// (request-id gated, buffered, applied in ref order).
+    /// #1060: request-id → pending in-flight recovery fetch (gated, applied in ref order).
     pending_message_recovery: std::collections::HashMap<String, PendingMessageRecovery>,
-    /// Recovery batches keyed by a client-local id, each retaining the exact
-    /// chat range of its turn so a late response cannot overwrite a newer one.
+    /// Recovery batches (client-local id → turn chat range) guarding late overwrites.
     message_recovery_batches: std::collections::HashMap<String, MessageRecoveryBatch>,
+    pending_stub_recall: std::collections::HashMap<String, app_paged_history::StubRecall>,
+    failed_stub_recalls: std::collections::HashSet<(Option<String>, String)>,
     /// Tool boxes observed since the current master AgentStart (#1060 recovery).
     tools_this_turn: usize,
-    /// Tool starts not yet matched by an end; > 0 forces recovery on a dropped
-    /// tool-result event (#1060 review 3).
+    /// Tool starts not yet matched by an end; > 0 forces recovery on a dropped end.
     open_tool_calls: usize,
     active_turn_start: usize,
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
@@ -243,13 +238,9 @@ impl SubagentUi {
     }
 }
 
-/// Per-session state for the multi-session UI (#800/#802). The master (#828)
-/// and every sub-agent are modeled identically: own chat transcript, own
-/// workflow/phase bar, a running flag driving the per-session working indicator,
-/// and own footer. The editor and overlays stay single-instance on `App`.
+/// Per-session state for the multi-session UI (#800/#802/#828).
 pub(crate) struct SessionView {
     chat: Chat,
-    /// The child's own workflow/phase bar, fed by its forwarded `workflow_state`.
     workflow_bar: workflow_bar::WorkflowBarState,
     /// Whether the child is mid-turn — drives a per-session working indicator.
     running: bool,
@@ -260,8 +251,11 @@ pub(crate) struct SessionView {
     /// Whether a complete (untrimmed) history backfill was applied (#828),
     /// guarding re-delivery. Trimmed busy-connect snapshots do not set it (#1050).
     history_backfilled: bool,
-    /// Chat entries a trimmed busy-connect snapshot prepended (#1050 review).
     partial_backfill_len: Option<usize>,
+    history_before_cursor: Option<String>,
+    history_has_more_before: bool,
+    history_page_seq: u64,
+    history_pending_page: Option<app_paged_history::PendingHistoryPage>,
     /// Until this session's own stream reports run-state, `active_subagent_running`
     /// trusts the tracked status not `running` (#834).
     observed_run_state: bool,
@@ -291,6 +285,10 @@ impl SessionView {
             deferred_subagent_notes: std::collections::VecDeque::new(),
             history_backfilled: false,
             partial_backfill_len: None,
+            history_before_cursor: None,
+            history_has_more_before: false,
+            history_page_seq: 0,
+            history_pending_page: None,
             observed_run_state: false,
             active_turn_start: 0,
             tools_this_turn: 0,
@@ -314,7 +312,7 @@ const SUBAGENT_PANEL_WIDTH: usize = 30;
 const MAX_RETAINED_SESSIONS: usize = 16;
 
 struct CommandSendFailure {
-    command_kind: &'static str,
+    command: Command,
     error: String,
 }
 
@@ -368,6 +366,8 @@ impl App {
             context_stats_requested: false,
             pending_message_recovery: std::collections::HashMap::new(),
             message_recovery_batches: std::collections::HashMap::new(),
+            pending_stub_recall: std::collections::HashMap::new(),
+            failed_stub_recalls: std::collections::HashSet::new(),
             tools_this_turn: 0,
             open_tool_calls: 0,
             active_turn_start: 0,
@@ -442,6 +442,8 @@ mod app_idle_efficiency;
 mod app_methods;
 #[path = "app_models.rs"]
 mod app_models;
+#[path = "app_paged_history.rs"]
+mod app_paged_history;
 #[path = "app_response.rs"]
 mod app_response;
 #[path = "app_rewind.rs"]
@@ -675,9 +677,6 @@ mod app_cov_tests;
 #[path = "app_disconnect_tests.rs"]
 mod app_disconnect_tests;
 #[cfg(test)]
-#[path = "app_effort_1067_tests.rs"]
-mod app_effort_1067_tests;
-#[cfg(test)]
 #[path = "app_event_loop_tests.rs"]
 mod app_event_loop_tests;
 #[cfg(test)]
@@ -696,8 +695,11 @@ mod app_idle_efficiency_tests;
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;
 #[cfg(test)]
-#[path = "app_model_focus_1085_tests.rs"]
-mod app_model_focus_1085_tests;
+#[path = "app_paged_history_review_tests.rs"]
+mod app_paged_history_review_tests;
+#[cfg(test)]
+#[path = "app_paged_history_tests.rs"]
+mod app_paged_history_tests;
 #[cfg(test)]
 #[path = "app_rewind_response_tests.rs"]
 mod app_rewind_response_tests;
@@ -737,7 +739,6 @@ mod subagent_selection_tests;
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
-// Headless render harness, also exposed (read-only) to the workspace `bdd` integration target via `test-harness` (#805).
 #[cfg(any(test, feature = "test-harness"))]
 #[path = "tui_harness.rs"]
 pub mod tui_harness;

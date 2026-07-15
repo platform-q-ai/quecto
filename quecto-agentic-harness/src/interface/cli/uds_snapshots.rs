@@ -7,7 +7,7 @@ use serde_json::value::RawValue;
 
 use super::protocol::{AgentEvent, SessionState};
 use super::uds::DispatchCtx;
-use super::uds_session::{MessageView, compute_session_stats_with_usage};
+use super::uds_session::{HISTORY_PAGE_SIZE, MessageView, compute_session_stats_with_usage};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 
@@ -159,9 +159,8 @@ impl ConversationSnapshotData {
     /// every resolver so the ledger-then-live precedence stays in one place.
     fn lookup(&self, message_id: &str) -> Option<&Message> {
         self.ledger.get(message_id).or_else(|| {
-            self.messages
-                .iter()
-                .find(|m| m.id().to_string() == message_id)
+            super::uds_session::position_by_wire_id(&self.messages, message_id)
+                .map(|i| &self.messages[i])
         })
     }
 
@@ -450,8 +449,10 @@ pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
     // Serialize each message EXACTLY ONCE into an owned `RawValue`; its `.get()`
     // length is used for byte-budgeting and the same bytes are re-emitted
     // verbatim in the final line (no second serialization, no Value tree) (#994).
+    let page_start = messages.len().saturating_sub(HISTORY_PAGE_SIZE);
     let mut raws: Vec<Box<RawValue>> = messages
         .iter()
+        .skip(page_start)
         .map(|m| {
             serde_json::value::to_raw_value(&MessageView(m)).unwrap_or_else(|_| {
                 RawValue::from_string("null".to_string()).expect("null literal")
@@ -471,7 +472,10 @@ pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
         total += sz;
         start = i;
     }
-    let trimmed = start > 0;
+    let budget_trimmed = start > 0 || (raws.is_empty() && !messages.is_empty());
+    let cursor_index = page_start + start;
+    let has_more_before = start < raws.len() && cursor_index > 0;
+    let before = has_more_before.then(|| messages[cursor_index].id().to_string());
     // `split_off` moves the kept tail out in place — no slice clone (#994).
     let kept = raws.split_off(start);
 
@@ -481,7 +485,9 @@ pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
         data: GetMessagesData {
             messages: &kept,
             snapshot: true,
-            trimmed,
+            trimmed: budget_trimmed,
+            before: before.as_deref(),
+            has_more_before,
         },
     };
     let mut line =
@@ -510,6 +516,10 @@ struct GetMessagesData<'a> {
     snapshot: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     trimmed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    before: Option<&'a str>,
+    #[serde(rename = "hasMoreBefore")]
+    has_more_before: bool,
 }
 
 /// Build the connect-time `get_subagents` snapshot line a BUSY child pushes.
