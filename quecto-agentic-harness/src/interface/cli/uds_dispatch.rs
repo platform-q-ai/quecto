@@ -199,14 +199,11 @@ async fn forward_subagent_get_messages(
     match send_subagent_uds_command_with_timeout(&socket_path, &cmd, INSPECTOR_RESPONSE_TIMEOUT)
         .await
     {
-        Ok(line) => {
-            // The sub-agent replies with a full `response` event; unwrap its
-            // `data` payload so the caller sees the tail in the usual shape.
-            let data = serde_json::from_str::<serde_json::Value>(&line)
-                .ok()
-                .and_then(|v| v.get("data").cloned());
-            AgentEvent::ok(id, tn, data)
-        }
+        // Preserve child failures instead of rewriting them as parent success.
+        Ok(line) => match super::uds_forward_response::parse_forwarded_get_messages(&line) {
+            Ok(data) => AgentEvent::ok(id, tn, Some(data)),
+            Err(error) => AgentEvent::err(id, tn, error),
+        },
         Err(e) => AgentEvent::err(id, tn, e.to_string()),
     }
 }

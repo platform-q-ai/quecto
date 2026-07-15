@@ -133,7 +133,7 @@ async fn spawn_recording_child(
         let req: serde_json::Value = serde_json::from_str(&line).unwrap();
         let id = req.get("id").and_then(|v| v.as_str()).unwrap();
         let reply = format!(
-            "{{\"type\":\"response\",\"id\":\"{id}\",\"command\":\"get_messages\",\"data\":{{\"messages\":[{{\"content\":\"{marker}\"}}]}}}}\n"
+            "{{\"type\":\"response\",\"id\":\"{id}\",\"command\":\"get_messages\",\"success\":true,\"data\":{{\"messages\":[{{\"content\":\"{marker}\"}}]}}}}\n"
         );
         write_half.write_all(reply.as_bytes()).await.unwrap();
         write_half.flush().await.unwrap();
@@ -146,6 +146,33 @@ fn register_child(registry: &SubagentRegistry, id: &str, sock: std::path::PathBu
         .lock()
         .unwrap()
         .insert(id.to_string(), SubagentEntry::new(sock, 0));
+}
+
+async fn spawn_replying_child(
+    reply: &'static str,
+) -> (
+    std::path::PathBuf,
+    tempfile::TempDir,
+    tokio::task::JoinHandle<()>,
+) {
+    use tokio::io::{AsyncWriteExt, BufReader};
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("child.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+    let handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        let mut reader = BufReader::new(read_half);
+        let command = crate::infrastructure::test_support::read_framed_command_async(&mut reader)
+            .await
+            .unwrap();
+        let request: serde_json::Value = serde_json::from_str(&command).unwrap();
+        let request_id = request.get("id").and_then(|value| value.as_str()).unwrap();
+        let reply = reply.replace("__ID__", request_id);
+        write_half.write_all(reply.as_bytes()).await.unwrap();
+        write_half.flush().await.unwrap();
+    });
+    (sock, dir, handle)
 }
 
 #[tokio::test]
@@ -267,6 +294,58 @@ async fn dispatch_counted_agent_targeted_get_messages_forwards_count_to_child() 
     assert_eq!(
         fwd_json["count"], 7,
         "counted request must forward its count to the child, got: {fwd}"
+    );
+}
+
+#[tokio::test]
+async fn forward_get_messages_propagates_child_failure() {
+    let (sock, _dir, handle) = spawn_replying_child(
+        "{\"type\":\"response\",\"id\":\"__ID__\",\"command\":\"get_messages\",\"success\":false,\"error\":\"history cursor not found: stale\"}\n",
+    )
+    .await;
+    let registry = new_registry();
+    register_child(&registry, "worker", sock);
+    let mut fx = Fx::new();
+    let mut ctx = fx.ctx();
+    ctx.subagent_registry = Some(registry);
+
+    let event = forward_subagent_get_messages(
+        &ctx,
+        Some("page-2"),
+        "get_messages",
+        "worker",
+        None,
+        Some("stale"),
+    )
+    .await;
+    handle.await.unwrap();
+    let json = serde_json::to_value(event).unwrap();
+
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error"], "history cursor not found: stale");
+}
+
+#[tokio::test]
+async fn forward_get_messages_rejects_malformed_child_response() {
+    let (sock, _dir, handle) = spawn_replying_child("not-json\n").await;
+    let registry = new_registry();
+    register_child(&registry, "worker", sock);
+    let mut fx = Fx::new();
+    let mut ctx = fx.ctx();
+    ctx.subagent_registry = Some(registry);
+
+    let event =
+        forward_subagent_get_messages(&ctx, Some("page-2"), "get_messages", "worker", None, None)
+            .await;
+    handle.await.unwrap();
+    let json = serde_json::to_value(event).unwrap();
+
+    assert_eq!(json["success"], false);
+    assert!(
+        json["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty()),
+        "malformed child JSON must be surfaced as an error: {json}"
     );
 }
 

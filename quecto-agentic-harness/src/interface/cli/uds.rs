@@ -337,6 +337,8 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
 
 #[path = "uds_dispatch.rs"]
 mod uds_dispatch;
+#[path = "uds_forward_response.rs"]
+mod uds_forward_response;
 pub(crate) use uds_dispatch::dispatch_command;
 use uds_dispatch::handle_clear_history;
 
