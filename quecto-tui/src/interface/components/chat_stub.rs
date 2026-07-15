@@ -34,6 +34,19 @@ impl Chat {
             .collect()
     }
 
+    /// Return whether the identified stub has the supplied wire role. Recall
+    /// responses must agree with the original page metadata before replacement.
+    pub fn stub_role_matches(&self, message_id: &str, role: &str) -> bool {
+        self.entries.iter().any(|entry| {
+            matches!(
+                entry,
+                ChatEntry::Stub { id, is_user, .. }
+                    if id == message_id
+                        && ((*is_user && role == "user") || (!*is_user && role == "assistant"))
+            )
+        })
+    }
+
     /// Swap a recalled stub for its full content in place, converting it to a
     /// plain `User`/`Assistant` entry so it is no longer a recall target. Returns
     /// whether a matching stub was found. Preserves position and role.

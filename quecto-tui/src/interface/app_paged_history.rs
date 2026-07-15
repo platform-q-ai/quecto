@@ -60,10 +60,12 @@ impl App {
         let agent_id = self.subagents.active_agent_id.clone();
         let stub_ids = self.active_session().chat.visible_stub_message_ids();
         for message_id in stub_ids {
-            if self
-                .pending_stub_recall
-                .values()
-                .any(|r| r.message_id == message_id)
+            let recall_key = (agent_id.clone(), message_id.clone());
+            if self.failed_stub_recalls.contains(&recall_key)
+                || self
+                    .pending_stub_recall
+                    .values()
+                    .any(|r| r.agent_id == agent_id && r.message_id == message_id)
             {
                 continue;
             }
@@ -86,8 +88,9 @@ impl App {
     /// Apply a `get_message` response issued to auto-recall a demoted history
     /// stub (#1061). Replaces the stub body in place for the owning session and
     /// returns whether `req_id` was a stub-recall request (so the caller skips
-    /// the #1060 recovery path). A failed, no-data, or mismatched response just
-    /// drops the pending entry, leaving the stub to retry on the next scroll.
+    /// the #1060 recovery path). Failed, malformed, or mismatched responses mark
+    /// that session/message pair failed so a permanent error cannot cause one
+    /// new request per scroll action.
     pub(super) fn handle_stub_recall_response(
         &mut self,
         id: Option<&str>,
@@ -98,20 +101,20 @@ impl App {
         let Some(recall) = self.pending_stub_recall.remove(req_id) else {
             return false;
         };
+        let recall_key = (recall.agent_id.clone(), recall.message_id.clone());
         if !success {
+            self.failed_stub_recalls.insert(recall_key);
             return true;
         }
-        let Some(data) = data else { return true };
-        // Ignore a mismatched body (stale / rerouted response).
-        if data.get("id").and_then(|v| v.as_str()) != Some(recall.message_id.as_str()) {
-            return true;
-        }
-        let Some(content) = data.get("content").and_then(|v| v.as_str()) else {
+        let Some(data) = data else {
+            self.failed_stub_recalls.insert(recall_key);
             return true;
         };
-        // Untrusted transcript text (especially sub-agents): strip control
-        // sequences before rendering, matching the backfill path (#828 security).
-        let content = crate::interface::ansi::sanitize_control_keep_newlines(content);
+        // Reject a mismatched body (stale / rerouted response) and require the
+        // authoritative response role to agree with the original stub metadata.
+        let response_matches =
+            data.get("id").and_then(|v| v.as_str()) == Some(recall.message_id.as_str());
+        let role = data.get("role").and_then(|v| v.as_str());
         let chat = match &recall.agent_id {
             None => Some(&mut self.master_session.chat),
             Some(child) => self
@@ -120,8 +123,25 @@ impl App {
                 .get_mut(child)
                 .map(|session| &mut session.chat),
         };
-        if let Some(chat) = chat {
-            chat.recall_stub(&recall.message_id, &content);
+        let Some(chat) = chat else {
+            self.failed_stub_recalls.insert(recall_key);
+            return true;
+        };
+        if !response_matches
+            || !role.is_some_and(|role| chat.stub_role_matches(&recall.message_id, role))
+        {
+            self.failed_stub_recalls.insert(recall_key);
+            return true;
+        }
+        let Some(content) = data.get("content").and_then(|v| v.as_str()) else {
+            self.failed_stub_recalls.insert(recall_key);
+            return true;
+        };
+        // Untrusted transcript text (especially sub-agents): strip control
+        // sequences before rendering, matching the backfill path (#828 security).
+        let content = crate::interface::ansi::sanitize_control_keep_newlines(content);
+        if !chat.recall_stub(&recall.message_id, &content) {
+            self.failed_stub_recalls.insert(recall_key);
         }
         true
     }

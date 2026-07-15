@@ -357,6 +357,129 @@ async fn stubbed_history_message_is_recalled_and_replaced_on_scroll() {
 }
 
 #[tokio::test]
+async fn stub_recall_rejects_mismatched_role_and_does_not_retry() {
+    let mut h = harness().await;
+    respond(
+        h.app_mut(),
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        serde_json::json!({
+            "messages": [{
+                "id": "stub-role",
+                "role": "assistant",
+                "content": "[assistant stub — recall available]",
+                "collapsed": true,
+            }],
+            "hasMoreBefore": false,
+            "before": null,
+        }),
+    );
+    let _ = h.drain_commands().await;
+
+    prime_active_viewport(h.app_mut());
+    h.app_mut().handle_key(Key::PageUp);
+    let commands = h.drain_commands().await;
+    let req_id = commands
+        .iter()
+        .find_map(|line| {
+            let cmd: serde_json::Value = serde_json::from_str(line).ok()?;
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("get_message"))
+                .then(|| cmd.get("id")?.as_str().map(str::to_owned))?
+        })
+        .expect("visible stub must issue recall");
+
+    respond(
+        h.app_mut(),
+        Some(&req_id),
+        "get_message",
+        true,
+        serde_json::json!({
+            "id": "stub-role",
+            "role": "user",
+            "content": "must not replace assistant stub",
+        }),
+    );
+    h.app_mut().active_chat_mut().scroll_down(1000);
+    let frame = chat_text(h.app_mut());
+    assert!(
+        frame.contains("recall available"),
+        "role mismatch must preserve stub: {frame}"
+    );
+    assert!(
+        !frame.contains("must not replace"),
+        "role mismatch must reject content: {frame}"
+    );
+
+    prime_active_viewport(h.app_mut());
+    h.app_mut().handle_key(Key::PageUp);
+    assert!(
+        h.drain_commands().await.iter().all(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|cmd| cmd.get("type").and_then(|v| v.as_str()).map(str::to_owned))
+                .as_deref()
+                != Some("get_message")
+        }),
+        "a rejected permanent response must not retry on the next scroll"
+    );
+}
+
+#[tokio::test]
+async fn failed_stub_recall_does_not_retry_on_every_scroll() {
+    let mut h = harness().await;
+    respond(
+        h.app_mut(),
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        serde_json::json!({
+            "messages": [{
+                "id": "missing-stub",
+                "role": "assistant",
+                "content": "[assistant stub — recall available]",
+                "collapsed": true,
+            }],
+            "hasMoreBefore": false,
+            "before": null,
+        }),
+    );
+    let _ = h.drain_commands().await;
+
+    prime_active_viewport(h.app_mut());
+    h.app_mut().handle_key(Key::PageUp);
+    let commands = h.drain_commands().await;
+    let req_id = commands
+        .iter()
+        .find_map(|line| {
+            let cmd: serde_json::Value = serde_json::from_str(line).ok()?;
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("get_message"))
+                .then(|| cmd.get("id")?.as_str().map(str::to_owned))?
+        })
+        .expect("visible stub must issue recall");
+
+    h.app_mut().handle_response(
+        Some(req_id),
+        "get_message".into(),
+        false,
+        None,
+        Some("message not found".into()),
+    );
+    prime_active_viewport(h.app_mut());
+    h.app_mut().handle_key(Key::PageUp);
+    assert!(
+        h.drain_commands().await.iter().all(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|cmd| cmd.get("type").and_then(|v| v.as_str()).map(str::to_owned))
+                .as_deref()
+                != Some("get_message")
+        }),
+        "a permanent get_message failure must not retry on every scroll"
+    );
+}
+
+#[tokio::test]
 async fn subagent_older_history_page_prepends_without_replacing_newest() {
     let mut h = harness().await;
     h.event(Event::SubagentStateChanged {

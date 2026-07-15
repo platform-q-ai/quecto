@@ -29,7 +29,6 @@ use tokio::sync::mpsc;
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 pub(super) const STREAM_RENDER_INTERVAL: Duration = Duration::from_millis(33);
 const MOUSE_SCROLL_LINES: usize = 3;
-
 /// Maximum retry iterations for reassembling multi-fragment escape sequences.
 /// Handles up to 5-fragment CSI splits on slow SSH/serial connections.
 /// Total max wait = MAX_ESCAPE_RETRIES × escape_timeout (10ms) = 50ms.
@@ -117,8 +116,8 @@ pub struct App {
     pending_message_recovery: std::collections::HashMap<String, PendingMessageRecovery>,
     /// Recovery batches (client-local id → turn chat range) guarding late overwrites.
     message_recovery_batches: std::collections::HashMap<String, MessageRecoveryBatch>,
-    /// #1061 auto-recall: request-id → demoted stub being expanded ([`app_paged_history::StubRecall`]).
     pending_stub_recall: std::collections::HashMap<String, app_paged_history::StubRecall>,
+    failed_stub_recalls: std::collections::HashSet<(Option<String>, String)>,
     /// Tool boxes observed since the current master AgentStart (#1060 recovery).
     tools_this_turn: usize,
     /// Tool starts not yet matched by an end; > 0 forces recovery on a dropped end.
@@ -371,6 +370,7 @@ impl App {
             pending_message_recovery: std::collections::HashMap::new(),
             message_recovery_batches: std::collections::HashMap::new(),
             pending_stub_recall: std::collections::HashMap::new(),
+            failed_stub_recalls: std::collections::HashSet::new(),
             tools_this_turn: 0,
             open_tool_calls: 0,
             active_turn_start: 0,
