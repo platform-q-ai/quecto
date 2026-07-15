@@ -339,13 +339,19 @@ fn handle_monitor_line(
             // stream so the TUI inspector updates turn-by-turn (#797). Not a
             // status change, so it bypasses the state-changing path below.
             if let Some(fwd) = forward_child_messages_appended(line, agent_id, parent_id) {
-                // Re-stamping a child line already capped near the limit
-                // (empty `agent_id` → real id, added `parent_id`) can grow it
-                // past the cap; re-cap so the TUI never drops the forwarded
-                // line unread (#1047 review).
-                let mut fwd = crate::infrastructure::line_cap::cap_line(fwd);
-                fwd.push('\n');
-                let _ = tx.send(fwd);
+                // Re-stamping adds identity metadata and can cross the shared
+                // frame cap. That is an invariant violation, not permission to
+                // trim the child payload: reject the forwarded event whole.
+                if fwd.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+                    tracing::warn!(
+                        agent = %agent_id,
+                        len = fwd.len(),
+                        cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
+                        "monitor: dropping oversized forwarded event"
+                    );
+                    return;
+                }
+                let _ = tx.send(format!("{fwd}\n"));
                 return;
             }
             // Descendant sub-agent state (a grandchild, or deeper) must reach the

@@ -263,74 +263,19 @@ fn get_messages_snapshot_line_matches_agent_event_envelope() {
 }
 
 #[test]
-fn trimmed_get_messages_snapshot_line_matches_agent_event_envelope() {
-    use crate::interface::cli::protocol::AgentEvent;
-    use crate::interface::cli::uds_session::message_to_json;
-    use crate::interface::cli::uds_snapshots::{
-        SNAPSHOT_MESSAGES_BUDGET_BYTES, build_get_messages_line,
-    };
+fn paged_get_messages_snapshot_line_never_marks_content_trimmed() {
+    use crate::interface::cli::uds_snapshots::build_get_messages_line;
 
-    // One message larger than the snapshot budget so it is dropped (trimmed).
-    let messages = vec![Message::user(
-        "x".repeat(SNAPSHOT_MESSAGES_BUDGET_BYTES + 1024 * 1024),
-    )];
-
+    let messages = vec![Message::user("snapshot content")];
     let line = build_get_messages_line(&messages);
     let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
 
-    let canonical = AgentEvent::ok(
-        None,
-        "get_messages",
-        Some(serde_json::json!({
-            "messages": Vec::<serde_json::Value>::new(),
-            "snapshot": true,
-            "trimmed": true,
-            "hasMoreBefore": false,
-        })),
-    );
-    let want: serde_json::Value =
-        serde_json::from_str(&canonical.to_json_line()).expect("canonical event is JSON");
-
-    assert_eq!(got, want);
-    assert_eq!(got["data"]["snapshot"], true);
-    assert_eq!(got["data"]["messages"].as_array().unwrap().len(), 0);
-    assert_eq!(got["data"]["trimmed"], true);
-    assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
-
-    let would_not_trim = AgentEvent::ok(
-        None,
-        "get_messages",
-        Some(serde_json::json!({
-            "messages": messages.iter().map(message_to_json).collect::<Vec<_>>(),
-            "snapshot": true,
-        })),
-    );
-    let untrimmed: serde_json::Value = serde_json::from_str(&would_not_trim.to_json_line())
-        .expect("canonical untrimmed event is JSON");
-    assert_ne!(
-        got, untrimmed,
-        "oversized snapshots must be visibly trimmed"
-    );
-}
-
-#[test]
-fn under_budget_get_messages_snapshot_stays_untrimmed() {
-    use crate::interface::cli::uds_snapshots::{
-        SNAPSHOT_MESSAGES_BUDGET_BYTES, build_get_messages_line,
-    };
-
-    let content = "x".repeat(SNAPSHOT_MESSAGES_BUDGET_BYTES / 2);
-    let messages = vec![Message::user(content.clone())];
-    let line = build_get_messages_line(&messages);
-    let got: serde_json::Value = serde_json::from_str(line.trim()).expect("snapshot line is JSON");
-
-    assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
-    assert_ne!(
-        got["data"]["trimmed"], true,
-        "a half-budget message must not be trimmed"
+    assert!(
+        got["data"].get("trimmed").is_none(),
+        "count paging must not silently mark or reshape content"
     );
     assert_eq!(got["data"]["messages"].as_array().unwrap().len(), 1);
-    assert_eq!(got["data"]["messages"][0]["content"], content);
+    assert_eq!(got["data"]["messages"][0]["content"], "snapshot content");
 }
 
 #[tokio::test]

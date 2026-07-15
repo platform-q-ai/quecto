@@ -196,10 +196,18 @@ impl<'a> EventSink<'a> {
 
     /// Serialize an event to a JSON line and deliver it via this sink.
     ///
-    /// Uses the capped serializer so a turn near a full context window can
-    /// never produce a line the TUI client would drop unread (#1047).
+    /// Event payloads are bounded by construction. An over-cap event is an
+    /// invariant violation, so reject it whole rather than reshaping content.
     pub(crate) async fn emit(&mut self, event: &AgentEvent) {
-        let mut line = event.to_capped_json_line();
+        let mut line = event.to_json_line();
+        if line.len() > super::protocol::EVENT_LINE_JSON_BUDGET {
+            tracing::warn!(
+                len = line.len(),
+                cap = super::protocol::EVENT_LINE_CAP_BYTES,
+                "dropping oversized outbound event"
+            );
+            return;
+        }
         line.push('\n');
         match self {
             EventSink::Writer(w, mode) => {

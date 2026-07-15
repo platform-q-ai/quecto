@@ -473,8 +473,9 @@ impl AgentLoopImpl {
         // full total even while the pruning ladder reclaims the conversation
         // copies. Accepted deliberately: the ledger drops when `AgentResult`
         // is consumed at run end, and emission is independently capped at the
-        // 8 MiB protocol line cap (#1047, `to_capped_json_line`), so the wire
-        // never sees the aggregate. If a real workload ever demonstrates
+        // shared 8 MiB protocol frame cap (#1062), so an over-cap aggregate
+        // is rejected at emission rather than silently trimmed. If a real
+        // workload ever demonstrates
         // run-lifetime ledger growth as a problem, the remedy is
         // clone-on-demote (move the original into the ledger only when a
         // prune pass is about to mutate it), not Arc sharing.

@@ -805,13 +805,12 @@ fn then_agent_end_refs_cover_tool_roles(world: &mut QuectoWorld) {
             }
         }
     }
-    assert!(
-        !roles.is_empty(),
-        "could not resolve tool refs {refs:?} to streamed messages"
-    );
     // Also inspect tool events for evidence of a tool-using turn.
-    // Oversized args may fail before start is emitted (only tool_execution_end),
-    // but agent_end still carries refs for assistant tool-call + tool-result.
+    // Oversized arguments intentionally make the history response itself exceed
+    // the frame invariant (#1062/#1094); it is therefore rejected whole and
+    // cannot resolve the refs here. The run still contains user, assistant
+    // tool-call, and tool-result messages, so its end event must carry all three
+    // stable references without tailoring the payload.
     let has_tool_event = parsed.iter().any(|e| {
         matches!(
             e.get("type").and_then(|t| t.as_str()),
@@ -823,13 +822,19 @@ fn then_agent_end_refs_cover_tool_roles(world: &mut QuectoWorld) {
         "expected tool_execution_start/end in a tool-using turn; events: {lines:#?}"
     );
 
-    let has_assistant = roles.iter().any(|r| r == "assistant");
-    let has_tool = roles.iter().any(|r| r == "tool");
-    assert!(
-        has_assistant && has_tool,
-        "agent_end message refs must cover assistant tool-call and tool-result roles; roles={roles:?} refs={refs:?}"
-    );
-    // (refs.len() >= 2 already asserted above; has_assistant && has_tool implies it.)
+    if !roles.is_empty() {
+        let has_assistant = roles.iter().any(|r| r == "assistant");
+        let has_tool = roles.iter().any(|r| r == "tool");
+        assert!(
+            has_assistant && has_tool,
+            "agent_end message refs must cover assistant tool-call and tool-result roles; roles={roles:?} refs={refs:?}"
+        );
+    } else {
+        assert!(
+            refs.len() >= 3,
+            "without a readable oversized history response, refs must cover the user, assistant tool-call, and tool-result messages; got {refs:?}"
+        );
+    }
 }
 
 // ─── Then: get_messages id parity ─────────────────────────────────────────────

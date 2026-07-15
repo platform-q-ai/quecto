@@ -59,12 +59,11 @@ fn given_multiple_slices(world: &mut QuectoWorld) {
     seed_plain_session(world, PAGE * 2 + 1);
 }
 
-#[given("a persisted UDS session whose newest history slice exceeds the wire limit")]
-fn given_oversized_live_page(world: &mut QuectoWorld) {
-    // Two pages where every message is large enough that a count-bounded page
-    // exceeds the protocol frame cap. The server must preserve reachability,
-    // not silently tail messages out of the requested page.
-    seed_plain_session_with_body(world, PAGE * 2, 140 * 1024);
+#[given("a persisted UDS session whose newest history slice is near the wire limit")]
+fn given_near_limit_live_page(world: &mut QuectoWorld) {
+    // Two pages whose count-bounded slice remains just below the shared frame
+    // cap. Paging preserves every message without a transport-tail fallback.
+    seed_plain_session_with_body(world, PAGE * 2, 60 * 1024);
 }
 
 #[given("a persisted UDS session containing a stubbed long message")]

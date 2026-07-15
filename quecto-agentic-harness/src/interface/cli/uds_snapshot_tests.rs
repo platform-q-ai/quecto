@@ -11,6 +11,7 @@ use crate::interface::cli::protocol::SessionState;
 use crate::interface::cli::uds_multi::{
     BusyFlag, BusyGuard, ConversationSnapshot, build_get_messages_line, build_get_state_line,
 };
+use crate::interface::cli::uds_session::HISTORY_PAGE_SIZE;
 use crate::interface::cli::uds_snapshots::{ConversationSnapshotData, resolve_get_message};
 use std::time::Duration;
 
@@ -284,63 +285,28 @@ fn build_get_messages_line_marks_snapshot() {
     );
 }
 
-/// A history whose serialized form would exceed the parent's per-line read cap is
-/// tailed so the call yields a useful (trimmed) answer instead of erroring (#842).
 #[test]
-fn build_get_messages_line_trims_oversized_history() {
-    // Size the history relative to the CURRENT protocol cap so this pins trimming
-    // regardless of the cap value: ~64 KiB messages, enough to exceed the cap.
-    let cap = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
-    let big = "x".repeat(64 * 1024);
-    let count = cap / (64 * 1024) + 20;
+fn build_get_messages_line_pages_history_without_trimming() {
+    let count = HISTORY_PAGE_SIZE + 20;
     let messages: Vec<Message> = (0..count)
-        .map(|i| Message::assistant(format!("{i}-{big}"), vec![]))
+        .map(|i| Message::assistant(format!("message-{i}"), vec![]))
         .collect();
     let line = build_get_messages_line(&messages);
-    assert!(
-        line.len() <= cap,
-        "line must fit under the cap ({cap}), got {} bytes",
-        line.len()
-    );
     let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-    assert_eq!(
-        v["data"]["hasMoreBefore"], true,
-        "older history is explicitly reachable by paging"
-    );
-    assert_ne!(
-        v["data"]["trimmed"], true,
-        "page-size backfill is reachable, not silently trimmed"
-    );
-    let msgs = v["data"]["messages"].as_array().unwrap();
-    assert!(!msgs.is_empty(), "keeps the most recent messages");
-    // The newest message must be retained (tail, not head).
-    let kept_last = msgs.last().unwrap()["content"].as_str().unwrap();
-    assert!(
-        kept_last.starts_with(&format!("{}-", count - 1)),
-        "newest message kept: {kept_last}"
-    );
-}
+    let page = v["data"]["messages"].as_array().unwrap();
 
-/// A single message that alone exceeds the budget cannot be returned under the
-/// parent's read cap, so it is dropped — the call yields an empty `trimmed`
-/// snapshot rather than erroring or panicking (#842).
-#[test]
-fn build_get_messages_line_drops_single_oversized_message() {
-    // One message larger than the whole cap on its own.
-    let cap = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
-    let huge = "x".repeat(cap + 1024 * 1024);
-    let line = build_get_messages_line(&[Message::assistant(huge, vec![])]);
-    assert!(
-        line.len() <= cap,
-        "line must fit under the cap ({cap}), got {} bytes",
-        line.len()
+    assert_eq!(page.len(), HISTORY_PAGE_SIZE);
+    assert_eq!(v["data"]["hasMoreBefore"], true);
+    assert_eq!(
+        v["data"]["before"],
+        messages[count - HISTORY_PAGE_SIZE].id().to_string(),
+        "the page cursor makes every omitted older message reachable"
     );
-    let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-    assert_eq!(v["data"]["trimmed"], true, "trimmed marker present");
-    let msgs = v["data"]["messages"].as_array().unwrap();
-    assert!(
-        msgs.is_empty(),
-        "an oversized lone message is dropped: {msgs:?}"
+    assert!(v["data"].get("trimmed").is_none());
+    assert_eq!(
+        page.last().unwrap()["content"],
+        format!("message-{}", count - 1),
+        "the newest page member is retained"
     );
 }
 

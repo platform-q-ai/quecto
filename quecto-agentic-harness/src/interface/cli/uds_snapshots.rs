@@ -427,30 +427,17 @@ pub(super) async fn refresh_extension_snapshot(ctx: &DispatchCtx<'_>) {
     *snap = crate::interface::cli::uds_extensions::build_extension_list(ctx);
 }
 
-/// Byte budget for a connect-time `get_messages` snapshot line. Kept just under
-/// the parent's per-line read cap (`SUBAGENT_RESPONSE_MAX_FRAME_PAYLOAD_BYTES` = 8 MiB in
-/// `subagent_registry`) with headroom for the response envelope, so an oversized
-/// history is tailed to fit rather than making the parent's whole call error
-/// ("line exceeded size limit") on a busy child (#842).
-pub(super) const SNAPSHOT_MESSAGES_BUDGET_BYTES: usize =
-    quecto_line_io::PROTOCOL_LINE_CAP_BYTES - 4096;
-
 /// Build the connect-time `get_messages` snapshot line a BUSY child pushes.
 ///
 /// The `data.snapshot` marker tells callers the data may lag the in-flight turn
-/// (a live dispatch-loop reply has no such marker) (#842). When the serialized
-/// history would exceed [`SNAPSHOT_MESSAGES_BUDGET_BYTES`], the OLDEST messages
-/// are dropped so the most recent (the inspection target) still arrive, with
-/// `data.trimmed` set — counted/tail readers slice this further on the parent
-/// side, so a tail is exactly what they want. A single message that alone exceeds
-/// the budget cannot be returned under the parent's read cap, so it is dropped
-/// too (yielding an empty `trimmed` snapshot rather than erroring the call).
+/// (a live dispatch-loop reply has no such marker) (#842). History is bounded
+/// structurally by a count page and a reachable cursor; it is never silently
+/// tailed or trimmed to satisfy the transport cap (#1062).
 pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
-    // Serialize each message EXACTLY ONCE into an owned `RawValue`; its `.get()`
-    // length is used for byte-budgeting and the same bytes are re-emitted
-    // verbatim in the final line (no second serialization, no Value tree) (#994).
+    // Serialize every message in the newest count-bounded page exactly once and
+    // embed those raw values directly in the response (#994).
     let page_start = messages.len().saturating_sub(HISTORY_PAGE_SIZE);
-    let mut raws: Vec<Box<RawValue>> = messages
+    let raws: Vec<Box<RawValue>> = messages
         .iter()
         .skip(page_start)
         .map(|m| {
@@ -459,33 +446,15 @@ pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
             })
         })
         .collect();
-
-    // Accumulate from the newest message backwards until the next (older) one
-    // would breach the budget; `start` is the index of the oldest kept message.
-    let mut total = 0usize;
-    let mut start = raws.len();
-    for (i, rv) in raws.iter().enumerate().rev() {
-        let sz = rv.get().len() + 1; // +1 for the array separator
-        if total + sz > SNAPSHOT_MESSAGES_BUDGET_BYTES {
-            break;
-        }
-        total += sz;
-        start = i;
-    }
-    let budget_trimmed = start > 0 || (raws.is_empty() && !messages.is_empty());
-    let cursor_index = page_start + start;
-    let has_more_before = start < raws.len() && cursor_index > 0;
-    let before = has_more_before.then(|| messages[cursor_index].id().to_string());
-    // `split_off` moves the kept tail out in place — no slice clone (#994).
-    let kept = raws.split_off(start);
+    let has_more_before = page_start > 0;
+    let before = has_more_before.then(|| messages[page_start].id().to_string());
 
     let line_body = GetMessagesSnapshot::Response {
         command: "get_messages",
         success: true,
         data: GetMessagesData {
-            messages: &kept,
+            messages: &raws,
             snapshot: true,
-            trimmed: budget_trimmed,
             before: before.as_deref(),
             has_more_before,
         },
@@ -514,8 +483,6 @@ enum GetMessagesSnapshot<'a> {
 struct GetMessagesData<'a> {
     messages: &'a [Box<RawValue>],
     snapshot: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    trimmed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     before: Option<&'a str>,
     #[serde(rename = "hasMoreBefore")]
