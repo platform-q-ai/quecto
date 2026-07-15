@@ -73,6 +73,35 @@ fn readme_uds_protocol_lists_current_commands_and_events() {
 }
 
 #[test]
+fn uds_docs_document_paged_history_not_unbounded() {
+    // #1061 review follow-up: an uncounted `get_messages` returns the newest
+    // bounded page, never the full history. The user-facing UDS docs must
+    // describe the paging contract (`before`/`hasMoreBefore`) and must not
+    // resurrect the pre-paging "full history" promise.
+    let protocol = read_repo_file("docs/uds-protocol.md");
+    for field in ["`before`", "`hasMoreBefore`"] {
+        assert!(
+            protocol.contains(field),
+            "docs/uds-protocol.md must document the {field} paging field"
+        );
+    }
+    assert!(
+        !protocol.to_lowercase().contains("return the full history"),
+        "docs/uds-protocol.md must not promise unbounded history (#1061 paging)"
+    );
+
+    let getting_started = read_repo_file("docs/getting-started.md");
+    assert!(
+        !getting_started.contains("Full history returned"),
+        "getting-started re-sync example must not promise full history (#1061 paging)"
+    );
+    assert!(
+        getting_started.contains("hasMoreBefore"),
+        "getting-started re-sync example should point at the paging cursor"
+    );
+}
+
+#[test]
 fn agent_cmd_docs_match_tool_schema() {
     // #844: the docs' agent_cmd command surface must match the shipped tool
     // schema. After the #841 consolidation `get_messages_tail` is no longer a
@@ -128,8 +157,8 @@ fn agent_cmd_docs_match_tool_schema() {
 
     // Converse: every backtick-wrapped token on the row must be a supported
     // command (no stale/removed extras), so a future drift can't slip through.
-    // `count` is a documented parameter of `get_messages`, not a command.
-    const ROW_NON_COMMAND_TOKENS: &[&str] = &["count"];
+    // `count`/`before` are documented parameters of `get_messages`, not commands.
+    const ROW_NON_COMMAND_TOKENS: &[&str] = &["count", "before"];
     let command_list = row
         .split_once("subagents:")
         .map(|(_, rest)| rest)

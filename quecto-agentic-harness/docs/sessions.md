@@ -139,13 +139,13 @@ Returns the session key, message count, and streaming status.
 {"type": "get_messages"}
 ```
 
-Returns the full conversation history.
+Returns the newest bounded page of conversation history (#1061).
 
 ```json
 {"type": "get_messages", "count": 5}
 ```
 
-Returns the last 5 messages (omit `count` to return the full history).
+Returns the last 5 messages (omit `count` for the newest bounded history page; the response's `before`/`hasMoreBefore` fields page older history, #1061).
 
 ```json
 {"type": "get_session_stats"}
