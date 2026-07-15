@@ -255,17 +255,13 @@ impl App {
 
         self.master_session.chat.clear();
         for message in messages {
-            match message {
-                ResumedChatMessage::User(text) => {
-                    self.master_session.chat.add_entry(ChatEntry::User { text })
-                }
-                ResumedChatMessage::Assistant(text) => {
-                    self.master_session.chat.add_entry(ChatEntry::Assistant {
-                        text,
-                        streaming: false,
-                    })
-                }
-            }
+            let (text, id, stub, is_user) = match message {
+                ResumedChatMessage::User { text, id, stub } => (text, id, stub, true),
+                ResumedChatMessage::Assistant { text, id, stub } => (text, id, stub, false),
+            };
+            self.master_session
+                .chat
+                .add_entry(Self::history_entry(text, id, stub, is_user));
         }
         self.master_session.chat.add_entry(ChatEntry::Status {
             text: "Session resumed".to_string(),

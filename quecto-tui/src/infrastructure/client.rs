@@ -130,8 +130,10 @@ pub enum Command {
     RewindTo {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
-        #[serde(rename = "messageIndex")]
-        message_index: usize,
+        /// Stable message ref. The TUI targets rewind by id so a page-local array
+        /// position is never misapplied to the full server conversation (#1061).
+        #[serde(rename = "messageId")]
+        message_id: String,
     },
     GetSubagents {
         #[serde(skip_serializing_if = "Option::is_none")]

@@ -38,10 +38,11 @@ fn respond(
 fn attach_backfill_data(pairs: &[(&str, &str)]) -> serde_json::Value {
     let messages: Vec<serde_json::Value> = pairs
         .iter()
-        .flat_map(|(u, a)| {
+        .enumerate()
+        .flat_map(|(i, (u, a))| {
             [
-                serde_json::json!({ "role": "user", "content": u }),
-                serde_json::json!({ "role": "assistant", "content": a }),
+                serde_json::json!({ "role": "user", "content": u, "id": format!("u{i}") }),
+                serde_json::json!({ "role": "assistant", "content": a, "id": format!("a{i}") }),
             ]
         })
         .collect();

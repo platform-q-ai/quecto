@@ -203,7 +203,8 @@ fn test_parse_rewind_to_command() {
 fn test_rewind_to_type_name() {
     let cmd = AgentCommand::RewindTo {
         id: None,
-        message_index: 0,
+        message_index: Some(0),
+        message_id: None,
     };
     assert_eq!(cmd.type_name(), "rewind_to");
 }
@@ -235,6 +236,30 @@ fn test_rewind_to_rejects_out_of_range() {
     let mut messages: Vec<Message> = vec![Message::user("first")];
     assert!(!rewind_to_message_index(&mut messages, 99));
     assert_eq!(messages.len(), 1);
+}
+
+#[test]
+fn resolve_rewind_target_by_id_maps_to_absolute_index() {
+    // #1061 blocker: a stable messageId resolves against the FULL conversation,
+    // never a paged client's window-local array position (which would truncate
+    // the wrong, much older turn).
+    let messages: Vec<Message> = (0..100).map(|i| Message::user(format!("m{i}"))).collect();
+    let id = messages[80].id().to_string();
+    assert_eq!(resolve_rewind_target(&messages, Some(&id), None), Ok(80));
+}
+
+#[test]
+fn resolve_rewind_target_unknown_id_errs_without_falling_back() {
+    // An unresolvable id must error, never silently fall back to index 0.
+    let messages: Vec<Message> = vec![Message::user("only")];
+    assert!(resolve_rewind_target(&messages, Some("no-such-id"), Some(0)).is_err());
+}
+
+#[test]
+fn resolve_rewind_target_legacy_index_passes_through() {
+    let messages: Vec<Message> = vec![Message::user("a"), Message::user("b")];
+    assert_eq!(resolve_rewind_target(&messages, None, Some(1)), Ok(1));
+    assert!(resolve_rewind_target(&messages, None, None).is_err());
 }
 
 #[test]

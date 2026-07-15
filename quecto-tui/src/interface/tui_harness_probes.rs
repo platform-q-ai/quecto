@@ -4,6 +4,21 @@ use super::TuiHarness;
 use crate::interface::components::chat::ChatEntry;
 
 impl TuiHarness {
+    /// Full active-session chat transcript (test-harness). Pins to the bottom
+    /// first so the no-viewport render emits every entry, letting scroll-back
+    /// scenarios assert whole-history content (order / exact-once / gaps)
+    /// independent of the current scroll offset.
+    pub fn active_chat_text(&mut self, width: usize) -> String {
+        use crate::interface::component::Component as _;
+        let chat = self.app.active_chat_mut();
+        chat.scroll_down(usize::MAX);
+        chat.render(width)
+            .iter()
+            .map(|l| crate::interface::ansi::strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// Issue a rewind correlation id through the real idle double-Escape path.
     pub fn issue_rewind_open(&mut self) {
         self.app.handle_idle_escape_for_rewind();

@@ -26,8 +26,15 @@ impl App {
         error: Option<String>,
     ) {
         match command.as_str() {
-            // #1060: gated recovery for ref-based end-of-turn miss path.
-            "get_message" => self.handle_get_message_recovery(id.as_deref(), success, data),
+            // #1061 auto-recall of a demoted history stub takes precedence. The
+            // guard applies the stub recall as a side effect; only when this
+            // response is NOT a stub recall does it fall through to #1060's gated
+            // ref-based end-of-turn miss recovery (a stub recall lands in `_`).
+            "get_message"
+                if !self.handle_stub_recall_response(id.as_deref(), success, data.as_ref()) =>
+            {
+                self.handle_get_message_recovery(id.as_deref(), success, data);
+            }
             "get_state" if success => self.handle_get_state(data),
             "set_model" if success => self.handle_set_model_success(data),
             // Late master failure must not toast over a focused child (#1085).
@@ -111,7 +118,15 @@ impl App {
                     } else {
                         self.replace_chat_with_messages(&data);
                     }
+                } else {
+                    // Success but no data: clear the in-flight cursor so the same
+                    // older page can be retried on the next scroll (#1061 review).
+                    self.master_session.history_pending_before_cursor = None;
                 }
+            }
+            // Failed page fetch: same retry-unblock as the no-data case above.
+            "get_messages" => {
+                self.master_session.history_pending_before_cursor = None;
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id && success => {
                 self.rewind.pending_apply_id = None;

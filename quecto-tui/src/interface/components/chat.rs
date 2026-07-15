@@ -30,6 +30,16 @@ pub enum ChatEntry {
         /// Whether this message is still being streamed.
         streaming: bool,
     },
+    /// A ladder-demoted history message shown in place as a stub (#1061). Carries
+    /// the stable server id so its full body can be recalled on demand via
+    /// `get_message` and swapped back into a plain `User`/`Assistant` entry.
+    /// Only ever produced by history backfill/resume, never by the live stream.
+    Stub {
+        id: String,
+        /// Role the recalled content will render as (`true` = user).
+        is_user: bool,
+        text: String,
+    },
     /// Unified tool execution — created on ToolStart, updated in place on ToolEnd.
     ToolExecution {
         tool_call_id: String,
@@ -413,6 +423,19 @@ impl Chat {
                     lines.push(truncate_to_width(&theme::dim(status_line), width, None));
                 }
             }
+            ChatEntry::Stub { text, is_user, .. } => {
+                // A demoted stub renders exactly like its underlying role; scroll
+                // auto-recall swaps it for the full body in place (#1061).
+                let proxy = if *is_user {
+                    ChatEntry::User { text: text.clone() }
+                } else {
+                    ChatEntry::Assistant {
+                        text: text.clone(),
+                        streaming: false,
+                    }
+                };
+                return Self::render_entry(&proxy, width, tool_expanded);
+            }
         }
         lines
     }
@@ -692,6 +715,8 @@ mod cache_tests;
 #[cfg(test)]
 #[path = "chat_render_tests.rs"]
 mod chat_render_tests;
+#[path = "chat_stub.rs"]
+mod chat_stub;
 #[cfg(test)]
 #[path = "chat_integration_tests.rs"]
 mod integration_tests;

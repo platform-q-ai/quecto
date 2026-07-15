@@ -303,14 +303,14 @@ async fn rewind_blocked_while_streaming() {
     let mut fx = Fixture::new();
     fx.session.set_streaming(true);
     let mut ctx = fx.ctx();
-    assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", 0).await);
+    assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", Some(0), None).await);
 }
 
 #[tokio::test]
 async fn rewind_invalid_target() {
     let mut fx = Fixture::new();
     let mut ctx = fx.ctx();
-    assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", 999).await);
+    assert!(!handle_rewind_to(&mut ctx, Some("r"), "rewind_to", Some(999), None).await);
 }
 
 #[tokio::test]
@@ -320,7 +320,7 @@ async fn rewind_valid_truncates_and_persists() {
     fx.messages.push(Message::assistant("answer", vec![]));
     {
         let mut ctx = fx.ctx();
-        assert!(!handle_rewind_to(&mut ctx, None, "rewind_to", 0).await);
+        assert!(!handle_rewind_to(&mut ctx, None, "rewind_to", Some(0), None).await);
     }
     assert!(fx.messages.is_empty());
 }
@@ -337,7 +337,7 @@ async fn rewind_valid_clears_spill_store_for_current_key() {
     fx.messages.push(Message::assistant("answer", vec![]));
     {
         let mut ctx = fx.ctx();
-        assert!(!handle_rewind_to(&mut ctx, None, "rewind_to", 0).await);
+        assert!(!handle_rewind_to(&mut ctx, None, "rewind_to", Some(0), None).await);
     }
 
     assert_eq!(
@@ -345,6 +345,10 @@ async fn rewind_valid_clears_spill_store_for_current_key() {
         &["cli:test".to_string()]
     );
 }
+
+// #1061 blocker: rewind-by-messageId resolution is unit-tested directly on
+// `resolve_rewind_target` in uds_progress_clear_tests (a paged client's window
+// index is never valid against the full conversation).
 
 // ─── handle_new_session ──────────────────────────────────────────────────────
 
@@ -580,7 +584,8 @@ async fn dispatch_routes_rewind_to() {
     let mut fx = Fixture::new();
     let cmd = AgentCommand::RewindTo {
         id: Some("r".into()),
-        message_index: 5,
+        message_index: Some(5),
+        message_id: None,
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_command(cmd, &mut ctx).await);

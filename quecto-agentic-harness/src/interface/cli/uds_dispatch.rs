@@ -2,12 +2,10 @@ use super::*;
 use crate::interface::cli::uds_ext_protocol;
 
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
-    // Agent-targeted message tail forwards to the named sub-agent's own UDS
-    // before the local-history fast path can answer it (#795/#837).
-    // Forward whenever an agent_id is set — with OR without a count. An uncounted
-    // agent-targeted request asks for the child's FULL history; it must never fall
-    // through to the local fast path, which ignores agent_id and would silently
-    // return the connected/parent agent's own conversation (#843).
+    // Agent-targeted get_messages/tail forwards to the named sub-agent's own UDS
+    // (with OR without a count) before the local fast path — which ignores
+    // agent_id and would return the parent's history — can answer it
+    // (#795/#837/#843).
     if let AgentCommand::GetMessages {
         count,
         before,
@@ -85,9 +83,11 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             handle_follow_up(ctx, id.as_deref(), &type_name, message).await
         }
         AgentCommand::Abort { .. } => handle_abort(ctx, id.as_deref(), &type_name).await,
-        AgentCommand::RewindTo { message_index, .. } => {
-            handle_rewind_to(ctx, id.as_deref(), &type_name, message_index).await
-        }
+        AgentCommand::RewindTo {
+            message_index,
+            message_id,
+            ..
+        } => handle_rewind_to(ctx, id.as_deref(), &type_name, message_index, message_id).await,
         AgentCommand::SetWorkflowAutomation {
             auto_continue,
             completion_nudge,
@@ -639,13 +639,25 @@ pub(super) async fn handle_rewind_to(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     tn: &str,
-    message_index: usize,
+    message_index: Option<usize>,
+    message_id: Option<String>,
 ) -> bool {
     if ctx.session.is_streaming() {
         let ev = AgentEvent::err(id, tn, "cannot rewind while agent is running");
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
+
+    // Prefer the stable `messageId`, resolved against the full conversation (#1061).
+    let message_index =
+        match resolve_rewind_target(ctx.messages, message_id.as_deref(), message_index) {
+            Ok(idx) => idx,
+            Err(msg) => {
+                let ev = AgentEvent::err(id, tn, msg);
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                return false;
+            }
+        };
 
     if !rewind_to_message_index(ctx.messages, message_index) {
         let ev = AgentEvent::err(id, tn, "invalid rewind target");

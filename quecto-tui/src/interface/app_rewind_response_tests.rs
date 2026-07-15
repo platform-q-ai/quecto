@@ -93,9 +93,9 @@ async fn open_rewind_selector_builds_turns_in_reverse() {
     let mut h = harness().await;
     let data = serde_json::json!({
         "messages": [
-            {"role": "user", "content": "one"},
-            {"role": "assistant", "content": "ans"},
-            {"role": "user", "content": "two"}
+            {"role": "user", "content": "one", "id": "u1"},
+            {"role": "assistant", "content": "ans", "id": "a1"},
+            {"role": "user", "content": "two", "id": "u2"}
         ]
     });
     let a = h.app_mut();
@@ -116,12 +116,44 @@ async fn open_rewind_selector_no_user_turns_notifies() {
 #[tokio::test]
 async fn rewind_selector_enter_requests_rewind() {
     let mut h = harness().await;
-    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn"}]});
+    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn", "id": "u1"}]});
     let a = h.app_mut();
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Enter);
     assert!(a.rewind.selector.is_none());
     assert!(a.rewind.pending_apply_id.is_some());
+}
+
+#[tokio::test]
+async fn rewind_selector_enter_sends_stable_message_id_not_page_local_index() {
+    // #1061 blocker: with paged history the selector holds only a bounded
+    // window, so it must target the message's STABLE id — never a page-local
+    // array index that the server would misapply to the full conversation.
+    let mut h = harness().await;
+    {
+        let a = h.app_mut();
+        let data = serde_json::json!({"messages": [
+            {"role": "user", "content": "turn", "id": "msg-42"}
+        ]});
+        a.open_rewind_selector(&data);
+        a.handle_rewind_selector_key(&Key::Enter);
+    }
+    let commands = h.drain_commands().await;
+    let rewind = commands
+        .iter()
+        .find_map(|line| {
+            let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("rewind_to")).then_some(cmd)
+        })
+        .expect("a rewind_to command must be sent");
+    assert_eq!(
+        rewind.get("messageId").and_then(|v| v.as_str()),
+        Some("msg-42")
+    );
+    assert!(
+        rewind.get("messageIndex").is_none(),
+        "must not send a page-local index; command={rewind}"
+    );
 }
 
 #[tokio::test]
@@ -136,30 +168,12 @@ async fn rewind_selector_escape_cancels() {
 }
 
 #[tokio::test]
-async fn rewind_selector_invalid_value_notifies_error() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.rewind.selector = Some(SelectList::new(
-        vec![SelectItem {
-            value: "not-a-number".into(),
-            label: "bad".into(),
-            description: None,
-        }],
-        10,
-    ));
-    a.handle_rewind_selector_key(&Key::Enter);
-    assert!(a.rewind.selector.is_none());
-    assert!(a.rewind.pending_apply_id.is_none());
-    assert!(!a.notifications.is_empty());
-}
-
-#[tokio::test]
 async fn rewind_selector_pending_keeps_open() {
     let mut h = harness().await;
     let data = serde_json::json!({
         "messages": [
-            {"role": "user", "content": "a"},
-            {"role": "user", "content": "b"}
+            {"role": "user", "content": "a", "id": "u1"},
+            {"role": "user", "content": "b", "id": "u2"}
         ]
     });
     let a = h.app_mut();
@@ -181,7 +195,7 @@ async fn rewind_request_ids_are_monotonically_increasing() {
     let seq_after_open = a.rewind.request_seq;
     assert_eq!(seq_after_open, seq_before.wrapping_add(1));
     // Now simulate a rewind apply (open selector, press Enter).
-    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn"}]});
+    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn", "id": "u1"}]});
     a.rewind.pending_open_id = None; // simulate response clearing it
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Enter);
@@ -335,7 +349,7 @@ async fn response_get_messages_opens_rewind_when_id_matches() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.rewind.pending_open_id = Some("rid".into());
-    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn"}]});
+    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn", "id": "u1"}]});
     respond(a, Some("rid"), "get_messages", true, Some(data), None);
     assert!(a.rewind.selector.is_some());
     assert!(a.rewind.pending_open_id.is_none());

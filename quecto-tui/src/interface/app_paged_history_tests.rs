@@ -45,6 +45,19 @@ fn chat_text(app: &mut App) -> String {
         .join("\n")
 }
 
+fn child_chat_text(app: &mut App, agent_id: &str) -> String {
+    app.subagents
+        .sessions
+        .get_mut(agent_id)
+        .expect("child session exists")
+        .chat
+        .render(120)
+        .iter()
+        .map(|line| super::app_methods::strip_ansi(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 async fn drained_get_messages_commands(h: &mut TuiHarness) -> Vec<serde_json::Value> {
     h.drain_commands()
         .await
@@ -257,8 +270,9 @@ async fn resumed_paged_history_keeps_older_page_reachable() {
 }
 
 #[tokio::test]
-async fn stubbed_history_message_can_be_recalled_by_reference() {
+async fn stubbed_history_message_is_recalled_and_replaced_on_scroll() {
     let mut h = harness().await;
+    // Attach delivers a ladder-demoted stub in place (collapsed=true).
     respond(
         h.app_mut(),
         Some(ATTACH_BACKFILL_ID),
@@ -268,7 +282,8 @@ async fn stubbed_history_message_can_be_recalled_by_reference() {
             "messages": [{
                 "id": "stub-1",
                 "role": "assistant",
-                "content": "[content stub — recall available]",
+                "content": "[assistant stub — recall available]",
+                "collapsed": true,
             }],
             "hasMoreBefore": false,
             "before": null,
@@ -276,20 +291,158 @@ async fn stubbed_history_message_can_be_recalled_by_reference() {
     );
     let _ = h.drain_commands().await;
 
-    h.app_mut()
-        .request_history_message_recall_for_test("stub-1");
+    // Scrolling back auto-recalls the stub's full content through the production
+    // key path — no test-only entry point.
+    h.app_mut().handle_key(Key::PageUp);
     let commands = h.drain_commands().await;
-    let get_message = commands.iter().find_map(|line| {
-        let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
-        (cmd.get("type").and_then(|v| v.as_str()) == Some("get_message")).then_some(cmd)
-    });
-
+    let get_message = commands
+        .iter()
+        .find_map(|line| {
+            let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("get_message")).then_some(cmd)
+        })
+        .expect("scrolling a stub into view must auto-request its full content");
     assert_eq!(
-        get_message
-            .as_ref()
-            .and_then(|cmd| cmd.get("messageId"))
-            .and_then(|v| v.as_str()),
-        Some("stub-1"),
-        "TUI must be able to request full content for a stubbed history message; commands={commands:?}"
+        get_message.get("messageId").and_then(|v| v.as_str()),
+        Some("stub-1")
+    );
+    let req_id = get_message
+        .get("id")
+        .and_then(|v| v.as_str())
+        .expect("recall request carries a correlation id")
+        .to_string();
+
+    // Delivering the full body replaces the stub in place.
+    respond(
+        h.app_mut(),
+        Some(&req_id),
+        "get_message",
+        true,
+        serde_json::json!({
+            "id": "stub-1",
+            "role": "assistant",
+            "content": "the full recalled answer",
+        }),
+    );
+    // Re-anchor to the bottom (the PageUp above scrolled this tiny transcript
+    // out of the no-viewport render window) so the recalled body is captured.
+    h.app_mut().active_chat_mut().scroll_down(1000);
+    let frame = chat_text(h.app_mut());
+    assert!(
+        frame.contains("the full recalled answer"),
+        "recalled content must replace the stub: {frame}"
+    );
+    assert!(
+        !frame.contains("recall available"),
+        "the stub body must be gone after recall: {frame}"
+    );
+}
+
+#[tokio::test]
+async fn subagent_older_history_page_prepends_without_replacing_newest() {
+    let mut h = harness().await;
+    h.event(Event::SubagentStateChanged {
+        subagents: vec![crate::infrastructure::client::SubagentInfoEvent {
+            agent_id: "worker".into(),
+            status: "idle".into(),
+            last_tool: None,
+            last_error: None,
+            pid: 7,
+            socket_path: Some("/tmp/worker.sock".into()),
+            parent_id: None,
+            workflow: None,
+            read_only: false,
+        }],
+    });
+    h.select(Some("worker"));
+
+    // Initial (newest) child page reports older history before it.
+    h.route(
+        "worker",
+        Event::Response {
+            id: Some("child-backfill".into()),
+            command: "get_messages".into(),
+            success: true,
+            data: Some(page(
+                &[("m3", "third message"), ("m4", "fourth message")],
+                Some("m3"),
+                true,
+            )),
+            error: None,
+        },
+    );
+    // The explicitly-requested older page must PREPEND, not replace the newest
+    // page (regression: the child reconciler used replace_history_prefix).
+    h.route(
+        "worker",
+        Event::Response {
+            id: Some("history-page-1".into()),
+            command: "get_messages".into(),
+            success: true,
+            data: Some(page(
+                &[("m1", "first message"), ("m2", "second message")],
+                None,
+                false,
+            )),
+            error: None,
+        },
+    );
+
+    let frame = child_chat_text(h.app_mut(), "worker");
+    let first = frame.find("first message").expect("oldest page rendered");
+    let second = frame
+        .find("second message")
+        .expect("older page tail rendered");
+    let third = frame
+        .find("third message")
+        .expect("newer page head rendered");
+    let fourth = frame
+        .find("fourth message")
+        .expect("newest message rendered");
+    assert!(
+        first < second && second < third && third < fourth,
+        "child older page must join before the existing page without a gap:\n{frame}"
+    );
+    assert_eq!(
+        frame.matches("third message").count(),
+        1,
+        "child backfill must not duplicate or replace the newest page:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn failed_older_page_clears_cursor_and_allows_retry() {
+    let mut h = harness().await;
+    respond(
+        h.app_mut(),
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        page(&[("m3", "newest-page")], Some("m3"), true),
+    );
+    let _ = h.drain_commands().await;
+
+    h.app_mut().handle_key(Key::PageUp);
+    let first = drained_get_messages_commands(&mut h).await;
+    assert_eq!(first.len(), 1, "one older-page request should be in flight");
+
+    // The older-page request fails transiently.
+    h.app_mut().handle_response(
+        Some("history-page-1".into()),
+        "get_messages".into(),
+        false,
+        None,
+        Some("transient error".into()),
+    );
+
+    // A subsequent scroll must be able to retry the SAME cursor (the failed
+    // request must not leave it permanently in flight).
+    h.app_mut().handle_key(Key::PageUp);
+    let retry = drained_get_messages_commands(&mut h).await;
+    assert!(
+        retry
+            .iter()
+            .any(|cmd| cmd.get("before").and_then(|v| v.as_str()) == Some("m3")),
+        "a failed older page must be retryable on the next scroll; commands={retry:?}"
     );
 }

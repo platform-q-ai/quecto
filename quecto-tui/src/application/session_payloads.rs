@@ -24,11 +24,23 @@ pub struct ResumeSessionSummary {
     pub updated_unix_secs: Option<u64>,
 }
 
-/// Displayable chat messages from a resumed session.
+/// Displayable chat messages from a resumed/backfilled session.
+///
+/// Carries the stable server message id and whether the body is a ladder-demoted
+/// stub (#1061), so the TUI can render a stub in place and recall its full body
+/// on demand via `get_message`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResumedChatMessage {
-    User(String),
-    Assistant(String),
+    User {
+        text: String,
+        id: Option<String>,
+        stub: bool,
+    },
+    Assistant {
+        text: String,
+        id: Option<String>,
+        stub: bool,
+    },
 }
 
 /// Why a resumed-session messages payload could not be used safely.
@@ -125,9 +137,27 @@ pub fn parse_resumed_messages(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            let id = message
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            // `collapsed` marks a ladder-demoted stub whose full body is recallable
+            // by id (#1061). Absent on older payloads → treated as a full message.
+            let stub = message
+                .get("collapsed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             match role {
-                "user" => Some(ResumedChatMessage::User(content)),
-                "assistant" if !content.is_empty() => Some(ResumedChatMessage::Assistant(content)),
+                "user" => Some(ResumedChatMessage::User {
+                    text: content,
+                    id,
+                    stub,
+                }),
+                "assistant" if !content.is_empty() => Some(ResumedChatMessage::Assistant {
+                    text: content,
+                    id,
+                    stub,
+                }),
                 _ => None,
             }
         })

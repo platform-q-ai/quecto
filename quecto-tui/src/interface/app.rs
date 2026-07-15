@@ -113,16 +113,15 @@ pub struct App {
     /// Whether session stats were already requested as a fallback to learn the
     /// real context window for the current session/model.
     context_stats_requested: bool,
-    /// #1060: request-id → pending lookup for in-flight recovery fetches
-    /// (request-id gated, buffered, applied in ref order).
+    /// #1060: request-id → pending in-flight recovery fetch (gated, applied in ref order).
     pending_message_recovery: std::collections::HashMap<String, PendingMessageRecovery>,
-    /// Recovery batches keyed by a client-local id, each retaining the exact
-    /// chat range of its turn so a late response cannot overwrite a newer one.
+    /// Recovery batches (client-local id → turn chat range) guarding late overwrites.
     message_recovery_batches: std::collections::HashMap<String, MessageRecoveryBatch>,
+    /// #1061 auto-recall: request-id → demoted stub being expanded ([`app_paged_history::StubRecall`]).
+    pending_stub_recall: std::collections::HashMap<String, app_paged_history::StubRecall>,
     /// Tool boxes observed since the current master AgentStart (#1060 recovery).
     tools_this_turn: usize,
-    /// Tool starts not yet matched by an end; > 0 forces recovery on a dropped
-    /// tool-result event (#1060 review 3).
+    /// Tool starts not yet matched by an end; > 0 forces recovery on a dropped end.
     open_tool_calls: usize,
     active_turn_start: usize,
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
@@ -371,6 +370,7 @@ impl App {
             context_stats_requested: false,
             pending_message_recovery: std::collections::HashMap::new(),
             message_recovery_batches: std::collections::HashMap::new(),
+            pending_stub_recall: std::collections::HashMap::new(),
             tools_this_turn: 0,
             open_tool_calls: 0,
             active_turn_start: 0,

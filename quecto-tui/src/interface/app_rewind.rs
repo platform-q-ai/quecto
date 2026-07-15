@@ -43,10 +43,18 @@ impl App {
         };
 
         let mut items = Vec::new();
-        for (idx, message) in messages.iter().enumerate().rev() {
+        for message in messages.iter().rev() {
             if message.get("role").and_then(|v| v.as_str()) != Some("user") {
                 continue;
             }
+            // Target rewind by the message's STABLE id, not its page-local array
+            // position: paged history (#1061) delivers only a bounded window, so an
+            // array index here is not a valid index into the full server
+            // conversation and could truncate the wrong turn (destructive). Messages
+            // without an id (older harness) are not selectable rewind targets.
+            let Some(id) = message.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
             let content = message
                 .get("content")
                 .and_then(|v| v.as_str())
@@ -59,7 +67,7 @@ impl App {
                 format!("{turn_no} turns ago: {preview}")
             };
             items.push(SelectItem {
-                value: idx.to_string(),
+                value: id.to_string(),
                 label,
                 description: None,
             });
@@ -73,18 +81,14 @@ impl App {
     }
 
     pub(super) fn handle_rewind_selector_key(&mut self, key: &Key) {
-        let Some(value) = route_overlay_key(&mut self.rewind.selector, key) else {
-            return;
-        };
-        let Ok(message_index) = value.parse::<usize>() else {
-            self.notify("Invalid rewind target", NotifyLevel::Error);
+        let Some(message_id) = route_overlay_key(&mut self.rewind.selector, key) else {
             return;
         };
         let id = self.next_rewind_request_id("to");
         self.rewind.pending_apply_id = Some(id.clone());
         self.send_command(Command::RewindTo {
             id: Some(id),
-            message_index,
+            message_id,
         });
     }
 }

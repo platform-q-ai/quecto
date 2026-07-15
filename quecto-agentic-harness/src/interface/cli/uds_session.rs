@@ -470,8 +470,10 @@ impl serde::Serialize for MessageView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let msg = self.0;
-        // 7 fields: stable id (#1060) + role/content/tools + isError for recovery.
-        let mut s = serializer.serialize_struct("Message", 7)?;
+        // 8 fields: stable id (#1060) + role/content/tools + isError for recovery
+        // + collapsed so a paged client can render a demoted stub in place and
+        // recall its full body on demand (#1061 / ADR-0008 part 3).
+        let mut s = serializer.serialize_struct("Message", 8)?;
         // Domain UUID as a round-trippable string key (AC6).
         s.serialize_field("id", &msg.id().to_string())?;
         s.serialize_field("role", role_wire_name(&msg.role))?;
@@ -480,6 +482,9 @@ impl serde::Serialize for MessageView<'_> {
         s.serialize_field("toolCallId", &msg.tool_call_id)?;
         s.serialize_field("toolName", &msg.tool_name)?;
         s.serialize_field("isError", &msg.is_error)?;
+        // A demoted (ladder-collapsed) message ships as a stub; the client shows
+        // it in place and can recall the full body by `id` via get_message.
+        s.serialize_field("collapsed", &msg.is_collapsed)?;
         s.end()
     }
 }
@@ -503,6 +508,24 @@ pub fn clear_conversation(messages: &mut Vec<Message>) {
         messages.truncate(1);
     } else {
         messages.clear();
+    }
+}
+
+/// Resolve a rewind target to a full-vector index. A stable `message_id` (paged
+/// clients hold only a bounded window) is resolved against the full conversation;
+/// `message_index` is honoured only as a legacy fallback (#1059 / #1061 review).
+pub fn resolve_rewind_target(
+    messages: &[Message],
+    message_id: Option<&str>,
+    message_index: Option<usize>,
+) -> Result<usize, &'static str> {
+    match (message_id, message_index) {
+        (Some(mid), _) => messages
+            .iter()
+            .position(|m| m.id().to_string() == mid)
+            .ok_or("rewind target not found"),
+        (None, Some(idx)) => Ok(idx),
+        (None, None) => Err("rewind requires messageId or messageIndex"),
     }
 }
 

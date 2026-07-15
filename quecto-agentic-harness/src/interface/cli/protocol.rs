@@ -171,11 +171,23 @@ pub enum AgentCommand {
         id: Option<String>,
     },
     /// Rewind conversation history to a selected user-message boundary.
+    ///
+    /// Prefer `messageId` (a stable message ref). With paged history (#1061) a
+    /// client holds only a bounded window, so a page-local array position is NOT
+    /// a valid index into the full server conversation — sending one as
+    /// `messageIndex` truncates the wrong turn (destructive). `messageIndex` is
+    /// retained solely for one-window-older clients (#1059) that predate paging.
     RewindTo {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
-        #[serde(rename = "messageIndex")]
-        message_index: usize,
+        #[serde(
+            rename = "messageIndex",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        message_index: Option<usize>,
+        #[serde(rename = "messageId", default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
     },
     /// Toggle core workflow automation for this UDS session.
     SetWorkflowAutomation {

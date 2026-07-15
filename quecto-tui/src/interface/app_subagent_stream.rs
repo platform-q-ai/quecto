@@ -368,11 +368,27 @@ impl App {
                 chat.complete_tool(tool_call_id, &text, *is_error, None);
             }
             Event::Response {
-                command,
-                data: Some(data),
-                ..
+                command, data, id, ..
             } if command == "get_messages" => {
-                Self::reconcile_backfill_history(session, data);
+                if let Some(data) = data {
+                    // Older explicit pages EXTEND the existing prefix; only a fuller
+                    // initial backfill superseding a trimmed busy-connect snapshot
+                    // replaces it. Mirror the master path (#1061 review): the initial
+                    // page sets `partial_backfill_len`, so without clearing it here for
+                    // `history-page-*` the child reconciler would REPLACE the newest
+                    // page with each older page instead of prepending it.
+                    if id
+                        .as_deref()
+                        .is_some_and(|i| i.starts_with("history-page-"))
+                    {
+                        session.partial_backfill_len = None;
+                    }
+                    Self::reconcile_backfill_history(session, data);
+                } else {
+                    // Failed / no-data page fetch: clear the in-flight cursor so the
+                    // same older page can be retried on the next scroll (#1061 review).
+                    session.history_pending_before_cursor = None;
+                }
             }
             _ => {}
         }
@@ -539,6 +555,26 @@ impl App {
     /// `history_backfilled`; a later complete attach-backfill / get_messages
     /// replaces the partial prefix so omitted older history is not permanently
     /// suppressed (#1050 review).
+    /// Map a backfilled/resumed history message to a chat entry: a ladder-demoted
+    /// message carrying a stable id becomes a recallable [`ChatEntry::Stub`];
+    /// anything else renders as a plain user/assistant line (#1061). Shared by the
+    /// sub-agent/master backfill and the resume path so both recall identically.
+    pub(super) fn history_entry(
+        text: String,
+        id: Option<String>,
+        stub: bool,
+        is_user: bool,
+    ) -> ChatEntry {
+        match (stub, id) {
+            (true, Some(id)) => ChatEntry::Stub { id, is_user, text },
+            _ if is_user => ChatEntry::User { text },
+            _ => ChatEntry::Assistant {
+                text,
+                streaming: false,
+            },
+        }
+    }
+
     pub(super) fn reconcile_backfill_history(session: &mut SessionView, data: &serde_json::Value) {
         use crate::application::session_payloads::{self, ResumedChatMessage};
         if session.history_backfilled {
@@ -549,17 +585,16 @@ impl App {
         };
         let history: Vec<ChatEntry> = messages
             .into_iter()
-            .map(|message| match message {
+            .map(|message| {
                 // Sub-agent transcript text is untrusted; strip terminal control
                 // sequences before rendering so a child cannot inject ANSI/OSC/
                 // bidi escapes into the operator's terminal (#828 security).
-                ResumedChatMessage::User(text) => ChatEntry::User {
-                    text: crate::interface::ansi::sanitize_control_keep_newlines(&text),
-                },
-                ResumedChatMessage::Assistant(text) => ChatEntry::Assistant {
-                    text: crate::interface::ansi::sanitize_control_keep_newlines(&text),
-                    streaming: false,
-                },
+                let (text, id, stub, is_user) = match message {
+                    ResumedChatMessage::User { text, id, stub } => (text, id, stub, true),
+                    ResumedChatMessage::Assistant { text, id, stub } => (text, id, stub, false),
+                };
+                let text = crate::interface::ansi::sanitize_control_keep_newlines(&text);
+                Self::history_entry(text, id, stub, is_user)
             })
             .collect();
         let before = data

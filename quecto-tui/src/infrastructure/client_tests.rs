@@ -390,11 +390,11 @@ fn command_clear_history_serializes() {
 fn command_rewind_to_serializes() {
     let cmd = Command::RewindTo {
         id: Some("rw".into()),
-        message_index: 2,
+        message_id: "m2".into(),
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"rewind_to\""));
-    assert!(json.contains("\"messageIndex\":2"));
+    assert!(json.contains("\"messageId\":\"m2\""));
 }
 
 #[test]

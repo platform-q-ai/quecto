@@ -154,6 +154,8 @@ pub struct TuiWorld {
     pub tui_foundation_disconnect: bool,
     pub tui_foundation_notification: String,
     pub tui_foundation_render_was_err: bool,
+    // ── TUI paged-history backfill BDD (`tui_paged_history.feature`, #1061) ──
+    pub tui_paged: tui_paged_history_steps::PagedHistoryState,
 }
 
 #[derive(Debug)]
@@ -325,6 +327,7 @@ mod tui_foundation_steps;
 mod tui_idle_efficiency_steps;
 mod tui_list_render_state_steps;
 mod tui_new_reset_context_steps;
+mod tui_paged_history_steps;
 mod tui_pid_safety_steps;
 mod tui_stdin_buffer_cap_steps;
 mod tui_stdin_retry_steps;

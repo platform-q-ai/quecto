@@ -6,7 +6,9 @@ use super::uds_cancel::{
     disarm_cancel, run_agent_message,
 };
 use super::uds_query::query_response_data;
-use super::uds_session::{AgentSession, clear_conversation, rewind_to_message_index};
+use super::uds_session::{
+    AgentSession, clear_conversation, resolve_rewind_target, rewind_to_message_index,
+};
 #[cfg(test)]
 use super::uds_session::{
     compute_session_stats, compute_session_stats_with_usage, messages_tail_json,
