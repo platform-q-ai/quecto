@@ -263,6 +263,30 @@ fn resolve_rewind_target_legacy_index_passes_through() {
 }
 
 #[test]
+fn resolve_rewind_target_legacy_index_rejected_beyond_one_page() {
+    // #1061 review follow-up: a pre-paging client computes its index from the
+    // newest page (previously the full history). Once the conversation exceeds
+    // one page, that index is page-local — applying it as an absolute position
+    // would destructively truncate a much older turn. Reject it loudly instead.
+    use crate::interface::cli::protocol::HISTORY_PAGE_SIZE;
+    let messages: Vec<Message> = (0..=HISTORY_PAGE_SIZE)
+        .map(|i| Message::user(format!("m{i}")))
+        .collect();
+    let err = resolve_rewind_target(&messages, None, Some(2))
+        .expect_err("page-ambiguous legacy index must be rejected");
+    assert!(
+        err.contains("messageId"),
+        "error should steer to messageId: {err}"
+    );
+
+    // At exactly one page the index is still unambiguous and honoured.
+    let one_page: Vec<Message> = (0..HISTORY_PAGE_SIZE)
+        .map(|i| Message::user(format!("m{i}")))
+        .collect();
+    assert_eq!(resolve_rewind_target(&one_page, None, Some(2)), Ok(2));
+}
+
+#[test]
 fn test_rewind_to_removes_retained_spill_references() {
     let mut manifest = Message::system("[Session memory: 1 spilled entry]");
     manifest.is_manifest = true;

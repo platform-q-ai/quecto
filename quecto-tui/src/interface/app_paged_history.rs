@@ -18,7 +18,26 @@ pub(crate) struct StubRecall {
 pub(crate) struct PendingHistoryPage {
     pub(super) request_id: String,
     pub(super) before: String,
+    /// When the request was issued. Failure/no-data responses and enqueue
+    /// failures clear the pending entry, but a response that is simply never
+    /// delivered (peer died after accepting, line lost) has no such signal —
+    /// without an age bound the same-cursor dedupe would wedge paging for this
+    /// session until the next lifecycle reset (#1061 review follow-up).
+    pub(super) requested_at: std::time::Instant,
 }
+
+impl PendingHistoryPage {
+    /// Whether this in-flight request is old enough to presume lost and retry.
+    pub(super) fn is_stale(&self) -> bool {
+        self.requested_at.elapsed() >= PENDING_HISTORY_PAGE_RETRY
+    }
+}
+
+/// Age after which an unanswered older-page request may be re-issued. Generous
+/// against the ~10s inspector forward timeout so a slow-but-alive reply still
+/// wins the race and its late twin is dropped by the exact-id correlation.
+pub(super) const PENDING_HISTORY_PAGE_RETRY: std::time::Duration =
+    std::time::Duration::from_secs(30);
 
 impl SessionView {
     /// Whether `id` correlates to this session's own in-flight older-page request.
@@ -84,10 +103,13 @@ impl App {
             return None;
         }
         let before = session.history_before_cursor.clone()?;
+        // Dedupe an in-flight request for the same cursor — unless it has aged
+        // past the retry window (lost response), in which case a fresh request
+        // replaces it and the stale twin no longer correlates.
         if session
             .history_pending_page
             .as_ref()
-            .is_some_and(|p| p.before == before)
+            .is_some_and(|p| p.before == before && !p.is_stale())
         {
             return None;
         }
@@ -105,6 +127,7 @@ impl App {
         session.history_pending_page = Some(PendingHistoryPage {
             request_id: request_id.clone(),
             before: before.clone(),
+            requested_at: std::time::Instant::now(),
         });
         Some((request_id, before, target_child))
     }
@@ -255,7 +278,7 @@ impl App {
         self.master_session.history_backfilled = false;
         self.master_session.partial_backfill_len = None;
         // The cursors themselves are reconciled from `data` below.
-        Self::reconcile_backfill_history(&mut self.master_session, data);
+        Self::reconcile_backfill_history(&mut self.master_session, data, false);
         self.master_session.chat.add_entry(ChatEntry::Status {
             text: status.to_string(),
         });

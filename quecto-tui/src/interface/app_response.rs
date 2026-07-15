@@ -104,12 +104,8 @@ impl App {
                         };
                         self.replace_master_chat_with_history_page(&data, status);
                     } else if own_page {
-                        // Older pages extend the existing prefix. The
-                        // partial-prefix replacement path is only for a
-                        // fuller initial backfill superseding a trimmed
-                        // busy-connect snapshot.
-                        self.master_session.partial_backfill_len = None;
-                        Self::reconcile_backfill_history(&mut self.master_session, &data);
+                        // This client's own older page extends the loaded prefix.
+                        Self::reconcile_backfill_history(&mut self.master_session, &data, true);
                     } else if id
                         .as_deref()
                         .is_some_and(|id| id.starts_with("history-page-"))
@@ -120,9 +116,9 @@ impl App {
                         // prepending it would create an interior gap. Drop it.
                     } else if id.as_deref() == Some(ATTACH_BACKFILL_ID) || id.is_none() {
                         // Attach backfill OR unsolicited busy-connect snapshot
-                        // (id-less, see uds_snapshots): prepend + cursor
-                        // reconciliation.
-                        Self::reconcile_backfill_history(&mut self.master_session, &data);
+                        // (id-less, see uds_snapshots): replace any loaded
+                        // partial prefix (or prepend) + cursor reconciliation.
+                        Self::reconcile_backfill_history(&mut self.master_session, &data, false);
                     } else {
                         self.replace_chat_with_messages(&data);
                     }

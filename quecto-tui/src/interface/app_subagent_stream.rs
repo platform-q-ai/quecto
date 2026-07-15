@@ -374,13 +374,9 @@ impl App {
                 if let Some(data) = data {
                     if own_page {
                         // Older explicit pages EXTEND the existing prefix; only a
-                        // fuller initial backfill superseding a trimmed busy-connect
-                        // snapshot replaces it. Mirror the master path (#1061 review):
-                        // the initial page sets `partial_backfill_len`, so without
-                        // clearing it the child reconciler would REPLACE the newest
-                        // page with each older page instead of prepending it.
-                        session.partial_backfill_len = None;
-                        Self::reconcile_backfill_history(session, data);
+                        // fuller snapshot superseding a partial one replaces it
+                        // (#1061 review). Mirror the master path.
+                        Self::reconcile_backfill_history(session, data, true);
                     } else if id
                         .as_deref()
                         .is_some_and(|i| i.starts_with("history-page-"))
@@ -389,7 +385,7 @@ impl App {
                         // one orphaned by a session swap: applying it here would
                         // prepend history at the wrong depth. Drop it.
                     } else {
-                        Self::reconcile_backfill_history(session, data);
+                        Self::reconcile_backfill_history(session, data, false);
                     }
                 } else if own_page {
                     // Failed / no-data page fetch: clear the in-flight request so the
@@ -548,20 +544,6 @@ impl App {
         }
     }
 
-    /// Reconcile a connect-on-select / attach-time `get_messages` backfill into
-    /// a session (#828 master attach #1050). The prior conversation is
-    /// PREPENDED above whatever live content already streamed (never a
-    /// wholesale replace that drops live tokens), and a complete (untrimmed)
-    /// backfill is applied at most once so a re-delivered payload cannot
-    /// duplicate it. Shared by sub-agent connect-on-select and master
-    /// `--socket` attach.
-    ///
-    /// Busy-connect snapshots may set `trimmed: true` when the producer drops
-    /// oldest messages to stay under the frame budget (`uds_snapshots`). Those
-    /// partial tails are applied for immediate display but do **not** latch
-    /// `history_backfilled`; a later complete attach-backfill / get_messages
-    /// replaces the partial prefix so omitted older history is not permanently
-    /// suppressed (#1050 review).
     /// Map a backfilled/resumed history message to a chat entry: a ladder-demoted
     /// message carrying a stable id becomes a recallable [`ChatEntry::Stub`];
     /// anything else renders as a plain user/assistant line (#1061). Shared by the
@@ -582,7 +564,18 @@ impl App {
         }
     }
 
-    pub(super) fn reconcile_backfill_history(session: &mut SessionView, data: &serde_json::Value) {
+    /// `extend_prefix` distinguishes the two apply modes (#1061 review
+    /// follow-up — they must not share `partial_backfill_len` implicitly):
+    /// `true` for this session's OWN older page, which always prepends below
+    /// the already-loaded prefix; `false` for snapshots/backfills (attach,
+    /// id-less busy-connect), which replace the entire loaded backfill prefix
+    /// so a re-snapshot after paging cannot duplicate the newest slice or
+    /// leave an interior gap.
+    pub(super) fn reconcile_backfill_history(
+        session: &mut SessionView,
+        data: &serde_json::Value,
+        extend_prefix: bool,
+    ) {
         use crate::application::session_payloads::{self, ResumedChatMessage};
         if session.history_backfilled {
             return;
@@ -627,15 +620,24 @@ impl App {
             .get("trimmed")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        // A prior trimmed snapshot already contributed a prefix: replace it so
-        // the fuller payload does not stack another copy of the same tail.
-        if let Some(partial_len) = session.partial_backfill_len {
+        // `partial_backfill_len` tracks the TOTAL loaded backfill prefix, so a
+        // later snapshot replaces every previously loaded page — never just the
+        // most recent one (duplicated newest slice + interior gap).
+        let loaded_prefix = if extend_prefix {
+            // This session's own older page grows the loaded prefix.
+            session.chat.prepend_history(history);
+            session.partial_backfill_len.unwrap_or(0) + history_len
+        } else if let Some(partial_len) = session.partial_backfill_len {
+            // A prior partial snapshot / paged prefix already contributed:
+            // replace it all; paging restarts from the cursors set above.
             session.chat.replace_history_prefix(partial_len, history);
+            history_len
         } else {
             session.chat.prepend_history(history);
-        }
+            history_len
+        };
         if trimmed || has_more_before {
-            session.partial_backfill_len = Some(history_len);
+            session.partial_backfill_len = Some(loaded_prefix);
             session.history_backfilled = false;
         } else {
             session.partial_backfill_len = None;

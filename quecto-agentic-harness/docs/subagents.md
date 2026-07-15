@@ -216,7 +216,7 @@ output (see [Notification model](#notification-model)).
     },
     "count": {
       "type": "integer",
-      "description": "Number of messages for get_messages (omit for all; N for the last N)"
+      "description": "Number of messages for get_messages (omit for the newest history page; N for the last N)"
     },
     "timeout": {
       "type": "integer",
@@ -242,7 +242,7 @@ output (see [Notification model](#notification-model)).
 | `kill` | Terminate the subagent process (SIGTERM) | No |
 | `await` | Block until the subagent reaches a terminal state | No |
 | `get_state` | Check if the agent is idle or streaming | No |
-| `get_messages` | Read the message history (omit `count` for all; pass `count` for the last N messages) | No |
+| `get_messages` | Read the message history (omit `count` for the newest history page; pass `count` for the last N messages) | No |
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List subagents spawned by this agent | No |
 | `get_extensions` | List loaded extensions | No |

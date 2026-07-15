@@ -4,6 +4,13 @@
 /// All commands carry an optional `id` field for request/response correlation.
 use serde::{Deserialize, Serialize};
 
+/// Authoritative protocol page size for paged conversation history (#1061).
+///
+/// The single definition every producer, consumer, and test suite shares —
+/// per-call-site literals are forbidden by the #1061 constraint. `pub` (not
+/// crate-private) so the BDD integration targets assert against the same value.
+pub const HISTORY_PAGE_SIZE: usize = 64;
+
 // ─── Public parse helper ──────────────────────────────────────────────────────
 
 /// Parse a single JSON line into an [`AgentCommand`].
@@ -176,7 +183,9 @@ pub enum AgentCommand {
     /// client holds only a bounded window, so a page-local array position is NOT
     /// a valid index into the full server conversation — sending one as
     /// `messageIndex` truncates the wrong turn (destructive). `messageIndex` is
-    /// retained solely for one-window-older clients (#1059) that predate paging.
+    /// retained for one-window-older clients (#1059) and honoured only while the
+    /// conversation fits in one history page (unambiguous); beyond that it is
+    /// rejected with an error rather than misapplied.
     RewindTo {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,

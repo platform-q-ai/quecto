@@ -16,6 +16,14 @@ Feature: State and history endpoints
     Then the response status is 200
     And the response body contains "success":true
 
+  @done @issue-1061
+  Scenario: Page message history backward
+    Given the agent is connected
+    When I request GET /messages?before=some-message-id
+    Then the response status is 200
+    And the response body contains "success":true
+    And the response body contains "cursorEcho":"some-message-id"
+
   Scenario: Get tail of messages
     Given the agent is connected
     When I request GET /messages/tail?n=5

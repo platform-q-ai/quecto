@@ -29,9 +29,8 @@ use tokio::sync::mpsc;
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 pub(super) const STREAM_RENDER_INTERVAL: Duration = Duration::from_millis(33);
 const MOUSE_SCROLL_LINES: usize = 3;
-/// Maximum retry iterations for reassembling multi-fragment escape sequences.
-/// Handles up to 5-fragment CSI splits on slow SSH/serial connections.
-/// Total max wait = MAX_ESCAPE_RETRIES × escape_timeout (10ms) = 50ms.
+/// Retry cap for reassembling multi-fragment escape sequences (5-fragment CSI
+/// splits on slow SSH/serial); max wait = 5 × escape_timeout (10ms) = 50ms.
 const MAX_ESCAPE_RETRIES: usize = 5;
 
 #[path = "app_commands.rs"]
@@ -60,12 +59,10 @@ pub struct App {
     agent_connected: bool,
     /// Pin: once the left panel has shown for a connected agent it must not
     /// vanish when the agent dies (#1047) — the user keeps the session /
-    /// sub-agent context needed to diagnose the failure. Stays `true` after
-    /// `agent_connected` drops on disconnect.
+    /// sub-agent context to diagnose the failure. Stays `true` on disconnect.
     agent_ever_connected: bool,
-    /// Exit-diagnosis watch handle for the TUI-owned agent child (#1047),
-    /// published by [`crate::infrastructure::child_watch`] when the child is
-    /// reaped. `None` when the TUI attached to an external socket.
+    /// Exit-diagnosis watch for the TUI-owned agent child (#1047), published by
+    /// [`crate::infrastructure::child_watch`]. `None` for external sockets.
     child_exit_watch: Option<crate::infrastructure::child_watch::ChildWatch>,
     /// Oversized-event drops already surfaced as a notification, so each is
     /// reported exactly once (#1047).
@@ -109,8 +106,8 @@ pub struct App {
     git_repo: Option<PathBuf>,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
-    /// Whether session stats were already requested as a fallback to learn the
-    /// real context window for the current session/model.
+    /// Whether session stats were already requested as a fallback to learn
+    /// the real context window for the current session/model.
     context_stats_requested: bool,
     /// #1060: request-id → pending in-flight recovery fetch (gated, applied in ref order).
     pending_message_recovery: std::collections::HashMap<String, PendingMessageRecovery>,
@@ -697,6 +694,9 @@ mod app_idle_efficiency_tests;
 #[cfg(test)]
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;
+#[cfg(test)]
+#[path = "app_paged_history_review_tests.rs"]
+mod app_paged_history_review_tests;
 #[cfg(test)]
 #[path = "app_paged_history_tests.rs"]
 mod app_paged_history_tests;

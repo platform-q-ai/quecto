@@ -29,9 +29,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Authoritative protocol page size (mirrors `uds_session::HISTORY_PAGE_SIZE`,
-/// which is crate-private). Asserted behaviourally below, never sent on the wire.
-const PAGE: usize = 64;
+/// Authoritative protocol page size, imported so this suite cannot drift from
+/// the protocol constant. Asserted behaviourally below, never sent on the wire.
+use quecto::interface::cli::protocol::HISTORY_PAGE_SIZE as PAGE;
 const PAGED_SESSION: &str = "paged-history";
 const STUB_SESSION: &str = "paged-stub";
 const STUB_FULL: &str = "the full demoted body recalled for paged history";

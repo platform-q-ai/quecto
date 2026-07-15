@@ -157,20 +157,21 @@ fn agent_cmd_docs_match_tool_schema() {
         subagents.contains("get_messages"),
         "docs/subagents.md should document get_messages"
     );
-    // The AC requires documenting the optional `count` semantics (omit = all,
-    // N = last N), not merely the command name.
+    // The AC requires documenting the optional `count` semantics (omit = newest
+    // page post-#1061, N = last N), not merely the command name.
     let subagents_lower = subagents.to_lowercase();
     assert!(
         subagents.contains("count"),
         "docs/subagents.md must document the optional `count` parameter of get_messages"
     );
-    // Anchor on the documented phrasing rather than bare "all"/"last" substrings
-    // (which occur inside common words like "actually"/"call"), so removing the
-    // semantics sentence actually fails this guard. The doc reads:
-    // "omit `count` for all; pass `count` for the last N messages".
+    // Anchor on the documented phrasing rather than bare substrings (which occur
+    // inside common words), so removing the semantics sentence actually fails
+    // this guard. Post-#1061 an uncounted get_messages returns the newest
+    // bounded page, and the doc reads: "omit `count` for the newest history
+    // page; pass `count` for the last N messages".
     assert!(
-        subagents_lower.contains("omit") && subagents_lower.contains("for all"),
-        "docs/subagents.md must explain that omitting count returns all messages"
+        subagents_lower.contains("omit") && subagents_lower.contains("newest history page"),
+        "docs/subagents.md must explain that omitting count returns the newest history page"
     );
     assert!(
         subagents_lower.contains("last n"),

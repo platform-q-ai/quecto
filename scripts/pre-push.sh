@@ -100,6 +100,13 @@ echo "  Integration targets: ${TEST_TARGETS[*]}"
 ) &
 PID_CORE_GUARDS=$!
 
+# quecto-api unit + BDD (@done scenarios). The gateway package was previously
+# compiled by clippy but never TESTED by any gate (#1061 review follow-up).
+(
+    cargo test -p quecto-api --no-fail-fast --all-targets 2>&1 | "$ROOT/scripts/test-filter.sh"
+) &
+PID_API=$!
+
 (
     bash "$ROOT/scripts/run-bdd-shards.sh" \
         --suite "non-real-bdd" \
@@ -125,6 +132,10 @@ PID_TUI_BDD=$!
 FAIL=0
 if ! wait "$PID_CORE_GUARDS"; then
     echo -e "${RED}FAIL${NC}: cargo test -p quecto-agentic-harness --lib ${TEST_TARGET_ARGS[*]}"
+    FAIL=1
+fi
+if ! wait "$PID_API"; then
+    echo -e "${RED}FAIL${NC}: cargo test -p quecto-api --all-targets"
     FAIL=1
 fi
 if ! wait "$PID_BDD"; then

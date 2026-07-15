@@ -114,14 +114,31 @@ async fn state_handler<G: AgentGateway>(
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 
+#[derive(Deserialize)]
+struct MessagesQuery {
+    /// #1061: page backward — a stable message id from a prior page's `before`.
+    before: Option<String>,
+}
+
+/// #1061: history is paged. Returns the newest bounded page (or the page before
+/// `?before=<id>`); the response's `data` carries `before`/`hasMoreBefore` so
+/// clients walk older history explicitly instead of receiving one monolithic
+/// (and previously silently trimmed) snapshot.
 async fn messages_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
+    Query(params): Query<MessagesQuery>,
 ) -> impl IntoResponse {
     if !state.gateway.is_connected() {
         return api_error_response(crate::domain::error::ApiError::AgentNotConnected)
             .into_response();
     }
-    match state.gateway.send(AgentCommand::GetMessages).await {
+    match state
+        .gateway
+        .send(AgentCommand::GetMessages {
+            before: params.before,
+        })
+        .await
+    {
         Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
         Err(e) => api_error_response(e).into_response(),
     }

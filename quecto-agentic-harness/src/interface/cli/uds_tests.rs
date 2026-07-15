@@ -393,6 +393,10 @@ fn test_messages_tail_json_count_zero() {
     let messages: Vec<Message> = (0..3).map(|i| Message::user(format!("m{i}"))).collect();
     let data = messages_tail_json(&messages, 0);
     assert!(data["messages"].as_array().unwrap().is_empty());
+    // Documented count=0 contract (#1061): an empty window carries no cursor —
+    // the cursor names the oldest INCLUDED message, which it lacks.
+    assert_eq!(data["hasMoreBefore"], false);
+    assert_eq!(data["before"], serde_json::Value::Null);
 }
 
 #[test]

@@ -400,19 +400,20 @@ pub fn compute_session_stats_with_usage(
     }
 }
 
-/// Authoritative protocol page size for paged conversation history (#1061).
-pub(crate) const HISTORY_PAGE_SIZE: usize = 64;
+pub(crate) use super::protocol::HISTORY_PAGE_SIZE;
 
 /// Locate a message by its stable wire id (a stringified UUID). Parses the id
-/// ONCE and compares typed UUIDs, instead of allocating a `to_string` per
-/// candidate message on every cursor lookup (#1061 review). A non-UUID id can
-/// match no message, so it resolves to `None`.
+/// ONCE and compares typed UUIDs instead of allocating a `to_string` per
+/// candidate (#1061 review). A non-UUID id matches nothing, so `None`.
 pub(crate) fn position_by_wire_id(messages: &[Message], wire_id: &str) -> Option<usize> {
     let target = uuid::Uuid::parse_str(wire_id).ok()?;
     messages.iter().position(|m| m.id() == target)
 }
 
 /// Return a JSON value containing the selected history window in chronological order.
+///
+/// `count: 0` keeps the legacy empty-page contract and reports no cursor (the
+/// cursor names the oldest INCLUDED message, which an empty window lacks).
 pub fn messages_page_json(
     messages: &[Message],
     count: usize,
@@ -421,13 +422,12 @@ pub fn messages_page_json(
     let end = before
         .and_then(|cursor| position_by_wire_id(messages, cursor))
         .unwrap_or(messages.len());
-    // The default caller supplies HISTORY_PAGE_SIZE, while an explicit `count`
-    // retains the legacy "last N" contract (including counts above one page).
-    let page_len = count;
-    let start = end.saturating_sub(page_len);
+    // Default callers supply HISTORY_PAGE_SIZE; an explicit `count` retains the
+    // legacy "last N" contract (including counts above one page).
+    let start = end.saturating_sub(count);
     let msgs_json: Vec<serde_json::Value> =
         messages[start..end].iter().map(message_to_json).collect();
-    let has_more_before = page_len > 0 && start > 0;
+    let has_more_before = count > 0 && start > 0;
     let before_cursor = has_more_before.then(|| messages[start].id().to_string());
     serde_json::json!({
         "messages": msgs_json,
@@ -481,9 +481,8 @@ impl serde::Serialize for MessageView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let msg = self.0;
-        // 8 fields: stable id (#1060) + role/content/tools + isError for recovery
-        // + collapsed so a paged client can render a demoted stub in place and
-        // recall its full body on demand (#1061 / ADR-0008 part 3).
+        // 8 fields: stable id (#1060) + role/content/tools + isError + collapsed
+        // (a demoted stub the client recalls by id; #1061 / ADR-0008 part 3).
         let mut s = serializer.serialize_struct("Message", 8)?;
         // Domain UUID as a round-trippable string key (AC6).
         s.serialize_field("id", &msg.id().to_string())?;
@@ -493,8 +492,7 @@ impl serde::Serialize for MessageView<'_> {
         s.serialize_field("toolCallId", &msg.tool_call_id)?;
         s.serialize_field("toolName", &msg.tool_name)?;
         s.serialize_field("isError", &msg.is_error)?;
-        // A demoted (ladder-collapsed) message ships as a stub; the client shows
-        // it in place and can recall the full body by `id` via get_message.
+        // Ladder-collapsed stub: rendered in place, full body recallable by id.
         s.serialize_field("collapsed", &msg.is_collapsed)?;
         s.end()
     }
@@ -522,9 +520,11 @@ pub fn clear_conversation(messages: &mut Vec<Message>) {
     }
 }
 
-/// Resolve a rewind target to a full-vector index. A stable `message_id` (paged
-/// clients hold only a bounded window) is resolved against the full conversation;
-/// `message_index` is honoured only as a legacy fallback (#1059 / #1061 review).
+/// Resolve a rewind target to a full-vector index. A stable `message_id` is
+/// resolved against the full conversation. The legacy `message_index` (#1059)
+/// is honoured only while the conversation fits in ONE history page: beyond
+/// that a pre-paging client's index is page-local and applying it absolutely
+/// would destructively truncate a much older turn (#1061 review follow-up).
 pub fn resolve_rewind_target(
     messages: &[Message],
     message_id: Option<&str>,
@@ -532,6 +532,9 @@ pub fn resolve_rewind_target(
 ) -> Result<usize, &'static str> {
     match (message_id, message_index) {
         (Some(mid), _) => position_by_wire_id(messages, mid).ok_or("rewind target not found"),
+        (None, Some(_)) if messages.len() > HISTORY_PAGE_SIZE => {
+            Err("messageIndex is ambiguous beyond one history page; rewind requires messageId")
+        }
         (None, Some(idx)) => Ok(idx),
         (None, None) => Err("rewind requires messageId or messageIndex"),
     }

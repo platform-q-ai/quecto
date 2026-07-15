@@ -2,11 +2,17 @@ use super::app_response::ATTACH_BACKFILL_ID;
 use super::tui_harness::TuiHarness;
 use super::*;
 
-async fn harness() -> TuiHarness {
+pub(super) async fn harness() -> TuiHarness {
     TuiHarness::new().await
 }
 
-fn respond(app: &mut App, id: Option<&str>, command: &str, success: bool, data: serde_json::Value) {
+pub(super) fn respond(
+    app: &mut App,
+    id: Option<&str>,
+    command: &str,
+    success: bool,
+    data: serde_json::Value,
+) {
     app.handle_response(
         id.map(String::from),
         command.to_string(),
@@ -16,7 +22,7 @@ fn respond(app: &mut App, id: Option<&str>, command: &str, success: bool, data: 
     );
 }
 
-fn page(
+pub(super) fn page(
     messages: &[(&str, &str)],
     before: Option<&str>,
     has_more_before: bool,
@@ -35,7 +41,7 @@ fn page(
     })
 }
 
-fn chat_text(app: &mut App) -> String {
+pub(super) fn chat_text(app: &mut App) -> String {
     app.master_session
         .chat
         .render(120)
@@ -58,7 +64,7 @@ fn child_chat_text(app: &mut App, agent_id: &str) -> String {
         .join("\n")
 }
 
-fn prime_active_viewport(app: &mut App) {
+pub(super) fn prime_active_viewport(app: &mut App) {
     let chat = app.active_chat_mut();
     chat.set_viewport_height(1);
     let _ = chat.render(120);
@@ -66,13 +72,13 @@ fn prime_active_viewport(app: &mut App) {
 
 /// Undo `prime_active_viewport` so `chat_text` captures the whole transcript
 /// again (a 1-line scroll viewport would otherwise render a single line).
-fn widen_active_viewport(app: &mut App) {
+pub(super) fn widen_active_viewport(app: &mut App) {
     let chat = app.active_chat_mut();
     chat.set_viewport_height(200);
     chat.scroll_down(usize::MAX);
 }
 
-async fn drained_get_messages_commands(h: &mut TuiHarness) -> Vec<serde_json::Value> {
+pub(super) async fn drained_get_messages_commands(h: &mut TuiHarness) -> Vec<serde_json::Value> {
     h.drain_commands()
         .await
         .into_iter()
@@ -141,18 +147,6 @@ async fn older_history_request_is_deduped_while_cursor_is_in_flight() {
     );
 }
 
-#[tokio::test]
-async fn independent_clients_do_not_reuse_history_page_correlation_ids() {
-    let (mut first, mut second) = (harness().await, harness().await);
-    for h in [&mut first, &mut second] {
-        let session = &mut h.app_mut().master_session;
-        session.history_has_more_before = true;
-        session.history_before_cursor = Some("cursor".into());
-        session.chat.set_viewport_height(1);
-    }
-    let id = |h: &mut TuiHarness| h.app_mut().next_history_page_request().unwrap().0;
-    assert_ne!(id(&mut first), id(&mut second));
-}
 #[tokio::test]
 async fn subagent_older_history_request_targets_active_child_session() {
     let mut h = harness().await;

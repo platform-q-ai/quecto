@@ -18,7 +18,12 @@ pub enum AgentCommand {
     },
     Abort,
     GetState,
-    GetMessages,
+    /// #1061: history is paged — the agent returns the newest bounded page plus
+    /// `before`/`hasMoreBefore` metadata. Pass `before` (a stable message id
+    /// from a prior page) to fetch the adjacent older page.
+    GetMessages {
+        before: Option<String>,
+    },
     GetMessagesTail {
         count: usize,
     },

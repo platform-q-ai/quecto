@@ -1,6 +1,6 @@
 [package]
 name = "quecto-api"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "HTTP/WebSocket gateway to a quecto agent over UDS"
 license = "LicenseRef-Proprietary"
