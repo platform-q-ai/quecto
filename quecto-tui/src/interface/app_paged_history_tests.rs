@@ -142,6 +142,18 @@ async fn older_history_request_is_deduped_while_cursor_is_in_flight() {
 }
 
 #[tokio::test]
+async fn independent_clients_do_not_reuse_history_page_correlation_ids() {
+    let (mut first, mut second) = (harness().await, harness().await);
+    for h in [&mut first, &mut second] {
+        let session = &mut h.app_mut().master_session;
+        session.history_has_more_before = true;
+        session.history_before_cursor = Some("cursor".into());
+        session.chat.set_viewport_height(1);
+    }
+    let id = |h: &mut TuiHarness| h.app_mut().next_history_page_request().unwrap().0;
+    assert_ne!(id(&mut first), id(&mut second));
+}
+#[tokio::test]
 async fn subagent_older_history_request_targets_active_child_session() {
     let mut h = harness().await;
     h.event(Event::SubagentStateChanged {
@@ -241,12 +253,17 @@ async fn older_history_page_prepends_without_gap_or_duplicate() {
     let _ = h.drain_commands().await;
     prime_active_viewport(h.app_mut());
     h.app_mut().handle_key(Key::PageUp);
-    let _ = h.drain_commands().await;
+    let commands = drained_get_messages_commands(&mut h).await;
+    let request_id = commands
+        .iter()
+        .find_map(|cmd| cmd.get("id").and_then(|v| v.as_str()))
+        .expect("older-page request id")
+        .to_string();
 
     let a = h.app_mut();
     respond(
         a,
-        Some("history-page-1"),
+        Some(&request_id),
         "get_messages",
         true,
         page(
@@ -541,13 +558,14 @@ async fn subagent_older_history_page_prepends_without_replacing_newest() {
         .app_mut()
         .next_history_page_request()
         .expect("child older-page request is available");
-    assert_eq!(request.0, "history-page-1");
+    assert!(request.0.starts_with("history-page-"));
+    let request_id = request.0;
     // The explicitly-requested older page must PREPEND, not replace the newest
     // page (regression: the child reconciler used replace_history_prefix).
     h.route(
         "worker",
         Event::Response {
-            id: Some("history-page-1".into()),
+            id: Some(request_id),
             command: "get_messages".into(),
             success: true,
             data: Some(page(
@@ -597,10 +615,14 @@ async fn failed_older_page_clears_cursor_and_allows_retry() {
     h.app_mut().handle_key(Key::PageUp);
     let first = drained_get_messages_commands(&mut h).await;
     assert_eq!(first.len(), 1, "one older-page request should be in flight");
+    let request_id = first[0]["id"]
+        .as_str()
+        .expect("older-page request id")
+        .to_string();
 
     // The older-page request fails transiently.
     h.app_mut().handle_response(
-        Some("history-page-1".into()),
+        Some(request_id),
         "get_messages".into(),
         false,
         None,
@@ -639,8 +661,12 @@ async fn history_page_with_foreign_correlation_id_is_dropped() {
     );
     let _ = h.drain_commands().await;
     prime_active_viewport(h.app_mut());
-    h.app_mut().handle_key(Key::PageUp); // our in-flight id: history-page-1
-    let _ = h.drain_commands().await;
+    h.app_mut().handle_key(Key::PageUp);
+    let commands = drained_get_messages_commands(&mut h).await;
+    let request_id = commands[0]["id"]
+        .as_str()
+        .expect("our older-page request id")
+        .to_string();
 
     respond(
         h.app_mut(),
@@ -659,7 +685,7 @@ async fn history_page_with_foreign_correlation_id_is_dropped() {
     // Our own in-flight page must still apply after the foreign one was dropped.
     respond(
         h.app_mut(),
-        Some("history-page-1"),
+        Some(&request_id),
         "get_messages",
         true,
         page(&[("m1", "first message")], None, false),
@@ -685,7 +711,11 @@ async fn history_page_in_flight_across_resume_is_not_applied() {
     let _ = h.drain_commands().await;
     prime_active_viewport(h.app_mut());
     h.app_mut().handle_key(Key::PageUp); // in flight when the resume lands
-    let _ = h.drain_commands().await;
+    let commands = drained_get_messages_commands(&mut h).await;
+    let stale_request_id = commands[0]["id"]
+        .as_str()
+        .expect("stale older-page request id")
+        .to_string();
 
     respond(
         h.app_mut(),
@@ -698,7 +728,7 @@ async fn history_page_in_flight_across_resume_is_not_applied() {
     // resumed transcript (#1061 review).
     respond(
         h.app_mut(),
-        Some("history-page-1"),
+        Some(&stale_request_id),
         "get_messages",
         true,
         page(&[("m8", "old session older")], None, false),

@@ -74,7 +74,16 @@ impl App {
             return None;
         }
         session.history_page_seq = session.history_page_seq.wrapping_add(1);
-        let request_id = format!("history-page-{}", session.history_page_seq);
+        // `get_messages` responses are broadcast to every connected client, so
+        // a per-session sequence alone (`history-page-1`) is not sufficient:
+        // two clients paging at different depths could accept each other's
+        // response. Include a process-unique token while retaining the sequence
+        // suffix for readable diagnostics.
+        let request_id = format!(
+            "history-page-{}-{}",
+            super::app_events::uuid_like(),
+            session.history_page_seq
+        );
         session.history_pending_page = Some(PendingHistoryPage {
             request_id: request_id.clone(),
             before: before.clone(),
