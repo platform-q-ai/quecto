@@ -41,9 +41,13 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
         }
         Some("get_state") => {
             // A `count` on get_state is meaningless; keep it strict so an unusual
-            // command shape can never be silently answered by the snapshot.
+            // command shape can never be silently answered by the snapshot. Also
+            // require the explicit snapshot marker: an id-less unmarked state can
+            // be a stale turn-boundary line and must not beat the correlated live
+            // reply once the child is idle (#1104).
             cmd.get("count").is_none()
                 && json.get("command").and_then(|v| v.as_str()) == Some("get_state")
+                && json.pointer("/data/snapshot").and_then(|v| v.as_bool()) == Some(true)
                 && json
                     .pointer("/data/isStreaming")
                     .and_then(|v| v.as_bool())

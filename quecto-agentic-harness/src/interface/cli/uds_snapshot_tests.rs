@@ -445,6 +445,28 @@ fn build_get_state_line_serializes_status_snapshot() {
     assert_eq!(v["data"]["pendingMessageCount"], 1);
 }
 
+#[test]
+fn busy_get_state_line_marks_snapshot() {
+    let state = SessionState {
+        model: "mock-model".into(),
+        is_streaming: false,
+        session_key: "cli:test".into(),
+        message_count: 2,
+        pending_message_count: 0,
+        max_context_tokens: 1234,
+        effort: None,
+        effort_levels: Vec::new(),
+        workflow: None,
+    };
+
+    let line = crate::interface::cli::uds_snapshots::build_get_state_line_live(&state, &None, true);
+    let v: serde_json::Value = serde_json::from_str(line.trim()).expect("valid JSON line");
+    assert_eq!(
+        v["data"]["snapshot"], true,
+        "busy get_state snapshots must be tagged: {line}"
+    );
+}
+
 // ─── get_subagents connect-time snapshot (#874) ───────────────────────────────
 //
 // A busy child must serve its current registry view immediately on connect,

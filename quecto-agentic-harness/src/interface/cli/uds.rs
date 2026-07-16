@@ -429,6 +429,11 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
     drain_pending_and_nudge(ctx).await;
+    // Publish the completed-turn state before any post-turn query waits behind
+    // the next command in the dispatch loop. This closes the boundary where a
+    // just-idle child could still hand a newly connecting inspector the previous
+    // busy snapshot (#1104).
+    super::uds_snapshots::refresh_busy_snapshots(ctx).await;
     // Persist after every turn so the conversation survives an ungraceful exit.
     if let Err(err) = uds_dispatch::persist_current_session(ctx).await {
         tracing::warn!("failed to persist session after turn: {err}");
