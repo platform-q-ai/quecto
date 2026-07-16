@@ -137,8 +137,8 @@ for idx in "${!PIDS[@]}"; do
         FAIL=1
         echo "Shard ${shard} failed (see $TMP_DIR/shard-${shard}.log)"
         # Surface the failure inline — on CI the log files are unreachable.
-        echo "--- shard-${shard}.log (last 80 lines) ---"
-        tail -n 80 "$TMP_DIR/shard-${shard}.log" || true
+        echo "--- shard-${shard}.log (last 400 lines) ---"
+        tail -n 400 "$TMP_DIR/shard-${shard}.log" || true
         echo "--- end shard-${shard}.log ---"
     fi
 done

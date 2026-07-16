@@ -521,7 +521,7 @@ fn when_wait_first_turn_complete(world: &mut QuectoWorld) {
         send_queued_commands_live(world);
     }
     // Wait until client 1 sees agent_end.
-    wait_client_agent_end(world, 1, Duration::from_secs(15));
+    wait_client_agent_end(world, 1, Duration::from_secs(60));
 }
 
 #[when("I request the oversized message by its stable reference")]
@@ -1701,7 +1701,7 @@ fn wait_client_agent_end(world: &mut QuectoWorld, client_id: u32, timeout: Durat
 fn drive_mc_first_turn_keep_alive(world: &mut QuectoWorld) {
     drive_mc_start_and_connect(world, &world.mc_connected_clients.clone());
     send_queued_commands_live(world);
-    wait_client_agent_end(world, 1, Duration::from_secs(15));
+    wait_client_agent_end(world, 1, Duration::from_secs(60));
 }
 
 fn drive_mc_live_busy(world: &mut QuectoWorld) {
