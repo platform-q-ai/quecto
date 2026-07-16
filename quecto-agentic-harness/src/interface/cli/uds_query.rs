@@ -5,6 +5,23 @@ use super::uds_session::{
     position_by_wire_id,
 };
 
+pub(super) fn get_message_response_data(
+    message_id: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    request_id: Option<&str>,
+    ctx: &DispatchCtx<'_>,
+) -> Option<serde_json::Value> {
+    position_by_wire_id(ctx.messages, message_id).map(|i| {
+        super::uds_session::message_to_json_range_for_response(
+            &ctx.messages[i],
+            offset,
+            limit,
+            request_id,
+        )
+    })
+}
+
 pub(super) fn query_response_data(
     cmd: &AgentCommand,
     ctx: &DispatchCtx<'_>,
@@ -64,12 +81,12 @@ pub(super) fn query_response_data(
         // #1060: on-demand single-message lookup by stable id (busy-path safe).
         // Miss returns None so dispatch_fieldless_command emits a structured error.
         AgentCommand::GetMessage {
+            id,
             message_id,
             offset,
             limit,
             ..
-        } => position_by_wire_id(ctx.messages, message_id)
-            .map(|i| super::uds_session::message_to_json_range(&ctx.messages[i], *offset, *limit)),
+        } => get_message_response_data(message_id, *offset, *limit, id.as_deref(), ctx),
         AgentCommand::ReloadExtensions { .. } => None,
         _ => None,
     }

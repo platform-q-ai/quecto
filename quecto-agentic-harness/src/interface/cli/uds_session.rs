@@ -509,7 +509,7 @@ pub fn message_to_json(msg: &Message) -> serde_json::Value {
 
 #[path = "uds_session_message_range.rs"]
 mod uds_session_message_range;
-pub use uds_session_message_range::message_to_json_range;
+pub use uds_session_message_range::{message_to_json_range, message_to_json_range_for_response};
 
 /// Clear conversation history, preserving only the injected system prompt (non-manifest).
 /// Uses `truncate` instead of `clone+clear` to avoid copying the system message.

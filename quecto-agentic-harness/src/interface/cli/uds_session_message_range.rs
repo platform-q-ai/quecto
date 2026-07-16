@@ -1,4 +1,12 @@
 use crate::domain::message::Message;
+use crate::interface::cli::protocol::AgentEvent;
+
+#[cfg(test)]
+#[path = "uds_session_message_range/tests.rs"]
+mod tests;
+
+#[cfg(test)]
+const LONG_REQUEST_ID_REGRESSION_LEN: usize = 4096;
 
 fn nearest_char_boundary_at_or_before(s: &str, mut idx: usize) -> usize {
     idx = idx.min(s.len());
@@ -53,18 +61,9 @@ fn ranged_value(msg: &Message, start: usize, end: usize, content_len: usize) -> 
     value
 }
 
-fn data_fits_frame(value: &serde_json::Value) -> bool {
-    // Account for the response envelope as well as the data object. The exact
-    // request id length varies, so reserve enough room for normal UUID-like ids
-    // and JSON punctuation. If this check is true, the enclosing response line
-    // remains below the protocol cap even when content JSON-escapes heavily.
-    const RESPONSE_ENVELOPE_RESERVE: usize = 512;
-    serde_json::to_string(value)
-        .map(|line| {
-            line.len() + RESPONSE_ENVELOPE_RESERVE
-                <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET
-        })
-        .unwrap_or(false)
+fn data_fits_frame(value: &serde_json::Value, request_id: Option<&str>) -> bool {
+    let response = AgentEvent::ok(request_id, "get_message", Some(value.clone()));
+    response.to_json_line().len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET
 }
 
 fn bounded_range_end(
@@ -72,12 +71,13 @@ fn bounded_range_end(
     start: usize,
     requested_end: usize,
     content_len: usize,
+    request_id: Option<&str>,
 ) -> usize {
     let mut end = nearest_char_boundary_at_or_before(&msg.content, requested_end);
     if end == start && start < content_len {
         end = one_char_end(&msg.content, start);
     }
-    while end > start && !data_fits_frame(&ranged_value(msg, start, end, content_len)) {
+    while end > start && !data_fits_frame(&ranged_value(msg, start, end, content_len), request_id) {
         let midpoint = start + (end - start) / 2;
         end = nearest_char_boundary_at_or_before(&msg.content, midpoint);
         if end == start {
@@ -85,7 +85,7 @@ fn bounded_range_end(
             break;
         }
     }
-    if end > start && !data_fits_frame(&ranged_value(msg, start, end, content_len)) {
+    if end > start && !data_fits_frame(&ranged_value(msg, start, end, content_len), request_id) {
         // Metadata/tool-call overhead alone is too large for a success response.
         // Return an empty page rather than pretending progress is frame-safe; the
         // outer response guard will emit the explicit frame-limit error.
@@ -103,6 +103,15 @@ pub fn message_to_json_range(
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> serde_json::Value {
+    message_to_json_range_for_response(msg, offset, limit, None)
+}
+
+pub fn message_to_json_range_for_response(
+    msg: &Message,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    request_id: Option<&str>,
+) -> serde_json::Value {
     if offset.is_none() && limit.is_none() {
         return super::message_to_json(msg);
     }
@@ -112,6 +121,6 @@ pub fn message_to_json_range(
     let remaining = content_len.saturating_sub(start);
     let requested = limit.unwrap_or(remaining).min(remaining);
     let requested_end = start.saturating_add(requested).min(content_len);
-    let end = bounded_range_end(msg, start, requested_end, content_len);
+    let end = bounded_range_end(msg, start, requested_end, content_len, request_id);
     ranged_value(msg, start, end, content_len)
 }

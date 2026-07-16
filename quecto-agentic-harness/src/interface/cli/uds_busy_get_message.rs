@@ -52,7 +52,14 @@ pub(super) async fn service(
     // conversation still resolves to its full content (#1060 review 1a).
     let data = super::uds_snapshots::resolve_get_message(snapshot, &message_id)
         .await
-        .map(|msg| super::uds_session::message_to_json_range(&msg, offset, limit));
+        .map(|msg| {
+            super::uds_session::message_to_json_range_for_response(
+                &msg,
+                offset,
+                limit,
+                request_id.as_deref(),
+            )
+        });
     let event = match data {
         Some(data) => AgentEvent::ok(request_id.as_deref(), "get_message", Some(data)),
         None => AgentEvent::err(

@@ -336,8 +336,14 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
         let resolved =
             super::uds_snapshots::resolve_get_message(&ctx.conversation_snapshot, message_id)
                 .await
-                .map(|msg| super::uds_session::message_to_json_range(&msg, *offset, *limit));
-        let ev = match resolved.or_else(|| query_response_data(cmd, ctx)) {
+                .map(|msg| {
+                    super::uds_session::message_to_json_range_for_response(
+                        &msg, *offset, *limit, id,
+                    )
+                });
+        let ev = match resolved.or_else(|| {
+            super::uds_query::get_message_response_data(message_id, *offset, *limit, id, ctx)
+        }) {
             Some(data) => AgentEvent::ok(id, tn, Some(data)),
             None => AgentEvent::err(id, tn, format!("message not found: {message_id}")),
         };
