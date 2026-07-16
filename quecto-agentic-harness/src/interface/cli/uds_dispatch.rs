@@ -44,6 +44,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     if let AgentCommand::GetMessage {
         message_id,
         agent_id: Some(agent_id),
+        tool_call_id,
         offset,
         limit,
         id,
@@ -57,6 +58,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             ForwardGetMessage {
                 agent_id,
                 message_id,
+                tool_call_id: tool_call_id.as_deref(),
                 offset: *offset,
                 limit: *limit,
             },

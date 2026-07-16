@@ -473,6 +473,7 @@ impl App {
                 id: Some(req_id),
                 message_id: message_id.clone(),
                 agent_id: Some(agent_id.to_string()),
+                tool_call_id: None,
                 offset: Some(0),
                 limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
             });

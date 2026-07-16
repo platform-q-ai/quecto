@@ -1,5 +1,5 @@
 use super::{LONG_REQUEST_ID_REGRESSION_LEN, message_to_json_range_for_response};
-use crate::domain::message::Message;
+use crate::domain::message::{Message, ToolCall};
 use crate::interface::cli::protocol::AgentEvent;
 
 /// #1103 review: range fitting must include the actual response id, not a fixed
@@ -25,4 +25,47 @@ fn ranged_get_message_accounts_for_long_request_id() {
         "long request id should shrink the page, not return an empty page for simple content"
     );
     assert_eq!(data["hasMoreContent"].as_bool(), Some(true));
+}
+
+#[test]
+fn tool_call_argument_range_reassembles_utf8_payload_with_bounded_frames() {
+    let arguments = "λ".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+    let msg = Message::assistant(
+        "small content",
+        vec![ToolCall {
+            id: "call-large".into(),
+            name: "large_tool".into(),
+            arguments: arguments.clone(),
+        }],
+    );
+
+    let mut offset = 0usize;
+    let mut recovered = String::new();
+    loop {
+        let data = super::tool_call_arguments_to_json_range_for_response(
+            &msg,
+            "call-large",
+            Some(offset),
+            Some(64 * 1024),
+            Some("recover-tool-call"),
+        )
+        .expect("tool call exists");
+        let line = AgentEvent::ok(Some("recover-tool-call"), "get_message", Some(data.clone()))
+            .to_json_line();
+        assert!(
+            line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET,
+            "tool-call argument page must fit the protocol frame"
+        );
+        recovered.push_str(data["arguments"].as_str().expect("arguments page"));
+        assert_eq!(data["toolCallId"], "call-large");
+        assert_eq!(data["argumentsLength"], arguments.len());
+        if data["hasMoreArguments"] == false {
+            break;
+        }
+        let next = data["nextOffset"].as_u64().expect("next offset") as usize;
+        assert!(next > offset, "argument paging must make progress");
+        offset = next;
+    }
+
+    assert_eq!(recovered, arguments);
 }

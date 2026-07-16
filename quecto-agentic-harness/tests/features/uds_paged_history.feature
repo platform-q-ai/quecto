@@ -63,3 +63,30 @@ Feature: Paged history on connect and resume (ADR-0008 part 3)
     Given a client has received history containing a stubbed long message
     When the client requests the full message by its stable message reference
     Then the client should receive the full message content
+
+  @done @issue-1107 @persist
+  Scenario: Newest history remains safe to inspect when a recent message is very large
+    Given a persisted UDS session containing an oversized recent message
+    When a client requests the newest history page
+    Then the history response should remain safely bounded
+    And the oversized history message should be represented as a recoverable summary
+    And the client should know older history can be requested
+
+  @done @issue-1107 @persist
+  Scenario: Summarised oversized history remains recoverable by reference
+    Given a client has received history containing an oversized message summary
+    When the client requests the full message by its stable message reference
+    Then the client should reassemble the full oversized history message content
+
+  @done @issue-1107 @persist
+  Scenario: Oversized tool-call arguments remain recoverable from summarised history
+    Given a client has received summarised history containing oversized tool-call arguments
+    When the client pages each argument with its message and tool-call identifiers
+    Then the client should reassemble every full tool-call argument
+
+  @done @issue-1107 @persist
+  Scenario: Small history messages continue to arrive complete
+    Given a persisted UDS session containing only small recent messages
+    When a client requests the newest history page
+    Then each small history message should arrive complete
+    And no small history message should be represented as a summary

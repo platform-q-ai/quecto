@@ -31,6 +31,7 @@ pub(super) async fn intercept(ctx: BusyCommandCtx<'_>) -> bool {
 pub(super) struct ParsedGetMessage {
     pub(super) request_id: Option<String>,
     pub(super) message_id: String,
+    pub(super) tool_call_id: Option<String>,
     pub(super) offset: Option<usize>,
     pub(super) limit: Option<usize>,
 }
@@ -44,6 +45,7 @@ pub(super) async fn service(
     let ParsedGetMessage {
         request_id,
         message_id,
+        tool_call_id,
         offset,
         limit,
     } = parsed;
@@ -52,13 +54,22 @@ pub(super) async fn service(
     // conversation still resolves to its full content (#1060 review 1a).
     let data = super::uds_snapshots::resolve_get_message(snapshot, &message_id)
         .await
-        .map(|msg| {
-            super::uds_session::message_to_json_range_for_response(
+        .and_then(|msg| match tool_call_id.as_deref() {
+            Some(tool_call_id) => {
+                super::uds_session::tool_call_arguments_to_json_range_for_response(
+                    &msg,
+                    tool_call_id,
+                    offset,
+                    limit,
+                    request_id.as_deref(),
+                )
+            }
+            None => Some(super::uds_session::message_to_json_range_for_response(
                 &msg,
                 offset,
                 limit,
                 request_id.as_deref(),
-            )
+            )),
         });
     let event = match data {
         Some(data) => AgentEvent::ok(request_id.as_deref(), "get_message", Some(data)),
@@ -103,6 +114,10 @@ pub(super) fn parse(line: &str) -> Option<ParsedGetMessage> {
     }
     let message_id = value.get("messageId")?.as_str()?.to_string();
     let request_id = value.get("id").and_then(|v| v.as_str()).map(str::to_string);
+    let tool_call_id = value
+        .get("toolCallId")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     let offset = value
         .get("offset")
         .and_then(|v| v.as_u64())
@@ -114,6 +129,7 @@ pub(super) fn parse(line: &str) -> Option<ParsedGetMessage> {
     Some(ParsedGetMessage {
         request_id,
         message_id,
+        tool_call_id,
         offset,
         limit,
     })

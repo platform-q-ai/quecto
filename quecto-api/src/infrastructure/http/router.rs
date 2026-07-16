@@ -82,6 +82,8 @@ enum WsCommandRequest {
         #[serde(rename = "messageId")]
         message_id: String,
         agent_id: Option<String>,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: Option<String>,
         offset: Option<usize>,
         limit: Option<usize>,
     },
@@ -233,6 +235,7 @@ async fn message_handler<G: AgentGateway>(
         .send(AgentCommand::GetMessage {
             message_id: id,
             agent_id: params.agent_id,
+            tool_call_id: None,
             offset: params.offset,
             limit: params.limit,
         })
@@ -399,6 +402,7 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
                     id,
                     message_id,
                     agent_id,
+                    tool_call_id,
                     offset,
                     limit,
                 }) => {
@@ -406,6 +410,7 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
                         .send(AgentCommand::GetMessage {
                             message_id,
                             agent_id,
+                            tool_call_id,
                             offset,
                             limit,
                         })

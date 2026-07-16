@@ -1686,7 +1686,9 @@ fn wait_client_agent_end(world: &mut QuectoWorld, client_id: u32, timeout: Durat
             .get(&client_id)
             .cloned()
             .unwrap_or_default();
-        if events.iter().any(|l| l.contains(r#""type":"agent_end""#)) {
+        if events.iter().any(|line| {
+            line.contains(r#""type":"agent_end""#) || line.contains(r#""type":"workflow_idle""#)
+        }) {
             return;
         }
         if Instant::now() > deadline {

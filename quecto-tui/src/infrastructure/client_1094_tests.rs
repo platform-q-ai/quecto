@@ -8,6 +8,7 @@ fn command_get_message_range_serializes() {
         id: Some("gm-range".into()),
         message_id: "m2".into(),
         agent_id: Some("worker".into()),
+        tool_call_id: None,
         offset: Some(4096),
         limit: Some(8192),
     };

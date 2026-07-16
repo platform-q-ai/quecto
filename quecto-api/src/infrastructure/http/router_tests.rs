@@ -333,6 +333,7 @@ async fn message_handler_forwards_range_query_to_gateway() {
         AgentCommand::GetMessage {
             message_id,
             agent_id,
+            tool_call_id: None,
             offset,
             limit,
         } => {

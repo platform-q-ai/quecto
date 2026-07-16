@@ -224,7 +224,14 @@ pub enum AgentCommand {
         /// When set, forward lookup to a spawned child (same as get_messages).
         #[serde(skip_serializing_if = "Option::is_none")]
         agent_id: Option<String>,
-        /// Byte offset for ranged content recovery (#1094).
+        /// Select a tool call whose arguments should be recovered instead of message content.
+        #[serde(
+            rename = "toolCallId",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        tool_call_id: Option<String>,
+        /// Byte offset for ranged content or tool-call argument recovery (#1094/#1107).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         offset: Option<usize>,
         /// Maximum bytes of content to return for ranged recovery (#1094).

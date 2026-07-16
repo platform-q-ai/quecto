@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.92.2**.
+Current version: **0.92.3**.
 
 ## Quick Start
 
@@ -298,7 +298,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `follow_up` | `message`, optional `id` | Queue message for after current run completes; if idle, run it immediately |
 | `abort` | optional `id` | Cancel the current agent run |
 | `get_state` | optional `id` | Return session state (model, streaming, message count, and workflow snapshot when enabled) |
-| `get_messages` | optional `count`, optional `before`, optional `agent_id`, optional `id` | Return newest bounded history page; `count` requests an older-client newest slice, `before` pages backward, and `agent_id` targets a sub-agent. Responses include `messages`, `before`, and `hasMoreBefore` so older history is explicitly reachable. |
+| `get_messages` | optional `count`, optional `before`, optional `agent_id`, optional `id` | Return newest bounded history page; `count` requests an older-client newest slice, `before` pages backward, and `agent_id` targets a sub-agent. Responses include `messages`, `before`, and `hasMoreBefore` so older history is explicitly reachable. Oversized history entries are returned as recoverable summaries (`id`, role/tool metadata, preview `content`, `contentLength`, `collapsed: true`, `truncated: true`) and can be fetched deliberately with ranged `get_message`. |
 | `get_message` | `messageId`, optional `offset`, optional `limit`, optional `agent_id`, optional `id` | Return one stable message by id. With `offset`/`limit`, returns a bounded content byte range plus `nextOffset`, `contentLength`, and `hasMoreContent` so oversized messages can be paged without exceeding the frame cap; `agent_id` targets a sub-agent. |
 | `get_session_stats` | optional `id` | Return token usage and cost statistics |
 | `list_sessions` | optional `id` | Return persisted CLI sessions available for resume |

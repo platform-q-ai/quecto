@@ -3,11 +3,9 @@ use std::sync::Arc;
 use crate::domain::message::Message;
 use crate::domain::session::ContextSpillStore;
 
-use serde_json::value::RawValue;
-
 use super::protocol::{AgentEvent, SessionState};
 use super::uds::DispatchCtx;
-use super::uds_session::{HISTORY_PAGE_SIZE, MessageView, compute_session_stats_with_usage};
+use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, messages_page_json};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 
@@ -430,112 +428,21 @@ pub(super) async fn refresh_extension_snapshot(ctx: &DispatchCtx<'_>) {
 /// Build the connect-time `get_messages` snapshot line a BUSY child pushes.
 ///
 /// The `data.snapshot` marker tells callers the data may lag the in-flight turn
-/// (a live dispatch-loop reply has no such marker) (#842). History is bounded
-/// structurally by a count page and a reachable cursor; message CONTENT is
-/// never tailed or trimmed to satisfy the transport cap (#1062). When the
-/// default page overflows the frame budget, the page COUNT shrinks — whole
-/// messages move behind the advertised `before` cursor, staying reachable by
-/// normal backward paging. Only a single message too large to frame at all
-/// yields an explicit error.
+/// (a live dispatch-loop reply has no such marker) (#842). History uses the same
+/// byte-bounded page shaping as the live query path so a BUSY child with one
+/// oversized recent message still returns a recoverable summary (#1107).
 pub(crate) fn build_get_messages_line(messages: &[Message]) -> String {
-    // Serialize every message in the newest count-bounded page exactly once and
-    // embed those raw values directly in the response (#994).
-    let default_start = messages.len().saturating_sub(HISTORY_PAGE_SIZE);
-    let raws: Vec<Box<RawValue>> = messages
-        .iter()
-        .skip(default_start)
-        .map(|m| {
-            serde_json::value::to_raw_value(&MessageView(m)).unwrap_or_else(|_| {
-                RawValue::from_string("null".to_string()).expect("null literal")
-            })
-        })
-        .collect();
-    // Structural page shrink: keep the newest suffix whose serialized page fits
-    // the frame budget. Everything dropped remains reachable via the cursor —
-    // whole messages are re-paged, no content is reshaped (#1062). The suffix
-    // is sized in ONE pass from each raw value's exact serialized length
-    // (element bytes embed verbatim; +1 per array separator), so the page is
-    // serialized once, not once per dropped message.
-    const ENVELOPE_HEADROOM: usize = 512; // response envelope + cursor fields
-    let budget =
-        crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET.saturating_sub(ENVELOPE_HEADROOM);
-    let mut total = 0usize;
-    let mut keep_from = raws.len();
-    for (i, rv) in raws.iter().enumerate().rev() {
-        let sz = rv.get().len() + 1;
-        if total + sz > budget {
-            break;
+    let mut data = messages_page_json(messages, HISTORY_PAGE_SIZE, None);
+    if let Some(obj) = data.as_object_mut() {
+        if obj.get("before").is_some_and(serde_json::Value::is_null) {
+            obj.remove("before");
         }
-        total += sz;
-        keep_from = i;
+        obj.insert("snapshot".into(), serde_json::json!(true));
     }
-    let page_start = default_start + keep_from;
-    let kept = &raws[keep_from..];
-    if kept.is_empty() && !messages.is_empty() {
-        // A lone message too large to frame at all: fail explicitly rather
-        // than reshape its content (#1062).
-        tracing::warn!(
-            cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
-            "rejecting oversized busy get_messages snapshot"
-        );
-        let mut line = AgentEvent::err(
-            None,
-            "get_messages",
-            "history page exceeds the protocol frame limit; request a smaller page",
-        )
-        .to_json_line();
-        line.push('\n');
-        return line;
-    }
-    if keep_from > 0 {
-        tracing::warn!(
-            dropped = keep_from,
-            kept = kept.len(),
-            "busy get_messages snapshot page shrunk to fit the frame budget; \
-             older messages remain reachable via the before cursor"
-        );
-    }
-    let has_more_before = page_start > 0;
-    let before = has_more_before.then(|| messages[page_start].id().to_string());
-    let line_body = GetMessagesSnapshot::Response {
-        command: "get_messages",
-        success: true,
-        data: GetMessagesData {
-            messages: kept,
-            snapshot: true,
-            before: before.as_deref(),
-            has_more_before,
-        },
-    };
-    let mut line =
-        serde_json::to_string(&line_body).expect("get_messages snapshot is always serializable");
+    let mut line = AgentEvent::ok(None, "get_messages", Some(data)).to_json_line();
     debug_assert!(line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
     line.push('\n');
     line
-}
-
-/// Serializes byte-identically (modulo key order) to
-/// `AgentEvent::ok(None, "get_messages", Some(data))`, but embeds the
-/// pre-serialized message `RawValue`s directly so each message is serialized at
-/// most once (#994).
-#[derive(serde::Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum GetMessagesSnapshot<'a> {
-    Response {
-        command: &'a str,
-        success: bool,
-        data: GetMessagesData<'a>,
-    },
-}
-
-#[derive(serde::Serialize)]
-struct GetMessagesData<'a> {
-    messages: &'a [Box<RawValue>],
-    snapshot: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    before: Option<&'a str>,
-    #[serde(rename = "hasMoreBefore")]
-    has_more_before: bool,
 }
 
 /// Build the connect-time `get_subagents` snapshot line a BUSY child pushes.

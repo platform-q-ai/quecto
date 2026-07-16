@@ -146,6 +146,7 @@ fn get_message_command_is_available_for_on_demand_lookup() {
             id: Some("gm-req-1".into()),
             message_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
             agent_id: None,
+            tool_call_id: None,
             offset: None,
             limit: None,
         },

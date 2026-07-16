@@ -180,6 +180,18 @@ fn get_message_range_request_round_trips_wire_fields() {
 }
 
 #[test]
+fn get_message_tool_call_argument_range_round_trips_selector() {
+    let json = r#"{"type":"get_message","id":"gm-tool-page","messageId":"msg-1","toolCallId":"call-1","offset":7,"limit":11}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+
+    let wire = serde_json::to_value(&cmd).unwrap();
+    assert_eq!(wire["messageId"], "msg-1");
+    assert_eq!(wire["toolCallId"], "call-1");
+    assert_eq!(wire["offset"], 7);
+    assert_eq!(wire["limit"], 11);
+}
+
+#[test]
 fn get_message_range_request_preserves_agent_target() {
     let json = r#"{"type":"get_message","id":"gm-child-page","messageId":"msg-2","agent_id":"worker","offset":12,"limit":34}"#;
     let cmd: AgentCommand = serde_json::from_str(json).unwrap();

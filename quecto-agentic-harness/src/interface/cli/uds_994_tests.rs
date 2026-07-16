@@ -438,6 +438,7 @@ fn issue_1060_busy_reader_parses_only_un_targeted_get_message() {
         Some(super::super::uds_busy_get_message::ParsedGetMessage {
             request_id: Some("r1".into()),
             message_id: "m1".into(),
+            tool_call_id: None,
             offset: None,
             limit: None
         })

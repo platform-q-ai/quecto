@@ -79,6 +79,7 @@ impl AgentGateway for MockGateway {
                 AgentCommand::GetMessagesTail { .. } => "get_messages_tail",
                 AgentCommand::GetMessage {
                     message_id,
+                    tool_call_id: _,
                     offset,
                     limit,
                     ..
