@@ -131,6 +131,8 @@ fn test_definition() {
     assert_eq!(def.name, "spawn");
     assert!(!def.description.is_empty());
     assert!(def.description.contains("agent_cmd"));
+    assert!(def.description.contains("get_messages"));
+    assert!(!def.description.contains("get_messages_tail"));
 }
 
 #[test]

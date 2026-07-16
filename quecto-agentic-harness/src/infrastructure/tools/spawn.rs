@@ -534,7 +534,7 @@ impl SpawnTool {
 
         // If the caller provided an initial task, send it as the first prompt.
         // Fire-and-forget: the child acks the prompt internally, but we don't
-        // read the response here. Use agent_cmd get_messages_tail to check output.
+        // read the response here. Use agent_cmd get_messages to check output.
         if let Some(ref task) = config.task {
             self.send_initial_prompt(&socket_path, task).await?;
         }
@@ -609,8 +609,9 @@ impl Tool for SpawnTool {
                 completion note — non-blocking, entering your context at your NEXT turn \
                 (no manual await needed). Multiple completions are deduped/coalesced \
                 into a single note. The note is a summary only — use agent_cmd \
-                get_messages_tail or get_messages to read the child's full output. \
-                Blocking via agent_cmd command=await is OPTIONAL: use it only when you \
+                get_messages (with count for the last N messages, or before to page older \
+                history) to read the child's output. Blocking via agent_cmd command=await is \
+                OPTIONAL: use it only when you \
                 must wait synchronously (same turn) until the child reaches \
                 idle/exited/timeout/error before continuing."
                 .into(),
