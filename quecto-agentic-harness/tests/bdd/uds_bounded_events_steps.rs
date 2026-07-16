@@ -7,7 +7,6 @@
 
 use super::*;
 use quecto::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
-use quecto::interface::cli::uds_session::message_to_json_range;
 use quecto_line_io::PROTOCOL_FRAME_CAP_BYTES;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -78,95 +77,137 @@ fn issue_1094_body() -> String {
 
 fn seed_oversized_message(world: &mut QuectoWorld) {
     let content = issue_1094_body();
-    let mut msg = Message::assistant(content.clone(), vec![]);
-    msg.content = content.clone();
-    let id = message_to_json_range(&msg, None, None)
-        .get("id")
-        .and_then(|v| v.as_str())
-        .expect("message view carries id")
-        .to_string();
-    world._bounded_recorded_ref = Some(id);
+    mount_sequential_text_responses(world, &[(&content, Duration::ZERO)]);
     world._bounded_expected_body = Some(content);
-    world._bounded_oversized_message = Some(msg);
+    world.mc_mode = true;
+    world.no_session = true;
+    world._mc_persist = true;
+    if !world.mc_connected_clients.contains(&1) {
+        world.mc_connected_clients.push(1);
+    }
+    world
+        .mc_client_commands
+        .entry(1)
+        .or_default()
+        .push(serde_json::json!({"type":"prompt","message":"seed oversized prior"}).to_string());
+
+    drive_mc_first_turn_keep_alive(world);
+    let refs = completed_turn_refs(world, 1);
+    assert_eq!(
+        refs.len(),
+        1,
+        "oversized seed should create exactly one assistant message ref; got {refs:?}"
+    );
+    world._bounded_recorded_ref = refs.first().cloned();
+    world._bounded_message_refs = refs;
 }
 
-fn response_for_oversized_message(
-    world: &QuectoWorld,
+fn completed_turn_refs(world: &QuectoWorld, client_id: u32) -> Vec<String> {
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .cloned()
+        .unwrap_or_default();
+    let parsed = parse_events(&events);
+    let mut refs = Vec::new();
+    for ty in ["turn_end", "agent_end"] {
+        for event in events_of_type(&parsed, ty) {
+            refs.extend(non_empty_refs(event));
+        }
+    }
+    refs.sort();
+    refs.dedup();
+    assert!(
+        !refs.is_empty(),
+        "expected completed turn to emit message refs; events: {events:#?}"
+    );
+    refs
+}
+
+fn read_matching_response(
+    world: &mut QuectoWorld,
+    client_id: u32,
     request_id: &str,
-    offset: usize,
+    timeout: Duration,
 ) -> serde_json::Value {
-    let msg = world
-        ._bounded_oversized_message
-        .as_ref()
-        .expect("oversized message not seeded");
-    serde_json::json!({
-        "type": "response",
-        "id": request_id,
-        "command": "get_message",
-        "success": true,
-        "data": message_to_json_range(msg, Some(offset), Some(EVENT_LINE_CAP_BYTES / 2)),
-    })
+    let deadline = Instant::now() + timeout;
+    loop {
+        drain_client_events(world, client_id, Duration::from_millis(100));
+        let events = world
+            .mc_client_events
+            .get(&client_id)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(response) = events.iter().rev().find_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            (value.get("type").and_then(|v| v.as_str()) == Some("response")
+                && value.get("id").and_then(|v| v.as_str()) == Some(request_id))
+            .then_some(value)
+        }) {
+            return response;
+        }
+        assert!(
+            Instant::now() <= deadline,
+            "timeout waiting for response id={request_id}; events: {events:#?}"
+        );
+    }
 }
 
 fn collect_paged_oversized_response(world: &mut QuectoWorld) {
-    let mut responses = Vec::new();
     let client_id = if world._mc_live_busy { 2 } else { 1 };
     world._bounded_oversized_client_id = Some(client_id);
-    world._mc_live_streams.entry(client_id).or_insert_with(|| {
-        let (client, mut server) = UnixStream::pair().expect("create connection probe stream");
-        std::thread::spawn(move || {
-            let mut reader = BufReader::new(server.try_clone().expect("clone probe stream"));
-            let mut line = String::new();
-            while reader.read_line(&mut line).unwrap_or(0) > 0 {
-                if line.contains("oversized-connection-probe") {
-                    let _ = writeln!(
-                        server,
-                        "{}",
-                        serde_json::json!({
-                            "type": "response",
-                            "id": "oversized-connection-probe",
-                            "command": "get_state",
-                            "success": true,
-                            "data": {"isStreaming": false},
-                        })
-                    );
-                    let _ = server.flush();
-                    break;
-                }
-                line.clear();
-            }
-        });
-        client
-    });
+    if !world._mc_live_streams.contains_key(&client_id) {
+        connect_client_live(world, client_id);
+    }
+    let mid = world
+        ._bounded_recorded_ref
+        .clone()
+        .expect("oversized message ref not seeded");
+    world._bounded_get_message_responses.clear();
     let mut offset = 0usize;
-    for idx in 0..8 {
+    for idx in 0..16 {
+        let request_id = format!("oversized-page-{idx}");
+        let cmd = serde_json::json!({
+            "type": "get_message",
+            "id": request_id,
+            "messageId": mid,
+            "offset": offset,
+            "limit": EVENT_LINE_CAP_BYTES / 2,
+        });
+        let stream = world
+            ._mc_live_streams
+            .get_mut(&client_id)
+            .expect("live UDS client stream for oversized get_message");
+        writeln!(stream, "{cmd}").expect("write get_message command");
+        stream.flush().expect("flush get_message command");
+
         let response =
-            response_for_oversized_message(world, &format!("oversized-page-{idx}"), offset);
-        let line = serde_json::to_string(&response).expect("response serializes");
-        assert!(
-            line.len() <= EVENT_LINE_CAP_BYTES,
-            "oversized get_message response page exceeded frame cap: {} > {}",
-            line.len(),
-            EVENT_LINE_CAP_BYTES
+            read_matching_response(world, client_id, &request_id, Duration::from_secs(5));
+        assert_eq!(
+            response.get("success").and_then(|v| v.as_bool()),
+            Some(true),
+            "paged get_message should succeed: {response}"
         );
-        let next = response
-            .get("data")
-            .and_then(|d| d.get("nextOffset"))
+        let data = response.get("data").expect("get_message response data");
+        assert_eq!(data.get("id").and_then(|v| v.as_str()), Some(mid.as_str()));
+        let next = data
+            .get("nextOffset")
             .and_then(|v| v.as_u64())
-            .expect("nextOffset") as usize;
-        let has_more = response
-            .get("data")
-            .and_then(|d| d.get("hasMoreContent"))
+            .map(|v| v as usize);
+        let has_more = data
+            .get("hasMoreContent")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        responses.push(response);
+        world._bounded_get_message_responses.push(response);
         if !has_more {
             break;
         }
+        let Some(next) = next else {
+            panic!("paged get_message response with hasMoreContent lacked nextOffset");
+        };
         assert!(next > offset, "paged get_message must make progress");
         offset = next;
     }
-    world._bounded_get_message_responses = responses;
 }
 
 fn reassembled_oversized_content(world: &QuectoWorld) -> String {
@@ -287,11 +328,9 @@ fn mount_sequential_text_responses(world: &mut QuectoWorld, bodies: &[(&str, Dur
     rt.block_on(async {
         let server = wiremock::MockServer::start().await;
         let new_uri = server.uri();
-        // Mount in reverse priority so earlier responses win first N times.
-        // wiremock: higher priority number = lower priority; first match wins.
-        // Use up_to_n_times(1) with decreasing priority for ordered consumption.
-        for (i, (content, delay)) in bodies.iter().enumerate() {
-            let priority = (bodies.len() - i) as u64 + 1;
+        // Mount the fallback first, then one-shot responses in reverse order so
+        // the first scenario response is the most recently registered match.
+        for (i, (content, delay)) in bodies.iter().enumerate().rev() {
             let mut tmpl =
                 wiremock::ResponseTemplate::new(200).set_body_json(openai_text_body(content));
             if !delay.is_zero() {
@@ -299,8 +338,7 @@ fn mount_sequential_text_responses(world: &mut QuectoWorld, bodies: &[(&str, Dur
             }
             let mut mock = wiremock::Mock::given(wiremock::matchers::method("POST"))
                 .and(wiremock::matchers::path("/chat/completions"))
-                .respond_with(tmpl)
-                .with_priority(priority as u8);
+                .respond_with(tmpl);
             // Last response stays mounted forever; earlier ones are one-shot.
             if i + 1 < bodies.len() {
                 mock = mock.up_to_n_times(1);
@@ -494,10 +532,27 @@ fn when_request_oversized_message_by_ref(world: &mut QuectoWorld) {
 #[given("the agent is processing a later turn")]
 #[when("the agent is processing a later turn")]
 fn when_agent_processing_later_turn(world: &mut QuectoWorld) {
-    // The busy-path implementation is pinned by unit coverage. This BDD state
-    // records the behavioural condition while the response assertions below use
-    // the same bounded response contract as the busy resolver.
     world._mc_live_busy = true;
+    if world._mc_live_socket.is_none() {
+        drive_mc_start_and_connect(world, &[1]);
+    }
+    if !world._mc_live_streams.contains_key(&1) {
+        connect_client_live(world, 1);
+    }
+    let body = world
+        ._bounded_expected_body
+        .clone()
+        .unwrap_or_else(|| "later turn".to_string());
+    mount_sequential_text_responses(world, &[("later turn", Duration::from_secs(3))]);
+    world._bounded_expected_body = Some(body);
+    let cmd = serde_json::json!({"type":"prompt","message":"slow later turn"});
+    let stream = world
+        ._mc_live_streams
+        .get_mut(&1)
+        .expect("client 1 live stream for later turn");
+    writeln!(stream, "{cmd}").expect("write later-turn prompt");
+    stream.flush().expect("flush later-turn prompt");
+    std::thread::sleep(Duration::from_millis(200));
 }
 
 #[when("another client requests the oversized message by its stable reference")]

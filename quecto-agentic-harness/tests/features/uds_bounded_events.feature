@@ -163,7 +163,9 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
 
   @done @issue-1094 @adr-0008-part2 @persist
   Scenario: An oversized prior message is recoverable after the agent is idle
-    Given an idle persisted agent session containing an oversized prior assistant message
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And an idle persisted agent session containing an oversized prior assistant message
     When I request the oversized message by its stable reference
     Then every oversized-message response fragment should stay within the protocol frame cap
     And the response fragments should reassemble the full message content
@@ -171,7 +173,9 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
 
   @done @issue-1094 @adr-0008-part2 @multi-client @persist
   Scenario: An oversized prior message is recoverable while a later turn is in flight
-    Given a persisted agent session contains an oversized prior assistant message
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And a persisted agent session contains an oversized prior assistant message
     And the agent is processing a later turn
     When another client requests the oversized message by its stable reference
     Then every oversized-message response fragment received by that client should stay within the protocol frame cap
