@@ -446,7 +446,7 @@ async fn main() {
     ApiWorld::cucumber()
         .max_concurrent_scenarios(1) // serial — each scenario starts its own server
         .filter_run("tests/features", move |feat, _, sc| {
-            if sc.tags.iter().any(|t| t == "wip") {
+            if sc.tags.contains(&String::from("wip")) {
                 return false;
             }
             if let Some(ref tag) = tag_filter {
