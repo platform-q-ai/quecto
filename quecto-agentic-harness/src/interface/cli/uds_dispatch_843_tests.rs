@@ -388,8 +388,63 @@ async fn forward_tail_unknown_agent_is_error_event() {
 }
 
 // #1060: the singular `forward_subagent_get_message` (child ref lookup) must
-// share the plural's error semantics. The happy path needs a live child socket
-// (covered by the @wip cross-process BDD); its error paths are unit-testable.
+// share the plural's error semantics.
+#[tokio::test]
+async fn forward_get_message_preserves_id_and_range_on_child_wire() {
+    use tokio::io::{AsyncWriteExt, BufReader};
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("child-get-message.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+    let received = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
+    let recorded = received.clone();
+    let handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        let mut reader = BufReader::new(read_half);
+        let line = crate::infrastructure::test_support::read_framed_command_async(&mut reader)
+            .await
+            .unwrap();
+        *recorded.lock().await = line.clone();
+        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let child_id = request["id"].as_str().unwrap();
+        let reply = format!(
+            "{{\"type\":\"response\",\"id\":\"{child_id}\",\"command\":\"get_message\",\"success\":true,\"data\":{{\"id\":\"m1\",\"content\":\"page\",\"offset\":4096,\"nextOffset\":4100,\"contentLength\":4100,\"hasMoreContent\":false}}}}\n"
+        );
+        write_half.write_all(reply.as_bytes()).await.unwrap();
+    });
+    let registry = new_registry();
+    register_child(&registry, "worker", sock);
+    let mut fx = Fx::new();
+    let mut ctx = fx.ctx();
+    ctx.subagent_registry = Some(registry);
+
+    let event = forward_subagent_get_message(
+        &ctx,
+        Some("parent-page"),
+        "get_message",
+        ForwardGetMessage {
+            agent_id: "worker",
+            message_id: "m1",
+            offset: Some(4096),
+            limit: Some(8192),
+        },
+    )
+    .await;
+    handle.await.unwrap();
+
+    let command: serde_json::Value = serde_json::from_str(&received.lock().await).unwrap();
+    assert!(
+        command["id"].as_str().is_some_and(|id| !id.is_empty()),
+        "forwarding transport must stamp a child correlation id"
+    );
+    assert_eq!(command["messageId"], "m1");
+    assert_eq!(command["offset"], 4096);
+    assert_eq!(command["limit"], 8192);
+    let response = serde_json::to_value(event).unwrap();
+    assert_eq!(response["success"], true);
+    assert_eq!(response["id"], "parent-page");
+}
+
 #[tokio::test]
 async fn forward_get_message_no_registry_is_error_event() {
     let mut fx = Fx::new();

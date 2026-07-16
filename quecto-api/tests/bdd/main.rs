@@ -228,8 +228,10 @@ async fn connect_websocket(world: &mut ApiWorld) {
 async fn request_oversized_message_via_websocket(world: &mut ApiWorld) {
     let mut offset = 0usize;
     loop {
+        let request_id = format!("oversized-page-{offset}");
         let request = serde_json::json!({
             "type": "get_message",
+            "id": request_id,
             "messageId": OVERSIZED_REF,
             "offset": offset,
             "limit": quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 2,
@@ -245,6 +247,11 @@ async fn request_oversized_message_via_websocket(world: &mut ApiWorld) {
             .expect("websocket frame ok");
         let text = msg.into_text().expect("text response");
         let response: serde_json::Value = serde_json::from_str(&text).expect("json response");
+        assert_eq!(
+            response.get("id").and_then(|value| value.as_str()),
+            Some(request_id.as_str()),
+            "each WebSocket page must preserve its caller correlation id"
+        );
         let data = response.get("data").expect("response data");
         world.ws_reassembled.push_str(
             data.get("content")

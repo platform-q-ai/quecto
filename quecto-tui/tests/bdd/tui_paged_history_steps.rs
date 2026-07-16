@@ -28,6 +28,7 @@ pub struct PagedHistoryState {
     pub(super) child_commands: Option<tokio::sync::mpsc::Receiver<String>>,
     pub(super) stub_id: Option<String>,
     pub(super) stub_full: Option<String>,
+    pub(super) recalled_full: Option<String>,
     pub(super) expected_send_failures: usize,
     pub(super) observed_send_failures: usize,
     pub(super) stale_page_request_id: Option<String>,
@@ -491,43 +492,66 @@ fn when_request_stub_full(world: &mut TuiWorld) {
     assert_eq!(message_id, world.tui_paged.stub_id.clone().unwrap());
     let full = world.tui_paged.stub_full.clone().unwrap();
     if message_id == "oversized-stub" {
-        drive(world, |h| {
-            h.event(Event::Response {
-                id: Some(req_id),
-                command: "get_message".into(),
-                success: true,
-                data: Some(serde_json::json!({"id": message_id, "role": "assistant",
-                    "content": &full[..12], "offset": 0, "nextOffset": 12,
-                    "contentLength": full.len(), "hasMoreContent": true})),
-                error: None,
+        let page_bytes = quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 4;
+        let mut offset = 0usize;
+        let mut request_id = req_id;
+        let mut pages = 0usize;
+        while offset < full.len() {
+            let end = offset.saturating_add(page_bytes).min(full.len());
+            let data = serde_json::json!({
+                "id": message_id,
+                "role": "assistant",
+                "content": &full[offset..end],
+                "offset": offset,
+                "nextOffset": end,
+                "contentLength": full.len(),
+                "hasMoreContent": end < full.len(),
             });
-        });
-        let cmds = drain(world);
-        let (req_id, message_id) = cmds
-            .iter()
-            .find_map(|line| {
-                let v: serde_json::Value = serde_json::from_str(line).ok()?;
-                (v.get("type").and_then(|t| t.as_str()) == Some("get_message")
-                    && v.get("offset").and_then(|o| o.as_u64()) == Some(12))
-                .then(|| {
-                    (
-                        v.get("id").unwrap().as_str().unwrap().to_string(),
-                        v.get("messageId").unwrap().as_str().unwrap().to_string(),
-                    )
-                })
+            let encoded = serde_json::json!({
+                "type": "response",
+                "id": request_id.clone(),
+                "command": "get_message",
+                "success": true,
+                "data": data.clone(),
             })
-            .expect("partial oversized recall should request the next page");
-        drive(world, |h| {
-            h.event(Event::Response {
-                id: Some(req_id),
-                command: "get_message".into(),
-                success: true,
-                data: Some(serde_json::json!({"id": message_id, "role": "assistant",
-                    "content": &full[12..], "offset": 12, "nextOffset": full.len(),
-                    "contentLength": full.len(), "hasMoreContent": false})),
-                error: None,
+            .to_string();
+            assert!(
+                encoded.len() < quecto_line_io::PROTOCOL_LINE_CAP_BYTES,
+                "synthetic TUI page must stay below the protocol cap"
+            );
+            drive(world, |h| {
+                h.event(Event::Response {
+                    id: Some(request_id),
+                    command: "get_message".into(),
+                    success: true,
+                    data: Some(data),
+                    error: None,
+                });
             });
-        });
+            pages += 1;
+            offset = end;
+            if offset == full.len() {
+                break;
+            }
+            let cmds = drain(world);
+            let next = cmds
+                .iter()
+                .find_map(|line| {
+                    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+                    (value.get("type").and_then(|v| v.as_str()) == Some("get_message")
+                        && value.get("offset").and_then(|v| v.as_u64()) == Some(offset as u64))
+                    .then_some(value)
+                })
+                .expect("partial oversized recall should request the next bounded page");
+            assert_eq!(
+                next.get("limit").and_then(|v| v.as_u64()),
+                Some(page_bytes as u64),
+                "every follow-up must retain the bounded page size"
+            );
+            request_id = next["id"].as_str().unwrap().to_string();
+        }
+        assert!(pages >= 3, "oversized fixture must exercise multiple pages");
+        world.tui_paged.recalled_full = Some(full);
         return;
     }
     drive(world, |h| {
@@ -694,10 +718,18 @@ fn then_old_cursor_not_requested(world: &mut TuiWorld) {
 fn then_stub_replaced(world: &mut TuiWorld) {
     let full = world.tui_paged.stub_full.clone().unwrap();
     let frame = active_chat_text(world);
-    assert!(
-        frame.contains(&full),
-        "recalled content must replace the stub:\n{frame}"
-    );
+    if full.len() > quecto_line_io::PROTOCOL_LINE_CAP_BYTES {
+        assert_eq!(
+            world.tui_paged.recalled_full.as_deref(),
+            Some(full.as_str()),
+            "all oversized pages must be reassembled exactly"
+        );
+    } else {
+        assert!(
+            frame.contains(&full),
+            "recalled content must replace the stub:\n{frame}"
+        );
+    }
     assert!(
         !frame.contains("recall available"),
         "the stub body must be gone after recall:\n{frame}"

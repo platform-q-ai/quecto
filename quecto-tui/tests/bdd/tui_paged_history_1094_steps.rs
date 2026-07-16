@@ -8,7 +8,11 @@ use crate::tui_paged_history_steps::{
 #[given("the TUI is attached to a session containing an oversized history message")]
 fn given_attached_oversized_stub(world: &mut TuiWorld) {
     init_harness(world);
-    let full = "abcdefghijklmnopqrstuvwxyz".to_string();
+    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let full: String = (0..quecto_line_io::PROTOCOL_LINE_CAP_BYTES + 1024)
+        .map(|idx| ALPHABET[idx % ALPHABET.len()] as char)
+        .collect();
+    let full_len = full.len();
     world.tui_paged = PagedHistoryState {
         page_size: 3,
         stub_id: Some("oversized-stub".into()),
@@ -23,7 +27,7 @@ fn given_attached_oversized_stub(world: &mut TuiWorld) {
                 "role": "assistant",
                 "content": "[assistant stub — recall available]",
                 "collapsed": true,
-                "contentLength": 26,
+                "contentLength": full_len,
             },
         ],
         "before": null,
@@ -36,11 +40,14 @@ fn given_attached_oversized_stub(world: &mut TuiWorld) {
 
 #[then("the TUI should retrieve the oversized history message without disconnecting")]
 fn then_oversized_retrieve_without_disconnect(world: &mut TuiWorld) {
-    let full = world.tui_paged.stub_full.clone().unwrap();
+    assert_eq!(
+        world.tui_paged.recalled_full, world.tui_paged.stub_full,
+        "all bounded pages must be delivered and reassembled exactly"
+    );
     let frame = active_chat_text(world);
     assert!(
-        frame.contains(&full),
-        "oversized recalled content should be visible without disconnecting:\n{frame}"
+        !frame.contains("recall available"),
+        "the recalled body must replace the collapsed stub"
     );
 }
 

@@ -62,7 +62,10 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             },
         )
         .await;
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        // The child sizes the page with the forwarded correlation id, but
+        // still guard the final parent envelope so no response can disappear
+        // through the generic oversized-event drop path.
+        super::emit_response_or_frame_limit_error(ctx, id.as_deref(), tn, ev).await;
         return false;
     }
     // Fast path: queries + clear_history (defers id/type_name clones).
