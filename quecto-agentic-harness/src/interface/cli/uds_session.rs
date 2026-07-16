@@ -400,46 +400,10 @@ pub fn compute_session_stats_with_usage(
     }
 }
 
-pub(crate) use super::protocol::HISTORY_PAGE_SIZE;
-
-/// Locate a message by its stable wire id (a stringified UUID). Parses the id
-/// ONCE and compares typed UUIDs instead of allocating a `to_string` per
-/// candidate (#1061 review). A non-UUID id matches nothing, so `None`.
-pub(crate) fn position_by_wire_id(messages: &[Message], wire_id: &str) -> Option<usize> {
-    let target = uuid::Uuid::parse_str(wire_id).ok()?;
-    messages.iter().position(|m| m.id() == target)
-}
-
-/// Return a JSON value containing the selected history window in chronological order.
-///
-/// `count: 0` keeps the legacy empty-page contract and reports no cursor (the
-/// cursor names the oldest INCLUDED message, which an empty window lacks).
-pub fn messages_page_json(
-    messages: &[Message],
-    count: usize,
-    before: Option<&str>,
-) -> serde_json::Value {
-    let end = before
-        .and_then(|cursor| position_by_wire_id(messages, cursor))
-        .unwrap_or(messages.len());
-    // Default callers supply HISTORY_PAGE_SIZE; an explicit `count` retains the
-    // legacy "last N" contract (including counts above one page).
-    let start = end.saturating_sub(count);
-    let msgs_json: Vec<serde_json::Value> =
-        messages[start..end].iter().map(message_to_json).collect();
-    let has_more_before = count > 0 && start > 0;
-    let before_cursor = has_more_before.then(|| messages[start].id().to_string());
-    serde_json::json!({
-        "messages": msgs_json,
-        "before": before_cursor,
-        "hasMoreBefore": has_more_before,
-    })
-}
-
-/// Return a JSON value containing the last `count` messages in chronological order.
-pub fn messages_tail_json(messages: &[Message], count: usize) -> serde_json::Value {
-    messages_page_json(messages, count, None)
-}
+#[path = "uds_session_history.rs"]
+pub(crate) mod uds_session_history;
+pub(crate) use uds_session_history::{HISTORY_PAGE_SIZE, position_by_wire_id};
+pub use uds_session_history::{messages_page_json, messages_tail_json};
 
 /// Static wire name for a role — no per-message throwaway `String` allocation
 /// (previously `format!("{:?}", role).to_lowercase()`, two heap allocs) (#994).

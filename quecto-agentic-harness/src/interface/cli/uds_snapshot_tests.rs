@@ -311,11 +311,10 @@ fn build_get_messages_line_pages_history_without_trimming() {
 }
 
 #[test]
-fn build_get_messages_line_shrinks_the_page_structurally_when_over_budget() {
-    // Each message is large enough that a full default page exceeds the frame
-    // budget; the snapshot must shrink the page COUNT (whole messages behind
-    // the cursor) rather than reshape content or fail the call.
-    let body = "x".repeat(quecto_line_io::PROTOCOL_LINE_CAP_BYTES / HISTORY_PAGE_SIZE + 1024);
+fn build_get_messages_line_summarises_oversized_busy_history() {
+    // Each message is large enough that a full default page used to exceed the
+    // frame budget; the busy snapshot now shares the live history summary policy.
+    let body = "x".repeat(quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
     let messages: Vec<Message> = (0..HISTORY_PAGE_SIZE)
         .map(|i| Message::assistant(format!("{i}-{body}"), vec![]))
         .collect();
@@ -326,36 +325,42 @@ fn build_get_messages_line_shrinks_the_page_structurally_when_over_budget() {
     assert_eq!(v["success"], true);
     let page = v["data"]["messages"].as_array().unwrap();
     assert!(!page.is_empty(), "the newest messages must be served");
-    assert!(
-        page.len() < HISTORY_PAGE_SIZE,
-        "the page must shrink structurally"
+    let last = page.last().unwrap();
+    assert_eq!(last["collapsed"], true);
+    assert_eq!(last["truncated"], true);
+    assert_eq!(
+        last["contentLength"],
+        format!("{}-{body}", HISTORY_PAGE_SIZE - 1).len()
     );
-    // Newest message retained whole — content is never reshaped.
-    let last = page.last().unwrap()["content"].as_str().unwrap();
-    assert_eq!(last, format!("{}-{body}", HISTORY_PAGE_SIZE - 1));
-    // Every omitted older message stays reachable via the advertised cursor.
-    assert_eq!(v["data"]["hasMoreBefore"], true);
-    let first_kept = HISTORY_PAGE_SIZE - page.len();
-    assert_eq!(v["data"]["before"], messages[first_kept].id().to_string());
+    assert!(
+        last["content"].as_str().unwrap().len() < body.len(),
+        "busy snapshot should send a bounded preview, not the full oversized body"
+    );
+    if page.len() < HISTORY_PAGE_SIZE {
+        assert_eq!(v["data"]["hasMoreBefore"], true);
+        assert!(v["data"]["before"].as_str().is_some());
+    }
     assert!(v["data"].get("trimmed").is_none());
 }
 
 #[test]
-fn build_get_messages_line_rejects_a_lone_unframeable_message_with_a_small_error() {
-    // A single message that alone exceeds the frame budget has no smaller
-    // structural page; the call must fail explicitly, never reshape content.
+fn build_get_messages_line_summarises_a_lone_unframeable_message() {
     let huge = "x".repeat(quecto_line_io::PROTOCOL_LINE_CAP_BYTES + 1024 * 1024);
-    let line = build_get_messages_line(&[Message::assistant(huge, vec![])]);
+    let line = build_get_messages_line(&[Message::assistant(huge.clone(), vec![])]);
     assert!(line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
     let response: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(response["type"], "response");
     assert_eq!(response["command"], "get_messages");
-    assert_eq!(response["success"], false);
+    assert_eq!(response["success"], true);
+    let messages = response["data"]["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1);
+    let summary = &messages[0];
+    assert_eq!(summary["collapsed"], true);
+    assert_eq!(summary["truncated"], true);
+    assert_eq!(summary["contentLength"], huge.len());
     assert!(
-        response["error"]
-            .as_str()
-            .is_some_and(|message| message.contains("frame limit")),
-        "an unframeable snapshot must be rejected explicitly: {response}"
+        summary["id"].as_str().is_some(),
+        "busy summary should remain recoverable by stable id: {summary}"
     );
 }
 

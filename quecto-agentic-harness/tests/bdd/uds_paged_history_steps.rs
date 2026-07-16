@@ -36,6 +36,10 @@ const PAGED_SESSION: &str = "paged-history";
 const STUB_SESSION: &str = "paged-stub";
 const STUB_FULL: &str = "the full demoted body recalled for paged history";
 const STUB_SPILL_ID: &str = "turn1:msg:assistant";
+const HISTORY_RESPONSE_JSON_BUDGET: usize =
+    quecto::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET / 2;
+const OVERSIZED_HISTORY_BODY_LEN: usize =
+    HISTORY_RESPONSE_JSON_BUDGET + (HISTORY_RESPONSE_JSON_BUDGET / 4);
 
 // ── Given: seed a persisted session ─────────────────────────────────────────
 
@@ -71,6 +75,16 @@ fn given_stubbed_session(world: &mut QuectoWorld) {
     seed_stub_session(world);
 }
 
+#[given("a persisted UDS session containing an oversized recent message")]
+fn given_oversized_recent_message(world: &mut QuectoWorld) {
+    seed_oversized_history_session(world);
+}
+
+#[given("a persisted UDS session containing only small recent messages")]
+fn given_only_small_recent_messages(world: &mut QuectoWorld) {
+    seed_plain_session(world, 2);
+}
+
 #[given("a client has received history containing a stubbed long message")]
 fn given_client_received_stub(world: &mut QuectoWorld) {
     seed_stub_session(world);
@@ -78,6 +92,15 @@ fn given_client_received_stub(world: &mut QuectoWorld) {
     connect_paged_client(world, 1);
     let response = attach_get_messages(world, 1);
     record_stub_ref(world, &response);
+}
+
+#[given("a client has received history containing an oversized message summary")]
+fn given_client_received_oversized_summary(world: &mut QuectoWorld) {
+    seed_oversized_history_session(world);
+    start_paged_agent(world, PAGED_SESSION);
+    connect_paged_client(world, 1);
+    let response = attach_get_messages(world, 1);
+    record_oversized_summary_ref(world, &response);
 }
 
 // ── When ────────────────────────────────────────────────────────────────────
@@ -88,6 +111,11 @@ fn when_client_attaches(world: &mut QuectoWorld) {
     connect_paged_client(world, 1);
     let response = attach_get_messages(world, 1);
     world._paged_response = Some(response);
+}
+
+#[when("a client requests the newest history page")]
+fn when_client_requests_newest_history_page(world: &mut QuectoWorld) {
+    when_client_attaches(world);
 }
 
 #[when("an older client requests conversation history without a paging cursor")]
@@ -285,6 +313,73 @@ fn then_includes_newest(world: &mut QuectoWorld) {
     assert!(world._paged_collected.contains(&newest));
 }
 
+#[then("the history response should remain safely bounded")]
+fn then_history_response_safely_bounded(world: &mut QuectoWorld) {
+    let response = last_response(world);
+    let encoded = serde_json::to_vec(response).expect("history response serializes");
+    assert!(
+        encoded.len() <= HISTORY_RESPONSE_JSON_BUDGET,
+        "history response should stay bounded: {} > {}; response={response}",
+        encoded.len(),
+        HISTORY_RESPONSE_JSON_BUDGET
+    );
+}
+
+#[then("the oversized history message should be represented as a recoverable summary")]
+fn then_oversized_history_recoverable_summary(world: &mut QuectoWorld) {
+    let response = last_response(world).clone();
+    record_oversized_summary_ref(world, &response);
+    assert!(
+        world._bounded_recorded_ref.is_some(),
+        "oversized summary should provide a stable message reference for recovery"
+    );
+}
+
+#[then("each small history message should arrive complete")]
+fn then_each_small_history_message_complete(world: &mut QuectoWorld) {
+    let contents = page_contents(last_response(world));
+    assert_eq!(
+        contents, world._paged_seeded,
+        "small messages should arrive with their original content"
+    );
+}
+
+#[then("no small history message should be represented as a summary")]
+fn then_no_small_history_message_summary(world: &mut QuectoWorld) {
+    let response = last_response(world);
+    let messages = response
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .expect("messages array");
+    assert!(
+        messages
+            .iter()
+            .all(|m| m.get("collapsed").and_then(|v| v.as_bool()) == Some(false)),
+        "small messages should not be summarised: {response}"
+    );
+}
+
+#[then("the client should reassemble the full oversized history message content")]
+fn then_reassemble_full_oversized_history_message(world: &mut QuectoWorld) {
+    let response = world
+        ._bounded_get_message_responses
+        .first()
+        .expect("no get_message response recorded");
+    let content = response
+        .get("data")
+        .and_then(|d| d.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let expected = world
+        ._bounded_expected_body
+        .as_ref()
+        .expect("expected oversized body");
+    assert_eq!(
+        content, expected,
+        "full oversized history body should be recoverable"
+    );
+}
+
 #[then("the history should show the stubbed message in place")]
 fn then_stub_in_place(world: &mut QuectoWorld) {
     let response = last_response(world);
@@ -363,6 +458,39 @@ fn active_session_name(world: &QuectoWorld) -> &'static str {
 
 fn seed_plain_session(world: &mut QuectoWorld, n: usize) {
     seed_plain_session_with_body(world, n, 0);
+}
+
+fn seed_oversized_history_session(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    ensure_query_only_provider_config(world);
+    let base = base_path(world);
+    let session_key = Session::build_key("cli", PAGED_SESSION);
+    let store = FileSessionStore::new(&base);
+    let oversized = "H".repeat(OVERSIZED_HISTORY_BODY_LEN);
+    let mut messages: Vec<Message> = (0..2000)
+        .map(|i| Message::user(format!("omitted older history message {i:04}")))
+        .collect();
+    messages.push(Message::user("included recent history message"));
+    messages.push(Message::assistant(oversized.clone(), vec![]));
+    world._paged_seeded = messages.iter().map(|m| m.content.clone()).collect();
+    world._bounded_expected_body = Some(oversized);
+    let session = Session {
+        key: session_key,
+        messages,
+        workflow_run: None,
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        store
+            .save(&session)
+            .await
+            .expect("save oversized history session")
+    });
+    world.no_session = false;
+    world.session_name = Some(PAGED_SESSION.into());
+    world._mc_persist = true;
+    world.mc_mode = true;
+    world.mc_connected_clients = vec![1];
 }
 
 fn seed_plain_session_with_body(world: &mut QuectoWorld, n: usize, body_len: usize) {
@@ -468,6 +596,35 @@ fn seed_stub_session(world: &mut QuectoWorld) {
     world._mc_persist = true;
     world.mc_mode = true;
     world.mc_connected_clients = vec![1];
+}
+
+fn record_oversized_summary_ref(world: &mut QuectoWorld, response: &serde_json::Value) {
+    let messages = response
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .expect("messages array");
+    let summary = messages
+        .iter()
+        .find(|m| m.get("collapsed").and_then(|v| v.as_bool()) == Some(true))
+        .expect("an oversized summary message");
+    assert_eq!(
+        summary.get("truncated").and_then(|v| v.as_bool()),
+        Some(true),
+        "oversized summary should advertise truncation: {summary}"
+    );
+    assert_eq!(
+        summary.get("contentLength").and_then(|v| v.as_u64()),
+        Some(OVERSIZED_HISTORY_BODY_LEN as u64),
+        "oversized summary should carry the full content length: {summary}"
+    );
+    world._paged_response = Some(response.clone());
+    world._bounded_recorded_ref = Some(
+        summary
+            .get("id")
+            .and_then(|v| v.as_str())
+            .expect("summary id")
+            .to_string(),
+    );
 }
 
 fn record_stub_ref(world: &mut QuectoWorld, response: &serde_json::Value) {
