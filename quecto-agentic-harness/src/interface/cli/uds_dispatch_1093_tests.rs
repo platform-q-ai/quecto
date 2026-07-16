@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::message::Message;
+use crate::domain::message::{Message, ToolCall};
 use crate::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::protocol::AgentCommand;
@@ -420,6 +420,63 @@ async fn get_message_idle_paginates_message_one_byte_over_frame_cap() {
         response["data"]["contentLength"].as_u64(),
         Some(content_len as u64)
     );
+}
+
+#[tokio::test]
+async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usable() {
+    let tool_calls = vec![ToolCall {
+        id: "tc-too-large".into(),
+        name: "metadata_hog".into(),
+        arguments: "x".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET),
+    }];
+    let msg = Message::assistant("body", tool_calls);
+    let message_id = msg.id().to_string();
+    let mut fx = Fixture::new(None);
+    fx.messages.push(msg);
+    let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+
+    let cmd = AgentCommand::GetMessage {
+        id: Some("gm-metadata-too-large".into()),
+        message_id,
+        agent_id: None,
+        offset: Some(0),
+        limit: Some(1),
+    };
+
+    assert!(!dispatch_command(cmd, &mut fx.ctx(Some(tx.clone()))).await);
+
+    let line = rx.recv().await.expect("dispatch emits frame-limit error");
+    assert!(
+        line.len() <= crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES,
+        "outer guard must replace oversized success frames with a bounded error"
+    );
+    let response: serde_json::Value = serde_json::from_str(&line).expect("response is json");
+    assert_eq!(response["type"], "response");
+    assert_eq!(response["success"], false);
+    assert_eq!(response["id"], "gm-metadata-too-large");
+    assert_eq!(response["command"], "get_message");
+    assert!(
+        response["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("frame limit")),
+        "structured error should explain the frame-limit failure: {response}"
+    );
+
+    assert!(
+        !dispatch_command(
+            AgentCommand::GetState {
+                id: Some("after-error".into())
+            },
+            &mut fx.ctx(Some(tx))
+        )
+        .await,
+        "connection/dispatch path should remain usable after frame-limit error"
+    );
+    let follow_up = next_response(&mut rx).await;
+    assert_eq!(follow_up["type"], "response");
+    assert_eq!(follow_up["success"], true);
+    assert_eq!(follow_up["id"], "after-error");
+    assert_eq!(follow_up["command"], "get_state");
 }
 
 #[tokio::test]
