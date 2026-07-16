@@ -224,69 +224,38 @@ impl App {
             self.failed_stub_recalls.insert(recall_key);
             return true;
         }
-        let Some(content) = data.get("content").and_then(|v| v.as_str()) else {
-            self.failed_stub_recalls.insert(recall_key);
-            return true;
-        };
-        let response_offset = data
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .and_then(|n| usize::try_from(n).ok())
-            .unwrap_or(0);
-        if response_offset != recall.offset {
-            self.failed_stub_recalls.insert(recall_key);
-            return true;
-        }
-        let mut accumulated = recall.content;
-        accumulated.push_str(content);
-        let content_len = data
-            .get("contentLength")
-            .and_then(|v| v.as_u64())
-            .and_then(|n| usize::try_from(n).ok())
-            .unwrap_or(accumulated.len());
-        let has_more = data
-            .get("hasMoreContent")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if has_more {
-            let Some(next_offset) = data
-                .get("nextOffset")
-                .and_then(|v| v.as_u64())
-                .and_then(|n| usize::try_from(n).ok())
-            else {
-                self.failed_stub_recalls.insert(recall_key);
+        let update = super::range_accumulator::RangeAccumulator::new(recall.content, recall.offset)
+            .apply(data);
+        let accumulated = match update {
+            Ok(super::range_accumulator::RangeUpdate::Continue {
+                content,
+                next_offset,
+            }) => {
+                let req_id = format!("stub-recall-{}", super::app_events::uuid_like());
+                self.pending_stub_recall.insert(
+                    req_id.clone(),
+                    StubRecall {
+                        agent_id: recall.agent_id.clone(),
+                        message_id: recall.message_id.clone(),
+                        content,
+                        offset: next_offset,
+                    },
+                );
+                self.send_command(Command::GetMessage {
+                    id: Some(req_id),
+                    message_id: recall.message_id,
+                    agent_id: recall.agent_id,
+                    offset: Some(next_offset),
+                    limit: Some(GET_MESSAGE_PAGE_BYTES),
+                });
                 return true;
-            };
-            if next_offset <= response_offset
-                || next_offset > content_len
-                || accumulated.len() > content_len
-            {
+            }
+            Ok(super::range_accumulator::RangeUpdate::Complete(content)) => content,
+            Err(_) => {
                 self.failed_stub_recalls.insert(recall_key);
                 return true;
             }
-            let req_id = format!("stub-recall-{}", super::app_events::uuid_like());
-            self.pending_stub_recall.insert(
-                req_id.clone(),
-                StubRecall {
-                    agent_id: recall.agent_id.clone(),
-                    message_id: recall.message_id.clone(),
-                    content: accumulated,
-                    offset: next_offset,
-                },
-            );
-            self.send_command(Command::GetMessage {
-                id: Some(req_id),
-                message_id: recall.message_id,
-                agent_id: recall.agent_id,
-                offset: Some(next_offset),
-                limit: Some(GET_MESSAGE_PAGE_BYTES),
-            });
-            return true;
-        }
-        if accumulated.len() != content_len {
-            self.failed_stub_recalls.insert(recall_key);
-            return true;
-        }
+        };
         // Untrusted transcript text (especially sub-agents): strip control
         // sequences once after all pages are reassembled, so split ANSI/control
         // sequences are interpreted identically to the original message.

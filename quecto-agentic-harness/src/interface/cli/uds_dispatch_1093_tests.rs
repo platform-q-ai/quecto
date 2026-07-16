@@ -253,6 +253,72 @@ fn patterned_content(len: usize) -> String {
         .collect()
 }
 
+struct TestRangeAccumulator {
+    expected: String,
+    offset: usize,
+    reassembled: String,
+    pages: usize,
+}
+
+impl TestRangeAccumulator {
+    fn new(expected: String) -> Self {
+        Self {
+            expected,
+            offset: 0,
+            reassembled: String::new(),
+            pages: 0,
+        }
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    fn pages(&self) -> usize {
+        self.pages
+    }
+
+    fn apply_response(&mut self, line: &str, message_id: &str, failure_context: &str) -> bool {
+        assert!(
+            line.len() <= crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES,
+            "each get_message range response must fit in one protocol frame"
+        );
+        let response: serde_json::Value = serde_json::from_str(line).expect("response is json");
+        assert_eq!(response["success"], true, "{failure_context}: {response}");
+        assert_eq!(response["data"]["id"], message_id);
+        assert_eq!(
+            response["data"]["offset"].as_u64(),
+            Some(self.offset as u64)
+        );
+        assert_eq!(
+            response["data"]["contentLength"].as_u64(),
+            Some(self.expected.len() as u64)
+        );
+        let page = response["data"]["content"].as_str().unwrap();
+        let expected_end = (self.offset + page.len()).min(self.expected.len());
+        assert_eq!(page, &self.expected[self.offset..expected_end]);
+        self.reassembled.push_str(page);
+        let next_offset = response["data"]["nextOffset"].as_u64().unwrap() as usize;
+        assert_eq!(next_offset, expected_end);
+        self.pages += 1;
+        if response["data"]["hasMoreContent"].as_bool() == Some(false) {
+            assert_eq!(next_offset, self.expected.len());
+            return false;
+        }
+        assert!(next_offset > self.offset, "pagination must make progress");
+        self.offset = next_offset;
+        true
+    }
+
+    fn assert_complete(&self) {
+        assert!(
+            self.pages >= 3,
+            "test must exercise first, middle, and final pages"
+        );
+        assert_eq!(self.reassembled, self.expected);
+    }
+}
+
 #[tokio::test]
 async fn get_message_idle_reassembles_all_bounded_pages_for_oversized_message() {
     let content_len = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES + 1024;
@@ -264,16 +330,14 @@ async fn get_message_idle_reassembles_all_bounded_pages_for_oversized_message() 
     fx.messages.push(msg);
     let (tx, mut rx) = tokio::sync::broadcast::channel(8);
     let page_limit = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES / 2;
-    let mut offset = 0usize;
-    let mut reassembled = String::new();
-    let mut pages = 0usize;
+    let mut range = TestRangeAccumulator::new(oversized);
 
     loop {
         let cmd: AgentCommand = serde_json::from_value(serde_json::json!({
             "type": "get_message",
-            "id": format!("gm-oversized-page-{pages}"),
+            "id": format!("gm-oversized-page-{}", range.pages()),
             "messageId": message_id,
-            "offset": offset,
+            "offset": range.offset(),
             "limit": page_limit,
         }))
         .expect("range get_message parses");
@@ -281,41 +345,16 @@ async fn get_message_idle_reassembles_all_bounded_pages_for_oversized_message() 
         assert!(!dispatch_command(cmd, &mut fx.ctx(Some(tx.clone()))).await);
 
         let line = rx.recv().await.expect("dispatch emits a response");
-        assert!(
-            line.len() <= crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES,
-            "each get_message range response must fit in one protocol frame"
-        );
-        let response: serde_json::Value = serde_json::from_str(&line).expect("response is json");
-        assert_eq!(
-            response["success"], true,
-            "range lookup should succeed instead of returning the frame-limit error: {response}"
-        );
-        assert_eq!(response["data"]["id"], message_id);
-        assert_eq!(response["data"]["offset"].as_u64(), Some(offset as u64));
-        assert_eq!(
-            response["data"]["contentLength"].as_u64(),
-            Some(content_len as u64)
-        );
-        let page = response["data"]["content"].as_str().unwrap();
-        let expected_end = (offset + page.len()).min(content_len);
-        assert_eq!(page, &oversized[offset..expected_end]);
-        reassembled.push_str(page);
-        let next_offset = response["data"]["nextOffset"].as_u64().unwrap() as usize;
-        assert_eq!(next_offset, expected_end);
-        pages += 1;
-        if response["data"]["hasMoreContent"].as_bool() == Some(false) {
-            assert_eq!(next_offset, content_len);
+        if !range.apply_response(
+            &line,
+            &message_id,
+            "range lookup should succeed instead of returning the frame-limit error",
+        ) {
             break;
         }
-        assert!(next_offset > offset, "pagination must make progress");
-        offset = next_offset;
     }
 
-    assert!(
-        pages >= 3,
-        "test must exercise first, middle, and final pages"
-    );
-    assert_eq!(reassembled, oversized);
+    range.assert_complete();
 }
 
 #[tokio::test]
@@ -332,17 +371,15 @@ async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_m
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     crate::interface::cli::uds_ext_protocol::register_client_writer(&registry, 7, tx);
     let page_limit = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES / 2;
-    let mut offset = 0usize;
-    let mut reassembled = String::new();
-    let mut pages = 0usize;
+    let mut range = TestRangeAccumulator::new(oversized);
 
     loop {
         let parsed = crate::interface::cli::uds_busy_get_message::parse(
             &serde_json::json!({
                 "type": "get_message",
-                "id": format!("busy-range-{pages}"),
+                "id": format!("busy-range-{}", range.pages()),
                 "messageId": message_id,
-                "offset": offset,
+                "offset": range.offset(),
                 "limit": page_limit,
             })
             .to_string(),
@@ -352,41 +389,16 @@ async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_m
         crate::interface::cli::uds_busy_get_message::service(parsed, &snapshot, &registry, 7).await;
 
         let line = rx.recv().await.expect("busy resolver emits a response");
-        assert!(
-            line.len() <= crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES,
-            "each busy get_message range response must fit in one protocol frame"
-        );
-        let response: serde_json::Value = serde_json::from_str(&line).expect("response is json");
-        assert_eq!(
-            response["success"], true,
-            "busy range lookup should succeed instead of returning the frame-limit error: {response}"
-        );
-        assert_eq!(response["data"]["id"], message_id);
-        assert_eq!(response["data"]["offset"].as_u64(), Some(offset as u64));
-        assert_eq!(
-            response["data"]["contentLength"].as_u64(),
-            Some(content_len as u64)
-        );
-        let page = response["data"]["content"].as_str().unwrap();
-        let expected_end = (offset + page.len()).min(content_len);
-        assert_eq!(page, &oversized[offset..expected_end]);
-        reassembled.push_str(page);
-        let next_offset = response["data"]["nextOffset"].as_u64().unwrap() as usize;
-        assert_eq!(next_offset, expected_end);
-        pages += 1;
-        if response["data"]["hasMoreContent"].as_bool() == Some(false) {
-            assert_eq!(next_offset, content_len);
+        if !range.apply_response(
+            &line,
+            &message_id,
+            "busy range lookup should succeed instead of returning the frame-limit error",
+        ) {
             break;
         }
-        assert!(next_offset > offset, "pagination must make progress");
-        offset = next_offset;
     }
 
-    assert!(
-        pages >= 3,
-        "test must exercise first, middle, and final pages"
-    );
-    assert_eq!(reassembled, oversized);
+    range.assert_complete();
 }
 
 #[tokio::test]

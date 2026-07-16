@@ -155,71 +155,43 @@ impl App {
             self.abandon_recovery_batch(&pending.batch_id);
             return;
         }
-        let response_offset = data
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .and_then(|n| usize::try_from(n).ok())
-            .unwrap_or(0);
-        if response_offset != pending.offset {
-            self.abandon_recovery_batch(&pending.batch_id);
-            return;
-        }
-        let mut accumulated = pending.content;
-        if let Some(content) = data.get("content").and_then(|v| v.as_str()) {
-            accumulated.push_str(content);
-        }
-        let content_len = data
-            .get("contentLength")
-            .and_then(|v| v.as_u64())
-            .and_then(|n| usize::try_from(n).ok())
-            .unwrap_or(accumulated.len());
-        let has_more = data
-            .get("hasMoreContent")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if has_more {
-            let Some(next_offset) = data
-                .get("nextOffset")
-                .and_then(|v| v.as_u64())
-                .and_then(|n| usize::try_from(n).ok())
-            else {
-                self.abandon_recovery_batch(&pending.batch_id);
+        let update =
+            super::range_accumulator::RangeAccumulator::new(pending.content, pending.offset)
+                .apply(&data);
+        let accumulated = match update {
+            Ok(super::range_accumulator::RangeUpdate::Continue {
+                content,
+                next_offset,
+            }) => {
+                let req_id = format!("msg-recovery-{}", super::app_events::uuid_like());
+                let message_id = pending.message_id;
+                let batch_id = pending.batch_id;
+                let agent_id = pending.agent_id;
+                self.pending_message_recovery.insert(
+                    req_id.clone(),
+                    PendingMessageRecovery {
+                        message_id: message_id.clone(),
+                        batch_id,
+                        agent_id: agent_id.clone(),
+                        content,
+                        offset: next_offset,
+                    },
+                );
+                self.send_command(Command::GetMessage {
+                    id: Some(req_id),
+                    message_id,
+                    agent_id,
+                    offset: Some(next_offset),
+                    limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
+                });
                 return;
-            };
-            if next_offset <= response_offset
-                || next_offset > content_len
-                || accumulated.len() > content_len
-            {
+            }
+            Ok(super::range_accumulator::RangeUpdate::Complete(content)) => content,
+            Err(_) => {
                 self.abandon_recovery_batch(&pending.batch_id);
                 return;
             }
-            let req_id = format!("msg-recovery-{}", super::app_events::uuid_like());
-            let message_id = pending.message_id;
-            let batch_id = pending.batch_id;
-            let agent_id = pending.agent_id;
-            self.pending_message_recovery.insert(
-                req_id.clone(),
-                PendingMessageRecovery {
-                    message_id: message_id.clone(),
-                    batch_id,
-                    agent_id: agent_id.clone(),
-                    content: accumulated,
-                    offset: next_offset,
-                },
-            );
-            self.send_command(Command::GetMessage {
-                id: Some(req_id),
-                message_id,
-                agent_id,
-                offset: Some(next_offset),
-                limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
-            });
-            return;
-        }
-        if accumulated.len() != content_len {
-            self.abandon_recovery_batch(&pending.batch_id);
-            return;
-        }
+        };
         let mut data = data;
         data["content"] = serde_json::Value::String(accumulated);
         data["hasMoreContent"] = serde_json::Value::Bool(false);

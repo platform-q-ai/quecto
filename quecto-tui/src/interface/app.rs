@@ -444,6 +444,8 @@ mod app_subagent_panel;
 mod app_subagent_state;
 #[path = "app_submit.rs"]
 mod app_submit;
+#[path = "range_accumulator.rs"]
+mod range_accumulator;
 use app_subagent_state::{
     TrackedSubagent, gc_exited_subagents, next_exited_subagent_gc_deadline,
     subagent_status_is_active,
