@@ -78,6 +78,7 @@ struct PromptRequest {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum WsCommandRequest {
     GetMessage {
+        id: Option<String>,
         #[serde(rename = "messageId")]
         message_id: String,
         agent_id: Option<String>,
@@ -88,6 +89,28 @@ enum WsCommandRequest {
 
 fn default_wait_for_completion() -> bool {
     true
+}
+
+fn ws_error_response(id: Option<String>, command: &str, error: impl Into<String>) -> AgentEvent {
+    AgentEvent::Response {
+        id,
+        command: command.into(),
+        success: false,
+        data: None,
+        error: Some(error.into()),
+    }
+}
+
+fn command_type_from_text(text: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|value| value.get("type")?.as_str().map(ToOwned::to_owned))
+}
+
+fn command_id_from_text(text: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|value| value.get("id")?.as_str().map(ToOwned::to_owned))
 }
 
 async fn prompt_handler<G: AgentGateway>(
@@ -345,28 +368,40 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
     let gateway = state.gateway.clone();
     let cmd_task = tokio::spawn(async move {
         while let Some(text) = incoming_rx.recv().await {
-            if let Ok(req) = serde_json::from_str::<WsCommandRequest>(&text) {
-                match req {
-                    WsCommandRequest::GetMessage {
-                        message_id,
-                        agent_id,
-                        offset,
-                        limit,
-                    } => {
-                        if let Ok(event) = gateway
-                            .send(AgentCommand::GetMessage {
-                                message_id,
-                                agent_id,
-                                offset,
-                                limit,
-                            })
-                            .await
-                        {
-                            let _ = command_event_tx.send(event).await;
-                        }
+            match serde_json::from_str::<WsCommandRequest>(&text) {
+                Ok(WsCommandRequest::GetMessage {
+                    id,
+                    message_id,
+                    agent_id,
+                    offset,
+                    limit,
+                }) => {
+                    let event = match gateway
+                        .send(AgentCommand::GetMessage {
+                            message_id,
+                            agent_id,
+                            offset,
+                            limit,
+                        })
+                        .await
+                    {
+                        Ok(event) => event,
+                        Err(err) => ws_error_response(id, "get_message", err.to_string()),
+                    };
+                    let _ = command_event_tx.send(event).await;
+                    continue;
+                }
+                Err(err) => {
+                    if let Some(command) = command_type_from_text(&text) {
+                        let event = ws_error_response(
+                            command_id_from_text(&text),
+                            &command,
+                            format!("invalid request: {err}"),
+                        );
+                        let _ = command_event_tx.send(event).await;
+                        continue;
                     }
                 }
-                continue;
             }
             if let Ok(req) = serde_json::from_str::<PromptRequest>(&text) {
                 if !req.message.is_empty() {
@@ -458,6 +493,7 @@ mod tests {
     use super::*;
     use crate::domain::error::ApiError;
     use crate::domain::event::AgentEvent;
+    use futures::{SinkExt, StreamExt};
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
@@ -466,13 +502,14 @@ mod tests {
     struct MockGateway {
         commands: Arc<Mutex<Vec<AgentCommand>>>,
         connected: bool,
+        send_error: Option<String>,
     }
 
-    struct EmptySubscriber;
+    struct PendingSubscriber;
 
-    impl crate::application::ports::agent_gateway::EventSubscriber for EmptySubscriber {
+    impl crate::application::ports::agent_gateway::EventSubscriber for PendingSubscriber {
         fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<AgentEvent>> + Send + '_>> {
-            Box::pin(async { None })
+            Box::pin(std::future::pending())
         }
     }
 
@@ -482,7 +519,11 @@ mod tests {
             cmd: AgentCommand,
         ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
             self.commands.lock().unwrap().push(cmd);
-            Box::pin(async {
+            let send_error = self.send_error.clone();
+            Box::pin(async move {
+                if let Some(message) = send_error {
+                    return Err(ApiError::Internal(message));
+                }
                 Ok(AgentEvent::Response {
                     id: Some("req".into()),
                     command: "get_message".into(),
@@ -513,12 +554,89 @@ mod tests {
                     + '_,
             >,
         > {
-            Box::pin(async { Ok(Box::new(EmptySubscriber) as _) })
+            Box::pin(async { Ok(Box::new(PendingSubscriber) as _) })
         }
 
         fn is_connected(&self) -> bool {
             self.connected
         }
+    }
+
+    async fn ws_response_for(gateway: MockGateway, text: serde_json::Value) -> serde_json::Value {
+        let app = build_router(gateway);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+            .await
+            .expect("websocket connects");
+
+        ws.send(tokio_tungstenite::tungstenite::Message::Text(
+            text.to_string().into(),
+        ))
+        .await
+        .expect("send websocket command");
+
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(2), ws.next())
+            .await
+            .expect("websocket response arrives")
+            .expect("websocket stream item")
+            .expect("websocket message succeeds");
+        let tokio_tungstenite::tungstenite::Message::Text(text) = msg else {
+            panic!("expected text response, got {msg:?}");
+        };
+        serde_json::from_str(&text).expect("websocket response is json")
+    }
+
+    #[tokio::test]
+    async fn websocket_malformed_command_returns_structured_error() {
+        let response = ws_response_for(
+            MockGateway {
+                connected: true,
+                ..MockGateway::default()
+            },
+            serde_json::json!({"type":"get_message","id":"bad-command","offset":0}),
+        )
+        .await;
+
+        assert_eq!(response["type"], "response");
+        assert_eq!(response["id"], "bad-command");
+        assert_eq!(response["command"], "get_message");
+        assert_eq!(response["success"], false);
+        assert!(
+            response["error"]
+                .as_str()
+                .is_some_and(|message| message.contains("invalid request")),
+            "parse failure should be reported to the WebSocket client: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn websocket_gateway_send_failure_returns_structured_error() {
+        let gateway = MockGateway {
+            connected: true,
+            send_error: Some("uds write failed".into()),
+            ..MockGateway::default()
+        };
+        let response = ws_response_for(
+            gateway.clone(),
+            serde_json::json!({"type":"get_message","id":"send-failed","messageId":"m1"}),
+        )
+        .await;
+
+        assert_eq!(gateway.commands.lock().unwrap().len(), 1);
+        assert_eq!(response["type"], "response");
+        assert_eq!(response["id"], "send-failed");
+        assert_eq!(response["command"], "get_message");
+        assert_eq!(response["success"], false);
+        assert!(
+            response["error"]
+                .as_str()
+                .is_some_and(|message| message.contains("uds write failed")),
+            "gateway send failure should be reported to the WebSocket client: {response}"
+        );
     }
 
     #[tokio::test]
