@@ -7,19 +7,25 @@ use super::uds_session::{
 
 pub(super) fn get_message_response_data(
     message_id: &str,
+    tool_call_id: Option<&str>,
     offset: Option<usize>,
     limit: Option<usize>,
     request_id: Option<&str>,
     ctx: &DispatchCtx<'_>,
 ) -> Option<serde_json::Value> {
-    position_by_wire_id(ctx.messages, message_id).map(|i| {
-        super::uds_session::message_to_json_range_for_response(
-            &ctx.messages[i],
+    let message = &ctx.messages[position_by_wire_id(ctx.messages, message_id)?];
+    match tool_call_id {
+        Some(tool_call_id) => super::uds_session::tool_call_arguments_to_json_range_for_response(
+            message,
+            tool_call_id,
             offset,
             limit,
             request_id,
-        )
-    })
+        ),
+        None => Some(super::uds_session::message_to_json_range_for_response(
+            message, offset, limit, request_id,
+        )),
+    }
 }
 
 pub(super) fn query_response_data(
@@ -83,10 +89,18 @@ pub(super) fn query_response_data(
         AgentCommand::GetMessage {
             id,
             message_id,
+            tool_call_id,
             offset,
             limit,
             ..
-        } => get_message_response_data(message_id, *offset, *limit, id.as_deref(), ctx),
+        } => get_message_response_data(
+            message_id,
+            tool_call_id.as_deref(),
+            *offset,
+            *limit,
+            id.as_deref(),
+            ctx,
+        ),
         AgentCommand::ReloadExtensions { .. } => None,
         _ => None,
     }
@@ -514,6 +528,7 @@ mod tests {
                 id: Some("r1".into()),
                 message_id: target_id.clone(),
                 agent_id: None,
+                tool_call_id: None,
                 offset: None,
                 limit: None,
             },
@@ -542,6 +557,7 @@ mod tests {
                 id: Some("r1".into()),
                 message_id: "00000000-0000-0000-0000-000000000000".into(),
                 agent_id: None,
+                tool_call_id: None,
                 offset: None,
                 limit: None,
             },

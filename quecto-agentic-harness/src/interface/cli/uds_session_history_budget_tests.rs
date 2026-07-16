@@ -128,6 +128,7 @@ fn history_summary_boundary_is_pinned_on_both_sides() {
 fn get_messages_summarises_messages_with_oversized_tool_calls() {
     let oversized_arguments =
         "{\"payload\":\"".to_string() + &"t".repeat(HISTORY_PAGE_JSON_BUDGET) + "\"}";
+    let arguments_len = oversized_arguments.len();
     let message = Message::assistant(
         "small assistant content",
         vec![ToolCall {
@@ -151,13 +152,15 @@ fn get_messages_summarises_messages_with_oversized_tool_calls() {
         summary.get("collapsed").and_then(|value| value.as_bool()),
         Some(true)
     );
-    assert_eq!(
-        summary
-            .get("toolCalls")
-            .and_then(|value| value.as_array())
-            .map(Vec::len),
-        Some(0)
-    );
+    let tool_calls = summary["toolCalls"]
+        .as_array()
+        .expect("tool-call summaries");
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0]["id"], "call-huge");
+    assert_eq!(tool_calls[0]["name"], "huge_tool");
+    assert_eq!(tool_calls[0]["arguments"], "");
+    assert_eq!(tool_calls[0]["argumentsLength"], arguments_len);
+    assert_eq!(tool_calls[0]["truncated"], true);
     assert!(
         summary.get("id").and_then(|value| value.as_str()).is_some(),
         "summary should carry a stable id so get_message can recover full tool calls: {summary}"

@@ -170,6 +170,7 @@ impl App {
                 id: Some(req_id),
                 message_id,
                 agent_id: agent_id.clone(),
+                tool_call_id: None,
                 offset: Some(0),
                 limit: Some(GET_MESSAGE_PAGE_BYTES),
             });
@@ -245,6 +246,7 @@ impl App {
                     id: Some(req_id),
                     message_id: recall.message_id,
                     agent_id: recall.agent_id,
+                    tool_call_id: None,
                     offset: Some(next_offset),
                     limit: Some(GET_MESSAGE_PAGE_BYTES),
                 });

@@ -425,6 +425,7 @@ async fn forward_get_message_preserves_id_and_range_on_child_wire() {
         ForwardGetMessage {
             agent_id: "worker",
             message_id: "m1",
+            tool_call_id: Some("call-large"),
             offset: Some(4096),
             limit: Some(8192),
         },
@@ -438,6 +439,7 @@ async fn forward_get_message_preserves_id_and_range_on_child_wire() {
         "forwarding transport must stamp a child correlation id"
     );
     assert_eq!(command["messageId"], "m1");
+    assert_eq!(command["toolCallId"], "call-large");
     assert_eq!(command["offset"], 4096);
     assert_eq!(command["limit"], 8192);
     let response = serde_json::to_value(event).unwrap();
@@ -456,6 +458,7 @@ async fn forward_get_message_no_registry_is_error_event() {
         ForwardGetMessage {
             agent_id: "worker",
             message_id: "m1",
+            tool_call_id: None,
             offset: None,
             limit: None,
         },
@@ -480,6 +483,7 @@ async fn forward_get_message_unknown_agent_is_error_event() {
         ForwardGetMessage {
             agent_id: "ghost",
             message_id: "m1",
+            tool_call_id: None,
             offset: None,
             limit: None,
         },

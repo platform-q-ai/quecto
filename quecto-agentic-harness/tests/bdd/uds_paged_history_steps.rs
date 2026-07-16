@@ -10,7 +10,7 @@ use super::*;
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::domain::agent::AgentLoop;
 use quecto::domain::error::DomainError;
-use quecto::domain::message::{LlmResponse, Message};
+use quecto::domain::message::{LlmResponse, Message, ToolCall};
 use quecto::domain::provider::{ChatRequest, LlmProvider};
 use quecto::domain::session::{ContextSpillStore, Session, SessionStore};
 use quecto::infrastructure::config::Config;
@@ -92,6 +92,15 @@ fn given_client_received_stub(world: &mut QuectoWorld) {
     connect_paged_client(world, 1);
     let response = attach_get_messages(world, 1);
     record_stub_ref(world, &response);
+}
+
+#[given("a client has received summarised history containing oversized tool-call arguments")]
+fn given_client_received_oversized_tool_call_summary(world: &mut QuectoWorld) {
+    seed_oversized_tool_call_history_session(world);
+    start_paged_agent(world, PAGED_SESSION);
+    connect_paged_client(world, 1);
+    let response = attach_get_messages(world, 1);
+    record_oversized_tool_call_refs(world, &response);
 }
 
 #[given("a client has received history containing an oversized message summary")]
@@ -176,7 +185,63 @@ fn when_request_full_by_ref(world: &mut QuectoWorld) {
     world._bounded_get_message_responses = vec![response];
 }
 
+#[when("the client pages each argument with its message and tool-call identifiers")]
+fn when_page_tool_call_arguments(world: &mut QuectoWorld) {
+    let message_id = world
+        ._bounded_recorded_ref
+        .clone()
+        .expect("message reference");
+    let tool_call_ids = world._bounded_message_refs.clone();
+    let mut recovered = Vec::new();
+    for (index, tool_call_id) in tool_call_ids.iter().enumerate() {
+        let mut offset = 0usize;
+        let mut argument = String::new();
+        loop {
+            let request_id = format!("tool-argument-{index}-{offset}");
+            write_command(
+                world,
+                1,
+                &serde_json::json!({
+                    "type": "get_message", "id": request_id,
+                    "messageId": message_id, "toolCallId": tool_call_id,
+                    "offset": offset, "limit": 64 * 1024,
+                }),
+            );
+            let response = wait_for_paged_event(
+                world,
+                1,
+                Duration::from_secs(5),
+                "tool-call argument page",
+                |event| event.get("id").and_then(|v| v.as_str()) == Some(request_id.as_str()),
+            );
+            let data = response.get("data").expect("response data");
+            assert_eq!(data["toolCallId"], tool_call_id.as_str());
+            argument.push_str(data["arguments"].as_str().expect("argument page"));
+            if data["hasMoreArguments"] == false {
+                break;
+            }
+            let next = data["nextOffset"].as_u64().expect("next offset") as usize;
+            assert!(next > offset, "argument paging must make progress");
+            offset = next;
+        }
+        recovered.push(argument);
+    }
+    world._paged_collected = recovered;
+}
+
 // ── Then ────────────────────────────────────────────────────────────────────
+
+#[then("the client should reassemble every full tool-call argument")]
+fn then_reassemble_tool_call_arguments(world: &mut QuectoWorld) {
+    let expected: Vec<String> = world
+        ._bounded_expected_body
+        .as_deref()
+        .expect("expected arguments")
+        .split('\n')
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(world._paged_collected, expected);
+}
 
 fn last_response(world: &QuectoWorld) -> &serde_json::Value {
     world
@@ -493,6 +558,48 @@ fn seed_oversized_history_session(world: &mut QuectoWorld) {
     world.mc_connected_clients = vec![1];
 }
 
+fn seed_oversized_tool_call_history_session(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    ensure_query_only_provider_config(world);
+    let arguments = [
+        "λ".repeat(OVERSIZED_HISTORY_BODY_LEN),
+        "β".repeat(OVERSIZED_HISTORY_BODY_LEN),
+    ];
+    let message = Message::assistant(
+        "small content",
+        vec![
+            ToolCall {
+                id: "call-one".into(),
+                name: "one".into(),
+                arguments: arguments[0].clone(),
+            },
+            ToolCall {
+                id: "call-two".into(),
+                name: "two".into(),
+                arguments: arguments[1].clone(),
+            },
+        ],
+    );
+    let session = Session {
+        key: Session::build_key("cli", PAGED_SESSION),
+        messages: vec![message],
+        workflow_run: None,
+    };
+    let store = FileSessionStore::new(base_path(world));
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        store
+            .save(&session)
+            .await
+            .expect("save oversized tool-call session")
+    });
+    world._bounded_expected_body = Some(arguments.join("\n"));
+    world.no_session = false;
+    world.session_name = Some(PAGED_SESSION.into());
+    world._mc_persist = true;
+    world.mc_mode = true;
+    world.mc_connected_clients = vec![1];
+}
+
 fn seed_plain_session_with_body(world: &mut QuectoWorld, n: usize, body_len: usize) {
     ensure_temp_dir(world);
     ensure_query_only_provider_config(world);
@@ -596,6 +703,29 @@ fn seed_stub_session(world: &mut QuectoWorld) {
     world._mc_persist = true;
     world.mc_mode = true;
     world.mc_connected_clients = vec![1];
+}
+
+fn record_oversized_tool_call_refs(world: &mut QuectoWorld, response: &serde_json::Value) {
+    let summary = &response["messages"][0];
+    assert_eq!(summary["collapsed"], true);
+    world._bounded_recorded_ref = Some(summary["id"].as_str().expect("message id").to_owned());
+    let tool_calls = summary["toolCalls"]
+        .as_array()
+        .expect("tool-call summaries");
+    assert_eq!(
+        tool_calls.len(),
+        2,
+        "both tool calls must remain discoverable"
+    );
+    world._bounded_message_refs = tool_calls
+        .iter()
+        .map(|call| {
+            assert_eq!(call["truncated"], true);
+            assert!(call["argumentsLength"].as_u64().is_some());
+            call["id"].as_str().expect("tool-call id").to_owned()
+        })
+        .collect();
+    world._paged_response = Some(response.clone());
 }
 
 fn record_oversized_summary_ref(world: &mut QuectoWorld, response: &serde_json::Value) {

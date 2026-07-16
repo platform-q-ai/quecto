@@ -86,6 +86,7 @@ impl App {
                 id: Some(req_id),
                 message_id: message_id.clone(),
                 agent_id: None,
+                tool_call_id: None,
                 offset: Some(0),
                 limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
             });
@@ -181,6 +182,7 @@ impl App {
                     id: Some(req_id),
                     message_id,
                     agent_id,
+                    tool_call_id: None,
                     offset: Some(next_offset),
                     limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
                 });

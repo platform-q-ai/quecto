@@ -228,6 +228,7 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
         AgentCommand::GetMessage {
             message_id,
             agent_id,
+            tool_call_id,
             offset,
             limit,
         } => {
@@ -236,6 +237,9 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
             });
             if let Some(agent_id) = agent_id {
                 v["agent_id"] = serde_json::Value::String(agent_id);
+            }
+            if let Some(tool_call_id) = tool_call_id {
+                v["toolCallId"] = serde_json::Value::String(tool_call_id);
             }
             if let Some(offset) = offset {
                 v["offset"] = serde_json::json!(offset);
@@ -477,6 +481,7 @@ mod tests {
             AgentCommand::GetMessage {
                 message_id: "m1".into(),
                 agent_id: None,
+                tool_call_id: None,
                 offset: None,
                 limit: None,
             },
@@ -493,6 +498,7 @@ mod tests {
             AgentCommand::GetMessage {
                 message_id: "m2".into(),
                 agent_id: Some("worker".into()),
+                tool_call_id: None,
                 offset: Some(4096),
                 limit: Some(8192),
             },

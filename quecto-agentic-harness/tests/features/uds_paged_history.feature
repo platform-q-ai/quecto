@@ -79,6 +79,12 @@ Feature: Paged history on connect and resume (ADR-0008 part 3)
     Then the client should reassemble the full oversized history message content
 
   @done @issue-1107 @persist
+  Scenario: Oversized tool-call arguments remain recoverable from summarised history
+    Given a client has received summarised history containing oversized tool-call arguments
+    When the client pages each argument with its message and tool-call identifiers
+    Then the client should reassemble every full tool-call argument
+
+  @done @issue-1107 @persist
   Scenario: Small history messages continue to arrive complete
     Given a persisted UDS session containing only small recent messages
     When a client requests the newest history page

@@ -3,6 +3,7 @@ use super::{AgentEvent, DispatchCtx};
 pub(super) struct ForwardGetMessage<'a> {
     pub(super) agent_id: &'a str,
     pub(super) message_id: &'a str,
+    pub(super) tool_call_id: Option<&'a str>,
     pub(super) offset: Option<usize>,
     pub(super) limit: Option<usize>,
 }
@@ -28,6 +29,9 @@ pub(super) async fn forward_subagent_get_message(
         "type": "get_message",
         "messageId": req.message_id,
     });
+    if let Some(tool_call_id) = req.tool_call_id {
+        cmd["toolCallId"] = serde_json::json!(tool_call_id);
+    }
     if let Some(offset) = req.offset {
         cmd["offset"] = serde_json::json!(offset);
     }

@@ -328,6 +328,7 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
     // a possibly-collapsed live entry.
     if let AgentCommand::GetMessage {
         message_id,
+        tool_call_id,
         offset,
         limit,
         ..
@@ -336,13 +337,29 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
         let resolved =
             super::uds_snapshots::resolve_get_message(&ctx.conversation_snapshot, message_id)
                 .await
-                .map(|msg| {
-                    super::uds_session::message_to_json_range_for_response(
+                .and_then(|msg| match tool_call_id.as_deref() {
+                    Some(tool_call_id) => {
+                        super::uds_session::tool_call_arguments_to_json_range_for_response(
+                            &msg,
+                            tool_call_id,
+                            *offset,
+                            *limit,
+                            id,
+                        )
+                    }
+                    None => Some(super::uds_session::message_to_json_range_for_response(
                         &msg, *offset, *limit, id,
-                    )
+                    )),
                 });
         let ev = match resolved.or_else(|| {
-            super::uds_query::get_message_response_data(message_id, *offset, *limit, id, ctx)
+            super::uds_query::get_message_response_data(
+                message_id,
+                tool_call_id.as_deref(),
+                *offset,
+                *limit,
+                id,
+                ctx,
+            )
         }) {
             Some(data) => AgentEvent::ok(id, tn, Some(data)),
             None => AgentEvent::err(id, tn, format!("message not found: {message_id}")),

@@ -318,7 +318,6 @@ impl TestRangeAccumulator {
         assert_eq!(self.reassembled, self.expected);
     }
 }
-
 #[tokio::test]
 async fn get_message_idle_reassembles_all_bounded_pages_for_oversized_message() {
     let content_len = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES + 1024;
@@ -356,7 +355,6 @@ async fn get_message_idle_reassembles_all_bounded_pages_for_oversized_message() 
 
     range.assert_complete();
 }
-
 #[tokio::test]
 async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_message() {
     let content_len = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES + 1024;
@@ -400,7 +398,6 @@ async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_m
 
     range.assert_complete();
 }
-
 #[tokio::test]
 async fn get_message_idle_paginates_message_one_byte_over_frame_cap() {
     let content_len = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES + 1;
@@ -433,7 +430,6 @@ async fn get_message_idle_paginates_message_one_byte_over_frame_cap() {
         Some(content_len as u64)
     );
 }
-
 #[tokio::test]
 async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usable() {
     let tool_calls = vec![ToolCall {
@@ -451,6 +447,7 @@ async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usabl
         id: Some("gm-metadata-too-large".into()),
         message_id,
         agent_id: None,
+        tool_call_id: None,
         offset: Some(0),
         limit: Some(1),
     };
@@ -506,6 +503,7 @@ async fn get_message_idle_recalls_full_content_for_collapsed_live_message() {
         id: Some("gm-collapsed".into()),
         message_id,
         agent_id: None,
+        tool_call_id: None,
         offset: None,
         limit: None,
     };
@@ -553,6 +551,7 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
         crate::interface::cli::uds_busy_get_message::ParsedGetMessage {
             request_id: Some("busy-collapsed".into()),
             message_id: message_id.clone(),
+            tool_call_id: None,
             offset: None,
             limit: None,
         },
@@ -586,6 +585,7 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
         crate::interface::cli::uds_busy_get_message::ParsedGetMessage {
             request_id: Some("busy-collapsed-cached".into()),
             message_id,
+            tool_call_id: None,
             offset: None,
             limit: None,
         },
@@ -619,6 +619,7 @@ async fn assert_idle_stub_fallback(spill_id: &str, store: Arc<MemSpillStore>) {
         id: Some("gm-collapsed".into()),
         message_id,
         agent_id: None,
+        tool_call_id: None,
         offset: None,
         limit: None,
     };

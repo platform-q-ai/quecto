@@ -106,6 +106,53 @@ pub fn message_to_json_range(
     message_to_json_range_for_response(msg, offset, limit, None)
 }
 
+pub fn tool_call_arguments_to_json_range_for_response(
+    msg: &Message,
+    tool_call_id: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    request_id: Option<&str>,
+) -> Option<serde_json::Value> {
+    let tool_call = msg.tool_calls.iter().find(|call| call.id == tool_call_id)?;
+    let arguments = &tool_call.arguments;
+    let arguments_len = arguments.len();
+    let start = nearest_char_boundary_at_or_before(arguments, offset.unwrap_or(0));
+    let remaining = arguments_len.saturating_sub(start);
+    let requested = limit.unwrap_or(remaining).min(remaining);
+    let requested_end = nearest_char_boundary_at_or_before(
+        arguments,
+        start.saturating_add(requested).min(arguments_len),
+    );
+    let mut end = requested_end;
+    if end == start && start < arguments_len {
+        end = one_char_end(arguments, start);
+    }
+    let build = |end| {
+        serde_json::json!({
+            "id": msg.id().to_string(),
+            "toolCallId": tool_call.id,
+            "toolName": tool_call.name,
+            "arguments": &arguments[start..end],
+            "offset": start,
+            "nextOffset": end,
+            "argumentsLength": arguments_len,
+            "hasMoreArguments": end < arguments_len,
+        })
+    };
+    while end > start && !data_fits_frame(&build(end), request_id) {
+        let midpoint = start + (end - start) / 2;
+        end = nearest_char_boundary_at_or_before(arguments, midpoint);
+        if end == start {
+            end = one_char_end(arguments, start);
+            break;
+        }
+    }
+    if !data_fits_frame(&build(end), request_id) {
+        return None;
+    }
+    Some(build(end))
+}
+
 pub fn message_to_json_range_for_response(
     msg: &Message,
     offset: Option<usize>,
