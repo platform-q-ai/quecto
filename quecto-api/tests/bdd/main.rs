@@ -23,7 +23,13 @@ struct MockGateway {
 }
 
 const OVERSIZED_REF: &str = "oversized-message-ref";
-const OVERSIZED_BODY: &str = "abcdefghijklmnopqrstuvwxyz";
+
+fn oversized_body() -> String {
+    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    (0..quecto_line_io::PROTOCOL_LINE_CAP_BYTES + 1024)
+        .map(|idx| ALPHABET[idx % ALPHABET.len()] as char)
+        .collect()
+}
 
 impl MockGateway {
     fn new(connected: bool) -> Self {
@@ -77,17 +83,21 @@ impl AgentGateway for MockGateway {
                     limit,
                     ..
                 } => {
-                    let start = offset.unwrap_or(0).min(OVERSIZED_BODY.len());
-                    let requested = limit.unwrap_or(OVERSIZED_BODY.len() - start);
-                    let end = (start + requested).min(OVERSIZED_BODY.len());
+                    let body = oversized_body();
+                    let start = offset.unwrap_or(0).min(body.len());
+                    let requested = limit.unwrap_or(body.len() - start);
+                    let mut end = (start + requested).min(body.len());
+                    while !body.is_char_boundary(end) {
+                        end -= 1;
+                    }
                     data = serde_json::json!({
                         "id": message_id,
                         "role": "assistant",
-                        "content": &OVERSIZED_BODY[start..end],
+                        "content": &body[start..end],
                         "offset": start,
                         "nextOffset": end,
-                        "contentLength": OVERSIZED_BODY.len(),
-                        "hasMoreContent": end < OVERSIZED_BODY.len(),
+                        "contentLength": body.len(),
+                        "hasMoreContent": end < body.len(),
                     });
                     "get_message"
                 }
@@ -222,7 +232,7 @@ async fn request_oversized_message_via_websocket(world: &mut ApiWorld) {
             "type": "get_message",
             "messageId": OVERSIZED_REF,
             "offset": offset,
-            "limit": 12,
+            "limit": quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 2,
         });
         let ws = world.ws.as_mut().expect("websocket connected");
         ws.send(WsMessage::Text(request.to_string().into()))
@@ -315,7 +325,11 @@ fn ws_fragments_bounded(world: &mut ApiWorld) {
 
 #[then("the WebSocket client should receive the complete reassembled message body")]
 fn ws_complete_body(world: &mut ApiWorld) {
-    assert_eq!(world.ws_reassembled, OVERSIZED_BODY);
+    assert_eq!(world.ws_reassembled, oversized_body());
+    assert!(
+        world.ws_fragments.len() >= 3,
+        "body larger than one protocol page should require multiple fragments"
+    );
 }
 
 #[then("the WebSocket remains open")]
@@ -432,7 +446,7 @@ async fn main() {
     ApiWorld::cucumber()
         .max_concurrent_scenarios(1) // serial — each scenario starts its own server
         .filter_run("tests/features", move |feat, _, sc| {
-            if feat.name.contains("WebSocket") && !sc.tags.iter().any(|t| t == "issue-1094") {
+            if sc.tags.iter().any(|t| t == "wip") {
                 return false;
             }
             if let Some(ref tag) = tag_filter {

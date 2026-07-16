@@ -3,6 +3,7 @@ Feature: WebSocket event stream
   I want to subscribe to agent events via WebSocket
   So that I can show streaming tokens and tool executions in real time
 
+  @wip
   Scenario: Connect and receive agent events
     Given the agent is connected
     When I connect a WebSocket to /ws
@@ -12,12 +13,14 @@ Feature: WebSocket event stream
     And I receive an agent_end event
     And the WebSocket remains open
 
+  @wip
   Scenario: WebSocket disconnects gracefully when agent stops
     Given the agent is connected
     And I have an open WebSocket to /ws
     When the agent disconnects
     Then the WebSocket is closed with a normal close code
 
+  @wip
   Scenario: Multiple WebSocket clients receive the same events
     Given the agent is connected
     And I have 2 open WebSocket connections to /ws
