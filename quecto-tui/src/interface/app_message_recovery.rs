@@ -338,6 +338,7 @@ pub(super) fn recovered_chat_entries(
                     .to_string();
                 let is_error = data
                     .get("isError")
+                    .or_else(|| data.get("is_error"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 if let Some(idx) = tools.get(&call_id).copied()
@@ -351,15 +352,17 @@ pub(super) fn recovered_chat_entries(
                     *err = is_error;
                     continue;
                 }
-                entries.push(ChatEntry::ToolExecution {
-                    tool_call_id: call_id,
-                    tool_name: name,
-                    parsed_args: None,
-                    args: "{}".into(),
-                    result: Some(content.to_string()),
-                    is_error,
-                    duration_ms: None,
-                });
+                if !call_id.is_empty() {
+                    entries.push(ChatEntry::ToolExecution {
+                        tool_call_id: call_id,
+                        tool_name: name,
+                        parsed_args: None,
+                        args: String::new(),
+                        result: Some(content.to_string()),
+                        is_error,
+                        duration_ms: None,
+                    });
+                }
             }
             _ => {}
         }
