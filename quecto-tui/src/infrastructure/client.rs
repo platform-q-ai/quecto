@@ -78,6 +78,10 @@ pub enum Command {
         message_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         agent_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        offset: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        limit: Option<usize>,
     },
     GetSessionStats {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -643,6 +647,10 @@ mod tests;
 #[cfg(test)]
 #[path = "client_1060_tests.rs"]
 mod client_1060_tests;
+
+#[cfg(test)]
+#[path = "client_1094_tests.rs"]
+mod client_1094_tests;
 
 #[cfg(test)]
 #[path = "client_legacy_tests.rs"]

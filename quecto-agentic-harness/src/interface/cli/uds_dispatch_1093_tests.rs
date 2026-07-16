@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::message::Message;
+use crate::domain::message::{Message, ToolCall};
 use crate::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::protocol::AgentCommand;
@@ -246,6 +246,251 @@ async fn next_response(rx: &mut tokio::sync::broadcast::Receiver<String>) -> ser
     serde_json::from_str(&line).expect("response is json")
 }
 
+fn patterned_content(len: usize) -> String {
+    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    (0..len)
+        .map(|idx| ALPHABET[idx % ALPHABET.len()] as char)
+        .collect()
+}
+
+struct TestRangeAccumulator {
+    expected: String,
+    offset: usize,
+    reassembled: String,
+    pages: usize,
+}
+
+impl TestRangeAccumulator {
+    fn new(expected: String) -> Self {
+        Self {
+            expected,
+            offset: 0,
+            reassembled: String::new(),
+            pages: 0,
+        }
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    fn pages(&self) -> usize {
+        self.pages
+    }
+
+    fn apply_response(&mut self, line: &str, message_id: &str, failure_context: &str) -> bool {
+        assert!(
+            line.len() <= crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES,
+            "each get_message range response must fit in one protocol frame"
+        );
+        let response: serde_json::Value = serde_json::from_str(line).expect("response is json");
+        assert_eq!(response["success"], true, "{failure_context}: {response}");
+        assert_eq!(response["data"]["id"], message_id);
+        assert_eq!(
+            response["data"]["offset"].as_u64(),
+            Some(self.offset as u64)
+        );
+        assert_eq!(
+            response["data"]["contentLength"].as_u64(),
+            Some(self.expected.len() as u64)
+        );
+        let page = response["data"]["content"].as_str().unwrap();
+        let expected_end = (self.offset + page.len()).min(self.expected.len());
+        assert_eq!(page, &self.expected[self.offset..expected_end]);
+        self.reassembled.push_str(page);
+        let next_offset = response["data"]["nextOffset"].as_u64().unwrap() as usize;
+        assert_eq!(next_offset, expected_end);
+        self.pages += 1;
+        if response["data"]["hasMoreContent"].as_bool() == Some(false) {
+            assert_eq!(next_offset, self.expected.len());
+            return false;
+        }
+        assert!(next_offset > self.offset, "pagination must make progress");
+        self.offset = next_offset;
+        true
+    }
+
+    fn assert_complete(&self) {
+        assert!(
+            self.pages >= 3,
+            "test must exercise first, middle, and final pages"
+        );
+        assert_eq!(self.reassembled, self.expected);
+    }
+}
+
+#[tokio::test]
+async fn get_message_idle_reassembles_all_bounded_pages_for_oversized_message() {
+    let content_len = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES + 1024;
+    let oversized = patterned_content(content_len);
+    let mut msg = Message::assistant(oversized.clone(), vec![]);
+    let message_id = msg.id().to_string();
+    msg.content = oversized.clone();
+    let mut fx = Fixture::new(None);
+    fx.messages.push(msg);
+    let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+    let page_limit = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES / 2;
+    let mut range = TestRangeAccumulator::new(oversized);
+
+    loop {
+        let cmd: AgentCommand = serde_json::from_value(serde_json::json!({
+            "type": "get_message",
+            "id": format!("gm-oversized-page-{}", range.pages()),
+            "messageId": message_id,
+            "offset": range.offset(),
+            "limit": page_limit,
+        }))
+        .expect("range get_message parses");
+
+        assert!(!dispatch_command(cmd, &mut fx.ctx(Some(tx.clone()))).await);
+
+        let line = rx.recv().await.expect("dispatch emits a response");
+        if !range.apply_response(
+            &line,
+            &message_id,
+            "range lookup should succeed instead of returning the frame-limit error",
+        ) {
+            break;
+        }
+    }
+
+    range.assert_complete();
+}
+
+#[tokio::test]
+async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_message() {
+    let content_len = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES + 1024;
+    let oversized = patterned_content(content_len);
+    let mut msg = Message::assistant(oversized.clone(), vec![]);
+    let message_id = msg.id().to_string();
+    msg.content = oversized.clone();
+    let snapshot_data =
+        crate::interface::cli::uds_snapshots::ConversationSnapshotData::from_messages(vec![msg]);
+    let snapshot = Arc::new(tokio::sync::RwLock::new(snapshot_data));
+    let registry = new_client_tool_registry();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    crate::interface::cli::uds_ext_protocol::register_client_writer(&registry, 7, tx);
+    let page_limit = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES / 2;
+    let mut range = TestRangeAccumulator::new(oversized);
+
+    loop {
+        let parsed = crate::interface::cli::uds_busy_get_message::parse(
+            &serde_json::json!({
+                "type": "get_message",
+                "id": format!("busy-range-{}", range.pages()),
+                "messageId": message_id,
+                "offset": range.offset(),
+                "limit": page_limit,
+            })
+            .to_string(),
+        )
+        .expect("busy range get_message parses");
+
+        crate::interface::cli::uds_busy_get_message::service(parsed, &snapshot, &registry, 7).await;
+
+        let line = rx.recv().await.expect("busy resolver emits a response");
+        if !range.apply_response(
+            &line,
+            &message_id,
+            "busy range lookup should succeed instead of returning the frame-limit error",
+        ) {
+            break;
+        }
+    }
+
+    range.assert_complete();
+}
+
+#[tokio::test]
+async fn get_message_idle_paginates_message_one_byte_over_frame_cap() {
+    let content_len = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES + 1;
+    let oversized = patterned_content(content_len);
+    let mut msg = Message::assistant(oversized, vec![]);
+    let message_id = msg.id().to_string();
+    msg.content = patterned_content(content_len);
+    let mut fx = Fixture::new(None);
+    fx.messages.push(msg);
+    let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+
+    let cmd: AgentCommand = serde_json::from_value(serde_json::json!({
+        "type": "get_message",
+        "id": "gm-just-over-cap",
+        "messageId": message_id,
+        "offset": 0,
+        "limit": crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES / 2,
+    }))
+    .expect("range get_message parses");
+
+    assert!(!dispatch_command(cmd, &mut fx.ctx(Some(tx))).await);
+
+    let line = rx.recv().await.expect("dispatch emits a response");
+    assert!(line.len() <= crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES);
+    let response: serde_json::Value = serde_json::from_str(&line).expect("response is json");
+    assert_eq!(response["success"], true);
+    assert_eq!(response["data"]["hasMoreContent"], true);
+    assert_eq!(
+        response["data"]["contentLength"].as_u64(),
+        Some(content_len as u64)
+    );
+}
+
+#[tokio::test]
+async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usable() {
+    let tool_calls = vec![ToolCall {
+        id: "tc-too-large".into(),
+        name: "metadata_hog".into(),
+        arguments: "x".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET),
+    }];
+    let msg = Message::assistant("body", tool_calls);
+    let message_id = msg.id().to_string();
+    let mut fx = Fixture::new(None);
+    fx.messages.push(msg);
+    let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+
+    let cmd = AgentCommand::GetMessage {
+        id: Some("gm-metadata-too-large".into()),
+        message_id,
+        agent_id: None,
+        offset: Some(0),
+        limit: Some(1),
+    };
+
+    assert!(!dispatch_command(cmd, &mut fx.ctx(Some(tx.clone()))).await);
+
+    let line = rx.recv().await.expect("dispatch emits frame-limit error");
+    assert!(
+        line.len() <= crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES,
+        "outer guard must replace oversized success frames with a bounded error"
+    );
+    let response: serde_json::Value = serde_json::from_str(&line).expect("response is json");
+    assert_eq!(response["type"], "response");
+    assert_eq!(response["success"], false);
+    assert_eq!(response["id"], "gm-metadata-too-large");
+    assert_eq!(response["command"], "get_message");
+    assert!(
+        response["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("frame limit")),
+        "structured error should explain the frame-limit failure: {response}"
+    );
+
+    assert!(
+        !dispatch_command(
+            AgentCommand::GetState {
+                id: Some("after-error".into())
+            },
+            &mut fx.ctx(Some(tx))
+        )
+        .await,
+        "connection/dispatch path should remain usable after frame-limit error"
+    );
+    let follow_up = next_response(&mut rx).await;
+    assert_eq!(follow_up["type"], "response");
+    assert_eq!(follow_up["success"], true);
+    assert_eq!(follow_up["id"], "after-error");
+    assert_eq!(follow_up["command"], "get_state");
+}
+
 #[tokio::test]
 async fn get_message_idle_recalls_full_content_for_collapsed_live_message() {
     let spill_id = "turn1:msg:assistant";
@@ -261,6 +506,8 @@ async fn get_message_idle_recalls_full_content_for_collapsed_live_message() {
         id: Some("gm-collapsed".into()),
         message_id,
         agent_id: None,
+        offset: None,
+        limit: None,
     };
 
     assert!(!dispatch_command(cmd, &mut fx.ctx(Some(tx))).await);
@@ -303,7 +550,12 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
     crate::interface::cli::uds_ext_protocol::register_client_writer(&registry, 7, tx);
 
     crate::interface::cli::uds_busy_get_message::service(
-        (Some("busy-collapsed".into()), message_id.clone()),
+        crate::interface::cli::uds_busy_get_message::ParsedGetMessage {
+            request_id: Some("busy-collapsed".into()),
+            message_id: message_id.clone(),
+            offset: None,
+            limit: None,
+        },
         &snapshot,
         &registry,
         7,
@@ -331,7 +583,12 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
     );
 
     crate::interface::cli::uds_busy_get_message::service(
-        (Some("busy-collapsed-cached".into()), message_id),
+        crate::interface::cli::uds_busy_get_message::ParsedGetMessage {
+            request_id: Some("busy-collapsed-cached".into()),
+            message_id,
+            offset: None,
+            limit: None,
+        },
         &snapshot,
         &registry,
         7,
@@ -362,6 +619,8 @@ async fn assert_idle_stub_fallback(spill_id: &str, store: Arc<MemSpillStore>) {
         id: Some("gm-collapsed".into()),
         message_id,
         agent_id: None,
+        offset: None,
+        limit: None,
     };
 
     assert!(!dispatch_command(cmd, &mut fx.ctx(Some(tx))).await);

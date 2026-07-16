@@ -6,7 +6,11 @@ use super::*;
 pub(crate) struct StubRecall {
     pub(super) agent_id: Option<String>,
     pub(super) message_id: String,
+    pub(super) content: String,
+    pub(super) offset: usize,
 }
+
+pub(super) const GET_MESSAGE_PAGE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 4;
 
 /// This session's in-flight older-page request (#1061 review). Responses are
 /// applied only when their id matches `request_id` EXACTLY: `get_messages`
@@ -158,12 +162,16 @@ impl App {
                 StubRecall {
                     agent_id: agent_id.clone(),
                     message_id: message_id.clone(),
+                    content: String::new(),
+                    offset: 0,
                 },
             );
             self.send_command(Command::GetMessage {
                 id: Some(req_id),
                 message_id,
                 agent_id: agent_id.clone(),
+                offset: Some(0),
+                limit: Some(GET_MESSAGE_PAGE_BYTES),
             });
         }
     }
@@ -216,14 +224,43 @@ impl App {
             self.failed_stub_recalls.insert(recall_key);
             return true;
         }
-        let Some(content) = data.get("content").and_then(|v| v.as_str()) else {
-            self.failed_stub_recalls.insert(recall_key);
-            return true;
+        let update = super::range_accumulator::RangeAccumulator::new(recall.content, recall.offset)
+            .apply(data);
+        let accumulated = match update {
+            Ok(super::range_accumulator::RangeUpdate::Continue {
+                content,
+                next_offset,
+            }) => {
+                let req_id = format!("stub-recall-{}", super::app_events::uuid_like());
+                self.pending_stub_recall.insert(
+                    req_id.clone(),
+                    StubRecall {
+                        agent_id: recall.agent_id.clone(),
+                        message_id: recall.message_id.clone(),
+                        content,
+                        offset: next_offset,
+                    },
+                );
+                self.send_command(Command::GetMessage {
+                    id: Some(req_id),
+                    message_id: recall.message_id,
+                    agent_id: recall.agent_id,
+                    offset: Some(next_offset),
+                    limit: Some(GET_MESSAGE_PAGE_BYTES),
+                });
+                return true;
+            }
+            Ok(super::range_accumulator::RangeUpdate::Complete(content)) => content,
+            Err(_) => {
+                self.failed_stub_recalls.insert(recall_key);
+                return true;
+            }
         };
         // Untrusted transcript text (especially sub-agents): strip control
-        // sequences before rendering, matching the backfill path (#828 security).
-        let content = crate::interface::ansi::sanitize_control_keep_newlines(content);
-        if !chat.recall_stub(&recall.message_id, &content) {
+        // sequences once after all pages are reassembled, so split ANSI/control
+        // sequences are interpreted identically to the original message.
+        let accumulated = crate::interface::ansi::sanitize_control_keep_newlines(&accumulated);
+        if !chat.recall_stub(&recall.message_id, &accumulated) {
             self.failed_stub_recalls.insert(recall_key);
         }
         true

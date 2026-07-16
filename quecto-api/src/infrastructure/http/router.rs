@@ -13,6 +13,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::application::ports::agent_gateway::{AgentCommand, AgentGateway};
 use crate::application::use_cases;
+use crate::domain::event::AgentEvent;
 
 /// Shared application state, injected into every handler.
 pub struct AppState<G: AgentGateway> {
@@ -73,8 +74,69 @@ struct PromptRequest {
     wait_for_completion: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WsCommandRequest {
+    GetMessage {
+        id: Option<String>,
+        #[serde(rename = "messageId")]
+        message_id: String,
+        agent_id: Option<String>,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    },
+}
+
 fn default_wait_for_completion() -> bool {
     true
+}
+
+fn ws_error_response(id: Option<String>, command: &str, error: impl Into<String>) -> AgentEvent {
+    AgentEvent::Response {
+        id,
+        command: command.into(),
+        success: false,
+        data: None,
+        error: Some(error.into()),
+    }
+}
+
+fn with_response_id(event: AgentEvent, id: Option<String>) -> AgentEvent {
+    match event {
+        AgentEvent::Response {
+            command,
+            success,
+            data,
+            error,
+            ..
+        } => AgentEvent::Response {
+            id,
+            command,
+            success,
+            data,
+            error,
+        },
+        other => other,
+    }
+}
+
+fn is_direct_ws_command_response(event: &AgentEvent) -> bool {
+    matches!(
+        event,
+        AgentEvent::Response { command, .. } if command == "get_message"
+    )
+}
+
+fn command_type_from_text(text: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|value| value.get("type")?.as_str().map(ToOwned::to_owned))
+}
+
+fn command_id_from_text(text: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|value| value.get("id")?.as_str().map(ToOwned::to_owned))
 }
 
 async fn prompt_handler<G: AgentGateway>(
@@ -148,6 +210,10 @@ async fn messages_handler<G: AgentGateway>(
 struct MessageQuery {
     /// Forward the lookup to a spawned child agent by id (#1060).
     agent_id: Option<String>,
+    /// Byte offset into message content for bounded recovery (#1094).
+    offset: Option<usize>,
+    /// Maximum content bytes to return for bounded recovery (#1094).
+    limit: Option<usize>,
 }
 
 /// #1060: resolve a single message by its stable id — the on-demand lookup for
@@ -167,6 +233,8 @@ async fn message_handler<G: AgentGateway>(
         .send(AgentCommand::GetMessage {
             message_id: id,
             agent_id: params.agent_id,
+            offset: params.offset,
+            limit: params.limit,
         })
         .await
     {
@@ -321,10 +389,49 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
     // We use a channel to coordinate: the reader task sends incoming messages,
     // and the main loop forwards events back to the client.
     let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel::<String>(32);
+    let (command_event_tx, mut command_event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(32);
 
     let gateway = state.gateway.clone();
     let cmd_task = tokio::spawn(async move {
         while let Some(text) = incoming_rx.recv().await {
+            match serde_json::from_str::<WsCommandRequest>(&text) {
+                Ok(WsCommandRequest::GetMessage {
+                    id,
+                    message_id,
+                    agent_id,
+                    offset,
+                    limit,
+                }) => {
+                    let event = match gateway
+                        .send(AgentCommand::GetMessage {
+                            message_id,
+                            agent_id,
+                            offset,
+                            limit,
+                        })
+                        .await
+                    {
+                        Ok(event) => with_response_id(event, id),
+                        Err(err) => ws_error_response(id, "get_message", err.to_string()),
+                    };
+                    let _ = command_event_tx.send(event).await;
+                    continue;
+                }
+                Err(err) => {
+                    // Only malformed commands owned by this direct-command
+                    // parser are errors here. Other typed payloads (notably
+                    // `type: prompt`) retain the legacy PromptRequest fallback.
+                    if command_type_from_text(&text).as_deref() == Some("get_message") {
+                        let event = ws_error_response(
+                            command_id_from_text(&text),
+                            "get_message",
+                            format!("invalid request: {err}"),
+                        );
+                        let _ = command_event_tx.send(event).await;
+                        continue;
+                    }
+                }
+            }
             if let Ok(req) = serde_json::from_str::<PromptRequest>(&text) {
                 if !req.message.is_empty() {
                     let _ = gateway
@@ -341,10 +448,29 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
     // Main loop: concurrently read from WS and write agent events.
     loop {
         tokio::select! {
+            // Direct command response → WS
+            event = command_event_rx.recv() => {
+                match event {
+                    Some(ev) => {
+                        if let Ok(json) = serde_json::to_string(&ev) {
+                            if socket.send(Message::Text(json.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    None => break,
+                }
+            }
             // Agent event → WS
             event = subscriber.recv() => {
                 match event {
                     Some(ev) => {
+                        // Direct get_message responses are returned by
+                        // `gateway.send` above. The real UDS gateway also
+                        // broadcasts them, so suppress that duplicate here.
+                        if is_direct_ws_command_response(&ev) {
+                            continue;
+                        }
                         if let Ok(json) = serde_json::to_string(&ev) {
                             if socket.send(Message::Text(json.into())).await.is_err() {
                                 break;
@@ -396,3 +522,7 @@ fn api_error_response(
     };
     (status, Json(serde_json::json!({"error": message})))
 }
+
+#[cfg(test)]
+#[path = "router_tests.rs"]
+mod tests;

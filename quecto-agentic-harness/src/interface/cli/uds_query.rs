@@ -1,9 +1,26 @@
 use super::protocol::AgentCommand;
 use super::uds::DispatchCtx;
 use super::uds_session::{
-    HISTORY_PAGE_SIZE, compute_session_stats_with_usage, message_to_json, messages_page_json,
-    messages_tail_json, position_by_wire_id,
+    HISTORY_PAGE_SIZE, compute_session_stats_with_usage, messages_page_json, messages_tail_json,
+    position_by_wire_id,
 };
+
+pub(super) fn get_message_response_data(
+    message_id: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    request_id: Option<&str>,
+    ctx: &DispatchCtx<'_>,
+) -> Option<serde_json::Value> {
+    position_by_wire_id(ctx.messages, message_id).map(|i| {
+        super::uds_session::message_to_json_range_for_response(
+            &ctx.messages[i],
+            offset,
+            limit,
+            request_id,
+        )
+    })
+}
 
 pub(super) fn query_response_data(
     cmd: &AgentCommand,
@@ -63,9 +80,13 @@ pub(super) fn query_response_data(
         }
         // #1060: on-demand single-message lookup by stable id (busy-path safe).
         // Miss returns None so dispatch_fieldless_command emits a structured error.
-        AgentCommand::GetMessage { message_id, .. } => {
-            position_by_wire_id(ctx.messages, message_id).map(|i| message_to_json(&ctx.messages[i]))
-        }
+        AgentCommand::GetMessage {
+            id,
+            message_id,
+            offset,
+            limit,
+            ..
+        } => get_message_response_data(message_id, *offset, *limit, id.as_deref(), ctx),
         AgentCommand::ReloadExtensions { .. } => None,
         _ => None,
     }
@@ -493,6 +514,8 @@ mod tests {
                 id: Some("r1".into()),
                 message_id: target_id.clone(),
                 agent_id: None,
+                offset: None,
+                limit: None,
             },
             &ctx,
         )
@@ -519,6 +542,8 @@ mod tests {
                 id: Some("r1".into()),
                 message_id: "00000000-0000-0000-0000-000000000000".into(),
                 agent_id: None,
+                offset: None,
+                limit: None,
             },
             &ctx,
         );

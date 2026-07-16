@@ -435,7 +435,12 @@ fn issue_1060_busy_reader_parses_only_un_targeted_get_message() {
         super::super::uds_busy_get_message::parse(
             r#"{"type":"get_message","id":"r1","messageId":"m1"}"#
         ),
-        Some((Some("r1".into()), "m1".into()))
+        Some(super::super::uds_busy_get_message::ParsedGetMessage {
+            request_id: Some("r1".into()),
+            message_id: "m1".into(),
+            offset: None,
+            limit: None
+        })
     );
     // An agent-targeted lookup MUST fall through (None) so dispatch forwards it
     // to the child. The wire key is snake_case `agent_id` (Command::GetMessage

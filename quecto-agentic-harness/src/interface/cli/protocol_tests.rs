@@ -161,6 +161,42 @@ fn test_parse_get_messages_tail_count_zero() {
 }
 
 #[test]
+fn get_message_range_request_round_trips_wire_fields() {
+    let json =
+        r#"{"type":"get_message","id":"gm-page-1","messageId":"msg-1","offset":4096,"limit":8192}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(cmd.type_name(), "get_message");
+
+    let wire = serde_json::to_value(&cmd).unwrap();
+    assert_eq!(wire["messageId"], "msg-1");
+    assert_eq!(
+        wire["offset"], 4096,
+        "range start must survive command parsing"
+    );
+    assert_eq!(
+        wire["limit"], 8192,
+        "range length must survive command parsing"
+    );
+}
+
+#[test]
+fn get_message_range_request_preserves_agent_target() {
+    let json = r#"{"type":"get_message","id":"gm-child-page","messageId":"msg-2","agent_id":"worker","offset":12,"limit":34}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+
+    let wire = serde_json::to_value(&cmd).unwrap();
+    assert_eq!(wire["agent_id"], "worker");
+    assert_eq!(
+        wire["offset"], 12,
+        "child forwarding requires the byte offset"
+    );
+    assert_eq!(
+        wire["limit"], 34,
+        "child forwarding requires the byte limit"
+    );
+}
+
+#[test]
 fn test_parse_get_session_stats_command() {
     let json = r#"{"type":"get_session_stats"}"#;
     let cmd: AgentCommand = serde_json::from_str(json).unwrap();

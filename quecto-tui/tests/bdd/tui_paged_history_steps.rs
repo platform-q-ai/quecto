@@ -20,23 +20,24 @@ const CHILD: &str = "worker";
 #[derive(Debug, Default)]
 pub struct PagedHistoryState {
     /// Full chronological (id, content) history the server would page over.
-    messages: Vec<(String, String)>,
-    page_size: usize,
+    pub(super) messages: Vec<(String, String)>,
+    pub(super) page_size: usize,
     /// Whether a scroll-back step observed an older-history request.
-    requested_older: bool,
+    pub(super) requested_older: bool,
     /// Commands decoded by the active child's real Unix socket.
-    child_commands: Option<tokio::sync::mpsc::Receiver<String>>,
-    stub_id: Option<String>,
-    stub_full: Option<String>,
-    expected_send_failures: usize,
-    observed_send_failures: usize,
-    stale_page_request_id: Option<String>,
-    stale_page_cursor: Option<String>,
+    pub(super) child_commands: Option<tokio::sync::mpsc::Receiver<String>>,
+    pub(super) stub_id: Option<String>,
+    pub(super) stub_full: Option<String>,
+    pub(super) recalled_full: Option<String>,
+    pub(super) expected_send_failures: usize,
+    pub(super) observed_send_failures: usize,
+    pub(super) stale_page_request_id: Option<String>,
+    pub(super) stale_page_cursor: Option<String>,
 }
 
 // ── harness plumbing ────────────────────────────────────────────────────────
 
-fn init_harness(world: &mut TuiWorld) {
+pub(super) fn init_harness(world: &mut TuiWorld) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let h = rt.block_on(TuiHarness::new());
     world.tui_parity_rt = Some(rt);
@@ -45,7 +46,7 @@ fn init_harness(world: &mut TuiWorld) {
 
 /// Run a closure against the harness inside the runtime context (key/select
 /// paths spawn background tasks, so they need a live runtime).
-fn drive<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
+pub(super) fn drive<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     let handle = world
         .tui_parity_rt
         .as_ref()
@@ -59,7 +60,7 @@ fn drive<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
 
 /// Drain the master client's outgoing commands (no enter guard: `block_on`
 /// cannot run inside an active runtime context).
-fn drain(world: &mut TuiWorld) -> Vec<String> {
+pub(super) fn drain(world: &mut TuiWorld) -> Vec<String> {
     let handle = world
         .tui_parity_rt
         .as_ref()
@@ -70,7 +71,7 @@ fn drain(world: &mut TuiWorld) -> Vec<String> {
     handle.block_on(h.drain_commands())
 }
 
-fn active_chat_text(world: &mut TuiWorld) -> String {
+pub(super) fn active_chat_text(world: &mut TuiWorld) -> String {
     drive(world, |h| h.active_chat_text(120))
 }
 
@@ -103,7 +104,7 @@ fn page_json(
     })
 }
 
-fn get_messages_response(id: &str, data: serde_json::Value) -> Event {
+pub(super) fn get_messages_response(id: &str, data: serde_json::Value) -> Event {
     Event::Response {
         id: Some(id.into()),
         command: "get_messages".into(),
@@ -490,6 +491,69 @@ fn when_request_stub_full(world: &mut TuiWorld) {
         .expect("scrolling a stub into view must auto-request its full content");
     assert_eq!(message_id, world.tui_paged.stub_id.clone().unwrap());
     let full = world.tui_paged.stub_full.clone().unwrap();
+    if message_id == "oversized-stub" {
+        let page_bytes = quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 4;
+        let mut offset = 0usize;
+        let mut request_id = req_id;
+        let mut pages = 0usize;
+        while offset < full.len() {
+            let end = offset.saturating_add(page_bytes).min(full.len());
+            let data = serde_json::json!({
+                "id": message_id,
+                "role": "assistant",
+                "content": &full[offset..end],
+                "offset": offset,
+                "nextOffset": end,
+                "contentLength": full.len(),
+                "hasMoreContent": end < full.len(),
+            });
+            let encoded = serde_json::json!({
+                "type": "response",
+                "id": request_id.clone(),
+                "command": "get_message",
+                "success": true,
+                "data": data.clone(),
+            })
+            .to_string();
+            assert!(
+                encoded.len() < quecto_line_io::PROTOCOL_LINE_CAP_BYTES,
+                "synthetic TUI page must stay below the protocol cap"
+            );
+            drive(world, |h| {
+                h.event(Event::Response {
+                    id: Some(request_id),
+                    command: "get_message".into(),
+                    success: true,
+                    data: Some(data),
+                    error: None,
+                });
+            });
+            pages += 1;
+            offset = end;
+            if offset == full.len() {
+                break;
+            }
+            let cmds = drain(world);
+            let next = cmds
+                .iter()
+                .find_map(|line| {
+                    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+                    (value.get("type").and_then(|v| v.as_str()) == Some("get_message")
+                        && value.get("offset").and_then(|v| v.as_u64()) == Some(offset as u64))
+                    .then_some(value)
+                })
+                .expect("partial oversized recall should request the next bounded page");
+            assert_eq!(
+                next.get("limit").and_then(|v| v.as_u64()),
+                Some(page_bytes as u64),
+                "every follow-up must retain the bounded page size"
+            );
+            request_id = next["id"].as_str().unwrap().to_string();
+        }
+        assert!(pages >= 3, "oversized fixture must exercise multiple pages");
+        world.tui_paged.recalled_full = Some(full);
+        return;
+    }
     drive(world, |h| {
         h.event(Event::Response {
             id: Some(req_id),
@@ -650,13 +714,22 @@ fn then_old_cursor_not_requested(world: &mut TuiWorld) {
 }
 
 #[then("the recalled content should replace the stubbed history entry")]
+#[then("the recalled content should replace the history entry with the complete oversized body")]
 fn then_stub_replaced(world: &mut TuiWorld) {
     let full = world.tui_paged.stub_full.clone().unwrap();
     let frame = active_chat_text(world);
-    assert!(
-        frame.contains(&full),
-        "recalled content must replace the stub:\n{frame}"
-    );
+    if full.len() > quecto_line_io::PROTOCOL_LINE_CAP_BYTES {
+        assert_eq!(
+            world.tui_paged.recalled_full.as_deref(),
+            Some(full.as_str()),
+            "all oversized pages must be reassembled exactly"
+        );
+    } else {
+        assert!(
+            frame.contains(&full),
+            "recalled content must replace the stub:\n{frame}"
+        );
+    }
     assert!(
         !frame.contains("recall available"),
         "the stub body must be gone after recall:\n{frame}"

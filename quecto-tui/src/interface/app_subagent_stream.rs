@@ -462,18 +462,19 @@ impl App {
                 PendingMessageRecovery {
                     message_id: message_id.clone(),
                     batch_id: batch_id.clone(),
+                    agent_id: Some(agent_id.to_string()),
+                    content: String::new(),
+                    offset: 0,
                 },
             );
-            // Route via the MASTER connection with the ending child's id: the
-            // master forwards get_message to that child regardless of TUI
-            // selection. `send_to_active_subagent` only reached the *selected*
-            // child, so background children never recovered and the failure was
-            // silently discarded (F1). The response returns on the master stream
-            // and is applied by `handle_get_message_recovery` via batch.agent_id.
+            // Route via the MASTER connection; it forwards by child id and the
+            // response is applied by `handle_get_message_recovery`.
             self.send_command(Command::GetMessage {
                 id: Some(req_id),
                 message_id: message_id.clone(),
                 agent_id: Some(agent_id.to_string()),
+                offset: Some(0),
+                limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
             });
         }
     }

@@ -228,12 +228,20 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
         AgentCommand::GetMessage {
             message_id,
             agent_id,
+            offset,
+            limit,
         } => {
             let mut v = serde_json::json!({
                 "type": "get_message", "id": id, "messageId": message_id
             });
             if let Some(agent_id) = agent_id {
                 v["agent_id"] = serde_json::Value::String(agent_id);
+            }
+            if let Some(offset) = offset {
+                v["offset"] = serde_json::json!(offset);
+            }
+            if let Some(limit) = limit {
+                v["limit"] = serde_json::json!(limit);
             }
             v
         }
@@ -469,6 +477,8 @@ mod tests {
             AgentCommand::GetMessage {
                 message_id: "m1".into(),
                 agent_id: None,
+                offset: None,
+                limit: None,
             },
             "req1",
         );
@@ -476,15 +486,21 @@ mod tests {
         assert_eq!(v["messageId"], "m1");
         assert_eq!(v["id"], "req1");
         assert!(v.get("agent_id").is_none());
+        assert!(v.get("offset").is_none());
+        assert!(v.get("limit").is_none());
 
         let child = command_to_json(
             AgentCommand::GetMessage {
                 message_id: "m2".into(),
                 agent_id: Some("worker".into()),
+                offset: Some(4096),
+                limit: Some(8192),
             },
             "req2",
         );
         assert_eq!(child["agent_id"], "worker");
+        assert_eq!(child["offset"], 4096);
+        assert_eq!(child["limit"], 8192);
     }
 
     #[test]

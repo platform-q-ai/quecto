@@ -507,6 +507,10 @@ pub fn message_to_json(msg: &Message) -> serde_json::Value {
     serde_json::to_value(MessageView(msg)).unwrap_or_default()
 }
 
+#[path = "uds_session_message_range.rs"]
+mod uds_session_message_range;
+pub use uds_session_message_range::{message_to_json_range, message_to_json_range_for_response};
+
 /// Clear conversation history, preserving only the injected system prompt (non-manifest).
 /// Uses `truncate` instead of `clone+clear` to avoid copying the system message.
 pub fn clear_conversation(messages: &mut Vec<Message>) {
@@ -587,20 +591,16 @@ mod subagent_notification_dedupe_tests {
     #[test]
     fn same_monotonic_subagent_notification_is_recorded_once() {
         let mut session = AgentSession::new("m".into(), "s".into());
-
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert!(!session.record_subagent_notification("worker".into(), 1));
-
         assert!(session.drain_pending().is_empty());
     }
 
     #[test]
     fn later_monotonic_subagent_notification_is_recorded() {
         let mut session = AgentSession::new("m".into(), "s".into());
-
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert!(session.record_subagent_notification("worker".into(), 2));
-
         assert!(session.drain_pending().is_empty());
     }
 

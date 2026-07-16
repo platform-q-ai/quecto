@@ -859,6 +859,10 @@ pub struct QuectoWorld {
     pub _bounded_delay_secs: Option<u64>,
     /// Whether a subagent_messages_appended event was injected/observed.
     pub _bounded_subagent_appended: bool,
+    /// Oversized message under test for #1094 paged get_message BDD scenarios.
+    pub _bounded_oversized_message: Option<Message>,
+    /// Client id used for #1094 oversized recovery connection probes.
+    pub _bounded_oversized_client_id: Option<u32>,
     // --- #1061 paged history (uds_paged_history.feature) ---
     /// Seeded message contents in chronological order.
     pub _paged_seeded: Vec<String>,

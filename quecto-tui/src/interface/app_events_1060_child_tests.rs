@@ -186,7 +186,7 @@ async fn child_streamed_turn_after_prior_tools_does_not_refetch() {
 #[test]
 fn recovered_chat_entries_propagates_is_error() {
     use std::collections::HashMap;
-    let refs = vec!["a".to_string(), "b".to_string()];
+    let refs = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     let mut responses: HashMap<String, serde_json::Value> = HashMap::new();
     responses.insert(
         "a".into(),
@@ -197,7 +197,11 @@ fn recovered_chat_entries_propagates_is_error() {
     );
     responses.insert(
         "b".into(),
-        serde_json::json!({"role":"tool","toolCallId":"t1","content":"boom","isError":true}),
+        serde_json::json!({"role":"tool","toolCallId":"t1","content":"boom","is_error":true}),
+    );
+    responses.insert(
+        "c".into(),
+        serde_json::json!({"role":"tool","toolCallId":"t2","content":"boom","isError":true}),
     );
     let entries = recovered_chat_entries(&refs, &responses);
     assert!(
@@ -205,7 +209,40 @@ fn recovered_chat_entries_propagates_is_error() {
             e,
             ChatEntry::ToolExecution { is_error: true, result: Some(r), .. } if r == "boom"
         )),
-        "recovered tool entry must carry isError = true"
+        "recovered tool entry must carry isError/is_error = true"
+    );
+    assert!(
+        entries.iter().any(|e| matches!(
+            e,
+            ChatEntry::ToolExecution {
+                tool_call_id,
+                args,
+                result: Some(r),
+                is_error: true,
+                ..
+            } if tool_call_id == "t2" && args.is_empty() && r == "boom"
+        )),
+        "orphan recovered tool entry must preserve empty fallback args"
+    );
+}
+
+/// #1103 review: a tool result with no call id is incomplete recovery metadata;
+/// it must not create a phantom tool box in the chat transcript.
+#[test]
+fn recovered_chat_entries_ignores_empty_tool_call_id() {
+    use std::collections::HashMap;
+    let refs = vec!["a".to_string()];
+    let mut responses: HashMap<String, serde_json::Value> = HashMap::new();
+    responses.insert(
+        "a".into(),
+        serde_json::json!({"role":"tool","toolCallId":"","toolName":"bash","content":"orphan"}),
+    );
+
+    let entries = recovered_chat_entries(&refs, &responses);
+
+    assert!(
+        entries.is_empty(),
+        "empty toolCallId must not create a tool box"
     );
 }
 

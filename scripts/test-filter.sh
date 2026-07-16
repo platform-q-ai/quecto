@@ -23,6 +23,7 @@ in_failures                { print; next }
 
 # On a failed step, print the Feature + Scenario context first
 /✘/ {
+    in_fail_detail=1
     if (feature != "" && feature != last_printed_feature) {
         print feature
         last_printed_feature = feature
@@ -35,6 +36,11 @@ in_failures                { print; next }
     print
     next
 }
+
+# Print failure detail lines (Step failed / panic / assertion output) that
+# cucumber emits after a failed step, until the next step or scenario begins.
+in_fail_detail && /✔|^Feature:|^  Scenario:|^  Rule:/ { in_fail_detail=0 }
+in_fail_detail             { print; next }
 
 # Capture block after failure (e.g. assertion details)
 /^   Captured/             { in_capture=1 }

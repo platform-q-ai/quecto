@@ -6,16 +6,29 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use futures::{SinkExt, StreamExt};
+
 use quecto_api::application::ports::agent_gateway::{AgentCommand, AgentGateway, EventSubscriber};
 use quecto_api::domain::error::ApiError;
 use quecto_api::domain::event::AgentEvent;
 use quecto_api::infrastructure::http::router::build_router;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 // ── Mock gateway ─────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
 struct MockGateway {
     connected: Arc<AtomicBool>,
+}
+
+const OVERSIZED_REF: &str = "oversized-message-ref";
+
+fn oversized_body() -> String {
+    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    (0..quecto_line_io::PROTOCOL_LINE_CAP_BYTES + 1024)
+        .map(|idx| ALPHABET[idx % ALPHABET.len()] as char)
+        .collect()
 }
 
 impl MockGateway {
@@ -64,7 +77,30 @@ impl AgentGateway for MockGateway {
                     "get_messages"
                 }
                 AgentCommand::GetMessagesTail { .. } => "get_messages_tail",
-                AgentCommand::GetMessage { .. } => "get_message",
+                AgentCommand::GetMessage {
+                    message_id,
+                    offset,
+                    limit,
+                    ..
+                } => {
+                    let body = oversized_body();
+                    let start = offset.unwrap_or(0).min(body.len());
+                    let requested = limit.unwrap_or(body.len() - start);
+                    let mut end = (start + requested).min(body.len());
+                    while !body.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    data = serde_json::json!({
+                        "id": message_id,
+                        "role": "assistant",
+                        "content": &body[start..end],
+                        "offset": start,
+                        "nextOffset": end,
+                        "contentLength": body.len(),
+                        "hasMoreContent": end < body.len(),
+                    });
+                    "get_message"
+                }
                 AgentCommand::GetSessionStats => "get_session_stats",
                 AgentCommand::SetModel { .. } => "set_model",
                 AgentCommand::ClearHistory => "clear_history",
@@ -134,6 +170,9 @@ pub struct ApiWorld {
     pub response_status: Option<u16>,
     pub response_body: Option<String>,
     pub server_addr: Option<String>,
+    pub ws: Option<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>>,
+    pub ws_fragments: Vec<serde_json::Value>,
+    pub ws_reassembled: String,
 }
 
 impl ApiWorld {
@@ -164,12 +203,80 @@ fn agent_connected(world: &mut ApiWorld) {
     world.agent_connected = true;
 }
 
+#[given("the agent is connected with prior history containing an oversized message")]
+fn agent_connected_with_oversized_history(world: &mut ApiWorld) {
+    world.agent_connected = true;
+}
+
 #[given("the agent is not connected")]
 fn agent_not_connected(world: &mut ApiWorld) {
     world.agent_connected = false;
 }
 
 // ── When steps (HTTP) ────────────────────────────────────────────────────────
+
+#[when("I connect a WebSocket to /ws")]
+async fn connect_websocket(world: &mut ApiWorld) {
+    let base = world.ensure_server().await.replace("http://", "ws://");
+    let (ws, _) = connect_async(format!("{base}/ws"))
+        .await
+        .expect("websocket connects");
+    world.ws = Some(ws);
+}
+
+#[when("I request the oversized message by its stable reference via the WebSocket")]
+async fn request_oversized_message_via_websocket(world: &mut ApiWorld) {
+    let mut offset = 0usize;
+    loop {
+        let request_id = format!("oversized-page-{offset}");
+        let request = serde_json::json!({
+            "type": "get_message",
+            "id": request_id,
+            "messageId": OVERSIZED_REF,
+            "offset": offset,
+            "limit": quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 2,
+        });
+        let ws = world.ws.as_mut().expect("websocket connected");
+        ws.send(WsMessage::Text(request.to_string().into()))
+            .await
+            .expect("send get_message request");
+        let msg = ws
+            .next()
+            .await
+            .expect("websocket yields response")
+            .expect("websocket frame ok");
+        let text = msg.into_text().expect("text response");
+        let response: serde_json::Value = serde_json::from_str(&text).expect("json response");
+        assert_eq!(
+            response.get("id").and_then(|value| value.as_str()),
+            Some(request_id.as_str()),
+            "each WebSocket page must preserve its caller correlation id"
+        );
+        let data = response.get("data").expect("response data");
+        world.ws_reassembled.push_str(
+            data.get("content")
+                .and_then(|v| v.as_str())
+                .expect("response content"),
+        );
+        let next = data
+            .get("nextOffset")
+            .and_then(|v| v.as_u64())
+            .expect("nextOffset") as usize;
+        let more = data
+            .get("hasMoreContent")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        world.ws_fragments.push(response);
+        if !more {
+            break;
+        }
+        assert!(
+            next > offset,
+            "WebSocket get_message pagination must progress"
+        );
+        offset = next;
+    }
+}
 
 #[when(regex = r"^I request GET (.+)$")]
 async fn request_get(world: &mut ApiWorld, path: String) {
@@ -203,6 +310,42 @@ async fn request_post_prompt(world: &mut ApiWorld, step: &cucumber::gherkin::Ste
 }
 
 // ── Then steps ───────────────────────────────────────────────────────────────
+
+#[then(
+    "each oversized-message response fragment delivered to the WebSocket should stay within the protocol frame cap"
+)]
+fn ws_fragments_bounded(world: &mut ApiWorld) {
+    assert!(
+        !world.ws_fragments.is_empty(),
+        "no WebSocket response fragments"
+    );
+    for fragment in &world.ws_fragments {
+        let line = serde_json::to_string(fragment).expect("fragment serializes");
+        assert!(
+            line.len() <= quecto_line_io::PROTOCOL_LINE_CAP_BYTES,
+            "WebSocket fragment exceeded protocol cap: {} > {}",
+            line.len(),
+            quecto_line_io::PROTOCOL_LINE_CAP_BYTES
+        );
+    }
+}
+
+#[then("the WebSocket client should receive the complete reassembled message body")]
+fn ws_complete_body(world: &mut ApiWorld) {
+    assert_eq!(world.ws_reassembled, oversized_body());
+    assert!(
+        world.ws_fragments.len() >= 3,
+        "body larger than one protocol page should require multiple fragments"
+    );
+}
+
+#[then("the WebSocket remains open")]
+async fn ws_remains_open(world: &mut ApiWorld) {
+    let ws = world.ws.as_mut().expect("websocket connected");
+    ws.send(WsMessage::Ping(Vec::new().into()))
+        .await
+        .expect("ping succeeds on open WebSocket");
+}
 
 #[then(regex = r"^the response status is (\d+)$")]
 fn check_status(world: &mut ApiWorld, expected: u16) {
@@ -310,8 +453,7 @@ async fn main() {
     ApiWorld::cucumber()
         .max_concurrent_scenarios(1) // serial — each scenario starts its own server
         .filter_run("tests/features", move |feat, _, sc| {
-            // Skip websocket tests for now — they need a real agent
-            if feat.name.contains("WebSocket") {
+            if sc.tags.contains(&String::from("wip")) {
                 return false;
             }
             if let Some(ref tag) = tag_filter {
