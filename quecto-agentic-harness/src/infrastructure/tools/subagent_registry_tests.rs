@@ -447,10 +447,19 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         r#"{"type":"get_messages","before":"some-cursor"}"#
     ));
 
-    let state_snapshot = serde_json::json!({
+    let unmarked_state_snapshot = serde_json::json!({
         "type": "response",
         "command": "get_state",
         "data": { "isStreaming": true, "messageCount": 2 }
+    });
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &unmarked_state_snapshot,
+        r#"{"type":"get_state"}"#
+    ));
+    let state_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_state",
+        "data": { "isStreaming": true, "messageCount": 2, "snapshot": true }
     });
     assert!(subagent_snapshot::response_is_valid_answer(
         &state_snapshot,

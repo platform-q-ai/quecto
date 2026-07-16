@@ -6,6 +6,8 @@
 //! post-turn idle drain (`drain_pending_and_nudge`) must honour them.
 
 use super::dispatch_test_env::{DispatchTestEnv as Env, make_dispatch_test_agent};
+use crate::interface::cli::protocol::{AgentCommand, StreamingBehavior};
+use crate::interface::cli::uds_session::PendingMessage;
 use crate::interface::shared::WorkflowStateHandle;
 
 // ─── #895: abort = full stop ────────────────────────────────────────────────
@@ -46,6 +48,57 @@ async fn abort_suppresses_nudge_and_discards_pending() {
     assert!(
         !ctx.turn_control.is_abort_pending(),
         "abort flag is consumed by the idle drain"
+    );
+}
+
+/// Ack honesty (#1105): a mid-turn follow_up must be retained in the pending
+/// queue; `success:true` must not be emitted for work that vanished.
+#[tokio::test]
+async fn mid_turn_follow_up_is_queued() {
+    let mut env = Env::with_unselected_workflow();
+    env.session.set_streaming(true);
+    {
+        let mut ctx = env.ctx();
+        super::uds_dispatch::handle_follow_up(
+            &mut ctx,
+            Some("f"),
+            "follow_up",
+            "say followed".into(),
+        )
+        .await;
+    }
+
+    let pending = env.session.drain_pending();
+    assert!(
+        matches!(pending.as_slice(), [PendingMessage::User(msg)] if msg == "say followed"),
+        "follow_up success must leave an observable queued message: {pending:?}"
+    );
+}
+
+/// Ack honesty (#1105): a prompt with `streamingBehavior=steer` received while
+/// busy is the transport shape used by parents for steering; it must be queued
+/// just like a direct steer instead of being silently acknowledged and lost.
+#[tokio::test]
+async fn busy_prompt_with_steer_behavior_is_queued() {
+    let mut env = Env::with_unselected_workflow();
+    env.session.set_streaming(true);
+    {
+        let mut ctx = env.ctx();
+        super::uds_dispatch::dispatch_command(
+            AgentCommand::Prompt {
+                id: Some("s".into()),
+                message: "say steered".into(),
+                streaming_behavior: Some(StreamingBehavior::Steer),
+            },
+            &mut ctx,
+        )
+        .await;
+    }
+
+    let pending = env.session.drain_pending();
+    assert!(
+        matches!(pending.as_slice(), [PendingMessage::User(msg)] if msg == "say steered"),
+        "steer success must leave an observable queued message: {pending:?}"
     );
 }
 
