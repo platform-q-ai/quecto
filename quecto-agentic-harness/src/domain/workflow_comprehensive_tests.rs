@@ -315,6 +315,74 @@ fn selector_nudge_requires_explicit_arming() {
     );
 }
 
+/// #1113 AC3 regression: the selector nudge must NOT be gated on
+/// `workflow.auto_continue`. The retired system-prompt selector reached the
+/// model regardless of that setting, and the idle-boundary nudge is now the
+/// sole proactive selection channel — with auto-continue disabled, an armed
+/// unselected session must still be told to select a template, while
+/// active-step continuation stays gated on auto-continue.
+#[test]
+fn selector_nudge_fires_with_auto_continue_disabled() {
+    let mut config = nudge_probe_config(vec![probe_template("qx-selector-probe", "QX Probe")]);
+    config.auto_continue = false;
+    let mut engine = WorkflowEngine::new(config, false).unwrap();
+    engine.set_selector_nudge(true);
+
+    for (variant, nudge) in [
+        ("standard", engine.auto_continue_nudge()),
+        ("corrective", engine.corrective_nudge()),
+    ] {
+        let nudge = nudge.unwrap_or_else(|| {
+            panic!("the {variant} selector nudge must fire with auto-continue disabled (#1113 AC3)")
+        });
+        assert!(
+            nudge.contains("select_template") && nudge.contains("qx-selector-probe"),
+            "{variant} selector nudge must present the selector: {nudge}"
+        );
+    }
+
+    // Once a template is active, step continuation is still auto-continue's.
+    engine.select_template("qx-selector-probe", None).unwrap();
+    assert!(
+        engine.auto_continue_nudge().is_none() && engine.corrective_nudge().is_none(),
+        "active-step nudges must stay gated on auto-continue"
+    );
+}
+
+/// #1113 AC2: the tool-result step handoff must carry the progress count and
+/// the active issue alongside the step focus — the retired per-turn system
+/// prompt carried all three, and the tool result is its immediate
+/// replacement channel after `select_template`/`check`/`skip`/`uncheck`.
+#[test]
+fn step_handoff_text_carries_progress_and_active_issue() {
+    let mut template = probe_template("qx-handoff-probe", "QX Handoff Probe");
+    template.steps.push(WorkflowTemplateStep {
+        key: "second".into(),
+        label: "Second probe step".into(),
+        phase: "green".into(),
+        guidance: None,
+    });
+    let mut engine = WorkflowEngine::new(nudge_probe_config(vec![template]), false).unwrap();
+    engine
+        .select_template("qx-handoff-probe", Some((77, "Handoff probe issue".into())))
+        .unwrap();
+    engine.check(1).unwrap();
+
+    let handoff = engine.step_handoff_text("Next step");
+    assert!(
+        handoff.contains("Second probe step"),
+        "handoff must carry the current step focus: {handoff}"
+    );
+    assert!(
+        handoff.contains("Progress: 1/2 steps complete."),
+        "handoff must carry the progress count: {handoff}"
+    );
+    assert!(
+        handoff.contains("#77") && handoff.contains("Handoff probe issue"),
+        "handoff must carry the active issue: {handoff}"
+    );
+}
+
 #[test]
 fn status_text_shows_guidance_for_incomplete_non_current_steps() {
     // Regression: the status view used to render guidance only for the CURRENT

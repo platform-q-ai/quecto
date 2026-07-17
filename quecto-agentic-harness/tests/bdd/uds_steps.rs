@@ -3681,6 +3681,184 @@ fn then_every_llm_request_has_identical_system_prompt(world: &mut QuectoWorld) {
     }
 }
 
+/// Mock (#1113 AC3): the model's FIRST reply is plain text with no
+/// `select_template` call — the session reaches its first idle boundary
+/// unselected, so the selector must arrive via the idle-boundary nudge. The
+/// second reply (the nudged turn) selects a template; a text catch-all ends
+/// the run. The server ref is stored so the selector-delivery assertion can
+/// inspect the requests the agent actually sent.
+#[given(
+    expr = "the mock LLM replies {string} without selecting, then selects template {string}, then replies {string}"
+)]
+fn given_mock_llm_selects_only_after_nudge(
+    world: &mut QuectoWorld,
+    first: String,
+    template: String,
+    last: String,
+) {
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set"
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        fn text_body(id: &str, text: &str) -> serde_json::Value {
+            serde_json::json!({
+                "id": id,
+                "object": "chat.completion",
+                "choices": [{
+                    "index": 0,
+                    "message": { "role": "assistant", "content": text },
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+            })
+        }
+        let select_body = serde_json::json!({
+            "id": "chatcmpl-wf-nudged-select",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_wf_nudged_sel",
+                        "type": "function",
+                        "function": {
+                            "name": "workflow",
+                            "arguments": format!("{{\"action\":\"select_template\",\"template\":\"{template}\"}}")
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(text_body("chatcmpl-wf-unselected", &first)),
+            )
+            .up_to_n_times(1)
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(select_body))
+            .up_to_n_times(1)
+            .with_priority(3)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(text_body("chatcmpl-wf-done", &last)),
+            )
+            .mount(&server)
+            .await;
+
+        e2e_steps::rewrite_config_to_uri(world, &new_uri);
+        world.wiremock_server_ref = Some(Box::leak(Box::new(server)));
+    });
+    std::mem::forget(rt);
+}
+
+/// #1113 AC3 regression: the selector nudge must fire even with workflow
+/// auto-continue disabled — it is the sole proactive selection channel.
+#[given("the config file disables workflow auto-continue")]
+fn given_config_disables_workflow_auto_continue(world: &mut QuectoWorld) {
+    let base = world
+        .cli_context
+        .base_dir
+        .as_ref()
+        .expect("no base dir — add 'Given a temp base directory'");
+    let path = base.join("config.json");
+    let raw = std::fs::read_to_string(&path).expect("config.json must exist before this step");
+    let mut config: serde_json::Value = serde_json::from_str(&raw).expect("config.json is JSON");
+    config["workflow"]["auto_continue"] = serde_json::json!(false);
+    std::fs::write(&path, serde_json::to_string_pretty(&config).unwrap())
+        .expect("rewrite config.json with workflow auto-continue disabled");
+}
+
+/// #1113 AC3, arming-to-dispatch integration: the template selector must
+/// reach the model as an APPENDED (non-system) message on a request AFTER the
+/// first — proving the idle-boundary nudge actually triggered a further LLM
+/// request carrying the selector, not that the harness front-loaded it. The
+/// first request is asserted selector-free so a session that injected the
+/// selector up front (the retired system-prompt mechanism) fails here.
+#[then("a nudged LLM request should carry the workflow template selector")]
+fn then_nudged_llm_request_carries_template_selector(world: &mut QuectoWorld) {
+    let server = world
+        .wiremock_server_ref
+        .expect("mock server ref not stored — use a #1113-aware workflow mock step");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let requests = rt
+        .block_on(server.received_requests())
+        .expect("received requests should be available");
+    std::mem::forget(rt);
+    const SELECTOR_MARKER: &str = "No workflow template is selected";
+    let chat_messages: Vec<Vec<(String, String)>> = requests
+        .iter()
+        .filter(|request: &&Request| {
+            request.method.as_str() == "POST" && request.url.path() == "/chat/completions"
+        })
+        .map(|request| {
+            let body: serde_json::Value =
+                serde_json::from_slice(&request.body).expect("chat request body is JSON");
+            body["messages"]
+                .as_array()
+                .expect("chat request has a messages array")
+                .iter()
+                .map(|m| {
+                    (
+                        m["role"].as_str().unwrap_or_default().to_string(),
+                        m["content"].as_str().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    assert!(
+        chat_messages.len() >= 2,
+        "the idle-boundary nudge must trigger at least one further LLM request; got {}\nevents: {:#?}\nstderr: {}",
+        chat_messages.len(),
+        world.agent_events,
+        world.agent_stderr
+    );
+    let first = &chat_messages[0];
+    assert!(
+        !first
+            .iter()
+            .any(|(_, content)| content.contains(SELECTOR_MARKER)),
+        "the FIRST request must not carry the selector — it must arrive via a later idle-boundary nudge: {first:#?}"
+    );
+    let nudged = chat_messages[1..].iter().flatten().find(|(_, content)| {
+        content.contains(SELECTOR_MARKER) && content.contains("select_template")
+    });
+    let (role, content) = nudged.unwrap_or_else(|| {
+        panic!(
+            "no later LLM request carried the template selector in its history\nrequests: {chat_messages:#?}\nevents: {:#?}\nstderr: {}",
+            world.agent_events, world.agent_stderr
+        )
+    });
+    assert_eq!(
+        role, "user",
+        "the selector must arrive as an appended user message (append-only channel), not '{role}': {content}"
+    );
+    assert!(
+        content.contains("Available templates:"),
+        "the selector nudge must list the available templates: {content}"
+    );
+}
+
 /// Mock: LLM returns a tool call for `workflow status`, then a text reply.
 #[given(expr = "the mock LLM returns a tool call for workflow status then text {string}")]
 fn given_mock_llm_workflow_status(world: &mut QuectoWorld, text: String) {

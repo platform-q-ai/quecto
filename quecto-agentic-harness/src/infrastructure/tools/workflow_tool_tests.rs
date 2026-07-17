@@ -183,6 +183,48 @@ async fn uncheck_result_carries_rewound_current_step_label_and_guidance() {
     );
 }
 
+/// #1113 AC2: the tool-result handoff is the immediate replacement for the
+/// retired per-turn system prompt, which carried progress and the active
+/// issue alongside the current step — select_template and check results
+/// must carry all three.
+#[tokio::test]
+async fn select_and_check_results_carry_progress_and_active_issue() {
+    let tool = guided_tool();
+    let select = tool
+        .execute(
+            r#"{"action":"select_template","template":"guided","issueNumber":88,"issueTitle":"Guided probe issue"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(!select.is_error);
+    assert!(
+        select.content.contains("Progress: 0/2 steps complete."),
+        "select_template result must carry the progress count: {}",
+        select.content
+    );
+    assert!(
+        select.content.contains("#88") && select.content.contains("Guided probe issue"),
+        "select_template result must carry the active issue: {}",
+        select.content
+    );
+
+    let check = tool
+        .execute(r#"{"action":"check","step":1}"#)
+        .await
+        .unwrap();
+    assert!(!check.is_error);
+    assert!(
+        check.content.contains("Progress: 1/2 steps complete."),
+        "check result must carry the updated progress count: {}",
+        check.content
+    );
+    assert!(
+        check.content.contains("#88") && check.content.contains("Guided probe issue"),
+        "check result must carry the active issue: {}",
+        check.content
+    );
+}
+
 /// #1113 AC2: with a static system prompt, `status` is the model's
 /// re-orientation channel — it must carry the current step's label and
 /// guidance for an active workflow.

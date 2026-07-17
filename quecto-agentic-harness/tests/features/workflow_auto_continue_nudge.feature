@@ -52,3 +52,18 @@ Feature: Workflow auto-continue nudge wording
     Given a workflow awaiting template selection with auto-continue enabled
     When I request the corrective nudge
     Then the nudge should present the workflow template selector
+
+  # The selector nudge is the sole proactive selection channel, so it must
+  # not be gated on auto-continue: a session configured with auto-continue
+  # disabled must still be told to select a template at the idle boundary.
+  @cache-safe-prompt
+  Scenario: Auto-continue nudge presents the template selector even with auto-continue disabled
+    Given a workflow awaiting template selection with auto-continue disabled
+    When I request the auto-continue nudge
+    Then the nudge should present the workflow template selector
+
+  @cache-safe-prompt
+  Scenario: Corrective nudge presents the template selector even with auto-continue disabled
+    Given a workflow awaiting template selection with auto-continue disabled
+    When I request the corrective nudge
+    Then the nudge should present the workflow template selector

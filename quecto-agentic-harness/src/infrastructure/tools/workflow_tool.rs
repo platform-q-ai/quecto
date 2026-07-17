@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolGuard, ToolResult};
 use crate::domain::workflow::{
-    WorkflowEngine, WorkflowGuardRule, WorkflowSnapshot, WorkflowTemplateSummary, step_focus_text,
+    WorkflowEngine, WorkflowGuardRule, WorkflowSnapshot, WorkflowTemplateSummary,
 };
 
 pub type WorkflowEventEmitter = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
@@ -212,15 +212,12 @@ impl WorkflowTool {
 /// Current-step handoff appended to every step-state-changing tool result
 /// (`select_template`/`check`/`skip`/`uncheck`, #1113 AC2): with the system
 /// prompt static for the whole session, the tool result is where the model
-/// receives each step's guidance exactly when the current step changes.
-/// Wording is rendered by the engine's [`step_focus_text`] — the same
-/// function behind the idle-boundary nudges — so the two channels cannot
-/// drift apart.
+/// receives each step's guidance — plus workflow progress and the active
+/// issue — exactly when the current step changes. Rendering is owned by the
+/// engine's [`WorkflowEngine::step_handoff_text`], the same wording source
+/// behind the idle-boundary nudges, so the channels cannot drift apart.
 fn step_handoff(engine: &WorkflowEngine, heading: &str) -> String {
-    match engine.current_step() {
-        Some(step) => format!("\n{}", step_focus_text(&step, heading)),
-        None => "\nAll workflow steps complete.".to_string(),
-    }
+    engine.step_handoff_text(heading)
 }
 
 fn render_templates(templates: Vec<WorkflowTemplateSummary>) -> String {

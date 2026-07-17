@@ -127,6 +127,42 @@ fn when_model_selects_workflow_template(world: &mut QuectoWorld, template: Strin
     );
 }
 
+/// Selection with an issue bound (#1113 AC2): the handoff must carry the
+/// active issue, so these steps thread issueNumber/issueTitle through.
+fn select_template_for_issue(world: &mut QuectoWorld, template: &str, number: usize, title: &str) {
+    execute_workflow_action(
+        world,
+        &format!(
+            r#"{{"action":"select_template","template":"{template}","issueNumber":{number},"issueTitle":"{title}"}}"#
+        ),
+    );
+}
+
+#[when(expr = "the model selects the workflow template {string} for issue {int} {string}")]
+fn when_model_selects_workflow_template_for_issue(
+    world: &mut QuectoWorld,
+    template: String,
+    number: usize,
+    title: String,
+) {
+    select_template_for_issue(world, &template, number, &title);
+}
+
+#[given(expr = "the workflow template {string} is selected for issue {int} {string}")]
+fn given_workflow_template_selected_for_issue(
+    world: &mut QuectoWorld,
+    template: String,
+    number: usize,
+    title: String,
+) {
+    select_template_for_issue(world, &template, number, &title);
+    assert!(
+        !world.workflow_tool_result.as_ref().unwrap().is_error,
+        "selecting template with issue should succeed: {}",
+        world.workflow_tool_result.as_ref().unwrap().content
+    );
+}
+
 #[when(expr = "the model checks off workflow step {int}")]
 fn when_model_checks_off_workflow_step(world: &mut QuectoWorld, number: usize) {
     execute_workflow_action(world, &format!(r#"{{"action":"check","step":{number}}}"#));
@@ -200,6 +236,38 @@ fn then_result_carries_engine_current_step(world: &mut QuectoWorld) {
     assert!(
         result.content.contains(guidance),
         "tool result must carry the step guidance '{guidance}': {}",
+        result.content
+    );
+}
+
+/// #1113 AC2: assert against the engine's own progress and active issue —
+/// not fixture magic strings — that the last tool result carries both. The
+/// retired per-turn system prompt delivered progress and issue context; the
+/// tool-result handoff is its immediate replacement channel.
+#[then("the workflow tool result should carry the workflow progress and active issue")]
+fn then_result_carries_engine_progress_and_issue(world: &mut QuectoWorld) {
+    let result = world
+        .workflow_tool_result
+        .as_ref()
+        .expect("workflow result not set");
+    let engine = workflow_tool(world).engine().lock().unwrap();
+    let progress = engine.progress();
+    let expected_progress = format!(
+        "Progress: {}/{} steps complete.",
+        progress.done, progress.total
+    );
+    assert!(
+        result.content.contains(&expected_progress),
+        "tool result must carry the progress count '{expected_progress}': {}",
+        result.content
+    );
+    let (number, title) = engine
+        .snapshot(true)
+        .active_issue
+        .expect("fixture must bind an active issue");
+    assert!(
+        result.content.contains(&format!("#{number}")) && result.content.contains(&title),
+        "tool result must carry the active issue '#{number} — {title}': {}",
         result.content
     );
 }

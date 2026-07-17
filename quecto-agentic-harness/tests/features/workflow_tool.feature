@@ -77,6 +77,24 @@ Feature: Workflow tool behavior
     Then the workflow tool result should not be an error
     And the workflow tool result should carry the current step's label and guidance
 
+  # The retired per-turn system prompt carried workflow progress and the
+  # active issue alongside the current step; the tool-result handoff is its
+  # immediate replacement channel and must carry all three (#1113 AC2).
+  @cache-safe-prompt
+  Scenario: Selecting a template for an issue returns progress and the active issue in the tool result
+    Given a workflow tool for a three-step guarded template
+    When the model selects the workflow template "wave" for issue 88 "Guided probe issue"
+    Then the workflow tool result should not be an error
+    And the workflow tool result should carry the workflow progress and active issue
+
+  @cache-safe-prompt
+  Scenario: Checking a step returns updated progress and the active issue in the tool result
+    Given a workflow tool for a three-step guarded template
+    And the workflow template "wave" is selected for issue 88 "Guided probe issue"
+    When the model checks off workflow step 1
+    Then the workflow tool result should not be an error
+    And the workflow tool result should carry the workflow progress and active issue
+
   # NOTE: regression PIN of pre-#1113 status_text behavior (the channel #1113
   # leans on), not proof of new #1113 work — falsifiable #1113 coverage lives
   # in the select_template/check/skip/uncheck handoff scenarios.

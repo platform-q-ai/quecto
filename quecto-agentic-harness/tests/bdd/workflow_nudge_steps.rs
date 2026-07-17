@@ -96,8 +96,7 @@ fn then_corrective_nudge_demands_check_off_or_work(world: &mut QuectoWorld) {
 /// A `--workflow` session before template selection: the engine sits in
 /// selector mode with the idle-boundary selector nudge armed. Distinctive
 /// (non-dictionary) template ids keep the listing assertions falsifiable.
-#[given("a workflow awaiting template selection with auto-continue enabled")]
-fn given_selector_mode_workflow_with_auto_continue(world: &mut QuectoWorld) {
+fn selector_mode_workflow(world: &mut QuectoWorld, auto_continue: bool) {
     use quecto::domain::workflow::{WorkflowTemplate, WorkflowTemplateStep};
     let templates = vec![WorkflowTemplate {
         id: "qx-selector-probe".into(),
@@ -113,13 +112,26 @@ fn given_selector_mode_workflow_with_auto_continue(world: &mut QuectoWorld) {
         guards: vec![],
     }];
     let config = WorkflowConfig {
-        auto_continue: true,
+        auto_continue,
         templates,
         ..WorkflowConfig::default()
     };
     let mut engine = WorkflowEngine::new(config, false).expect("engine builds");
     engine.set_selector_nudge(true);
     world.workflow_nudge_engine = Some(engine);
+}
+
+#[given("a workflow awaiting template selection with auto-continue enabled")]
+fn given_selector_mode_workflow_with_auto_continue(world: &mut QuectoWorld) {
+    selector_mode_workflow(world, true);
+}
+
+/// #1113 AC3 regression: the selector nudge is the sole proactive selection
+/// channel and must not be gated on `workflow.auto_continue` — the retired
+/// system-prompt selector reached the model regardless of that setting.
+#[given("a workflow awaiting template selection with auto-continue disabled")]
+fn given_selector_mode_workflow_without_auto_continue(world: &mut QuectoWorld) {
+    selector_mode_workflow(world, false);
 }
 
 #[then("the nudge should carry the current step label and guidance")]

@@ -233,6 +233,29 @@ impl WorkflowEngine {
         Some(status_for_step(template, idx, self.run.done[idx]))
     }
 
+    /// Step handoff appended to every step-state-changing tool result
+    /// (`select_template`/`check`/`skip`/`uncheck`, #1113 AC2): the current
+    /// step's focus block plus the progress and active-issue context the
+    /// retired per-turn system prompt used to carry — the tool result is the
+    /// model's immediate replacement channel for all three. Renders the step
+    /// through [`step_focus_text`], the same function behind the
+    /// idle-boundary nudges, so the two channels cannot drift apart.
+    pub fn step_handoff_text(&self, heading: &str) -> String {
+        let mut out = match self.current_step() {
+            Some(step) => format!("\n{}", step_focus_text(&step, heading)),
+            None => "\nAll workflow steps complete.".to_string(),
+        };
+        let progress = self.progress();
+        out.push_str(&format!(
+            "\nProgress: {}/{} steps complete.",
+            progress.done, progress.total
+        ));
+        if let Some((number, title)) = &self.run.active_issue {
+            out.push_str(&format!("\nActive issue: #{number} — {title}"));
+        }
+        out
+    }
+
     pub fn status_text(&self) -> String {
         match self.mode() {
             WorkflowMode::SelectingTemplate => self.selector_status_text(),
@@ -290,17 +313,21 @@ impl WorkflowEngine {
     }
 
     /// Shared gate for the auto-continue nudges: what the nudge should point
-    /// the model at. `Some` only while auto-continue is enabled AND either
-    /// the workflow is active with an incomplete current step, or no template
-    /// is selected yet and the selector nudge is armed (#1113 AC3).
+    /// the model at. Active-step continuation requires auto-continue; the
+    /// template selector does NOT — it fires whenever the selector nudge is
+    /// armed and no template is selected yet (#1113 AC3). The retired
+    /// system-prompt selector never depended on `workflow.auto_continue`, and
+    /// the nudge is now the sole proactive selection channel, so gating it on
+    /// that setting would leave an `auto_continue: false` `--workflow`
+    /// session with no way to learn it must select a template.
     fn auto_continue_target(&self) -> Option<NudgeTarget> {
-        if !self.auto_continue {
-            return None;
-        }
         match self.mode() {
-            WorkflowMode::Active => self.current_step().map(NudgeTarget::Step),
             WorkflowMode::SelectingTemplate if self.selector_nudge => Some(NudgeTarget::Selector),
             WorkflowMode::SelectingTemplate | WorkflowMode::Complete => None,
+            WorkflowMode::Active if self.auto_continue => {
+                self.current_step().map(NudgeTarget::Step)
+            }
+            WorkflowMode::Active => None,
         }
     }
 
