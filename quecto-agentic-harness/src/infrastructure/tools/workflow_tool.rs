@@ -256,12 +256,18 @@ fn parse_step(args: &serde_json::Value) -> Result<u32, String> {
 }
 
 fn parse_issue(args: &serde_json::Value) -> Result<(u32, String), String> {
-    let issue = parse_optional_issue(args)?.ok_or("missing field: issueNumber")?;
-    Ok(issue)
+    parse_issue_fields(args)?.ok_or("missing field: issueNumber".into())
 }
 
 fn parse_optional_issue(args: &serde_json::Value) -> Result<Option<(u32, String)>, String> {
+    parse_issue_fields(args)
+}
+
+fn parse_issue_fields(args: &serde_json::Value) -> Result<Option<(u32, String)>, String> {
     let Some(val) = args.get("issueNumber") else {
+        if args.get("issueTitle").is_some() {
+            return Err("issueTitle requires issueNumber".into());
+        }
         return Ok(None);
     };
     let number = if let Some(n) = val.as_u64() {

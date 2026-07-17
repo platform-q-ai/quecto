@@ -295,6 +295,88 @@ fn parse_issue_number_accepts_non_ascii_string_value() {
     assert!(result.is_err());
 }
 
+#[tokio::test]
+async fn select_template_rejects_issue_title_without_issue_number() {
+    let tool = test_tool();
+    let result = tool
+        .execute(r#"{"action":"select_template","template":"feature","issueTitle":"Title only"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("issueTitle requires issueNumber"));
+}
+
+#[tokio::test]
+async fn set_issue_rejects_issue_title_without_issue_number() {
+    let tool = test_tool();
+    let result = tool
+        .execute(r#"{"action":"set_issue","issueTitle":"Title only"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("issueTitle requires issueNumber"));
+}
+
+#[tokio::test]
+async fn issue_argument_shapes_keep_existing_behavior() {
+    let tool = guided_tool();
+
+    let select_number_and_title = tool
+        .execute(
+            r#"{"action":"select_template","template":"guided","issueNumber":88,"issueTitle":"Guided probe issue"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(!select_number_and_title.is_error);
+    assert!(select_number_and_title.content.contains("#88"));
+    assert!(
+        select_number_and_title
+            .content
+            .contains("Guided probe issue")
+    );
+
+    let set_number_and_title = tool
+        .execute(r#"{"action":"set_issue","issueNumber":99,"issueTitle":"Set issue"}"#)
+        .await
+        .unwrap();
+    assert!(!set_number_and_title.is_error);
+    assert!(set_number_and_title.content.contains("#99"));
+    assert!(set_number_and_title.content.contains("Set issue"));
+
+    let select_number_only = test_tool()
+        .execute(r#"{"action":"select_template","template":"feature","issueNumber":99}"#)
+        .await
+        .unwrap();
+    assert!(select_number_only.is_error);
+    assert!(
+        select_number_only
+            .content
+            .contains("missing field: issueTitle")
+    );
+
+    let set_number_only = tool
+        .execute(r#"{"action":"set_issue","issueNumber":99}"#)
+        .await
+        .unwrap();
+    assert!(set_number_only.is_error);
+    assert!(
+        set_number_only
+            .content
+            .contains("missing field: issueTitle")
+    );
+
+    let select_no_issue = test_tool()
+        .execute(r#"{"action":"select_template","template":"feature"}"#)
+        .await
+        .unwrap();
+    assert!(!select_no_issue.is_error);
+    assert!(!select_no_issue.content.contains("Active issue:"));
+
+    let set_no_issue = tool.execute(r#"{"action":"set_issue"}"#).await.unwrap();
+    assert!(set_no_issue.is_error);
+    assert!(set_no_issue.content.contains("missing field: issueNumber"));
+}
+
 #[test]
 fn snapshot_event_contains_mode() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), true).unwrap();
