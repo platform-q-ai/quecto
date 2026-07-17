@@ -35,7 +35,12 @@ pub fn discover_workflow_templates(
     cwd: &Path,
     home_dir: Option<&Path>,
 ) -> Result<WorkflowTemplateDiscovery, ConfigError> {
-    let source_dir = if let Some(configured) = config.workflow.dir.as_deref() {
+    // `auto_discovered` distinguishes an explicitly configured `workflow.dir`
+    // (a deliberate user choice) from a directory picked up implicitly from the
+    // repo-local/home precedence chain. The implicit case silently switches the
+    // session away from the built-in default templates, so it is surfaced with
+    // a startup warning below.
+    let (source_dir, auto_discovered) = if let Some(configured) = config.workflow.dir.as_deref() {
         // An explicitly configured workflow.dir that does not exist is a hard
         // error — never a silent fall-through to another source.
         let dir = cwd.join(configured);
@@ -45,13 +50,14 @@ pub fn discover_workflow_templates(
                 dir.display()
             )));
         }
-        Some(dir)
+        (Some(dir), false)
     } else {
-        [Some(cwd), home_dir]
+        let discovered = [Some(cwd), home_dir]
             .into_iter()
             .flatten()
             .map(|root| root.join(".quecto/workflows"))
-            .find(|dir| dir.is_dir())
+            .find(|dir| dir.is_dir());
+        (discovered, true)
     };
     let Some(dir) = source_dir else {
         // Inline `workflow.templates` fallback (AC5); an empty library keeps
@@ -63,12 +69,35 @@ pub fn discover_workflow_templates(
         });
     };
     let templates = load_workflow_templates_from_dir(&dir)?;
-    let warning = (!config.workflow.templates.is_empty()).then(|| {
-        format!(
+    // A resolved workflow directory is the single source of truth for the
+    // session; zero templates is a hard error, never a silent fall-through to
+    // the engine's built-in defaults (which would let a misconfigured or
+    // template-less directory quietly run the shipped feature/refactor
+    // workflows the user believed they had replaced).
+    if templates.is_empty() {
+        return Err(ConfigError::WorkflowTemplate(format!(
+            "workflow directory {} contains no templates (no top-level *.json files)",
+            dir.display()
+        )));
+    }
+    let warning = if !config.workflow.templates.is_empty() {
+        // A directory always wins over inline templates; say so loudly so the
+        // ignored inline library is never a silent surprise.
+        Some(format!(
             "workflow template directory {} is in use; inline workflow.templates are ignored",
             dir.display()
-        )
-    });
+        ))
+    } else if auto_discovered {
+        // No inline templates, but a directory was picked up implicitly from
+        // the precedence chain: surface that the session runs those templates
+        // instead of the built-in defaults, so the switch is never invisible.
+        Some(format!(
+            "workflow templates loaded from discovered directory {}; built-in default templates are not in use",
+            dir.display()
+        ))
+    } else {
+        None
+    };
     Ok(WorkflowTemplateDiscovery {
         templates,
         source_dir: Some(dir),

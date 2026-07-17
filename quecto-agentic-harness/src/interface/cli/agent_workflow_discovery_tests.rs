@@ -99,9 +99,18 @@ fn startup_engine_runs_templates_discovered_from_workflow_dir() {
     let build = build(cwd.path(), &config, &workflow_flags(), &mut stderr)
         .expect("startup must succeed with a valid workflow dir");
     assert_eq!(engine_template_ids(&build), ["foo"]);
+    // No inline templates to shadow, so there is no "inline ... ignored" warning.
     assert!(
-        !stderr.contains("WARNING: workflow template directory"),
+        !stderr.contains("inline"),
         "no shadowing warning without inline templates: {stderr}"
+    );
+    // But an auto-discovered directory silently replaces the built-in default
+    // templates, so that switch IS surfaced on startup stderr (never invisible).
+    assert!(
+        stderr.contains("WARNING")
+            && stderr.contains("discovered directory")
+            && stderr.contains("built-in default templates are not in use"),
+        "an auto-discovered workflow dir must surface that it replaces the built-in defaults: {stderr}"
     );
 }
 

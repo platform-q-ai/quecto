@@ -453,6 +453,95 @@ fn test_discover_accepts_exactly_max_template_files() {
 }
 
 #[test]
+fn test_discover_configured_dir_with_no_templates_fails_naming_dir() {
+    // A resolved workflow directory is the single source of truth; a configured
+    // dir that holds only a steps/ subfolder (no top-level *.json) must be a
+    // hard error, never a silent fall-through to the engine's built-in
+    // defaults.
+    let dir = tempfile::tempdir().unwrap();
+    write_file(
+        &dir.path().join("wf/steps/shared.json"),
+        r#"{"key":"shared","label":"Shared","phase":"green","guidance":"g"}"#,
+    );
+    let config = config_in(dir.path(), r#"{"workflow":{"dir":"wf"}}"#);
+
+    let err = discover_workflow_templates(&config, dir.path(), None)
+        .expect_err("a template-less configured workflow.dir must fail startup")
+        .to_string();
+    assert!(err.contains("wf"), "error must name the directory: {err}");
+    assert!(
+        err.contains("no templates"),
+        "error must explain there are no templates: {err}"
+    );
+}
+
+#[test]
+fn test_discover_repo_local_dir_with_no_templates_fails_naming_dir() {
+    // Same invariant for an auto-discovered repo-local directory: an existing
+    // .quecto/workflows with no top-level *.json is an error, not a silent
+    // fall-through to built-in defaults (and it does NOT cascade to ~/).
+    let dir = tempfile::tempdir().unwrap();
+    write_file(
+        &dir.path().join(".quecto/workflows/steps/shared.json"),
+        r#"{"key":"shared","label":"Shared","phase":"green","guidance":"g"}"#,
+    );
+    let config = config_in(dir.path(), "{}");
+
+    let err = discover_workflow_templates(&config, dir.path(), None)
+        .expect_err("a template-less repo-local workflow dir must fail startup")
+        .to_string();
+    assert!(
+        err.contains(".quecto/workflows"),
+        "error must name the directory: {err}"
+    );
+    assert!(
+        err.contains("no templates"),
+        "error must explain there are no templates: {err}"
+    );
+}
+
+#[test]
+fn test_discover_auto_discovered_dir_warns_even_without_inline_templates() {
+    // An auto-discovered directory silently replaces the built-in default
+    // templates; that switch must be surfaced as a startup warning even when no
+    // inline templates are being shadowed.
+    let dir = tempfile::tempdir().unwrap();
+    write_file(
+        &dir.path().join(".quecto/workflows/foo.json"),
+        &template_file_json("Foo"),
+    );
+    let config = config_in(dir.path(), "{}");
+
+    let discovery = discover_workflow_templates(&config, dir.path(), None).unwrap();
+    let warning = discovery
+        .warning
+        .expect("an auto-discovered directory replacing the defaults must warn");
+    assert!(
+        warning.contains("discovered directory")
+            && warning.contains("built-in default templates are not in use"),
+        "warning should state the built-in defaults are not in use: {warning}"
+    );
+}
+
+#[test]
+fn test_discover_explicitly_configured_dir_does_not_warn_without_inline_templates() {
+    // An explicitly configured workflow.dir is a deliberate user choice, not a
+    // surprise, so it is silent when there are no inline templates to shadow.
+    let dir = tempfile::tempdir().unwrap();
+    write_file(
+        &dir.path().join("wf/speedy.json"),
+        &template_file_json("Speedy"),
+    );
+    let config = config_in(dir.path(), r#"{"workflow":{"dir":"wf"}}"#);
+
+    let discovery = discover_workflow_templates(&config, dir.path(), None).unwrap();
+    assert_eq!(
+        discovery.warning, None,
+        "an explicitly configured dir with no inline templates must not warn"
+    );
+}
+
+#[test]
 fn test_discover_empty_world_keeps_default_fallback_intact() {
     // Precedence terminus: no workflow.dir, no repo/home directory, no inline
     // templates. Discovery must succeed with an empty library and no warning,
