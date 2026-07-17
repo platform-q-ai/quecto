@@ -299,6 +299,24 @@ Optional `workflow` section in `config.json`:
 | `phase` | string | yes | Phase category (`red`, `green`, `refactor`, `ci_cd`, `review`, or custom) |
 | `guidance` | string | no | Step-specific guidance injected into the prompt when this is the current step |
 
+### Reusable step references
+
+A step entry can take three shapes:
+
+| Shape | Example | Meaning |
+|-------|---------|---------|
+| Inline object | `{"key":"tests","label":"Write tests","phase":"red"}` | The step itself, as documented above |
+| String reference | `"steps/shared"` | Load the step from a JSON file resolved relative to the config directory; `.json` is appended when the reference has no extension |
+| Reference object | `{"ref":"steps/shared.json","phase":"review"}` | Load the referenced step, then apply the given `key` / `label` / `phase` / `guidance` overrides on top (overrides always win over the file's values) |
+
+Referenced files must:
+
+- stay inside the config directory — absolute paths, `..`, and symlink escapes are rejected
+- be at most 64 KB
+- contain a single complete step object using only the step fields above; unknown fields are rejected, and a referenced file cannot itself contain `ref` (no recursive references)
+
+Backward compatibility: an inline step that already has `key`, `label`, and `phase` **and** carries fields outside the step-field table (e.g. an `owner` tag alongside a `ref` ticket marker) is kept as-is — the extra fields are ignored as metadata, not treated as a reference.
+
 ### Guard fields
 
 | Field | Type | Description |

@@ -135,27 +135,169 @@ fn test_load_workflow_step_reference_applies_individual_overrides() {
 }
 
 #[test]
-fn test_load_workflow_step_reference_supports_all_overrides_and_explicit_extension() {
+fn test_load_workflow_step_reference_overriding_key_label_phase_still_loads_the_file() {
+    // The guidance assertion can only pass if shared.json was actually read,
+    // so this pins that an all-structural-override reference still resolves
+    // (it previously fell through to the inline branch and skipped the file).
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("shared.json"),
-        r#"{"key":"base","label":"Base","phase":"green","guidance":"base"}"#,
+        r#"{"key":"base","label":"Base","phase":"green","guidance":"from the file"}"#,
     )
     .unwrap();
     let config_path = dir.path().join("config.json");
     std::fs::write(
-            &config_path,
-            workflow_config_with_steps(
-                r#"{"ref":"shared.json","key":"new","label":"New","phase":"review","guidance":"new guidance"}"#,
-            ),
-        )
-        .unwrap();
+        &config_path,
+        workflow_config_with_steps(
+            r#"{"ref":"shared.json","key":"new","label":"New","phase":"review"}"#,
+        ),
+    )
+    .unwrap();
 
     let config = Config::load(config_path.to_str().unwrap()).unwrap();
     let step = &config.workflow.templates[0].steps[0];
     assert_eq!((step.key.as_str(), step.label.as_str()), ("new", "New"));
     assert_eq!(step.phase, "review");
-    assert_eq!(step.guidance.as_deref(), Some("new guidance"));
+    assert_eq!(step.guidance.as_deref(), Some("from the file"));
+}
+
+#[test]
+fn test_load_workflow_step_reference_with_all_overrides_still_fails_on_missing_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.json");
+    std::fs::write(
+        &config_path,
+        workflow_config_with_steps(
+            r#"{"ref":"missing.json","key":"new","label":"New","phase":"review","guidance":"g"}"#,
+        ),
+    )
+    .unwrap();
+
+    let error = Config::load(config_path.to_str().unwrap()).unwrap_err();
+    assert!(error.to_string().contains("missing.json"), "{error}");
+}
+
+#[test]
+fn test_load_workflow_step_reference_with_wrong_typed_override_names_the_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("shared.json"),
+        r#"{"key":"base","label":"Base","phase":"green"}"#,
+    )
+    .unwrap();
+    let config_path = dir.path().join("config.json");
+    std::fs::write(
+        &config_path,
+        workflow_config_with_steps(r#"{"ref":"shared.json","key":5}"#),
+    )
+    .unwrap();
+
+    let error = Config::load(config_path.to_str().unwrap()).unwrap_err();
+    assert!(
+        error.to_string().contains("failed to load workflow step"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("shared.json"), "{error}");
+    assert!(error.to_string().contains("invalid type"), "{error}");
+}
+
+#[test]
+fn test_resolve_workflow_steps_with_bare_config_filename_uses_current_directory() {
+    // Path::new("config.json").parent() is Some(""), not None; the resolver
+    // must fall back to "." or every reference fails on canonicalizing "".
+    let mut value: serde_json::Value =
+        serde_json::from_str(&workflow_config_with_steps(r#""nope""#)).unwrap();
+    let error = resolve_workflow_step_entries(&mut value, Path::new("config.json")).unwrap_err();
+    assert!(error.to_string().contains("nope.json"), "{error}");
+}
+
+#[test]
+fn test_load_rejects_too_many_workflow_templates_before_resolving_references() {
+    let dir = tempfile::tempdir().unwrap();
+    let templates = (0..=crate::domain::workflow::MAX_TEMPLATE_COUNT)
+        .map(|i| format!(r#"{{"id":"t{i}","label":"T","description":"d","steps":["missing"]}}"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    let config_path = dir.path().join("config.json");
+    std::fs::write(
+        &config_path,
+        format!(r#"{{"workflow":{{"templates":[{templates}]}}}}"#),
+    )
+    .unwrap();
+
+    // No "missing.json" exists: the count check must fire before any file load.
+    let error = Config::load(config_path.to_str().unwrap()).unwrap_err();
+    assert!(
+        error.to_string().contains("too many workflow templates"),
+        "{error}"
+    );
+}
+
+#[test]
+fn test_load_rejects_too_many_workflow_steps_before_resolving_references() {
+    let dir = tempfile::tempdir().unwrap();
+    let steps = vec![r#""missing""#; crate::domain::workflow::MAX_STEPS_PER_TEMPLATE + 1].join(",");
+    let config_path = dir.path().join("config.json");
+    std::fs::write(&config_path, workflow_config_with_steps(&steps)).unwrap();
+
+    // No "missing.json" exists: the count check must fire before any file load.
+    let error = Config::load(config_path.to_str().unwrap()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("template 'test' has too many steps"),
+        "{error}"
+    );
+}
+
+#[test]
+fn test_load_rejects_oversized_workflow_step_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let skeleton = r#"{"key":"big","label":"Big","phase":"green","guidance":""}"#;
+    let padding = "g".repeat(MAX_WORKFLOW_STEP_FILE_BYTES as usize - skeleton.len() + 1);
+    std::fs::write(
+        dir.path().join("big.json"),
+        skeleton.replace(r#""guidance":"""#, &format!(r#""guidance":"{padding}""#)),
+    )
+    .unwrap();
+    let config_path = dir.path().join("config.json");
+    std::fs::write(&config_path, workflow_config_with_steps(r#""big""#)).unwrap();
+
+    let error = Config::load(config_path.to_str().unwrap()).unwrap_err();
+    assert!(
+        error.to_string().contains("step file is too large"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("big.json"), "{error}");
+}
+
+#[test]
+fn test_load_workflow_step_file_at_exact_size_cap_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    let skeleton = r#"{"key":"big","label":"Big","phase":"green","guidance":""}"#;
+    let padding = "g".repeat(MAX_WORKFLOW_STEP_FILE_BYTES as usize - skeleton.len());
+    let content = skeleton.replace(r#""guidance":"""#, &format!(r#""guidance":"{padding}""#));
+    assert_eq!(content.len() as u64, MAX_WORKFLOW_STEP_FILE_BYTES);
+    std::fs::write(dir.path().join("big.json"), content).unwrap();
+    let config_path = dir.path().join("config.json");
+    std::fs::write(&config_path, workflow_config_with_steps(r#""big""#)).unwrap();
+
+    let config = Config::load(config_path.to_str().unwrap()).unwrap();
+    assert_eq!(config.workflow.templates[0].steps[0].key, "big");
+}
+
+#[test]
+fn test_load_invalid_typed_field_reports_line_and_column() {
+    // Configs without step references must keep serde's line/column context
+    // (the reference resolver's Value round-trip would otherwise strip it).
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        tmp,
+        "{{\n  \"agents\": {{\n    \"defaults\": {{\n      \"max_tokens\": \"not_a_number\"\n    }}\n  }}\n}}"
+    )
+    .unwrap();
+    let error = Config::load(tmp.path().to_str().unwrap()).unwrap_err();
+    assert!(error.to_string().contains("line 4"), "{error}");
 }
 
 #[test]

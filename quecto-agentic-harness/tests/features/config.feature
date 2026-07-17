@@ -50,6 +50,18 @@ Feature: Configuration
     When I load the config
     Then workflow step 1 should be "adapted" in phase "review" with guidance "Review it"
 
+  Scenario: Override every structural field of a reused workflow step
+    Given a workflow step file "shared.json" with content:
+      """
+      {"key":"shared","label":"Shared step","phase":"green","guidance":"From the file"}
+      """
+    And a config file at "~/.quecto/config.json" with content:
+      """
+      {"workflow":{"templates":[{"id":"test","label":"Test","description":"Test workflow","steps":[{"ref":"shared.json","key":"adapted","label":"Adapted","phase":"review"}]}]}}
+      """
+    When I load the config
+    Then workflow step 1 should be "adapted" in phase "review" with guidance "From the file"
+
   Scenario: Report the referenced workflow step file when it cannot be loaded
     Given a config file at "~/.quecto/config.json" with content:
       """

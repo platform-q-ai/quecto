@@ -290,8 +290,14 @@ impl Config {
         };
         let mut value: serde_json::Value =
             serde_json::from_str(&content).map_err(ConfigError::Parse)?;
-        resolve_workflow_step_entries(&mut value, Path::new(path))?;
-        let config: Config = serde_json::from_value(value).map_err(ConfigError::Parse)?;
+        let resolved_references = resolve_workflow_step_entries(&mut value, Path::new(path))?;
+        // Deserializing the resolved Value loses line/column error context, so
+        // only pay that cost when a reference was actually substituted.
+        let config: Config = if resolved_references {
+            serde_json::from_value(value).map_err(ConfigError::Parse)?
+        } else {
+            serde_json::from_str(&content).map_err(ConfigError::Parse)?
+        };
         config.validate_effort()?;
         Ok(config)
     }
@@ -385,19 +391,43 @@ impl Config {
     }
 }
 
+const WORKFLOW_STEP_FIELDS: &[&str] = &["key", "label", "phase", "guidance"];
+
+/// Returns `true` when resolution replaced at least one reference entry;
+/// callers use that to keep the cheaper (and line/column-preserving) text
+/// deserialization path for configs without references.
 fn resolve_workflow_step_entries(
     config: &mut serde_json::Value,
     config_path: &Path,
-) -> Result<(), ConfigError> {
+) -> Result<bool, ConfigError> {
     let Some(templates) = config
         .get_mut("workflow")
         .and_then(|workflow| workflow.get_mut("templates"))
         .and_then(serde_json::Value::as_array_mut)
     else {
-        return Ok(());
+        return Ok(false);
     };
-    let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    // Bound file loads before any reference is resolved; the engine re-checks
+    // both limits post-load with full template validation.
+    if templates.len() > crate::domain::workflow::MAX_TEMPLATE_COUNT {
+        return Err(ConfigError::WorkflowStep(format!(
+            "too many workflow templates: {} > {}",
+            templates.len(),
+            crate::domain::workflow::MAX_TEMPLATE_COUNT
+        )));
+    }
+    // `Path::new("config.json").parent()` is `Some("")`, not `None`.
+    let base_dir = match config_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let mut resolved = false;
     for template in templates {
+        let id = template
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
         let Some(steps) = template
             .get_mut("steps")
             .and_then(serde_json::Value::as_array_mut)
@@ -406,16 +436,41 @@ fn resolve_workflow_step_entries(
         };
         if steps.len() > crate::domain::workflow::MAX_STEPS_PER_TEMPLATE {
             return Err(ConfigError::WorkflowStep(format!(
-                "template has too many steps: {} > {}",
+                "template '{id}' has too many steps: {} > {}",
                 steps.len(),
                 crate::domain::workflow::MAX_STEPS_PER_TEMPLATE
             )));
         }
         for entry in steps {
+            resolved |= is_workflow_step_reference(entry);
             *entry = resolve_workflow_step_entry(entry.take(), base_dir)?;
         }
     }
-    Ok(())
+    Ok(resolved)
+}
+
+/// A reference object is one carrying `ref` whose other keys are all step
+/// fields — including when every field is overridden, so the referenced file
+/// is still loaded and validated. The one carve-out: an object that is
+/// already a complete inline step (`key` + `label` + `phase`) AND carries
+/// keys outside the step fields stays inline, so pre-existing configs using
+/// `ref` as free-form step metadata keep working.
+fn is_workflow_step_reference_object(object: &serde_json::Map<String, serde_json::Value>) -> bool {
+    object.contains_key("ref")
+        && (object
+            .keys()
+            .all(|key| key == "ref" || WORKFLOW_STEP_FIELDS.contains(&key.as_str()))
+            || !(object.contains_key("key")
+                && object.contains_key("label")
+                && object.contains_key("phase")))
+}
+
+fn is_workflow_step_reference(entry: &serde_json::Value) -> bool {
+    match entry {
+        serde_json::Value::String(_) => true,
+        serde_json::Value::Object(object) => is_workflow_step_reference_object(object),
+        _ => false,
+    }
 }
 
 fn resolve_workflow_step_entry(
@@ -424,24 +479,17 @@ fn resolve_workflow_step_entry(
 ) -> Result<serde_json::Value, ConfigError> {
     match entry {
         serde_json::Value::String(reference) => load_workflow_step(base_dir, &reference),
-        serde_json::Value::Object(mut object)
-            if object.contains_key("ref")
-                && !(object.contains_key("key")
-                    && object.contains_key("label")
-                    && object.contains_key("phase")) =>
-        {
+        serde_json::Value::Object(mut object) if is_workflow_step_reference_object(&object) => {
             let reference = object
                 .remove("ref")
                 .and_then(|value| value.as_str().map(str::to_owned))
                 .ok_or_else(|| ConfigError::WorkflowStep("`ref` must be a string".into()))?;
-            reject_unknown_keys(
-                &object,
-                &["key", "label", "phase", "guidance"],
-                "step reference",
-            )?;
+            reject_unknown_keys(&object, WORKFLOW_STEP_FIELDS, "step reference")?;
             let mut step = load_workflow_step(base_dir, &reference)?;
             let target = step.as_object_mut().expect("loaded step is an object");
             target.extend(object);
+            serde_json::from_value::<crate::domain::workflow::WorkflowTemplateStep>(step.clone())
+                .map_err(|error| ConfigError::WorkflowStep(format!("{reference}: {error}")))?;
             Ok(step)
         }
         serde_json::Value::Object(object) => Ok(serde_json::Value::Object(object)),
@@ -504,11 +552,7 @@ fn load_workflow_step(base_dir: &Path, reference: &str) -> Result<serde_json::Va
             path.display()
         )));
     }
-    reject_unknown_keys(
-        object,
-        &["key", "label", "phase", "guidance"],
-        &path.display().to_string(),
-    )?;
+    reject_unknown_keys(object, WORKFLOW_STEP_FIELDS, &path.display().to_string())?;
     serde_json::from_value::<crate::domain::workflow::WorkflowTemplateStep>(value.clone())
         .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?;
     Ok(value)
