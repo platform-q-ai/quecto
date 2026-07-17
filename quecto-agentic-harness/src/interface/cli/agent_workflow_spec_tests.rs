@@ -217,6 +217,32 @@ fn build_agent_with_unloadable_workflow_spec_fails_closed() {
 }
 
 #[test]
+fn build_agent_with_semantically_invalid_workflow_spec_fails_startup() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
+    )
+    .unwrap();
+    let spec_path = tmp.path().join("spec.json");
+    std::fs::write(
+        &spec_path,
+        r#"{"template":{"id":"review-pr","label":"Review PR","description":"d","steps":[{"key":" ","label":"Analyze","phase":"review"}]}}"#,
+    )
+    .unwrap();
+
+    let mut flags = uds_workflow_flags(false, false);
+    flags.workflow_spec_path = Some(spec_path);
+    let mut stderr = String::new();
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None);
+
+    assert!(result.is_none(), "an invalid bound spec must abort startup");
+    assert!(stderr.contains("failed to initialize workflow"), "{stderr}");
+    assert!(stderr.contains("empty key"), "{stderr}");
+}
+
+#[test]
 fn build_agent_with_oversized_workflow_spec_fails_closed() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(

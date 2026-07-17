@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{Config, ConfigError, reject_unknown_keys, resolve_workflow_step_entry};
+use super::{Config, ConfigError, resolve_workflow_step_entry};
 
 /// Outcome of workflow template discovery (PRD workflow-composable-templates
 /// §3.2, slice 2).
@@ -110,6 +110,28 @@ pub fn discover_workflow_templates(
 /// a load error (two sources of truth could disagree).
 const WORKFLOW_TEMPLATE_FIELDS: &[&str] =
     &["label", "description", "when_to_use", "steps", "guards"];
+const WORKFLOW_TEMPLATE_STEP_FIELDS: &[&str] = &["key", "label", "phase", "guidance"];
+const WORKFLOW_TEMPLATE_REFERENCE_FIELDS: &[&str] = &["ref", "key", "label", "phase", "guidance"];
+const WORKFLOW_TEMPLATE_GUARD_FIELDS: &[&str] = &["commands", "before_step_key", "message"];
+
+/// Maximum raw size of one directory template file (256 KiB). Combined with
+/// `MAX_TEMPLATE_COUNT`, this bounds repository-controlled startup input before
+/// JSON parsing and matches the existing by-value workflow-spec ceiling.
+pub(crate) const MAX_WORKFLOW_TEMPLATE_FILE_BYTES: u64 =
+    crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES as u64;
+
+fn reject_unknown_template_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    allowed: &[&str],
+    context: &str,
+) -> Result<(), ConfigError> {
+    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(ConfigError::WorkflowTemplate(format!(
+            "{context}: unknown field `{key}`"
+        )));
+    }
+    Ok(())
+}
 
 /// Load every workflow template from the top-level `*.json` files of `dir`
 /// (template id = filename stem; `steps/` and all subfolders are never scanned
@@ -152,6 +174,15 @@ fn load_workflow_template_file(
             ConfigError::WorkflowTemplate(format!("{context}: template filename must be UTF-8"))
         })?
         .to_owned();
+    let size = path
+        .metadata()
+        .map_err(|error| ConfigError::WorkflowTemplate(format!("{context}: {error}")))?
+        .len();
+    if size > MAX_WORKFLOW_TEMPLATE_FILE_BYTES {
+        return Err(ConfigError::WorkflowTemplate(format!(
+            "{context}: template file is too large: {size} > {MAX_WORKFLOW_TEMPLATE_FILE_BYTES}"
+        )));
+    }
     let content = std::fs::read_to_string(path)
         .map_err(|error| ConfigError::WorkflowTemplate(format!("{context}: {error}")))?;
     let value: serde_json::Value = serde_json::from_str(&content)
@@ -163,31 +194,60 @@ fn load_workflow_template_file(
     };
     // Strict parsing (PRD Decision 2): typos and an explicit `id` field are
     // both load errors naming the file.
-    reject_unknown_keys(&object, WORKFLOW_TEMPLATE_FIELDS, &context)?;
-    let steps = object
-        .get_mut("steps")
-        .and_then(serde_json::Value::as_array_mut)
-        .ok_or_else(|| {
-            ConfigError::WorkflowTemplate(format!("{context}: template must have a steps array"))
-        })?;
-    if steps.is_empty() {
-        return Err(ConfigError::WorkflowTemplate(format!(
-            "{context}: template must define at least one step"
-        )));
+    reject_unknown_template_keys(&object, WORKFLOW_TEMPLATE_FIELDS, &context)?;
+    {
+        let steps = object
+            .get_mut("steps")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| {
+                ConfigError::WorkflowTemplate(format!(
+                    "{context}: template must have a steps array"
+                ))
+            })?;
+        if steps.is_empty() {
+            return Err(ConfigError::WorkflowTemplate(format!(
+                "{context}: template must define at least one step"
+            )));
+        }
+        if steps.len() > crate::domain::workflow::MAX_STEPS_PER_TEMPLATE {
+            return Err(ConfigError::WorkflowTemplate(format!(
+                "{context}: too many steps: {} > {}",
+                steps.len(),
+                crate::domain::workflow::MAX_STEPS_PER_TEMPLATE
+            )));
+        }
+        // Directory templates are a strict file format: validate nested inline
+        // steps here rather than changing the shared domain structs, whose
+        // lenient deserialization is retained for backward-compatible inline
+        // configs and forward-compatible by-value WorkflowSpec payloads.
+        for entry in steps.iter() {
+            if let serde_json::Value::Object(step) = entry {
+                let allowed = if step.contains_key("ref") {
+                    WORKFLOW_TEMPLATE_REFERENCE_FIELDS
+                } else {
+                    WORKFLOW_TEMPLATE_STEP_FIELDS
+                };
+                reject_unknown_template_keys(step, allowed, &format!("{context}: step entry"))?;
+            }
+        }
+        // Step references resolve relative to the workflow directory, through
+        // the same slice-1 resolver inline configs use (bounds, no recursion,
+        // strict step fields, containment within the directory).
+        for entry in steps {
+            *entry = resolve_workflow_step_entry(entry.take(), dir)
+                .map_err(|error| ConfigError::WorkflowTemplate(format!("{context}: {error}")))?;
+        }
     }
-    if steps.len() > crate::domain::workflow::MAX_STEPS_PER_TEMPLATE {
-        return Err(ConfigError::WorkflowTemplate(format!(
-            "{context}: too many steps: {} > {}",
-            steps.len(),
-            crate::domain::workflow::MAX_STEPS_PER_TEMPLATE
-        )));
-    }
-    // Step references resolve relative to the workflow directory, through the
-    // same slice-1 resolver inline configs use (bounds, no recursion, strict
-    // step fields, containment within the directory).
-    for entry in steps {
-        *entry = resolve_workflow_step_entry(entry.take(), dir)
-            .map_err(|error| ConfigError::WorkflowTemplate(format!("{context}: {error}")))?;
+    if let Some(guards) = object.get("guards").and_then(serde_json::Value::as_array) {
+        for guard in guards {
+            if let serde_json::Value::Object(guard) = guard {
+                reject_unknown_template_keys(
+                    guard,
+                    WORKFLOW_TEMPLATE_GUARD_FIELDS,
+                    &format!("{context}: guard"),
+                )?;
+            }
+        }
     }
     object.insert("id".into(), serde_json::Value::String(id));
     let template: crate::domain::workflow::WorkflowTemplate =

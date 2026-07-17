@@ -306,6 +306,64 @@ fn test_discover_unknown_template_field_fails_naming_file() {
 }
 
 #[test]
+fn test_discover_unknown_inline_step_field_fails_naming_file_and_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let wf = dir.path().join(".quecto/workflows");
+    write_file(
+        &wf.join("step-typo.json"),
+        r#"{"label":"T","description":"d","steps":[{"key":"one","label":"One","phase":"green","guidnace":"lost"}]}"#,
+    );
+    let config = config_in(dir.path(), "{}");
+
+    let err = discover_workflow_templates(&config, dir.path(), None)
+        .expect_err("unknown inline step fields must fail startup")
+        .to_string();
+
+    assert!(err.contains("step-typo.json"), "{err}");
+    assert!(err.contains("guidnace"), "{err}");
+}
+
+#[test]
+fn test_discover_unknown_inline_ref_field_fails_naming_file_and_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let wf = dir.path().join(".quecto/workflows");
+    write_file(
+        &wf.join("ref-typo.json"),
+        r#"{"label":"T","description":"d","steps":[{"ref":"steps/base","guidnace":"lost"}]}"#,
+    );
+    write_file(
+        &wf.join("steps/base.json"),
+        r#"{"key":"one","label":"One","phase":"green"}"#,
+    );
+    let config = config_in(dir.path(), "{}");
+
+    let err = discover_workflow_templates(&config, dir.path(), None)
+        .expect_err("unknown reference override fields must fail startup")
+        .to_string();
+
+    assert!(err.contains("ref-typo.json"), "{err}");
+    assert!(err.contains("guidnace"), "{err}");
+}
+
+#[test]
+fn test_discover_unknown_guard_field_fails_naming_file_and_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let wf = dir.path().join(".quecto/workflows");
+    write_file(
+        &wf.join("guard-typo.json"),
+        r#"{"label":"T","description":"d","steps":[{"key":"one","label":"One","phase":"green"}],"guards":[{"commands":["git push"],"before_step_key":"one","message":"blocked","messsage":"lost"}]}"#,
+    );
+    let config = config_in(dir.path(), "{}");
+
+    let err = discover_workflow_templates(&config, dir.path(), None)
+        .expect_err("unknown guard fields must fail startup")
+        .to_string();
+
+    assert!(err.contains("guard-typo.json"), "{err}");
+    assert!(err.contains("messsage"), "{err}");
+}
+
+#[test]
 fn test_discover_explicit_id_field_in_template_file_fails_naming_file() {
     // The template id IS the filename stem; an explicit `id` field would allow
     // two sources of truth to disagree, so it is a load error.
@@ -416,6 +474,47 @@ fn test_discover_rejects_too_many_template_files() {
         err.contains("too many workflow templates"),
         "error should state the template-count bound: {err}"
     );
+}
+
+fn template_file_with_exact_size(size: usize) -> String {
+    let prefix = r#"{"label":"T","description":""#;
+    let suffix = r#"","steps":[{"key":"one","label":"One","phase":"green"}]}"#;
+    assert!(size >= prefix.len() + suffix.len());
+    format!(
+        "{prefix}{}{suffix}",
+        "x".repeat(size - prefix.len() - suffix.len())
+    )
+}
+
+#[test]
+fn test_discover_accepts_template_file_at_exact_size_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let wf = dir.path().join(".quecto/workflows");
+    let content = template_file_with_exact_size(MAX_WORKFLOW_TEMPLATE_FILE_BYTES as usize);
+    assert_eq!(content.len() as u64, MAX_WORKFLOW_TEMPLATE_FILE_BYTES);
+    write_file(&wf.join("boundary.json"), &content);
+    let config = config_in(dir.path(), "{}");
+
+    let discovery = discover_workflow_templates(&config, dir.path(), None)
+        .expect("a template at the exact byte limit must load");
+
+    assert_eq!(template_ids(&discovery), ["boundary"]);
+}
+
+#[test]
+fn test_discover_rejects_template_file_over_size_limit_naming_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let wf = dir.path().join(".quecto/workflows");
+    let content = template_file_with_exact_size(MAX_WORKFLOW_TEMPLATE_FILE_BYTES as usize + 1);
+    write_file(&wf.join("oversized.json"), &content);
+    let config = config_in(dir.path(), "{}");
+
+    let err = discover_workflow_templates(&config, dir.path(), None)
+        .expect_err("a template one byte over the limit must fail startup")
+        .to_string();
+
+    assert!(err.contains("oversized.json"), "{err}");
+    assert!(err.contains("too large"), "{err}");
 }
 
 #[test]

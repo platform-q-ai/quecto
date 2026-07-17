@@ -183,38 +183,32 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
                 }
             }
         };
-        match crate::interface::shared::register_workflow_tool(
+        let state = crate::interface::shared::register_workflow_tool(
             &mut registry,
             wf_config,
             flags.workflow_guards,
             wf_emitter,
-        ) {
-            Ok(state) => {
-                // Bind: pre-select the assigned template (Active mode) and lock
-                // the engine so the model cannot reset or switch templates.
-                if let Some(spec) = bound_spec {
-                    match state.lock() {
-                        Ok(mut engine) => match engine.select_template(&spec.template.id, None) {
-                            Ok(()) => engine.set_bound(true),
-                            Err(err) => stderr.push_str(&format!(
-                                "failed to bind workflow template '{}': {}\n",
-                                spec.template.id, err
-                            )),
-                        },
-                        Err(_) => {
-                            stderr.push_str(
-                                "failed to bind workflow template: engine lock poisoned\n",
-                            );
-                        }
-                    }
-                }
-                Some(state)
-            }
-            Err(err) => {
-                stderr.push_str(&format!("failed to initialize workflow: {}\n", err));
-                None
-            }
+        )
+        .map_err(|error| format!("failed to initialize workflow: {error}"))?;
+        // Bind: pre-select the assigned template (Active mode) and lock the
+        // engine so the model cannot reset or switch templates. Initialization
+        // and binding errors abort startup; an explicitly requested workflow
+        // must never degrade into a session without its workflow.
+        if let Some(spec) = bound_spec {
+            let mut engine = state.lock().map_err(|_| {
+                "failed to bind workflow template: engine lock poisoned".to_string()
+            })?;
+            engine
+                .select_template(&spec.template.id, None)
+                .map_err(|error| {
+                    format!(
+                        "failed to bind workflow template '{}': {error}",
+                        spec.template.id
+                    )
+                })?;
+            engine.set_bound(true);
         }
+        Some(state)
     } else {
         None
     };

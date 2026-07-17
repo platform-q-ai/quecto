@@ -250,6 +250,31 @@ fn agent_cmd_docs_match_tool_schema() {
 }
 
 #[test]
+fn subagent_docs_distinguish_bound_specs_from_directory_templates() {
+    let subagents = read_repo_file("docs/subagents.md");
+    let relevant = subagents
+        .split("- The `template` is")
+        .nth(1)
+        .and_then(|text| text.split("- The spec is size-bounded").next())
+        .expect("bound workflow template documentation must exist");
+
+    assert!(relevant.contains("fully resolved, inlined"), "{relevant}");
+    assert!(
+        relevant.contains("requires") && relevant.contains("`id`"),
+        "{relevant}"
+    );
+    assert!(
+        relevant.contains("cannot use file references"),
+        "{relevant}"
+    );
+    for field in ["`key`", "`label`", "`phase`", "`guidance`"] {
+        assert!(relevant.contains(field), "missing {field}: {relevant}");
+    }
+    assert!(!relevant.contains("done_when"), "{relevant}");
+    assert!(!relevant.contains("same shape"), "{relevant}");
+}
+
+#[test]
 fn subagent_docs_document_readonly_and_disable_tools_spawn() {
     // #960: the agent-facing docs served by the docs tool must document the
     // spawn `disable_tools` / `read_only` capability (#957) so a coordinator can

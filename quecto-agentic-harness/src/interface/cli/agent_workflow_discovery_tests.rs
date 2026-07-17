@@ -42,15 +42,19 @@ fn config_from_json(json: &str) -> Config {
 }
 
 fn write_template(cwd: &std::path::Path, name: &str, label: &str) {
-    let dir = cwd.join(".quecto/workflows");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join(name),
-        format!(
+    write_template_json(
+        cwd,
+        name,
+        &format!(
             r#"{{"label":"{label}","description":"d","steps":[{{"key":"one","label":"One","phase":"green","guidance":"g"}}]}}"#
         ),
-    )
-    .unwrap();
+    );
+}
+
+fn write_template_json(cwd: &std::path::Path, name: &str, json: &str) {
+    let dir = cwd.join(".quecto/workflows");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(name), json).unwrap();
 }
 
 fn build(
@@ -119,9 +123,7 @@ fn startup_engine_runs_templates_discovered_from_workflow_dir() {
 #[test]
 fn startup_fails_fast_when_a_workflow_dir_template_is_broken() {
     let cwd = tempfile::TempDir::new().unwrap();
-    let dir = cwd.path().join(".quecto/workflows");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("broken.json"), "not json {").unwrap();
+    write_template_json(cwd.path(), "broken.json", "not json {");
     let config = config_from_json(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
     let mut stderr = String::new();
     let err = match build(cwd.path(), &config, &workflow_flags(), &mut stderr) {
@@ -132,6 +134,46 @@ fn startup_fails_fast_when_a_workflow_dir_template_is_broken() {
         err.contains("broken.json"),
         "error must name the file: {err}"
     );
+}
+
+#[test]
+fn startup_fails_fast_when_a_template_has_an_empty_step_key() {
+    let cwd = tempfile::TempDir::new().unwrap();
+    write_template_json(
+        cwd.path(),
+        "empty-key.json",
+        r#"{"label":"Bad","description":"d","steps":[{"key":" ","label":"One","phase":"green"}]}"#,
+    );
+    let config = config_from_json(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+    let mut stderr = String::new();
+
+    let err = match build(cwd.path(), &config, &workflow_flags(), &mut stderr) {
+        Err(error) => error,
+        Ok(_) => panic!("engine validation errors must abort startup"),
+    };
+
+    assert!(err.contains("failed to initialize workflow"), "{err}");
+    assert!(err.contains("empty key"), "{err}");
+}
+
+#[test]
+fn startup_fails_fast_when_a_guard_references_an_unknown_step() {
+    let cwd = tempfile::TempDir::new().unwrap();
+    write_template_json(
+        cwd.path(),
+        "bad-guard.json",
+        r#"{"label":"Bad","description":"d","steps":[{"key":"one","label":"One","phase":"green"}],"guards":[{"commands":["git push"],"before_step_key":"missing","message":"blocked"}]}"#,
+    );
+    let config = config_from_json(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+    let mut stderr = String::new();
+
+    let err = match build(cwd.path(), &config, &workflow_flags(), &mut stderr) {
+        Err(error) => error,
+        Ok(_) => panic!("engine validation errors must abort startup"),
+    };
+
+    assert!(err.contains("failed to initialize workflow"), "{err}");
+    assert!(err.contains("unknown step key 'missing'"), "{err}");
 }
 
 /// The shadowing warning reaches the OBSERVABLE startup channel (stderr) —
