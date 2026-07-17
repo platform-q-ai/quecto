@@ -13,6 +13,16 @@ fn given_config_file_at_path(world: &mut QuectoWorld, step: &gherkin::Step, _pat
     world.config_path = Some(config_file.to_string_lossy().to_string());
 }
 
+#[given(expr = "a workflow step file {string} with content:")]
+fn given_workflow_step_file(world: &mut QuectoWorld, step: &gherkin::Step, path: String) {
+    let content = step.docstring().expect("step should have a docstring");
+    ensure_temp_dir(world);
+    let step_file = base_path(world).join(path);
+    std::fs::create_dir_all(step_file.parent().expect("step file has parent"))
+        .expect("failed to create workflow step directory");
+    std::fs::write(step_file, content).expect("failed to write workflow step file");
+}
+
 #[given(expr = "an environment variable {string} set to {string}")]
 fn given_env_var(world: &mut QuectoWorld, key: String, value: String) {
     world.env_overrides.insert(key, value);
@@ -105,6 +115,15 @@ fn when_load_config(world: &mut QuectoWorld) {
     world.config = Some(config);
 }
 
+#[when("I try to load the config")]
+fn when_try_load_config(world: &mut QuectoWorld) {
+    let path = world.config_path.as_ref().expect("config_path must be set");
+    match Config::load_with_env(path, &world.env_overrides) {
+        Ok(config) => world.config = Some(config),
+        Err(error) => world.stderr = error.to_string(),
+    }
+}
+
 #[when("I resolve the workspace path")]
 fn when_resolve_workspace(world: &mut QuectoWorld) {
     let path = world
@@ -118,6 +137,30 @@ fn when_resolve_workspace(world: &mut QuectoWorld) {
 // ===========================================================================
 // Config Steps (Then)
 // ===========================================================================
+
+#[then(expr = "workflow step {int} should be {string} in phase {string} with guidance {string}")]
+fn then_workflow_step_should_match(
+    world: &mut QuectoWorld,
+    index: usize,
+    key: String,
+    phase: String,
+    guidance: String,
+) {
+    let config = world.config.as_ref().expect("config not loaded");
+    let step = &config.workflow.templates[0].steps[index - 1];
+    assert_eq!(step.key, key);
+    assert_eq!(step.phase, phase);
+    assert_eq!(step.guidance.as_deref(), Some(guidance.as_str()));
+}
+
+#[then(expr = "config loading should fail with {string}")]
+fn then_config_loading_should_fail(world: &mut QuectoWorld, expected: String) {
+    assert!(
+        world.stderr.contains(&expected),
+        "expected config error to contain '{expected}', got '{}'",
+        world.stderr
+    );
+}
 
 #[then(expr = "the model should be {string}")]
 fn then_model_should_be(world: &mut QuectoWorld, expected: String) {

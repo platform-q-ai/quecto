@@ -26,6 +26,62 @@ Feature: Configuration
     And the max_tokens should be 4096
     And the OpenAI API key should be "sk-test-123"
 
+  Scenario: Reuse a workflow step from a relative file
+    Given a workflow step file "steps/shared.json" with content:
+      """
+      {"key":"shared","label":"Shared step","phase":"green","guidance":"Reuse this"}
+      """
+    And a config file at "~/.quecto/config.json" with content:
+      """
+      {"workflow":{"templates":[{"id":"test","label":"Test","description":"Test workflow","steps":["steps/shared"]}]}}
+      """
+    When I load the config
+    Then workflow step 1 should be "shared" in phase "green" with guidance "Reuse this"
+
+  Scenario: Adapt a reused workflow step for one template
+    Given a workflow step file "shared.json" with content:
+      """
+      {"key":"shared","label":"Shared step","phase":"green","guidance":"Base guidance"}
+      """
+    And a config file at "~/.quecto/config.json" with content:
+      """
+      {"workflow":{"templates":[{"id":"test","label":"Test","description":"Test workflow","steps":[{"ref":"shared.json","key":"adapted","phase":"review","guidance":"Review it"}]}]}}
+      """
+    When I load the config
+    Then workflow step 1 should be "adapted" in phase "review" with guidance "Review it"
+
+  Scenario: Override every structural field of a reused workflow step
+    Given a workflow step file "shared.json" with content:
+      """
+      {"key":"shared","label":"Shared step","phase":"green","guidance":"From the file"}
+      """
+    And a config file at "~/.quecto/config.json" with content:
+      """
+      {"workflow":{"templates":[{"id":"test","label":"Test","description":"Test workflow","steps":[{"ref":"shared.json","key":"adapted","label":"Adapted","phase":"review"}]}]}}
+      """
+    When I load the config
+    Then workflow step 1 should be "adapted" in phase "review" with guidance "From the file"
+
+  Scenario: Report the referenced workflow step file when it cannot be loaded
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"workflow":{"templates":[{"id":"test","label":"Test","description":"Test workflow","steps":["steps/missing"]}]}}
+      """
+    When I try to load the config
+    Then config loading should fail with "steps/missing.json"
+
+  Scenario: Reject workflow step files that reference other files
+    Given a workflow step file "recursive.json" with content:
+      """
+      {"ref":"other"}
+      """
+    And a config file at "~/.quecto/config.json" with content:
+      """
+      {"workflow":{"templates":[{"id":"test","label":"Test","description":"Test workflow","steps":["recursive"]}]}}
+      """
+    When I try to load the config
+    Then config loading should fail with "recursive references are not allowed"
+
   Scenario: Missing config fields use defaults
     Given a config file at "~/.quecto/config.json" with content:
       """
