@@ -2,7 +2,7 @@
 
 This repository is a Cargo workspace containing the Quecto agentic harness and related packages.
 
-Current version: **0.94.0**
+Current version: **0.95.0**
 
 ## Packages
 

@@ -2,7 +2,7 @@
 
 **Status:** Draft for review
 **Scope:** `quecto-agentic-harness` workflow subsystem
-**Related:** `docs/workflow.md`, `docs/composable-workflow-units-prd.md`
+**Related:** `docs/workflow.md`
 
 ---
 

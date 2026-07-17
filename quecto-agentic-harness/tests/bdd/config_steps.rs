@@ -23,6 +23,30 @@ fn given_workflow_step_file(world: &mut QuectoWorld, step: &gherkin::Step, path:
     std::fs::write(step_file, content).expect("failed to write workflow step file");
 }
 
+#[given(expr = "a workflow template file {string} with content:")]
+fn given_workflow_template_file(world: &mut QuectoWorld, step: &gherkin::Step, path: String) {
+    let content = step.docstring().expect("step should have a docstring");
+    ensure_temp_dir(world);
+    // `~/` is the feature file's ubiquitous language for the user's home
+    // directory; it maps to the same fake home dir discovery runs against
+    // (see `discover_workflow_templates_for_world`).
+    let template_file = match path.strip_prefix("~/") {
+        Some(rest) => base_path(world).join("home").join(rest),
+        None => base_path(world).join(path),
+    };
+    std::fs::create_dir_all(template_file.parent().expect("template file has parent"))
+        .expect("failed to create workflow template directory");
+    std::fs::write(template_file, content).expect("failed to write workflow template file");
+}
+
+#[given("an empty config file")]
+fn given_empty_config_file(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let config_file = base_path(world).join("config.json");
+    std::fs::write(&config_file, "{}").expect("failed to write config file");
+    world.config_path = Some(config_file.to_string_lossy().to_string());
+}
+
 #[given(expr = "an environment variable {string} set to {string}")]
 fn given_env_var(world: &mut QuectoWorld, key: String, value: String) {
     world.env_overrides.insert(key, value);
@@ -124,6 +148,41 @@ fn when_try_load_config(world: &mut QuectoWorld) {
     }
 }
 
+/// Slice 2 (workflow-composable-templates PRD §3.2): run directory discovery
+/// with the scenario's base dir as the working directory and `<base>/home` as
+/// the home directory, so precedence scenarios can lay files under either.
+fn discover_workflow_templates_for_world(world: &mut QuectoWorld) {
+    let path = world
+        .config_path
+        .as_ref()
+        .expect("config_path must be set before discovery")
+        .clone();
+    let config =
+        Config::load_with_env(&path, &world.env_overrides).expect("Config::load_with_env failed");
+    let cwd = base_path(world);
+    let home = cwd.join("home");
+    match quecto::infrastructure::config::discover_workflow_templates(&config, &cwd, Some(&home)) {
+        Ok(discovery) => world.workflow_discovery = Some(discovery),
+        Err(error) => world.stderr = error.to_string(),
+    }
+    world.config = Some(config);
+}
+
+#[when("I discover workflow templates")]
+fn when_discover_workflow_templates(world: &mut QuectoWorld) {
+    discover_workflow_templates_for_world(world);
+    assert!(
+        world.workflow_discovery.is_some(),
+        "workflow template discovery failed: {}",
+        world.stderr
+    );
+}
+
+#[when("I try to discover workflow templates")]
+fn when_try_discover_workflow_templates(world: &mut QuectoWorld) {
+    discover_workflow_templates_for_world(world);
+}
+
 #[when("I resolve the workspace path")]
 fn when_resolve_workspace(world: &mut QuectoWorld) {
     let path = world
@@ -151,6 +210,83 @@ fn then_workflow_step_should_match(
     assert_eq!(step.key, key);
     assert_eq!(step.phase, phase);
     assert_eq!(step.guidance.as_deref(), Some(guidance.as_str()));
+}
+
+#[then(expr = "the only discovered workflow template should be {string}")]
+fn then_only_discovered_template(world: &mut QuectoWorld, expected: String) {
+    let discovery = world
+        .workflow_discovery
+        .as_ref()
+        .expect("workflow templates were not discovered");
+    let ids: Vec<&str> = discovery.templates.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [expected.as_str()],
+        "expected `{expected}` to be the only discovered template, got {ids:?}"
+    );
+}
+
+#[then(expr = "discovered template {string} step {int} should have guidance {string}")]
+fn then_discovered_template_step_guidance(
+    world: &mut QuectoWorld,
+    id: String,
+    index: usize,
+    guidance: String,
+) {
+    let discovery = world
+        .workflow_discovery
+        .as_ref()
+        .expect("workflow templates were not discovered");
+    let template = discovery
+        .templates
+        .iter()
+        .find(|t| t.id == id)
+        .unwrap_or_else(|| panic!("template `{id}` was not discovered"));
+    assert_eq!(
+        template.steps[index - 1].guidance.as_deref(),
+        Some(guidance.as_str())
+    );
+}
+
+#[then("no workflow discovery warning should be issued")]
+fn then_no_discovery_warning(world: &mut QuectoWorld) {
+    let discovery = world
+        .workflow_discovery
+        .as_ref()
+        .expect("workflow templates were not discovered");
+    assert_eq!(
+        discovery.warning, None,
+        "no startup warning expected for this discovery"
+    );
+}
+
+#[then(expr = "a workflow discovery warning should mention {string}")]
+fn then_discovery_warning_mentions(world: &mut QuectoWorld, expected: String) {
+    let discovery = world
+        .workflow_discovery
+        .as_ref()
+        .expect("workflow templates were not discovered");
+    let warning = discovery
+        .warning
+        .as_ref()
+        .expect("a startup warning should have been issued");
+    assert!(
+        warning.contains(&expected),
+        "expected the discovery warning to mention '{expected}', got '{warning}'"
+    );
+}
+
+#[then(expr = "workflow discovery should fail with {string}")]
+fn then_workflow_discovery_fails(world: &mut QuectoWorld, expected: String) {
+    assert!(
+        world.workflow_discovery.is_none(),
+        "expected workflow discovery to fail, but it succeeded"
+    );
+    assert!(
+        world.stderr.contains(&expected),
+        "expected discovery error to contain '{expected}', got '{}'",
+        world.stderr
+    );
 }
 
 #[then(expr = "config loading should fail with {string}")]

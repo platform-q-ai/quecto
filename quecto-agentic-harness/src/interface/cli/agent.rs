@@ -15,31 +15,6 @@ use crate::infrastructure::persistence::session_store::FileSessionStore;
 /// we use the stricter limit for portability.
 const MAX_SOCKET_PATH_BYTES: usize = 104;
 
-/// Parsed flags for the `agent` subcommand.
-pub(crate) struct AgentFlags {
-    pub(crate) session_name: Option<String>,
-    pub(crate) no_session: bool,
-    pub(crate) message: Option<String>,
-    pub(crate) system_prompt: Option<String>,
-    pub(crate) model_override: Option<String>,
-    pub(crate) max_iterations: Option<u32>,
-    pub(crate) max_time: Option<u64>,
-    pub(crate) uds_mode: bool,
-    pub(crate) no_sandbox: bool,
-    pub(crate) socket_path: Option<std::path::PathBuf>,
-    pub(crate) persist: bool,
-    pub(crate) disabled_tools: Vec<String>,
-    pub(crate) effort: Option<crate::domain::provider::EffortLevel>,
-    pub(crate) workflow: bool,
-    pub(crate) workflow_guards: bool,
-    pub(crate) workflow_disabled: bool,
-    pub(crate) workflow_spec_path: Option<std::path::PathBuf>,
-    /// `--parent-id`: the spawning agent's id, stamped onto this agent's emitted
-    /// events so consumers can reconstruct the unit tree (PRD Stage B). `None`
-    /// at the root.
-    pub(crate) parent_id: Option<String>,
-}
-
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
 pub(crate) struct AgentOutput<'a> {
     pub(crate) stdout: &'a mut String,
@@ -55,6 +30,7 @@ pub(crate) enum DeadlineResult {
 }
 
 mod flag_parse;
+pub(crate) use flag_parse::AgentFlags;
 use flag_parse::{
     next_arg, parse_agent_mode, parse_effort_level, parse_pos_u32, parse_pos_u64,
     parse_session_name,
@@ -340,6 +316,10 @@ pub(crate) fn build_agent_from_config(
         http_client.clone(),
     );
 
+    // Workflow template discovery (slice 2) resolves against the process
+    // working directory and the user's home directory.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let home_dir = crate::infrastructure::tools::path_utils::home_dir();
     let ToolRegistryBuild {
         registry,
         spill_store,
@@ -350,14 +330,24 @@ pub(crate) fn build_agent_from_config(
         notification_rx,
         subagent_registry,
         workflow_state,
-    } = build_tool_registry(ToolRegistryArgs {
+    } = match build_tool_registry(ToolRegistryArgs {
         base_dir,
         config: &config,
         http_client: &http_client,
         flags,
         stderr,
         broadcast_tx,
-    });
+        cwd: &cwd,
+        home_dir,
+    }) {
+        Ok(build) => build,
+        Err(error) => {
+            // Fail fast at startup: a broken workflow template file must not
+            // silently degrade into a session with a partial library.
+            stderr.push_str(&format!("{error}\n"));
+            return None;
+        }
+    };
 
     // Remove disabled tools before boxing the registry (#402).
     let mut registry = registry;
@@ -741,6 +731,9 @@ mod provider_1066_tests;
 #[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "agent_workflow_discovery_tests.rs"]
+mod workflow_discovery_tests;
 #[cfg(test)]
 #[path = "agent_workflow_spec_tests.rs"]
 mod workflow_spec_tests;

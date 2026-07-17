@@ -57,7 +57,10 @@ fn test_926_spawn_capable_build_has_live_notification_rx_with_real_base_dir() {
         flags: &flags,
         stderr: &mut stderr,
         broadcast_tx: None,
-    });
+        cwd: tmp.path(),
+        home_dir: None,
+    })
+    .expect("registry build should succeed");
     assert!(
         build.notification_rx.is_some(),
         "spawn-capable parent must have a live notification receiver"
@@ -77,6 +80,7 @@ fn test_926_empty_base_dir_still_keeps_notification_rx_live() {
     let config = config_with_provider();
     let flags = spawn_capable_flags();
     let mut stderr = String::new();
+    let cwd = tempfile::TempDir::new().unwrap();
     let build = build_tool_registry(ToolRegistryArgs {
         base_dir: std::path::Path::new(""),
         config: &config,
@@ -84,7 +88,10 @@ fn test_926_empty_base_dir_still_keeps_notification_rx_live() {
         flags: &flags,
         stderr: &mut stderr,
         broadcast_tx: None,
-    });
+        cwd: cwd.path(),
+        home_dir: None,
+    })
+    .expect("registry build should succeed");
     assert!(
         build.notification_rx.is_some(),
         "a live notify_tx must never be paired with a dropped notify_rx (#926)"
@@ -111,7 +118,10 @@ fn test_957_read_only_child_registry_omits_write_edit_keeps_others() {
         flags: &flags,
         stderr: &mut stderr,
         broadcast_tx: None,
-    });
+        cwd: tmp.path(),
+        home_dir: None,
+    })
+    .expect("registry build should succeed");
     // Guard against a vacuous pass: the base registry must actually expose the
     // tools we intend to remove, so the post-removal absence proves removal (not
     // that they were never registered — the exact regression a read-only guard

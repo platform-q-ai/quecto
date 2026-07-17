@@ -2,35 +2,91 @@ use crate::domain::workflow::WorkflowTemplate;
 
 /// The built-in workflow templates.
 ///
-/// These are defined ONCE in the crate-root `workflow-config.json` — the
-/// guard-tested canonical spec — and embedded here at compile time, so the
-/// RUNNING workflow is byte-for-byte the reviewed spec.
+/// These are defined ONCE in the canonical `workflows/` folder (the single
+/// source of truth per the workflow-composable-templates PRD §3.2 / AC7) and
+/// embedded here at compile time, so the RUNNING workflow is byte-for-byte the
+/// reviewed spec. Template id = filename stem, exactly as the runtime
+/// directory loader (`load_workflow_templates_from_dir`) derives it; the
+/// `runtime_default_templates_match_canonical_folder` drift test pins the two
+/// load paths to resolve identically.
 ///
-/// Previously the feature template was hand-maintained in this file and silently
-/// drifted from `workflow-config.json`: stale gate facts (`Smoke Test`,
-/// `QUECTO_SKIP_REAL_LLM`), missing steps (`version_bump`), and a reviewer
-/// read-only instruction that lived only in a `shared_guidance` field serde
-/// never deserialized — so none of it reached a running agent. Parsing the
-/// single source removes that entire class of drift bug.
+/// Shared steps live once in `workflows/steps/` and are referenced by string
+/// path from the template files (slice 1 step-entry union). The embedded
+/// resolver below handles exactly the reference forms the canonical files
+/// use; anything else in an embedded file is a compile-tested developer error
+/// and panics at first use (caught by the unit tests in this module).
 ///
 /// `include_str!` + `serde_json::from_str` is pure compile-time embedding plus
 /// in-memory parsing (no filesystem or network access at runtime).
 pub fn default_templates() -> Vec<WorkflowTemplate> {
-    const CONFIG_JSON: &str = include_str!("../../../../workflow-config.json");
+    /// The canonical template files: (id = filename stem, embedded content).
+    const TEMPLATE_FILES: &[(&str, &str)] = &[
+        (
+            "feature",
+            include_str!("../../../../workflows/feature.json"),
+        ),
+        (
+            "refactor",
+            include_str!("../../../../workflows/refactor.json"),
+        ),
+    ];
+    /// The canonical shared-step files, keyed by their reference path
+    /// (relative to the workflow dir, `.json` extension omitted).
+    const STEP_FILES: &[(&str, &str)] = &[
+        (
+            "steps/shared/hooks",
+            include_str!("../../../../workflows/steps/shared/hooks.json"),
+        ),
+        (
+            "steps/shared/push_fixes",
+            include_str!("../../../../workflows/steps/shared/push_fixes.json"),
+        ),
+        (
+            "steps/shared/resolve_threads",
+            include_str!("../../../../workflows/steps/shared/resolve_threads.json"),
+        ),
+    ];
 
-    #[derive(serde::Deserialize)]
-    struct Root {
-        workflow: WorkflowSection,
-    }
-    #[derive(serde::Deserialize)]
-    struct WorkflowSection {
-        templates: Vec<WorkflowTemplate>,
-    }
+    TEMPLATE_FILES
+        .iter()
+        .map(|(id, content)| parse_embedded_template(id, content, STEP_FILES))
+        .collect()
+}
 
-    serde_json::from_str::<Root>(CONFIG_JSON)
-        .expect("embedded workflow-config.json must deserialize into workflow templates")
-        .workflow
-        .templates
+/// Parse one embedded canonical template file: inject the filename-stem id and
+/// resolve string step references against the embedded step library.
+fn parse_embedded_template(
+    id: &str,
+    content: &str,
+    step_files: &[(&str, &str)],
+) -> WorkflowTemplate {
+    let mut value: serde_json::Value = serde_json::from_str(content)
+        .unwrap_or_else(|e| panic!("embedded workflow template `{id}` must parse: {e}"));
+    let object = value
+        .as_object_mut()
+        .unwrap_or_else(|| panic!("embedded workflow template `{id}` must be an object"));
+    object.insert("id".into(), serde_json::Value::String(id.to_owned()));
+    let steps = object
+        .get_mut("steps")
+        .and_then(serde_json::Value::as_array_mut)
+        .unwrap_or_else(|| panic!("embedded workflow template `{id}` must have a steps array"));
+    for entry in steps {
+        if let serde_json::Value::String(reference) = entry {
+            let resolved = step_files
+                .iter()
+                .find(|(path, _)| {
+                    *path == reference.as_str() || format!("{path}.json") == *reference
+                })
+                .map(|(_, step)| step)
+                .unwrap_or_else(|| {
+                    panic!("embedded template `{id}` references unembedded step `{reference}`")
+                });
+            *entry = serde_json::from_str(resolved)
+                .unwrap_or_else(|e| panic!("embedded shared step `{reference}` must parse: {e}"));
+        }
+    }
+    serde_json::from_value(value)
+        .unwrap_or_else(|e| panic!("embedded workflow template `{id}` must deserialize: {e}"))
 }
 
 pub(super) fn phase_display_name(phase: &str) -> &str {
@@ -52,17 +108,45 @@ mod tests {
         default_templates()
             .into_iter()
             .find(|t| t.id == "feature")
-            .expect("the embedded config must define a `feature` template")
+            .expect("the embedded canonical folder must define a `feature` template")
     }
 
     #[test]
-    fn embedded_config_parses_into_a_feature_template() {
-        // The whole point of parsing `workflow-config.json` at compile time: the
-        // RUNTIME template is the guard-tested spec, so it cannot drift.
-        let f = feature();
-        assert!(!f.steps.is_empty());
-        assert!(f.steps.iter().any(|s| s.key == "bdd_review"));
-        assert!(f.steps.iter().any(|s| s.key == "reviewers"));
+    fn embedded_canonical_folder_parses_into_both_templates() {
+        // The whole point of embedding the canonical `workflows/` folder at
+        // compile time: the RUNTIME templates are the guard-tested spec, so
+        // they cannot drift, and every shared-step reference must resolve.
+        let templates = default_templates();
+        let ids: Vec<&str> = templates.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["feature", "refactor"]);
+        for t in &templates {
+            assert!(!t.steps.is_empty(), "template `{}` must have steps", t.id);
+        }
+    }
+
+    #[test]
+    fn shared_step_references_resolve_to_inline_steps() {
+        // AC2: `steps/shared/hooks` is defined once on disk and referenced by
+        // both templates; after embedding+resolution each template carries a
+        // fully inlined `hooks` step with the shared guidance.
+        for t in default_templates() {
+            let hooks = t
+                .steps
+                .iter()
+                .find(|s| s.key == "hooks")
+                .unwrap_or_else(|| {
+                    panic!("template `{}` must resolve the shared hooks step", t.id)
+                });
+            assert!(
+                hooks
+                    .guidance
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("install-hooks.sh"),
+                "template `{}` hooks step must carry the shared guidance",
+                t.id
+            );
+        }
     }
 
     #[test]

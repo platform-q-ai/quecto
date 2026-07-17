@@ -28,6 +28,11 @@ pub(super) struct ToolRegistryArgs<'a> {
     pub(super) stderr: &'a mut String,
     /// Broadcast channel sender for workflow_state events (#598).
     pub(super) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    /// Working directory workflow template discovery resolves against
+    /// (slice 2): `workflow.dir` and `./.quecto/workflows` are relative to it.
+    pub(super) cwd: &'a std::path::Path,
+    /// Home directory for the `~/.quecto/workflows` discovery fallback.
+    pub(super) home_dir: Option<&'a std::path::Path>,
 }
 
 /// Resolve the model a CLI agent (or spawned child) runs on, honouring the
@@ -42,7 +47,11 @@ pub(crate) fn resolve_agent_model(model_override: Option<&str>, config_default: 
     }
 }
 
-pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
+/// Build the tool registry for an agent session. Fails fast (per slice-1
+/// conventions) when workflow template directory discovery hits a load error,
+/// returning an error message naming the offending file — the caller aborts
+/// startup rather than running with a partial template library.
+pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegistryBuild, String> {
     let ToolRegistryArgs {
         base_dir,
         config,
@@ -50,6 +59,8 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
         flags,
         stderr,
         broadcast_tx,
+        cwd,
+        home_dir,
     } = args;
     let workspace = crate::interface::shared::resolve_agent_workspace(
         &config.workspace_path(),
@@ -140,47 +151,64 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
     let wf_state = if workflow_available {
         // For a bound run, use a config containing ONLY the assigned template
         // (avoids cloning the whole default library just to discard it).
+        // A bound spec bypasses directory discovery entirely (AC6): the
+        // assigned template is the whole library, and no shadowing warning
+        // can apply.
         let wf_config = match &bound_spec {
             Some(spec) => crate::domain::workflow::WorkflowConfig {
                 auto_continue: config.workflow.auto_continue,
                 completion_nudge: config.workflow.completion_nudge,
                 selector_prompt: None,
+                dir: None,
                 templates: vec![spec.template.clone()],
             },
-            None => config.workflow.clone(),
+            None => {
+                // Slice 2: resolve the session's template library from the
+                // workflow directory precedence chain (workflow.dir →
+                // ./.quecto/workflows → ~/.quecto/workflows → inline).
+                let discovery = crate::infrastructure::config::discover_workflow_templates(
+                    config, cwd, home_dir,
+                )
+                .map_err(|error| error.to_string())?;
+                if let Some(warning) = &discovery.warning {
+                    stderr.push_str(&format!("WARNING: {warning}\n"));
+                }
+                crate::domain::workflow::WorkflowConfig {
+                    auto_continue: config.workflow.auto_continue,
+                    completion_nudge: config.workflow.completion_nudge,
+                    selector_prompt: config.workflow.selector_prompt.clone(),
+                    // Already resolved; the engine consumes the template list.
+                    dir: None,
+                    templates: discovery.templates,
+                }
+            }
         };
-        match crate::interface::shared::register_workflow_tool(
+        let state = crate::interface::shared::register_workflow_tool(
             &mut registry,
             wf_config,
             flags.workflow_guards,
             wf_emitter,
-        ) {
-            Ok(state) => {
-                // Bind: pre-select the assigned template (Active mode) and lock
-                // the engine so the model cannot reset or switch templates.
-                if let Some(spec) = bound_spec {
-                    match state.lock() {
-                        Ok(mut engine) => match engine.select_template(&spec.template.id, None) {
-                            Ok(()) => engine.set_bound(true),
-                            Err(err) => stderr.push_str(&format!(
-                                "failed to bind workflow template '{}': {}\n",
-                                spec.template.id, err
-                            )),
-                        },
-                        Err(_) => {
-                            stderr.push_str(
-                                "failed to bind workflow template: engine lock poisoned\n",
-                            );
-                        }
-                    }
-                }
-                Some(state)
-            }
-            Err(err) => {
-                stderr.push_str(&format!("failed to initialize workflow: {}\n", err));
-                None
-            }
+        )
+        .map_err(|error| format!("failed to initialize workflow: {error}"))?;
+        // Bind: pre-select the assigned template (Active mode) and lock the
+        // engine so the model cannot reset or switch templates. Initialization
+        // and binding errors abort startup; an explicitly requested workflow
+        // must never degrade into a session without its workflow.
+        if let Some(spec) = bound_spec {
+            let mut engine = state.lock().map_err(|_| {
+                "failed to bind workflow template: engine lock poisoned".to_string()
+            })?;
+            engine
+                .select_template(&spec.template.id, None)
+                .map_err(|error| {
+                    format!(
+                        "failed to bind workflow template '{}': {error}",
+                        spec.template.id
+                    )
+                })?;
+            engine.set_bound(true);
         }
+        Some(state)
     } else {
         None
     };
@@ -197,7 +225,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
     // means a child's completion is emitted into a channel with no receiver and
     // the idle parent is NEVER woken. Keep tx and rx wired together so a child
     // completing reliably wakes the parent in every config.
-    ToolRegistryBuild {
+    Ok(ToolRegistryBuild {
         registry,
         spill_store,
         session_key,
@@ -207,7 +235,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
         notification_rx: Some(notify_rx),
         subagent_registry: Some(subagent_registry_for_protocol),
         workflow_state: wf_state,
-    }
+    })
 }
 
 /// Load and parse a by-value workflow spec file (`--workflow-spec <path>`).

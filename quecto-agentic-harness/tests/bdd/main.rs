@@ -297,6 +297,9 @@ pub struct QuectoWorld {
     pub docs_is_error: bool,
     /// Loaded config (after "When I load the config")
     pub config: Option<Config>,
+    /// Workflow template discovery outcome (slice 2, "When I discover
+    /// workflow templates")
+    pub workflow_discovery: Option<quecto::infrastructure::config::WorkflowTemplateDiscovery>,
     /// Resolved workspace path (after "When I resolve the workspace path")
     pub resolved_workspace: Option<String>,
     /// Environment variable overrides to apply during config loading

@@ -77,6 +77,12 @@ pub struct WorkflowConfig {
     pub completion_nudge: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selector_prompt: Option<String>,
+    /// Optional workflow template directory (PRD workflow-composable-templates
+    /// §3.2, slice 2). When set, templates are discovered from top-level
+    /// `*.json` files in this directory instead of the inline `templates`
+    /// list; see `infrastructure::config::discover_workflow_templates`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub templates: Vec<WorkflowTemplate>,
 }
@@ -198,6 +204,7 @@ impl Default for WorkflowConfig {
             auto_continue: true,
             completion_nudge: true,
             selector_prompt: None,
+            dir: None,
             templates: Vec::new(),
         }
     }

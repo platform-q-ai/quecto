@@ -168,10 +168,11 @@ observable and gates its completion on actually finishing them.
 }
 ```
 
-- The `template` is the full definition (same shape as a `workflow-config.json`
-  template) — steps can carry `guidance`, `phase`, and `done_when`, not just
-  `key`/`label`; see the `workflow` doc (`docs {"name":"workflow"}`) for the full
-  field reference.
+- The `template` is a fully resolved, inlined `WorkflowTemplate`: unlike a
+  canonical `workflows/*.json` directory file, it **requires** an `id` and its
+  `steps` cannot use file references. Each step has `key`, `label`, `phase`, and
+  optional `guidance`; see the `workflow` doc (`docs {"name":"workflow"}`) for
+  the full field reference.
 - The spec is size-bounded (256 KiB) and written to a private, single-use file
   the child deletes once read.
 - If a spec is assigned but cannot be loaded, the child **fails closed** (it

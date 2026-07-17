@@ -1,7 +1,14 @@
-//! Structural assertions for the native `feature` workflow template in
-//! `workflow-config.json`. These encode issue #814 acceptance criteria:
-//! a `conformance` gate, corrected gate/required-check facts, git-add safety,
-//! per-step exit criteria, de-duplicated reviewer mechanics, and repo gotchas.
+//! Structural assertions for the canonical `feature` workflow template.
+//! These encode issue #814 acceptance criteria: a `conformance` gate,
+//! corrected gate/required-check facts, git-add safety, per-step exit
+//! criteria, de-duplicated reviewer mechanics, and repo gotchas.
+//!
+//! Slice 2 (workflow-composable-templates PRD §3.2 / AC7): template guidance
+//! lives in exactly ONE canonical repo location — the `workflows/` folder —
+//! and these drift tests assert against it alone (the former triplicate of
+//! `workflow-config.json` / `examples/config.json` / `feature.js` guidance is
+//! collapsed). `.claude/workflows/feature.js` remains separately guarded
+//! below because it is the LIVE Claude Code orchestration script.
 
 mod common;
 
@@ -9,8 +16,7 @@ use common::read_repo_file;
 use serde_json::Value;
 
 fn read_native_config() -> Value {
-    serde_json::from_str(&read_repo_file("workflow-config.json"))
-        .expect("workflow-config.json should parse as JSON")
+    common::canonical_workflow_config()
 }
 
 fn feature_template(config: &Value) -> &Value {
@@ -136,20 +142,60 @@ fn merge_blocks_on_errored_phase_or_bypassed_gate() {
 
 #[test]
 fn no_stale_strings_remain() {
-    // The native config and its example mirror must both be free of the stale
+    // Every file in the canonical workflow folder must be free of the stale
     // required-check / opt-out facts, otherwise the acceptance criterion can
-    // report GREEN while the strings still live in the mirror config.
-    for path in ["workflow-config.json", "examples/config.json"] {
-        let raw = read_repo_file(path);
+    // report GREEN while the strings still live in a template or step file.
+    for (path, raw) in common::canonical_workflow_files() {
         assert!(
             !raw.contains("Smoke Test"),
-            "{path}: the Smoke Test required-check reference should be gone"
+            "workflows/{path}: the Smoke Test required-check reference should be gone"
         );
         assert!(
             !raw.contains("QUECTO_SKIP_REAL_LLM"),
-            "{path}: the obsolete QUECTO_SKIP_REAL_LLM opt-out should be gone"
+            "workflows/{path}: the obsolete QUECTO_SKIP_REAL_LLM opt-out should be gone"
         );
     }
+}
+
+#[test]
+fn examples_config_no_longer_inlines_workflow_content() {
+    // Slice 2 / AC7: `examples/config.json` must not carry its own copy of the
+    // template library (the drift class the canonical `workflows/` folder
+    // exists to kill). Only non-template workflow knobs may remain.
+    let raw = read_repo_file("examples/config.json");
+    let example: Value =
+        serde_json::from_str(&raw).expect("examples/config.json should parse as JSON");
+    assert!(
+        example["workflow"].get("templates").is_none(),
+        "examples/config.json must not inline workflow.templates; \
+         the canonical workflows/ folder is the single source of truth"
+    );
+    assert!(
+        example["workflow"].get("selector_prompt").is_none(),
+        "examples/config.json must not duplicate the selector_prompt"
+    );
+    for stale in ["Smoke Test", "QUECTO_SKIP_REAL_LLM"] {
+        assert!(
+            !raw.contains(stale),
+            "examples/config.json must stay free of the stale `{stale}` fact"
+        );
+    }
+}
+
+#[test]
+fn runtime_default_templates_match_canonical_folder() {
+    // AC7 + Decision 3 (1:1 migration): the templates a session actually runs
+    // (`default_templates()`) must be byte-identical, at the resolved-template
+    // level, to what the canonical `workflows/` folder loads to. This is the
+    // single drift guard that replaces the old triplicate pinning.
+    let mut canonical = common::canonical_workflow_templates();
+    canonical.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut runtime = quecto::domain::workflow::default_templates();
+    runtime.sort_by(|a, b| a.id.cmp(&b.id));
+    assert_eq!(
+        canonical, runtime,
+        "the runtime template library must resolve identically to the canonical workflows/ folder"
+    );
 }
 
 #[test]
