@@ -287,7 +287,7 @@ async fn set_issue_rejects_invalid_issue_numbers() {
         .await
         .unwrap();
     assert!(missing.is_error);
-    assert!(missing.content.contains("missing field: issueNumber"));
+    assert!(missing.content.contains("issueTitle requires issueNumber"));
 }
 
 #[tokio::test]

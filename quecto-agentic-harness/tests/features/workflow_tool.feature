@@ -13,6 +13,20 @@ Feature: Workflow tool behavior
     And the last workflow event should have active issue number 1028 and title "BDD coverage"
     And the last workflow event current step should be 1 with key "plan"
 
+  Scenario: Selecting a template rejects a title without an issue number
+    Given a workflow tool for a three-step guarded template
+    When I run workflow action '{"action":"select_template","template":"wave","issueTitle":"BDD coverage"}'
+    Then the workflow tool result should be an error
+    And the workflow tool result should contain "issueTitle requires issueNumber"
+    And no workflow event should be emitted
+
+  Scenario: Setting an issue rejects a title without an issue number
+    Given a workflow tool for a three-step guarded template
+    When I run workflow action '{"action":"set_issue","issueTitle":"BDD coverage"}'
+    Then the workflow tool result should be an error
+    And the workflow tool result should contain "issueTitle requires issueNumber"
+    And no workflow event should be emitted
+
   Scenario: Read-only workflow actions do not emit workflow_state events
     Given a workflow tool for a three-step guarded template
     When I run workflow action '{"action":"status"}'
