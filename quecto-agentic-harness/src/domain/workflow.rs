@@ -13,7 +13,7 @@ fn default_true() -> bool {
 }
 
 const MAX_TEMPLATE_COUNT: usize = 32;
-const MAX_STEPS_PER_TEMPLATE: usize = 100;
+pub(crate) const MAX_STEPS_PER_TEMPLATE: usize = 100;
 const MAX_ISSUE_TITLE_LEN: usize = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -101,7 +101,11 @@ fn test_load_workflow_step_from_string_reference() {
 
     let config = Config::load(config_path.to_str().unwrap()).unwrap();
     let step = &config.workflow.templates[0].steps[0];
-    assert_eq!(step.key, "shared");
+    assert_eq!(
+        (step.key.as_str(), step.label.as_str()),
+        ("shared", "Shared")
+    );
+    assert_eq!(step.phase, "green");
     assert_eq!(step.guidance.as_deref(), Some("reuse me"));
 }
 
@@ -174,6 +178,49 @@ fn test_load_workflow_inline_step_remains_compatible() {
 }
 
 #[test]
+fn test_load_workflow_inline_step_preserves_unknown_metadata_including_ref() {
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        tmp,
+        "{}",
+        workflow_config_with_steps(
+            r#"{"key":"inline","label":"Inline","phase":"red","owner":"team","ref":"ticket-1"}"#
+        )
+    )
+    .unwrap();
+    let config = Config::load(tmp.path().to_str().unwrap()).unwrap();
+    assert_eq!(config.workflow.templates[0].steps[0].key, "inline");
+}
+
+#[test]
+fn test_load_workflow_reference_rejects_paths_outside_config_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.json");
+    for reference in ["../outside", "/tmp/outside"] {
+        std::fs::write(
+            &config_path,
+            workflow_config_with_steps(&format!(r#""{reference}""#)),
+        )
+        .unwrap();
+        let error = Config::load(config_path.to_str().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("must remain within"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn test_load_workflow_reference_rejects_symlink_escape() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    symlink(outside.path(), dir.path().join("linked.json")).unwrap();
+    let config_path = dir.path().join("config.json");
+    std::fs::write(&config_path, workflow_config_with_steps(r#""linked""#)).unwrap();
+    let error = Config::load(config_path.to_str().unwrap()).unwrap_err();
+    assert!(error.to_string().contains("escapes config directory"));
+}
+
+#[test]
 fn test_load_workflow_reference_errors_name_the_offending_file() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.json");
@@ -198,11 +245,8 @@ fn test_load_invalid_workflow_step_json_names_the_file() {
 }
 
 #[test]
-fn test_load_rejects_unknown_fields_in_each_workflow_step_shape() {
-    let cases = [
-        r#"{"key":"x","label":"X","phase":"red","guidence":"typo"}"#,
-        r#"{"ref":"shared","guidence":"typo"}"#,
-    ];
+fn test_load_rejects_unknown_fields_in_new_workflow_step_shapes() {
+    let cases = [r#"{"ref":"shared","guidence":"typo"}"#];
     for entry in cases {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -261,7 +305,7 @@ fn test_resolved_duplicate_step_keys_are_rejected_by_engine() {
     .unwrap();
     let config = Config::load(config_path.to_str().unwrap()).unwrap();
     let error = crate::domain::workflow::WorkflowEngine::new(config.workflow, true).unwrap_err();
-    assert!(error.to_string().contains("same"));
+    assert!(error.to_string().contains("duplicate step key 'same'"));
 }
 
 #[test]

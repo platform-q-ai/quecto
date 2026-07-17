@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+const MAX_WORKFLOW_STEP_FILE_BYTES: u64 = 64 * 1024;
 
 use crate::domain::workflow::WorkflowConfig;
 
@@ -402,6 +404,13 @@ fn resolve_workflow_step_entries(
         else {
             continue;
         };
+        if steps.len() > crate::domain::workflow::MAX_STEPS_PER_TEMPLATE {
+            return Err(ConfigError::WorkflowStep(format!(
+                "template has too many steps: {} > {}",
+                steps.len(),
+                crate::domain::workflow::MAX_STEPS_PER_TEMPLATE
+            )));
+        }
         for entry in steps {
             *entry = resolve_workflow_step_entry(entry.take(), base_dir)?;
         }
@@ -415,7 +424,12 @@ fn resolve_workflow_step_entry(
 ) -> Result<serde_json::Value, ConfigError> {
     match entry {
         serde_json::Value::String(reference) => load_workflow_step(base_dir, &reference),
-        serde_json::Value::Object(mut object) if object.contains_key("ref") => {
+        serde_json::Value::Object(mut object)
+            if object.contains_key("ref")
+                && !(object.contains_key("key")
+                    && object.contains_key("label")
+                    && object.contains_key("phase")) =>
+        {
             let reference = object
                 .remove("ref")
                 .and_then(|value| value.as_str().map(str::to_owned))
@@ -430,14 +444,7 @@ fn resolve_workflow_step_entry(
             target.extend(object);
             Ok(step)
         }
-        serde_json::Value::Object(object) => {
-            reject_unknown_keys(
-                &object,
-                &["key", "label", "phase", "guidance"],
-                "inline step",
-            )?;
-            Ok(serde_json::Value::Object(object))
-        }
+        serde_json::Value::Object(object) => Ok(serde_json::Value::Object(object)),
         _ => Err(ConfigError::WorkflowStep(
             "step entry must be a string reference, reference object, or step object".into(),
         )),
@@ -446,11 +453,45 @@ fn resolve_workflow_step_entry(
 
 fn load_workflow_step(base_dir: &Path, reference: &str) -> Result<serde_json::Value, ConfigError> {
     let mut relative = PathBuf::from(reference);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(ConfigError::WorkflowStep(format!(
+            "step reference must remain within the config directory: {reference}"
+        )));
+    }
     if relative.extension().is_none() {
         relative.set_extension("json");
     }
     let path = base_dir.join(relative);
-    let content = std::fs::read_to_string(&path)
+    let canonical_base = base_dir
+        .canonicalize()
+        .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", base_dir.display())))?;
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?;
+    if !canonical_path.starts_with(&canonical_base) {
+        return Err(ConfigError::WorkflowStep(format!(
+            "{}: step reference escapes config directory",
+            path.display()
+        )));
+    }
+    let size = canonical_path
+        .metadata()
+        .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?
+        .len();
+    if size > MAX_WORKFLOW_STEP_FILE_BYTES {
+        return Err(ConfigError::WorkflowStep(format!(
+            "{}: step file is too large: {size} > {MAX_WORKFLOW_STEP_FILE_BYTES}",
+            path.display()
+        )));
+    }
+    let content = std::fs::read_to_string(&canonical_path)
         .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?;
     let value: serde_json::Value = serde_json::from_str(&content)
         .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?;
