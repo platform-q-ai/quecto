@@ -6,13 +6,15 @@
 
 ## Context
 
-`docs/composable-workflow-units-prd.md` defines quecto's recursive unit contract:
-sub-agents are the same binary over the same protocol as parents; a parent can
-spawn a child with a by-value, binding `workflow_spec`; children return typed
-results; identity-tagged events let any consumer reconstruct the tree. Stages A
-and B have shipped. Separately, a **taskgraph** (DAG / fan-out / fan-in /
-dependency orchestration) is useful, but putting a graph engine into the kernel
-would enlarge the workflow engine and introduce a privileged orchestrator role.
+Quecto's recursive unit contract is: sub-agents are the same binary over the same
+protocol as parents; a parent can spawn a child with a by-value, binding
+`workflow_spec`; children return typed results; identity-tagged events let any
+consumer reconstruct the tree. The spec-based assignment, typed `agent_cmd await`
+result, and identity-tagged event bus have shipped; per-unit journaling/resume,
+verification gates, and isolation bounds (budget/depth/concurrency) remain planned
+kernel work. Separately, a **taskgraph** (DAG / fan-out / fan-in / dependency
+orchestration) is useful, but putting a graph engine into the kernel would enlarge
+the workflow engine and introduce a privileged orchestrator role.
 
 ## Decision
 
@@ -21,7 +23,7 @@ orchestration** as an external tool.
 
 - Kernel-owned: `spawn`, `workflow_spec`, typed `agent_cmd await` result,
   identity-tagged event bus, per-unit workflow engine, and future per-unit
-  journaling/resume/verification/bounds from the composable-units PRD.
+  journaling/resume/verification/bounds.
 - Tool-owned: graph construction, dependency scheduling, fan-out/fan-in policy,
   and which sub-agent definitions to use for each node.
 - A taskgraph tool drives ordinary quecto units by calling existing surfaces
@@ -41,9 +43,9 @@ orchestration** as an external tool.
   acceptable because the kernel-standard contract is the unit boundary, not the
   graph language.
 - *Enforcement line:* the taskgraph tool may decide the graph, but the kernel
-  enforces per-unit constraints (budget/depth/concurrency once Stage E lands),
-  journaling/resume (Stage C), and verification gates (Stage D). A tool cannot
-  opt out by claiming to be an orchestrator.
+  enforces per-unit constraints (budget/depth/concurrency), journaling/resume,
+  and verification gates once those capabilities land. A tool cannot opt out by
+  claiming to be an orchestrator.
 
 ## Alternatives Considered
 
@@ -60,7 +62,6 @@ orchestration** as an external tool.
 
 ## Related
 
-- [Composable workflow units PRD](../composable-workflow-units-prd.md)
 - [Kernel boundary](../kernel-boundary.md)
 - Surface #4: tools/extensions
 - Workflow surface #3
