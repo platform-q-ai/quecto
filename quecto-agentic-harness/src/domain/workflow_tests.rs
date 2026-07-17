@@ -720,7 +720,7 @@ fn selector_status_text_includes_issue_and_custom_prompt() {
 }
 
 #[test]
-fn active_status_and_prompt_render_issue_then_completion_with_guards() {
+fn active_status_renders_issue_then_completion_with_guards() {
     let mut template = template_with_steps("t", vec![step("a"), step("b")]);
     template.guards = vec![WorkflowGuardRule {
         commands: vec!["git push".into()],
@@ -734,14 +734,12 @@ fn active_status_and_prompt_render_issue_then_completion_with_guards() {
 
     let status = engine.status_text();
     assert!(status.contains("Active issue: #9 — ship it"));
-    let prompt = engine.prompt_snippet();
-    assert!(prompt.contains("Active issue: #9 — ship it"));
 
-    // Complete every step, then the status/prompt reflect completion + guards.
+    // Complete every step, then the status reflects completion + guards.
     engine.check(1).unwrap();
     engine.check(2).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Complete);
-    let done = engine.prompt_snippet();
+    let done = engine.status_text();
     assert!(done.contains("All workflow steps complete"));
     assert!(done.contains("run the gate before push"));
 }

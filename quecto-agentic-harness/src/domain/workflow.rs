@@ -1,8 +1,10 @@
 //! Workflow V2 domain model.
 //!
 //! Workflow is a native in-process subsystem owned by the UDS session runtime.
-//! It exposes a template library, a single active workflow run, prompt snippets,
-//! guard evaluation, nudges, and persistable run state.
+//! It exposes a template library, a single active workflow run, guard
+//! evaluation, idle-boundary nudges, and persistable run state. Workflow state
+//! never enters the system prompt (#1113): guidance travels in tool results
+//! and nudges so the provider-side cached prefix survives every step.
 
 use serde::{Deserialize, Serialize};
 
@@ -214,6 +216,11 @@ pub struct WorkflowEngine {
     /// clears step progress), `select_template` cannot switch templates, and the
     /// completion nudge does not tell the model to pick a new workflow.
     bound: bool,
+    /// When true, an idle boundary in `SelectingTemplate` mode nudges the
+    /// model with the template selector (#1113). Armed only for explicit
+    /// workflow sessions (`--workflow`): a plain UDS session that merely has
+    /// the workflow tool available must never be nudged to pick a template.
+    selector_nudge: bool,
 }
 
 mod engine;

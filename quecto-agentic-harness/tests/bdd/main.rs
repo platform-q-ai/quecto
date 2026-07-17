@@ -635,8 +635,6 @@ pub struct QuectoWorld {
     /// the run-ledger retention assertion derives its expected clone count
     /// from this rather than hardcoding the scenario's setup).
     pub headless_tool_calls_issued: Option<usize>,
-    /// Retained conversation from repeated-instructions agent-loop scenarios
-    pub repeated_instruction_messages: Vec<Message>,
     // --- Grep BDD fields ---
     /// Temp dir for grep workspace (kept alive)
     pub _grep_temp_dir: Option<TempDir>,
@@ -888,6 +886,9 @@ pub struct QuectoWorld {
     pub workflow_events: Option<Arc<Mutex<Vec<serde_json::Value>>>>,
     /// Workflow tool BDD: last direct tool execution result.
     pub workflow_tool_result: Option<ToolResult>,
+    /// Workflow tool BDD (#1113): definition read via "I read the workflow
+    /// tool definition".
+    pub workflow_tool_definition: Option<quecto::domain::tool::ToolDefinition>,
     /// Workflow nudge BDD: engine under test for auto-continue nudge wording.
     pub workflow_nudge_engine: Option<quecto::domain::workflow::WorkflowEngine>,
     /// Workflow nudge BDD: captured auto-continue nudge text.

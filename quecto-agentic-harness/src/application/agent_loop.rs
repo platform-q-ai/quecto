@@ -54,8 +54,6 @@ pub struct AgentLoopConfig {
     pub streaming: bool,
     /// Optional effort level for every `ChatRequest`; `None` = provider default.
     pub effort: Option<EffortLevel>,
-    /// Optional dynamic system prompt provider invoked before each LLM turn.
-    pub system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     /// Optional append-only audit log. When `Some`, every significant event
     /// (tool call, tool result, LLM turn, pruning, etc.) is written to a
     /// durable JSONL file. When `None`, no audit overhead.
@@ -101,8 +99,6 @@ pub struct AgentLoopImpl {
     pub(super) effort: Option<EffortLevel>,
     /// Startup default effort, restored on session switches (#1067).
     pub(super) default_effort: Option<EffortLevel>,
-    /// Optional dynamic system prompt provider invoked before each LLM turn.
-    system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     /// Optional append-only audit log for durable event recording.
     audit_log: Option<Arc<dyn AuditSink>>,
     /// #1072: latched by `apply_context_pruning` whenever a pass mutated
@@ -154,7 +150,6 @@ impl AgentLoopImpl {
             streaming: config.streaming,
             effort: config.effort,
             default_effort: config.effort,
-            system_prompt_provider: config.system_prompt_provider,
             audit_log: config.audit_log,
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
         }
@@ -242,13 +237,6 @@ impl AgentLoopImpl {
     pub fn set_progress_callback(&mut self, cb: Option<ProgressCallback>) {
         self.progress_callback = cb;
     }
-    /// Set or replace the dynamic system prompt provider at runtime.
-    pub fn set_system_prompt_provider(
-        &mut self,
-        provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
-    ) {
-        self.system_prompt_provider = provider;
-    }
     /// Access the audit log (if configured).
     pub fn audit_log(&self) -> Option<&Arc<dyn AuditSink>> {
         self.audit_log.as_ref()
@@ -274,27 +262,6 @@ impl AgentLoopImpl {
     /// Access the context spill store (if configured).
     pub fn spill_store(&self) -> Option<&Arc<dyn ContextSpillStore>> {
         self.spill_store.as_ref()
-    }
-
-    fn refresh_dynamic_system_prompt(&self, messages: &mut Vec<Message>) {
-        let Some(ref provider) = self.system_prompt_provider else {
-            return;
-        };
-        let prompt = provider();
-        if prompt.is_empty() {
-            return;
-        }
-        if let Some(first) = messages.first_mut()
-            && first.role == crate::domain::message::Role::System
-            && !first.is_manifest
-        {
-            if first.content != prompt {
-                first.content = prompt;
-                first.invalidate_token_cache();
-            }
-        } else {
-            messages.insert(0, Message::system(prompt));
-        }
     }
 
     fn build_chat_request<'a>(
@@ -488,7 +455,6 @@ impl AgentLoopImpl {
         let mut malformed_retries: u32 = 0;
 
         loop {
-            self.refresh_dynamic_system_prompt(messages);
             let context_tokens = self
                 .apply_context_pruning(messages, current_turn, spills_dirty)
                 .await;

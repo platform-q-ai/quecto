@@ -39,27 +39,23 @@ impl WorkflowNudge {
 /// The next workflow nudge, if auto-continue or completion nudging is
 /// enabled and the engine still has something to say.
 pub(super) fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<WorkflowNudge> {
-    let (Some(ws), Some(wc)) = (&ctx.workflow_state, &ctx.workflow_config) else {
+    let (Some(ws), Some(_)) = (&ctx.workflow_state, &ctx.workflow_config) else {
         return None;
     };
-    if !wc.auto_continue && !wc.completion_nudge {
-        return None;
-    }
     let Ok(engine) = ws.lock() else { return None };
-    wc.auto_continue
-        .then(|| {
-            Some(WorkflowNudge::AutoContinue {
-                standard: engine.auto_continue_nudge()?,
-                corrective: engine.corrective_nudge()?,
-            })
+    // The engine owns all nudge policy (kept live by the UDS automation
+    // control via `set_automation`): `auto_continue_nudge` gates active-step
+    // continuation on auto-continue but yields the template selector even
+    // with auto-continue disabled — the nudge is the sole proactive selection
+    // channel (#1113 AC3), so a `wc.auto_continue` pre-filter here would
+    // leave such a session never told to select a template.
+    (|| {
+        Some(WorkflowNudge::AutoContinue {
+            standard: engine.auto_continue_nudge()?,
+            corrective: engine.corrective_nudge()?,
         })
-        .flatten()
-        .or_else(|| {
-            wc.completion_nudge
-                .then(|| engine.completion_nudge())
-                .flatten()
-                .map(WorkflowNudge::Completion)
-        })
+    })()
+    .or_else(|| engine.completion_nudge().map(WorkflowNudge::Completion))
 }
 
 /// A serialized fingerprint of workflow progress, used to detect whether a

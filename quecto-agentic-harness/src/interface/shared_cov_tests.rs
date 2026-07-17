@@ -9,26 +9,6 @@ use std::sync::Arc;
 
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 
-// --- append_workflow_prompt ---
-
-#[test]
-fn append_workflow_prompt_appends_engine_snippet() {
-    let workflow: WorkflowStateHandle = std::sync::Arc::new(std::sync::Mutex::new(
-        crate::domain::workflow::WorkflowEngine::new(
-            crate::domain::workflow::WorkflowConfig::default(),
-            false,
-        )
-        .unwrap(),
-    ));
-    let mut system = "base".to_string();
-    append_workflow_prompt(&mut system, &workflow);
-    assert!(system.starts_with("base\n\n"), "got: {system}");
-    assert!(
-        system.len() > "base\n\n".len(),
-        "snippet should be appended: {system}"
-    );
-}
-
 // --- resolve_api_key_with_refresh_async: provider without an OAuth config ---
 
 #[tokio::test]

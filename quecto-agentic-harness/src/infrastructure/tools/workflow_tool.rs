@@ -139,7 +139,11 @@ impl WorkflowTool {
         engine
             .select_template(template, issue)
             .map_err(|e| e.to_string())?;
-        Ok(format!("Selected workflow template '{}'.", template))
+        Ok(format!(
+            "Selected workflow template '{}'.{}",
+            template,
+            step_handoff(engine, "Current step")
+        ))
     }
 
     fn do_check(
@@ -149,7 +153,11 @@ impl WorkflowTool {
     ) -> Result<String, String> {
         let step = parse_step(args)?;
         engine.check(step).map_err(|e| e.to_string())?;
-        Ok(format!("Step {} checked.", step))
+        Ok(format!(
+            "Step {} checked.{}",
+            step,
+            step_handoff(engine, "Next step")
+        ))
     }
 
     fn do_uncheck(
@@ -159,7 +167,13 @@ impl WorkflowTool {
     ) -> Result<String, String> {
         let step = parse_step(args)?;
         engine.uncheck(step).map_err(|e| e.to_string())?;
-        Ok(format!("Step {} unchecked.", step))
+        // Unchecking can move the current step BACKWARDS — re-orient the
+        // model on where the workflow now stands (#1113 AC2).
+        Ok(format!(
+            "Step {} unchecked.{}",
+            step,
+            step_handoff(engine, "Current step")
+        ))
     }
 
     fn do_skip(
@@ -169,7 +183,13 @@ impl WorkflowTool {
     ) -> Result<String, String> {
         let step = parse_step(args)?;
         engine.skip(step).map_err(|e| e.to_string())?;
-        Ok(format!("Step {} skipped.", step))
+        // Skipping advances the current step exactly like `check` — hand the
+        // model the next step's label and guidance (#1113 AC2).
+        Ok(format!(
+            "Step {} skipped.{}",
+            step,
+            step_handoff(engine, "Next step")
+        ))
     }
 
     fn do_set_issue(
@@ -187,6 +207,17 @@ impl WorkflowTool {
             emitter(event);
         }
     }
+}
+
+/// Current-step handoff appended to every step-state-changing tool result
+/// (`select_template`/`check`/`skip`/`uncheck`, #1113 AC2): with the system
+/// prompt static for the whole session, the tool result is where the model
+/// receives each step's guidance — plus workflow progress and the active
+/// issue — exactly when the current step changes. Rendering is owned by the
+/// engine's [`WorkflowEngine::step_handoff_text`], the same wording source
+/// behind the idle-boundary nudges, so the channels cannot drift apart.
+fn step_handoff(engine: &WorkflowEngine, heading: &str) -> String {
+    engine.step_handoff_text(heading)
 }
 
 fn render_templates(templates: Vec<WorkflowTemplateSummary>) -> String {
@@ -282,7 +313,7 @@ impl Tool for WorkflowTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "workflow".into(),
-            description: "Manage the active UDS workflow template and step progression.".into(),
+            description: "Manage the active development workflow. Discover templates with action=list_templates, activate one with action=select_template, mark steps done with action=check (the result hands you the next step's guidance), and use action=status for current progress and guidance.".into(),
             parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["status","list_templates","select_template","check","uncheck","skip","reset","set_issue","clear_issue","check_guards"]},"template":{"type":"string"},"step":{"type":"integer"},"issueNumber":{"type":"integer"},"issueTitle":{"type":"string"},"command":{"type":"string"}},"required":["action"]}"#.into(),
         }
     }
@@ -439,137 +470,5 @@ use super::command_match::{command_matches_parsed, extract_bash_command, parse_p
 mod comprehensive_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::workflow::{WorkflowConfig, WorkflowMode};
-
-    fn test_tool() -> WorkflowTool {
-        let engine = Arc::new(Mutex::new(
-            WorkflowEngine::new(WorkflowConfig::default(), true).unwrap(),
-        ));
-        WorkflowTool::new(engine)
-    }
-
-    #[tokio::test]
-    async fn status_starts_in_selector_mode() {
-        let tool = test_tool();
-        let result = tool.execute(r#"{"action":"status"}"#).await.unwrap();
-        assert!(!result.is_error);
-        assert!(result.content.contains("Template Selection"));
-    }
-
-    #[tokio::test]
-    async fn list_templates_works() {
-        let tool = test_tool();
-        let result = tool
-            .execute(r#"{"action":"list_templates"}"#)
-            .await
-            .unwrap();
-        assert!(result.content.contains("feature"));
-    }
-
-    #[tokio::test]
-    async fn select_template_and_check_flow() {
-        let tool = test_tool();
-        let result = tool
-            .execute(r#"{"action":"select_template","template":"feature"}"#)
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        let result = tool
-            .execute(r#"{"action":"check","step":1}"#)
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-    }
-
-    #[tokio::test]
-    async fn no_template_selected_errors_for_check() {
-        let tool = test_tool();
-        let result = tool
-            .execute(r#"{"action":"check","step":1}"#)
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.content.contains("select_template"));
-    }
-
-    #[test]
-    fn parse_step_accepts_non_ascii_string_value() {
-        let val = serde_json::json!("étape 1");
-        let result = parse_step(&serde_json::json!({"step": val}));
-        // A non-ASCII string is not a valid u32, so it should return a graceful
-        // error rather than panicking or corrupting the display string.
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_issue_number_accepts_non_ascii_string_value() {
-        let val = serde_json::json!("numéro 1");
-        let result = parse_optional_issue(&serde_json::json!({"issueNumber": val}));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn snapshot_event_contains_mode() {
-        let engine = WorkflowEngine::new(WorkflowConfig::default(), true).unwrap();
-        let event = snapshot_to_event(&engine.snapshot(true));
-        assert_eq!(event["type"], "workflow_state");
-        assert_eq!(
-            event["mode"],
-            serde_json::json!(WorkflowMode::SelectingTemplate)
-        );
-    }
-
-    fn guard_template(id: &str) -> crate::domain::workflow::WorkflowTemplate {
-        use crate::domain::workflow::{WorkflowGuardRule, WorkflowTemplate, WorkflowTemplateStep};
-        WorkflowTemplate {
-            id: id.to_string(),
-            label: id.to_string(),
-            description: String::new(),
-            when_to_use: None,
-            steps: vec![WorkflowTemplateStep {
-                key: "s1".to_string(),
-                label: "S1".to_string(),
-                phase: "p".to_string(),
-                guidance: None,
-            }],
-            guards: vec![WorkflowGuardRule {
-                commands: vec!["git push".to_string()],
-                before_step_key: "s1".to_string(),
-                message: "do s1 first".to_string(),
-            }],
-        }
-    }
-
-    /// #996 item 3 (PR #999 review): `parsed_rules_for` must parse a template's
-    /// guards once and reuse the `Arc` on subsequent calls for the SAME id, and
-    /// must rebuild when the active template id changes (no stale-cache bleed).
-    #[test]
-    fn parsed_rules_cache_reuses_by_id_and_invalidates_on_change() {
-        let engine = Arc::new(Mutex::new(
-            WorkflowEngine::new(WorkflowConfig::default(), true).unwrap(),
-        ));
-        let guard = WorkflowGuard::new(engine);
-
-        let a = guard_template("alpha");
-        let first = guard.parsed_rules_for(&a);
-        let second = guard.parsed_rules_for(&a);
-        assert!(
-            Arc::ptr_eq(&first, &second),
-            "same template id must return the cached Arc, not re-parse"
-        );
-
-        let b = guard_template("beta");
-        let third = guard.parsed_rules_for(&b);
-        assert!(
-            !Arc::ptr_eq(&second, &third),
-            "a different template id must rebuild the parsed rules"
-        );
-        assert_eq!(third[0].before_step_key, "s1");
-
-        // Switching back re-parses (cache holds a single active entry).
-        let fourth = guard.parsed_rules_for(&a);
-        assert!(!Arc::ptr_eq(&first, &fourth));
-    }
-}
+#[path = "workflow_tool_tests.rs"]
+mod tests;

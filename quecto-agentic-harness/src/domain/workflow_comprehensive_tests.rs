@@ -41,21 +41,21 @@ fn snapshot_in_active_mode_has_steps_and_current_step() {
 }
 
 #[test]
-fn selector_prompt_mentions_select_template() {
+fn selector_status_mentions_select_template() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
-    let prompt = engine.prompt_snippet();
-    assert!(prompt.contains("select_template"));
-    assert!(prompt.contains("feature"));
+    let status = engine.status_text();
+    assert!(status.contains("select_template"));
+    assert!(status.contains("feature"));
 }
 
 #[test]
-fn active_prompt_mentions_guidance() {
+fn active_status_mentions_guidance() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     engine.check(1).unwrap();
-    let prompt = engine.prompt_snippet();
-    assert!(prompt.contains("CURRENT STEP"));
-    assert!(prompt.contains("acceptance criteria"));
+    let status = engine.status_text();
+    assert!(status.contains("CURRENT STEP"));
+    assert!(status.contains("acceptance criteria"));
 }
 
 #[test]
@@ -151,6 +151,236 @@ fn no_active_template_errors_for_step_actions() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     let err = engine.check(1).unwrap_err();
     assert!(matches!(err, WorkflowError::NoActiveTemplate(_)));
+}
+
+// ── #1113 cache-safe prompting: idle-boundary nudges carry workflow state ───
+
+/// Single-step template with a distinctive, non-dictionary id so selector
+/// assertions cannot pass on prose that merely mentions e.g. "feature".
+fn probe_template(id: &str, label: &str) -> WorkflowTemplate {
+    WorkflowTemplate {
+        id: id.into(),
+        label: label.into(),
+        description: "probe template".into(),
+        when_to_use: None,
+        steps: vec![WorkflowTemplateStep {
+            key: "only".into(),
+            label: "Only probe step".into(),
+            phase: "red".into(),
+            guidance: None,
+        }],
+        guards: vec![],
+    }
+}
+
+fn nudge_probe_config(templates: Vec<WorkflowTemplate>) -> WorkflowConfig {
+    WorkflowConfig {
+        auto_continue: true,
+        templates,
+        ..WorkflowConfig::default()
+    }
+}
+
+/// #1113 AC4: with a static system prompt, the auto-continue nudge is the
+/// idle-boundary channel for the current step — it must carry the step's
+/// label and its guidance blob.
+#[test]
+fn auto_continue_nudge_carries_current_step_label_and_guidance() {
+    let mut template = probe_template("t", "T");
+    template.steps[0].label = "Alpha planning step".into();
+    template.steps[0].guidance = Some("guidance for step alpha".into());
+    let mut engine = WorkflowEngine::new(nudge_probe_config(vec![template]), false).unwrap();
+    engine.select_template("t", None).unwrap();
+
+    let nudge = engine
+        .auto_continue_nudge()
+        .expect("active incomplete workflow yields a nudge");
+    assert!(
+        nudge.contains("Alpha planning step"),
+        "nudge must carry the current step label: {nudge}"
+    );
+    assert!(
+        nudge.contains("guidance for step alpha"),
+        "nudge must carry the current step guidance: {nudge}"
+    );
+}
+
+/// #1113 AC4: the corrective idle-boundary variant (sent after a stalled
+/// nudged turn) must carry the current step's label and guidance too.
+#[test]
+fn corrective_nudge_carries_current_step_label_and_guidance() {
+    let mut template = probe_template("t", "T");
+    template.steps[0].label = "Alpha planning step".into();
+    template.steps[0].guidance = Some("guidance for step alpha".into());
+    let mut engine = WorkflowEngine::new(nudge_probe_config(vec![template]), false).unwrap();
+    engine.select_template("t", None).unwrap();
+
+    let nudge = engine
+        .corrective_nudge()
+        .expect("active incomplete workflow yields a corrective nudge");
+    assert!(
+        nudge.contains("Alpha planning step"),
+        "corrective nudge must carry the current step label: {nudge}"
+    );
+    assert!(
+        nudge.contains("guidance for step alpha"),
+        "corrective nudge must carry the current step guidance: {nudge}"
+    );
+}
+
+/// #1113 AC3: an explicit `--workflow` session (selector nudge armed) with no
+/// template selected must push the template selector — listing the actual
+/// templates — through BOTH nudge wordings: the dispatch loop
+/// (`workflow_nudge_message`) requires standard AND corrective to be `Some`,
+/// so extending only one would silently never deliver the selector.
+#[test]
+fn idle_nudges_present_template_selector_before_selection() {
+    let templates = vec![
+        probe_template("qx-selector-probe", "QX Selector Probe"),
+        probe_template("qx-other-probe", "QX Other Probe"),
+    ];
+    let mut engine = WorkflowEngine::new(nudge_probe_config(templates), false).unwrap();
+    engine.set_selector_nudge(true);
+    assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
+
+    for (variant, nudge) in [
+        ("standard", engine.auto_continue_nudge()),
+        ("corrective", engine.corrective_nudge()),
+    ] {
+        let nudge = nudge.unwrap_or_else(|| {
+            panic!("selector-mode idle boundary must push the {variant} selector nudge (#1113)")
+        });
+        assert!(
+            nudge.contains("select_template"),
+            "{variant} selector nudge must instruct selection via select_template: {nudge}"
+        );
+        for (id, label) in [
+            ("qx-selector-probe", "QX Selector Probe"),
+            ("qx-other-probe", "QX Other Probe"),
+        ] {
+            assert!(
+                nudge.contains(id) && nudge.contains(label),
+                "{variant} selector nudge must list template '{id}' ({label}): {nudge}"
+            );
+        }
+    }
+}
+
+/// #1113: the idle-boundary selector nudge is the SOLE proactive selection
+/// channel, so it must carry everything the retired system-prompt selector
+/// carried — the operator-configured `workflow.selector_prompt` and the
+/// active issue. Otherwise the config knob is silently dead in the exact
+/// flow (`--workflow` start-up) it was designed for.
+#[test]
+fn selector_nudge_carries_selector_prompt_and_active_issue() {
+    let mut config = nudge_probe_config(vec![probe_template("qx-selector-probe", "QX Probe")]);
+    config.selector_prompt =
+        Some("Operator rule: for production incidents always choose hotfix".into());
+    let mut engine = WorkflowEngine::new(config, false).unwrap();
+    engine.set_selector_nudge(true);
+    engine.set_issue(42, "Fix the flaky gate".to_string());
+
+    for (variant, nudge) in [
+        ("standard", engine.auto_continue_nudge()),
+        ("corrective", engine.corrective_nudge()),
+    ] {
+        let nudge = nudge.unwrap_or_else(|| {
+            panic!("selector-mode idle boundary must push the {variant} selector nudge (#1113)")
+        });
+        assert!(
+            nudge.contains("Operator rule: for production incidents always choose hotfix"),
+            "{variant} selector nudge must carry the configured selector_prompt: {nudge}"
+        );
+        assert!(
+            nudge.contains("#42") && nudge.contains("Fix the flaky gate"),
+            "{variant} selector nudge must carry the active issue: {nudge}"
+        );
+    }
+}
+
+/// #1113: the selector nudge is armed only for explicit `--workflow`
+/// sessions. A plain UDS session (workflow tool available, nothing armed)
+/// must never be nudged to pick a template at idle boundaries.
+#[test]
+fn selector_nudge_requires_explicit_arming() {
+    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
+    assert!(
+        engine.auto_continue_nudge().is_none(),
+        "unarmed selector mode must not yield an auto-continue nudge"
+    );
+    assert!(
+        engine.corrective_nudge().is_none(),
+        "unarmed selector mode must not yield a corrective nudge"
+    );
+}
+
+/// #1113 AC3 regression: the selector nudge must NOT be gated on
+/// `workflow.auto_continue`. The retired system-prompt selector reached the
+/// model regardless of that setting, and the idle-boundary nudge is now the
+/// sole proactive selection channel — with auto-continue disabled, an armed
+/// unselected session must still be told to select a template, while
+/// active-step continuation stays gated on auto-continue.
+#[test]
+fn selector_nudge_fires_with_auto_continue_disabled() {
+    let mut config = nudge_probe_config(vec![probe_template("qx-selector-probe", "QX Probe")]);
+    config.auto_continue = false;
+    let mut engine = WorkflowEngine::new(config, false).unwrap();
+    engine.set_selector_nudge(true);
+
+    for (variant, nudge) in [
+        ("standard", engine.auto_continue_nudge()),
+        ("corrective", engine.corrective_nudge()),
+    ] {
+        let nudge = nudge.unwrap_or_else(|| {
+            panic!("the {variant} selector nudge must fire with auto-continue disabled (#1113 AC3)")
+        });
+        assert!(
+            nudge.contains("select_template") && nudge.contains("qx-selector-probe"),
+            "{variant} selector nudge must present the selector: {nudge}"
+        );
+    }
+
+    // Once a template is active, step continuation is still auto-continue's.
+    engine.select_template("qx-selector-probe", None).unwrap();
+    assert!(
+        engine.auto_continue_nudge().is_none() && engine.corrective_nudge().is_none(),
+        "active-step nudges must stay gated on auto-continue"
+    );
+}
+
+/// #1113 AC2: the tool-result step handoff must carry the progress count and
+/// the active issue alongside the step focus — the retired per-turn system
+/// prompt carried all three, and the tool result is its immediate
+/// replacement channel after `select_template`/`check`/`skip`/`uncheck`.
+#[test]
+fn step_handoff_text_carries_progress_and_active_issue() {
+    let mut template = probe_template("qx-handoff-probe", "QX Handoff Probe");
+    template.steps.push(WorkflowTemplateStep {
+        key: "second".into(),
+        label: "Second probe step".into(),
+        phase: "green".into(),
+        guidance: None,
+    });
+    let mut engine = WorkflowEngine::new(nudge_probe_config(vec![template]), false).unwrap();
+    engine
+        .select_template("qx-handoff-probe", Some((77, "Handoff probe issue".into())))
+        .unwrap();
+    engine.check(1).unwrap();
+
+    let handoff = engine.step_handoff_text("Next step");
+    assert!(
+        handoff.contains("Second probe step"),
+        "handoff must carry the current step focus: {handoff}"
+    );
+    assert!(
+        handoff.contains("Progress: 1/2 steps complete."),
+        "handoff must carry the progress count: {handoff}"
+    );
+    assert!(
+        handoff.contains("#77") && handoff.contains("Handoff probe issue"),
+        "handoff must carry the active issue: {handoff}"
+    );
 }
 
 #[test]

@@ -128,45 +128,6 @@ async fn workflow_subsystem_registers_live_engine_handle() {
 }
 
 #[test]
-fn append_workflow_prompt_if_active_skips_selector_mode_unless_forced() {
-    let workflow = std::sync::Arc::new(std::sync::Mutex::new(
-        crate::domain::workflow::WorkflowEngine::new(
-            crate::domain::workflow::WorkflowConfig::default(),
-            false,
-        )
-        .unwrap(),
-    ));
-
-    let mut prompt = "base".to_string();
-    append_workflow_prompt_if_active(&mut prompt, &workflow, false);
-    assert_eq!(prompt, "base");
-
-    append_workflow_prompt_if_active(&mut prompt, &workflow, true);
-    assert!(prompt.contains("MODE: SELECT TEMPLATE"));
-}
-
-#[test]
-fn append_workflow_prompt_if_active_appends_after_template_selection() {
-    let workflow = std::sync::Arc::new(std::sync::Mutex::new(
-        crate::domain::workflow::WorkflowEngine::new(
-            crate::domain::workflow::WorkflowConfig::default(),
-            false,
-        )
-        .unwrap(),
-    ));
-    workflow
-        .lock()
-        .unwrap()
-        .select_template("feature", None)
-        .unwrap();
-
-    let mut prompt = "base".to_string();
-    append_workflow_prompt_if_active(&mut prompt, &workflow, false);
-    assert!(prompt.contains("Template: Feature"));
-    assert!(prompt.contains("CURRENT STEP"));
-}
-
-#[test]
 fn workflow_guard_registered_only_when_guards_enabled() {
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     let _handle = register_workflow_tool(
@@ -648,7 +609,6 @@ mod context_settings {
             progress_callback: None,
             streaming: false,
             effort: None,
-            system_prompt_provider: None,
             audit_log: None,
             pin_recent_turns: defaults.pin_recent_turns,
             context_collapse_after_messages: defaults.context_collapse_after_messages,

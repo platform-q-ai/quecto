@@ -109,31 +109,13 @@ pub fn append_extension_prompt(system: &mut String, snippets: &str) {
 }
 
 /// Shared workflow engine handle returned by [`register_workflow_tool`].
+///
+/// Workflow state is deliberately NEVER rendered into the system prompt
+/// (#1113): the prompt stays byte-identical for the whole session so the
+/// provider-side cached prefix survives every workflow step. Dynamic state
+/// reaches the model through workflow tool results and idle-boundary nudges.
 pub type WorkflowStateHandle =
     std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>>;
-
-/// Append the workflow prompt snippet from the live engine state.
-pub fn append_workflow_prompt(system: &mut String, workflow: &WorkflowStateHandle) {
-    let Ok(engine) = workflow.lock() else { return };
-    system.push_str("\n\n");
-    system.push_str(&engine.prompt_snippet());
-}
-
-/// Append workflow context only after a template is selected unless forced.
-pub fn append_workflow_prompt_if_active(
-    system: &mut String,
-    workflow: &WorkflowStateHandle,
-    force_selector_prompt: bool,
-) {
-    let Ok(engine) = workflow.lock() else { return };
-    if !force_selector_prompt
-        && engine.mode() == crate::domain::workflow::WorkflowMode::SelectingTemplate
-    {
-        return;
-    }
-    system.push_str("\n\n");
-    system.push_str(&engine.prompt_snippet());
-}
 
 /// Register the workflow tool and optional guard in a tool registry.
 pub fn register_workflow_tool(
