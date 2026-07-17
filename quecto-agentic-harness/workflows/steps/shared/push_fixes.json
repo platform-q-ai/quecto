@@ -1,0 +1,6 @@
+{
+  "key": "push_fixes",
+  "label": "Push changes to remote",
+  "phase": "review",
+  "guidance": "Push the fixes; the full pre-push gate runs again. Wait for it to pass before resolving threads."
+}

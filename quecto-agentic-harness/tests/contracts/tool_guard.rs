@@ -16,6 +16,7 @@ fn workflow_guard(templates: Vec<WorkflowTemplate>) -> Arc<dyn ToolGuard> {
         auto_continue: true,
         completion_nudge: true,
         selector_prompt: None,
+        dir: None,
         templates,
     };
     let engine = WorkflowEngine::new(config, true).unwrap();

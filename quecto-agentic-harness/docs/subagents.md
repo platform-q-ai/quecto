@@ -168,8 +168,9 @@ observable and gates its completion on actually finishing them.
 }
 ```
 
-- The `template` is the full definition (same shape as a `workflow-config.json`
-  template) — steps can carry `guidance`, `phase`, and `done_when`, not just
+- The `template` is the full definition (same shape as a template file in the
+  canonical `workflows/` folder) — steps can carry `guidance`, `phase`, and
+  `done_when`, not just
   `key`/`label`; see the `workflow` doc (`docs {"name":"workflow"}`) for the full
   field reference.
 - The spec is size-bounded (256 KiB) and written to a private, single-use file

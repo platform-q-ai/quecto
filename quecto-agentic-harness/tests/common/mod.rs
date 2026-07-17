@@ -12,6 +12,73 @@ pub fn read_repo_file(relative_path: &str) -> String {
         .unwrap_or_else(|e| panic!("failed to read {relative_path}: {e}"))
 }
 
+/// Slice 2 (workflow-composable-templates PRD §3.2 / AC7): the canonical
+/// on-disk workflow template library — `quecto-agentic-harness/workflows/` —
+/// loaded through the SAME directory loader the runtime uses, so the drift
+/// tests pin exactly what a session would run.
+pub fn canonical_workflow_templates() -> Vec<quecto::domain::workflow::WorkflowTemplate> {
+    let dir = repo_file("workflows");
+    quecto::infrastructure::config::load_workflow_templates_from_dir(&dir).unwrap_or_else(|e| {
+        panic!(
+            "the canonical workflow folder {} must load: {e}",
+            dir.display()
+        )
+    })
+}
+
+/// The canonical template library wrapped in the legacy
+/// `{"workflow":{"templates":[...]}}` JSON shape, so pinning tests written
+/// against `workflow-config.json` keep their navigation helpers unchanged.
+pub fn canonical_workflow_config() -> serde_json::Value {
+    serde_json::json!({
+        "workflow": {
+            "templates": serde_json::to_value(canonical_workflow_templates())
+                .expect("canonical templates serialize"),
+            // The shape-based selector routing between templates stays a
+            // config-level concern; it is pinned from workflow-config.json.
+            "selector_prompt": serde_json::from_str::<serde_json::Value>(
+                &read_repo_file("workflow-config.json")
+            )
+            .expect("workflow-config.json should parse as JSON")["workflow"]["selector_prompt"]
+            .clone(),
+        }
+    })
+}
+
+/// Every `*.json` file under the canonical workflow folder (templates AND
+/// shared steps), as `(relative_path, content)` pairs — for whole-library
+/// content sweeps such as the stale-string guard.
+pub fn canonical_workflow_files() -> Vec<(String, String)> {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<(String, String)>) {
+        let entries = fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("failed to read canonical dir {}: {e}", dir.display()));
+        for entry in entries {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                walk(&path, root, out);
+            } else if path.extension().is_some_and(|ext| ext == "json") {
+                let rel = path
+                    .strip_prefix(root)
+                    .expect("canonical file under root")
+                    .to_string_lossy()
+                    .to_string();
+                let content = fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+                out.push((rel, content));
+            }
+        }
+    }
+    let root = repo_file("workflows");
+    let mut out = Vec::new();
+    walk(&root, &root, &mut out);
+    assert!(
+        !out.is_empty(),
+        "the canonical workflow folder {} must contain template files",
+        root.display()
+    );
+    out
+}
+
 /// Issue #1004: the reviewer wave is restructured into narrow finder angles
 /// with find -> verify -> single-post waves; Conformance-to-AC leaves the wave.
 /// Shared by the native-config, examples-config and docs-guide tests so all

@@ -42,6 +42,7 @@ fn single_template_config_binds_to_active_on_select() {
         auto_continue: true,
         completion_nudge: true,
         selector_prompt: None,
+        dir: None,
         templates: vec![template],
     };
     let mut engine = WorkflowEngine::new(config, false).unwrap();
@@ -74,6 +75,7 @@ fn bound_engine(templates: Vec<WorkflowTemplate>, select: &str) -> WorkflowEngin
         auto_continue: true,
         completion_nudge: true,
         selector_prompt: None,
+        dir: None,
         templates,
     };
     let mut engine = WorkflowEngine::new(config, false).unwrap();
@@ -584,6 +586,7 @@ fn cfg(templates: Vec<WorkflowTemplate>) -> WorkflowConfig {
         auto_continue: true,
         completion_nudge: true,
         selector_prompt: None,
+        dir: None,
         templates,
     }
 }
@@ -709,6 +712,7 @@ fn selector_status_text_includes_issue_and_custom_prompt() {
         auto_continue: true,
         completion_nudge: true,
         selector_prompt: Some("Pick wisely".into()),
+        dir: None,
         templates: vec![template_with_steps("t", vec![step("a")])],
     };
     let mut engine = WorkflowEngine::new(config, false).unwrap();

@@ -1,4 +1,30 @@
-//! Value-parsing helpers for the `agent` subcommand flag parser.
+//! Value-parsing helpers for the `agent` subcommand flag parser, and the
+//! parsed [`AgentFlags`] the parser produces.
+
+/// Parsed flags for the `agent` subcommand.
+pub(crate) struct AgentFlags {
+    pub(crate) session_name: Option<String>,
+    pub(crate) no_session: bool,
+    pub(crate) message: Option<String>,
+    pub(crate) system_prompt: Option<String>,
+    pub(crate) model_override: Option<String>,
+    pub(crate) max_iterations: Option<u32>,
+    pub(crate) max_time: Option<u64>,
+    pub(crate) uds_mode: bool,
+    pub(crate) no_sandbox: bool,
+    pub(crate) socket_path: Option<std::path::PathBuf>,
+    pub(crate) persist: bool,
+    pub(crate) disabled_tools: Vec<String>,
+    pub(crate) effort: Option<crate::domain::provider::EffortLevel>,
+    pub(crate) workflow: bool,
+    pub(crate) workflow_guards: bool,
+    pub(crate) workflow_disabled: bool,
+    pub(crate) workflow_spec_path: Option<std::path::PathBuf>,
+    /// `--parent-id`: the spawning agent's id, stamped onto this agent's emitted
+    /// events so consumers can reconstruct the unit tree (PRD Stage B). `None`
+    /// at the root.
+    pub(crate) parent_id: Option<String>,
+}
 
 /// Return `args[i+1]` or push `err_msg` to stderr and return `None`.
 pub(super) fn next_arg<'a>(

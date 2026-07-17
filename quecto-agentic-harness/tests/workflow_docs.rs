@@ -3,9 +3,11 @@ mod common;
 use common::{assert_pure_move_refactor_guidance, assert_reviewer_finder_waves, read_repo_file};
 use serde_json::Value;
 
+// Slice 2 (workflow-composable-templates PRD §3.2 / AC7): the reference
+// workflow is pinned against the canonical `workflows/` folder — the former
+// `examples/config.json` mirror is collapsed into it.
 fn read_workflow_config() -> Value {
-    serde_json::from_str(&read_repo_file("examples/config.json"))
-        .expect("examples/config.json should parse as JSON")
+    common::canonical_workflow_config()
 }
 
 fn feature_template(config: &Value) -> &Value {
@@ -165,14 +167,14 @@ fn examples_config_reviewers_describe_finder_waves() {
     // Issue #1004: the mirror config must carry the same three-wave structure.
     let config = read_workflow_config();
     let g = reviewers_guidance(&config);
-    assert_reviewer_finder_waves(&g, "examples/config.json");
+    assert_reviewer_finder_waves(&g, "workflows/ (canonical)");
     // #862 review (Low): the single parallel batch (wall-clock) invariant phrasing
     // must match the native config so this mirror cannot silently drop it.
     assert!(
         g.contains("SINGLE parallel batch"),
-        "examples/config.json reviewers guidance should keep the SINGLE parallel batch invariant"
+        "canonical workflows/ reviewers guidance should keep the SINGLE parallel batch invariant"
     );
-    assert_reviewer_pr_number_hardening(&g, "examples/config.json");
+    assert_reviewer_pr_number_hardening(&g, "workflows/ (canonical)");
 }
 
 fn assert_reviewer_pr_number_hardening(g: &str, source: &str) {
@@ -243,7 +245,7 @@ fn examples_config_mirrors_bdd_strictness_and_version_bump() {
     let scenarios = step_guidance(&config, "scenarios").to_lowercase();
     assert!(
         scenarios.contains("declarative") && scenarios.contains("one behaviour per scenario"),
-        "examples/config.json scenarios should teach best-practice Gherkin"
+        "canonical workflows/ scenarios should teach best-practice Gherkin"
     );
 
     let bdd = step_guidance(&config, "bdd_review").to_lowercase();
@@ -251,13 +253,13 @@ fn examples_config_mirrors_bdd_strictness_and_version_bump() {
         bdd.contains("strict")
             && bdd.contains("every valid")
             && bdd.contains("regardless of severity"),
-        "examples/config.json bdd_review should be strict and fix every valid concern"
+        "canonical workflows/ bdd_review should be strict and fix every valid concern"
     );
 
     let fix = step_guidance(&config, "fix_reviews").to_lowercase();
     assert!(
         fix.contains("every valid") && fix.contains("regardless of severity"),
-        "examples/config.json fix_reviews should require fixing every valid concern"
+        "canonical workflows/ fix_reviews should require fixing every valid concern"
     );
 
     // #950 version_bump present between verify and commit.
@@ -266,7 +268,7 @@ fn examples_config_mirrors_bdd_strictness_and_version_bump() {
         vb.contains("semver")
             && vb.contains("Current version:")
             && vb.contains("repo_docs.feature"),
-        "examples/config.json version_bump should bump semver and sync version docs"
+        "canonical workflows/ version_bump should bump semver and sync version docs"
     );
 }
 
@@ -280,17 +282,17 @@ fn examples_config_mirrors_bdd_finders_and_per_assertion_red() {
     for token in ["Gherkin discipline", "Falsifiability", "Coverage"] {
         assert!(
             bdd.contains(token),
-            "examples/config.json bdd_review should name the `{token}` finder"
+            "canonical workflows/ bdd_review should name the `{token}` finder"
         );
     }
     let bdd_lower = bdd.to_lowercase();
     assert!(
         bdd_lower.contains("quote the offending line"),
-        "examples/config.json bdd_review findings must quote the offending line"
+        "canonical workflows/ bdd_review findings must quote the offending line"
     );
     assert!(
         bdd_lower.contains("both sides"),
-        "examples/config.json bdd_review coverage finder must pin both sides of limits"
+        "canonical workflows/ bdd_review coverage finder must pin both sides of limits"
     );
 
     let red = step_guidance(&config, "red").to_lowercase();
@@ -298,7 +300,7 @@ fn examples_config_mirrors_bdd_finders_and_per_assertion_red() {
         (red.contains("per new then step") || red.contains("every new then step"))
             && (red.contains("per new test assertion") || red.contains("every new assertion"))
             && red.contains("individually be shown to fail"),
-        "examples/config.json red step must require per-assertion failure evidence"
+        "canonical workflows/ red step must require per-assertion failure evidence"
     );
 }
 

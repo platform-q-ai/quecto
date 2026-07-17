@@ -1,0 +1,118 @@
+{
+  "label": "Refactor",
+  "description": "Behaviour-preserving restructure: gate readiness, characterize current behaviour GREEN-first, prove falsifiability by mutation, freeze the suite, refactor under it, prove parity, then review and hand off the PR for human review (no auto-merge).",
+  "when_to_use": "Use when the issue mandates zero behaviour change: consolidation, extraction, dedup, renames, moving state. Acceptance criteria are structural/parity-only. If the issue adds or alters observable behaviour, use 'feature'. If mixed, stop and report that the issue must be split.",
+  "steps": [
+    "steps/shared/hooks",
+    {
+      "key": "scope",
+      "label": "Read the issue; run the readiness gate; write the parity contract",
+      "phase": "setup",
+      "guidance": "First read the issue and comments with `gh issue view <N> --json title,body,comments`. Run the READINESS GATE before any other work. BLOCKING (stop and report with a structured list of exactly what is missing, with examples of what good looks like): the issue does not explicitly mandate zero behaviour change; the touched observable surfaces cannot be enumerated; no test/render harness exists to pin a surface's behaviour; the issue mixes behavioural change with refactoring (report that it must be split). WARNING (proceed only after stating the named consequence in your notes and later in the PR body): performance characteristics of replaced specialized code not recorded — consequence: allocation/complexity regressions will be undetectable. Then write the PARITY CONTRACT: (a) the exhaustive list of observable surfaces the refactor touches; (b) per surface, the behaviours that must be provably identical afterwards, in behaviour language first, including boundary cases — exact-fit vs overflow widths, empty/one/many items, both sides of every numeric limit, scroll-window edges, full-set vs visible-window computations; (c) performance characteristics of specialized code being replaced (allocation patterns, single-pass vs recompute, cached values) that the shared replacement must not regress. Never infer facts not verified against the actual code — verify what the current code ACTUALLY does at each boundary before recording it; mark anything you cannot determine as __UNRESOLVED__ rather than guessing, and resolve or escalate every marker before the characterize step. Structural goals from the issue (e.g. 'one shared renderer', 'net LOC decrease') are recorded as REVIEW-TIME checks for the conformance step — they must NEVER become test assertions. The contract starts as draft and must be marked approved (all __UNRESOLVED__ markers cleared, gate passed) before characterization begins. Done when the gate has passed (or warnings are explicitly accepted with consequences stated) and the parity contract is approved with a per-surface behaviour checklist."
+    },
+    {
+      "key": "characterize",
+      "label": "Write characterization tests that pass GREEN on the unmodified code",
+      "phase": "green",
+      "guidance": "BEFORE touching production code, write tests that pin the current behaviour of every surface in the parity contract, using the real harness and real inputs: construct the widget/component, drive actual keystrokes and navigation, assert on rendered frames and observable outcomes. Use these crate names: kernel `cargo test -p quecto-agentic-harness --lib <name_substring>` (the package is `quecto-agentic-harness`; its lib target is named `quecto`, but `-p` takes the PACKAGE name); TUI `cargo test -p quecto-tui --lib <name_substring>`; render-harness-driven TUI BDD uses the integration `bdd` target with `--features test-harness`. HARD BAN: no test may read production source files and assert on their text (contains/regex on helper names, field names, struct layout) — such a test verifies the diff, not the behaviour, and is rejected on sight; equally banned are assertions on test-constructed state, constants, or type-guaranteed facts. Where a scenario title or step name claims an action ('the user filters', 'moves selection'), the step body MUST perform that action — a When that sends no input is a defect. Choose the cheapest runtime class that is still truthful about the behaviour: a TUI widget's behaviour is observable only through the render harness, never below it. Cover the boundary cases from the parity contract explicitly. Run the tests against the UNMODIFIED code: all must pass GREEN. A characterization test that fails on master means you misunderstood current behaviour — investigate before proceeding. Done when the full characterization set is GREEN on untouched code and maps to every row of the parity contract."
+    },
+    {
+      "key": "mutation",
+      "label": "Prove each characterization test can fail (mutation evidence)",
+      "phase": "red",
+      "guidance": "This replaces the feature flow's RED gate: characterization tests pass before the change by design, so falsifiability is proven by MUTATION instead. For each characterization assertion (per assertion, not per test target), temporarily introduce a plausible defect of the class the refactor could cause — an off-by-one in width arithmetic, computing over the visible window instead of the full set, dropping a clamp, ignoring an input key — confirm the test FAILS for that reason, then revert the mutation cleanly and verify NO MUTATION RESIDUE remains: `git diff` shows only the intended characterization-test additions and no production-code changes. A test that survives every relevant mutation is hollow: fix or delete it. Record a mutation log (test -> mutation -> observed failure) as evidence for the PR body. Done when every characterization assertion has demonstrated it can fail, no mutation residue remains in production code, and the suite is GREEN again."
+    },
+    {
+      "key": "freeze_review",
+      "label": "Despatch characterization review finders, then FREEZE the suite",
+      "phase": "review",
+      "guidance": "Dispatch three narrow review finders in parallel BEFORE the refactor begins, each bound to its OWN dedicated review workflow via `workflow_spec`/`template` (never this refactor workflow), launched read-only: pass `read_only: true` to `spawn` so a finder cannot write or edit repo files while retaining `bash`, `read`, `grep`, `find` and `agent_cmd` to inspect the changes. Give each finder the parity contract, the mutation log, and the new characterization tests, with ONE angle: (1) Falsifiability — for each assertion, name the implementation change that would make it fail; flag any source-text assertion, self-asserted state, constant comparison, or step body that does not perform the action its title claims. (2) Coverage — full parity-contract-to-test mapping: every surface and boundary in the contract has a pinning test, both sides of every numeric limit. (3) Gherkin discipline for any BDD scenarios, per repo BDD best practice. Address EVERY valid concern: fix it, or explicitly DECLINE it with documented rationale. Then FREEZE the suite: record the characterization test files and their content hashes (e.g. `git hash-object`) as the freeze manifest. From this point until the parity step these tests are READ-ONLY; any necessary edit must be recorded with written rationale and re-run through mutation evidence — silent edits are gate violations. Done when all finders returned, every concern is fixed or declined with rationale, and the freeze manifest is recorded."
+    },
+    {
+      "key": "restructure",
+      "label": "Perform the refactor under the frozen suite",
+      "phase": "refactor",
+      "guidance": "Now restructure: extract the shared helper, move the state clusters, redirect call sites. Rules: (a) the characterization tests are the oracle — after each coherent slice, re-run them; they must pass UNMODIFIED (the only exception is a mechanical call-site adaptation inside a frozen test, logged and re-run through mutation evidence per (f)). (b) When forcing an existing abstraction to serve a new call site, EXTEND the abstraction to fit the data (add the field, add the full-set computation) rather than shoehorning the data to fit the abstraction (stringified values, per-window recomputes) — impedance mismatch at a call site is a design signal, not something to paper over. The same applies to parity quirks: a legacy behaviour preserved for zero-change parity belongs INSIDE the shared mechanism, documented next to the canonical rules — never re-implemented as caller-side state at a consuming call site. (c) Keep a DELETION LEDGER: for every line you delete, name the invariant it enforced and where the new code re-establishes it. The ledger covers deleted TESTS too: for every deleted test assertion, name where that behaviour remains pinned afterwards, or port the assertion before deleting it. (d) No behaviour or visual change, no speculative abstraction — every new pub item must have a consumer outside its own module, otherwise keep it private or inline it; respect the 750-line file cap. (e) CONSOLIDATION COMPLETENESS: when you introduce or canonicalize a shared helper, grep the crate for remaining hand-rolled implementations of the same pattern and either route each through the helper or record it in the deletion ledger as declined with rationale. (f) NEVER add production cfg(test) forks, shims, or signature variants to keep frozen tests compiling — the correct move is a mechanical call-site adaptation inside the frozen test, logged with rationale and re-run through mutation evidence; a test-only production code path is a gate violation. Done when the refactor is complete and the frozen suite is GREEN with zero test edits (or only logged, re-mutation-tested ones)."
+    },
+    {
+      "key": "parity",
+      "label": "Prove parity: behaviour, performance, and the issue's quantitative claims",
+      "phase": "green",
+      "guidance": "Run `cargo fmt` and targeted strict clippy first, then produce parity EVIDENCE, not assertion, as a table (surface x behaviour x evidence x verdict): (1) Behavioural — the frozen characterization suite and all pre-existing targeted suites for touched crates pass with ZERO modifications to pre-existing tests; diff the test tree against the freeze manifest and explain any delta. (2) Visual — where frames are pinned, before/after rendered output is identical for every surface in the contract. (3) Performance — for each piece of specialized code replaced by shared code, state what the old code avoided (allocations per keystroke, recomputation, extra passes) and show the new path does not reintroduce it, citing the mechanism. (4) Quantitative — measure any numeric criteria from the issue (e.g. net LOC decrease) and record the number. Done when all four parity classes have recorded evidence and fmt/clippy are clean. If any parity class fails, fix the production code — never the frozen tests — and re-verify."
+    },
+    {
+      "key": "version_bump",
+      "label": "Bump semver for every changed crate and sync version docs",
+      "phase": "ci_cd",
+      "guidance": "Bump the semver of every crate whose source changed in this PR before committing, so the bump goes through the same gate as the code. Determine which crates you actually modified (e.g. `git diff --name-only master...HEAD` plus unstaged changes) and bump the PATCH version in each such crate's Cargo.toml. Do NOT bump crates you did not change. Keep version docs in lockstep: for the `quecto` kernel, update the README.md 'Current version: **x.y.z**' line and the matching assertion in `quecto-agentic-harness/tests/features/repo_docs.feature`; for `quecto-tui`, its Cargo.toml and any TUI version assertion; for any other crate, whatever doc or test pins its version. Done when every changed crate's Cargo.toml and its version docs show the new, matching version and no unchanged crate was bumped."
+    },
+    {
+      "key": "commit",
+      "label": "Commit",
+      "phase": "ci_cd",
+      "guidance": "If on the default branch, create a feature branch first. Stage only the files you changed (`git add <paths>`); never `git add -A` or `git add .` — that sweeps untracked tooling and build artifacts into the commit. Write a clear, descriptive commit message that summarizes the parity evidence, and include any commit trailers your harness requires. Done when only the intended files are staged and committed on a feature branch."
+    },
+    {
+      "key": "push",
+      "label": "Push (pre-push hook will run tests and linting)",
+      "phase": "ci_cd",
+      "guidance": "Push triggers the full local gate (or validate without pushing via `scripts/pre-push.sh`): fmt, strict clippy, unit/integration/architecture/contracts/repo_docs/workflow_config, the 24-shard non-real BDD suite, region coverage at or above 87% for quecto and quecto-tui, machete and deny. The `find.feature` \"Nested .gitignore … in git repo\" scenario is load-flaky under the parallel shard wave — re-run the shard before treating it as a real failure. Push may take minutes and is not hung. Fix every failure; never use --no-verify. Done when the full gate is green."
+    },
+    {
+      "key": "pr",
+      "label": "Create PR",
+      "phase": "ci_cd",
+      "guidance": "Open the PR against the default branch with gh. The body MUST state: the parity contract summary, the mutation-evidence summary, the freeze-manifest status (characterization tests unmodified: yes/no, with rationale for any logged edit), performance-parity notes, measured quantitative criteria (e.g. LOC delta), and any accepted readiness-gate WARNINGs with their named consequences. The required CI checks are \"Unit Tests\" and \"Mock LLM E2E Tests\". Do not claim to co-author it. Done when the PR is open and the required checks are running."
+    },
+    {
+      "key": "reviewers",
+      "label": "Despatch refactor-specialized review finders, verify adversarially, post one review",
+      "phase": "review",
+      "guidance": "Precondition: reviewers MUST NOT be dispatched before a PR exists; if no PR number is available, stop and complete the Create PR step first. Use `gh pr view <PR> --json id,headRefOid,state,mergeStateStatus` and `gh pr diff <PR>`. The review runs as three waves. Wave 1 — narrow parallel finders: dispatch ALL angles in a SINGLE parallel batch, each spawned read-only (`read_only: true`) and bound to its OWN `review-pr` workflow, given only the PR number, head commit SHA and ONE angle; finders fetch the diff themselves and make no GitHub writes. Refactor-weighted angles: Removed-behavior audit seeded with the DELETION LEDGER (primary angle — for every deleted/replaced line, name the invariant it enforced and where the new code re-establishes it); Equivalence tracer (for each call site redirected to shared code, diff the old inline logic against the shared path for that site's exact parameters — width arithmetic, clamps, edge cases); Performance/efficiency versus the replaced specialized code specifically; Test falsifiability (name the implementation change that would make each test fail; flag source-text assertions and step bodies that do not perform their titles' actions; reject anything that would pass with the implementation reverted); Cross-file tracer (callers/callees/consumers of every changed symbol); Reuse + altitude with a consolidation completeness sweep (for every helper this PR introduces or canonicalizes, grep the crate for remaining hand-rolled implementations of the same pattern — each survivor is a finding unless the PR records a decline with rationale; same-defect-class grep; bandaid vs. mechanism — is each preserved quirk implemented at the right depth); Clean architecture (layering and dependency direction respected; shared logic at the right altitude — a quirk preserved for parity lives inside the shared mechanism, never as caller-side state in a consumer; no production code path that exists only for tests, e.g. cfg(test) forks or shims; every new public API item has a consumer outside its own module — flag speculative surface); line-by-line hunk scan seeded with diff-specific failure classes. Conformance is NOT a finder angle — it lives in the standalone conformance step. Each finding is structured as file:line, a one-line summary, and a concrete failure scenario (required — a finding without one is dropped). Wave 2 — adversarial verification: dedupe, then dispatch one read-only verifier per finding, in parallel, prompted to REFUTE it; verdicts are CONFIRMED, PLAUSIBLE or REFUTED and must quote the proving/disproving line. If Wave 1 returns no findings, skip Wave 2. Wave 3 — single post: the master posts exactly one submitted review via GitHub GraphQL (addPullRequestReview, event COMMENT, comments array) carrying every surviving finding as an INLINE review comment; if a line anchor is rejected, fall back to a review comment that still cites file:line. When multiple finders converge on the same line, treat that as a severity signal. CRITICAL: SUBMIT the review, never leave it PENDING; verify submittedAt != null. Done when every surviving finding is posted inline in one submitted (non-PENDING) review on the PR."
+    },
+    {
+      "key": "fix_reviews",
+      "label": "Fix all valid review concerns",
+      "phase": "review",
+      "guidance": "Triage each inline finding — confirm it is genuinely valid before changing anything (reviewers can be wrong). Address EVERY valid concern regardless of severity: fix it in the same branch, or explicitly DECLINE it with a documented rationale. Fixes to production code must keep the frozen characterization suite green; any fix that requires changing a characterization test goes back through mutation evidence with a logged rationale. Done when every valid finding has a fix in the branch or a documented decline."
+    },
+    "steps/shared/push_fixes",
+    "steps/shared/resolve_threads",
+    {
+      "key": "conformance",
+      "label": "Verify the PR against the issue AND the parity contract",
+      "phase": "review",
+      "guidance": "Read the original issue and comments with `gh issue view <N> --json title,body,comments`, then verify EACH acceptance criterion against the ACTUAL branch code with file:line evidence — never PR-description claims; be skeptical. Refactor-specific checks: structural goals (e.g. single shared helper, extracted state clusters) are verified HERE by code inspection — this is why they were never test assertions; behaviour unchanged per the recorded parity evidence; quantitative criteria measured (e.g. net LOC decrease); NO test asserts on production source text — grep the test tree for reads of src files inside assertions and treat any hit as a FAIL; no speculative public API — every new pub item introduced by the PR has a consumer outside its own module, else it must be privatized or inlined; and no production code path exists only for tests — grep the PR diff for cfg(test) additions under src and treat any unexplained hit as a FAIL. Output a per-criterion table marking each met/partial/unmet with evidence, then a final verdict line: `CONFORMANCE: PASS` only if every criterion is fully met, otherwise `CONFORMANCE: FAIL` listing gaps. On FAIL, fix the gaps and re-verify before reporting — do NOT merge on a FAIL. Done when the verdict is `CONFORMANCE: PASS` with file:line evidence for every criterion."
+    },
+    {
+      "key": "pre_merge",
+      "label": "Confirm the pre-push gate passed and report the PR (do NOT merge)",
+      "phase": "ci_cd",
+      "guidance": "Confirm the latest push's pre-push gate passed in full and the required CI checks \"Unit Tests\" and \"Mock LLM E2E Tests\" are green. Confirm the reviewers actually POSTED inline findings on the PR and all review threads are resolved. Confirm the PR body carries the parity evidence, mutation log and freeze-manifest status. The `find.feature` \"Nested .gitignore … in git repo\" scenario is load-flaky — re-run the shard before treating it as a real failure. Do NOT run gh pr merge or git merge, and do NOT set auto-merge: this workflow never merges. Report the PR number and a short summary, then STOP — the master agent and a human own merging. If any review, fix, or conformance step ERRORED or did not actually run, or the push bypassed the local gate with --no-verify, report that too. Done when the gate and required checks are green, inline findings were posted, all threads are resolved, and the PR is reported as ready for review (NOT merged)."
+    },
+    {
+      "key": "cleanup",
+      "label": "Clean up sub agents",
+      "phase": "ci_cd",
+      "guidance": "Reviewers that have already reported completion have exited and need no cleanup. Check `get_subagents` for any sub agent still running, and only then terminate the stragglers (abort or kill each) so no orphaned sub agents remain."
+    }
+  ],
+  "guards": [
+    {
+      "commands": [
+        "git commit",
+        "git push"
+      ],
+      "before_step_key": "version_bump",
+      "message": "Complete the readiness gate, characterization, mutation evidence, freeze, restructure and parity proof before committing."
+    },
+    {
+      "commands": [
+        "git merge",
+        "gh pr merge"
+      ],
+      "before_step_key": "cleanup",
+      "message": "This workflow does NOT merge — report the PR for review and stop. Before reporting, complete code review, pass the conformance gate (CONFORMANCE: PASS), verify parity evidence is recorded, and verify the pre-push gate genuinely passed (not bypassed with --no-verify). Never run gh pr merge / git merge or set auto-merge."
+    }
+  ]
+}

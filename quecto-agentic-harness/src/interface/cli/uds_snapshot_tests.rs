@@ -574,6 +574,7 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
         auto_continue: true,
         completion_nudge: false,
         selector_prompt: None,
+        dir: None,
         templates: vec![WorkflowTemplate {
             id: "t".into(),
             label: "T".into(),

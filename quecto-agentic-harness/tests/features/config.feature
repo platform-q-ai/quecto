@@ -82,6 +82,105 @@ Feature: Configuration
     When I try to load the config
     Then config loading should fail with "recursive references are not allowed"
 
+  # --- workflow-composable-templates PRD §3.2 slice 2: template directory
+  # --- discovery (workflow.dir → ./.quecto/workflows → ~/.quecto/workflows
+  # --- → inline workflow.templates fallback)
+
+  @workflow-dir
+  Scenario: Discover templates from a configured workflow directory
+    Given a workflow template file "wf/speedy.json" with content:
+      """
+      {"label":"Speedy","description":"A dropped-in template","steps":[{"key":"one","label":"One","phase":"green","guidance":"go"}]}
+      """
+    And a config file at "~/.quecto/config.json" with content:
+      """
+      {"workflow":{"dir":"wf"}}
+      """
+    When I discover workflow templates
+    Then the only discovered workflow template should be "speedy"
+
+  @workflow-dir
+  Scenario: A template dropped into the repo-local workflow directory appears without any config edit
+    Given a workflow template file ".quecto/workflows/foo.json" with content:
+      """
+      {"label":"Foo","description":"d","steps":[{"key":"one","label":"One","phase":"green","guidance":"go"}]}
+      """
+    And an empty config file
+    When I discover workflow templates
+    Then the only discovered workflow template should be "foo"
+
+  @workflow-dir
+  Scenario: The home workflow directory is used when the repository has none
+    Given a workflow template file "~/.quecto/workflows/bar.json" with content:
+      """
+      {"label":"Bar","description":"d","steps":[{"key":"one","label":"One","phase":"green","guidance":"go"}]}
+      """
+    And an empty config file
+    When I discover workflow templates
+    Then the only discovered workflow template should be "bar"
+
+  @workflow-dir
+  Scenario: Inline templates remain the fallback, without a warning, when no workflow directory exists
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {"workflow":{"templates":[{"id":"inline_tpl","label":"Inline","description":"d","steps":[{"key":"one","label":"One","phase":"green","guidance":"go"}]}]}}
+      """
+    When I discover workflow templates
+    Then the only discovered workflow template should be "inline_tpl"
+    And no workflow discovery warning should be issued
+
+  @workflow-dir
+  Scenario: A workflow directory wins over inline templates with a startup warning
+    Given a workflow template file ".quecto/workflows/from_dir.json" with content:
+      """
+      {"label":"Dir","description":"d","steps":[{"key":"one","label":"One","phase":"green","guidance":"go"}]}
+      """
+    And a config file at "~/.quecto/config.json" with content:
+      """
+      {"workflow":{"templates":[{"id":"inline_tpl","label":"Inline","description":"d","steps":[{"key":"one","label":"One","phase":"green","guidance":"go"}]}]}}
+      """
+    When I discover workflow templates
+    Then the only discovered workflow template should be "from_dir"
+    And a workflow discovery warning should mention "inline"
+
+  @workflow-dir
+  Scenario: Files under the steps subfolder are never templates
+    Given a workflow template file ".quecto/workflows/real.json" with content:
+      """
+      {"label":"Real","description":"d","steps":[{"key":"one","label":"One","phase":"green","guidance":"go"}]}
+      """
+    And a workflow template file ".quecto/workflows/steps/reviews/shared.json" with content:
+      """
+      {"key":"shared","label":"Shared","phase":"review","guidance":"defined once"}
+      """
+    And an empty config file
+    When I discover workflow templates
+    Then the only discovered workflow template should be "real"
+
+  @workflow-dir
+  Scenario: A discovered template resolves step references relative to the workflow directory
+    Given a workflow template file ".quecto/workflows/real.json" with content:
+      """
+      {"label":"Real","description":"d","steps":["steps/reviews/shared"]}
+      """
+    And a workflow template file ".quecto/workflows/steps/reviews/shared.json" with content:
+      """
+      {"key":"shared","label":"Shared","phase":"review","guidance":"defined once"}
+      """
+    And an empty config file
+    When I discover workflow templates
+    Then discovered template "real" step 1 should have guidance "defined once"
+
+  @workflow-dir
+  Scenario: An unloadable template file fails discovery naming the file
+    Given a workflow template file ".quecto/workflows/broken.json" with content:
+      """
+      not json {
+      """
+    And an empty config file
+    When I try to discover workflow templates
+    Then workflow discovery should fail with "broken.json"
+
   Scenario: Missing config fields use defaults
     Given a config file at "~/.quecto/config.json" with content:
       """

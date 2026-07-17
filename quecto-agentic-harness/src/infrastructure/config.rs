@@ -391,6 +391,14 @@ impl Config {
     }
 }
 
+// Workflow template directory discovery (slice 2) lives beside this module;
+// it reuses the private step-reference resolver below.
+#[path = "config_discovery.rs"]
+mod discovery;
+pub use discovery::{
+    WorkflowTemplateDiscovery, discover_workflow_templates, load_workflow_templates_from_dir,
+};
+
 const WORKFLOW_STEP_FIELDS: &[&str] = &["key", "label", "phase", "guidance"];
 
 /// Returns `true` when resolution replaced at least one reference entry;
@@ -576,6 +584,9 @@ pub enum ConfigError {
     Io(String, std::io::Error),
     Parse(serde_json::Error),
     WorkflowStep(String),
+    /// Workflow template directory discovery/load failure (slice 2); the
+    /// message names the offending file or directory.
+    WorkflowTemplate(String),
     /// Unrecognised `agents.defaults.effort` value (#1066).
     InvalidEffort(String),
 }
@@ -588,6 +599,9 @@ impl std::fmt::Display for ConfigError {
             }
             ConfigError::Parse(err) => write!(f, "failed to parse config: {}", err),
             ConfigError::WorkflowStep(err) => write!(f, "failed to load workflow step: {err}"),
+            ConfigError::WorkflowTemplate(err) => {
+                write!(f, "failed to load workflow template: {err}")
+            }
             ConfigError::InvalidEffort(v) => write!(
                 f,
                 "invalid effort level '{}'; expected one of: {}",

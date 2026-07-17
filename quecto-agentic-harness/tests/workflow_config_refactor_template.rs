@@ -7,12 +7,13 @@
 
 mod common;
 
-use common::read_repo_file;
 use serde_json::Value;
 
+// Slice 2 (workflow-composable-templates PRD §3.2 / AC7): the refactor
+// template is pinned against the canonical `workflows/` folder — the single
+// source of truth — via the same directory loader the runtime uses.
 fn read_native_config() -> Value {
-    serde_json::from_str(&read_repo_file("workflow-config.json"))
-        .expect("workflow-config.json should parse as JSON")
+    common::canonical_workflow_config()
 }
 
 fn template<'a>(config: &'a Value, id: &str) -> &'a Value {
@@ -461,20 +462,23 @@ fn guards_block_commit_before_parity_and_forbid_merge() {
     );
 }
 
-// --- Mirror parity -----------------------------------------------------------------
+// --- Runtime parity ----------------------------------------------------------------
 
 #[test]
-fn example_config_mirrors_native_refactor_template_and_selector() {
-    let native = read_native_config();
-    let example: Value = serde_json::from_str(&read_repo_file("examples/config.json"))
-        .expect("examples/config.json should parse as JSON");
+fn runtime_refactor_template_matches_canonical_folder() {
+    // Slice 2 collapse of the old native/example mirror parity: the refactor
+    // template a session actually runs must resolve identically to the
+    // canonical workflows/ folder (AC7, Decision 3).
+    let canonical = common::canonical_workflow_templates()
+        .into_iter()
+        .find(|t| t.id == "refactor")
+        .expect("canonical workflows/ folder should define the refactor template");
+    let runtime = quecto::domain::workflow::default_templates()
+        .into_iter()
+        .find(|t| t.id == "refactor")
+        .expect("runtime default templates should include refactor");
     assert_eq!(
-        native["workflow"]["selector_prompt"], example["workflow"]["selector_prompt"],
-        "selector_prompt should match between native and example configs"
-    );
-    assert_eq!(
-        template(&native, "refactor"),
-        template(&example, "refactor"),
-        "refactor template should match between native and example configs"
+        canonical, runtime,
+        "the runtime refactor template must resolve identically to the canonical workflows/ folder"
     );
 }
