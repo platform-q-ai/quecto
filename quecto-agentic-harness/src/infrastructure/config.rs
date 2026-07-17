@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use crate::domain::workflow::WorkflowConfig;
 
@@ -285,7 +286,10 @@ impl Config {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
             Err(e) => return Err(ConfigError::Io(path.to_string(), e)),
         };
-        let config: Config = serde_json::from_str(&content).map_err(ConfigError::Parse)?;
+        let mut value: serde_json::Value =
+            serde_json::from_str(&content).map_err(ConfigError::Parse)?;
+        resolve_workflow_step_entries(&mut value, Path::new(path))?;
+        let config: Config = serde_json::from_value(value).map_err(ConfigError::Parse)?;
         config.validate_effort()?;
         Ok(config)
     }
@@ -379,10 +383,114 @@ impl Config {
     }
 }
 
+fn resolve_workflow_step_entries(
+    config: &mut serde_json::Value,
+    config_path: &Path,
+) -> Result<(), ConfigError> {
+    let Some(templates) = config
+        .get_mut("workflow")
+        .and_then(|workflow| workflow.get_mut("templates"))
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return Ok(());
+    };
+    let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    for template in templates {
+        let Some(steps) = template
+            .get_mut("steps")
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            continue;
+        };
+        for entry in steps {
+            *entry = resolve_workflow_step_entry(entry.take(), base_dir)?;
+        }
+    }
+    Ok(())
+}
+
+fn resolve_workflow_step_entry(
+    entry: serde_json::Value,
+    base_dir: &Path,
+) -> Result<serde_json::Value, ConfigError> {
+    match entry {
+        serde_json::Value::String(reference) => load_workflow_step(base_dir, &reference),
+        serde_json::Value::Object(mut object) if object.contains_key("ref") => {
+            let reference = object
+                .remove("ref")
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .ok_or_else(|| ConfigError::WorkflowStep("`ref` must be a string".into()))?;
+            reject_unknown_keys(
+                &object,
+                &["key", "label", "phase", "guidance"],
+                "step reference",
+            )?;
+            let mut step = load_workflow_step(base_dir, &reference)?;
+            let target = step.as_object_mut().expect("loaded step is an object");
+            target.extend(object);
+            Ok(step)
+        }
+        serde_json::Value::Object(object) => {
+            reject_unknown_keys(
+                &object,
+                &["key", "label", "phase", "guidance"],
+                "inline step",
+            )?;
+            Ok(serde_json::Value::Object(object))
+        }
+        _ => Err(ConfigError::WorkflowStep(
+            "step entry must be a string reference, reference object, or step object".into(),
+        )),
+    }
+}
+
+fn load_workflow_step(base_dir: &Path, reference: &str) -> Result<serde_json::Value, ConfigError> {
+    let mut relative = PathBuf::from(reference);
+    if relative.extension().is_none() {
+        relative.set_extension("json");
+    }
+    let path = base_dir.join(relative);
+    let content = std::fs::read_to_string(&path)
+        .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?;
+    let object = value.as_object().ok_or_else(|| {
+        ConfigError::WorkflowStep(format!("{}: expected a step object", path.display()))
+    })?;
+    if object.contains_key("ref") {
+        return Err(ConfigError::WorkflowStep(format!(
+            "{}: expected a step object; recursive references are not allowed",
+            path.display()
+        )));
+    }
+    reject_unknown_keys(
+        object,
+        &["key", "label", "phase", "guidance"],
+        &path.display().to_string(),
+    )?;
+    serde_json::from_value::<crate::domain::workflow::WorkflowTemplateStep>(value.clone())
+        .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?;
+    Ok(value)
+}
+
+fn reject_unknown_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    allowed: &[&str],
+    context: &str,
+) -> Result<(), ConfigError> {
+    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(ConfigError::WorkflowStep(format!(
+            "{context}: unknown field `{key}`"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub enum ConfigError {
     Io(String, std::io::Error),
     Parse(serde_json::Error),
+    WorkflowStep(String),
     /// Unrecognised `agents.defaults.effort` value (#1066).
     InvalidEffort(String),
 }
@@ -394,6 +502,7 @@ impl std::fmt::Display for ConfigError {
                 write!(f, "failed to read config file '{}': {}", path, err)
             }
             ConfigError::Parse(err) => write!(f, "failed to parse config: {}", err),
+            ConfigError::WorkflowStep(err) => write!(f, "failed to load workflow step: {err}"),
             ConfigError::InvalidEffort(v) => write!(
                 f,
                 "invalid effort level '{}'; expected one of: {}",
@@ -411,329 +520,5 @@ impl std::error::Error for ConfigError {}
 mod effort_1066_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-
-    #[test]
-    fn test_deserialize_full_config() {
-        let json = r#"{
-            "agents": {
-                "defaults": {
-                    "model": "gpt-4",
-                    "max_tokens": 4096
-                }
-            },
-            "providers": {
-                "openai": {
-                    "api_key": "sk-test-123"
-                }
-            }
-        }"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(config.agents.defaults.model, "gpt-4");
-        assert_eq!(config.agents.defaults.max_tokens, 4096);
-        assert_eq!(config.providers.openai.api_key, "sk-test-123");
-    }
-
-    #[test]
-    fn test_deserialize_empty_uses_defaults() {
-        let config: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.agents.defaults.model, "gpt-5.5");
-        assert_eq!(config.agents.defaults.max_tokens, 8192);
-        assert!((config.agents.defaults.temperature - 0.7).abs() < f32::EPSILON);
-        assert_eq!(config.agents.defaults.workspace, "~/.quecto/workspace");
-        assert_eq!(config.agents.defaults.max_tool_iterations, 999_999);
-        assert!(config.agents.defaults.restrict_to_workspace);
-    }
-
-    #[test]
-    fn test_agent_defaults_has_no_command_allowlist() {
-        let defaults = AgentDefaults::default();
-        assert_eq!(defaults.command_allowlist, None);
-    }
-
-    #[test]
-    fn test_command_allowlist_deserializes_from_config() {
-        let json = r#"{
-            "agents": {
-                "defaults": {
-                    "command_allowlist": ["echo", "ls", "cat"]
-                }
-            }
-        }"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            config.agents.defaults.command_allowlist,
-            Some(vec![
-                "echo".to_string(),
-                "ls".to_string(),
-                "cat".to_string()
-            ])
-        );
-    }
-
-    #[test]
-    fn test_deserialize_legacy_exec_fields_ignored() {
-        // Old configs may still carry the removed nsjail/network keys; serde
-        // ignores unknown fields, so they deserialize without error.
-        let json = r#"{
-            "tools": {
-                "exec": {
-                    "isolation": "nsjail",
-                    "nsjail_binary": "/usr/bin/nsjail",
-                    "network_passthrough": true
-                }
-            }
-        }"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-        // Sandbox confinement is independent and still defaults on.
-        assert!(config.agents.defaults.restrict_to_workspace);
-    }
-
-    #[test]
-    fn test_load_from_file() {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmp,
-            r#"{{ "agents": {{ "defaults": {{ "model": "claude-opus-4-5" }} }} }}"#
-        )
-        .unwrap();
-        let config = Config::load(tmp.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.agents.defaults.model, "claude-opus-4-5");
-        // defaults still applied for missing fields
-        assert_eq!(config.agents.defaults.max_tokens, 8192);
-    }
-
-    #[test]
-    fn test_load_missing_file_returns_default() {
-        // Zero-config: a missing config file yields the default config rather
-        // than an error (no onboarding step required).
-        let config = Config::load("/nonexistent/path/config.json").unwrap();
-        assert_eq!(
-            config.agents.defaults.model,
-            Config::default().agents.defaults.model
-        );
-    }
-
-    #[test]
-    fn test_load_missing_file_with_env_applies_overrides_on_default() {
-        // Env overrides apply on top of defaults even with no config file.
-        let mut env = HashMap::new();
-        env.insert(
-            "QUECTO_AGENTS_DEFAULTS_MODEL".to_string(),
-            "env/model".to_string(),
-        );
-        let config = Config::load_with_env("/nonexistent/path/config.json", &env).unwrap();
-        assert_eq!(config.agents.defaults.model, "env/model");
-    }
-
-    #[test]
-    fn test_load_invalid_json() {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        write!(tmp, "not valid json {{").unwrap();
-        let result = Config::load(tmp.path().to_str().unwrap());
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("failed to parse config"));
-    }
-
-    #[test]
-    fn test_env_override_model() {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmp,
-            r#"{{ "agents": {{ "defaults": {{ "model": "gpt-4" }} }} }}"#
-        )
-        .unwrap();
-
-        let mut env = HashMap::new();
-        env.insert(
-            "QUECTO_AGENTS_DEFAULTS_MODEL".to_string(),
-            "claude-opus-4-5".to_string(),
-        );
-
-        let config = Config::load_with_env(tmp.path().to_str().unwrap(), &env).unwrap();
-        assert_eq!(config.agents.defaults.model, "claude-opus-4-5");
-    }
-
-    #[test]
-    fn test_env_override_max_tokens() {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        write!(tmp, "{{}}").unwrap();
-
-        let mut env = HashMap::new();
-        env.insert(
-            "QUECTO_AGENTS_DEFAULTS_MAX_TOKENS".to_string(),
-            "2048".to_string(),
-        );
-
-        let config = Config::load_with_env(tmp.path().to_str().unwrap(), &env).unwrap();
-        assert_eq!(config.agents.defaults.max_tokens, 2048);
-    }
-
-    #[test]
-    fn test_env_override_provider_key() {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        write!(tmp, "{{}}").unwrap();
-
-        let mut env = HashMap::new();
-        env.insert("OPENAI_API_KEY".to_string(), "sk-from-env".to_string());
-
-        let config = Config::load_with_env(tmp.path().to_str().unwrap(), &env).unwrap();
-        assert_eq!(config.providers.openai.api_key, "sk-from-env");
-    }
-
-    #[test]
-    fn test_workspace_path_tilde_expansion() {
-        let config: Config = serde_json::from_str("{}").unwrap();
-        let ws = config.workspace_path();
-        assert!(ws.starts_with('/'), "should start with /: {ws}");
-        assert!(
-            ws.ends_with(".quecto/workspace"),
-            "should end with .quecto/workspace: {ws}"
-        );
-    }
-
-    #[test]
-    fn test_workspace_path_absolute_no_expansion() {
-        let json = r#"{
-            "agents": {
-                "defaults": {
-                    "workspace": "/opt/quecto/workspace"
-                }
-            }
-        }"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(config.workspace_path(), "/opt/quecto/workspace");
-    }
-
-    #[test]
-    fn test_env_override_invalid_number_ignored() {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        write!(tmp, "{{}}").unwrap();
-
-        let mut env = HashMap::new();
-        env.insert(
-            "QUECTO_AGENTS_DEFAULTS_MAX_TOKENS".to_string(),
-            "not_a_number".to_string(),
-        );
-
-        let config = Config::load_with_env(tmp.path().to_str().unwrap(), &env).unwrap();
-        // Should keep the default since parse failed
-        assert_eq!(config.agents.defaults.max_tokens, 8192);
-    }
-
-    #[test]
-    fn test_provider_entry_debug_redacts_api_key() {
-        let entry = ProviderEntry {
-            api_key: "sk-secret-key-12345".to_string(),
-            api_base: "https://api.openai.com/v1".to_string(),
-            disable_codex_routing: false,
-        };
-        let debug = format!("{:?}", entry);
-        assert!(!debug.contains("sk-secret-key-12345"));
-    }
-
-    #[test]
-    fn test_default_max_session_messages() {
-        let config: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.agents.defaults.max_session_messages, 200);
-    }
-
-    #[test]
-    fn test_default_max_context_tokens() {
-        let config: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.agents.defaults.max_context_tokens, 200_000);
-    }
-
-    #[test]
-    fn test_default_context_collapse_after_tool_calls_is_50() {
-        // #1017: collapse triggers after a configurable number of tool calls,
-        // default 50 — pin the default in code, not only in docs.
-        assert_eq!(default_context_collapse_after_tool_calls(), 50);
-        let config: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.agents.defaults.context_collapse_after_tool_calls, 50);
-        assert_eq!(
-            AgentDefaults::default().context_collapse_after_tool_calls,
-            50
-        );
-    }
-
-    #[test]
-    fn test_context_collapse_legacy_turns_alias_deserializes() {
-        // Pre-#1017 config files used `context_collapse_after_turns`; the serde
-        // alias keeps them working.
-        let json = r#"{
-            "agents": { "defaults": { "context_collapse_after_turns": 12 } }
-        }"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(config.agents.defaults.context_collapse_after_tool_calls, 12);
-    }
-
-    #[test]
-    fn test_deserialize_max_session_messages_override() {
-        let json = r#"{
-            "agents": { "defaults": { "max_session_messages": 12 } }
-        }"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(config.agents.defaults.max_session_messages, 12);
-    }
-
-    #[test]
-    fn test_openai_compatible_endpoints_deserialize() {
-        let json = r#"{
-            "providers": {
-                "openai_compatible": {
-                    "endpoints": [
-                        {
-                            "prefix": "spark",
-                            "api_base": "http://127.0.0.1:8000/v1",
-                            "api_key": "sk-spark",
-                            "allow_remote_http": true
-                        }
-                    ]
-                }
-            }
-        }"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-        let endpoint = &config.providers.openai_compatible.endpoints[0];
-        assert_eq!(endpoint.prefix, "spark");
-        assert_eq!(endpoint.api_base, "http://127.0.0.1:8000/v1");
-        assert_eq!(endpoint.api_key, "sk-spark");
-        assert!(endpoint.allow_remote_http);
-    }
-
-    #[test]
-    fn test_openai_disable_codex_routing_deserializes() {
-        let json = r#"{
-            "providers": {
-                "openai": {
-                    "api_key": "sk-custom",
-                    "api_base": "http://127.0.0.1:8000/v1",
-                    "disable_codex_routing": true
-                }
-            }
-        }"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-        assert!(config.providers.openai.disable_codex_routing);
-    }
-
-    #[test]
-    fn test_legacy_config_with_removed_sections_still_deserializes() {
-        // Guard against regressions: existing config.json files may contain
-        // telegram, heartbeat, gateway, health, voice, and cron sections that
-        // were removed in #317. serde's default handling must silently ignore
-        // these unknown fields.
-        let json = r#"{
-            "agents": { "defaults": { "model": "gpt-4" } },
-            "channels": { "telegram": { "enabled": true, "token": "123:ABC" } },
-            "heartbeat": { "enabled": true, "interval": 300 },
-            "gateway": { "host": "0.0.0.0", "port": 8080 },
-            "health": { "enabled": true, "port": 9090 },
-            "voice": { "groq": { "api_key": "gsk-test" } }
-        }"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(config.agents.defaults.model, "gpt-4");
-    }
-}
+#[path = "config_tests.rs"]
+mod tests;
