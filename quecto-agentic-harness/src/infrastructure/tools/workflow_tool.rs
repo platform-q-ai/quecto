@@ -139,7 +139,11 @@ impl WorkflowTool {
         engine
             .select_template(template, issue)
             .map_err(|e| e.to_string())?;
-        Ok(format!("Selected workflow template '{}'.", template))
+        Ok(format!(
+            "Selected workflow template '{}'.{}",
+            template,
+            step_handoff(engine, "Current step")
+        ))
     }
 
     fn do_check(
@@ -149,7 +153,11 @@ impl WorkflowTool {
     ) -> Result<String, String> {
         let step = parse_step(args)?;
         engine.check(step).map_err(|e| e.to_string())?;
-        Ok(format!("Step {} checked.", step))
+        Ok(format!(
+            "Step {} checked.{}",
+            step,
+            step_handoff(engine, "Next step")
+        ))
     }
 
     fn do_uncheck(
@@ -186,6 +194,23 @@ impl WorkflowTool {
         if let Some(ref emitter) = self.event_emitter {
             emitter(event);
         }
+    }
+}
+
+/// Current-step handoff appended to `select_template`/`check` results
+/// (#1113 AC2): with the system prompt static for the whole session, the tool
+/// result is where the model receives each step's guidance exactly when it
+/// advances to it.
+fn step_handoff(engine: &WorkflowEngine, heading: &str) -> String {
+    match engine.current_step() {
+        Some(step) => {
+            let mut out = format!("\n{} {}: {}", heading, step.index, step.label);
+            if let Some(guidance) = step.guidance {
+                out.push_str(&format!("\nGuidance: {guidance}"));
+            }
+            out
+        }
+        None => "\nAll workflow steps complete.".to_string(),
     }
 }
 
@@ -282,7 +307,7 @@ impl Tool for WorkflowTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "workflow".into(),
-            description: "Manage the active UDS workflow template and step progression.".into(),
+            description: "Manage the active development workflow. Discover templates with action=list_templates, activate one with action=select_template, mark steps done with action=check (the result hands you the next step's guidance), and use action=status for current progress and guidance.".into(),
             parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["status","list_templates","select_template","check","uncheck","skip","reset","set_issue","clear_issue","check_guards"]},"template":{"type":"string"},"step":{"type":"integer"},"issueNumber":{"type":"integer"},"issueTitle":{"type":"string"},"command":{"type":"string"}},"required":["action"]}"#.into(),
         }
     }
@@ -481,6 +506,132 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.is_error);
+    }
+
+    // ─── #1113 cache-safe prompting: guidance travels in tool results ────────
+
+    /// Two-step template with known guidance strings for #1113 assertions.
+    fn guided_template() -> crate::domain::workflow::WorkflowTemplate {
+        use crate::domain::workflow::{WorkflowTemplate, WorkflowTemplateStep};
+        WorkflowTemplate {
+            id: "guided".to_string(),
+            label: "Guided".to_string(),
+            description: "guided template".to_string(),
+            when_to_use: None,
+            steps: vec![
+                WorkflowTemplateStep {
+                    key: "first".to_string(),
+                    label: "First guided step".to_string(),
+                    phase: "red".to_string(),
+                    guidance: Some("first step guidance text".to_string()),
+                },
+                WorkflowTemplateStep {
+                    key: "second".to_string(),
+                    label: "Second guided step".to_string(),
+                    phase: "green".to_string(),
+                    guidance: Some("second step guidance text".to_string()),
+                },
+            ],
+            guards: vec![],
+        }
+    }
+
+    fn guided_tool() -> WorkflowTool {
+        let engine = Arc::new(Mutex::new(
+            WorkflowEngine::new(
+                WorkflowConfig {
+                    templates: vec![guided_template()],
+                    ..WorkflowConfig::default()
+                },
+                true,
+            )
+            .unwrap(),
+        ));
+        WorkflowTool::new(engine)
+    }
+
+    /// #1113 AC2: with a static system prompt, select_template must hand the
+    /// model the current (first) step's label and guidance in its result.
+    #[tokio::test]
+    async fn select_template_result_carries_first_step_label_and_guidance() {
+        let tool = guided_tool();
+        let result = tool
+            .execute(r#"{"action":"select_template","template":"guided"}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(
+            result.content.contains("First guided step"),
+            "select_template result must name the current step: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("first step guidance text"),
+            "select_template result must carry the current step's guidance: {}",
+            result.content
+        );
+    }
+
+    /// #1113 AC2: check must hand the model the NEXT step's label and
+    /// guidance exactly when it advances to it.
+    #[tokio::test]
+    async fn check_result_carries_next_step_label_and_guidance() {
+        let tool = guided_tool();
+        tool.execute(r#"{"action":"select_template","template":"guided"}"#)
+            .await
+            .unwrap();
+        let result = tool
+            .execute(r#"{"action":"check","step":1}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(
+            result.content.contains("Second guided step"),
+            "check result must name the next step: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("second step guidance text"),
+            "check result must carry the next step's guidance: {}",
+            result.content
+        );
+    }
+
+    /// #1113 AC2: with a static system prompt, `status` is the model's
+    /// re-orientation channel — it must carry the current step's label and
+    /// guidance for an active workflow.
+    #[tokio::test]
+    async fn status_result_carries_current_step_label_and_guidance() {
+        let tool = guided_tool();
+        tool.execute(r#"{"action":"select_template","template":"guided"}"#)
+            .await
+            .unwrap();
+        let result = tool.execute(r#"{"action":"status"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(
+            result.content.contains("First guided step"),
+            "status result must name the current step: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("first step guidance text"),
+            "status result must carry the current step's guidance: {}",
+            result.content
+        );
+    }
+
+    /// #1113 AC3: with no selector text injected into the system prompt, the
+    /// tool's schema description must advertise template discovery/selection.
+    #[test]
+    fn tool_description_advertises_template_selection() {
+        let definition = test_tool().definition();
+        for needle in ["list_templates", "select_template"] {
+            assert!(
+                definition.description.contains(needle),
+                "workflow tool description must advertise '{needle}': {}",
+                definition.description
+            );
+        }
     }
 
     #[tokio::test]

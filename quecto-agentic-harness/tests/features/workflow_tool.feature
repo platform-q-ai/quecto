@@ -36,6 +36,40 @@ Feature: Workflow tool behavior
     And the workflow tool result should contain "finish workflow tests first"
     And the workflow tool result should contain "Complete step 1"
 
+  # ─── Cache-safe prompting (#1113): guidance travels in tool results ─────────
+  # The system prompt is static for the whole session, so the tool results of
+  # select_template, check, and status must hand the model the current/next
+  # step's label and guidance exactly when it advances.
+
+  @cache-safe-prompt
+  Scenario: Selecting a template returns the current step and its guidance in the tool result
+    Given a workflow tool for a three-step guarded template
+    When the model selects the workflow template "wave"
+    Then the workflow tool result should not be an error
+    And the workflow tool result should carry the current step's label and guidance
+
+  @cache-safe-prompt
+  Scenario: Checking a step returns the next step and its guidance in the tool result
+    Given a workflow tool for a three-step guarded template
+    And the workflow template "wave" is selected
+    When the model checks off workflow step 1
+    Then the workflow tool result should not be an error
+    And the workflow tool result should carry the next step's label and guidance
+
+  @cache-safe-prompt
+  Scenario: Requesting the status returns the current step and its guidance in the tool result
+    Given a workflow tool for a three-step guarded template
+    And the workflow template "wave" is selected
+    When the model requests the workflow status
+    Then the workflow tool result should not be an error
+    And the workflow tool result should carry the current step's label and guidance
+
+  @cache-safe-prompt
+  Scenario: The workflow tool description advertises template selection
+    Given a workflow tool for a three-step guarded template
+    When I read the workflow tool definition
+    Then the definition description should advertise the list_templates and select_template actions
+
   Scenario: Matching workflow guards allow commands after prerequisite steps are complete
     Given a workflow tool for a three-step guarded template
     And the workflow template "wave" is selected

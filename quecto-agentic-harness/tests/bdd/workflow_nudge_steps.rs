@@ -90,6 +90,88 @@ fn then_corrective_nudge_demands_check_off_or_work(world: &mut QuectoWorld) {
     );
 }
 
+// ─── Cache-safe prompting (#1113): nudges carry the workflow state that no
+// longer lives in the system prompt ──────────────────────────────────────────
+
+/// A `--workflow` session before template selection: the engine sits in
+/// selector mode with the idle-boundary selector nudge armed. Distinctive
+/// (non-dictionary) template ids keep the listing assertions falsifiable.
+#[given("a workflow awaiting template selection with auto-continue enabled")]
+fn given_selector_mode_workflow_with_auto_continue(world: &mut QuectoWorld) {
+    use quecto::domain::workflow::{WorkflowTemplate, WorkflowTemplateStep};
+    let templates = vec![WorkflowTemplate {
+        id: "qx-selector-probe".into(),
+        label: "QX Selector Probe".into(),
+        description: "probe template for selector nudges".into(),
+        when_to_use: None,
+        steps: vec![WorkflowTemplateStep {
+            key: "only".into(),
+            label: "Only probe step".into(),
+            phase: "red".into(),
+            guidance: None,
+        }],
+        guards: vec![],
+    }];
+    let config = WorkflowConfig {
+        auto_continue: true,
+        templates,
+        ..WorkflowConfig::default()
+    };
+    let mut engine = WorkflowEngine::new(config, false).expect("engine builds");
+    engine.set_selector_nudge(true);
+    world.workflow_nudge_engine = Some(engine);
+}
+
+#[then("the nudge should carry the current step label and guidance")]
+fn then_nudge_carries_current_step_label_and_guidance(world: &mut QuectoWorld) {
+    let engine = world
+        .workflow_nudge_engine
+        .as_ref()
+        .expect("workflow engine not set");
+    let step = engine
+        .current_step()
+        .expect("incomplete workflow has a current step");
+    let guidance = step
+        .guidance
+        .as_deref()
+        .expect("first feature step carries guidance");
+    let text = nudge_text(world);
+    assert!(
+        text.contains(&step.label),
+        "nudge must carry the current step label '{}': {text}",
+        step.label
+    );
+    assert!(
+        text.contains(guidance),
+        "nudge must carry the current step guidance '{guidance}': {text}"
+    );
+}
+
+#[then("the nudge should present the workflow template selector")]
+fn then_nudge_presents_template_selector(world: &mut QuectoWorld) {
+    let text = nudge_text(world).to_string();
+    let engine = world
+        .workflow_nudge_engine
+        .as_ref()
+        .expect("workflow engine not set");
+    assert!(
+        text.contains("select_template"),
+        "selector nudge must tell the model to select a template via select_template: {text}"
+    );
+    // Derive the expected listing from the engine itself so a nudge that
+    // drops the template menu cannot pass on incidental prose.
+    let templates = engine.list_templates();
+    assert!(!templates.is_empty(), "engine must expose templates");
+    for template in templates {
+        assert!(
+            text.contains(&template.id) && text.contains(&template.label),
+            "selector nudge must list template '{}' ({}): {text}",
+            template.id,
+            template.label
+        );
+    }
+}
+
 #[then("the nudge should instruct the model how to recover from a failed tool call")]
 fn then_nudge_carries_error_path_instruction(world: &mut QuectoWorld) {
     let text = nudge_text(world);

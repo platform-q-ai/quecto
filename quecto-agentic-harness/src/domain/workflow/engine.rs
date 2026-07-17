@@ -16,6 +16,7 @@ impl WorkflowEngine {
             guards_enabled,
             selector_prompt: config.selector_prompt,
             bound: false,
+            selector_nudge: false,
         })
     }
 
@@ -29,6 +30,14 @@ impl WorkflowEngine {
     /// Whether this engine is bound to a single assigned template.
     pub fn is_bound(&self) -> bool {
         self.bound
+    }
+
+    /// Arm (or disarm) the idle-boundary template-selector nudge (#1113).
+    /// Only explicit workflow sessions (`--workflow`) arm this: a plain UDS
+    /// session with the workflow tool merely available must never be nudged
+    /// to pick a template.
+    pub fn set_selector_nudge(&mut self, enabled: bool) {
+        self.selector_nudge = enabled;
     }
 
     pub fn restore_run(&mut self, persisted: WorkflowRunPersisted) {
@@ -231,13 +240,14 @@ impl WorkflowEngine {
         }
     }
 
-    pub fn prompt_snippet(&self) -> String {
-        match self.mode() {
-            WorkflowMode::SelectingTemplate => self.selector_prompt_text(),
-            WorkflowMode::Active | WorkflowMode::Complete => self.active_prompt_text(),
-        }
-    }
-
+    /// Idle-boundary nudge for an auto-continuing workflow.
+    ///
+    /// With the system prompt static for the whole session (#1113), this
+    /// nudge is the idle-boundary channel for workflow state: in `Active`
+    /// mode it carries the current step's label and guidance; in
+    /// `SelectingTemplate` mode (armed via [`Self::set_selector_nudge`],
+    /// i.e. an explicit `--workflow` session) it presents the template
+    /// selector instead of any system-prompt injection.
     pub fn auto_continue_nudge(&self) -> Option<String> {
         // No mandated status reply here: literal instruction-following models
         // treated the old "Respond with just the word DONE" sentence as a
@@ -245,8 +255,12 @@ impl WorkflowEngine {
         // silently killed auto-continue for the rest of the run.
         const AUTO_CONTINUE_NUDGE: &str = "Workflow incomplete. Continue with the next incomplete step. Use the workflow tool to check off steps as you complete them. If a tool call failed, retry or work around it; if genuinely blocked, state which step is blocked and why. Never ask for permission or stop for any other reason than the task is entirely complete.";
 
-        self.auto_continue_gate()?;
-        Some(AUTO_CONTINUE_NUDGE.to_owned())
+        match self.auto_continue_target()? {
+            NudgeTarget::Selector => Some(self.selector_nudge_text()),
+            NudgeTarget::Step(step) => {
+                Some(format!("{AUTO_CONTINUE_NUDGE}\n{}", step_focus_text(&step)))
+            }
+        }
     }
 
     /// Corrective variant of [`Self::auto_continue_nudge`], sent when the
@@ -256,23 +270,50 @@ impl WorkflowEngine {
     ///
     /// Lives here (not in the interface layer) so ALL workflow nudge wording
     /// is owned by the engine and covered by the same wording tests — a
-    /// wording pass over the sibling nudges cannot miss this one.
+    /// wording pass over the sibling nudges cannot miss this one. The
+    /// dispatch loop requires BOTH wordings, so this yields `Some` in every
+    /// state the standard nudge does — including selector mode (#1113).
     pub fn corrective_nudge(&self) -> Option<String> {
         const CORRECTIVE_NUDGE: &str = "Your last reply did not advance the workflow. If the current step is finished, check it off with the workflow tool now; otherwise continue working on it. Do not reply with only a status message.";
 
-        self.auto_continue_gate()?;
-        Some(CORRECTIVE_NUDGE.to_owned())
+        match self.auto_continue_target()? {
+            NudgeTarget::Selector => Some(format!(
+                "Your last reply did not select a workflow template. {}",
+                self.selector_nudge_text()
+            )),
+            NudgeTarget::Step(step) => {
+                Some(format!("{CORRECTIVE_NUDGE}\n{}", step_focus_text(&step)))
+            }
+        }
     }
 
-    /// Shared gate for the auto-continue nudges: `Some(())` only while
-    /// auto-continue is enabled, the workflow is active, and a current
-    /// (incomplete) step exists.
-    fn auto_continue_gate(&self) -> Option<()> {
-        if !self.auto_continue || self.mode() != WorkflowMode::Active {
+    /// Shared gate for the auto-continue nudges: what the nudge should point
+    /// the model at. `Some` only while auto-continue is enabled AND either
+    /// the workflow is active with an incomplete current step, or no template
+    /// is selected yet and the selector nudge is armed (#1113 AC3).
+    fn auto_continue_target(&self) -> Option<NudgeTarget> {
+        if !self.auto_continue {
             return None;
         }
-        self.current_step()?;
-        Some(())
+        match self.mode() {
+            WorkflowMode::Active => self.current_step().map(NudgeTarget::Step),
+            WorkflowMode::SelectingTemplate if self.selector_nudge => Some(NudgeTarget::Selector),
+            WorkflowMode::SelectingTemplate | WorkflowMode::Complete => None,
+        }
+    }
+
+    /// Template-selector wording pushed at the first idle boundary of a
+    /// `--workflow` session that has not selected a template (#1113 AC3) —
+    /// the selector reaches the model through the nudge channel, never
+    /// through injected system-prompt text.
+    fn selector_nudge_text(&self) -> String {
+        let mut out = String::from(
+            "No workflow template is selected. Choose the best template for this task now: call workflow(action=\"select_template\", template=\"<id>\").\nAvailable templates:\n",
+        );
+        for t in self.list_templates() {
+            out.push_str(&format!("- {} — {}: {}\n", t.id, t.label, t.description));
+        }
+        out
     }
 
     pub fn completion_nudge(&self) -> Option<String> {
@@ -460,66 +501,6 @@ impl WorkflowEngine {
         out
     }
 
-    fn selector_prompt_text(&self) -> String {
-        let mut out = String::from("## Active Development Workflow\nMODE: SELECT TEMPLATE\n");
-        if let Some((num, title)) = &self.run.active_issue {
-            out.push_str(&format!("Active issue: #{} — {}\n", num, title));
-        } else {
-            out.push_str("Active issue: (not set)\n");
-        }
-        if let Some(prompt) = &self.selector_prompt {
-            out.push_str(&format!("{}\n", prompt));
-        } else {
-            out.push_str(
-                "Choose the best workflow template for this task before starting execution.\n",
-            );
-        }
-        out.push_str("Available templates:\n");
-        for t in self.list_templates() {
-            out.push_str(&format!("- {}: {}\n", t.id, t.description));
-        }
-        out.push_str(
-            "Call workflow(action=\"select_template\", template=\"<id>\") before checking steps.\n",
-        );
-        out
-    }
-
-    fn active_prompt_text(&self) -> String {
-        let template = match self.active_template() {
-            Some(t) => t,
-            None => return self.selector_prompt_text(),
-        };
-        let progress = self.progress();
-        let mut out = format!(
-            "## Active Development Workflow\nTemplate: {} ({})\nProgress: {}/{} steps complete.\n",
-            template.label, template.id, progress.done, progress.total
-        );
-        if let Some((num, title)) = &self.run.active_issue {
-            out.push_str(&format!("Active issue: #{} — {}\n", num, title));
-        } else {
-            out.push_str("Active issue: (not set)\n");
-        }
-        if let Some(step) = self.current_step() {
-            out.push_str(&format!(
-                "CURRENT STEP → {}. {} [{}]\n",
-                step.index,
-                step.label,
-                phase_display_name(&step.phase)
-            ));
-            if let Some(g) = step.guidance {
-                out.push_str(&format!("Guidance: {}\n", g));
-            }
-        } else {
-            out.push_str("✓ All workflow steps complete.\n");
-        }
-        if self.guards_enabled && !template.guards.is_empty() {
-            for guard in &template.guards {
-                out.push_str(&format!("Guard: {}\n", guard.message));
-            }
-        }
-        out
-    }
-
     fn require_active_template(&self) -> Result<&WorkflowTemplate, WorkflowError> {
         self.active_template().ok_or_else(|| {
             WorkflowError::NoActiveTemplate(
@@ -527,6 +508,29 @@ impl WorkflowEngine {
             )
         })
     }
+}
+
+/// What an auto-continue nudge should point the model at: the template
+/// selector (no template chosen yet) or the current incomplete step.
+enum NudgeTarget {
+    Selector,
+    Step(WorkflowStepStatus),
+}
+
+/// Focus block naming the current step — and its guidance, if any — so
+/// idle-boundary nudges carry the state that no longer lives in the system
+/// prompt (#1113 AC4).
+fn step_focus_text(step: &WorkflowStepStatus) -> String {
+    let mut out = format!(
+        "Current step {}: {} [{}]",
+        step.index,
+        step.label,
+        phase_display_name(&step.phase)
+    );
+    if let Some(g) = &step.guidance {
+        out.push_str(&format!("\nGuidance: {g}"));
+    }
+    out
 }
 
 fn summary_for_template(template: &WorkflowTemplate) -> WorkflowTemplateSummary {

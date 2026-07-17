@@ -149,15 +149,13 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         agent.set_streaming(true);
     }
 
-    // Set up live prompt injection when workflow is enabled.
+    // #1113 cache-safe prompting: workflow state is never rendered into the
+    // system prompt. Mirror `--workflow` by arming the idle-boundary template
+    // selector nudge instead.
     if let Some(ref wf) = workflow_state {
-        let wf_for_provider = wf.clone();
-        let base_prompt = world.system_prompt.clone().unwrap_or_default();
-        agent.set_system_prompt_provider(Some(std::sync::Arc::new(move || {
-            let mut prompt = base_prompt.clone();
-            quecto::interface::shared::append_workflow_prompt(&mut prompt, &wf_for_provider);
-            prompt
-        })));
+        if let Ok(mut engine) = wf.lock() {
+            engine.set_selector_nudge(true);
+        }
     }
 
     Ok(UdsAgentContext {
@@ -2063,7 +2061,12 @@ pub(crate) fn execute_multi_client_uds(world: &mut QuectoWorld) {
     let socket_path = base.join("mc-test-agent.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let (handle, socket_path) = match mc_spawn_agent(ctx, &base, socket_path) {
+    let (handle, socket_path) = match mc_spawn_agent(
+        ctx,
+        &base,
+        socket_path,
+        world.system_prompt.clone().unwrap_or_default(),
+    ) {
         Ok(pair) => pair,
         Err(msg) => {
             world.agent_stderr = msg;
@@ -2122,10 +2125,14 @@ pub(crate) fn execute_multi_client_uds(world: &mut QuectoWorld) {
 }
 
 /// Spawn the UDS agent loop in a background thread and wait for the socket.
+/// `system_prompt` is the scenario's static base prompt (empty when unset) —
+/// with cache-safe prompting (#1113) it is the ONLY system prompt the model
+/// ever sees, byte-identical across every turn.
 fn mc_spawn_agent(
     ctx: UdsAgentContext,
     base: &std::path::Path,
     socket_path: std::path::PathBuf,
+    system_prompt: String,
 ) -> Result<(std::thread::JoinHandle<i32>, std::path::PathBuf), String> {
     let UdsAgentContext {
         agent,
@@ -2149,7 +2156,7 @@ fn mc_spawn_agent(
             session_key,
             model,
             ephemeral,
-            system_prompt: String::new(),
+            system_prompt,
             socket_path: sp,
             socket_override: None,
             session_store_override: None,
@@ -3118,7 +3125,12 @@ fn execute_real_llm_uds(world: &mut QuectoWorld) {
     let socket_path = base.join("real-llm-uds.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let (agent_handle, socket_path) = match mc_spawn_agent(ctx, &base, socket_path) {
+    let (agent_handle, socket_path) = match mc_spawn_agent(
+        ctx,
+        &base,
+        socket_path,
+        world.system_prompt.clone().unwrap_or_default(),
+    ) {
         Ok(pair) => pair,
         Err(msg) => {
             world.agent_stderr = msg;
@@ -3311,6 +3323,19 @@ fn when_start_mc_uds_with_workflow(world: &mut QuectoWorld) {
     world._workflow_enabled = true;
 }
 
+/// Same, with an explicit static system prompt (#1113): the cache-safe
+/// scenarios assert on the system message of every LLM request, so the
+/// session must carry a real (non-empty) system prompt.
+#[when(
+    expr = "I start the multi-client UDS agent with workflow enabled and system prompt {string}"
+)]
+fn when_start_mc_uds_with_workflow_and_system(world: &mut QuectoWorld, system: String) {
+    world.mc_mode = true;
+    world.no_session = true;
+    world._workflow_enabled = true;
+    world.system_prompt = Some(system);
+}
+
 /// Mock: LLM returns a tool call for `workflow select_template feature`, then a text reply.
 #[given(expr = "the mock LLM returns a tool call for workflow select_template then text {string}")]
 fn given_mock_llm_workflow_select(world: &mut QuectoWorld, text: String) {
@@ -3460,9 +3485,201 @@ fn given_mock_llm_workflow_select_check(world: &mut QuectoWorld, text: String) {
             .await;
 
         e2e_steps::rewrite_config_to_uri(world, &new_uri);
-        std::mem::forget(server);
+        // Keep the server reachable so #1113 steps can inspect the system
+        // prompts the agent actually sent (leaked: BDD process is short-lived).
+        world.wiremock_server_ref = Some(Box::leak(Box::new(server)));
     });
     std::mem::forget(rt);
+}
+
+/// Mock (#1113): LLM selects an inline template, checks steps 1–3 in order,
+/// then replies with a final text. Also used to prove the system prompt stays
+/// byte-identical across the whole run, so the server ref is stored.
+#[given(
+    expr = "the mock LLM selects template {string}, checks all three steps, then replies {string}"
+)]
+fn given_mock_llm_workflow_full_completion(
+    world: &mut QuectoWorld,
+    template: String,
+    text: String,
+) {
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set"
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        fn tool_call_body(id: &str, call_id: &str, arguments: &str) -> serde_json::Value {
+            serde_json::json!({
+                "id": id,
+                "object": "chat.completion",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [{
+                            "id": call_id,
+                            "type": "function",
+                            "function": { "name": "workflow", "arguments": arguments }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+            })
+        }
+
+        let select_args = format!("{{\"action\":\"select_template\",\"template\":\"{template}\"}}");
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(tool_call_body(
+                    "chatcmpl-wf-sel",
+                    "call_wf_sel",
+                    &select_args,
+                )),
+            )
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        for step in 1..=3u8 {
+            let check_args = format!("{{\"action\":\"check\",\"step\":{step}}}");
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/chat/completions"))
+                .respond_with(
+                    wiremock::ResponseTemplate::new(200).set_body_json(tool_call_body(
+                        &format!("chatcmpl-wf-c{step}"),
+                        &format!("call_wf_c{step}"),
+                        &check_args,
+                    )),
+                )
+                .up_to_n_times(1)
+                .with_priority(1 + step)
+                .mount(&server)
+                .await;
+        }
+        let text_body = serde_json::json!({
+            "id": "chatcmpl-wf-done",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": text },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 25, "completion_tokens": 5, "total_tokens": 30}
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(text_body))
+            .mount(&server)
+            .await;
+
+        e2e_steps::rewrite_config_to_uri(world, &new_uri);
+        world.wiremock_server_ref = Some(Box::leak(Box::new(server)));
+    });
+    std::mem::forget(rt);
+}
+
+/// #1113 (AC6): rewrite the scenario config so it defines an inline
+/// three-step `workflow.templates` entry — inline configs must keep loading
+/// and behaving identically with cache-safe prompting.
+#[given(expr = "the config file defines an inline three-step workflow template {string}")]
+fn given_config_defines_inline_three_step_template(world: &mut QuectoWorld, id: String) {
+    let base = world
+        .cli_context
+        .base_dir
+        .as_ref()
+        .expect("no base dir — add 'Given a temp base directory'");
+    let path = base.join("config.json");
+    let raw = std::fs::read_to_string(&path).expect("config.json must exist before this step");
+    let mut config: serde_json::Value = serde_json::from_str(&raw).expect("config.json is JSON");
+    config["workflow"] = serde_json::json!({
+        "templates": [{
+            "id": id,
+            "label": "Inline Three Step",
+            "description": "Inline template exercising cache-safe prompting (#1113)",
+            "steps": [
+                {"key": "one", "label": "Inline step one", "phase": "red",
+                 "guidance": "inline guidance one"},
+                {"key": "two", "label": "Inline step two", "phase": "green",
+                 "guidance": "inline guidance two"},
+                {"key": "three", "label": "Inline step three", "phase": "review",
+                 "guidance": "inline guidance three"}
+            ]
+        }]
+    });
+    std::fs::write(&path, serde_json::to_string_pretty(&config).unwrap())
+        .expect("rewrite config.json with inline workflow templates");
+}
+
+/// #1113 (AC1 / PRD G1): every chat request the agent sent to the LLM must
+/// carry byte-identical, non-empty system-message content — the workflow
+/// engine must never mutate the rendered system prompt between turns. Each
+/// request must actually carry a system message with plain string content:
+/// an implementation that drops (or restructures) the system message must
+/// fail here rather than pass vacuously on equal empty strings.
+#[then("every LLM request of the session should carry a byte-identical system prompt")]
+fn then_every_llm_request_has_identical_system_prompt(world: &mut QuectoWorld) {
+    let server = world
+        .wiremock_server_ref
+        .expect("mock server ref not stored — use a #1113-aware workflow mock step");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let requests = rt
+        .block_on(server.received_requests())
+        .expect("received requests should be available");
+    std::mem::forget(rt);
+    let system_prompts: Vec<String> = requests
+        .iter()
+        .filter(|request: &&Request| {
+            request.method.as_str() == "POST" && request.url.path() == "/chat/completions"
+        })
+        .map(|request| {
+            let body: serde_json::Value =
+                serde_json::from_slice(&request.body).expect("chat request body is JSON");
+            let systems: Vec<String> = body["messages"]
+                .as_array()
+                .expect("chat request has a messages array")
+                .iter()
+                .filter(|m| m["role"] == "system")
+                .map(|m| {
+                    let content = m["content"].as_str().unwrap_or_else(|| {
+                        panic!("system message content must be a plain string: {m}")
+                    });
+                    assert!(
+                        !content.is_empty(),
+                        "system message content must be non-empty"
+                    );
+                    content.to_string()
+                })
+                .collect();
+            assert!(
+                !systems.is_empty(),
+                "every LLM request must carry a system message; request body: {body}"
+            );
+            systems.join("\n---\n")
+        })
+        .collect();
+    assert!(
+        system_prompts.len() >= 2,
+        "expected at least two LLM calls to compare system prompts across; got {}\nevents: {:#?}\nstderr: {}",
+        system_prompts.len(),
+        world.agent_events,
+        world.agent_stderr
+    );
+    let first = &system_prompts[0];
+    for (i, prompt) in system_prompts.iter().enumerate() {
+        assert_eq!(
+            prompt,
+            first,
+            "system prompt mutated between LLM call 1 and call {} — workflow state must not be injected into the system prompt (#1113)",
+            i + 1
+        );
+    }
 }
 
 /// Mock: LLM returns a tool call for `workflow status`, then a text reply.

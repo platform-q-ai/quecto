@@ -21,7 +21,7 @@ fn guarded_template() -> WorkflowTemplate {
                 key: "tests".to_string(),
                 label: "Add behavioral tests".to_string(),
                 phase: "red".to_string(),
-                guidance: None,
+                guidance: Some("write failing tests first".to_string()),
             },
             WorkflowTemplateStep {
                 key: "verify".to_string(),
@@ -113,6 +113,85 @@ fn given_workflow_step_is_checked_through_tool(world: &mut QuectoWorld, number: 
 #[when(expr = "I run workflow action {string}")]
 fn when_i_run_workflow_action(world: &mut QuectoWorld, arguments: String) {
     execute_workflow_action(world, &arguments);
+}
+
+// ─── Cache-safe prompting (#1113): guidance travels in tool results ─────────
+
+/// Declarative wrapper over the raw-JSON action step: the behaviour is "the
+/// model selects a template", not a wire-format literal.
+#[when(expr = "the model selects the workflow template {string}")]
+fn when_model_selects_workflow_template(world: &mut QuectoWorld, template: String) {
+    execute_workflow_action(
+        world,
+        &format!(r#"{{"action":"select_template","template":"{template}"}}"#),
+    );
+}
+
+#[when(expr = "the model checks off workflow step {int}")]
+fn when_model_checks_off_workflow_step(world: &mut QuectoWorld, number: usize) {
+    execute_workflow_action(world, &format!(r#"{{"action":"check","step":{number}}}"#));
+}
+
+#[when("the model requests the workflow status")]
+fn when_model_requests_workflow_status(world: &mut QuectoWorld) {
+    execute_workflow_action(world, r#"{"action":"status"}"#);
+}
+
+/// #1113 cache-safe prompting: with no selector text injected into the system
+/// prompt, the tool's own schema description must advertise how to discover
+/// and select templates.
+#[when("I read the workflow tool definition")]
+fn when_read_workflow_tool_definition(world: &mut QuectoWorld) {
+    world.workflow_tool_definition = Some(workflow_tool(world).definition());
+}
+
+#[then(
+    "the definition description should advertise the list_templates and select_template actions"
+)]
+fn then_definition_description_advertises_template_selection(world: &mut QuectoWorld) {
+    let definition = world
+        .workflow_tool_definition
+        .as_ref()
+        .expect("workflow tool definition not read");
+    for needle in ["list_templates", "select_template"] {
+        assert!(
+            definition.description.contains(needle),
+            "workflow tool description must advertise template selection via '{needle}': {}",
+            definition.description
+        );
+    }
+}
+
+/// #1113 AC2: assert against the engine's own current step — not fixture
+/// magic strings — that the last tool result hands the model the step's
+/// label and guidance. After a `check`, the engine's current step IS the
+/// next step, so both phrasings share this assertion.
+#[then("the workflow tool result should carry the current step's label and guidance")]
+#[then("the workflow tool result should carry the next step's label and guidance")]
+fn then_result_carries_engine_current_step(world: &mut QuectoWorld) {
+    let result = world
+        .workflow_tool_result
+        .as_ref()
+        .expect("workflow result not set");
+    let engine = workflow_tool(world).engine().lock().unwrap();
+    let step = engine
+        .current_step()
+        .expect("workflow must have an incomplete current step");
+    let guidance = step
+        .guidance
+        .as_deref()
+        .expect("fixture step must carry guidance");
+    assert!(
+        result.content.contains(&step.label),
+        "tool result must carry the step label '{}': {}",
+        step.label,
+        result.content
+    );
+    assert!(
+        result.content.contains(guidance),
+        "tool result must carry the step guidance '{guidance}': {}",
+        result.content
+    );
 }
 
 #[then("the workflow tool result should not be an error")]

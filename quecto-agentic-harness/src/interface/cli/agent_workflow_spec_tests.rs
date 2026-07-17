@@ -42,9 +42,12 @@ fn test_build_agent_from_config_uds_default_makes_workflow_available_without_for
         .expect("agent should build with optional workflow available");
     assert!(result.workflow_state.is_some(), "stderr: {}", stderr);
     assert!(result.workflow_config.is_some(), "stderr: {}", stderr);
+    // #1113: without --workflow the selector nudge stays disarmed — a plain
+    // UDS session must never be nudged to pick a template at idle boundaries.
+    let engine = result.workflow_state.as_ref().unwrap().lock().unwrap();
     assert!(
-        !result.workflow_prompt_initially_active,
-        "normal UDS must not inject selector-mode workflow prompt before selection"
+        engine.auto_continue_nudge().is_none(),
+        "normal UDS must not push the template selector at idle boundaries"
     );
 }
 
@@ -95,9 +98,16 @@ fn test_build_agent_from_config_uds_workflow_flag_creates_workflow_state() {
         .expect("agent should build with workflow enabled");
     assert!(result.workflow_state.is_some(), "stderr: {}", stderr);
     assert!(result.workflow_config.is_some(), "stderr: {}", stderr);
+    // #1113: --workflow arms the idle-boundary template selector nudge (no
+    // system-prompt injection): the engine yields a selector nudge while no
+    // template is selected.
+    let engine = result.workflow_state.as_ref().unwrap().lock().unwrap();
+    let nudge = engine
+        .auto_continue_nudge()
+        .expect("--workflow must arm the idle-boundary template selector nudge");
     assert!(
-        result.workflow_prompt_initially_active,
-        "--workflow should inject selector-mode workflow prompt immediately"
+        nudge.contains("select_template"),
+        "selector nudge must instruct selection via select_template: {nudge}"
     );
 }
 

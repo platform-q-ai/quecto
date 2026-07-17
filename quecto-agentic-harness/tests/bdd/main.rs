@@ -888,6 +888,9 @@ pub struct QuectoWorld {
     pub workflow_events: Option<Arc<Mutex<Vec<serde_json::Value>>>>,
     /// Workflow tool BDD: last direct tool execution result.
     pub workflow_tool_result: Option<ToolResult>,
+    /// Workflow tool BDD (#1113): definition read via "I read the workflow
+    /// tool definition".
+    pub workflow_tool_definition: Option<quecto::domain::tool::ToolDefinition>,
     /// Workflow nudge BDD: engine under test for auto-continue nudge wording.
     pub workflow_nudge_engine: Option<quecto::domain::workflow::WorkflowEngine>,
     /// Workflow nudge BDD: captured auto-continue nudge text.

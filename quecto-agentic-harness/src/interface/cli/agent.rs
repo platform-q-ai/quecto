@@ -287,7 +287,6 @@ pub(crate) struct AgentBuildResult {
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
-    pub workflow_prompt_initially_active: bool,
     pub provider_reload: crate::interface::cli::provider_reload::ProviderReload,
     pub provider_reload_inputs: crate::interface::cli::provider_reload::ProviderReloadInputs,
 }
@@ -383,7 +382,17 @@ pub(crate) fn build_agent_from_config(
         })
     });
 
-    let workflow_prompt_initially_active = flags.workflow;
+    // #1113: an explicit `--workflow` session arms the idle-boundary template
+    // selector nudge — the selector reaches the model through the nudge
+    // channel and the workflow tool description, never through the system
+    // prompt, which stays byte-identical for the whole session.
+    if flags.workflow {
+        if let Some(ws) = &workflow_state {
+            if let Ok(mut engine) = ws.lock() {
+                engine.set_selector_nudge(true);
+            }
+        }
+    }
     let wf_config = workflow_state.as_ref().map(|_| config.workflow.clone());
     // #935/#1044: one registry load supplies the per-model output cap (clamps
     // max_tokens so low-limit models never get a larger value; set_model
@@ -425,7 +434,6 @@ pub(crate) fn build_agent_from_config(
         notification_rx,
         subagent_registry,
         workflow_state,
-        workflow_prompt_initially_active,
         provider_reload,
         provider_reload_inputs,
     })
@@ -652,26 +660,15 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
 
     let model = build.model.clone();
 
-    // Build the base system prompt; workflow is appended dynamically before each UDS turn.
+    // Build the base system prompt. It is static for the lifetime of the
+    // session (#1113): workflow state is never appended, so the provider-side
+    // cached prefix survives every workflow step. Dynamic workflow state
+    // reaches the model through tool results and idle-boundary nudges.
     let mut system_prompt = crate::interface::shared::build_system_prompt(&flags.system_prompt);
     crate::interface::shared::append_extension_prompt(
         &mut system_prompt,
         &build.extension_prompt_snippets,
     );
-    if let Some(workflow) = build.workflow_state.clone() {
-        let base_prompt = system_prompt.clone();
-        let workflow_for_provider = workflow.clone();
-        let force_workflow_selector = build.workflow_prompt_initially_active;
-        agent.set_system_prompt_provider(Some(Arc::new(move || {
-            let mut prompt = base_prompt.clone();
-            crate::interface::shared::append_workflow_prompt_if_active(
-                &mut prompt,
-                &workflow_for_provider,
-                force_workflow_selector,
-            );
-            prompt
-        })));
-    }
 
     // Use --socket path if provided; otherwise auto-generate in $XDG_RUNTIME_DIR or temp.
     let socket_path = flags.socket_path.clone().unwrap_or_else(|| {

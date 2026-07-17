@@ -41,21 +41,21 @@ fn snapshot_in_active_mode_has_steps_and_current_step() {
 }
 
 #[test]
-fn selector_prompt_mentions_select_template() {
+fn selector_status_mentions_select_template() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
-    let prompt = engine.prompt_snippet();
-    assert!(prompt.contains("select_template"));
-    assert!(prompt.contains("feature"));
+    let status = engine.status_text();
+    assert!(status.contains("select_template"));
+    assert!(status.contains("feature"));
 }
 
 #[test]
-fn active_prompt_mentions_guidance() {
+fn active_status_mentions_guidance() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     engine.check(1).unwrap();
-    let prompt = engine.prompt_snippet();
-    assert!(prompt.contains("CURRENT STEP"));
-    assert!(prompt.contains("acceptance criteria"));
+    let status = engine.status_text();
+    assert!(status.contains("CURRENT STEP"));
+    assert!(status.contains("acceptance criteria"));
 }
 
 #[test]
@@ -151,6 +151,136 @@ fn no_active_template_errors_for_step_actions() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     let err = engine.check(1).unwrap_err();
     assert!(matches!(err, WorkflowError::NoActiveTemplate(_)));
+}
+
+// ── #1113 cache-safe prompting: idle-boundary nudges carry workflow state ───
+
+/// Single-step template with a distinctive, non-dictionary id so selector
+/// assertions cannot pass on prose that merely mentions e.g. "feature".
+fn probe_template(id: &str, label: &str) -> WorkflowTemplate {
+    WorkflowTemplate {
+        id: id.into(),
+        label: label.into(),
+        description: "probe template".into(),
+        when_to_use: None,
+        steps: vec![WorkflowTemplateStep {
+            key: "only".into(),
+            label: "Only probe step".into(),
+            phase: "red".into(),
+            guidance: None,
+        }],
+        guards: vec![],
+    }
+}
+
+fn nudge_probe_config(templates: Vec<WorkflowTemplate>) -> WorkflowConfig {
+    WorkflowConfig {
+        auto_continue: true,
+        templates,
+        ..WorkflowConfig::default()
+    }
+}
+
+/// #1113 AC4: with a static system prompt, the auto-continue nudge is the
+/// idle-boundary channel for the current step — it must carry the step's
+/// label and its guidance blob.
+#[test]
+fn auto_continue_nudge_carries_current_step_label_and_guidance() {
+    let mut template = probe_template("t", "T");
+    template.steps[0].label = "Alpha planning step".into();
+    template.steps[0].guidance = Some("guidance for step alpha".into());
+    let mut engine = WorkflowEngine::new(nudge_probe_config(vec![template]), false).unwrap();
+    engine.select_template("t", None).unwrap();
+
+    let nudge = engine
+        .auto_continue_nudge()
+        .expect("active incomplete workflow yields a nudge");
+    assert!(
+        nudge.contains("Alpha planning step"),
+        "nudge must carry the current step label: {nudge}"
+    );
+    assert!(
+        nudge.contains("guidance for step alpha"),
+        "nudge must carry the current step guidance: {nudge}"
+    );
+}
+
+/// #1113 AC4: the corrective idle-boundary variant (sent after a stalled
+/// nudged turn) must carry the current step's label and guidance too.
+#[test]
+fn corrective_nudge_carries_current_step_label_and_guidance() {
+    let mut template = probe_template("t", "T");
+    template.steps[0].label = "Alpha planning step".into();
+    template.steps[0].guidance = Some("guidance for step alpha".into());
+    let mut engine = WorkflowEngine::new(nudge_probe_config(vec![template]), false).unwrap();
+    engine.select_template("t", None).unwrap();
+
+    let nudge = engine
+        .corrective_nudge()
+        .expect("active incomplete workflow yields a corrective nudge");
+    assert!(
+        nudge.contains("Alpha planning step"),
+        "corrective nudge must carry the current step label: {nudge}"
+    );
+    assert!(
+        nudge.contains("guidance for step alpha"),
+        "corrective nudge must carry the current step guidance: {nudge}"
+    );
+}
+
+/// #1113 AC3: an explicit `--workflow` session (selector nudge armed) with no
+/// template selected must push the template selector — listing the actual
+/// templates — through BOTH nudge wordings: the dispatch loop
+/// (`workflow_nudge_message`) requires standard AND corrective to be `Some`,
+/// so extending only one would silently never deliver the selector.
+#[test]
+fn idle_nudges_present_template_selector_before_selection() {
+    let templates = vec![
+        probe_template("qx-selector-probe", "QX Selector Probe"),
+        probe_template("qx-other-probe", "QX Other Probe"),
+    ];
+    let mut engine = WorkflowEngine::new(nudge_probe_config(templates), false).unwrap();
+    engine.set_selector_nudge(true);
+    assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
+
+    for (variant, nudge) in [
+        ("standard", engine.auto_continue_nudge()),
+        ("corrective", engine.corrective_nudge()),
+    ] {
+        let nudge = nudge.unwrap_or_else(|| {
+            panic!("selector-mode idle boundary must push the {variant} selector nudge (#1113)")
+        });
+        assert!(
+            nudge.contains("select_template"),
+            "{variant} selector nudge must instruct selection via select_template: {nudge}"
+        );
+        for (id, label) in [
+            ("qx-selector-probe", "QX Selector Probe"),
+            ("qx-other-probe", "QX Other Probe"),
+        ] {
+            assert!(
+                nudge.contains(id) && nudge.contains(label),
+                "{variant} selector nudge must list template '{id}' ({label}): {nudge}"
+            );
+        }
+    }
+}
+
+/// #1113: the selector nudge is armed only for explicit `--workflow`
+/// sessions. A plain UDS session (workflow tool available, nothing armed)
+/// must never be nudged to pick a template at idle boundaries.
+#[test]
+fn selector_nudge_requires_explicit_arming() {
+    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
+    assert!(
+        engine.auto_continue_nudge().is_none(),
+        "unarmed selector mode must not yield an auto-continue nudge"
+    );
+    assert!(
+        engine.corrective_nudge().is_none(),
+        "unarmed selector mode must not yield a corrective nudge"
+    );
 }
 
 #[test]
