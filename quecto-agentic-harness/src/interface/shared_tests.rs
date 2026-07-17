@@ -609,7 +609,6 @@ mod context_settings {
             progress_callback: None,
             streaming: false,
             effort: None,
-            system_prompt_provider: None,
             audit_log: None,
             pin_recent_turns: defaults.pin_recent_turns,
             context_collapse_after_messages: defaults.context_collapse_after_messages,

@@ -411,7 +411,6 @@ pub(crate) fn build_agent_from_config(
         progress_callback: None,
         streaming: false,
         effort,
-        system_prompt_provider: None,
         audit_log: None,
         // #1044/#1045/#1046: constructor fields — config cannot be dropped.
         pin_recent_turns: config.agents.defaults.pin_recent_turns,

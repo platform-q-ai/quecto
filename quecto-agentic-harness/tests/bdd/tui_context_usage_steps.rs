@@ -84,7 +84,6 @@ fn run_context_turn(world: &mut QuectoWorld, streaming: bool) {
         progress_callback: None,
         streaming,
         effort: None,
-        system_prompt_provider: None,
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,

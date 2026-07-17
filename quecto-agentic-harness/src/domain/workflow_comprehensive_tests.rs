@@ -266,6 +266,38 @@ fn idle_nudges_present_template_selector_before_selection() {
     }
 }
 
+/// #1113: the idle-boundary selector nudge is the SOLE proactive selection
+/// channel, so it must carry everything the retired system-prompt selector
+/// carried — the operator-configured `workflow.selector_prompt` and the
+/// active issue. Otherwise the config knob is silently dead in the exact
+/// flow (`--workflow` start-up) it was designed for.
+#[test]
+fn selector_nudge_carries_selector_prompt_and_active_issue() {
+    let mut config = nudge_probe_config(vec![probe_template("qx-selector-probe", "QX Probe")]);
+    config.selector_prompt =
+        Some("Operator rule: for production incidents always choose hotfix".into());
+    let mut engine = WorkflowEngine::new(config, false).unwrap();
+    engine.set_selector_nudge(true);
+    engine.set_issue(42, "Fix the flaky gate".to_string());
+
+    for (variant, nudge) in [
+        ("standard", engine.auto_continue_nudge()),
+        ("corrective", engine.corrective_nudge()),
+    ] {
+        let nudge = nudge.unwrap_or_else(|| {
+            panic!("selector-mode idle boundary must push the {variant} selector nudge (#1113)")
+        });
+        assert!(
+            nudge.contains("Operator rule: for production incidents always choose hotfix"),
+            "{variant} selector nudge must carry the configured selector_prompt: {nudge}"
+        );
+        assert!(
+            nudge.contains("#42") && nudge.contains("Fix the flaky gate"),
+            "{variant} selector nudge must carry the active issue: {nudge}"
+        );
+    }
+}
+
 /// #1113: the selector nudge is armed only for explicit `--workflow`
 /// sessions. A plain UDS session (workflow tool available, nothing armed)
 /// must never be nudged to pick a template at idle boundaries.

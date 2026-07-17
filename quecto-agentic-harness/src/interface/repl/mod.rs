@@ -340,7 +340,6 @@ pub fn run_repl<R: BufRead, W: Write>(
         progress_callback,
         streaming: false,
         effort: resolve_effort_from_config(ctx.config),
-        system_prompt_provider: None,
         audit_log: None,
         // #1044/#1045/#1046: the context knobs are constructor fields so this
         // site cannot silently drop the user's configured values.

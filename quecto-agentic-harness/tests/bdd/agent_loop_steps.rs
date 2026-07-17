@@ -24,15 +24,6 @@ fn build_agent_loop_with_callback(
     max_iterations: Option<u32>,
     progress_callback: Option<Arc<dyn Fn(quecto::domain::agent::AgentProgressEvent) + Send + Sync>>,
 ) -> AgentLoopImpl {
-    build_agent_loop_with_config(world, max_iterations, progress_callback, None)
-}
-
-fn build_agent_loop_with_config(
-    world: &QuectoWorld,
-    max_iterations: Option<u32>,
-    progress_callback: Option<Arc<dyn Fn(quecto::domain::agent::AgentProgressEvent) + Send + Sync>>,
-    system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
-) -> AgentLoopImpl {
     let provider = world.mock_llm.clone().expect("mock LLM not configured") as Arc<dyn LlmProvider>;
 
     // Build a tool registry from mock_tools or tool_registry
@@ -64,7 +55,6 @@ fn build_agent_loop_with_config(
         progress_callback,
         streaming: false,
         effort: None,
-        system_prompt_provider,
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
@@ -150,12 +140,6 @@ fn given_tool_returns_output_exactly_at_display_boundary(
     let output = "a".repeat(DEFAULT_OUTPUT_CAP_BYTES);
     let tool = Arc::new(MockBddTool::new(&tool_name, &output));
     world.mock_tools.insert(tool_name, tool);
-}
-
-#[given("an agent with stable dynamic instructions")]
-fn given_configured_agent_with_repeated_dynamic_instructions(world: &mut QuectoWorld) {
-    ensure_mock_llm(world);
-    world.repeated_instruction_messages.clear();
 }
 
 #[given(expr = "the LLM then returns {string}")]
@@ -354,29 +338,6 @@ fn when_agent_processes_message_with_progress(world: &mut QuectoWorld, message: 
     world.completed_turn_roles = completed_roles.lock().unwrap().clone();
 }
 
-#[when("the agent processes two messages while the instructions stay the same")]
-fn when_agent_processes_two_messages_with_same_dynamic_instructions(world: &mut QuectoWorld) {
-    let agent = build_agent_loop_with_config(
-        world,
-        None,
-        None,
-        Some(Arc::new(|| "stable instructions".to_string())),
-    );
-    let mut messages = vec![Message::user("first request")];
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-
-    runtime
-        .block_on(agent.process(&mut messages))
-        .expect("first agent process failed");
-    messages.push(Message::user("second request"));
-    let result = runtime
-        .block_on(agent.process(&mut messages))
-        .expect("second agent process failed");
-
-    world.agent_result = Some(result);
-    world.repeated_instruction_messages = messages;
-}
-
 #[when("the agent sends a request to the LLM")]
 fn when_agent_sends_request(world: &mut QuectoWorld) {
     let agent = build_agent_loop(world, None);
@@ -520,20 +481,6 @@ fn then_tool_requests_borrowed_and_ledger_retains_one_copy_each(world: &mut Quec
         Some(issued),
         "execution borrows tool requests; exactly one clone per issued \
          request is retained by the run append ledger (#1072)"
-    );
-}
-
-#[then("the agent should reuse the unchanged instructions")]
-fn then_unchanged_dynamic_instructions_should_be_estimated_once(world: &mut QuectoWorld) {
-    let system_message = world
-        .repeated_instruction_messages
-        .iter()
-        .find(|message| message.role == Role::System)
-        .expect("dynamic instructions were not retained");
-    assert_eq!(
-        system_message.cached_token_build_count_for_tests(),
-        1,
-        "the unchanged dynamic instructions should not be re-estimated on the second turn"
     );
 }
 

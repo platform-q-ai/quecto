@@ -132,6 +132,16 @@ fn when_model_checks_off_workflow_step(world: &mut QuectoWorld, number: usize) {
     execute_workflow_action(world, &format!(r#"{{"action":"check","step":{number}}}"#));
 }
 
+#[when(expr = "the model skips workflow step {int}")]
+fn when_model_skips_workflow_step(world: &mut QuectoWorld, number: usize) {
+    execute_workflow_action(world, &format!(r#"{{"action":"skip","step":{number}}}"#));
+}
+
+#[when(expr = "the model unchecks workflow step {int}")]
+fn when_model_unchecks_workflow_step(world: &mut QuectoWorld, number: usize) {
+    execute_workflow_action(world, &format!(r#"{{"action":"uncheck","step":{number}}}"#));
+}
+
 #[when("the model requests the workflow status")]
 fn when_model_requests_workflow_status(world: &mut QuectoWorld) {
     execute_workflow_action(world, r#"{"action":"status"}"#);

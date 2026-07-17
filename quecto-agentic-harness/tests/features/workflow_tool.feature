@@ -56,6 +56,30 @@ Feature: Workflow tool behavior
     Then the workflow tool result should not be an error
     And the workflow tool result should carry the next step's label and guidance
 
+  # Skip advances the current step exactly like check, so its result must
+  # hand the model the next step's label and guidance too (#1113 AC2).
+  @cache-safe-prompt
+  Scenario: Skipping a step returns the next step and its guidance in the tool result
+    Given a workflow tool for a three-step guarded template
+    And the workflow template "wave" is selected
+    When the model skips workflow step 1
+    Then the workflow tool result should not be an error
+    And the workflow tool result should carry the next step's label and guidance
+
+  # Uncheck can move the current step BACKWARDS — its result must re-orient
+  # the model on the step the workflow rewound to (#1113 AC2).
+  @cache-safe-prompt
+  Scenario: Unchecking a step returns the rewound current step and its guidance in the tool result
+    Given a workflow tool for a three-step guarded template
+    And the workflow template "wave" is selected
+    And workflow step 1 is checked through the tool
+    When the model unchecks workflow step 1
+    Then the workflow tool result should not be an error
+    And the workflow tool result should carry the current step's label and guidance
+
+  # NOTE: regression PIN of pre-#1113 status_text behavior (the channel #1113
+  # leans on), not proof of new #1113 work — falsifiable #1113 coverage lives
+  # in the select_template/check/skip/uncheck handoff scenarios.
   @cache-safe-prompt
   Scenario: Requesting the status returns the current step and its guidance in the tool result
     Given a workflow tool for a three-step guarded template

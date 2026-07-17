@@ -635,8 +635,6 @@ pub struct QuectoWorld {
     /// the run-ledger retention assertion derives its expected clone count
     /// from this rather than hardcoding the scenario's setup).
     pub headless_tool_calls_issued: Option<usize>,
-    /// Retained conversation from repeated-instructions agent-loop scenarios
-    pub repeated_instruction_messages: Vec<Message>,
     // --- Grep BDD fields ---
     /// Temp dir for grep workspace (kept alive)
     pub _grep_temp_dir: Option<TempDir>,

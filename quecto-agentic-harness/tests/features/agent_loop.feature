@@ -60,13 +60,6 @@ Feature: Agent Loop
     When the agent processes [message] "Copy my notes to output.txt"
     Then execution should borrow the tool requests and the run ledger should retain one copy per request
 
-  Scenario: Unchanged instructions are reused across turns
-    Given an agent with stable dynamic instructions
-    And the LLM returns a plain text response "First done"
-    And the LLM then returns "Second done"
-    When the agent processes two messages while the instructions stay the same
-    Then the agent should reuse the unchanged instructions
-
   Scenario: Message triggers multiple tool calls in one turn
     Given a configured agent with a mock LLM
     And the LLM returns simultaneous tool calls for "read" and "write"

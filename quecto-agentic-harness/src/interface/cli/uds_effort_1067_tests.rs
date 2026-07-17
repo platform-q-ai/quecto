@@ -40,7 +40,6 @@ fn make_effort_test_agent(effort: Option<EffortLevel>) -> AgentLoopImpl {
         progress_callback: None,
         streaming: false,
         effort,
-        system_prompt_provider: None,
         audit_log: None,
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,

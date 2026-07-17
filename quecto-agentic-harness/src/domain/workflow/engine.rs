@@ -257,9 +257,10 @@ impl WorkflowEngine {
 
         match self.auto_continue_target()? {
             NudgeTarget::Selector => Some(self.selector_nudge_text()),
-            NudgeTarget::Step(step) => {
-                Some(format!("{AUTO_CONTINUE_NUDGE}\n{}", step_focus_text(&step)))
-            }
+            NudgeTarget::Step(step) => Some(format!(
+                "{AUTO_CONTINUE_NUDGE}\n{}",
+                step_focus_text(&step, "Current step")
+            )),
         }
     }
 
@@ -281,9 +282,10 @@ impl WorkflowEngine {
                 "Your last reply did not select a workflow template. {}",
                 self.selector_nudge_text()
             )),
-            NudgeTarget::Step(step) => {
-                Some(format!("{CORRECTIVE_NUDGE}\n{}", step_focus_text(&step)))
-            }
+            NudgeTarget::Step(step) => Some(format!(
+                "{CORRECTIVE_NUDGE}\n{}",
+                step_focus_text(&step, "Current step")
+            )),
         }
     }
 
@@ -306,10 +308,23 @@ impl WorkflowEngine {
     /// `--workflow` session that has not selected a template (#1113 AC3) —
     /// the selector reaches the model through the nudge channel, never
     /// through injected system-prompt text.
+    ///
+    /// This is the sole proactive selection channel, so it must carry
+    /// everything the retired system-prompt selector carried: the active
+    /// issue (when set) and the operator-configured
+    /// `workflow.selector_prompt` — otherwise that config knob is silently
+    /// dead in the exact flow it was designed for.
     fn selector_nudge_text(&self) -> String {
         let mut out = String::from(
-            "No workflow template is selected. Choose the best template for this task now: call workflow(action=\"select_template\", template=\"<id>\").\nAvailable templates:\n",
+            "No workflow template is selected. Choose the best template for this task now: call workflow(action=\"select_template\", template=\"<id>\").\n",
         );
+        if let Some((num, title)) = &self.run.active_issue {
+            out.push_str(&format!("Active issue: #{} — {}\n", num, title));
+        }
+        if let Some(prompt) = &self.selector_prompt {
+            out.push_str(&format!("{}\n", prompt));
+        }
+        out.push_str("Available templates:\n");
         for t in self.list_templates() {
             out.push_str(&format!("- {} — {}: {}\n", t.id, t.label, t.description));
         }
@@ -517,12 +532,17 @@ enum NudgeTarget {
     Step(WorkflowStepStatus),
 }
 
-/// Focus block naming the current step — and its guidance, if any — so
-/// idle-boundary nudges carry the state that no longer lives in the system
-/// prompt (#1113 AC4).
-fn step_focus_text(step: &WorkflowStepStatus) -> String {
+/// Focus block naming a step — and its guidance, if any — under the given
+/// heading (e.g. "Current step", "Next step"), so idle-boundary nudges and
+/// workflow tool results carry the state that no longer lives in the system
+/// prompt (#1113 AC2/AC4). This is the single wording source for the step
+/// handoff: the workflow tool renders its `select_template`/`check`/`skip`/
+/// `uncheck` handoffs through this same function so the two channels cannot
+/// drift apart.
+pub fn step_focus_text(step: &WorkflowStepStatus, heading: &str) -> String {
     let mut out = format!(
-        "Current step {}: {} [{}]",
+        "{} {}: {} [{}]",
+        heading,
         step.index,
         step.label,
         phase_display_name(&step.phase)
