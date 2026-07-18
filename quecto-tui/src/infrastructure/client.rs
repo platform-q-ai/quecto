@@ -521,7 +521,7 @@ impl Client {
         // a length-prefixed frame or a legacy NDJSON line (deprecation
         // window, #1059), with over-cap messages rejected while reading —
         // bounded memory either way (#1003).
-        tokio::spawn(async move {
+        let reader_task = async move {
             let mut reader = BufReader::new(read_half);
             // Reused across iterations so a streaming turn (one small JSON
             // event per token) does not allocate a fresh payload buffer per
@@ -555,12 +555,10 @@ impl Client {
                             }
                         }
                     }
-                    Err(FrameError::Oversized { .. }) => {
-                        // Drop over-cap messages without printing (the TUI
-                        // owns the terminal, so stderr would smear
-                        // diagnostics over the UI) — but COUNT the drop so
-                        // the UI can surface the loss instead of the
-                        // session silently appearing frozen (#1047).
+                    Err(e @ FrameError::Oversized { .. }) => {
+                        // The structured warning is silent without a subscriber; the counter lets the
+                        // UI surface the loss instead of the session appearing frozen (#1047, #1112).
+                        tracing::warn!("dropping oversized message from agent: {e}");
                         dropped_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                     Err(_e) => {
@@ -573,6 +571,11 @@ impl Client {
                     }
                 }
             }
+        };
+        let dispatcher = tracing::dispatcher::get_default(|dispatcher| dispatcher.clone());
+        tokio::spawn(async move {
+            let _guard = tracing::dispatcher::set_default(&dispatcher);
+            reader_task.await;
         });
 
         Ok(Self {

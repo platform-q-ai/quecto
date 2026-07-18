@@ -24,7 +24,7 @@ Feature: TUI UDS client defensive bounds
     Then the TUI should ignore the oversized events
     And the TUI should receive the later token event
 
-  @issue-1047 @issue-1062 @adr-0008-part4 @tui
+  @issue-1047 @issue-1062 @issue-1112 @adr-0008-part4 @tui
   Scenario: Oversized agent event drops are reported by the client
     Given the TUI is connected to an agent event stream
     When the agent sends an event larger than the supported event size
