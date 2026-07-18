@@ -426,12 +426,11 @@ async fn manifest_insertion_into_the_persisted_prefix_latches_dirty() {
     );
 }
 
-/// Clean-side companion: when the manifest already exists and only its TEXT
-/// is rewritten in place (every tool-calling turn), no index shifts — the
-/// latch must stay clean or `save_clean_delta` would be defeated on
-/// virtually every turn.
+/// Clean-side companion: once the manifest already contains static guidance,
+/// later spill growth changes no prefix bytes, so the latch must stay clean or
+/// `save_clean_delta` would be defeated on virtually every turn.
 #[tokio::test]
-async fn in_place_manifest_text_rewrite_does_not_latch_dirty() {
+async fn unchanged_static_manifest_does_not_latch_dirty() {
     let store: Arc<dyn crate::domain::session::ContextSpillStore> =
         Arc::new(MemSpillStore::default());
     let agent = agent_with(
@@ -446,15 +445,52 @@ async fn in_place_manifest_text_rewrite_does_not_latch_dirty() {
     assert!(agent.take_durable_prefix_dirty());
     assert!(messages.iter().any(|m| m.is_manifest));
 
-    // Second run: manifest exists, all history spilled — the manifest text is
-    // rewritten in place only.
+    // Second run: manifest exists and stays byte-identical while history grows.
     messages.push(Message::user("again"));
     let _ = agent.run_loop(&mut messages).await.unwrap();
     assert!(
         !agent.take_durable_prefix_dirty(),
-        "an in-place manifest text rewrite shifts no indices and must NOT \
-         latch dirty — latching here would force a full compact rewrite on \
-         virtually every turn"
+        "an unchanged static manifest must NOT latch dirty — latching here \
+         would force a full compact rewrite on virtually every turn"
+    );
+}
+
+#[tokio::test]
+async fn legacy_dynamic_manifest_migration_latches_dirty() {
+    let store = Arc::new(MemSpillStore::default());
+    store
+        .append(
+            "",
+            &SpillEntry {
+                id: "turn1:bash:0".into(),
+                tool: "bash".into(),
+                input_preview: "legacy preview".into(),
+                tokens: 10,
+                content: "legacy content".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let agent = agent_with(
+        MockProvider::new(vec![text_response("ok")]),
+        MockRegistry::new(),
+        Some(store),
+        190_000,
+    );
+    let mut legacy =
+        Message::system("[Session memory: 1 spilled entries via recall()]\nLatest: turn1:bash:0");
+    legacy.is_manifest = true;
+    legacy.is_pinned = true;
+    let mut messages = vec![legacy, Message::user("resume")];
+
+    let _ = agent.run_loop(&mut messages).await.unwrap();
+
+    let manifest = messages.iter().find(|message| message.is_manifest).unwrap();
+    assert!(!manifest.content.contains("turn1:bash:0"));
+    assert!(manifest.content.contains("recall(\"list\")"));
+    assert!(
+        agent.take_durable_prefix_dirty(),
+        "migrating persisted dynamic manifest bytes requires a durable rewrite"
     );
 }
 

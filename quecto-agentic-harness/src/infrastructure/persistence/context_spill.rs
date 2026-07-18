@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::domain::error::DomainError;
-use crate::domain::session::{ContextSpillStore, SpillEntry, SpillIndex, SpillIndexList};
+use crate::domain::session::{
+    ContextSpillStore, SpillEntry, SpillIndex, SpillIndexList, SpillPresence,
+};
 
 /// JSONL-based spill store for context pruning.
 ///
@@ -315,6 +317,16 @@ impl ContextSpillStore for FileContextSpillStore {
         })
     }
 
+    fn has_entries(&self, session_key: &str) -> SpillPresence<'_> {
+        let path = self.spill_path(session_key);
+        Box::pin(async move {
+            // Presence must use the same corrupt-line-skipping semantics as
+            // list_entries(), otherwise a torn append can advertise memory
+            // that recall("list") cannot discover.
+            Ok(!read_spill_index_records(&path).await?.is_empty())
+        })
+    }
+
     fn clear(
         &self,
         session_key: &str,
@@ -461,6 +473,48 @@ mod tests {
         // Verify the file is now empty
         let entries_after = store.list_entries("test-session").await.unwrap();
         assert!(entries_after.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_has_entries_ignores_a_torn_write_with_no_parseable_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileContextSpillStore::new(dir.path().to_path_buf());
+        let path = store.spill_path("session");
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&path, br#"{"id":"turn1:bash:0""#)
+            .await
+            .unwrap();
+
+        assert!(store.list_entries("session").await.unwrap().is_empty());
+        assert!(
+            !store.has_entries("session").await.unwrap(),
+            "presence must agree with the parse-based index"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_has_entries_tracks_append_and_clear_without_loading_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileContextSpillStore::new(dir.path().to_path_buf());
+        assert!(!store.has_entries("session").await.unwrap());
+        store
+            .append(
+                "session",
+                &SpillEntry {
+                    id: "turn1:bash:0".into(),
+                    tool: "bash".into(),
+                    input_preview: "echo hi".into(),
+                    tokens: 2,
+                    content: "hi".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(store.has_entries("session").await.unwrap());
+        store.clear("session").await.unwrap();
+        assert!(!store.has_entries("session").await.unwrap());
     }
 
     #[tokio::test]

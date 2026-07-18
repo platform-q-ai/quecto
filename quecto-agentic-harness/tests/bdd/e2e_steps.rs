@@ -328,6 +328,14 @@ fn then_stdout_not_empty(world: &mut QuectoWorld) {
 
 /// Helper: build the OpenAI-format JSON for a tool call response.
 fn openai_tool_call_json(tool_name: &str, args_json: &str) -> serde_json::Value {
+    openai_tool_call_json_with_id(tool_name, args_json, &format!("call_{tool_name}"))
+}
+
+fn openai_tool_call_json_with_id(
+    tool_name: &str,
+    args_json: &str,
+    tool_call_id: &str,
+) -> serde_json::Value {
     serde_json::json!({
         "id": "chatcmpl-tool",
         "object": "chat.completion",
@@ -337,7 +345,7 @@ fn openai_tool_call_json(tool_name: &str, args_json: &str) -> serde_json::Value 
                 "role": "assistant",
                 "content": null,
                 "tool_calls": [{
-                    "id": format!("call_{}", tool_name),
+                    "id": tool_call_id,
                     "type": "function",
                     "function": {
                         "name": tool_name,
@@ -1044,6 +1052,64 @@ fn given_mock_llm_tool_call_sequence(world: &mut QuectoWorld, step: &gherkin::St
 
         rewrite_config_to_uri(world, &new_uri);
         std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+#[given("an isolated agent session with a controllable OpenAI provider")]
+fn given_isolated_session_with_controllable_openai(world: &mut QuectoWorld) {
+    given_temp_base_directory(world);
+    given_config_with_openai_mock(world);
+}
+
+/// Mock (#1118 AC1/AC2/AC4): exercise the production recall tool exactly as a
+/// model would after the dynamic front-positioned spill manifest is removed.
+/// Two ordinary tool calls create distinct entries, recall("list") exposes
+/// their live IDs, and a later recall retrieves one indexed entry. Assertions
+/// tie each tool result to its tool-call ID and prove list/recall consistency.
+#[given(
+    expr = "the model will complete after creating, listing, and recalling spilled session memory with {string}"
+)]
+fn given_model_exercises_spilled_memory(world: &mut QuectoWorld, final_text: String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        let responses = [
+            openai_tool_call_json_with_id(
+                "bash",
+                r#"{"command":"printf first-spill-; printf '\\150\\151\\144\\144\\145\\156\\055\\146\\151\\162\\163\\164\\055\\143\\157\\156\\164\\145\\156\\164'"}"#,
+                "call_bash_first",
+            ),
+            openai_tool_call_json_with_id(
+                "bash",
+                r#"{"command":"printf second-spill-; printf '\\150\\151\\144\\144\\145\\156\\055\\163\\145\\143\\157\\156\\144\\055\\143\\157\\156\\164\\145\\156\\164'"}"#,
+                "call_bash_second",
+            ),
+            openai_tool_call_json_with_id("recall", r#"{"id":"list"}"#, "call_recall_list"),
+            openai_tool_call_json_with_id(
+                "recall",
+                r#"{"id":"turn2:bash:0"}"#,
+                "call_recall_content",
+            ),
+            openai_text_json(&final_text),
+        ];
+        let last = responses.len() - 1;
+        for (i, body) in responses.into_iter().enumerate() {
+            let mock = wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/chat/completions"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+                .with_priority(
+                    u8::try_from(i + 1).expect("too many mock responses for u8 priority"),
+                );
+            if i < last {
+                mock.up_to_n_times(1).mount(&server).await;
+            } else {
+                mock.mount(&server).await;
+            }
+        }
+        rewrite_config_to_uri(world, &new_uri);
+        world.wiremock_server_ref = Some(Box::leak(Box::new(server)));
     });
     std::mem::forget(rt);
 }
@@ -3014,6 +3080,211 @@ fn when_run_agent_with_config_flag(world: &mut QuectoWorld, rest: String) {
     world.exit_code = output.exit_code;
     world.stdout = output.stdout;
     world.stderr = output.stderr;
+}
+
+// ===========================================================================
+// Cache-safe spill-memory assertions (#1118)
+// ===========================================================================
+
+fn captured_openai_request_bodies(world: &QuectoWorld) -> Vec<serde_json::Value> {
+    let server = world
+        .wiremock_server_ref
+        .expect("no capturing mock LLM configured");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let requests = rt.block_on(async { server.received_requests().await });
+    std::mem::forget(rt);
+    requests
+        .expect("request recording not enabled")
+        .into_iter()
+        .map(|request| serde_json::from_slice(&request.body).expect("parse OpenAI request body"))
+        .collect()
+}
+
+fn front_positioned_prompt_guidance(body: &serde_json::Value) -> Vec<&serde_json::Value> {
+    body["messages"]
+        .as_array()
+        .expect("OpenAI request should contain messages")
+        .iter()
+        .take_while(|message| {
+            matches!(message["role"].as_str(), Some("system") | Some("user"))
+                && message["content"].as_str().is_some_and(|content| {
+                    message["role"].as_str() == Some("system") || content.contains("Session memory")
+                })
+        })
+        .collect()
+}
+
+fn rendered_cache_prefix(body: &serde_json::Value) -> Vec<u8> {
+    let prefix = serde_json::json!({
+        "tools": body["tools"],
+        "front_messages": front_positioned_prompt_guidance(body),
+    });
+    serde_json::to_vec(&prefix).expect("serialize provider-visible cache prefix")
+}
+
+fn tool_result<'a>(body: &'a serde_json::Value, tool_call_id: &str) -> Option<&'a str> {
+    body["messages"].as_array()?.iter().find_map(|message| {
+        (message["role"].as_str() == Some("tool")
+            && message["tool_call_id"].as_str() == Some(tool_call_id))
+        .then(|| message["content"].as_str())
+        .flatten()
+    })
+}
+
+fn assistant_tool_arguments<'a>(
+    body: &'a serde_json::Value,
+    tool_call_id: &str,
+) -> Option<&'a str> {
+    body["messages"].as_array()?.iter().find_map(|message| {
+        message["tool_calls"].as_array()?.iter().find_map(|call| {
+            (call["id"].as_str() == Some(tool_call_id))
+                .then(|| call["function"]["arguments"].as_str())
+                .flatten()
+        })
+    })
+}
+
+#[then(
+    "every LLM request of the session should carry byte-identical front-positioned prompt guidance"
+)]
+fn then_every_request_has_identical_front_prompt(world: &mut QuectoWorld) {
+    let bodies = captured_openai_request_bodies(world);
+    assert!(
+        bodies.len() >= 4,
+        "expected a multi-turn spilling run, got {} request(s)",
+        bodies.len()
+    );
+    let expected_guidance = front_positioned_prompt_guidance(&bodies[0]);
+    assert!(
+        expected_guidance.iter().any(|message| {
+            message["role"].as_str() == Some("system")
+                && message["content"].as_str().is_some_and(|content| {
+                    content.contains("You are the cache-safe memory test agent.")
+                })
+        }),
+        "expected the supplied system prompt in the first request"
+    );
+    let memory_guidance_count = expected_guidance
+        .iter()
+        .filter(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("Session memory"))
+        })
+        .count();
+    assert_eq!(
+        memory_guidance_count, 1,
+        "expected exactly one static session-memory guidance message"
+    );
+    let expected_prefix = rendered_cache_prefix(&bodies[0]);
+    for (index, body) in bodies.iter().enumerate().skip(1) {
+        assert_eq!(
+            rendered_cache_prefix(body),
+            expected_prefix,
+            "provider-visible cache-prefix bytes changed in LLM request {} after spills grew",
+            index + 1
+        );
+    }
+}
+
+#[then("the recall tool should advertise its full session-memory index")]
+fn then_recall_tool_advertises_index(world: &mut QuectoWorld) {
+    let bodies = captured_openai_request_bodies(world);
+    let first = bodies
+        .first()
+        .expect("expected an OpenAI request carrying tool definitions");
+    let recall = first["tools"]
+        .as_array()
+        .expect("OpenAI request should contain tools")
+        .iter()
+        .find(|tool| tool["function"]["name"].as_str() == Some("recall"))
+        .expect("recall tool should be exposed to the model");
+    let description = recall["function"]["description"]
+        .as_str()
+        .expect("recall description should be text");
+    assert!(
+        description.contains("full session-memory index"),
+        "recall description did not advertise the full session-memory index: {description}"
+    );
+}
+
+#[then("the model should receive the complete live spill index on demand")]
+fn then_model_received_complete_live_spill_index(world: &mut QuectoWorld) {
+    let bodies = captured_openai_request_bodies(world);
+    let index = bodies
+        .iter()
+        .find_map(|body| tool_result(body, "call_recall_list"))
+        .expect("recall(\"list\") did not return an index to the model");
+    for expected in [
+        "Spilled outputs (3 entries):",
+        "turn0:msg:user",
+        "turn1:bash:0",
+        "turn2:bash:0",
+        "printf first-spill-; printf",
+        "printf second-spill-; printf",
+    ] {
+        assert!(
+            index.contains(expected),
+            "recall(\"list\") omitted live index data {expected:?}: {index}"
+        );
+    }
+    for hidden_content in ["hidden-first-content", "hidden-second-content"] {
+        assert!(
+            !index.contains(hidden_content),
+            "recall(\"list\") leaked full spill content {hidden_content:?}: {index}"
+        );
+    }
+}
+
+#[then("the model should recall content using an id from that index")]
+fn then_model_recalled_content_from_index(world: &mut QuectoWorld) {
+    let bodies = captured_openai_request_bodies(world);
+    let index = bodies
+        .iter()
+        .find_map(|body| tool_result(body, "call_recall_list"))
+        .expect("recall(\"list\") result should precede content recall");
+    let arguments = bodies
+        .iter()
+        .find_map(|body| assistant_tool_arguments(body, "call_recall_content"))
+        .expect("model did not issue a recall-by-id tool call");
+    let parsed_arguments =
+        serde_json::from_str::<serde_json::Value>(arguments).expect("parse recall arguments");
+    let recalled_id = parsed_arguments["id"]
+        .as_str()
+        .expect("recall arguments should contain an id");
+    assert!(
+        index
+            .lines()
+            .any(|line| line.trim_start().starts_with(recalled_id)),
+        "model recalled id {recalled_id:?}, but it was absent from recall(\"list\"): {index}"
+    );
+    let content = bodies
+        .iter()
+        .find_map(|body| tool_result(body, "call_recall_content"))
+        .expect("recall-by-id did not return a tool result");
+    assert_eq!(
+        content, "second-spill-hidden-second-content",
+        "recall-by-id returned the wrong spilled content"
+    );
+}
+
+#[then("the live spill index should not appear in front-positioned prompt guidance")]
+fn then_live_index_absent_from_front_prompt(world: &mut QuectoWorld) {
+    let bodies = captured_openai_request_bodies(world);
+    for (index, body) in bodies.iter().enumerate() {
+        for message in front_positioned_prompt_guidance(body) {
+            let content = message["content"]
+                .as_str()
+                .expect("front guidance content should be text");
+            assert!(
+                !content.contains("turn1:bash:0")
+                    && !content.contains("turn2:bash:0")
+                    && !content.contains("Spilled outputs ("),
+                "live spill index leaked into front guidance in request {}: {content}",
+                index + 1
+            );
+        }
+    }
 }
 
 // ===========================================================================

@@ -12,14 +12,12 @@
 // Depends on: domain::message, domain::session (ContextSpillStore).
 // Never imports infrastructure.
 
-use std::fmt::Write;
-
 // #1046: conversation-message collapse, demotion ladder, creation-time spill.
 #[path = "context_pruning_messages.rs"]
 pub mod messages;
 
 use crate::domain::message::{Message, Role};
-use crate::domain::session::{ContextSpillStore, SpillIndex};
+use crate::domain::session::ContextSpillStore;
 
 /// Sentinel value indicating that tool-result collapse is disabled.
 /// When `context_collapse_after_tool_calls` is set to this value, collapse is
@@ -173,43 +171,38 @@ fn drop_until_under_budget(
 /// demotes (#1045).
 pub const DEFAULT_PIN_RECENT_TURNS: u32 = 2;
 
-/// Build or update the pinned spill manifest message.
-/// Shows the last 10 spill entries plus summary metadata.
-/// Fixed token budget (~500 tokens) regardless of session length.
+/// Build or update the pinned, constant-size spill guidance message.
 ///
-/// Returns `true` when the update STRUCTURALLY changed the conversation —
-/// a manifest message was inserted or removed, shifting every later index —
-/// so callers can latch the durable-prefix dirty flag (#1073 review): a
-/// structural change misaligns any persisted-prefix watermark, and a clean
-/// delta appended against it would duplicate or drop messages. An in-place
-/// content rewrite of an existing manifest deliberately returns `false`: it
-/// shifts no indices, and the manifest text is rebuilt from the spill store
-/// before every LLM turn (including on resume), so stale durable manifest
-/// text is self-healing and latching on it would force a full compact
-/// rewrite on virtually every tool-calling turn.
+/// Returns `true` when durable prefix persistence must rewrite history: the
+/// manifest was inserted/removed (shifting later indices), or a legacy dynamic
+/// manifest was migrated in place. An already-static manifest returns `false`,
+/// preserving the clean-delta fast path on ordinary tool-calling turns.
 pub async fn update_spill_manifest(
     messages: &mut Vec<Message>,
     spill_store: &dyn ContextSpillStore,
     session_key: &str,
 ) -> bool {
-    let entries = spill_store
-        .list_entries(session_key)
-        .await
-        .unwrap_or_default();
-    if entries.is_empty() {
+    let has_entries = spill_store.has_entries(session_key).await.unwrap_or(false);
+    if !has_entries {
         // Remove manifest if it exists and there are no entries
         let before = messages.len();
         messages.retain(|m| !m.is_manifest);
         return messages.len() != before;
     }
 
-    let manifest = build_manifest_text(&entries);
+    let manifest = build_manifest_text();
 
-    // Find existing manifest message and update, or insert one
+    // Keep front-positioned guidance byte-for-byte static as the spill store
+    // grows. The live index is available on demand through recall("list").
+    // Find an existing manifest and migrate/update it, or insert one.
     if let Some(msg) = messages.iter_mut().find(|m| m.is_manifest) {
-        msg.content = manifest;
-        msg.invalidate_token_cache();
-        false
+        if msg.content == manifest {
+            false
+        } else {
+            msg.content = manifest;
+            msg.invalidate_token_cache();
+            true
+        }
     } else {
         let mut msg = Message::system(manifest);
         msg.is_pinned = true;
@@ -224,35 +217,14 @@ pub async fn update_spill_manifest(
     }
 }
 
-/// Build the manifest text from spill index entries.
-pub fn build_manifest_text(entries: &[SpillIndex]) -> String {
-    let total = entries.len();
-    let oldest = &entries[0];
-    let latest = &entries[total - 1];
-    let recent: Vec<_> = entries.iter().rev().take(10).collect();
-
-    let mut manifest = format!(
-        "[Session memory: {} spilled entries via recall()]\n\
-         Oldest: {} — {} ({} tokens)\n\
-         Latest: {} — {} ({} tokens)\n\
-         Recent:\n",
-        total,
-        oldest.id,
-        oldest.input_preview,
-        oldest.tokens,
-        latest.id,
-        latest.input_preview,
-        latest.tokens,
-    );
-    for entry in recent.iter().rev() {
-        let _ = writeln!(
-            manifest,
-            "  {} — {} ({} tokens)",
-            entry.id, entry.input_preview, entry.tokens
-        );
-    }
-    manifest.push_str("Use recall(\"<id>\") to retrieve. Use recall(\"list\") for full index.");
-    manifest
+/// Build static front-positioned session-memory guidance.
+///
+/// No entry-derived bytes may appear here because provider prompt caches use
+/// exact prefix matching. The complete dynamic index is `recall("list")`.
+pub fn build_manifest_text() -> String {
+    "[Session memory is available via recall()]\n\
+     Use recall(\"list\") for the full session-memory index, then recall(\"<id>\") to retrieve content."
+        .to_string()
 }
 
 #[cfg(test)]
@@ -343,26 +315,11 @@ mod tests {
 
     #[test]
     fn test_build_manifest_text() {
-        let entries = vec![
-            SpillIndex {
-                id: "turn1:bash:0".to_string(),
-                tool: "bash".to_string(),
-                input_preview: "echo hello".to_string(),
-                tokens: 100,
-            },
-            SpillIndex {
-                id: "turn2:bash:0".to_string(),
-                tool: "bash".to_string(),
-                input_preview: "ls -la".to_string(),
-                tokens: 200,
-            },
-        ];
-        let text = build_manifest_text(&entries);
-        assert!(text.contains("2 spilled entries"));
-        assert!(text.contains("turn1:bash:0"));
-        assert!(text.contains("turn2:bash:0"));
-        assert!(text.contains("recall(\"<id>\")"));
-        assert!(text.contains("recall(\"list\")"));
+        assert_eq!(
+            build_manifest_text(),
+            "[Session memory is available via recall()]\n\
+             Use recall(\"list\") for the full session-memory index, then recall(\"<id>\") to retrieve content."
+        );
     }
 
     #[test]

@@ -114,8 +114,14 @@ model's context window when the model registry declares one.
 
 ### Spill and recall
 
-Tool outputs are spilled to `<base_dir>/spills/<session_key>.jsonl`. When a
-message is collapsed, the compact stub looks like:
+Tool outputs are spilled to `<base_dir>/spills/<session_key>.jsonl`. Once the
+spill store is non-empty, the conversation carries a pinned, static guidance
+message that points the model to `recall("list")`; it deliberately contains no
+spill count, IDs, or previews, so the provider-visible prompt prefix remains
+byte-identical as the spill set grows. `recall("list")` returns the complete
+live index on demand, and the `recall` tool description advertises that route.
+
+When a message is collapsed, the compact stub looks like:
 
 ```
 [bash: ls -la (2450 tokens) — recall("turn5:bash:0")]

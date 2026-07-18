@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::SpillEntry;
+use crate::domain::session::{SpillEntry, SpillIndex};
 
 fn assistant_on_turn(content: &str, turn: u32) -> Message {
     let mut m = Message::assistant(content, vec![]);
@@ -213,9 +213,9 @@ fn ceiling_ladder_never_demotes_system_prompt_or_manifest() {
 }
 
 #[tokio::test]
-async fn manifest_text_distinguishes_tool_and_message_spills() {
-    // Exercise the REAL id construction: a tool spill already in the store,
-    // plus an assistant turn filed by the creation-time spill writer (#1046).
+async fn manifest_text_stays_static_across_tool_and_message_spills() {
+    // Exercise real tool/message spill IDs, then verify none of their dynamic
+    // bytes enter the front-positioned cache prefix (#1118).
     let store = MemStore::default();
     store
         .append(
@@ -234,15 +234,22 @@ async fn manifest_text_distinguishes_tool_and_message_spills() {
     let mut assistant = assistant_on_turn(&big, 1);
     messages::spill_conversation_message(&mut assistant, &store, "s").await;
     let entries = store.list_entries("s").await.unwrap();
-    let text = build_manifest_text(&entries);
-    assert!(
-        text.contains("turn1:bash:0"),
-        "manifest must keep the tool-spill id form; got: {text}"
+    assert_eq!(
+        entries.len(),
+        2,
+        "test setup should create both spill kinds"
     );
-    assert!(
-        text.contains("turn1:msg:assistant"),
-        "manifest must render the message-spill id produced by the ceiling; got: {text}"
-    );
+
+    let mut messages = vec![Message::system("system prompt"), Message::user("prompt")];
+    assert!(update_spill_manifest(&mut messages, &store, "s").await);
+    let manifest = messages
+        .iter()
+        .find(|message| message.is_manifest)
+        .expect("a populated spill store should produce guidance");
+    assert_eq!(manifest.content, build_manifest_text());
+    assert!(!manifest.content.contains("turn1:bash:0"));
+    assert!(!manifest.content.contains("turn1:msg:assistant"));
+    assert!(!manifest.content.contains("echo hello"));
 }
 
 // --- review fixes for PR #1043 ---

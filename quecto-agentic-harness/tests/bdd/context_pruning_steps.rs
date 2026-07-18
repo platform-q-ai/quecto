@@ -849,6 +849,21 @@ fn then_manifest_contains(world: &mut QuectoWorld, expected: String) {
     );
 }
 
+#[then(expr = "the manifest does not contain {string}")]
+fn then_manifest_does_not_contain(world: &mut QuectoWorld, unexpected: String) {
+    let messages = world.context_messages.as_ref().unwrap();
+    let manifest = messages
+        .iter()
+        .find(|m| m.is_manifest)
+        .expect("manifest should exist");
+    assert!(
+        !manifest.content.contains(&unexpected),
+        "manifest unexpectedly contained '{}': {}",
+        unexpected,
+        manifest.content
+    );
+}
+
 #[then("the manifest lists the 10 most recent entries")]
 fn then_manifest_lists_10_recent(world: &mut QuectoWorld) {
     let store = world.context_spill_store.as_ref().unwrap().clone();
@@ -1074,10 +1089,10 @@ fn given_user_prompt_exceeding_budget(world: &mut QuectoWorld) {
 }
 
 /// Run the production context-management pipeline (mirroring
-/// `apply_context_pruning`): refresh the manifest (so an existing one is
-/// pinned in context), file every not-yet-spilled conversation message
+/// `apply_context_pruning`): ensure the manifest exists (so it is pinned in
+/// context), file every not-yet-spilled conversation message
 /// through the creation-time spill writer (#1046), enforce the demotion-
-/// ladder ceiling, and refresh the manifest again if anything spilled.
+/// ladder ceiling, and insert static guidance if the pass created a first spill.
 fn run_spilling_sliding_window(world: &mut QuectoWorld) {
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let max_tokens = world

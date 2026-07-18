@@ -220,7 +220,7 @@ async fn budget_pruned_user_message_is_spilled_with_role_id() {
 }
 
 #[tokio::test]
-async fn ceiling_message_spill_is_reflected_in_manifest_without_tool_calls() {
+async fn ceiling_message_spill_creates_static_manifest_without_tool_calls() {
     let spill_store = Arc::new(MockSpillStore::default());
     let agent = tight_budget_agent(spill_store.clone(), 200);
     let big = "x".repeat(2000);
@@ -231,10 +231,11 @@ async fn ceiling_message_spill_is_reflected_in_manifest_without_tool_calls() {
     let manifest = messages
         .iter()
         .find(|m| m.is_manifest)
-        .expect("a ceiling message spill on a no-tool turn must produce/refresh the manifest");
+        .expect("a ceiling message spill on a no-tool turn must produce the manifest");
+    assert!(manifest.content.contains("recall(\"list\")"));
     assert!(
-        manifest.content.contains("turn1:msg:assistant"),
-        "manifest must reflect the message spill; got: {}",
+        !manifest.content.contains("turn1:msg:assistant"),
+        "dynamic spill IDs must stay out of the cache-safe manifest: {}",
         manifest.content
     );
 }
