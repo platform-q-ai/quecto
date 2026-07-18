@@ -234,15 +234,22 @@ async fn manifest_text_stays_static_across_tool_and_message_spills() {
     let mut assistant = assistant_on_turn(&big, 1);
     messages::spill_conversation_message(&mut assistant, &store, "s").await;
     let entries = store.list_entries("s").await.unwrap();
-    let text = build_manifest_text();
-    assert!(!text.contains("turn1:bash:0"));
-    assert!(!text.contains("turn1:msg:assistant"));
-    assert!(!text.contains("echo hello"));
     assert_eq!(
         entries.len(),
         2,
         "test setup should create both spill kinds"
     );
+
+    let mut messages = vec![Message::system("system prompt"), Message::user("prompt")];
+    assert!(update_spill_manifest(&mut messages, &store, "s").await);
+    let manifest = messages
+        .iter()
+        .find(|message| message.is_manifest)
+        .expect("a populated spill store should produce guidance");
+    assert_eq!(manifest.content, build_manifest_text());
+    assert!(!manifest.content.contains("turn1:bash:0"));
+    assert!(!manifest.content.contains("turn1:msg:assistant"));
+    assert!(!manifest.content.contains("echo hello"));
 }
 
 // --- review fixes for PR #1043 ---

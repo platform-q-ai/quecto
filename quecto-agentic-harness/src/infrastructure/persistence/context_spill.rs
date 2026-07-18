@@ -320,16 +320,10 @@ impl ContextSpillStore for FileContextSpillStore {
     fn has_entries(&self, session_key: &str) -> SpillPresence<'_> {
         let path = self.spill_path(session_key);
         Box::pin(async move {
-            // A valid append always writes a non-empty JSONL record. Clear
-            // atomically replaces the file with an empty one, so file length
-            // is a constant-time presence check that avoids parsing an index.
-            match tokio::fs::metadata(&path).await {
-                Ok(metadata) => Ok(metadata.len() > 0),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-                Err(error) => Err(DomainError::Session(format!(
-                    "failed to stat spill file: {error}"
-                ))),
-            }
+            // Presence must use the same corrupt-line-skipping semantics as
+            // list_entries(), otherwise a torn append can advertise memory
+            // that recall("list") cannot discover.
+            Ok(!read_spill_index_records(&path).await?.is_empty())
         })
     }
 
@@ -479,6 +473,25 @@ mod tests {
         // Verify the file is now empty
         let entries_after = store.list_entries("test-session").await.unwrap();
         assert!(entries_after.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_has_entries_ignores_a_torn_write_with_no_parseable_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileContextSpillStore::new(dir.path().to_path_buf());
+        let path = store.spill_path("session");
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&path, br#"{"id":"turn1:bash:0""#)
+            .await
+            .unwrap();
+
+        assert!(store.list_entries("session").await.unwrap().is_empty());
+        assert!(
+            !store.has_entries("session").await.unwrap(),
+            "presence must agree with the parse-based index"
+        );
     }
 
     #[tokio::test]
