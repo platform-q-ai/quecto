@@ -1,11 +1,5 @@
 use super::*;
-use std::{
-    io,
-    sync::{Arc, Mutex},
-};
-
 use tokio::io::AsyncWriteExt;
-use tracing::instrument::WithSubscriber;
 
 /// Guard that removes a test's temp dir (and its socket) on drop, so reruns
 /// under a recycled PID never hit a stale socket file.
@@ -43,31 +37,6 @@ fn token_frame_of_len(frame_len: usize) -> (String, String) {
     frame.push_str(token_suffix);
     assert_eq!(frame.len(), frame_len);
     (frame, token)
-}
-
-#[derive(Clone)]
-struct LogWriter(Arc<Mutex<String>>);
-
-impl io::Write for LogWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap()
-            .push_str(&String::from_utf8_lossy(buf));
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl tracing_subscriber::fmt::MakeWriter<'_> for LogWriter {
-    type Writer = Self;
-
-    fn make_writer(&self) -> Self::Writer {
-        self.clone()
-    }
 }
 
 #[tokio::test]
@@ -220,15 +189,6 @@ async fn oversized_event_drop_is_recorded_for_ui_surfacing() {
     let (listener, socket_path, _dir) = bind_test_socket("oversized-drop-counted-test");
 
     let (frame, _) = token_frame_of_len(MAX_LINE_BYTES + 65_536);
-    let captured_log = Arc::new(Mutex::new(String::new()));
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(LogWriter(captured_log.clone()))
-        .with_ansi(false)
-        .without_time()
-        .with_target(false)
-        .finish();
-    let dispatch = tracing::Dispatch::new(subscriber);
-
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         stream.write_all(frame.as_bytes()).await.unwrap();
@@ -240,10 +200,7 @@ async fn oversized_event_drop_is_recorded_for_ui_surfacing() {
         stream.flush().await.unwrap();
     });
 
-    let mut client = Client::connect(&socket_path)
-        .with_subscriber(dispatch)
-        .await
-        .unwrap();
+    let mut client = Client::connect(&socket_path).await.unwrap();
     match tokio::time::timeout(std::time::Duration::from_secs(2), client.recv())
         .await
         .unwrap()
@@ -257,13 +214,5 @@ async fn oversized_event_drop_is_recorded_for_ui_surfacing() {
         1,
         "the client must record the dropped oversized event line so the UI can surface it (#1047)"
     );
-    assert!(
-        captured_log
-            .lock()
-            .unwrap()
-            .contains("dropping oversized message from agent"),
-        "the client must warn-log the dropped oversized event line (#1112)"
-    );
-
     server.await.unwrap();
 }

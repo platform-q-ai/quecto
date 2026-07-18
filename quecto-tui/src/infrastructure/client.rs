@@ -14,7 +14,6 @@ use std::path::Path;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
-use tracing::instrument::WithSubscriber;
 
 /// Maximum line size from the agent — derived from the shared protocol cap
 /// (`quecto_line_io::PROTOCOL_LINE_CAP_BYTES`, 8 MiB) so the harness emitter
@@ -573,8 +572,7 @@ impl Client {
                 }
             }
         };
-        let dispatch = tracing::dispatcher::get_default(|dispatcher| dispatcher.clone());
-        tokio::spawn(reader_task.with_subscriber(dispatch));
+        tokio::spawn(reader_task);
 
         Ok(Self {
             cmd_tx,
