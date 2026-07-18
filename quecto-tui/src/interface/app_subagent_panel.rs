@@ -1,6 +1,5 @@
 use super::*;
 use crate::interface::theme;
-
 impl App {
     // ── Visibility / active session ────────────────────────────────────
 
@@ -307,7 +306,9 @@ impl App {
         // Outbound channel so the editor's send/abort path can steer this child
         // (#802); the connection task forwards queued commands onto its socket.
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<Command>(32);
-        let handle = tokio::spawn(async move {
+        use tracing::instrument::WithSubscriber;
+        let connect_dispatch = tracing::dispatcher::get_default(Clone::clone);
+        let connect_task = async move {
             let Ok(mut client) = Client::connect(&path).await else {
                 return;
             };
@@ -343,7 +344,8 @@ impl App {
                     },
                 }
             }
-        });
+        };
+        let handle = tokio::spawn(connect_task.with_subscriber(connect_dispatch));
         self.subagents.active_conn = Some((id.to_string(), handle));
         self.subagents.active_cmd_tx = Some((id.to_string(), cmd_tx));
     }

@@ -1722,7 +1722,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-tui"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "cucumber",
  "futures",
@@ -1734,6 +1734,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
  "unicode-width",
 ]
 

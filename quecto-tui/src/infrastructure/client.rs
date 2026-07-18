@@ -471,6 +471,10 @@ impl Client {
         socket_path: &Path,
         mode: WireMode,
     ) -> Result<Self, ClientError> {
+        // Snapshot the caller's dispatcher before the first yield point. A
+        // thread-scoped default may not be present on the runtime worker that
+        // resumes this future after the connect completes.
+        let connect_dispatch = tracing::dispatcher::get_default(Clone::clone);
         let stream = UnixStream::connect(socket_path).await?;
         let (read_half, mut write_half) = tokio::io::split(stream);
 
@@ -485,8 +489,14 @@ impl Client {
         // `get_message` per ref. Sized well above any realistic single-turn
         // message count so ordered `try_send` never hits backpressure in
         // practice.
+        // The explicitly captured connect-time dispatcher carries reader
+        // diagnostics (#1112) into the spawned task, including when an
+        // embedder installed only a thread-scoped subscriber. The TUI itself
+        // installs none, so these events remain no-ops in the shipped binary.
+        use tracing::instrument::WithSubscriber;
+
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(1024);
-        tokio::spawn(async move {
+        let writer_task = async move {
             if mode == WireMode::Framed
                 && write_message(&mut write_half, b"", mode, MAX_LINE_BYTES)
                     .await
@@ -511,7 +521,8 @@ impl Client {
                     Err(_) => break,
                 }
             }
-        });
+        };
+        tokio::spawn(writer_task);
 
         let (tx, rx) = mpsc::channel(256);
         let dropped_oversized = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -521,7 +532,7 @@ impl Client {
         // a length-prefixed frame or a legacy NDJSON line (deprecation
         // window, #1059), with over-cap messages rejected while reading —
         // bounded memory either way (#1003).
-        tokio::spawn(async move {
+        let reader_task = async move {
             let mut reader = BufReader::new(read_half);
             // Reused across iterations so a streaming turn (one small JSON
             // event per token) does not allocate a fresh payload buffer per
@@ -555,13 +566,18 @@ impl Client {
                             }
                         }
                     }
-                    Err(FrameError::Oversized { .. }) => {
+                    Err(e @ FrameError::Oversized { .. }) => {
                         // Drop over-cap messages without printing (the TUI
                         // owns the terminal, so stderr would smear
                         // diagnostics over the UI) — but COUNT the drop so
                         // the UI can surface the loss instead of the
-                        // session silently appearing frozen (#1047).
+                        // session silently appearing frozen (#1047), and
+                        // warn-log it for diagnostics (#1112). The TUI never
+                        // installs a subscriber itself, so the warning is a
+                        // no-op unless an embedder or test provides one —
+                        // the no-stderr policy holds.
                         dropped_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        tracing::warn!("dropping oversized message from agent: {e}");
                     }
                     Err(_e) => {
                         // Socket error or an explicit protocol version
@@ -573,7 +589,8 @@ impl Client {
                     }
                 }
             }
-        });
+        };
+        tokio::spawn(reader_task.with_subscriber(connect_dispatch));
 
         Ok(Self {
             cmd_tx,
