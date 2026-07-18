@@ -485,10 +485,12 @@ fn feature_js_late_push_phases_require_structured_pushed_head_results() {
         .expect("FIX_RESOLVE_RESULT should precede CONFORMANCE_FIX_RESULT")
         .0;
     assert!(
-        fix_schema.contains("required: ['pushed_head_sha', 'threads_resolved']")
+        fix_schema.contains("required: ['pushed_head_sha', 'threads_resolved', 'findings_accepted', 'findings_declined']")
             && fix_schema.contains("pushed_head_sha:")
-            && fix_schema.contains("threads_resolved:"),
-        "fix-resolve schema should require pushed_head_sha and threads_resolved: {fix_schema}"
+            && fix_schema.contains("threads_resolved:")
+            && fix_schema.contains("findings_accepted:")
+            && fix_schema.contains("findings_declined:"),
+        "fix-resolve schema should require pushed_head_sha, threads_resolved, and accepted/declined counts: {fix_schema}"
     );
 
     let fix_call = js
@@ -590,6 +592,20 @@ fn feature_js_conformance_uses_the_post_fix_head_after_review_fixes() {
         "feature.js should guard the post-fix head against the Ship head depending on accepted fixes: {guard_block}"
     );
 
+    let conformance_fix_guard = js
+        .split_once("if (conformanceFix !== null) {")
+        .expect("feature.js should guard non-null conformance-fix results")
+        .1
+        .split_once("postFixHead = conformanceFix.pushed_head_sha")
+        .expect("conformance-fix guard should precede updating postFixHead")
+        .0;
+    assert!(
+        conformance_fix_guard.contains("conformanceFix.pushed_head_sha === postFixHead")
+            && conformance_fix_guard
+                .contains("conformance-fix claimed success but returned the pre-fix head SHA"),
+        "feature.js should reject a conformance-fix result that returns the pre-fix head SHA: {conformance_fix_guard}"
+    );
+
     let conformance_block = js
         .split_once("let conformance = await agent(")
         .expect("feature.js should run conformance")
@@ -646,6 +662,10 @@ fn feature_js_meta_stays_literal() {
                     && trimmed.contains("'")
                     && !trimmed.contains('`')
                     && !trimmed.contains("${"))
+                || (trimmed.starts_with("model: ")
+                    && trimmed.contains("'")
+                    && !trimmed.contains('`')
+                    && !trimmed.contains("${"))
                 || (trimmed.starts_with("{ title: '")
                     && trimmed.contains("detail: '")
                     && trimmed.ends_with("},")
@@ -675,7 +695,7 @@ fn feature_js_runtime_parses_script() {
     let status = std::process::Command::new("node")
         .arg(temp.as_os_str())
         .status()
-        .expect("node should run");
+        .expect("node should run; install node: this guard parses feature.js");
     assert!(
         status.success(),
         "feature.js should parse as valid workflow JavaScript"

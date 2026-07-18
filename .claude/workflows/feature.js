@@ -132,7 +132,7 @@ const SHIP_RESULT = {
 const FIX_RESOLVE_RESULT = {
   type: 'object',
   additionalProperties: false,
-  required: ['pushed_head_sha', 'threads_resolved'],
+  required: ['pushed_head_sha', 'threads_resolved', 'findings_accepted', 'findings_declined'],
   properties: {
     pushed_head_sha: {
       type: 'string',
@@ -389,6 +389,9 @@ if (/CONFORMANCE:\s*FAIL/i.test(conformance)) {
     { label: 'conformance-fix', phase: 'Conformance', schema: CONFORMANCE_FIX_RESULT }
   )
   if (conformanceFix !== null) {
+    if (conformanceFix.pushed_head_sha === postFixHead) {
+      throw new Error('conformance-fix claimed success but returned the pre-fix head SHA')
+    }
     postFixHead = conformanceFix.pushed_head_sha
     postFixPr = `PR #${prNumber}, head commit ${postFixHead}`
     conformance = await agent(
