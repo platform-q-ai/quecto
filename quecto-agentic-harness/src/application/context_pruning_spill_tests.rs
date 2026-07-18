@@ -213,9 +213,9 @@ fn ceiling_ladder_never_demotes_system_prompt_or_manifest() {
 }
 
 #[tokio::test]
-async fn manifest_text_distinguishes_tool_and_message_spills() {
-    // Exercise the REAL id construction: a tool spill already in the store,
-    // plus an assistant turn filed by the creation-time spill writer (#1046).
+async fn manifest_text_stays_static_across_tool_and_message_spills() {
+    // Exercise real tool/message spill IDs, then verify none of their dynamic
+    // bytes enter the front-positioned cache prefix (#1118).
     let store = MemStore::default();
     store
         .append(
@@ -235,13 +235,13 @@ async fn manifest_text_distinguishes_tool_and_message_spills() {
     messages::spill_conversation_message(&mut assistant, &store, "s").await;
     let entries = store.list_entries("s").await.unwrap();
     let text = build_manifest_text(&entries);
-    assert!(
-        text.contains("turn1:bash:0"),
-        "manifest must keep the tool-spill id form; got: {text}"
-    );
-    assert!(
-        text.contains("turn1:msg:assistant"),
-        "manifest must render the message-spill id produced by the ceiling; got: {text}"
+    assert!(!text.contains("turn1:bash:0"));
+    assert!(!text.contains("turn1:msg:assistant"));
+    assert!(!text.contains("echo hello"));
+    assert_eq!(
+        text,
+        build_manifest_text(&entries[..1]),
+        "manifest bytes must not depend on spill count or kind"
     );
 }
 

@@ -12,8 +12,6 @@
 // Depends on: domain::message, domain::session (ContextSpillStore).
 // Never imports infrastructure.
 
-use std::fmt::Write;
-
 // #1046: conversation-message collapse, demotion ladder, creation-time spill.
 #[path = "context_pruning_messages.rs"]
 pub mod messages;
@@ -183,10 +181,8 @@ pub const DEFAULT_PIN_RECENT_TURNS: u32 = 2;
 /// structural change misaligns any persisted-prefix watermark, and a clean
 /// delta appended against it would duplicate or drop messages. An in-place
 /// content rewrite of an existing manifest deliberately returns `false`: it
-/// shifts no indices, and the manifest text is rebuilt from the spill store
-/// before every LLM turn (including on resume), so stale durable manifest
-/// text is self-healing and latching on it would force a full compact
-/// rewrite on virtually every tool-calling turn.
+/// shifts no indices. The rewrite also migrates persisted dynamic manifests
+/// to the static guidance used for provider-cache-safe sessions (#1118).
 pub async fn update_spill_manifest(
     messages: &mut Vec<Message>,
     spill_store: &dyn ContextSpillStore,
@@ -205,7 +201,9 @@ pub async fn update_spill_manifest(
 
     let manifest = build_manifest_text(&entries);
 
-    // Find existing manifest message and update, or insert one
+    // Keep front-positioned guidance byte-for-byte static as the spill store
+    // grows. The live index is available on demand through recall("list").
+    // Find an existing manifest and migrate/update it, or insert one.
     if let Some(msg) = messages.iter_mut().find(|m| m.is_manifest) {
         msg.content = manifest;
         msg.invalidate_token_cache();
@@ -224,35 +222,15 @@ pub async fn update_spill_manifest(
     }
 }
 
-/// Build the manifest text from spill index entries.
-pub fn build_manifest_text(entries: &[SpillIndex]) -> String {
-    let total = entries.len();
-    let oldest = &entries[0];
-    let latest = &entries[total - 1];
-    let recent: Vec<_> = entries.iter().rev().take(10).collect();
-
-    let mut manifest = format!(
-        "[Session memory: {} spilled entries via recall()]\n\
-         Oldest: {} — {} ({} tokens)\n\
-         Latest: {} — {} ({} tokens)\n\
-         Recent:\n",
-        total,
-        oldest.id,
-        oldest.input_preview,
-        oldest.tokens,
-        latest.id,
-        latest.input_preview,
-        latest.tokens,
-    );
-    for entry in recent.iter().rev() {
-        let _ = writeln!(
-            manifest,
-            "  {} — {} ({} tokens)",
-            entry.id, entry.input_preview, entry.tokens
-        );
-    }
-    manifest.push_str("Use recall(\"<id>\") to retrieve. Use recall(\"list\") for full index.");
-    manifest
+/// Build static front-positioned session-memory guidance.
+///
+/// `entries` deliberately affects only whether the caller inserts a manifest;
+/// no entry-derived bytes may appear here because provider prompt caches use
+/// exact prefix matching. The complete dynamic index is `recall("list")`.
+pub fn build_manifest_text(_entries: &[SpillIndex]) -> String {
+    "[Session memory is available via recall()]\n\
+     Use recall(\"list\") for the full session-memory index, then recall(\"<id>\") to retrieve content."
+        .to_string()
 }
 
 #[cfg(test)]
@@ -358,11 +336,24 @@ mod tests {
             },
         ];
         let text = build_manifest_text(&entries);
-        assert!(text.contains("2 spilled entries"));
-        assert!(text.contains("turn1:bash:0"));
-        assert!(text.contains("turn2:bash:0"));
-        assert!(text.contains("recall(\"<id>\")"));
-        assert!(text.contains("recall(\"list\")"));
+        assert_eq!(
+            text,
+            "[Session memory is available via recall()]\n\
+             Use recall(\"list\") for the full session-memory index, then recall(\"<id>\") to retrieve content."
+        );
+        assert!(!text.contains("turn1:bash:0"));
+        assert!(!text.contains("turn2:bash:0"));
+        let grown = build_manifest_text(&[
+            entries[0].clone(),
+            entries[1].clone(),
+            SpillIndex {
+                id: "turn3:read:0".to_string(),
+                tool: "read".to_string(),
+                input_preview: "dynamic preview".to_string(),
+                tokens: 300,
+            },
+        ]);
+        assert_eq!(text.as_bytes(), grown.as_bytes());
     }
 
     #[test]

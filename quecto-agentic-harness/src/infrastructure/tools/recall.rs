@@ -43,9 +43,10 @@ impl Tool for RecallTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "recall".into(),
-            description: "Retrieve a previously collapsed tool output by its ID. \
-                Use the ID shown in collapse stubs like: recall(\"turn20:bash:0\"). \
-                Use recall(\"list\") for the full index."
+            description: "Retrieve spilled session memory by ID. \
+                Use recall(\"list\") for the full session-memory index, then pass an ID \
+                from that result to retrieve its content. Collapse stubs also show IDs \
+                inline, for example: recall(\"turn20:bash:0\")."
                 .into(),
             parameters_schema: r#"{"type":"object","properties":{"id":{"type":"string","description":"The spill ID from the collapse stub, or \"list\" for the full index"}},"required":["id"]}"#.into(),
         }
@@ -400,6 +401,8 @@ mod tests {
         let tool = RecallTool::new(store, "test".to_string());
         let def = tool.definition();
         assert_eq!(def.name, "recall");
-        assert!(def.description.contains("collapsed tool output"));
+        assert!(def.description.contains("spilled session memory"));
+        assert!(def.description.contains("full session-memory index"));
+        assert!(def.description.contains("recall(\"list\")"));
     }
 }

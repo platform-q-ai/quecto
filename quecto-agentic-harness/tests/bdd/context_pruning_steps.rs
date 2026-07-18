@@ -849,6 +849,21 @@ fn then_manifest_contains(world: &mut QuectoWorld, expected: String) {
     );
 }
 
+#[then(expr = "the manifest does not contain {string}")]
+fn then_manifest_does_not_contain(world: &mut QuectoWorld, unexpected: String) {
+    let messages = world.context_messages.as_ref().unwrap();
+    let manifest = messages
+        .iter()
+        .find(|m| m.is_manifest)
+        .expect("manifest should exist");
+    assert!(
+        !manifest.content.contains(&unexpected),
+        "manifest unexpectedly contained '{}': {}",
+        unexpected,
+        manifest.content
+    );
+}
+
 #[then("the manifest lists the 10 most recent entries")]
 fn then_manifest_lists_10_recent(world: &mut QuectoWorld) {
     let store = world.context_spill_store.as_ref().unwrap().clone();

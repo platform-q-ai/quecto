@@ -90,17 +90,21 @@ Feature: Context pruning via sliding window and tool-call collapse
 
   # --- Spill manifest ---
 
-  Scenario: Spill manifest is injected after first spill
+  @issue-1118
+  Scenario: Static spill guidance is injected after first spill
     Given no spill entries exist
     When the agent executes a bash tool on turn 1
     Then a pinned manifest [message] appears in context
-    And the manifest contains "1 spilled entries via recall()"
+    And the manifest contains "full session-memory index"
+    And the manifest does not contain "turn1:bash:0"
 
-  Scenario: Spill manifest shows last 10 entries
+  @issue-1118
+  Scenario: Spill guidance stays static as the index grows
     Given 25 spilled tool results
-    Then the manifest lists the 10 most recent entries
-    And the manifest shows total count as 25
-    And the manifest shows the oldest and latest entry IDs
+    When the spill manifest is updated
+    Then the manifest contains "full session-memory index"
+    And the manifest does not contain "25 spilled entries"
+    And the manifest does not contain "turn25:bash:0"
 
   Scenario: Spill manifest survives sliding window
     Given max_context_tokens is set to 500
@@ -109,10 +113,11 @@ Feature: Context pruning via sliding window and tool-call collapse
     Then the manifest [message] remains in context
     And the manifest is pinned
 
-  Scenario: Spill manifest is updated in-place
+  Scenario: Spill guidance is maintained in-place
     When the agent executes tools on turns 1 through 5
     Then only one manifest [message] exists in context
-    And it reflects all 5 spill entries
+    And the manifest contains "full session-memory index"
+    And the manifest does not contain "turn5:bash:0"
 
   Scenario: No manifest when no spill entries exist
     When the agent processes 3 turns with no tool calls
@@ -174,22 +179,25 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the spilling sliding window drops messages to fit budget
     Then the spill file contains an entry with id "turn1:msg:user"
 
-  Scenario: Message spills are distinguishable from tool spills in the manifest
+  @issue-1118
+  Scenario: Tool and message spill IDs stay out of static prompt guidance
     Given max_context_tokens is set to 200
     And recent-turn pinning is set to 2 turns
     And a spilled tool result with id "turn1:bash:0"
     And an old assistant message of 500 tokens on turn 1
     When the spilling sliding window drops messages to fit budget
-    Then the manifest contains "turn1:bash:0"
-    And the manifest contains "turn1:msg:assistant"
+    Then the manifest does not contain "turn1:bash:0"
+    And the manifest does not contain "turn1:msg:assistant"
 
-  Scenario: Manifest reflects a message spill on a turn with no tool calls
+  @issue-1118
+  Scenario: Message spill on a turn with no tool calls creates static guidance
     Given max_context_tokens is set to 200
     And recent-turn pinning is set to 2 turns
     And an old assistant message of 500 tokens on turn 1
     When the agent completes a prompt with no tool calls
     Then a pinned manifest [message] appears in context
-    And the manifest contains "turn1:msg:assistant"
+    And the manifest contains "full session-memory index"
+    And the manifest does not contain "turn1:msg:assistant"
 
   Scenario: System prompt and manifest are never dropped by the spilling sliding window
     Given max_context_tokens is set to 10
@@ -456,7 +464,7 @@ Feature: Context pruning via sliding window and tool-call collapse
     When the [session] is saved and reloaded from disk
     And the spill manifest is updated
     Then only one manifest [message] exists in context
-    And exactly one system [message] contains "spilled entries via recall()"
+    And exactly one system [message] contains "Session memory is available via recall()"
 
   Scenario: Tool results remain uncollapsed after session round-trip
     When the agent executes a bash tool on turn 1
