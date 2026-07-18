@@ -129,6 +129,44 @@ const SHIP_RESULT = {
     },
   },
 }
+const FIX_RESOLVE_RESULT = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['pushed_head_sha', 'threads_resolved'],
+  properties: {
+    pushed_head_sha: {
+      type: 'string',
+      description: 'The pushed head commit SHA after the review-fix/resolve phase completed.',
+    },
+    threads_resolved: {
+      type: 'integer',
+      description: 'Number of PR review threads resolved through GraphQL.',
+    },
+    threads_replied: {
+      type: 'integer',
+      description: 'Number of PR review threads replied to before resolving.',
+    },
+    findings_accepted: {
+      type: 'integer',
+      description: 'Number of posted findings accepted and fixed in this phase.',
+    },
+    findings_declined: {
+      type: 'integer',
+      description: 'Number of posted findings declined with rationale.',
+    },
+  },
+}
+const CONFORMANCE_FIX_RESULT = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['pushed_head_sha'],
+  properties: {
+    pushed_head_sha: {
+      type: 'string',
+      description: 'The pushed head commit SHA after fixing unmet conformance criteria.',
+    },
+  },
+}
 const ship = await agent(
   `Task: ${TASK}\n\n` +
   `STEP — Commit. If on the default branch (master), create a feature branch first. Stage only intended files. Remember git commit pre-commit does not run unit/BDD tests. Write a clear, ` +
@@ -189,6 +227,8 @@ if (!ship || !Number.isInteger(ship.pr_number) || ship.pr_number <= 0) {
 }
 const prNumber = ship.pr_number
 const pr = `PR #${ship.pr_number}, head commit ${ship.head_sha}`
+let postFixHead = ship.head_sha
+let postFixPr = pr
 const finderReports = await parallel(Object.entries(ANGLES).map(([angle, focus]) => () => agent(
   `You are a narrow ${angle} finder for this Quecto PR. PR/context: #${prNumber}\n\n` +
   `PRECONDITION: finders MUST NOT be dispatched before a PR exists; stop if this prompt does not include a PR number. ` +
@@ -294,17 +334,32 @@ const fixResolve = await agent(
   `changing anything (reviewers can be wrong). Address EVERY valid concern regardless of severity — not just ` +
   `high-priority ones: fix it in the same branch, or explicitly decline it with a documented rationale. ` +
   `Track accepted vs declined.\n` +
-  `STEP — Push changes. The full pre-push gate runs again; wait for it to pass.\n` +
+  `STEP — Push changes. Run 'git push' in the FOREGROUND with a timeout of at least 20 minutes and WAIT for it to ` +
+  `exit — the push runs the full local gate as a pre-push hook and can take 10-15+ minutes. Do NOT run it in ` +
+  `the background, do NOT end your turn while it runs, and never conclude with any variant of "waiting for ` +
+  `the gate": your task is not done until the push command has exited. Fix every failure and push again; ` +
+  `never use --no-verify — a bypassed gate does NOT count as passing. If only the load-flaky find.feature ` +
+  `scenario fails, re-run the shard.\n` +
   `STEP — Reply to EVERY review comment and resolve threads. For accepted findings note the fix and commit; ` +
   `for declined ones explain why. Resolve each thread with the GraphQL resolveReviewThread mutation ` +
-  `(thread ids from the PR reviewThreads connection).`,
-  { label: 'fix-resolve', phase: 'Fix Reviews' }
+  `(thread ids from the PR reviewThreads connection). Return the pushed_head_sha, threads_resolved, and ` +
+  `accepted/declined counts only after the push, replies, and resolves are complete.`,
+  { label: 'fix-resolve', phase: 'Fix Reviews', schema: FIX_RESOLVE_RESULT }
 )
+const acceptedFixes = Number(fixResolve.findings_accepted || 0)
+postFixHead = fixResolve.pushed_head_sha
+if (acceptedFixes > 0 && postFixHead === ship.head_sha) {
+  throw new Error('fix-resolve accepted findings but returned the original ship head SHA')
+}
+if (acceptedFixes === 0 && postFixHead !== ship.head_sha) {
+  throw new Error('fix-resolve reported no accepted findings but returned a changed head SHA')
+}
+postFixPr = `PR #${prNumber}, head commit ${postFixHead}`
 
 // ── Conformance: systematic PR-vs-issue acceptance-criteria gate ────────────
 phase('Conformance')
 let conformance = await agent(
-  `Task: ${TASK}. PR: ${pr}\n\n` +
+  `Task: ${TASK}. PR: ${postFixPr}\n\n` +
   `SYSTEMATIC ACCEPTANCE REVIEW — a hard gate before merge. Read the ORIGINAL issue's acceptance ` +
   `criteria ('gh issue view <N> --json title,body,comments') and the PR diff (gh pr diff <PR>), and ` +
   `inspect the actual branch code. For EVERY acceptance criterion, decide met / partial / unmet and cite ` +
@@ -318,15 +373,22 @@ let conformance = await agent(
 // On FAIL, run one targeted fix round against the unmet criteria, then re-verify.
 if (/CONFORMANCE:\s*FAIL/i.test(conformance)) {
   log('Conformance FAIL — fixing unmet acceptance criteria, then re-verifying before merge.')
-  await agent(
-    `Task: ${TASK}. PR: ${pr}\n\n` +
+  const conformanceFix = await agent(
+    `Task: ${TASK}. PR: ${postFixPr}\n\n` +
     `The systematic acceptance review FAILED:\n${conformance}\n\n` +
-    `Fix ONLY the unmet/partial acceptance criteria in the same branch; keep changes minimal; push (the ` +
-    `full pre-push gate must pass). Do NOT merge.`,
-    { label: 'conformance-fix', phase: 'Conformance' }
+    `Fix ONLY the unmet/partial acceptance criteria in the same branch; keep changes minimal. ` +
+    `Run 'git push' in the FOREGROUND with a timeout of at least 20 minutes and WAIT for it to exit — ` +
+    `the push runs the full local gate as a pre-push hook and can take 10-15+ minutes. Do NOT run it in ` +
+    `the background, do NOT end your turn while it runs, and never conclude with any variant of "waiting for ` +
+    `the gate": your task is not done until the push command has exited. Fix every failure and push again; ` +
+    `never use --no-verify — a bypassed gate does NOT count as passing. Do NOT merge. Return pushed_head_sha ` +
+    `only after the push has completed successfully.`,
+    { label: 'conformance-fix', phase: 'Conformance', schema: CONFORMANCE_FIX_RESULT }
   )
+  postFixHead = conformanceFix.pushed_head_sha
+  postFixPr = `PR #${prNumber}, head commit ${postFixHead}`
   conformance = await agent(
-    `Task: ${TASK}. PR: ${pr}\n\n` +
+    `Task: ${TASK}. PR: ${postFixPr}\n\n` +
     `Re-run the systematic acceptance review after the fix round, same rules: verify each issue criterion ` +
     `against the branch code with file:line evidence; end with EXACTLY "CONFORMANCE: PASS" or ` +
     `"CONFORMANCE: FAIL" + the remaining gaps. Do NOT modify code.`,
@@ -347,14 +409,14 @@ if (findersCompleted < angleCount || !reviewPost || fixResolve === null || !conf
     fixResolve === null ? 'the fix/resolve phase errored' : null,
     !conformancePass ? 'conformance did not return CONFORMANCE: PASS' : null,
   ].filter(Boolean).join('; ')
-  log(`REPORT BLOCKED — ${reason}. Leaving PR ${pr} open for manual attention; NOT merging.`)
-  return { pr, ready: false, blocked: reason, conformance }
+  log(`REPORT BLOCKED — ${reason}. Leaving PR ${postFixPr} open for manual attention; NOT merging.`)
+  return { pr: postFixPr, ready: false, blocked: reason, conformance }
 }
 
 // ── Report PR readiness, do not merge ─────────────────────────────────────
 phase('Report')
 const result = await agent(
-  `Task: ${TASK}. PR: ${pr}\n\n` +
+  `Task: ${TASK}. PR: ${postFixPr}\n\n` +
   `Acceptance-conformance verdict:\n${conformance}\n\n` +
   `STEP — Confirm the latest push's pre-push gate passed IN FULL on the latest pushed commit ` +
   `(coverage threshold, machete, deny, and the mocked @mock-llm e2e lane) WITHOUT --no-verify, ` +
@@ -365,4 +427,4 @@ const result = await agent(
 )
 
 log('Feature workflow complete — PR reported, not merged.')
-return { pr, result }
+return { pr: postFixPr, result }

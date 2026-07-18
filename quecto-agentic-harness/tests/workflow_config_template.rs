@@ -472,6 +472,217 @@ fn feature_js_reviewers_run_finder_waves() {
 }
 
 #[test]
+fn feature_js_late_push_phases_require_structured_pushed_head_results() {
+    // Issue #1116: later push-bearing phases must be hardened the same way as
+    // Ship. A prose "waiting for the gate" answer must not satisfy these phases.
+    let js = read_repo_file("../.claude/workflows/feature.js");
+
+    let fix_schema = js
+        .split_once("const FIX_RESOLVE_RESULT = {")
+        .expect("feature.js should define FIX_RESOLVE_RESULT")
+        .1
+        .split_once("const CONFORMANCE_FIX_RESULT = {")
+        .expect("FIX_RESOLVE_RESULT should precede CONFORMANCE_FIX_RESULT")
+        .0;
+    assert!(
+        fix_schema.contains("required: ['pushed_head_sha', 'threads_resolved']")
+            && fix_schema.contains("pushed_head_sha:")
+            && fix_schema.contains("threads_resolved:"),
+        "fix-resolve schema should require pushed_head_sha and threads_resolved: {fix_schema}"
+    );
+
+    let fix_call = js
+        .split_once("const fixResolve = await agent(")
+        .expect("feature.js should dispatch fix-resolve")
+        .1
+        .split_once("// ── Conformance")
+        .expect("fix-resolve block should precede conformance")
+        .0;
+    assert!(
+        fix_call.contains("label: 'fix-resolve'")
+            && fix_call.contains("schema: FIX_RESOLVE_RESULT"),
+        "the fix-resolve agent call should attach FIX_RESOLVE_RESULT: {fix_call}"
+    );
+
+    let conformance_schema = js
+        .split_once("const CONFORMANCE_FIX_RESULT = {")
+        .expect("feature.js should define CONFORMANCE_FIX_RESULT")
+        .1
+        .split_once("const ship = await agent(")
+        .expect("CONFORMANCE_FIX_RESULT should precede Ship dispatch")
+        .0;
+    assert!(
+        conformance_schema.contains("required: ['pushed_head_sha']")
+            && conformance_schema.contains("pushed_head_sha:"),
+        "conformance-fix schema should require pushed_head_sha: {conformance_schema}"
+    );
+
+    let conformance_fix_call = js
+        .split_once("const conformanceFix = await agent(")
+        .expect("feature.js should capture conformance-fix result")
+        .1
+        .split_once("conformance = await agent(")
+        .expect("conformance-fix block should precede conformance recheck")
+        .0;
+    assert!(
+        conformance_fix_call.contains("label: 'conformance-fix'")
+            && conformance_fix_call.contains("schema: CONFORMANCE_FIX_RESULT"),
+        "the conformance-fix agent call should attach CONFORMANCE_FIX_RESULT: {conformance_fix_call}"
+    );
+}
+
+#[test]
+fn feature_js_late_push_phases_require_foreground_gate_waiting() {
+    let js = read_repo_file("../.claude/workflows/feature.js");
+
+    let fix_block = js
+        .split_once("const fixResolve = await agent(")
+        .expect("feature.js should dispatch fix-resolve")
+        .1
+        .split_once("// ── Conformance")
+        .expect("fix-resolve block should precede conformance")
+        .0;
+    let fix_lower = fix_block.to_lowercase();
+    assert!(
+        fix_lower.contains("foreground")
+            && fix_lower.contains("at least 20 minutes")
+            && fix_lower.contains("do not run it in")
+            && fix_lower.contains("background")
+            && fix_lower.contains("waiting for")
+            && fix_lower.contains("the gate"),
+        "fix-resolve prompt should carry Ship's foreground push wording: {fix_block}"
+    );
+
+    let conformance_fix_block = js
+        .split_once("const conformanceFix = await agent(")
+        .expect("feature.js should dispatch conformance-fix")
+        .1
+        .split_once("conformance = await agent(")
+        .expect("conformance-fix block should precede conformance recheck")
+        .0;
+    let conformance_fix_lower = conformance_fix_block.to_lowercase();
+    assert!(
+        conformance_fix_lower.contains("foreground")
+            && conformance_fix_lower.contains("at least 20 minutes")
+            && conformance_fix_lower.contains("do not run it in")
+            && conformance_fix_lower.contains("background")
+            && conformance_fix_lower.contains("waiting for")
+            && conformance_fix_lower.contains("the gate"),
+        "conformance-fix prompt should carry Ship's foreground push wording: {conformance_fix_block}"
+    );
+}
+
+#[test]
+fn feature_js_conformance_uses_the_post_fix_head_after_review_fixes() {
+    let js = read_repo_file("../.claude/workflows/feature.js");
+
+    let guard_block = js
+        .split_once("const acceptedFixes")
+        .expect("feature.js should compute accepted fixes")
+        .1
+        .split_once("// ── Conformance")
+        .expect("post-fix guard should precede conformance")
+        .0;
+    assert!(
+        guard_block.contains("fixResolve.pushed_head_sha")
+            && guard_block.contains("acceptedFixes > 0 && postFixHead === ship.head_sha")
+            && guard_block.contains("acceptedFixes === 0 && postFixHead !== ship.head_sha"),
+        "feature.js should guard the post-fix head against the Ship head depending on accepted fixes: {guard_block}"
+    );
+
+    let conformance_block = js
+        .split_once("let conformance = await agent(")
+        .expect("feature.js should run conformance")
+        .1
+        .split_once("// On FAIL")
+        .expect("initial conformance block should end before fail handling")
+        .0;
+    assert!(
+        conformance_block.contains("PR: ${postFixPr}")
+            && !conformance_block.contains("PR: ${pr}")
+            && !conformance_block.contains("ship.head_sha"),
+        "initial conformance prompt should use the post-fix PR/head context: {conformance_block}"
+    );
+
+    let report_block = js
+        .split_once("const result = await agent(")
+        .expect("feature.js should report PR readiness")
+        .1
+        .split_once("log('Feature workflow complete")
+        .expect("report block should precede completion log")
+        .0;
+    assert!(
+        report_block.contains("PR: ${postFixPr}")
+            && !report_block.contains("PR: ${pr}")
+            && !report_block.contains("ship.head_sha"),
+        "report prompt should use the post-fix PR/head context: {report_block}"
+    );
+}
+
+#[test]
+fn feature_js_meta_stays_literal() {
+    // The workflow loader dry-runs the file by reading a literal meta export;
+    // keep executable code out of the meta object.
+    let js = read_repo_file("../.claude/workflows/feature.js");
+    let meta = js
+        .split_once("export const meta = {")
+        .expect("feature.js should export literal meta")
+        .1
+        .split_once("// The task/issue description")
+        .expect("literal meta should end before executable workflow code")
+        .0;
+
+    assert!(
+        meta.lines().all(|line| {
+            let trimmed = line.trim();
+            trimmed.is_empty()
+                || trimmed == "}"
+                || trimmed == "},"
+                || trimmed == "],"
+                || trimmed == "phases: ["
+                || ((trimmed.starts_with("name: ")
+                    || trimmed.starts_with("description: ")
+                    || trimmed.starts_with("whenToUse: "))
+                    && trimmed.contains("'")
+                    && !trimmed.contains('`')
+                    && !trimmed.contains("${"))
+                || (trimmed.starts_with("{ title: '")
+                    && trimmed.contains("detail: '")
+                    && trimmed.ends_with("},")
+                    && !trimmed.contains('`')
+                    && !trimmed.contains("${"))
+        }),
+        "feature.js meta should remain a pure literal object/array of strings: {meta}"
+    );
+}
+
+#[test]
+fn feature_js_runtime_parses_script() {
+    let js = read_repo_file("../.claude/workflows/feature.js");
+    let temp = tempfile::Builder::new()
+        .suffix(".mjs")
+        .tempfile()
+        .expect("temp feature.js parser")
+        .into_temp_path();
+    let escaped = serde_json::to_string(&js).expect("workflow JS as JSON string");
+    std::fs::write(
+        &temp,
+        format!(
+            "const source = {escaped};\nconst body = source.replace('export const meta =', 'const meta =');\nconst AsyncFunction = Object.getPrototypeOf(async function(){{}}).constructor;\nnew AsyncFunction('args', 'agent', 'phase', 'parallel', 'log', body);\n"
+        ),
+    )
+    .expect("write feature.js parser");
+    let status = std::process::Command::new("node")
+        .arg(temp.as_os_str())
+        .status()
+        .expect("node should run");
+    assert!(
+        status.success(),
+        "feature.js should parse as valid workflow JavaScript"
+    );
+}
+
+#[test]
 fn feature_js_red_requires_per_assertion_failure_evidence() {
     // Issue #1004 mirrored into the executable feature.js: RED evidence is per
     // new Then step / per new test assertion, not per test target.
