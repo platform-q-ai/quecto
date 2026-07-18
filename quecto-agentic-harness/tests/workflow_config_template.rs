@@ -518,7 +518,7 @@ fn feature_js_late_push_phases_require_structured_pushed_head_results() {
     );
 
     let conformance_fix_call = js
-        .split_once("const conformanceFix = await agent(")
+        .split_once("conformanceFix = await agent(")
         .expect("feature.js should capture conformance-fix result")
         .1
         .split_once("conformance = await agent(")
@@ -554,7 +554,7 @@ fn feature_js_late_push_phases_require_foreground_gate_waiting() {
     );
 
     let conformance_fix_block = js
-        .split_once("const conformanceFix = await agent(")
+        .split_once("conformanceFix = await agent(")
         .expect("feature.js should dispatch conformance-fix")
         .1
         .split_once("conformance = await agent(")

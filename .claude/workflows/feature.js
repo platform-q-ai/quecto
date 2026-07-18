@@ -346,15 +346,17 @@ const fixResolve = await agent(
   `accepted/declined counts only after the push, replies, and resolves are complete.`,
   { label: 'fix-resolve', phase: 'Fix Reviews', schema: FIX_RESOLVE_RESULT }
 )
-const acceptedFixes = Number(fixResolve.findings_accepted || 0)
-postFixHead = fixResolve.pushed_head_sha
-if (acceptedFixes > 0 && postFixHead === ship.head_sha) {
-  throw new Error('fix-resolve accepted findings but returned the original ship head SHA')
+if (fixResolve !== null) {
+  const acceptedFixes = fixResolve.findings_accepted
+  postFixHead = fixResolve.pushed_head_sha
+  if (acceptedFixes > 0 && postFixHead === ship.head_sha) {
+    throw new Error('fix-resolve accepted findings but returned the original ship head SHA')
+  }
+  if (acceptedFixes === 0 && postFixHead !== ship.head_sha) {
+    throw new Error('fix-resolve reported no accepted findings but returned a changed head SHA')
+  }
+  postFixPr = `PR #${prNumber}, head commit ${postFixHead}`
 }
-if (acceptedFixes === 0 && postFixHead !== ship.head_sha) {
-  throw new Error('fix-resolve reported no accepted findings but returned a changed head SHA')
-}
-postFixPr = `PR #${prNumber}, head commit ${postFixHead}`
 
 // ── Conformance: systematic PR-vs-issue acceptance-criteria gate ────────────
 phase('Conformance')
@@ -371,9 +373,10 @@ let conformance = await agent(
   { label: 'conformance', phase: 'Conformance' }
 )
 // On FAIL, run one targeted fix round against the unmet criteria, then re-verify.
+let conformanceFix = undefined
 if (/CONFORMANCE:\s*FAIL/i.test(conformance)) {
   log('Conformance FAIL — fixing unmet acceptance criteria, then re-verifying before merge.')
-  const conformanceFix = await agent(
+  conformanceFix = await agent(
     `Task: ${TASK}. PR: ${postFixPr}\n\n` +
     `The systematic acceptance review FAILED:\n${conformance}\n\n` +
     `Fix ONLY the unmet/partial acceptance criteria in the same branch; keep changes minimal. ` +
@@ -385,28 +388,31 @@ if (/CONFORMANCE:\s*FAIL/i.test(conformance)) {
     `only after the push has completed successfully.`,
     { label: 'conformance-fix', phase: 'Conformance', schema: CONFORMANCE_FIX_RESULT }
   )
-  postFixHead = conformanceFix.pushed_head_sha
-  postFixPr = `PR #${prNumber}, head commit ${postFixHead}`
-  conformance = await agent(
-    `Task: ${TASK}. PR: ${postFixPr}\n\n` +
-    `Re-run the systematic acceptance review after the fix round, same rules: verify each issue criterion ` +
-    `against the branch code with file:line evidence; end with EXACTLY "CONFORMANCE: PASS" or ` +
-    `"CONFORMANCE: FAIL" + the remaining gaps. Do NOT modify code.`,
-    { label: 'conformance-recheck', phase: 'Conformance' }
-  )
+  if (conformanceFix !== null) {
+    postFixHead = conformanceFix.pushed_head_sha
+    postFixPr = `PR #${prNumber}, head commit ${postFixHead}`
+    conformance = await agent(
+      `Task: ${TASK}. PR: ${postFixPr}\n\n` +
+      `Re-run the systematic acceptance review after the fix round, same rules: verify each issue criterion ` +
+      `against the branch code with file:line evidence; end with EXACTLY "CONFORMANCE: PASS" or ` +
+      `"CONFORMANCE: FAIL" + the remaining gaps. Do NOT modify code.`,
+      { label: 'conformance-recheck', phase: 'Conformance' }
+    )
+  }
 }
 
 // ── Report gate: refuse a clean hand-off if any upstream phase errored or conformance failed ──
 const findersCompleted = finderReports.filter(Boolean).length
 const angleCount = Object.keys(ANGLES).length
 const conformancePass = !!conformance && /CONFORMANCE:\s*PASS/i.test(conformance)
-if (findersCompleted < angleCount || !reviewPost || fixResolve === null || !conformancePass) {
+if (findersCompleted < angleCount || !reviewPost || fixResolve === null || conformanceFix === null || !conformancePass) {
   const reason = [
     findersCompleted < angleCount
       ? `only ${findersCompleted}/${angleCount} finders completed (a Wave 1 finder errored)`
       : null,
     !reviewPost ? 'the Wave 3 review post errored' : null,
     fixResolve === null ? 'the fix/resolve phase errored' : null,
+    conformanceFix === null ? 'the conformance-fix phase errored' : null,
     !conformancePass ? 'conformance did not return CONFORMANCE: PASS' : null,
   ].filter(Boolean).join('; ')
   log(`REPORT BLOCKED — ${reason}. Leaving PR ${postFixPr} open for manual attention; NOT merging.`)
