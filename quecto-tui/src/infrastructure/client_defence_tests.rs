@@ -5,6 +5,7 @@ use std::{
 };
 
 use tokio::io::AsyncWriteExt;
+use tracing::instrument::WithSubscriber;
 
 /// Guard that removes a test's temp dir (and its socket) on drop, so reruns
 /// under a recycled PID never hit a stale socket file.
@@ -239,12 +240,10 @@ async fn oversized_event_drop_is_recorded_for_ui_surfacing() {
         stream.flush().await.unwrap();
     });
 
-    let mut connect = Box::pin(Client::connect(&socket_path));
-    let mut client = std::future::poll_fn(|context| {
-        tracing::dispatcher::with_default(&dispatch, || connect.as_mut().poll(context))
-    })
-    .await
-    .unwrap();
+    let mut client = Client::connect(&socket_path)
+        .with_subscriber(dispatch)
+        .await
+        .unwrap();
     match tokio::time::timeout(std::time::Duration::from_secs(2), client.recv())
         .await
         .unwrap()
