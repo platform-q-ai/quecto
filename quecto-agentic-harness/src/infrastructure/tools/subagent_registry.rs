@@ -412,7 +412,14 @@ where
                     String::from_utf8_lossy(e.as_bytes()).into_owned()
                 })));
             }
-            Err(FrameError::Oversized { .. }) => continue,
+            // Warn-log the skip (mirroring subagent_monitor's oversized-drop
+            // warns, #1112 review): without it, a dropped response frame
+            // surfaces only as an unrelated "subagent response timed out",
+            // with no trail tying the hang to an oversized frame.
+            Err(e @ FrameError::Oversized { .. }) => {
+                tracing::warn!("registry: dropping oversized message from subagent: {e}");
+                continue;
+            }
             Err(e) => {
                 return Err(DomainError::Tool(format!("read from subagent failed: {e}")));
             }

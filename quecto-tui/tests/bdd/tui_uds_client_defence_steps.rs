@@ -6,6 +6,7 @@
 
 use super::*;
 use quecto_tui::infrastructure::client::{Client, Event, MAX_LINE_BYTES};
+use quecto_tui::infrastructure::warn_capture::{install_warn_capture, oversized_warn_count};
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixListener;
@@ -36,55 +37,6 @@ pub struct TuiDefenceStream {
     /// must be warning-logged — at exactly WARN, so the level is kept).
     captured_warnings: Vec<(tracing::Level, String)>,
     _temp_dir: TempDir,
-}
-
-/// The exact message the client must warn with when dropping an oversized
-/// inbound frame (mirrors quecto-api's UDS client, #1112).
-const OVERSIZED_WARN_MSG: &str = "dropping oversized message from agent";
-
-/// How many captured events are exactly-WARN oversized-drop warnings.
-fn oversized_warn_count(captured: &[(tracing::Level, String)]) -> usize {
-    captured
-        .iter()
-        .filter(|(level, msg)| *level == tracing::Level::WARN && msg.contains(OVERSIZED_WARN_MSG))
-        .count()
-}
-
-/// Minimal `tracing` subscriber recording the level and `message` field of
-/// every WARN-or-more-severe event (hand-rolled on the `tracing` core API).
-/// ERROR events are captured too so a `warn!` → `error!` regression shows up
-/// in assertion failure output instead of silently vanishing.
-struct WarnCapture(std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
-
-struct MessageVisitor(String);
-
-impl tracing::field::Visit for MessageVisitor {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
-            self.0 = format!("{value:?}");
-        }
-    }
-}
-
-impl tracing::Subscriber for WarnCapture {
-    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
-        *metadata.level() <= tracing::Level::WARN
-    }
-    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
-    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
-    fn event(&self, event: &tracing::Event<'_>) {
-        let mut visitor = MessageVisitor(String::new());
-        event.record(&mut visitor);
-        self.0
-            .lock()
-            .unwrap()
-            .push((*event.metadata().level(), visitor.0));
-    }
-    fn enter(&self, _span: &tracing::span::Id) {}
-    fn exit(&self, _span: &tracing::span::Id) {}
 }
 
 #[given("the TUI is connected to an agent event stream")]
@@ -124,10 +76,10 @@ fn send_frames_and_receive(world: &mut TuiWorld, frames: Vec<Vec<u8>>) -> Vec<Ev
     // dispatcher is installed as the *thread-scoped* default on this step
     // thread only; the client's reader runs in a spawned task on a runtime
     // worker thread, so warnings are observable solely if the client
-    // propagates the connect-time dispatcher into the reader task.
-    let warnings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let dispatch = tracing::Dispatch::new(WarnCapture(std::sync::Arc::clone(&warnings)));
-    let dispatch_guard = tracing::dispatcher::set_default(&dispatch);
+    // propagates the connect-time dispatcher into the reader task. The
+    // capture apparatus is shared with the unit tests
+    // (`infrastructure::warn_capture`) so both targets pin one warn contract.
+    let (warnings, dispatch_guard) = install_warn_capture();
     let mut client = rt.block_on(async move {
         let client_future = Client::connect(&socket_path);
         let server = async move {

@@ -1,4 +1,7 @@
 use super::*;
+use crate::infrastructure::warn_capture::{
+    OVERSIZED_OUTBOUND_WARN_MSG, install_warn_capture, oversized_warn_count, warn_count_containing,
+};
 use tokio::io::AsyncWriteExt;
 
 /// Guard that removes a test's temp dir (and its socket) on drop, so reruns
@@ -244,68 +247,6 @@ async fn oversized_event_drop_is_recorded_for_ui_surfacing() {
     server.await.unwrap();
 }
 
-/// The exact message the client must warn with when dropping an oversized
-/// inbound frame (mirrors quecto-api's UDS client, #1112).
-const OVERSIZED_WARN_MSG: &str = "dropping oversized message from agent";
-
-/// Captured `(level, message)` tracing events, shared with a [`WarnCapture`].
-type CapturedEvents = std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>;
-
-/// How many captured events are exactly-WARN oversized-drop warnings. The
-/// exact-level match rules out a `warn!` → `error!` regression.
-fn oversized_warn_count(captured: &[(tracing::Level, String)]) -> usize {
-    captured
-        .iter()
-        .filter(|(level, msg)| *level == tracing::Level::WARN && msg.contains(OVERSIZED_WARN_MSG))
-        .count()
-}
-
-/// Install a fresh [`WarnCapture`] as the *thread-scoped* tracing default.
-/// Returns the shared capture buffer and the guard keeping it installed.
-fn install_warn_capture() -> (CapturedEvents, tracing::dispatcher::DefaultGuard) {
-    let captured: CapturedEvents = std::sync::Arc::default();
-    let dispatch = tracing::Dispatch::new(WarnCapture(std::sync::Arc::clone(&captured)));
-    let guard = tracing::dispatcher::set_default(&dispatch);
-    (captured, guard)
-}
-
-/// Minimal `tracing` subscriber that records the level and `message` field of
-/// every WARN-or-more-severe event. Hand-rolled on the `tracing` core API so
-/// the test needs no extra capture crate. ERROR events are captured too so a
-/// `warn!` → `error!` regression shows up in assertion failure output.
-struct WarnCapture(CapturedEvents);
-
-struct MessageVisitor(String);
-
-impl tracing::field::Visit for MessageVisitor {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
-            self.0 = format!("{value:?}");
-        }
-    }
-}
-
-impl tracing::Subscriber for WarnCapture {
-    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
-        *metadata.level() <= tracing::Level::WARN
-    }
-    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
-    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
-    fn event(&self, event: &tracing::Event<'_>) {
-        let mut visitor = MessageVisitor(String::new());
-        event.record(&mut visitor);
-        self.0
-            .lock()
-            .unwrap()
-            .push((*event.metadata().level(), visitor.0));
-    }
-    fn enter(&self, _span: &tracing::span::Id) {}
-    fn exit(&self, _span: &tracing::span::Id) {}
-}
-
 /// #1112: dropping an oversized inbound frame must emit `tracing::warn!` (in
 /// addition to the #1047 counter), and the warning must reach a subscriber
 /// that is only installed as the *thread-scoped* default on the connecting
@@ -451,4 +392,75 @@ async fn client_installs_no_global_subscriber() {
     );
 
     server.await.unwrap();
+}
+
+/// #1112 review: an over-cap OUTBOUND command is refused with nothing on the
+/// wire; the drop must warn-log (mirroring the inbound branch and quecto-api's
+/// UDS client) instead of vanishing silently, and the writer must stay alive
+/// so the next command still goes out. The subscriber is thread-scoped only,
+/// so this also pins dispatcher propagation into the spawned writer task.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_outbound_command_drop_warns_and_keeps_writer_alive() {
+    let (listener, socket_path, _dir) = bind_test_socket("oversized-outbound-warn-test");
+
+    let (warnings, _guard) = install_warn_capture();
+
+    // Server: read framed messages, skipping the empty framed-mode hello, and
+    // return the first non-empty payload the writer actually put on the wire.
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut reader = tokio::io::BufReader::new(stream);
+        loop {
+            match quecto_line_io::read_frame_or_legacy_line(&mut reader, MAX_LINE_BYTES)
+                .await
+                .unwrap()
+            {
+                Some(incoming) => {
+                    let bytes = match incoming {
+                        quecto_line_io::Incoming::Frame(b)
+                        | quecto_line_io::Incoming::LegacyLine(b) => b,
+                    };
+                    if bytes.is_empty() {
+                        continue; // framed-mode hello
+                    }
+                    return String::from_utf8(bytes).unwrap();
+                }
+                None => panic!("connection closed before a command arrived"),
+            }
+        }
+    });
+
+    let mut client = Client::connect(&socket_path).await.unwrap();
+    // A prompt whose serialized JSON exceeds the cap: enqueued fine (the
+    // channel accepts it), refused by the writer with nothing on the wire.
+    let huge = Command::Prompt {
+        id: None,
+        message: "x".repeat(MAX_LINE_BYTES + 65_536),
+        streaming_behavior: None,
+    };
+    client.send(&huge).await.unwrap();
+    client.send(&Command::Abort { id: None }).await.unwrap();
+
+    // The writer drains FIFO, so receiving the abort proves the oversized
+    // command was already dropped (and its warning emitted) — no sleeps.
+    let received = tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        received.contains("\"abort\""),
+        "the command after the oversized one must still reach the wire \
+         (writer stays alive); got: {received}"
+    );
+
+    {
+        let captured = warnings.lock().unwrap();
+        assert_eq!(
+            warn_count_containing(&captured, OVERSIZED_OUTBOUND_WARN_MSG),
+            1,
+            "refusing one oversized outbound command must emit exactly one \
+             tracing::warn! visible to the connect-time dispatcher (#1112 review); \
+             captured events: {captured:?}"
+        );
+    }
 }

@@ -485,8 +485,17 @@ impl Client {
         // `get_message` per ref. Sized well above any realistic single-turn
         // message count so ordered `try_send` never hits backpressure in
         // practice.
+        // `with_current_subscriber()` (on both spawned tasks below) carries
+        // the connect-time `tracing` dispatcher into the task, so diagnostics
+        // emitted by the writer or reader (#1112) reach whatever subscriber
+        // the embedder (or a test) had installed when it connected —
+        // including thread-scoped ones. The TUI itself never installs a
+        // subscriber (no-stderr policy), so in the shipped binary these
+        // events stay no-ops.
+        use tracing::instrument::WithSubscriber;
+
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(1024);
-        tokio::spawn(async move {
+        let writer_task = async move {
             if mode == WireMode::Framed
                 && write_message(&mut write_half, b"", mode, MAX_LINE_BYTES)
                     .await
@@ -503,15 +512,22 @@ impl Client {
                     // writer alive — mirroring the reader's skip-and-continue
                     // for oversized frames — instead of tearing down the whole
                     // session for a single per-message validation refusal. (No
-                    // stderr: the TUI owns the terminal.)
-                    Err(FrameError::Oversized { .. }) => continue,
+                    // stderr: the TUI owns the terminal.) Warn-log the drop
+                    // for diagnostics, mirroring the inbound branch and
+                    // quecto-api's UDS client (#1112 review) — a no-op unless
+                    // an embedder or test installs a subscriber.
+                    Err(e @ FrameError::Oversized { .. }) => {
+                        tracing::warn!("dropping oversized outbound command: {e}");
+                        continue;
+                    }
                     // A real transport error (or a protocol version mismatch)
                     // is fatal: stop the writer; the closed channel surfaces
                     // the disconnect to the UI on the next send.
                     Err(_) => break,
                 }
             }
-        });
+        };
+        tokio::spawn(writer_task.with_current_subscriber());
 
         let (tx, rx) = mpsc::channel(256);
         let dropped_oversized = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -521,12 +537,6 @@ impl Client {
         // a length-prefixed frame or a legacy NDJSON line (deprecation
         // window, #1059), with over-cap messages rejected while reading —
         // bounded memory either way (#1003).
-        //
-        // `with_current_subscriber()` carries the connect-time `tracing`
-        // dispatcher into the spawned task, so diagnostics emitted by the
-        // reader (#1112) reach whatever subscriber the embedder (or a test)
-        // had installed when it connected — including thread-scoped ones.
-        use tracing::instrument::WithSubscriber;
         let reader_task = async move {
             let mut reader = BufReader::new(read_half);
             // Reused across iterations so a streaming turn (one small JSON
