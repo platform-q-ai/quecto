@@ -452,6 +452,35 @@ mod tests {
     }
 
     #[test]
+    fn open_sync_creates_sanitized_log_file_and_debug_redacts_path() {
+        let tmp = TempDir::new().unwrap();
+        let log = AuditLog::open_sync(tmp.path(), "cli:sync-session").unwrap();
+        let path = AuditLog::file_path(tmp.path(), "cli:sync-session");
+
+        assert!(path.exists(), "open_sync must create the append log file");
+        assert_eq!(path.file_name().unwrap(), "cli_sync-session.jsonl");
+        let debug = format!("{log:?}");
+        assert!(
+            debug.contains("cli:sync-session"),
+            "debug should name the session: {debug}"
+        );
+        assert!(
+            !debug.contains(tmp.path().to_str().unwrap()),
+            "debug must not expose the filesystem path: {debug}"
+        );
+    }
+
+    #[test]
+    fn unix_to_utc_handles_leap_year_boundaries_and_centuries() {
+        assert_eq!(unix_to_utc(951_782_400), (2000, 2, 29, 0, 0, 0));
+        assert_eq!(unix_to_utc(951_868_800), (2000, 3, 1, 0, 0, 0));
+        assert!(is_leap(2000));
+        assert!(!is_leap(1900));
+        assert!(is_leap(2024));
+        assert!(!is_leap(2025));
+    }
+
+    #[test]
     fn unix_to_utc_epoch() {
         assert_eq!(unix_to_utc(0), (1970, 1, 1, 0, 0, 0));
     }

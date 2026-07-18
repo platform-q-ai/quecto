@@ -385,6 +385,63 @@ mod tests {
         }
     }
 
+    #[test]
+    fn debug_names_base_dir_without_dumping_cache_contents() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileContextSpillStore::new(tmp.path().join("spill-base"));
+        let debug = format!("{store:?}");
+        assert!(
+            debug.contains("spill-base"),
+            "debug should identify the store base dir: {debug}"
+        );
+        assert!(
+            !debug.contains("index_cache"),
+            "debug must not dump cached spill ids/content: {debug}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_entries_seeds_empty_cache_and_append_extends_it() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+        let initial = store.list_entries("new-session").await.unwrap();
+        assert!(initial.is_empty());
+        let mut entry = test_entry();
+        entry.id = "turn9:read:0".into();
+        store.append("new-session", &entry).await.unwrap();
+        let entries = store.list_entries("new-session").await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "turn9:read:0");
+        assert_eq!(entries[0].tool, "bash");
+        assert_eq!(entries[0].tokens, 100);
+    }
+
+    #[tokio::test]
+    async fn recall_cache_miss_short_circuits_even_if_disk_contains_id() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+        store.append("session", &test_entry()).await.unwrap();
+        assert_eq!(store.list_entries("session").await.unwrap().len(), 1);
+        let mut hidden = test_entry();
+        hidden.id = "turn-hidden:bash:0".into();
+        let path = store.spill_path("session");
+        let mut line = serde_json::to_string(&SpillRecord::from(&hidden)).unwrap();
+        line.push('\n');
+        use tokio::io::AsyncWriteExt;
+        let mut file = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .await
+            .unwrap();
+        file.write_all(line.as_bytes()).await.unwrap();
+        file.flush().await.unwrap();
+        let recalled = store.recall("session", "turn-hidden:bash:0").await.unwrap();
+        assert!(
+            recalled.is_none(),
+            "populated index cache should avoid scanning IDs not present in it"
+        );
+    }
+
     #[tokio::test]
     async fn test_append_and_recall() {
         let tmp = TempDir::new().unwrap();

@@ -439,3 +439,79 @@ fn parsed_rules_cache_reuses_by_id_and_invalidates_on_change() {
     let fourth = guard.parsed_rules_for(&a);
     assert!(!Arc::ptr_eq(&first, &fourth));
 }
+
+#[tokio::test]
+async fn broadcast_emitter_stamps_identity_and_serializes_line() {
+    let (tx, mut rx) = tokio::sync::broadcast::channel(4);
+    let emitter = broadcast_emitter(tx, Some("child".into()), Some("parent".into()));
+    emitter(serde_json::json!({"type":"workflow_state","mode":"active"}));
+    let line = rx.recv().await.unwrap();
+    assert!(line.ends_with('\n'));
+    let event: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+    assert_eq!(event["type"], "workflow_state");
+    assert_eq!(event["agent_id"], "child");
+    assert_eq!(event["parent_id"], "parent");
+}
+
+#[test]
+fn parse_step_rejects_missing_large_and_non_numeric_values() {
+    assert_eq!(
+        parse_step(&serde_json::json!({})).unwrap_err(),
+        "missing field: step"
+    );
+    assert!(
+        parse_step(&serde_json::json!({"step": (u32::MAX as u64) + 1}))
+            .unwrap_err()
+            .contains("exceeds valid range")
+    );
+    let err = parse_step(&serde_json::json!({"step": "x".repeat(150)})).unwrap_err();
+    assert!(err.starts_with("invalid step value: "));
+    assert!(
+        err.len() < 130,
+        "long invalid values should be truncated: {err}"
+    );
+}
+
+#[test]
+fn parse_issue_rejects_out_of_range_and_non_string_titles() {
+    assert!(
+        parse_optional_issue(
+            &serde_json::json!({"issueNumber": (u32::MAX as u64) + 1, "issueTitle":"T"})
+        )
+        .unwrap_err()
+        .contains("exceeds u32 range")
+    );
+    assert!(
+        parse_optional_issue(&serde_json::json!({"issueNumber": 1, "issueTitle": 5}))
+            .unwrap_err()
+            .contains("missing field: issueTitle")
+    );
+    assert_eq!(
+        parse_issue(&serde_json::json!({"issueNumber":"42","issueTitle":"Meaning"})).unwrap(),
+        (42, "Meaning".to_string())
+    );
+}
+
+#[tokio::test]
+async fn mutating_actions_emit_workflow_events_but_status_does_not() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let captured = events.clone();
+    let tool = WorkflowTool::with_event_emitter(
+        Arc::new(Mutex::new(
+            WorkflowEngine::new(WorkflowConfig::default(), true).unwrap(),
+        )),
+        Arc::new(move |event| captured.lock().unwrap().push(event)),
+    );
+    let status = tool.execute(r#"{"action":"status"}"#).await.unwrap();
+    assert!(!status.is_error);
+    assert!(events.lock().unwrap().is_empty());
+    let selected = tool
+        .execute(r#"{"action":"select_template","template":"feature"}"#)
+        .await
+        .unwrap();
+    assert!(!selected.is_error);
+    let events = events.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["type"], "workflow_state");
+    assert_eq!(events[0]["activeTemplate"]["id"], "feature");
+}

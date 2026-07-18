@@ -657,3 +657,48 @@ fn test_discover_empty_world_keeps_default_fallback_intact() {
     assert_eq!(discovery.source_dir, None);
     assert_eq!(discovery.warning, None);
 }
+
+#[test]
+fn test_configured_workflow_dir_must_exist_and_never_falls_back_to_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    write_file(
+        &home.join(".quecto/workflows/home.json"),
+        &template_file_json("Home"),
+    );
+    let config = config_in(dir.path(), r#"{"workflow":{"dir":"missing"}}"#);
+    let error = discover_workflow_templates(&config, dir.path(), Some(&home)).unwrap_err();
+    let text = error.to_string();
+    assert!(text.contains("workflow.dir is not a directory"), "{text}");
+    assert!(text.contains("missing"), "{text}");
+}
+
+#[test]
+fn test_auto_discovered_empty_workflow_dir_is_error_not_builtin_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".quecto/workflows")).unwrap();
+    let config = config_in(dir.path(), "{}");
+    let error = discover_workflow_templates(&config, dir.path(), None).unwrap_err();
+    let text = error.to_string();
+    assert!(text.contains("contains no templates"), "{text}");
+}
+
+#[test]
+fn test_template_file_rejects_non_object_and_duplicate_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let wf = dir.path().join(".quecto/workflows");
+    write_file(&wf.join("array.json"), "[]");
+    let err = load_workflow_templates_from_dir(&wf)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("expected a template object"), "{err}");
+    std::fs::remove_file(wf.join("array.json")).unwrap();
+    write_file(
+        &wf.join("dupe.json"),
+        r#"{"label":"D","description":"d","steps":[{"key":"same","label":"One","phase":"green"},{"key":"same","label":"Two","phase":"red"}]}"#,
+    );
+    let err = load_workflow_templates_from_dir(&wf)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("duplicate step key `same`"), "{err}");
+}
