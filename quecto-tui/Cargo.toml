@@ -1,6 +1,6 @@
 [package]
 name = "quecto-tui"
-version = "0.14.2"
+version = "0.14.3"
 edition = "2024"
 description = "Lightweight terminal UI client for quecto"
 license = "LicenseRef-Proprietary"
@@ -22,6 +22,11 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "tim
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 quecto-line-io = { version = "0.2.0", path = "../quecto-line-io" }
+
+# Warn-log dropped oversized inbound frames (#1112). The TUI installs no
+# subscriber itself — events are no-ops unless an embedder/test installs one,
+# so the raw-mode terminal stays clean (no-stderr policy).
+tracing = "0.1"
 
 # Unicode width calculation (no other terminal crate)
 unicode-width = "0.2"

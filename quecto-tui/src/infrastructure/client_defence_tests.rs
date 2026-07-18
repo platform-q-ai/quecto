@@ -120,6 +120,8 @@ async fn client_connect_drops_invalid_utf8_instead_of_normalizing_it() {
 async fn client_connect_handles_line_just_under_cap() {
     let (listener, socket_path, _dir) = bind_test_socket("under-cap-client-test");
 
+    let (warnings, _guard) = install_warn_capture();
+
     // Content of MAX-1 bytes; with the newline the line is exactly MAX bytes —
     // the largest frame the client accepts.
     let (frame, expected_token) = token_frame_of_len(MAX_LINE_BYTES - 1);
@@ -140,12 +142,23 @@ async fn client_connect_handles_line_just_under_cap() {
         other => panic!("line just under cap should be handled normally, got {other:?}"),
     }
 
+    {
+        let captured = warnings.lock().unwrap();
+        assert!(
+            captured.is_empty(),
+            "an in-bounds frame must not emit any WARN-or-worse tracing event (#1112); \
+             captured events: {captured:?}"
+        );
+    }
+
     server.await.unwrap();
 }
 
 #[tokio::test]
 async fn client_connect_drops_line_exactly_at_cap() {
     let (listener, socket_path, _dir) = bind_test_socket("at-cap-client-test");
+
+    let (warnings, _guard) = install_warn_capture();
 
     // Content of exactly MAX bytes: with the newline the line is one byte over
     // the cap — the first frame that must be dropped. Pins the flip point so
@@ -176,6 +189,18 @@ async fn client_connect_drops_line_exactly_at_cap() {
             );
         }
         other => panic!("expected the event after the at-cap frame, got {other:?}"),
+    }
+
+    {
+        let captured = warnings.lock().unwrap();
+        // The smallest frame that must be dropped is also the smallest frame
+        // that must warn (#1112).
+        assert_eq!(
+            oversized_warn_count(&captured),
+            1,
+            "the at-cap boundary drop must emit exactly one tracing::warn! (#1112); \
+             captured events: {captured:?}"
+        );
     }
 
     server.await.unwrap();
@@ -214,6 +239,215 @@ async fn oversized_event_drop_is_recorded_for_ui_surfacing() {
         client.dropped_oversized_events(),
         1,
         "the client must record the dropped oversized event line so the UI can surface it (#1047)"
+    );
+
+    server.await.unwrap();
+}
+
+/// The exact message the client must warn with when dropping an oversized
+/// inbound frame (mirrors quecto-api's UDS client, #1112).
+const OVERSIZED_WARN_MSG: &str = "dropping oversized message from agent";
+
+/// Captured `(level, message)` tracing events, shared with a [`WarnCapture`].
+type CapturedEvents = std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>;
+
+/// How many captured events are exactly-WARN oversized-drop warnings. The
+/// exact-level match rules out a `warn!` → `error!` regression.
+fn oversized_warn_count(captured: &[(tracing::Level, String)]) -> usize {
+    captured
+        .iter()
+        .filter(|(level, msg)| *level == tracing::Level::WARN && msg.contains(OVERSIZED_WARN_MSG))
+        .count()
+}
+
+/// Install a fresh [`WarnCapture`] as the *thread-scoped* tracing default.
+/// Returns the shared capture buffer and the guard keeping it installed.
+fn install_warn_capture() -> (CapturedEvents, tracing::dispatcher::DefaultGuard) {
+    let captured: CapturedEvents = std::sync::Arc::default();
+    let dispatch = tracing::Dispatch::new(WarnCapture(std::sync::Arc::clone(&captured)));
+    let guard = tracing::dispatcher::set_default(&dispatch);
+    (captured, guard)
+}
+
+/// Minimal `tracing` subscriber that records the level and `message` field of
+/// every WARN-or-more-severe event. Hand-rolled on the `tracing` core API so
+/// the test needs no extra capture crate. ERROR events are captured too so a
+/// `warn!` → `error!` regression shows up in assertion failure output.
+struct WarnCapture(CapturedEvents);
+
+struct MessageVisitor(String);
+
+impl tracing::field::Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = format!("{value:?}");
+        }
+    }
+}
+
+impl tracing::Subscriber for WarnCapture {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        *metadata.level() <= tracing::Level::WARN
+    }
+    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut visitor = MessageVisitor(String::new());
+        event.record(&mut visitor);
+        self.0
+            .lock()
+            .unwrap()
+            .push((*event.metadata().level(), visitor.0));
+    }
+    fn enter(&self, _span: &tracing::span::Id) {}
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
+/// #1112: dropping an oversized inbound frame must emit `tracing::warn!` (in
+/// addition to the #1047 counter), and the warning must reach a subscriber
+/// that is only installed as the *thread-scoped* default on the connecting
+/// thread. The reader runs in a spawned task on another worker thread, so
+/// this passes only if the client propagates the connect-time dispatcher into
+/// the reader task.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_event_drop_emits_warning_through_propagated_dispatcher() {
+    let (listener, socket_path, _dir) = bind_test_socket("oversized-drop-warned-test");
+
+    // Thread-scoped only — deliberately NOT a global default, so a warning is
+    // observable solely via dispatcher propagation into the spawned reader.
+    let (warnings, _guard) = install_warn_capture();
+
+    let (frame, _) = token_frame_of_len(MAX_LINE_BYTES + 65_536);
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream.write_all(frame.as_bytes()).await.unwrap();
+        stream.write_all(b"\n").await.unwrap();
+        stream
+            .write_all(b"{\"type\":\"token\",\"token\":\"after\"}\n")
+            .await
+            .unwrap();
+        stream.flush().await.unwrap();
+    });
+
+    let mut client = Client::connect(&socket_path).await.unwrap();
+    // Receiving the event queued after the oversized frame proves the reader
+    // has already taken the oversized branch — no sleeps, no race.
+    match tokio::time::timeout(std::time::Duration::from_secs(2), client.recv())
+        .await
+        .unwrap()
+    {
+        Some(Event::Token { token }) => assert_eq!(token, "after"),
+        other => panic!("expected the event after the oversized frame, got {other:?}"),
+    }
+
+    {
+        let captured = warnings.lock().unwrap();
+        // Exactly one WARN for exactly one oversized frame: `count == 1`
+        // rules out a warn-at-connect or warn-on-every-frame implementation,
+        // and the exact-level match rules out an `error!` regression.
+        assert_eq!(
+            oversized_warn_count(&captured),
+            1,
+            "dropping one oversized inbound frame must emit exactly one tracing::warn! \
+             visible to the connect-time dispatcher (#1112); captured events: {captured:?}"
+        );
+    }
+
+    server.await.unwrap();
+}
+
+/// #1112: the warning is per-drop (matching quecto-api's UDS client), not
+/// once-per-connection — three oversized frames must produce three warnings.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn repeated_oversized_drops_emit_one_warning_each() {
+    let (listener, socket_path, _dir) = bind_test_socket("oversized-drop-warn-each-test");
+
+    let (warnings, _guard) = install_warn_capture();
+
+    let (frame, _) = token_frame_of_len(MAX_LINE_BYTES + 65_536);
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        for _ in 0..3 {
+            stream.write_all(frame.as_bytes()).await.unwrap();
+            stream.write_all(b"\n").await.unwrap();
+        }
+        stream
+            .write_all(b"{\"type\":\"token\",\"token\":\"after\"}\n")
+            .await
+            .unwrap();
+        stream.flush().await.unwrap();
+    });
+
+    let mut client = Client::connect(&socket_path).await.unwrap();
+    match tokio::time::timeout(std::time::Duration::from_secs(2), client.recv())
+        .await
+        .unwrap()
+    {
+        Some(Event::Token { token }) => assert_eq!(token, "after"),
+        other => panic!("expected the event after the oversized frames, got {other:?}"),
+    }
+
+    {
+        let captured = warnings.lock().unwrap();
+        assert_eq!(
+            oversized_warn_count(&captured),
+            3,
+            "each dropped oversized frame must emit its own warning (#1112); \
+             captured events: {captured:?}"
+        );
+    }
+
+    server.await.unwrap();
+}
+
+/// #1112 no-stderr policy: the client must never install a tracing subscriber
+/// itself — with no dispatcher installed by the embedder, driving an
+/// oversized drop must leave the process's global dispatcher unset, so the
+/// warn is a no-op on a raw-mode terminal instead of smearing stderr.
+#[tokio::test]
+async fn client_installs_no_global_subscriber() {
+    let (listener, socket_path, _dir) = bind_test_socket("no-global-subscriber-test");
+
+    let (frame, _) = token_frame_of_len(MAX_LINE_BYTES + 65_536);
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream.write_all(frame.as_bytes()).await.unwrap();
+        stream.write_all(b"\n").await.unwrap();
+        stream
+            .write_all(b"{\"type\":\"token\",\"token\":\"after\"}\n")
+            .await
+            .unwrap();
+        stream.flush().await.unwrap();
+    });
+
+    let mut client = Client::connect(&socket_path).await.unwrap();
+    match tokio::time::timeout(std::time::Duration::from_secs(2), client.recv())
+        .await
+        .unwrap()
+    {
+        Some(Event::Token { token }) => assert_eq!(token, "after"),
+        other => panic!("expected the event after the oversized frame, got {other:?}"),
+    }
+
+    // Observed from a fresh thread (which has no thread-scoped default), the
+    // dispatcher falls back to the process-global default — which must still
+    // be the no-op subscriber. (`dispatcher::has_been_set()` cannot be used
+    // here: it also flips on thread-scoped `set_default`, which the client's
+    // own dispatcher propagation performs.)
+    let global_is_noop = std::thread::spawn(|| {
+        tracing::dispatcher::get_default(|dispatch| {
+            dispatch.is::<tracing::subscriber::NoSubscriber>()
+        })
+    })
+    .join()
+    .unwrap();
+    assert!(
+        global_is_noop,
+        "the TUI client must never install a global tracing subscriber; the \
+         oversized-drop warn must stay a no-op unless the embedder installs one (#1112)"
     );
 
     server.await.unwrap();

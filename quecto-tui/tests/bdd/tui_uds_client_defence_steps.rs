@@ -31,7 +31,60 @@ pub struct TuiDefenceStream {
     pending_frames: Vec<Vec<u8>>,
     /// Oversized-drop count read from the client after receiving (#1047).
     dropped_oversized: Option<u64>,
+    /// `(level, message)` pairs of WARN-or-more-severe `tracing` events
+    /// captured while frames were exchanged (#1112: oversized inbound drops
+    /// must be warning-logged — at exactly WARN, so the level is kept).
+    captured_warnings: Vec<(tracing::Level, String)>,
     _temp_dir: TempDir,
+}
+
+/// The exact message the client must warn with when dropping an oversized
+/// inbound frame (mirrors quecto-api's UDS client, #1112).
+const OVERSIZED_WARN_MSG: &str = "dropping oversized message from agent";
+
+/// How many captured events are exactly-WARN oversized-drop warnings.
+fn oversized_warn_count(captured: &[(tracing::Level, String)]) -> usize {
+    captured
+        .iter()
+        .filter(|(level, msg)| *level == tracing::Level::WARN && msg.contains(OVERSIZED_WARN_MSG))
+        .count()
+}
+
+/// Minimal `tracing` subscriber recording the level and `message` field of
+/// every WARN-or-more-severe event (hand-rolled on the `tracing` core API).
+/// ERROR events are captured too so a `warn!` → `error!` regression shows up
+/// in assertion failure output instead of silently vanishing.
+struct WarnCapture(std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
+
+struct MessageVisitor(String);
+
+impl tracing::field::Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = format!("{value:?}");
+        }
+    }
+}
+
+impl tracing::Subscriber for WarnCapture {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        *metadata.level() <= tracing::Level::WARN
+    }
+    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut visitor = MessageVisitor(String::new());
+        event.record(&mut visitor);
+        self.0
+            .lock()
+            .unwrap()
+            .push((*event.metadata().level(), visitor.0));
+    }
+    fn enter(&self, _span: &tracing::span::Id) {}
+    fn exit(&self, _span: &tracing::span::Id) {}
 }
 
 #[given("the TUI is connected to an agent event stream")]
@@ -54,6 +107,7 @@ fn tui_connected_to_agent_event_stream(world: &mut TuiWorld) {
         expected_under_cap_token: None,
         pending_frames: Vec::new(),
         dropped_oversized: None,
+        captured_warnings: Vec::new(),
         _temp_dir: temp_dir,
     });
 }
@@ -66,6 +120,14 @@ fn send_frames_and_receive(world: &mut TuiWorld, frames: Vec<Vec<u8>>) -> Vec<Ev
     let socket_path = stream.socket_path.clone();
     let listener = stream.listener.take().expect("listener");
     let rt = &stream.runtime;
+    // Capture WARN events emitted while frames are exchanged (#1112). The
+    // dispatcher is installed as the *thread-scoped* default on this step
+    // thread only; the client's reader runs in a spawned task on a runtime
+    // worker thread, so warnings are observable solely if the client
+    // propagates the connect-time dispatcher into the reader task.
+    let warnings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let dispatch = tracing::Dispatch::new(WarnCapture(std::sync::Arc::clone(&warnings)));
+    let dispatch_guard = tracing::dispatcher::set_default(&dispatch);
     let mut client = rt.block_on(async move {
         let client_future = Client::connect(&socket_path);
         let server = async move {
@@ -90,6 +152,8 @@ fn send_frames_and_receive(world: &mut TuiWorld, frames: Vec<Vec<u8>>) -> Vec<Ev
     }
     stream.dropped_oversized = Some(client.dropped_oversized_events());
     drop(client);
+    drop(dispatch_guard);
+    stream.captured_warnings = warnings.lock().unwrap().clone();
     events
 }
 
@@ -128,6 +192,33 @@ fn tui_reports_one_oversized_agent_event_was_dropped(world: &mut TuiWorld) {
         Some(1),
         "the client must record exactly one dropped oversized event line \
          so the UI can surface the loss (#1047)"
+    );
+}
+
+#[then("the TUI emits a warning log for the dropped oversized event")]
+fn tui_emits_warning_for_dropped_oversized_event(world: &mut TuiWorld) {
+    let stream = world.tui_defence_stream.as_ref().expect("stream");
+    // Exactly one WARN for exactly one oversized frame: `count == 1` rules
+    // out a warn-at-connect or warn-on-every-frame implementation, and the
+    // exact-level match rules out an `error!` regression (#1112).
+    assert_eq!(
+        oversized_warn_count(&stream.captured_warnings),
+        1,
+        "dropping one oversized inbound frame must emit exactly one \
+         tracing::warn! visible to the connect-time dispatcher (#1112); \
+         captured events: {:?}",
+        stream.captured_warnings
+    );
+}
+
+#[then("the TUI emits no warning log")]
+fn tui_emits_no_warning_log(world: &mut TuiWorld) {
+    let stream = world.tui_defence_stream.as_ref().expect("stream");
+    assert!(
+        stream.captured_warnings.is_empty(),
+        "handling an in-bounds event must not emit any WARN-or-worse tracing \
+         event (#1112); captured events: {:?}",
+        stream.captured_warnings
     );
 }
 

@@ -521,7 +521,13 @@ impl Client {
         // a length-prefixed frame or a legacy NDJSON line (deprecation
         // window, #1059), with over-cap messages rejected while reading —
         // bounded memory either way (#1003).
-        tokio::spawn(async move {
+        //
+        // `with_current_subscriber()` carries the connect-time `tracing`
+        // dispatcher into the spawned task, so diagnostics emitted by the
+        // reader (#1112) reach whatever subscriber the embedder (or a test)
+        // had installed when it connected — including thread-scoped ones.
+        use tracing::instrument::WithSubscriber;
+        let reader_task = async move {
             let mut reader = BufReader::new(read_half);
             // Reused across iterations so a streaming turn (one small JSON
             // event per token) does not allocate a fresh payload buffer per
@@ -555,13 +561,18 @@ impl Client {
                             }
                         }
                     }
-                    Err(FrameError::Oversized { .. }) => {
+                    Err(e @ FrameError::Oversized { .. }) => {
                         // Drop over-cap messages without printing (the TUI
                         // owns the terminal, so stderr would smear
                         // diagnostics over the UI) — but COUNT the drop so
                         // the UI can surface the loss instead of the
-                        // session silently appearing frozen (#1047).
+                        // session silently appearing frozen (#1047), and
+                        // warn-log it for diagnostics (#1112). The TUI never
+                        // installs a subscriber itself, so the warning is a
+                        // no-op unless an embedder or test provides one —
+                        // the no-stderr policy holds.
                         dropped_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        tracing::warn!("dropping oversized message from agent: {e}");
                     }
                     Err(_e) => {
                         // Socket error or an explicit protocol version
@@ -573,7 +584,8 @@ impl Client {
                     }
                 }
             }
-        });
+        };
+        tokio::spawn(reader_task.with_current_subscriber());
 
         Ok(Self {
             cmd_tx,
