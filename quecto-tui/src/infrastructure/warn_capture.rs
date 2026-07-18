@@ -14,10 +14,6 @@
 /// inbound frame (mirrors quecto-api's UDS client, #1112).
 pub const OVERSIZED_WARN_MSG: &str = "dropping oversized message from agent";
 
-/// The exact message the client must warn with when the writer refuses an
-/// oversized outbound command (mirrors quecto-api's UDS client, #1112 review).
-pub const OVERSIZED_OUTBOUND_WARN_MSG: &str = "dropping oversized outbound command";
-
 /// Captured `(level, message)` tracing events, shared with a [`WarnCapture`].
 pub type CapturedEvents = std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>;
 

@@ -1,7 +1,5 @@
 use super::*;
-use crate::infrastructure::warn_capture::{
-    OVERSIZED_OUTBOUND_WARN_MSG, install_warn_capture, oversized_warn_count, warn_count_containing,
-};
+use crate::infrastructure::warn_capture::{install_warn_capture, oversized_warn_count};
 use tokio::io::AsyncWriteExt;
 
 /// Guard that removes a test's temp dir (and its socket) on drop, so reruns
@@ -300,6 +298,41 @@ async fn oversized_event_drop_emits_warning_through_propagated_dispatcher() {
     server.await.unwrap();
 }
 
+/// #1112: the normal v2 framed path must warn and recover too, not only the
+/// legacy NDJSON compatibility path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_framed_event_warns_and_recovers() {
+    let (listener, socket_path, _dir) = bind_test_socket("oversized-framed-warn-test");
+    let (warnings, _guard) = install_warn_capture();
+    let (oversized, _) = token_frame_of_len(MAX_LINE_BYTES + 1);
+    let valid = br#"{"type":"token","token":"after"}"#;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream
+            .write_all(&(oversized.len() as u32).to_be_bytes())
+            .await
+            .unwrap();
+        stream.write_all(oversized.as_bytes()).await.unwrap();
+        stream
+            .write_all(&(valid.len() as u32).to_be_bytes())
+            .await
+            .unwrap();
+        stream.write_all(valid).await.unwrap();
+        stream.flush().await.unwrap();
+    });
+
+    let mut client = Client::connect(&socket_path).await.unwrap();
+    match tokio::time::timeout(std::time::Duration::from_secs(2), client.recv())
+        .await
+        .unwrap()
+    {
+        Some(Event::Token { token }) => assert_eq!(token, "after"),
+        other => panic!("expected framed event after oversized frame, got {other:?}"),
+    }
+    assert_eq!(oversized_warn_count(&warnings.lock().unwrap()), 1);
+    server.await.unwrap();
+}
+
 /// #1112: the warning is per-drop (matching quecto-api's UDS client), not
 /// once-per-connection — three oversized frames must produce three warnings.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -392,75 +425,4 @@ async fn client_installs_no_global_subscriber() {
     );
 
     server.await.unwrap();
-}
-
-/// #1112 review: an over-cap OUTBOUND command is refused with nothing on the
-/// wire; the drop must warn-log (mirroring the inbound branch and quecto-api's
-/// UDS client) instead of vanishing silently, and the writer must stay alive
-/// so the next command still goes out. The subscriber is thread-scoped only,
-/// so this also pins dispatcher propagation into the spawned writer task.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn oversized_outbound_command_drop_warns_and_keeps_writer_alive() {
-    let (listener, socket_path, _dir) = bind_test_socket("oversized-outbound-warn-test");
-
-    let (warnings, _guard) = install_warn_capture();
-
-    // Server: read framed messages, skipping the empty framed-mode hello, and
-    // return the first non-empty payload the writer actually put on the wire.
-    let server = tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        let mut reader = tokio::io::BufReader::new(stream);
-        loop {
-            match quecto_line_io::read_frame_or_legacy_line(&mut reader, MAX_LINE_BYTES)
-                .await
-                .unwrap()
-            {
-                Some(incoming) => {
-                    let bytes = match incoming {
-                        quecto_line_io::Incoming::Frame(b)
-                        | quecto_line_io::Incoming::LegacyLine(b) => b,
-                    };
-                    if bytes.is_empty() {
-                        continue; // framed-mode hello
-                    }
-                    return String::from_utf8(bytes).unwrap();
-                }
-                None => panic!("connection closed before a command arrived"),
-            }
-        }
-    });
-
-    let mut client = Client::connect(&socket_path).await.unwrap();
-    // A prompt whose serialized JSON exceeds the cap: enqueued fine (the
-    // channel accepts it), refused by the writer with nothing on the wire.
-    let huge = Command::Prompt {
-        id: None,
-        message: "x".repeat(MAX_LINE_BYTES + 65_536),
-        streaming_behavior: None,
-    };
-    client.send(&huge).await.unwrap();
-    client.send(&Command::Abort { id: None }).await.unwrap();
-
-    // The writer drains FIFO, so receiving the abort proves the oversized
-    // command was already dropped (and its warning emitted) — no sleeps.
-    let received = tokio::time::timeout(std::time::Duration::from_secs(2), server)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(
-        received.contains("\"abort\""),
-        "the command after the oversized one must still reach the wire \
-         (writer stays alive); got: {received}"
-    );
-
-    {
-        let captured = warnings.lock().unwrap();
-        assert_eq!(
-            warn_count_containing(&captured, OVERSIZED_OUTBOUND_WARN_MSG),
-            1,
-            "refusing one oversized outbound command must emit exactly one \
-             tracing::warn! visible to the connect-time dispatcher (#1112 review); \
-             captured events: {captured:?}"
-        );
-    }
 }

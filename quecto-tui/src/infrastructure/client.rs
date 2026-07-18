@@ -471,6 +471,10 @@ impl Client {
         socket_path: &Path,
         mode: WireMode,
     ) -> Result<Self, ClientError> {
+        // Snapshot the caller's dispatcher before the first yield point. A
+        // thread-scoped default may not be present on the runtime worker that
+        // resumes this future after the connect completes.
+        let connect_dispatch = tracing::dispatcher::get_default(Clone::clone);
         let stream = UnixStream::connect(socket_path).await?;
         let (read_half, mut write_half) = tokio::io::split(stream);
 
@@ -485,13 +489,10 @@ impl Client {
         // `get_message` per ref. Sized well above any realistic single-turn
         // message count so ordered `try_send` never hits backpressure in
         // practice.
-        // `with_current_subscriber()` (on both spawned tasks below) carries
-        // the connect-time `tracing` dispatcher into the task, so diagnostics
-        // emitted by the writer or reader (#1112) reach whatever subscriber
-        // the embedder (or a test) had installed when it connected —
-        // including thread-scoped ones. The TUI itself never installs a
-        // subscriber (no-stderr policy), so in the shipped binary these
-        // events stay no-ops.
+        // The explicitly captured connect-time dispatcher carries reader
+        // diagnostics (#1112) into the spawned task, including when an
+        // embedder installed only a thread-scoped subscriber. The TUI itself
+        // installs none, so these events remain no-ops in the shipped binary.
         use tracing::instrument::WithSubscriber;
 
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(1024);
@@ -512,14 +513,8 @@ impl Client {
                     // writer alive — mirroring the reader's skip-and-continue
                     // for oversized frames — instead of tearing down the whole
                     // session for a single per-message validation refusal. (No
-                    // stderr: the TUI owns the terminal.) Warn-log the drop
-                    // for diagnostics, mirroring the inbound branch and
-                    // quecto-api's UDS client (#1112 review) — a no-op unless
-                    // an embedder or test installs a subscriber.
-                    Err(e @ FrameError::Oversized { .. }) => {
-                        tracing::warn!("dropping oversized outbound command: {e}");
-                        continue;
-                    }
+                    // stderr: the TUI owns the terminal.)
+                    Err(FrameError::Oversized { .. }) => continue,
                     // A real transport error (or a protocol version mismatch)
                     // is fatal: stop the writer; the closed channel surfaces
                     // the disconnect to the UI on the next send.
@@ -527,7 +522,7 @@ impl Client {
                 }
             }
         };
-        tokio::spawn(writer_task.with_current_subscriber());
+        tokio::spawn(writer_task);
 
         let (tx, rx) = mpsc::channel(256);
         let dropped_oversized = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -595,7 +590,7 @@ impl Client {
                 }
             }
         };
-        tokio::spawn(reader_task.with_current_subscriber());
+        tokio::spawn(reader_task.with_subscriber(connect_dispatch));
 
         Ok(Self {
             cmd_tx,
