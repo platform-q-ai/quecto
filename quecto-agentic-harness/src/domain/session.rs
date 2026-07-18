@@ -8,6 +8,7 @@ use super::{error::DomainError, message::Message};
 pub type SpillEntries = Arc<Vec<SpillIndex>>;
 pub type SpillIndexList<'a> =
     Pin<Box<dyn Future<Output = Result<SpillEntries, DomainError>> + Send + 'a>>;
+pub type SpillPresence<'a> = Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + 'a>>;
 
 /// Prefix for user-facing interactive chat sessions.
 pub const USER_CHAT_PREFIX: &str = "chat-";
@@ -297,6 +298,13 @@ pub trait ContextSpillStore: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>>;
 
     fn list_entries(&self, session_key: &str) -> SpillIndexList<'_>;
+
+    /// Return whether any spill entry exists without requiring callers to
+    /// materialize the complete index. Stores may override this with a cheap
+    /// metadata check; the default preserves compatibility for simple stores.
+    fn has_entries<'a>(&'a self, session_key: &'a str) -> SpillPresence<'a> {
+        Box::pin(async move { Ok(!self.list_entries(session_key).await?.is_empty()) })
+    }
 
     /// Clear all spill entries for a session (e.g. on /reload).
     /// Truncates spill.jsonl to empty so the manifest rebuilds clean.

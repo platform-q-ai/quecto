@@ -6,7 +6,7 @@ Feature: Cache-safe spilled session memory
 
   Background:
     Given an isolated agent session with a controllable OpenAI provider
-    And the model will complete after creating, discovering, and recalling spilled session memory with "memory handled"
+    And the model will complete after creating, listing, and recalling spilled session memory with "memory handled"
 
   # AC1: every request sees the same static front guidance even though the
   # spill index grows between tool-loop turns.
@@ -16,7 +16,7 @@ Feature: Cache-safe spilled session memory
 
   # AC2/AC4: the static tool contract is the discovery channel;
   # recall("list") supplies the live index and recall("<id>") retrieves content.
-  Scenario: A model discovers and recalls spilled session memory on demand
+  Scenario: A model can list and recall spilled session memory on demand
     When I run quecto agent -s spill-cache-safe --system "You are the cache-safe memory test agent." -m "exercise spilled session memory"
     Then the recall tool should advertise its full session-memory index
     And the model should receive the complete live spill index on demand

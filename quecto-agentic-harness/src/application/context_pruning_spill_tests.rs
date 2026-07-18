@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::SpillEntry;
+use crate::domain::session::{SpillEntry, SpillIndex};
 
 fn assistant_on_turn(content: &str, turn: u32) -> Message {
     let mut m = Message::assistant(content, vec![]);
@@ -234,14 +234,14 @@ async fn manifest_text_stays_static_across_tool_and_message_spills() {
     let mut assistant = assistant_on_turn(&big, 1);
     messages::spill_conversation_message(&mut assistant, &store, "s").await;
     let entries = store.list_entries("s").await.unwrap();
-    let text = build_manifest_text(&entries);
+    let text = build_manifest_text();
     assert!(!text.contains("turn1:bash:0"));
     assert!(!text.contains("turn1:msg:assistant"));
     assert!(!text.contains("echo hello"));
     assert_eq!(
-        text,
-        build_manifest_text(&entries[..1]),
-        "manifest bytes must not depend on spill count or kind"
+        entries.len(),
+        2,
+        "test setup should create both spill kinds"
     );
 }
 

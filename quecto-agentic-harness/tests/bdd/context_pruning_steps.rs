@@ -1089,10 +1089,10 @@ fn given_user_prompt_exceeding_budget(world: &mut QuectoWorld) {
 }
 
 /// Run the production context-management pipeline (mirroring
-/// `apply_context_pruning`): refresh the manifest (so an existing one is
-/// pinned in context), file every not-yet-spilled conversation message
+/// `apply_context_pruning`): ensure the manifest exists (so it is pinned in
+/// context), file every not-yet-spilled conversation message
 /// through the creation-time spill writer (#1046), enforce the demotion-
-/// ladder ceiling, and refresh the manifest again if anything spilled.
+/// ladder ceiling, and insert static guidance if the pass created a first spill.
 fn run_spilling_sliding_window(world: &mut QuectoWorld) {
     let store = world.context_spill_store.as_ref().unwrap().clone();
     let max_tokens = world

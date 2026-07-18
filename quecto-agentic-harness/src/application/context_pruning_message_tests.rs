@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use super::messages::*;
 use super::*;
 use crate::domain::message::{Message, Role};
-use crate::domain::session::SpillEntry;
+use crate::domain::session::{SpillEntry, SpillIndex};
 
 /// Minimal in-memory spill store for the creation-time spill path.
 #[derive(Debug, Default)]

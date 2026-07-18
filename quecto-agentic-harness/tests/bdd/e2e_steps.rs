@@ -1066,10 +1066,9 @@ fn given_isolated_session_with_controllable_openai(world: &mut QuectoWorld) {
 /// model would after the dynamic front-positioned spill manifest is removed.
 /// Two ordinary tool calls create distinct entries, recall("list") exposes
 /// their live IDs, and a later recall retrieves one indexed entry. Assertions
-/// tie each tool result to its tool-call ID and prove that the chosen ID came
-/// from the preceding list result.
+/// tie each tool result to its tool-call ID and prove list/recall consistency.
 #[given(
-    expr = "the model will complete after creating, discovering, and recalling spilled session memory with {string}"
+    expr = "the model will complete after creating, listing, and recalling spilled session memory with {string}"
 )]
 fn given_model_exercises_spilled_memory(world: &mut QuectoWorld, final_text: String) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1079,12 +1078,12 @@ fn given_model_exercises_spilled_memory(world: &mut QuectoWorld, final_text: Str
         let responses = [
             openai_tool_call_json_with_id(
                 "bash",
-                r#"{"command":"printf first-spill-payload"}"#,
+                r#"{"command":"printf first-spill-; printf '\\150\\151\\144\\144\\145\\156\\055\\146\\151\\162\\163\\164\\055\\143\\157\\156\\164\\145\\156\\164'"}"#,
                 "call_bash_first",
             ),
             openai_tool_call_json_with_id(
                 "bash",
-                r#"{"command":"printf second-spill-payload"}"#,
+                r#"{"command":"printf second-spill-; printf '\\150\\151\\144\\144\\145\\156\\055\\163\\145\\143\\157\\156\\144\\055\\143\\157\\156\\164\\145\\156\\164'"}"#,
                 "call_bash_second",
             ),
             openai_tool_call_json_with_id("recall", r#"{"id":"list"}"#, "call_recall_list"),
@@ -3221,23 +3220,20 @@ fn then_model_received_complete_live_spill_index(world: &mut QuectoWorld) {
         "turn0:msg:user",
         "turn1:bash:0",
         "turn2:bash:0",
-        "printf first-spill-payload",
-        "printf second-spill-payload",
+        "printf first-spill-; printf",
+        "printf second-spill-; printf",
     ] {
         assert!(
             index.contains(expected),
             "recall(\"list\") omitted live index data {expected:?}: {index}"
         );
     }
-    assert!(
-        !index
-            .lines()
-            .any(|line| line.trim() == "first-spill-payload")
-            && !index
-                .lines()
-                .any(|line| line.trim() == "second-spill-payload"),
-        "recall(\"list\") should return metadata, not full spilled content: {index}"
-    );
+    for hidden_content in ["hidden-first-content", "hidden-second-content"] {
+        assert!(
+            !index.contains(hidden_content),
+            "recall(\"list\") leaked full spill content {hidden_content:?}: {index}"
+        );
+    }
 }
 
 #[then("the model should recall content using an id from that index")]
@@ -3267,7 +3263,7 @@ fn then_model_recalled_content_from_index(world: &mut QuectoWorld) {
         .find_map(|body| tool_result(body, "call_recall_content"))
         .expect("recall-by-id did not return a tool result");
     assert_eq!(
-        content, "second-spill-payload",
+        content, "second-spill-hidden-second-content",
         "recall-by-id returned the wrong spilled content"
     );
 }
