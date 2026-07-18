@@ -246,4 +246,49 @@ mod tests {
             plain
         );
     }
+
+    #[test]
+    fn sync_items_preserves_selected_value_and_clamps_when_removed() {
+        let mut list = SelectList::new(make_items(&["A", "B", "C"]), 10);
+        list.handle_input(&Key::Down);
+        assert_eq!(list.selected_item().unwrap().value, "B");
+
+        list.sync_items(make_items(&["C", "B", "A"]));
+        assert_eq!(list.selected_item().unwrap().value, "B");
+        assert_eq!(list.item_count(), 3);
+
+        list.sync_items(make_items(&["C"]));
+        assert_eq!(list.selected_item().unwrap().value, "C");
+        assert_eq!(list.item_count(), 1);
+    }
+
+    #[test]
+    fn route_overlay_key_closes_only_after_terminal_result() {
+        let mut slot = Some(SelectList::new(make_items(&["A", "B"]), 10));
+
+        assert_eq!(route_overlay_key(&mut slot, &Key::Down), None);
+        assert!(
+            slot.is_some(),
+            "pending navigation should keep overlay open"
+        );
+
+        assert_eq!(
+            route_overlay_key(&mut slot, &Key::Enter),
+            Some("B".to_string())
+        );
+        assert!(slot.is_none(), "selection should close overlay");
+
+        let mut slot = Some(SelectList::new(make_items(&["A"]), 10));
+        assert_eq!(route_overlay_key(&mut slot, &Key::Escape), None);
+        assert!(slot.is_none(), "dismissal should close overlay");
+    }
+
+    #[test]
+    fn unhandled_key_is_not_consumed_and_empty_enter_stays_pending() {
+        let mut list = SelectList::new(vec![], 10);
+
+        assert!(!list.handle_input(&Key::Char('x')));
+        assert!(list.handle_input(&Key::Enter));
+        assert_eq!(list.take_result(), SelectResult::Pending);
+    }
 }

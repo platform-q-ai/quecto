@@ -437,4 +437,44 @@ mod tests {
             "truecolor bg with zero components must survive: {result:?}"
         );
     }
+
+    #[test]
+    fn text_style_helpers_emit_expected_sgr_codes() {
+        let cases = [
+            (italic("i"), "\x1b[3mi\x1b[0m"),
+            (underline("u"), "\x1b[4mu\x1b[0m"),
+            (reverse("r"), "\x1b[7mr\x1b[0m"),
+            (magenta("m"), "\x1b[35mm\x1b[0m"),
+        ];
+
+        for (actual, expected) in cases {
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn semantic_helpers_delegate_to_expected_colours() {
+        assert_eq!(accent("x"), cyan("x"));
+        assert_eq!(muted("x"), gray("x"));
+        assert_eq!(success("x"), green("x"));
+        assert_eq!(error("x"), red("x"));
+        assert_eq!(warning("x"), yellow("x"));
+        assert_eq!(spinner("x"), cyan("x"));
+        assert_eq!(tool_name("x"), blue("x"));
+        assert_eq!(tool_title("x"), bold("x"));
+    }
+
+    #[test]
+    fn background_helpers_and_overlay_emit_expected_codes() {
+        assert_eq!(tool_pending_bg("p"), format!("{BG_PENDING}p\x1b[0m"));
+        assert_eq!(tool_success_bg("s"), format!("{BG_SUCCESS}s\x1b[0m"));
+        assert_eq!(tool_error_bg("e"), format!("{BG_ERROR}e\x1b[0m"));
+
+        let overlay = apply_overlay_bg("hi", 5);
+        assert!(
+            overlay.starts_with(BG_OVERLAY),
+            "overlay should use default-bg code: {overlay:?}"
+        );
+        assert_eq!(crate::interface::utils::visible_width(&overlay), 5);
+    }
 }

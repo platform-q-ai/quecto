@@ -163,3 +163,7 @@ impl Component for EffortSelector {
 
     fn invalidate(&mut self) {}
 }
+
+#[cfg(test)]
+#[path = "effort_selector_tests.rs"]
+mod tests;
