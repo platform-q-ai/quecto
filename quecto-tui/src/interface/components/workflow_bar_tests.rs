@@ -537,3 +537,115 @@ fn from_subagent_snapshot_clamps_untrusted_total() {
     assert_eq!(small.steps.len(), 5);
     assert_eq!(small.total, 5);
 }
+
+#[test]
+fn selecting_template_visibility_requires_real_engagement() {
+    let mut state = WorkflowBarState {
+        mode: Some("selecting_template".to_string()),
+        template_count: 3,
+        ..Default::default()
+    };
+
+    assert!(
+        !state.is_visible(),
+        "available templates alone should stay dormant"
+    );
+
+    state.template_name = Some("Feature".to_string());
+    assert!(
+        state.is_visible(),
+        "active template should make selector visible"
+    );
+
+    state.template_name = None;
+    state.issue_number = Some(42);
+    assert!(
+        state.is_visible(),
+        "active issue should make selector visible"
+    );
+}
+
+#[test]
+fn compact_line_distinguishes_starting_current_and_complete() {
+    let mut starting = WorkflowBarState {
+        template_name: Some("Feature".to_string()),
+        workflow_auto_continue: true,
+        ..Default::default()
+    };
+    let starting_line = render_compact_line(&starting).expect("template makes bar visible");
+    assert!(
+        starting_line.contains("starting…"),
+        "empty visible workflow should say starting: {starting_line}"
+    );
+    assert!(
+        starting_line.contains("auto:on"),
+        "auto state should be shown: {starting_line}"
+    );
+
+    starting.steps = vec![WorkflowStepInfo {
+        id: 1,
+        label: "Review \u{1b}[31munsafe".to_string(),
+        phase: "qa\u{1b}[31m".to_string(),
+        done: false,
+    }];
+    starting.total = 1;
+    let current_line = render_compact_line(&starting).expect("steps make bar visible");
+    assert!(
+        current_line.contains("Step 1/1"),
+        "current step missing: {current_line}"
+    );
+    assert!(
+        current_line.contains("QA"),
+        "custom phase should be upper-cased and displayed: {current_line}"
+    );
+    assert!(
+        !current_line.contains("\u{1b}[31munsafe"),
+        "control sequences in label should be sanitized: {current_line:?}"
+    );
+
+    let complete = WorkflowBarState {
+        mode: Some("complete".to_string()),
+        template_name: Some("Feature".to_string()),
+        ..Default::default()
+    };
+    let complete_line = render_compact_line(&complete).expect("complete template is visible");
+    assert!(
+        complete_line.contains("✓ Workflow complete!"),
+        "complete marker missing: {complete_line}"
+    );
+}
+
+#[test]
+fn parse_workflow_event_accepts_compat_fields_and_defaults_progress() {
+    let data = serde_json::json!({
+        "steps": [
+            {"id": 7, "label": "Done", "phase": "ci", "done": true},
+            {"index": 8, "label": "Next", "phase": "review", "done": false},
+            {"index": "bad", "label": "Ignored", "phase": "review", "done": false}
+        ],
+        "active_issue": [123, "Fix coverage"],
+        "active_template": {"label": "Chore"},
+        "available_templates": [{"id": "a"}, {"id": "b"}],
+        "automation": {"auto_continue": true, "completion_nudge": true},
+        "mode": "active"
+    });
+
+    let state = parse_workflow_event(&data);
+
+    assert_eq!(state.steps.len(), 2);
+    assert_eq!(state.steps[0].id, 7);
+    assert_eq!(
+        state.done, 1,
+        "missing progress should default from done steps"
+    );
+    assert_eq!(
+        state.total, 2,
+        "missing progress should default from valid steps"
+    );
+    assert_eq!(state.issue_number, Some(123));
+    assert_eq!(state.issue_title.as_deref(), Some("Fix coverage"));
+    assert_eq!(state.template_name.as_deref(), Some("Chore"));
+    assert_eq!(state.template_count, 2);
+    assert!(state.workflow_auto_continue);
+    assert!(state.workflow_completion_nudge);
+}

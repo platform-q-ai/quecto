@@ -86,6 +86,78 @@ fn parse_config_without_value_is_ignored() {
     assert!(flags.config_path.is_none());
 }
 
+#[test]
+fn parse_config_system_and_disable_tools() {
+    let flags = parse_flags(&args(
+        "--config /tmp/quecto.toml --system hello --disable-tool write --disable-tool edit",
+    ));
+
+    assert_eq!(
+        flags.config_path.as_deref(),
+        Some(Path::new("/tmp/quecto.toml"))
+    );
+    assert_eq!(flags.system_prompt.as_deref(), Some("hello"));
+    assert_eq!(
+        flags.disable_tools,
+        vec!["write".to_string(), "edit".to_string()]
+    );
+}
+
+#[test]
+fn parse_trailing_disable_tool_is_ignored_without_value() {
+    let flags = parse_flags(&args("--disable-tool"));
+    assert!(flags.disable_tools.is_empty());
+}
+
+#[test]
+fn parse_system_file_reads_prompt_but_literal_takes_precedence() {
+    let dir = tmp_dir("systemfile");
+    let file = dir.join("prompt.txt");
+    std::fs::write(&file, "file prompt").unwrap();
+
+    let flags = parse_flags(&[
+        "quecto-tui".to_string(),
+        "--system-file".to_string(),
+        file.display().to_string(),
+    ]);
+    assert_eq!(flags.system_prompt.as_deref(), Some("file prompt"));
+
+    let flags = parse_flags(&[
+        "quecto-tui".to_string(),
+        "--system-file".to_string(),
+        file.display().to_string(),
+        "--system".to_string(),
+        "literal".to_string(),
+    ]);
+    assert_eq!(flags.system_prompt.as_deref(), Some("literal"));
+
+    let flags = parse_flags(&[
+        "quecto-tui".to_string(),
+        "--system".to_string(),
+        "literal".to_string(),
+        "--system-file".to_string(),
+        file.display().to_string(),
+    ]);
+    assert_eq!(flags.system_prompt.as_deref(), Some("literal"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn workflow_defaults_only_add_prompt_when_workflow_enabled_and_unset() {
+    let mut flags = parse_flags(&args(""));
+    apply_workflow_defaults(&mut flags);
+    assert!(flags.system_prompt.is_none());
+
+    let mut flags = parse_flags(&args("--workflow"));
+    apply_workflow_defaults(&mut flags);
+    let prompt = flags.system_prompt.as_deref().expect("default prompt");
+    assert!(prompt.contains("workflow tool"));
+
+    let mut flags = parse_flags(&args("--workflow --system custom"));
+    apply_workflow_defaults(&mut flags);
+    assert_eq!(flags.system_prompt.as_deref(), Some("custom"));
+}
+
 // ── stderr line bookkeeping ──────────────────────────────────────────
 
 #[test]

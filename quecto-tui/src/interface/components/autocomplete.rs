@@ -353,4 +353,39 @@ mod tests {
             other => panic!("expected Selected, got {:?}", other),
         }
     }
+
+    #[test]
+    fn dismiss_clears_but_selected_accept_retains_suggestions() {
+        let mut ac = Autocomplete::new(test_commands(), 5);
+        ac.update("/");
+        assert_eq!(ac.selected_index(), 0);
+        assert_eq!(ac.selected_value(), Some("/model".to_string()));
+        assert_eq!(ac.suggestion_count(), 4);
+
+        ac.handle_input(&Key::Enter);
+        assert_eq!(
+            ac.take_result(),
+            AutocompleteResult::Selected("/model".to_string())
+        );
+        assert_eq!(
+            ac.suggestion_count(),
+            4,
+            "accepting closes without clearing cached suggestions"
+        );
+
+        ac.dismiss();
+        assert_eq!(ac.suggestion_count(), 0);
+        assert!(!ac.is_active());
+    }
+
+    #[test]
+    fn no_match_is_inactive_and_enter_is_not_consumed() {
+        let mut ac = Autocomplete::new(test_commands(), 5);
+        ac.update("/zz");
+
+        assert!(!ac.is_active());
+        assert_eq!(ac.suggestion_count(), 0);
+        assert!(!ac.handle_input(&Key::Enter));
+        assert_eq!(ac.take_result(), AutocompleteResult::Pending);
+    }
 }
