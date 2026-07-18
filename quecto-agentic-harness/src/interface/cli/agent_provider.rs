@@ -511,5 +511,9 @@ fn build_single_provider(
 }
 
 #[cfg(test)]
+#[path = "agent_provider_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 #[path = "agent_provider_xai_tests.rs"]
 mod xai_tests;

@@ -667,5 +667,9 @@ pub(super) fn dispatch_tool_result(
 }
 
 #[cfg(test)]
+#[path = "uds_ext_protocol_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 #[path = "uds_ext_protocol_tests.rs"]
 mod tests;
