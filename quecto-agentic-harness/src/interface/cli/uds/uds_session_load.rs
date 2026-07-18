@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "uds_session_load_tests.rs"]
+mod tests;
+
 pub(super) async fn load_session(
     store: &dyn SessionStore,
     key: &str,

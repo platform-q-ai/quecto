@@ -10,6 +10,10 @@ use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use uds_session_load::load_session;
 
+#[cfg(test)]
+#[path = "uds_lifecycle_cov_tests.rs"]
+mod cov_tests;
+
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;

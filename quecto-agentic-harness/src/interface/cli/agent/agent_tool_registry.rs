@@ -243,6 +243,10 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
 /// Bounds the file size before reading (defense-in-depth against a hostile or
 /// corrupt spec) and removes the single-use file once read so it does not
 /// linger beside the socket.
+#[cfg(test)]
+#[path = "agent_tool_registry_cov_tests.rs"]
+mod cov_tests;
+
 fn load_workflow_spec(
     path: &std::path::Path,
 ) -> Result<crate::domain::workflow::WorkflowSpec, String> {

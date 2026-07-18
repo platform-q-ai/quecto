@@ -139,6 +139,10 @@ fn extract_id(arguments: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "recall_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::session::{SpillEntry, SpillIndex};
