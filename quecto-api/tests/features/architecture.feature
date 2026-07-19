@@ -7,9 +7,11 @@ Feature: Architecture boundaries
   Scenario: Domain layer has no outward imports
     Then the domain source should not import from infrastructure
     And the domain source should not import from application
+    And the domain source should not import from interface
 
   Scenario: Application layer has no infrastructure imports
     Then the application source should not import from infrastructure
+    And the application source should not import from interface
 
   Scenario: Application layer uses ports, not concrete transport types
     Then the application source should not contain "UnixStream"

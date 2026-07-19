@@ -400,7 +400,7 @@ fn check_body_contains(world: &mut ApiWorld, fragment: String) {
 // ── Architecture steps ───────────────────────────────────────────────────────
 
 #[then(
-    regex = r"^the (domain|application) source should not import from (infrastructure|application|domain)$"
+    regex = r"^the (domain|application) source should not import from (infrastructure|application|domain|interface)$"
 )]
 fn layer_should_not_import(_world: &mut ApiWorld, source_layer: String, forbidden_layer: String) {
     let source_dir = format!("src/{}", source_layer);
@@ -432,7 +432,17 @@ fn check_imports(dir: &str, pattern: &str) -> Vec<String> {
         if entry.extension().is_some_and(|e| e == "rs") {
             if let Ok(content) = std::fs::read_to_string(&entry) {
                 for (i, line) in content.lines().enumerate() {
-                    if line.contains("use ") && line.contains(pattern) {
+                    // Flag the forbidden `crate::<layer>` path wherever it
+                    // appears, not just on `use ` lines. This catches grouped
+                    // imports (`use crate::{infrastructure::...}`) and inline
+                    // fully-qualified references (`crate::infrastructure::...`)
+                    // that a `use `-prefixed check would miss. Comment lines are
+                    // ignored so documentation may still mention a layer.
+                    let trimmed = line.trim_start();
+                    if trimmed.starts_with("//") {
+                        continue;
+                    }
+                    if line.contains(pattern) {
                         violations.push(format!("{}:{}: {}", entry.display(), i + 1, line.trim()));
                     }
                 }
