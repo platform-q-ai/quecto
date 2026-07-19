@@ -263,3 +263,81 @@ fn build_agent_provider_rejects_endpoint_over_limit_before_provider_creation() {
     let err = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap_err();
     assert!(err.contains("exceeding the maximum"), "{err}");
 }
+
+fn endpoint(
+    prefix: &str,
+    api_base: &str,
+) -> crate::infrastructure::config::OpenAiCompatibleEndpoint {
+    crate::infrastructure::config::OpenAiCompatibleEndpoint {
+        prefix: prefix.to_string(),
+        api_key: "k".to_string(),
+        api_base: api_base.to_string(),
+        allow_remote_http: true,
+    }
+}
+
+#[test]
+fn build_agent_provider_requires_both_prefix_and_api_base() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let client = reqwest::Client::new();
+
+    for (prefix, api_base, case) in [
+        ("", "http://127.0.0.1:9/v1", "blank prefix"),
+        ("   ", "http://127.0.0.1:9/v1", "whitespace-only prefix"),
+        ("p", "", "blank api_base"),
+        ("p", "   ", "whitespace-only api_base"),
+    ] {
+        let mut config = Config::default();
+        config.providers.openai_compatible.endpoints = vec![endpoint(prefix, api_base)];
+
+        let err = match build_agent_provider(&config, tmp.path(), &client) {
+            Ok(_) => panic!("{case}: incomplete endpoint must be rejected"),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("requires prefix and api_base"),
+            "{case}: unexpected error: {err}"
+        );
+    }
+}
+
+#[test]
+fn build_agent_provider_rejects_duplicate_endpoint_prefixes_case_insensitively() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = Config::default();
+    // Prefixes are canonicalised to lowercase, so these two collide.
+    config.providers.openai_compatible.endpoints = vec![
+        endpoint("Local", "http://127.0.0.1:9/v1"),
+        endpoint("local", "http://127.0.0.1:10/v1"),
+    ];
+
+    let err = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect_err("a duplicate prefix must be rejected");
+    assert!(
+        err.contains("duplicate openai_compatible/provider prefix"),
+        "expected the duplicate-prefix error, got: {err}"
+    );
+    // The offending prefix is named in its original casing so the user can find it.
+    assert!(
+        err.contains("local"),
+        "error does not name the prefix: {err}"
+    );
+}
+
+#[test]
+fn build_agent_provider_errors_when_nothing_is_configured() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config::default();
+
+    let err = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect_err("an empty configuration has no providers to route to");
+    assert!(
+        err.contains("no LLM providers configured"),
+        "expected the no-providers error, got: {err}"
+    );
+    // The message must tell the user how to fix it.
+    assert!(
+        err.contains("quecto auth login"),
+        "error lacks remediation: {err}"
+    );
+}

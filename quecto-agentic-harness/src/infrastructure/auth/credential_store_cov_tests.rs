@@ -59,3 +59,61 @@ fn remove_missing_still_saves_empty_file() {
     let text = std::fs::read_to_string(store.path()).unwrap();
     assert!(text.contains("credentials"));
 }
+
+#[test]
+fn load_snapshot_reports_unreadable_credentials_file() {
+    let dir = TempDir::new().expect("tempdir");
+    // A directory where the credentials file is expected: readable as an entry,
+    // but `read_to_string` fails with EISDIR.
+    std::fs::create_dir(dir.path().join("credentials.json")).expect("create dir in place of file");
+
+    let err = CredentialStore::new(dir.path())
+        .load_snapshot()
+        .expect_err("reading a directory as the credentials file must fail");
+
+    assert!(
+        err.to_string().contains("failed to read credentials"),
+        "expected the read-stage message, got: {err}"
+    );
+}
+
+#[test]
+fn load_snapshot_reports_malformed_credentials_json() {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::write(dir.path().join("credentials.json"), "{ not json").expect("write bad json");
+
+    let err = CredentialStore::new(dir.path())
+        .load_snapshot()
+        .expect_err("malformed JSON must fail");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("failed to parse credentials"),
+        "expected the parse-stage message (distinct from the read stage), got: {msg}"
+    );
+    // The raw file contents must not be echoed back in the error.
+    assert!(
+        !msg.contains("not json"),
+        "parse error leaked file contents: {msg}"
+    );
+}
+
+#[test]
+fn save_all_reports_credentials_dir_creation_failure() {
+    let dir = TempDir::new().expect("tempdir");
+    // Make the would-be parent directory a regular file so create_dir_all fails.
+    let blocker = dir.path().join("blocked");
+    std::fs::write(&blocker, b"not a directory").expect("write blocker file");
+
+    let store = CredentialStore::new(blocker.join("nested"));
+    let err = store
+        .store(credential("openai", "sk-secret"))
+        .expect_err("saving under a non-directory parent must fail");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("failed to create credentials dir"),
+        "expected the dir-creation message, got: {msg}"
+    );
+    assert!(!msg.contains("sk-secret"), "error leaked the token: {msg}");
+}

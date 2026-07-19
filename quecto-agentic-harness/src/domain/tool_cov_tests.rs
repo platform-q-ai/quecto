@@ -16,15 +16,18 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-fn sandboxed_tools() -> (Arc<PathBuf>, Arc<Sandbox>) {
-    let workspace = Arc::new(std::env::temp_dir().join("quecto-tool-set-session-key-cov"));
+fn sandboxed_tools() -> (tempfile::TempDir, Arc<PathBuf>, Arc<Sandbox>) {
+    // A per-test TempDir: a fixed shared path under the system temp dir collides
+    // across concurrent and repeated runs.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let workspace = Arc::new(dir.path().to_path_buf());
     let sandbox = Arc::new(Sandbox::new(Some((*workspace).clone()), false));
-    (workspace, sandbox)
+    (dir, workspace, sandbox)
 }
 
 #[test]
 fn concrete_tools_without_session_state_accept_default_set_session_key() {
-    let (workspace, sandbox) = sandboxed_tools();
+    let (_workspace_dir, workspace, sandbox) = sandboxed_tools();
     let (tx, _rx) = tokio::sync::mpsc::channel(1);
     let workflow_engine = Arc::new(Mutex::new(
         WorkflowEngine::new(

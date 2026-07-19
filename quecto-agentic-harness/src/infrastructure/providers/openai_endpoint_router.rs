@@ -61,10 +61,6 @@ impl LlmProvider for OpenAiEndpointRouter {
         &self.provider_name
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn chat<'a>(
         &'a self,
         request: ChatRequest<'a>,

@@ -3,9 +3,6 @@ use super::*;
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
 use crate::domain::provider::{ChatRequest, LlmProvider};
-use crate::infrastructure::auth::credential_store::CredentialStore;
-use std::collections::HashSet;
-use std::sync::Arc;
 
 #[test]
 fn create_openai_provider_rejects_remote_http_base() {
@@ -99,78 +96,7 @@ async fn downcast_inner_provider_trait_surface_defaults_are_exercised() {
 }
 
 #[test]
-fn real_provider_as_any_downcasts_without_network() {
-    let client = reqwest::Client::new();
-
-    let openai = openai::OpenAiProvider::with_client(
-        "sk-test".to_string(),
-        Some("http://127.0.0.1:9/v1".to_string()),
-        client.clone(),
-    );
-    assert!(
-        openai
-            .as_any()
-            .downcast_ref::<openai::OpenAiProvider>()
-            .is_some()
-    );
-
-    let anthropic = anthropic::AnthropicProvider::with_client(
-        "sk-ant-test".to_string(),
-        Some("http://127.0.0.1:9".to_string()),
-        client.clone(),
-    );
-    assert!(
-        anthropic
-            .as_any()
-            .downcast_ref::<anthropic::AnthropicProvider>()
-            .is_some()
-    );
-
-    let codex = codex::CodexProvider::with_api_key(
-        "sk-test".to_string(),
-        Some("http://127.0.0.1:9/v1".to_string()),
-        client,
-    );
-    assert!(
-        codex
-            .as_any()
-            .downcast_ref::<codex::CodexProvider>()
-            .is_some()
-    );
-
-    let chat: Arc<dyn LlmProvider> = Arc::new(DowncastInnerProvider);
-    let responses: Arc<dyn LlmProvider> = Arc::new(DowncastInnerProvider);
-    let router = openai_endpoint_router::OpenAiEndpointRouter::new(
-        "openai".to_string(),
-        chat,
-        responses,
-        HashSet::from(["gpt-reason".to_string()]),
-    );
-    assert!(
-        router
-            .as_any()
-            .downcast_ref::<openai_endpoint_router::OpenAiEndpointRouter>()
-            .is_some()
-    );
-
-    let tmp = tempfile::TempDir::new().unwrap();
-    let refreshable = refreshable::RefreshableProvider::new(refreshable::RefreshableConfig {
-        inner: Arc::new(DowncastInnerProvider),
-        store: Arc::new(CredentialStore::new(tmp.path())),
-        provider_name: "refreshable".to_string(),
-        credential_provider: "refreshable".to_string(),
-        refresh_fn: Arc::new(|_, _| Box::pin(async { Ok("new-token".to_string()) })),
-        factory: Arc::new(|_| Arc::new(DowncastInnerProvider)),
-    });
-    assert!(
-        refreshable
-            .as_any()
-            .downcast_ref::<refreshable::RefreshableProvider>()
-            .is_some()
-    );
-}
-
-#[test]
+#[serial_test::serial]
 fn env_allows_custom_provider_hosts_when_truthy() {
     // SAFETY: this test mutates a process-wide environment variable and restores it before return.
     unsafe { std::env::set_var("QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS", "true") };

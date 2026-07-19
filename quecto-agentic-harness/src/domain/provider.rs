@@ -389,8 +389,9 @@ mod tests {
         assert_eq!(EffortLevel::None.as_str(), "none");
         assert_eq!(EffortLevel::XHigh.as_str(), "xhigh");
         for level in ["none", "low", "medium", "high", "xhigh"] {
-            let parsed = EffortLevel::parse(level)
-                .expect("OpenAI-documented effort level must parse (#1066)");
+            let parsed = EffortLevel::parse(level).unwrap_or_else(|| {
+                panic!("OpenAI-documented effort level '{level}' must parse (#1066)")
+            });
             assert_eq!(
                 parsed.as_str(),
                 level,

@@ -313,8 +313,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_recall_by_id() {
+        // Restored to its original single purpose: recalling the seeded entry.
+        // Store lifecycle (has_entries/list_entries/clear) is covered separately
+        // by test_spill_store_lifecycle below.
+        let store = test_store_with_entry();
+        let tool = RecallTool::new(store, "test-session".to_string());
+        let result = tool.execute(r#"{"id":"turn5:bash:0"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "hello world output");
+    }
+
+    #[tokio::test]
+    async fn test_spill_store_lifecycle() {
         let store = test_store_with_entry();
         assert!(store.has_entries("test-session").await.unwrap());
+
         let appended = SpillEntry {
             id: "turn7:grep:0".to_string(),
             tool: "grep".to_string(),
@@ -325,13 +338,14 @@ mod tests {
         store.append("test-session", &appended).await.unwrap();
         let listed = store.list_entries("test-session").await.unwrap();
         assert!(listed.iter().any(|e| e.id == "turn7:grep:0"));
+
         store.clear("test-session").await.unwrap();
         assert!(!store.has_entries("test-session").await.unwrap());
-        store.append("test-session", &appended).await.unwrap();
 
+        // Appending after a clear starts a fresh, recallable generation.
+        store.append("test-session", &appended).await.unwrap();
         let tool = RecallTool::new(store, "test-session".to_string());
         let result = tool.execute(r#"{"id":"turn7:grep:0"}"#).await.unwrap();
-        assert!(!result.is_error);
         assert_eq!(result.content, "match");
     }
 

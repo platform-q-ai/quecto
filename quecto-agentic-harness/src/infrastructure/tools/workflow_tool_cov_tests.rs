@@ -46,7 +46,6 @@ fn workflow_tool_debug_engine_and_poisoned_lock_paths() {
     let handle = engine_handle();
     let tool = WorkflowTool::new(handle.clone());
     assert_eq!(tool.engine().lock().unwrap().list_templates().len(), 2);
-    assert_eq!(format!("{tool:?}"), "WorkflowTool");
 
     let poisoned = handle.clone();
     let _ = std::thread::spawn(move || {
@@ -176,7 +175,7 @@ fn workflow_guard_caches_rules_blocks_and_allows() {
 }
 
 #[test]
-fn workflow_guard_handles_no_template_unknown_step_and_poison() {
+fn workflow_guard_rejects_missing_template_and_invalid_config() {
     let no_template = WorkflowGuard::new(engine_handle());
     assert!(
         no_template

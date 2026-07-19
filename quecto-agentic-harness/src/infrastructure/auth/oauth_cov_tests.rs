@@ -68,11 +68,16 @@ async fn refresh_xai_token_posts_form_and_parses_success() {
 
 #[tokio::test]
 async fn wait_for_oauth_callback_zero_timeout_errors_without_hanging() {
-    let err = wait_for_oauth_callback("state", 0)
+    // Bind on an OS-allocated port rather than the fixed production port, so the
+    // test cannot pass by way of a bind failure on a machine already using it.
+    let err = wait_for_oauth_callback_at("127.0.0.1:0", "/callback", "state", 0)
         .await
-        .unwrap_err()
+        .expect_err("a zero timeout must fail rather than hang")
         .to_string();
-    assert!(err.contains("timed out") || err.contains("address already in use"));
+    assert!(
+        err.contains("timed out"),
+        "expected a timeout error, got: {err}"
+    );
 }
 
 #[tokio::test]

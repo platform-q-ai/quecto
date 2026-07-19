@@ -158,7 +158,6 @@ async fn execute_await_exit_signal_wakes_immediately_with_reason() {
     let tmp = tempfile::TempDir::new().unwrap();
     let socket = tmp.path().join("exit.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    let (_tx_keepalive, _rx_keepalive) = tokio::sync::oneshot::channel::<()>();
     let (exit_tx, _exit_rx) = new_exit_signal_channel();
     let (tool, registry) = tool_with_entry(
         "exiter",

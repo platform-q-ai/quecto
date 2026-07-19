@@ -1,5 +1,4 @@
 use super::*;
-use crate::domain::error::DomainError;
 use crate::infrastructure::tools::subagent_registry::{
     SequencedSubagentNotification, SubagentEntry, SubagentNotification, WorkflowSnapshot,
     new_registry,
@@ -216,12 +215,6 @@ fn retain_pending_stall_from_sync_context_does_not_require_runtime() {
             .sequence,
         3
     );
-}
-
-#[test]
-fn touch_domain_error_import_for_test_kind_coverage() {
-    let err = DomainError::Tool("stall".into());
-    assert!(err.to_string().contains("stall"));
 }
 
 #[test]

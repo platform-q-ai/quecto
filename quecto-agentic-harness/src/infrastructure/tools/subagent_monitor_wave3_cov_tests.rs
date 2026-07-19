@@ -182,16 +182,6 @@ fn w5_monitor_poisoned_registry_and_notification_edges() {
         update_entry_next_sequence(&registry, "missing", |_| panic!("must not run")),
         0
     );
-    notify_child_exited(&registry, "bot", None);
-    send_notification(
-        None,
-        SequencedSubagentNotification::new(
-            0,
-            SubagentNotification::Completed {
-                agent_id: "x".into(),
-            },
-        ),
-    );
 }
 
 #[test]

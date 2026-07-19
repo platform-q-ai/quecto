@@ -176,14 +176,20 @@ async fn send_subagent_command_connect_timeout_and_closed_errors() {
     let err = send_subagent_uds_command_with_timeout(
         &closed_sock,
         r#"{"type":"get_state"}"#,
-        std::time::Duration::from_millis(200),
+        // Generous: the server closes immediately, so this must never be the
+        // timeout path. A short budget here races the assertion on loaded CI.
+        std::time::Duration::from_secs(5),
     )
     .await
     .unwrap_err();
+    let msg = err.to_string();
     assert!(
-        err.to_string().contains("closed connection")
-            || err.to_string().contains("read from subagent failed"),
-        "{err}"
+        msg.contains("closed connection") || msg.contains("read from subagent failed"),
+        "expected a closed-connection error, not a timeout: {msg}"
+    );
+    assert!(
+        !msg.contains("timed out"),
+        "raced into the timeout path: {msg}"
     );
     server.await.unwrap();
 }

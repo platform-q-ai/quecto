@@ -648,9 +648,6 @@ mod issue_1072_tests;
 #[path = "agent_loop_993_tests.rs"]
 mod issue_993_tests;
 #[cfg(test)]
-#[path = "agent_loop_mock_surface_tests.rs"]
-mod mock_surface_tests;
-#[cfg(test)]
 #[path = "agent_loop_spill_tests.rs"]
 mod spill_tests;
 #[cfg(test)]

@@ -233,7 +233,7 @@ async fn test_ssrf_restricted_urls() {
         let result = tool
             .execute(&format!(r#"{{"url":"{url}"}}"#))
             .await
-            .expect("restricted URL checks should complete");
+            .unwrap_or_else(|e| panic!("{label}: tool execution failed: {e}"));
         assert!(result.is_error, "{label}: request should be rejected");
         assert!(
             result.content.contains("restricted"),

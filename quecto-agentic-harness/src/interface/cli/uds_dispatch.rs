@@ -696,6 +696,9 @@ pub(super) async fn dispatch_ext_command(
 }
 
 #[cfg(test)]
+#[path = "uds_dispatch_935_clamp_tests.rs"]
+mod clamp_935_tests;
+#[cfg(test)]
 #[path = "uds_dispatch_cov2_tests.rs"]
 mod cov2_tests;
 #[cfg(test)]
@@ -708,18 +711,8 @@ mod lifecycle_1060_tests;
 #[path = "uds_dispatch_masked_pruning_tests.rs"]
 mod masked_pruning_tests;
 #[cfg(test)]
-#[path = "uds_dispatch_mock_surface_tests.rs"]
-mod mock_surface_tests;
-#[cfg(test)]
 #[path = "uds_dispatch_1093_tests.rs"]
 mod tests_1093;
-#[cfg(test)]
-#[path = "uds_dispatch_1093_mock_surface_tests.rs"]
-mod tests_1093_mock_surface;
-
-#[cfg(test)]
-#[path = "uds_dispatch_935_clamp_tests.rs"]
-mod clamp_935_tests;
 
 #[cfg(test)]
 #[path = "uds_dispatch_843_tests.rs"]

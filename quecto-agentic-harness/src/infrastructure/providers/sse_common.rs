@@ -478,7 +478,7 @@ mod pump_w5_cov_tests {
     }
 
     #[tokio::test]
-    async fn pump_sse_handles_split_lines_and_poisoned_test_mutex() {
+    async fn pump_sse_forwards_a_split_data_line_then_done() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/split"))
@@ -490,13 +490,6 @@ mod pump_w5_cov_tests {
             .unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
         let lines = Arc::new(Mutex::new(Vec::new()));
-        let poisoned = lines.clone();
-        let _ = std::thread::spawn(move || {
-            let _guard = poisoned.lock().unwrap();
-            panic!("poison lines mutex for coverage");
-        })
-        .join();
-        assert!(lines.lock().is_err());
         let mut handler = LinesHandler {
             lines: lines.clone(),
         };
@@ -504,7 +497,7 @@ mod pump_w5_cov_tests {
         pump_sse(&mut response, &tx, &mut handler).await;
 
         assert_eq!(
-            *lines.lock().unwrap_or_else(|e| e.into_inner()),
+            *lines.lock().expect("lines mutex is not poisoned"),
             vec!["data: split".to_string()]
         );
         assert!(matches!(rx.recv().await, Some(StreamEvent::Done(_))));

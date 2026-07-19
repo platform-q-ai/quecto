@@ -19,7 +19,7 @@ fn find_subagent<'a>(v: &'a serde_json::Value, id: &str) -> &'a serde_json::Valu
         .expect("subagents array")
         .iter()
         .find(|s| s["agentId"] == id)
-        .expect("missing expected subagent in forwarded event")
+        .unwrap_or_else(|| panic!("missing {id} in forwarded event"))
 }
 
 #[test]

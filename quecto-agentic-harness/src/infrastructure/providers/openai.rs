@@ -311,10 +311,6 @@ impl LlmProvider for OpenAiProvider {
         &self.provider_name
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn chat(
         &self,
         request: ChatRequest<'_>,

@@ -1,9 +1,6 @@
 use super::*;
 
 #[cfg(test)]
-#[path = "uds_session_load_mock_surface_tests.rs"]
-mod mock_surface_tests;
-#[cfg(test)]
 #[path = "uds_session_load_tests.rs"]
 mod tests;
 

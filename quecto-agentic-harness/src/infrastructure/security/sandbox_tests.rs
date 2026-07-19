@@ -371,3 +371,51 @@ fn test_with_allowlist_constructor_and_clone() {
     assert!(cloned.validate_path("/tmp/ws/file.txt").is_ok());
     assert!(cloned.validate_command("curl evil.com").is_err());
 }
+
+#[test]
+fn validate_path_resolves_textually_when_workspace_does_not_exist() {
+    // A workspace that has not been created yet must still produce a meaningful
+    // prefix check rather than silently allowing everything.
+    let base = tempfile::tempdir().expect("tempdir");
+    let missing_workspace = base.path().join("not-created-yet");
+    let sandbox = Sandbox::new(Some(missing_workspace.clone()), true);
+
+    let inside = sandbox
+        .validate_path(missing_workspace.join("file.txt").to_str().expect("utf-8"))
+        .expect("a path under the (absent) workspace is allowed");
+    assert!(inside.starts_with(&missing_workspace));
+
+    let err = sandbox
+        .validate_path(base.path().join("elsewhere.txt").to_str().expect("utf-8"))
+        .expect_err("a sibling of the absent workspace must be rejected");
+    assert!(
+        matches!(err, SandboxError::OutsideWorkspace(_, _)),
+        "expected OutsideWorkspace, got: {err:?}"
+    );
+}
+
+#[test]
+fn validate_path_rejects_symlink_escaping_an_existing_workspace() {
+    // The canonicalizing branch: a symlink inside the workspace pointing out of
+    // it must be resolved and refused, not accepted on its textual path.
+    let base = tempfile::tempdir().expect("tempdir");
+    let workspace = base.path().join("ws");
+    std::fs::create_dir(&workspace).expect("create workspace");
+    let outside = base.path().join("secret.txt");
+    std::fs::write(&outside, b"secret").expect("write outside file");
+
+    let link = workspace.join("escape.txt");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &link).expect("symlink");
+    #[cfg(not(unix))]
+    return;
+
+    let sandbox = Sandbox::new(Some(workspace), true);
+    let err = sandbox
+        .validate_path(link.to_str().expect("utf-8"))
+        .expect_err("symlink escaping the workspace must be rejected");
+    assert!(
+        matches!(err, SandboxError::OutsideWorkspace(_, _)),
+        "expected OutsideWorkspace after symlink resolution, got: {err:?}"
+    );
+}

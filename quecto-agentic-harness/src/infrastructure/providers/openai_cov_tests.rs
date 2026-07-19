@@ -371,9 +371,10 @@ fn build_request_body_invalid_tool_schema_defaults_to_null_parameters() {
 
 #[tokio::test]
 async fn chat_stream_incremental_reports_send_errors_as_stream_event() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    drop(listener);
+    // Port 0 of the loopback address is never connectable, so this cannot be
+    // claimed by another process between bind and connect (a TOCTOU that a
+    // bind-then-drop ephemeral port would be exposed to).
+    let url = "http://127.0.0.1:0".to_string();
     let provider = OpenAiProvider::new("sk-test".into(), Some(url));
     let messages = vec![Message::user("hi")];
     let mut rx = provider

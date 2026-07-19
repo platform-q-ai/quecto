@@ -23,15 +23,18 @@ fn registry_accessor_reflects_shared_state() {
 // --- inherited_runtime_config_path() ---
 
 #[test]
+#[serial_test::serial]
 fn inherited_runtime_config_path_reads_non_empty_and_ignores_empty() {
     let old = std::env::var_os("QUECTO_RUNTIME_CONFIG_PATH");
-    // SAFETY: serial test env mutation restored before return; no concurrent env readers spawned.
+    // Serialized by #[serial_test::serial]: no other test in this binary runs
+    // concurrently while the process-wide env is mutated.
+    // SAFETY: no concurrent env readers; the value is restored before return.
     unsafe {
         std::env::set_var("QUECTO_RUNTIME_CONFIG_PATH", "  ");
     }
     assert!(inherited_runtime_config_path().is_none());
 
-    // SAFETY: See safety note above; this is the same serial env mutation test.
+    // SAFETY: See note above; serialized by #[serial_test::serial].
     unsafe {
         std::env::set_var("QUECTO_RUNTIME_CONFIG_PATH", "runtime.toml");
     }
@@ -231,7 +234,7 @@ async fn register_and_broadcast_sends_state_changed_event() {
 }
 
 #[test]
-fn shutdown_all_aborts_monitors_signals_pids_and_clears_registry() {
+fn shutdown_all_clears_the_registry() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -397,5 +400,60 @@ async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn launch_uds_agent_rejects_an_oversized_workflow_spec_before_spawning() {
+    use crate::domain::workflow::{WorkflowSpec, WorkflowTemplate, WorkflowTemplateStep};
+
+    // The spec is forwarded to the child as a file; an unbounded one would let a
+    // caller write an arbitrarily large attacker-controlled file into socket_dir.
+    // The size check must therefore reject before any file is created or any
+    // child process is launched.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let tool = SpawnTool::new(vec![], true).with_socket_dir(dir.path().to_path_buf());
+
+    let huge = "g".repeat(crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES + 1);
+    let spec = WorkflowSpec {
+        template: WorkflowTemplate {
+            id: "oversized".into(),
+            label: "Oversized".into(),
+            description: "spec exceeding the byte cap".into(),
+            when_to_use: None,
+            steps: vec![WorkflowTemplateStep {
+                key: "step".into(),
+                label: "Step".into(),
+                phase: "phase".into(),
+                guidance: Some(huge),
+            }],
+            guards: vec![],
+        },
+    };
+
+    let mut config = tool
+        .parse_args(r#"{"task":"go"}"#)
+        .expect("baseline args parse");
+    config.workflow_spec = Some(spec);
+
+    let err = tool
+        .launch_uds_agent(&config)
+        .await
+        .expect_err("an oversized workflow spec must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("workflow spec too large"),
+        "expected the size-cap error, got: {msg}"
+    );
+
+    // Nothing was written to the socket dir before the rejection.
+    let leaked: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("read socket dir")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "spec file leaked before rejection: {leaked:?}"
     );
 }
