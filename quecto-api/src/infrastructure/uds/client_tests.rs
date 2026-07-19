@@ -95,6 +95,16 @@ fn control_commands_serialize_to_wire() {
         command_to_json(AgentCommand::ReloadExtensions, "g3")["type"],
         "reload_extensions"
     );
+
+    let effort = command_to_json(
+        AgentCommand::SetEffort {
+            effort: "high".into(),
+        },
+        "e1",
+    );
+    assert_eq!(effort["type"], "set_effort");
+    assert_eq!(effort["effort"], "high");
+    assert_eq!(effort["id"], "e1");
 }
 
 #[test]

@@ -115,6 +115,10 @@ impl AgentGateway for MockGateway {
                 }
                 AgentCommand::GetSessionStats => "get_session_stats",
                 AgentCommand::SetModel { .. } => "set_model",
+                AgentCommand::SetEffort { effort } => {
+                    data["effortEcho"] = serde_json::Value::String(effort);
+                    "set_effort"
+                }
                 AgentCommand::ClearHistory => "clear_history",
             };
             Ok(AgentEvent::Response {
@@ -145,6 +149,7 @@ impl AgentGateway for MockGateway {
                 AgentCommand::GetMessage { .. } => "get_message",
                 AgentCommand::GetSessionStats => "get_session_stats",
                 AgentCommand::SetModel { .. } => "set_model",
+                AgentCommand::SetEffort { .. } => "set_effort",
                 AgentCommand::ClearHistory => "clear_history",
                 AgentCommand::Steer { .. } => "steer",
                 AgentCommand::FollowUp { .. } => "follow_up",

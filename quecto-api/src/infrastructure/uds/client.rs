@@ -275,6 +275,9 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
             }
             obj
         }
+        AgentCommand::SetEffort { effort } => {
+            serde_json::json!({"type": "set_effort", "id": id, "effort": effort})
+        }
         AgentCommand::ClearHistory => serde_json::json!({"type": "clear_history", "id": id}),
         AgentCommand::GetSubagents => serde_json::json!({"type": "get_subagents", "id": id}),
         AgentCommand::GetExtensions => serde_json::json!({"type": "get_extensions", "id": id}),

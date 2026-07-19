@@ -171,6 +171,42 @@ async fn set_model_handler_success_and_validation() {
 }
 
 #[tokio::test]
+async fn set_effort_handler_success_and_validation() {
+    let ok = set_effort_handler(
+        state_for(connected_gw()),
+        Json(SetEffortRequest {
+            effort: "high".into(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(ok.status(), StatusCode::OK);
+
+    let bad = set_effort_handler(
+        state_for(connected_gw()),
+        Json(SetEffortRequest {
+            effort: "turbo".into(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn clear_history_handler_connected_and_disconnected() {
+    let ok = clear_history_handler(state_for(connected_gw()))
+        .await
+        .into_response();
+    assert_eq!(ok.status(), StatusCode::OK);
+
+    let down = clear_history_handler(state_for(MockGateway::default()))
+        .await
+        .into_response();
+    assert_eq!(down.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
 async fn subagents_and_extensions_handlers_forward() {
     for resp in [
         subagents_handler(state_for(connected_gw()))

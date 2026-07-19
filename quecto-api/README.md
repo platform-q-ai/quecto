@@ -14,6 +14,8 @@ Connects to a running `quecto agent --mode uds` process via Unix domain socket a
 | `POST` | `/follow_up` | Queue a message for when the current run finishes |
 | `POST` | `/abort` | Cancel the current agent run |
 | `POST` | `/model` | Switch the active model (`{"model":"provider/id"}` or `{"provider":...,"modelId":...}`) |
+| `POST` | `/effort` | Set reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`) |
+| `POST` | `/clear_history` | Clear conversation history in-place without restarting the agent |
 | `GET` | `/subagents` | List spawned subagents and their live status (#524) |
 | `GET` | `/extensions` | List registered extensions |
 | `POST` | `/extensions/reload` | Re-scan and reload script extensions |

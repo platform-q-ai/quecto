@@ -30,6 +30,8 @@ pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
         .route("/follow_up", post(follow_up_handler::<G>))
         .route("/abort", post(abort_handler::<G>))
         .route("/model", post(set_model_handler::<G>))
+        .route("/effort", post(set_effort_handler::<G>))
+        .route("/clear_history", post(clear_history_handler::<G>))
         .route("/subagents", get(subagents_handler::<G>))
         .route("/extensions", get(extensions_handler::<G>))
         .route("/extensions/reload", post(extensions_reload_handler::<G>))
@@ -228,6 +230,32 @@ async fn set_model_handler<G: AgentGateway>(
         model_id: body.model_id,
     };
     match use_cases::set_model::execute(&state.gateway, input).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+// ── Set effort / Clear history ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SetEffortRequest {
+    effort: String,
+}
+
+async fn set_effort_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+    Json(body): Json<SetEffortRequest>,
+) -> impl IntoResponse {
+    match use_cases::set_effort::execute(&state.gateway, body.effort).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+async fn clear_history_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+) -> impl IntoResponse {
+    match use_cases::clear_history::execute(&state.gateway).await {
         Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
         Err(e) => api_error_response(e).into_response(),
     }

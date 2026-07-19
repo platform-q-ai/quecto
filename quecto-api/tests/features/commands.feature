@@ -66,6 +66,52 @@ Feature: Agent control endpoints
     Then the response status is 400
     And the response body contains "invalid request"
 
+  Scenario: Set the reasoning effort
+    Given the agent is connected
+    When I POST /effort with body:
+      """
+      {"effort": "high"}
+      """
+    Then the response status is 200
+    And the response body contains "effortEcho":"high"
+
+  Scenario: Set effort normalizes case and whitespace
+    Given the agent is connected
+    When I POST /effort with body:
+      """
+      {"effort": "  MEDIUM "}
+      """
+    Then the response status is 200
+    And the response body contains "effortEcho":"medium"
+
+  Scenario: Set effort with an unknown level is rejected
+    Given the agent is connected
+    When I POST /effort with body:
+      """
+      {"effort": "turbo"}
+      """
+    Then the response status is 400
+    And the response body contains "invalid request"
+
+  Scenario: Set effort when agent disconnected
+    Given the agent is not connected
+    When I POST /effort with body:
+      """
+      {"effort": "low"}
+      """
+    Then the response status is 503
+
+  Scenario: Clear conversation history
+    Given the agent is connected
+    When I POST /clear_history with an empty body
+    Then the response status is 200
+    And the response body contains "type":"response"
+
+  Scenario: Clear history when agent disconnected
+    Given the agent is not connected
+    When I POST /clear_history with an empty body
+    Then the response status is 503
+
   Scenario: List subagents
     Given the agent is connected
     When I request GET /subagents
