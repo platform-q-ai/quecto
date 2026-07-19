@@ -8,6 +8,14 @@ pub mod router;
 pub mod sse_common;
 pub mod usage;
 
+#[cfg(test)]
+#[path = "sse_wire_cov_tests.rs"]
+mod sse_wire_cov_tests;
+
+#[cfg(test)]
+#[path = "providers_cov2_tests.rs"]
+mod providers_cov2_tests;
+
 use std::sync::Arc;
 
 use crate::domain::provider::LlmProvider;

@@ -598,6 +598,10 @@ pub fn model_pricing(model: &str) -> Option<ModelPricing> {
 }
 
 #[cfg(test)]
+#[path = "message_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

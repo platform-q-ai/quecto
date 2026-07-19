@@ -14,7 +14,7 @@ use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name};
 
-mod anthropic_sse;
+pub(super) mod anthropic_sse;
 mod anthropic_user_msg;
 
 /// Anthropic LLM provider.

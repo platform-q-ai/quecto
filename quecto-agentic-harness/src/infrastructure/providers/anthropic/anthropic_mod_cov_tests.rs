@@ -315,3 +315,54 @@ async fn chat_stream_incremental_cancelled_emits_error_event() {
         other => panic!("expected Error event, got {:?}", other),
     }
 }
+
+#[tokio::test]
+async fn chat_http_error_includes_retry_after() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(529)
+                .insert_header("retry-after", "3")
+                .set_body_string("busy"),
+        )
+        .mount(&server)
+        .await;
+    let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
+    let messages = vec![Message::user("hi")];
+
+    let err = provider
+        .chat(base_req(&messages, &[], "claude-sonnet-4-6"))
+        .await
+        .unwrap_err();
+    let text = err.to_string();
+    assert!(text.contains("HTTP 529 from Anthropic: busy"), "{text}");
+    assert!(text.contains("retry-after: 3"), "{text}");
+}
+
+#[tokio::test]
+async fn chat_invalid_json_reports_parse_context() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
+        .mount(&server)
+        .await;
+    let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
+    let messages = vec![Message::user("hi")];
+
+    let err = provider
+        .chat(base_req(&messages, &[], "claude-sonnet-4-6"))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("failed to parse response JSON"),
+        "{err}"
+    );
+}

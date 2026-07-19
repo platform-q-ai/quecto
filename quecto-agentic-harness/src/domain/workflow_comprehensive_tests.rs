@@ -247,9 +247,9 @@ fn idle_nudges_present_template_selector_before_selection() {
         ("standard", engine.auto_continue_nudge()),
         ("corrective", engine.corrective_nudge()),
     ] {
-        let nudge = nudge.unwrap_or_else(|| {
-            panic!("selector-mode idle boundary must push the {variant} selector nudge (#1113)")
-        });
+        let nudge = nudge
+            .as_deref()
+            .expect("selector-mode idle boundary must push the selector nudge");
         assert!(
             nudge.contains("select_template"),
             "{variant} selector nudge must instruct selection via select_template: {nudge}"
@@ -284,9 +284,9 @@ fn selector_nudge_carries_selector_prompt_and_active_issue() {
         ("standard", engine.auto_continue_nudge()),
         ("corrective", engine.corrective_nudge()),
     ] {
-        let nudge = nudge.unwrap_or_else(|| {
-            panic!("selector-mode idle boundary must push the {variant} selector nudge (#1113)")
-        });
+        let nudge = nudge
+            .as_deref()
+            .expect("selector-mode idle boundary must push the selector nudge");
         assert!(
             nudge.contains("Operator rule: for production incidents always choose hotfix"),
             "{variant} selector nudge must carry the configured selector_prompt: {nudge}"
@@ -332,9 +332,9 @@ fn selector_nudge_fires_with_auto_continue_disabled() {
         ("standard", engine.auto_continue_nudge()),
         ("corrective", engine.corrective_nudge()),
     ] {
-        let nudge = nudge.unwrap_or_else(|| {
-            panic!("the {variant} selector nudge must fire with auto-continue disabled (#1113 AC3)")
-        });
+        let nudge = nudge
+            .as_deref()
+            .expect("selector nudge must fire with auto-continue disabled");
         assert!(
             nudge.contains("select_template") && nudge.contains("qx-selector-probe"),
             "{variant} selector nudge must present the selector: {nudge}"

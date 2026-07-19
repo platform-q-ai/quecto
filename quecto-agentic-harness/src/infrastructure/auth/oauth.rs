@@ -735,6 +735,10 @@ pub fn is_anthropic_oauth_token(token: &str) -> bool {
 mod tests;
 
 #[cfg(test)]
+#[path = "oauth_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 #[path = "oauth_error_body_tests.rs"]
 mod error_body_tests;
 

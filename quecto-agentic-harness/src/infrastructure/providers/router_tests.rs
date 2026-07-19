@@ -124,6 +124,39 @@ async fn test_no_providers() {
 async fn test_router_name() {
     let router = ProviderRouter::new(vec![]);
     assert_eq!(router.name(), "router");
+    assert!(router.as_any().is::<ProviderRouter>());
+
+    let test = TestProvider::succeeding("test", "ok");
+    assert_eq!(test.name(), "test");
+    assert!(test.as_any().is::<()>());
+    assert_eq!(
+        test.chat_stream(test_request(&test_messages()))
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("ok")
+    );
+
+    let tracking = TrackingProvider::succeeding("tracking", "tracked");
+    assert_eq!(tracking.name(), "tracking");
+    assert!(tracking.as_any().is::<()>());
+    assert_eq!(
+        tracking
+            .chat_stream(test_request(&test_messages()))
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("tracked")
+    );
+    let mut rx = tracking
+        .chat_stream_incremental(test_request(&test_messages()))
+        .await;
+    assert!(
+        matches!(rx.recv().await, Some(StreamEvent::Done(done)) if done.content.as_deref() == Some("tracked"))
+    );
+    assert!(rx.recv().await.is_none());
 }
 
 // ── Model routing ──────────────────────────────────────────────────────
@@ -479,4 +512,30 @@ fn truncate_prefix_short_and_multibyte_boundary() {
     assert_eq!(super::truncate_prefix("abcd", 4), "abcd");
     // truncation lands mid-multibyte char → backs off to the char boundary
     assert_eq!(super::truncate_prefix("ééééé", 3), "é");
+}
+
+#[tokio::test]
+async fn slice_ptr_provider_trait_surface_defaults_are_exercised() {
+    let provider = SlicePtrProvider {
+        captured_msg_ptr: Mutex::new(None),
+        captured_tools_ptr: Mutex::new(None),
+    };
+    let messages = test_messages();
+
+    assert_eq!(provider.name(), "test");
+    assert!(provider.as_any().downcast_ref::<()>().is_some());
+
+    let response = provider.chat_stream(test_request(&messages)).await.unwrap();
+    assert_eq!(response.content.as_deref(), Some("ok"));
+
+    let mut rx = provider
+        .chat_stream_incremental(test_request(&messages))
+        .await;
+    match rx.recv().await.expect("default stream event") {
+        crate::domain::provider::StreamEvent::Done(done) => {
+            assert_eq!(done.content.as_deref(), Some("ok"));
+        }
+        other => panic!("unexpected stream event: {other:?}"),
+    }
+    assert!(rx.recv().await.is_none());
 }

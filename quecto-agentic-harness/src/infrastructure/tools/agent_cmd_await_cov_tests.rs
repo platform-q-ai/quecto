@@ -1,147 +1,328 @@
-// Additional region-coverage tests for the `await` command logic (#612).
-//
-// These cover the deterministic, no-server branches of `execute_await` and
-// `fetch_workflow_snapshot` that are reachable without standing up a live UDS
-// server:
-//   - malformed JSON when `execute_await` is invoked directly,
-//   - the "socket path exists but is not a real socket" connection-failed path,
-//   - the workflow-snapshot fetch giving up when the agent is unknown or the
-//     socket cannot deliver a response.
-//
-// The interior await loop (idle/exit/timeout/error state transitions) and the
-// successful workflow-snapshot decode require a live UDS server that streams a
-// JSON `response` event; those are intentionally left to the existing
-// socket-based integration tests, per the no-real-socket constraint.
-
 use super::*;
 
-/// `execute_await` is normally guarded by `is_await_command`, so its own
-/// malformed-JSON arm is only reachable by calling it directly.
-#[tokio::test]
-async fn execute_await_direct_invalid_json_is_structured_error() {
-    let tool = AgentCmdTool::new(new_registry());
-    let result = tool.execute_await("{not valid json").await.unwrap();
-    assert!(result.is_error);
-    assert!(result.content.contains("invalid JSON"));
+fn poison_registry(registry: &SubagentRegistry) {
+    let cloned = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = cloned.lock().unwrap();
+        panic!("poison registry for coverage");
+    })
+    .join();
+    assert!(registry.lock().is_err(), "registry should be poisoned");
+}
+use crate::infrastructure::test_support::read_framed_command_async;
+use crate::infrastructure::tools::subagent_registry::{ExitSignal, new_exit_signal_channel};
+use serde::Deserialize;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Deserialize)]
+struct AwaitJson {
+    status: String,
+    reason: Option<String>,
+    agent_id: String,
+    workflow: Option<WorkflowSnapshot>,
+    error: Option<String>,
 }
 
-/// A registry entry whose socket path exists but is a regular file: the
-/// synchronous connectivity probe runs (path exists) and fails, so `await`
-/// reports `connection_failed` while the agent is still registered.
-#[tokio::test]
-async fn execute_await_existing_nonsocket_path_is_connection_failed() {
-    let registry = new_registry();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("not_a_socket");
-    std::fs::write(&path, b"x").unwrap();
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), SubagentEntry::new(path, 0));
-
-    let tool = AgentCmdTool::new(registry);
-    let result = tool
-        .execute_await(r#"{"agent_id":"w1","command":"await","timeout":99999}"#)
-        .await
-        .unwrap();
-    assert!(!result.is_error);
-    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    assert_eq!(v["status"], "error");
-    assert_eq!(v["reason"], "connection_failed");
-    assert_eq!(v["result"]["status"], "failed");
-}
-
-/// Workflow-snapshot fetch returns `None` when the agent is not in the registry
-/// (socket lookup fails).
-#[tokio::test]
-async fn fetch_workflow_snapshot_unknown_agent_is_none() {
-    let tool = AgentCmdTool::new(new_registry());
-    assert!(tool.fetch_workflow_snapshot("ghost").await.is_none());
-}
-
-/// Workflow-snapshot fetch returns `None` when the socket cannot deliver a
-/// response (the path is a regular file, so the UDS command errors out).
-#[tokio::test]
-async fn fetch_workflow_snapshot_unconnectable_socket_is_none() {
-    let registry = new_registry();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("not_a_socket");
-    std::fs::write(&path, b"x").unwrap();
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), SubagentEntry::new(path, 0));
-
-    let tool = AgentCmdTool::new(registry);
-    assert!(tool.fetch_workflow_snapshot("w1").await.is_none());
-}
-
-use crate::infrastructure::tools::subagent_registry::{
-    ExitSignal, SubagentStatus, new_active_awaits, new_exit_signal_channel,
-};
-
-#[tokio::test]
-async fn execute_await_missing_agent_id_is_structured_error() {
-    let tool = AgentCmdTool::new(new_registry());
-    let result = tool.execute_await(r#"{"command":"await"}"#).await.unwrap();
-    assert!(result.is_error);
-    assert_eq!(result.content, "missing required field: agent_id");
-}
-
-#[tokio::test]
-async fn execute_await_invalid_agent_id_is_structured_error() {
-    let tool = AgentCmdTool::new(new_registry());
-    let result = tool
-        .execute_await(r#"{"agent_id":"../bad","command":"await"}"#)
-        .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.content.contains("agent_cmd error"));
-}
-
-#[tokio::test]
-async fn execute_await_duplicate_active_await_is_reported() {
-    let registry = new_registry();
-    let active = new_active_awaits();
-    active.lock().unwrap().insert("w1".to_string());
-    registry.lock().unwrap().insert(
-        "w1".to_string(),
-        SubagentEntry::new(std::path::PathBuf::from("/tmp/unused.sock"), 0),
+fn parse_result(result: ToolResult) -> AwaitJson {
+    assert!(
+        !result.is_error,
+        "await result should be structured success"
     );
+    serde_json::from_str(&result.content).expect("await json")
+}
 
-    let tool = AgentCmdTool::with_active_awaits(registry, active);
-    let result = tool
-        .execute_await(r#"{"agent_id":"w1","command":"await"}"#)
+fn tool_with_entry(
+    agent_id: &str,
+    socket_path: PathBuf,
+    status: SubagentStatus,
+    exit_tx: Option<tokio::sync::watch::Sender<Option<ExitSignal>>>,
+) -> (AgentCmdTool, SubagentRegistry) {
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new(socket_path, 123);
+    entry.status = status;
+    entry.exit_signal_tx = exit_tx;
+    registry.lock().unwrap().insert(agent_id.to_string(), entry);
+    (AgentCmdTool::new(registry.clone()), registry)
+}
+
+async fn serve_one_get_state(socket: &Path, mut response: serde_json::Value) {
+    let listener = tokio::net::UnixListener::bind(socket).expect("bind uds");
+    loop {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut reader = tokio::io::BufReader::new(stream);
+        let Some(request) = read_framed_command_async(&mut reader).await else {
+            // `execute_await` first performs a synchronous connectability probe.
+            continue;
+        };
+        assert!(request.contains("get_state"), "request: {request}");
+        if let (Some(request_id), Some(obj)) = (
+            serde_json::from_str::<serde_json::Value>(&request)
+                .ok()
+                .and_then(|v| v.get("id").and_then(|id| id.as_str()).map(str::to_owned)),
+            response.as_object_mut(),
+        ) {
+            obj.insert("id".to_string(), serde_json::Value::String(request_id));
+        }
+        quecto_line_io::write_frame(
+            reader.get_mut(),
+            response.to_string().as_bytes(),
+            quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+        )
         .await
-        .unwrap();
-    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    assert_eq!(v["status"], "error");
-    assert_eq!(v["reason"], "another_await_active");
+        .expect("write response");
+        break;
+    }
 }
 
 #[tokio::test]
-async fn execute_await_exited_status_reports_signal_reason() {
-    let registry = new_registry();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("agent.sock");
-    let _listener = tokio::net::UnixListener::bind(&path).unwrap();
-    let (tx, _rx) = new_exit_signal_channel();
-    tx.send(Some(ExitSignal {
-        exit_code: None,
-        signal: Some(9),
-    }))
-    .unwrap();
-    let mut entry = SubagentEntry::new(path, 0);
-    entry.status = SubagentStatus::Exited;
-    entry.exit_signal_tx = Some(tx);
-    registry.lock().unwrap().insert("w1".to_string(), entry);
+async fn execute_await_rejects_bad_json_missing_agent_id_and_bad_agent_id() {
+    let tool = AgentCmdTool::new(new_registry());
 
-    let tool = AgentCmdTool::new(registry);
-    let result = tool
-        .execute_await(r#"{"agent_id":"w1","command":"await","timeout":2}"#)
+    let bad = tool.execute_await("not-json").await.unwrap();
+    assert!(bad.is_error);
+    assert!(bad.content.contains("invalid JSON arguments"));
+
+    let missing = tool.execute_await(r#"{"timeout":1}"#).await.unwrap();
+    assert!(missing.is_error);
+    assert!(missing.content.contains("missing required field: agent_id"));
+
+    let invalid = tool
+        .execute_await(r#"{"agent_id":"../bad"}"#)
         .await
         .unwrap();
-    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    assert_eq!(v["status"], "exited");
-    assert_eq!(v["reason"], "signal_9");
+    assert!(invalid.is_error);
+    assert!(invalid.content.contains("agent_cmd error"));
+}
+
+#[tokio::test]
+async fn execute_await_reports_agent_not_found_and_connection_failed() {
+    let tool = AgentCmdTool::new(new_registry());
+    let missing = parse_result(
+        tool.execute_await(r#"{"agent_id":"ghost","timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(missing.status, "error");
+    assert_eq!(missing.reason.as_deref(), Some("agent_not_found"));
+    assert_eq!(missing.agent_id, "ghost");
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let dead_socket = tmp.path().join("dead.sock");
+    std::fs::write(&dead_socket, b"not a socket").unwrap();
+    let (tool, _) = tool_with_entry("stale", dead_socket, SubagentStatus::Idle, None);
+    let failed = parse_result(
+        tool.execute_await(r#"{"agent_id":"stale","timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(failed.status, "error");
+    assert_eq!(failed.reason.as_deref(), Some("connection_failed"));
+}
+
+#[tokio::test]
+async fn execute_await_idle_fetches_workflow_snapshot_and_marks_consumed() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("agent.sock");
+    let server_socket = socket.clone();
+    let server = tokio::spawn(async move {
+        serve_one_get_state(
+            &server_socket,
+            serde_json::json!({
+                "type": "response",
+                "data": {"workflow": {"mode": "active", "progress": {"done": 2, "total": 5}}}
+            }),
+        )
+        .await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let (tool, registry) = tool_with_entry("worker", socket, SubagentStatus::Idle, None);
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"worker","timeout":2,"idle_timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    server.await.unwrap();
+
+    assert_eq!(got.status, "idle");
+    assert_eq!(got.reason.as_deref(), Some("idle"));
+    let wf = got.workflow.expect("workflow snapshot");
+    assert_eq!(wf.mode, "active");
+    assert_eq!(wf.steps_completed, 2);
+    assert_eq!(wf.steps_total, 5);
+    assert!(registry.lock().unwrap()["worker"].completion_consumed_by_await);
+}
+
+#[tokio::test]
+async fn execute_await_exit_signal_wakes_immediately_with_reason() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("exit.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let (exit_tx, _exit_rx) = new_exit_signal_channel();
+    let (tool, registry) = tool_with_entry(
+        "exiter",
+        socket.clone(),
+        SubagentStatus::Running,
+        Some(exit_tx.clone()),
+    );
+    let accept = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+
+    let notify = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        exit_tx
+            .send(Some(ExitSignal {
+                exit_code: Some(7),
+                signal: None,
+            }))
+            .unwrap();
+    });
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"exiter","timeout":2}"#)
+            .await
+            .unwrap(),
+    );
+    notify.await.unwrap();
+    accept.abort();
+
+    assert_eq!(got.status, "exited");
+    assert_eq!(got.reason.as_deref(), Some("exit_code_7"));
+    assert!(registry.lock().unwrap()["exiter"].completion_consumed_by_await);
+}
+
+#[tokio::test]
+async fn execute_await_error_status_with_run_error_returns_structured_error() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("err.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let accept = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+    let (tool, registry) = tool_with_entry("bad", socket, SubagentStatus::Error, None);
+    registry.lock().unwrap().get_mut("bad").unwrap().run_error = Some("provider exploded".into());
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"bad","timeout":2,"idle_timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    accept.abort();
+
+    assert_eq!(got.status, "error");
+    assert_eq!(got.reason.as_deref(), Some("agent_error"));
+    assert_eq!(got.error.as_deref(), Some("provider exploded"));
+}
+
+#[tokio::test]
+async fn execute_await_duplicate_active_awaiter_is_rejected() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("dup.sock");
+    std::fs::write(&socket, b"fake").unwrap();
+    let active = new_active_awaits();
+    active.lock().unwrap().insert("dup".to_string());
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("dup".into(), SubagentEntry::new(socket, 1));
+    let tool = AgentCmdTool::with_active_awaits(registry, active);
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"dup","timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(got.status, "error");
+    assert_eq!(got.reason.as_deref(), Some("another_await_active"));
+}
+
+#[tokio::test]
+async fn execute_await_exited_status_uses_signal_reason_from_registry() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("signal.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let accept = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+    let (exit_tx, _exit_rx) = new_exit_signal_channel();
+    exit_tx
+        .send(Some(ExitSignal {
+            exit_code: None,
+            signal: Some(15),
+        }))
+        .unwrap();
+    let (tool, registry) = tool_with_entry("sig", socket, SubagentStatus::Exited, Some(exit_tx));
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"sig","timeout":1,"idle_timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    accept.abort();
+
+    assert_eq!(got.status, "exited");
+    assert_eq!(got.reason.as_deref(), Some("signal_15"));
+    assert!(registry.lock().unwrap()["sig"].completion_consumed_by_await);
+}
+
+#[tokio::test]
+async fn execute_await_recoverable_error_without_run_error_returns_idle() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("recover.sock");
+    let server_socket = socket.clone();
+    let server = tokio::spawn(async move {
+        serve_one_get_state(
+            &server_socket,
+            serde_json::json!({"type":"response","data":{"workflow":{"mode":"active"}}}),
+        )
+        .await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let (tool, _) = tool_with_entry("recover", socket, SubagentStatus::Error, None);
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"recover","timeout":1,"idle_timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    server.await.unwrap();
+
+    assert_eq!(got.status, "idle");
+    assert_eq!(got.reason.as_deref(), Some("idle"));
+    assert!(got.error.is_none());
+    let wf = got.workflow.unwrap();
+    assert_eq!(wf.mode, "active");
+    assert_eq!(wf.steps_completed, 0);
+    assert_eq!(wf.steps_total, 0);
+}
+
+#[tokio::test]
+async fn execute_await_poisoned_locks_recover_for_lookup_duplicate_and_removed() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("poison.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let accept = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+    let active = new_active_awaits();
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new(socket, 1);
+    entry.status = SubagentStatus::Exited;
+    registry.lock().unwrap().insert("poison".into(), entry);
+    poison_registry(&registry);
+    let tool = AgentCmdTool::with_active_awaits(registry.clone(), active);
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"poison","timeout":1,"idle_timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    accept.abort();
+    assert_eq!(got.status, "exited");
+    assert_eq!(got.reason.as_deref(), Some("exit_code_0"));
+    assert!(
+        registry.lock().unwrap_or_else(|e| e.into_inner())["poison"].completion_consumed_by_await
+    );
 }

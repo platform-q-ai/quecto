@@ -589,3 +589,31 @@ pub(crate) fn build_get_state_line_live(
     line.push('\n');
     line
 }
+
+#[cfg(test)]
+mod cov_tests {
+    use super::*;
+    use crate::domain::message::{Message, ToolCall};
+
+    #[test]
+    fn message_bytes_counts_optional_tool_metadata_and_lookup_falls_back_to_live_messages() {
+        let mut msg = Message::assistant(
+            "content",
+            vec![ToolCall {
+                id: "call-id".into(),
+                name: "bash".into(),
+                arguments: r#"{"command":"true"}"#.into(),
+            }],
+        );
+        msg.tool_call_id = Some("call-id".into());
+        msg.tool_name = Some("bash".into());
+
+        let size = message_bytes(&msg);
+        assert!(size > LEDGER_ENTRY_OVERHEAD + "content".len());
+
+        let id = msg.id().to_string();
+        let mut snapshot = ConversationSnapshotData::default();
+        snapshot.messages.push(msg);
+        assert_eq!(snapshot.lookup(&id).unwrap().id().to_string(), id);
+    }
+}

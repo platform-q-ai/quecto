@@ -745,3 +745,6 @@ mod stall_race_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_bounded_read_tests.rs"]
 mod bounded_read_tests;
+#[cfg(test)]
+#[path = "subagent_monitor_wave3_cov_tests.rs"]
+mod wave3_cov_tests;

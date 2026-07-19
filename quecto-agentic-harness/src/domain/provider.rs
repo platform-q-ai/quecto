@@ -303,6 +303,10 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
 }
 
 #[cfg(test)]
+#[path = "provider_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -382,6 +386,8 @@ mod tests {
     /// so it can be transmitted verbatim for OpenAI reasoning models.
     #[test]
     fn effort_level_parse_openai_documented_scale_1066() {
+        assert_eq!(EffortLevel::None.as_str(), "none");
+        assert_eq!(EffortLevel::XHigh.as_str(), "xhigh");
         for level in ["none", "low", "medium", "high", "xhigh"] {
             let parsed = EffortLevel::parse(level).unwrap_or_else(|| {
                 panic!("OpenAI-documented effort level '{level}' must parse (#1066)")
@@ -414,5 +420,70 @@ mod tests {
         let tc = ToolChoice::Specific("bash".to_string());
         assert_eq!(tc, ToolChoice::Specific("bash".to_string()));
         assert_ne!(tc, ToolChoice::Specific("read".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod default_surface_cov_tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct DefaultProvider;
+
+    impl LlmProvider for DefaultProvider {
+        fn name(&self) -> &str {
+            "default-provider"
+        }
+        fn chat<'a>(
+            &'a self,
+            _request: ChatRequest<'a>,
+        ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
+            Box::pin(async {
+                Ok(LlmResponse {
+                    content: Some("ok".into()),
+                    tool_calls: vec![],
+                    usage: None,
+                    stop_reason: None,
+                    thinking_blocks: vec![],
+                })
+            })
+        }
+    }
+
+    fn req<'a>() -> ChatRequest<'a> {
+        ChatRequest {
+            messages: &[],
+            tools: &[],
+            model: "m",
+            max_tokens: 1,
+            temperature: 0.0,
+            session_id: None,
+            tool_choice: None,
+            metadata: None,
+            thinking_level: None,
+            cancel_flag: None,
+            effort: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn default_provider_methods_execute_for_concrete_impl() {
+        let provider = DefaultProvider;
+        assert_eq!(provider.name(), "default-provider");
+        assert!(provider.as_any().downcast_ref::<()>().is_some());
+        assert_eq!(
+            provider
+                .chat_stream(req())
+                .await
+                .unwrap()
+                .content
+                .as_deref(),
+            Some("ok")
+        );
+        let mut rx = provider.chat_stream_incremental(req()).await;
+        match rx.recv().await.unwrap() {
+            StreamEvent::Done(resp) => assert_eq!(resp.content.as_deref(), Some("ok")),
+            other => panic!("unexpected stream event: {other:?}"),
+        }
     }
 }

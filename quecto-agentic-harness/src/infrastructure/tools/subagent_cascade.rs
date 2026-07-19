@@ -199,5 +199,8 @@ pub fn build_state_changed_event_locked(guard: &HashMap<String, SubagentEntry>) 
 }
 
 #[cfg(test)]
+#[path = "subagent_cascade_cov_tests.rs"]
+mod cov_tests;
+#[cfg(test)]
 #[path = "subagent_cascade_tests.rs"]
 mod tests;

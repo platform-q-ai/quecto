@@ -50,7 +50,7 @@ fn build_agent_from_config_threads_context_knobs_into_the_loop() {
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
     let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .unwrap_or_else(|| panic!("build failed; stderr: {stderr}"));
+        .expect("agent build should succeed");
     assert_eq!(
         result.agent.effective_max_context_tokens(),
         100_000,

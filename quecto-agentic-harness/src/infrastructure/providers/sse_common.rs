@@ -437,3 +437,69 @@ mod pump_tests {
         assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(text)) if text == "eof"));
     }
 }
+
+#[cfg(test)]
+mod pump_w5_cov_tests {
+    use super::*;
+    use crate::domain::message::LlmResponse;
+    use std::sync::{Arc, Mutex};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[derive(Clone, Default)]
+    struct LinesHandler {
+        lines: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl SseHandler for LinesHandler {
+        async fn process_line(
+            &mut self,
+            line: &str,
+            _tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+        ) -> SseLineOutcome {
+            self.lines
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(line.to_string());
+            SseLineOutcome::Continue
+        }
+
+        async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+            let _ = tx
+                .send(StreamEvent::Done(LlmResponse {
+                    content: Some("eof".into()),
+                    tool_calls: vec![],
+                    usage: None,
+                    stop_reason: None,
+                    thinking_blocks: vec![],
+                }))
+                .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn pump_sse_forwards_a_split_data_line_then_done() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/split"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"data: split\n"))
+            .mount(&server)
+            .await;
+        let mut response = reqwest::get(format!("{}/split", server.uri()))
+            .await
+            .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let mut handler = LinesHandler {
+            lines: lines.clone(),
+        };
+
+        pump_sse(&mut response, &tx, &mut handler).await;
+
+        assert_eq!(
+            *lines.lock().expect("lines mutex is not poisoned"),
+            vec!["data: split".to_string()]
+        );
+        assert!(matches!(rx.recv().await, Some(StreamEvent::Done(_))));
+    }
+}

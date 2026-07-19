@@ -7,7 +7,7 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
-use crate::domain::tool::{ToolDefinition, ToolRegistry, ToolResult};
+use crate::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::test_support::StubProvider;
 
@@ -16,6 +16,31 @@ use super::super::{ReplLoop, ReplSession};
 // -- Stubs --
 
 struct EmptyRegistry;
+
+struct NoopTool;
+
+impl Tool for NoopTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "noop".into(),
+            description: "noop".into(),
+            parameters_schema: "{}".into(),
+        }
+    }
+
+    fn execute(
+        &self,
+        _arguments: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+        Box::pin(async {
+            Ok(ToolResult {
+                content: "noop".into(),
+                is_error: false,
+                image_blocks: vec![],
+            })
+        })
+    }
+}
 
 impl ToolRegistry for EmptyRegistry {
     fn definitions(&self) -> &[ToolDefinition] {
@@ -29,6 +54,22 @@ impl ToolRegistry for EmptyRegistry {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         Box::pin(async { Err(DomainError::Tool("no tools".into())) })
     }
+}
+
+#[tokio::test]
+async fn empty_registry_trait_methods_are_invoked() {
+    let mut registry = EmptyRegistry;
+    assert_eq!(registry.tool_count(), 0);
+    assert!(registry.extension_names().is_empty());
+    registry.set_session_key("session");
+    let tool = Arc::new(NoopTool);
+    assert_eq!(tool.definition().name.as_ref(), "noop");
+    tool.set_session_key("tool-session".into());
+    assert_eq!(tool.execute("{}").await.unwrap().content, "noop");
+    registry.register_extension(tool);
+    registry.unregister_extension("missing");
+    let err = registry.execute("missing", "{}").await.unwrap_err();
+    assert!(err.to_string().contains("no tools"));
 }
 
 // -- Helper --

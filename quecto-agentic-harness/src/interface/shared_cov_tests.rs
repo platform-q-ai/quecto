@@ -349,3 +349,21 @@ fn make_provider_factory_openai_jwt_builds_codex_provider() {
     // A JWT carrying an account id routes to the Codex provider.
     assert_eq!(provider.name(), "codex");
 }
+
+#[test]
+fn make_provider_factory_invalid_provider_falls_back_to_openai() {
+    let factory = make_provider_factory("not-a-provider", None, reqwest::Client::new());
+    let provider = factory("new-token");
+    assert_eq!(provider.name(), "openai");
+}
+
+#[test]
+fn make_provider_factory_retries_codex_with_default_base_for_bad_custom_base() {
+    let factory = make_provider_factory(
+        "openai",
+        Some("http://[::1".to_string()),
+        reqwest::Client::new(),
+    );
+    let provider = factory(&jwt_with_account_id("acct-fallback"));
+    assert_eq!(provider.name(), "codex");
+}

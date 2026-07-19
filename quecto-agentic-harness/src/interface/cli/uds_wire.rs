@@ -77,3 +77,7 @@ pub fn socket_announcement(socket_path: &std::path::Path) -> String {
         socket_path.display()
     )
 }
+
+#[cfg(test)]
+#[path = "uds_wire_cov_tests.rs"]
+mod cov_tests;

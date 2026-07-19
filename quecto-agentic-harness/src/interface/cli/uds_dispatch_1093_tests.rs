@@ -1,8 +1,4 @@
 //! Regression tests for #1093: `get_message` resolves collapsed spill refs.
-
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::{Message, ToolCall};
 use crate::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
@@ -12,9 +8,10 @@ use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
-
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 #[derive(Debug, Default)]
-struct MemSpillStore {
+pub(super) struct MemSpillStore {
     entries: Mutex<HashMap<(String, String), SpillEntry>>,
     recalls: Mutex<Vec<(String, String)>>,
     recall_error: bool,
@@ -36,7 +33,7 @@ impl MemSpillStore {
         }
     }
 
-    fn with_recall_error() -> Self {
+    pub(super) fn with_recall_error() -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
             recalls: Mutex::new(Vec::new()),
@@ -44,11 +41,11 @@ impl MemSpillStore {
         }
     }
 
-    fn recall_count(&self) -> usize {
+    pub(super) fn recall_count(&self) -> usize {
         self.recalls.lock().unwrap().len()
     }
 
-    fn recalled(&self) -> Vec<(String, String)> {
+    pub(super) fn recalled(&self) -> Vec<(String, String)> {
         self.recalls.lock().unwrap().clone()
     }
 }
@@ -745,4 +742,8 @@ async fn get_message_idle_keeps_collapsed_stub_when_spill_recall_errors() {
         Arc::new(MemSpillStore::with_recall_error()),
     )
     .await;
+}
+#[tokio::test]
+async fn mem_spill_store_default_has_entries_is_false() {
+    assert!(!MemSpillStore::default().has_entries("s").await.unwrap());
 }

@@ -639,6 +639,9 @@ impl AgentLoop for AgentLoopImpl {
 }
 
 #[cfg(test)]
+#[path = "agent_loop_cov_tests.rs"]
+mod cov_tests;
+#[cfg(test)]
 #[path = "agent_loop_1072_tests.rs"]
 mod issue_1072_tests;
 #[cfg(test)]
@@ -647,6 +650,9 @@ mod issue_993_tests;
 #[cfg(test)]
 #[path = "agent_loop_spill_tests.rs"]
 mod spill_tests;
+#[cfg(test)]
+#[path = "agent_loop_support_cov_tests.rs"]
+mod support_cov_tests;
 #[cfg(test)]
 #[path = "agent_loop_swap_tests.rs"]
 mod swap_tests;

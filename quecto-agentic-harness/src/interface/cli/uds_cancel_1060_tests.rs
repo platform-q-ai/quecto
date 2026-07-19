@@ -18,13 +18,17 @@ use crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
 use crate::interface::cli::uds_session::AgentSession;
 
 #[derive(Debug)]
-struct ScriptedProvider {
-    responses: Mutex<Vec<LlmResponse>>,
+pub(super) struct ScriptedProvider {
+    pub(super) responses: Mutex<Vec<LlmResponse>>,
 }
 
 impl LlmProvider for ScriptedProvider {
     fn name(&self) -> &str {
         "scripted-1060"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 
     fn chat(
@@ -42,14 +46,18 @@ impl LlmProvider for ScriptedProvider {
 /// assembled `Done` response. Used to prove the producer does NOT append a
 /// duplicate synthetic token on a streaming turn (#1060).
 #[derive(Debug)]
-struct StreamingProvider {
-    deltas: Vec<String>,
-    response: LlmResponse,
+pub(super) struct StreamingProvider {
+    pub(super) deltas: Vec<String>,
+    pub(super) response: LlmResponse,
 }
 
 impl LlmProvider for StreamingProvider {
     fn name(&self) -> &str {
         "streaming-1060"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 
     fn chat(
@@ -83,6 +91,79 @@ impl LlmProvider for StreamingProvider {
 struct FixedTool {
     def: ToolDefinition,
     output: String,
+}
+
+#[tokio::test]
+async fn scripted_provider_trait_surface_methods_are_invoked() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(vec![LlmResponse {
+            content: Some("scripted-1060-ok".into()),
+            tool_calls: vec![],
+            usage: None,
+            stop_reason: None,
+            thinking_blocks: vec![],
+        }]),
+    };
+    assert_eq!(provider.name(), "scripted-1060");
+    assert!(provider.as_any().is::<ScriptedProvider>());
+
+    let request = ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "test",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    assert_eq!(
+        provider
+            .chat_stream(request)
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("scripted-1060-ok")
+    );
+
+    let streaming = StreamingProvider {
+        deltas: vec!["a".into()],
+        response: LlmResponse {
+            content: Some("done".into()),
+            tool_calls: vec![],
+            usage: None,
+            stop_reason: None,
+            thinking_blocks: vec![],
+        },
+    };
+    assert_eq!(streaming.name(), "streaming-1060");
+    assert!(streaming.as_any().is::<StreamingProvider>());
+    let request = ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "test",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    assert_eq!(
+        streaming
+            .chat_stream(request)
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("done")
+    );
 }
 
 impl Tool for FixedTool {
@@ -130,12 +211,78 @@ fn tool_call_response(name: &str) -> LlmResponse {
     }
 }
 
+fn provider_request<'a>(messages: &'a [Message]) -> ChatRequest<'a> {
+    ChatRequest {
+        messages,
+        tools: &[],
+        model: "stub",
+        max_tokens: 100,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    }
+}
+
+#[tokio::test]
+async fn scripted_and_streaming_provider_trait_methods_are_invoked() {
+    let scripted = ScriptedProvider {
+        responses: Mutex::new(vec![text_response("scripted")]),
+    };
+    assert_eq!(scripted.name(), "scripted-1060");
+    assert!(
+        scripted
+            .as_any()
+            .downcast_ref::<ScriptedProvider>()
+            .is_some()
+    );
+    let messages = [];
+    let resp = scripted.chat(provider_request(&messages)).await.unwrap();
+    assert_eq!(resp.content.as_deref(), Some("scripted"));
+
+    let streaming = StreamingProvider {
+        deltas: vec!["a".into(), "b".into()],
+        response: text_response("ab"),
+    };
+    assert_eq!(streaming.name(), "streaming-1060");
+    assert!(
+        streaming
+            .as_any()
+            .downcast_ref::<StreamingProvider>()
+            .is_some()
+    );
+    let messages = [];
+    let resp = streaming.chat(provider_request(&messages)).await.unwrap();
+    assert_eq!(resp.content.as_deref(), Some("ab"));
+    let messages = [];
+    let mut rx = streaming
+        .chat_stream_incremental(provider_request(&messages))
+        .await;
+    assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(d)) if d == "a"));
+    assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(d)) if d == "b"));
+    assert!(
+        matches!(rx.recv().await, Some(StreamEvent::Done(done)) if done.content.as_deref() == Some("ab"))
+    );
+}
+
 fn event_lines(bytes: &[u8]) -> Vec<serde_json::Value> {
     String::from_utf8_lossy(bytes)
         .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|line| serde_json::from_str(line).expect("event JSON"))
         .collect()
+}
+
+fn ref_string(item: &serde_json::Value) -> Option<String> {
+    if let Some(s) = item.as_str() {
+        return Some(s.to_string());
+    }
+    item.get("id")
+        .and_then(|id| id.as_str())
+        .map(str::to_string)
 }
 
 fn non_empty_refs(v: &serde_json::Value) -> Vec<String> {
@@ -149,14 +296,7 @@ fn non_empty_refs(v: &serde_json::Value) -> Vec<String> {
         if let Some(arr) = c.as_array() {
             let refs: Vec<String> = arr
                 .iter()
-                .filter_map(|item| {
-                    if let Some(s) = item.as_str() {
-                        return Some(s.to_string());
-                    }
-                    item.get("id")
-                        .and_then(|id| id.as_str())
-                        .map(str::to_string)
-                })
+                .filter_map(ref_string)
                 .filter(|s| !s.is_empty())
                 .collect();
             if !refs.is_empty() {
@@ -165,6 +305,14 @@ fn non_empty_refs(v: &serde_json::Value) -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+#[test]
+fn non_empty_refs_accepts_object_refs_and_skips_empty_strings() {
+    let v = serde_json::json!({
+        "messageRefs": ["", {"id": "obj-ref"}, {"id": ""}, {"missing": "ignored"}]
+    });
+    assert_eq!(non_empty_refs(&v), vec!["obj-ref".to_string()]);
 }
 
 async fn run_turn(
@@ -526,4 +674,18 @@ async fn emitted_refs_resolve_via_ledger_after_pruning() {
             "emitted ref {r} must still resolve via the ledger after pruning"
         );
     }
+}
+
+#[test]
+fn fixed_tool_default_session_key_is_noop_for_1060_helper() {
+    let tool = FixedTool {
+        def: ToolDefinition {
+            name: "fixed".into(),
+            description: "fixed helper".into(),
+            parameters_schema: "{}".into(),
+        },
+        output: "ok".into(),
+    };
+    Tool::set_session_key(&tool, "session".into());
+    assert_eq!(Tool::definition(&tool).name, "fixed");
 }

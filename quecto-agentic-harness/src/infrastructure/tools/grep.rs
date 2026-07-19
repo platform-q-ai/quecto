@@ -547,3 +547,7 @@ fn truncate_line(line: &str, max_bytes: usize) -> (String, bool) {
 #[cfg(test)]
 #[path = "grep_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "grep_cov_tests.rs"]
+mod cov_tests;

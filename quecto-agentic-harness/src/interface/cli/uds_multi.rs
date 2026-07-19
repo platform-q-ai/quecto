@@ -656,6 +656,9 @@ pub(in crate::interface::cli) use super::uds_cancel::forward_notification_broadc
 #[path = "uds_multi_accept_loop_tests.rs"]
 mod accept_loop_tests;
 #[cfg(test)]
+#[path = "uds_multi_cov2_tests.rs"]
+mod cov2_tests;
+#[cfg(test)]
 #[path = "uds_multi_cov_tests.rs"]
 mod cov_tests;
 #[cfg(test)]

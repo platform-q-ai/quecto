@@ -21,6 +21,15 @@ fn round_trip_json(ev: &AgentEvent) -> serde_json::Value {
     serde_json::from_str(&s).expect("AgentEvent serializes to JSON")
 }
 
+fn ref_string(item: &serde_json::Value) -> Option<String> {
+    if let Some(s) = item.as_str() {
+        return Some(s.to_string());
+    }
+    item.get("id")
+        .and_then(|id| id.as_str())
+        .map(str::to_string)
+}
+
 fn non_empty_refs(v: &serde_json::Value) -> Vec<String> {
     // Prefer top-level `messageRefs`; also accept nested under `message` for
     // turn_end so either producer layout can satisfy the contract.
@@ -34,14 +43,7 @@ fn non_empty_refs(v: &serde_json::Value) -> Vec<String> {
         if let Some(arr) = c.as_array() {
             let refs: Vec<String> = arr
                 .iter()
-                .filter_map(|item| {
-                    if let Some(s) = item.as_str() {
-                        return Some(s.to_string());
-                    }
-                    item.get("id")
-                        .and_then(|id| id.as_str())
-                        .map(str::to_string)
-                })
+                .filter_map(ref_string)
                 .filter(|s| !s.is_empty())
                 .collect();
             if !refs.is_empty() {
@@ -50,6 +52,14 @@ fn non_empty_refs(v: &serde_json::Value) -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+#[test]
+fn non_empty_refs_accepts_object_refs_and_discards_empty_values() {
+    let v = serde_json::json!({
+        "messageRefs": ["", {"id": "object-ref"}, {"id": ""}, {"other": "ignored"}]
+    });
+    assert_eq!(non_empty_refs(&v), vec!["object-ref".to_string()]);
 }
 
 /// #1060 AC6: turn_end must carry non-empty stable message refs (not empty arrays).

@@ -137,3 +137,16 @@ mod tests {
         assert!(out.len() <= 2000 + "…[truncated]".len());
     }
 }
+
+#[cfg(test)]
+mod redacted_cov_tests {
+    use super::*;
+
+    #[test]
+    fn redacted_from_string_and_display_scrub_secret() {
+        let redacted = Redacted::from(String::from("prefix token=hunter2 suffix"));
+        assert_eq!(redacted.as_str(), "prefix [REDACTED] suffix");
+        assert_eq!(redacted.to_string(), "prefix [REDACTED] suffix");
+        assert_eq!(&*redacted, "prefix [REDACTED] suffix");
+    }
+}

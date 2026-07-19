@@ -13,6 +13,7 @@ use super::dispatch_test_env::{
     DispatchTestEnv, make_completed_feature_workflow, make_selected_feature_workflow,
 };
 use super::*;
+use crate::domain::provider::{LlmProvider, StreamEvent};
 use crate::interface::shared::WorkflowStateHandle;
 
 /// Fragment of the standard auto-continue nudge (first nudge, and any nudge
@@ -54,6 +55,57 @@ impl ScriptedProgressProvider {
 impl std::fmt::Debug for ScriptedProgressProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ScriptedProgressProvider").finish()
+    }
+}
+
+#[tokio::test]
+async fn scripted_progress_provider_trait_surface_methods_are_invoked() {
+    let provider =
+        ScriptedProgressProvider::new(make_selected_feature_workflow(), vec![false, false], false);
+    assert_eq!(provider.name(), "scripted-progress");
+    assert!(format!("{provider:?}").contains("ScriptedProgressProvider"));
+    assert!(provider.as_any().is::<()>());
+
+    let request = crate::domain::provider::ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "test",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    assert_eq!(
+        provider
+            .chat_stream(request)
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("status")
+    );
+
+    let request = crate::domain::provider::ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "test",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let mut rx = provider.chat_stream_incremental(request).await;
+    match rx.recv().await.unwrap() {
+        StreamEvent::Done(resp) => assert_eq!(resp.content.as_deref(), Some("status")),
+        other => panic!("unexpected stream event: {other:?}"),
     }
 }
 

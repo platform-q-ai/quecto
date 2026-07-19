@@ -391,7 +391,7 @@ impl LlmProvider for OpenAiProvider {
 }
 
 #[path = "openai_sse.rs"]
-mod openai_sse;
+pub(super) mod openai_sse;
 #[path = "openai_sse_parser.rs"]
 mod openai_sse_parser;
 

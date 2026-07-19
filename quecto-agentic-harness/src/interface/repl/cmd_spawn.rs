@@ -125,6 +125,10 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
 }
 
 #[cfg(test)]
+#[path = "cmd_spawn_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use std::io::Cursor;
     use std::sync::Arc;

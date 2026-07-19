@@ -277,30 +277,30 @@ fn exempt_messages_never_collapse() {
         collapsed >= 1,
         "positive control: old conversation messages must collapse at N=0"
     );
-    let by_content = |needle: &str| {
+    fn message_with_content<'a>(messages: &'a [Message], needle: &str) -> &'a Message {
         messages
             .iter()
             .find(|m| m.content.contains(needle))
-            .unwrap_or_else(|| panic!("message containing {needle:?} must not be dropped"))
-    };
+            .expect("message containing needle must not be dropped")
+    }
     assert!(
-        !by_content("system prompt").is_collapsed,
+        !message_with_content(&messages, "system prompt").is_collapsed,
         "the system prompt is exempt"
     );
     assert!(
-        !by_content("Session memory").is_collapsed,
+        !message_with_content(&messages, "Session memory").is_collapsed,
         "the manifest is exempt"
     );
     assert!(
-        !by_content("current question").is_collapsed,
+        !message_with_content(&messages, "current question").is_collapsed,
         "the in-flight user prompt is exempt"
     );
     assert!(
-        !by_content("conversation message 9").is_collapsed,
+        !message_with_content(&messages, "conversation message 9").is_collapsed,
         "messages within the pin_recent_turns tail are exempt"
     );
     assert!(
-        by_content("conversation message 1").is_collapsed,
+        message_with_content(&messages, "conversation message 1").is_collapsed,
         "old-prompt messages must collapse at N=0"
     );
 }
@@ -538,24 +538,24 @@ fn current_run_recent_turns_are_exempt_from_message_collapse() {
         collapsed, 3,
         "both earlier-prompt messages and the current run's turn 1 collapse"
     );
-    let by_content = |needle: &str| {
+    fn message_with_content<'a>(messages: &'a [Message], needle: &str) -> &'a Message {
         messages
             .iter()
             .find(|m| m.content.contains(needle))
-            .unwrap_or_else(|| panic!("message containing {needle:?} must exist"))
-    };
-    assert!(by_content("conversation message 1").is_collapsed);
-    assert!(by_content("conversation message 2").is_collapsed);
+            .expect("message containing needle must exist")
+    }
+    assert!(message_with_content(&messages, "conversation message 1").is_collapsed);
+    assert!(message_with_content(&messages, "conversation message 2").is_collapsed);
     assert!(
-        by_content("current run answer 1").is_collapsed,
+        message_with_content(&messages, "current run answer 1").is_collapsed,
         "the current run's turn 1 is outside the pin tail of 2"
     );
     assert!(
-        !by_content("current run answer 2").is_collapsed,
+        !message_with_content(&messages, "current run answer 2").is_collapsed,
         "turn 2 is within the pin_recent_turns tail"
     );
     assert!(
-        !by_content("current run answer 3").is_collapsed,
+        !message_with_content(&messages, "current run answer 3").is_collapsed,
         "turn 3 is within the pin_recent_turns tail"
     );
 }
@@ -726,4 +726,25 @@ fn stub_without_recall_strips_only_the_trailing_clause() {
 #[test]
 fn stub_without_recall_is_identity_without_a_clause() {
     assert_eq!(message_stub_without_recall("plain text"), "plain text");
+}
+
+#[tokio::test]
+async fn mem_store_default_has_entries_is_false() {
+    assert!(!MemStore::default().has_entries("s").await.unwrap());
+}
+
+#[tokio::test]
+async fn mem_store_trait_surface_clear_empties_entries() {
+    let store = MemStore::default();
+    let entry = SpillEntry {
+        id: "id1".into(),
+        tool: "bash".into(),
+        input_preview: "echo".into(),
+        tokens: 2,
+        content: "out".into(),
+    };
+    store.append("s", &entry).await.unwrap();
+    assert_eq!(store.list_entries("s").await.unwrap().len(), 1);
+    store.clear("s").await.unwrap();
+    assert!(store.list_entries("s").await.unwrap().is_empty());
 }

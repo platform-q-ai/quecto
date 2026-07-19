@@ -359,3 +359,28 @@ fn test_import_openai_store_failure() {
         "stderr: {e}"
     );
 }
+
+#[test]
+fn load_external_auth_json_reports_missing_path() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let old_home = std::env::var_os("HOME");
+    // SAFETY: this test mutates HOME and restores it before returning.
+    unsafe {
+        std::env::set_var("HOME", tmp.path());
+    }
+    let mut stderr = String::new();
+    let loaded = load_external_auth_json(&mut stderr);
+    if let Some(home) = old_home {
+        // SAFETY: restore the process HOME captured before this test mutation.
+        unsafe {
+            std::env::set_var("HOME", home);
+        }
+    } else {
+        // SAFETY: restore the process HOME to its prior absent state.
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+    }
+    assert!(loaded.is_none());
+    assert!(stderr.contains("auth.json not found"), "{stderr}");
+}

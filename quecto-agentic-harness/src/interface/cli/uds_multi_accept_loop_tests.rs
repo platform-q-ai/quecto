@@ -124,9 +124,7 @@ async fn busy_accept_loop_pushes_get_subagents_snapshot() {
     let subagents_line = received
         .lines()
         .find(|l| l.contains("\"command\":\"get_subagents\""))
-        .unwrap_or_else(|| {
-            panic!("busy client must receive a get_subagents snapshot; got: {received}")
-        });
+        .expect("busy client must receive a get_subagents snapshot");
     let v: serde_json::Value = serde_json::from_str(subagents_line).expect("valid JSON line");
     assert_eq!(v["type"], "response");
     assert_eq!(v["command"], "get_subagents");
@@ -167,7 +165,7 @@ async fn busy_accept_loop_pushes_session_stats_and_extensions_snapshots() {
     let stats_line = received
         .lines()
         .find(|l| l.contains("\"command\":\"get_session_stats\""))
-        .unwrap_or_else(|| panic!("busy client must receive stats snapshot; got: {received}"));
+        .expect("busy client must receive stats snapshot");
     let stats: serde_json::Value = serde_json::from_str(stats_line).expect("valid stats JSON");
     assert_eq!(stats["type"], "response");
     assert_eq!(stats["command"], "get_session_stats");
@@ -178,7 +176,7 @@ async fn busy_accept_loop_pushes_session_stats_and_extensions_snapshots() {
     let extensions_line = received
         .lines()
         .find(|l| l.contains("\"command\":\"get_extensions\""))
-        .unwrap_or_else(|| panic!("busy client must receive extensions snapshot; got: {received}"));
+        .expect("busy client must receive extensions snapshot");
     let extensions: serde_json::Value =
         serde_json::from_str(extensions_line).expect("valid extensions JSON");
     assert_eq!(extensions["type"], "response");

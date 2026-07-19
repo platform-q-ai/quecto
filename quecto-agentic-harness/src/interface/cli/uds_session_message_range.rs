@@ -6,6 +6,10 @@ use crate::interface::cli::protocol::AgentEvent;
 mod tests;
 
 #[cfg(test)]
+#[path = "uds_session_message_range_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 const LONG_REQUEST_ID_REGRESSION_LEN: usize = 4096;
 
 fn nearest_char_boundary_at_or_before(s: &str, mut idx: usize) -> usize {

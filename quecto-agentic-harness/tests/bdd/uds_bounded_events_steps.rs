@@ -131,25 +131,32 @@ fn read_matching_response(
     timeout: Duration,
 ) -> serde_json::Value {
     let deadline = Instant::now() + timeout;
+    // Parse only newly arrived lines. The paged oversized-message reads call
+    // this once per page, so re-parsing the whole accumulated buffer each poll
+    // is quadratic in the number of pages times their (multi-megabyte) size.
+    let mut scanned = 0usize;
     loop {
         drain_client_events(world, client_id, Duration::from_millis(100));
-        let events = world
-            .mc_client_events
-            .get(&client_id)
-            .cloned()
-            .unwrap_or_default();
-        if let Some(response) = events.iter().rev().find_map(|line| {
-            let value: serde_json::Value = serde_json::from_str(line).ok()?;
-            (value.get("type").and_then(|v| v.as_str()) == Some("response")
-                && value.get("id").and_then(|v| v.as_str()) == Some(request_id))
-            .then_some(value)
-        }) {
-            return response;
+        if let Some(events) = world.mc_client_events.get(&client_id) {
+            let found = events.iter().skip(scanned).find_map(|line| {
+                let value: serde_json::Value = serde_json::from_str(line).ok()?;
+                (value.get("type").and_then(|v| v.as_str()) == Some("response")
+                    && value.get("id").and_then(|v| v.as_str()) == Some(request_id))
+                .then_some(value)
+            });
+            if let Some(response) = found {
+                return response;
+            }
+            scanned = events.len();
         }
-        assert!(
-            Instant::now() <= deadline,
-            "timeout waiting for response id={request_id}; events: {events:#?}"
-        );
+        if Instant::now() > deadline {
+            let events = world
+                .mc_client_events
+                .get(&client_id)
+                .cloned()
+                .unwrap_or_default();
+            panic!("timeout waiting for response id={request_id}; events: {events:#?}");
+        }
     }
 }
 
@@ -1678,19 +1685,28 @@ fn drain_client_events(world: &mut QuectoWorld, client_id: u32, budget: Duration
 
 fn wait_client_agent_end(world: &mut QuectoWorld, client_id: u32, timeout: Duration) {
     let deadline = Instant::now() + timeout;
+    // Scan only lines that arrived since the last tick. Cloning the whole event
+    // buffer each poll re-copies (and re-scans) every previously seen line; in
+    // the oversized-message scenarios those lines are megabytes each, which
+    // turns this wait into quadratic work and can outrun the timeout on a
+    // loaded runner even though the agent is behaving correctly.
+    let mut scanned = 0usize;
     loop {
         drain_client_events(world, client_id, Duration::from_millis(200));
-        let events = world
-            .mc_client_events
-            .get(&client_id)
-            .cloned()
-            .unwrap_or_default();
-        if events.iter().any(|line| {
-            line.contains(r#""type":"agent_end""#) || line.contains(r#""type":"workflow_idle""#)
-        }) {
-            return;
+        if let Some(events) = world.mc_client_events.get(&client_id) {
+            if events.iter().skip(scanned).any(|line| {
+                line.contains(r#""type":"agent_end""#) || line.contains(r#""type":"workflow_idle""#)
+            }) {
+                return;
+            }
+            scanned = events.len();
         }
         if Instant::now() > deadline {
+            let events = world
+                .mc_client_events
+                .get(&client_id)
+                .cloned()
+                .unwrap_or_default();
             panic!(
                 "timeout waiting for agent_end on client {client_id}; events: {events:#?}; stderr={}",
                 world.agent_stderr

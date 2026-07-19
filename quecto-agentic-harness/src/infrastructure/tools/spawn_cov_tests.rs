@@ -23,12 +23,39 @@ fn registry_accessor_reflects_shared_state() {
 // --- inherited_runtime_config_path() ---
 
 #[test]
-fn inherited_runtime_config_path_is_callable() {
-    // With the env var unset (the usual test environment) this returns None;
-    // either way it must not panic and yields an Option<PathBuf>.
-    let result = inherited_runtime_config_path();
-    if std::env::var("QUECTO_RUNTIME_CONFIG_PATH").is_err() {
-        assert!(result.is_none());
+#[serial_test::serial]
+fn inherited_runtime_config_path_reads_non_empty_and_ignores_empty() {
+    let old = std::env::var_os("QUECTO_RUNTIME_CONFIG_PATH");
+    // Serialized by #[serial_test::serial]: no other test in this binary runs
+    // concurrently while the process-wide env is mutated.
+    // SAFETY: no concurrent env readers; the value is restored before return.
+    unsafe {
+        std::env::set_var("QUECTO_RUNTIME_CONFIG_PATH", "  ");
+    }
+    assert!(inherited_runtime_config_path().is_none());
+
+    // SAFETY: See note above; serialized by #[serial_test::serial].
+    unsafe {
+        std::env::set_var("QUECTO_RUNTIME_CONFIG_PATH", "runtime.toml");
+    }
+    assert_eq!(
+        inherited_runtime_config_path().as_deref(),
+        Some(std::path::Path::new("runtime.toml"))
+    );
+
+    match old {
+        Some(value) => {
+            // SAFETY: Restores the process environment value saved at test entry.
+            unsafe {
+                std::env::set_var("QUECTO_RUNTIME_CONFIG_PATH", value);
+            }
+        }
+        None => {
+            // SAFETY: Restores the absence of the process environment value saved at test entry.
+            unsafe {
+                std::env::remove_var("QUECTO_RUNTIME_CONFIG_PATH");
+            }
+        }
     }
 }
 
@@ -76,6 +103,90 @@ fn validate_config_path_rejects_parent_dir_component() {
     );
 }
 
+#[test]
+fn parse_args_accepts_all_optional_spawn_fields() {
+    let tool = SpawnTool::new(vec!["allowed".to_string()], false);
+    let cfg = tool
+        .parse_args(
+            r#"{
+                "agent_id":"allowed",
+                "task":"do work",
+                "system":"be useful",
+                "config":"configs/child.toml",
+                "workflow":true,
+                "workflow_guards":true,
+                "model":"openai/gpt-5",
+                "effort":"high",
+                "read_only":true,
+                "disable_tools":["grep"]
+            }"#,
+        )
+        .unwrap();
+
+    assert_eq!(cfg.agent_id.as_deref(), Some("allowed"));
+    assert_eq!(cfg.task.as_deref(), Some("do work"));
+    assert_eq!(cfg.system.as_deref(), Some("be useful"));
+    assert_eq!(
+        cfg.config_path.as_deref(),
+        Some(std::path::Path::new("configs/child.toml"))
+    );
+    assert!(cfg.workflow);
+    assert!(cfg.workflow_guards);
+    assert_eq!(cfg.model.as_deref(), Some("openai/gpt-5"));
+    assert_eq!(cfg.effort.as_deref(), Some("high"));
+    assert_eq!(cfg.disable_tools, vec!["write", "edit", "grep"]);
+    assert!(cfg.read_only);
+    assert!(!cfg.restrict_to_workspace);
+}
+
+#[test]
+fn parse_args_rejects_bad_json_config_path_and_disable_tool_shapes() {
+    let tool = SpawnTool::new(vec![], true);
+
+    let err = tool.parse_args("{").unwrap_err();
+    assert!(err.contains("invalid JSON"), "{err}");
+
+    let err = tool
+        .parse_args(r#"{"config":"../secret.toml"}"#)
+        .unwrap_err();
+    assert!(err.contains("contains '..'"), "{err}");
+
+    let err = tool.parse_args(r#"{"disable_tools":"write"}"#).unwrap_err();
+    assert!(err.contains("disable_tools must be an array"), "{err}");
+
+    let err = tool
+        .parse_args(r#"{"disable_tools":["write",7]}"#)
+        .unwrap_err();
+    assert!(err.contains("entries must be strings"), "{err}");
+}
+
+#[test]
+fn parse_args_rejects_specific_invalid_fields() {
+    let tool = SpawnTool::new(vec!["ok".to_string()], true);
+    let err = tool.parse_args(r#"{"agent_id":"bad space"}"#).unwrap_err();
+    assert!(err.contains("invalid") || err.contains("agent_id"), "{err}");
+
+    let err = tool
+        .parse_args(r#"{"agent_id":"not-allowed"}"#)
+        .unwrap_err();
+    assert!(
+        err.contains("not allowed") || err.contains("not-allowed"),
+        "{err}"
+    );
+
+    let err = tool.parse_args(r#"{"workflow_guards":true}"#).unwrap_err();
+    assert_eq!(err, "workflow_guards requires workflow to also be true");
+
+    let err = tool.parse_args(r#"{"provider":"openai"}"#).unwrap_err();
+    assert!(err.contains("invalid model"), "{err}");
+
+    let err = tool.parse_args(r#"{"effort":"extreme"}"#).unwrap_err();
+    assert!(
+        err.contains("invalid effort") || err.contains("effort"),
+        "{err}"
+    );
+}
+
 #[tokio::test]
 async fn execute_parse_error_returns_llm_addressable_tool_error() {
     let tool = SpawnTool::new(vec![], true);
@@ -97,6 +208,48 @@ async fn stub_spawn_duplicate_id_replaces_existing_entry_without_panic() {
         registry.get("dup").unwrap().status,
         SubagentStatus::Starting
     );
+}
+
+#[tokio::test]
+async fn register_and_broadcast_sends_state_changed_event() {
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let (tx, mut rx) = tokio::sync::broadcast::channel(4);
+    let cfg = SpawnTool::new(vec![], true)
+        .parse_args(r#"{"agent_id":"child","read_only":true}"#)
+        .unwrap();
+    let entry = initial_registry_entry(
+        PathBuf::from("/tmp/child.sock"),
+        123,
+        Some("parent".to_string()),
+        &cfg,
+        None,
+    );
+
+    register_and_broadcast(&registry, Some(&tx), "child", entry);
+
+    assert!(registry.lock().unwrap().contains_key("child"));
+    let event = rx.recv().await.unwrap();
+    assert!(event.contains("state_changed"), "{event}");
+    assert!(event.contains("child"), "{event}");
+}
+
+#[test]
+fn shutdown_all_clears_the_registry() {
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let handle = rt.spawn(async {
+        std::future::pending::<()>().await;
+    });
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/no-pid.sock"), 0);
+    entry.monitor_handle = Some(Arc::new(handle));
+    registry.lock().unwrap().insert("idle".to_string(), entry);
+
+    shutdown_all(&registry);
+
+    assert!(registry.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -183,4 +336,124 @@ async fn send_initial_prompt_writes_to_listening_socket() {
     let received = accept.await.unwrap();
     assert!(received.contains("do-the-thing"), "got: {received}");
     assert!(received.contains("\"type\":\"prompt\""), "got: {received}");
+}
+
+#[test]
+fn parse_args_workflow_spec_null_and_scalar_paths() {
+    let tool = SpawnTool::new(vec![], true);
+    let cfg = tool.parse_args(r#"{"workflow_spec":null}"#).unwrap();
+    assert!(cfg.workflow_spec.is_none());
+
+    let err = tool.parse_args(r#"{"workflow_spec":42}"#).unwrap_err();
+    assert!(err.contains("invalid workflow_spec"), "{err}");
+}
+
+fn poison_registry(registry: &SubagentRegistry) {
+    let cloned = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = cloned.lock().unwrap();
+        panic!("poison registry for coverage");
+    })
+    .join();
+    assert!(registry.lock().is_err(), "registry should be poisoned");
+}
+
+#[tokio::test]
+async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let (tx, rx) = tokio::sync::broadcast::channel(1);
+    drop(rx);
+    let cfg = SpawnTool::new(vec![], true)
+        .parse_args(r#"{"agent_id":"closed"}"#)
+        .unwrap();
+    let entry = initial_registry_entry(PathBuf::from("/tmp/closed.sock"), 0, None, &cfg, None);
+
+    register_and_broadcast(&registry, Some(&tx), "closed", entry);
+
+    assert!(registry.lock().unwrap().contains_key("closed"));
+}
+
+#[tokio::test]
+async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let cfg = SpawnTool::new(vec![], true)
+        .parse_args(r#"{"agent_id":"poison","read_only":true}"#)
+        .unwrap();
+    poison_registry(&registry);
+
+    register_and_broadcast(
+        &registry,
+        None,
+        "poison",
+        initial_registry_entry(PathBuf::from("/tmp/poison.sock"), 0, None, &cfg, None),
+    );
+    assert!(
+        registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key("poison")
+    );
+
+    shutdown_all(&registry);
+    assert!(
+        registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn launch_uds_agent_rejects_an_oversized_workflow_spec_before_spawning() {
+    use crate::domain::workflow::{WorkflowSpec, WorkflowTemplate, WorkflowTemplateStep};
+
+    // The spec is forwarded to the child as a file; an unbounded one would let a
+    // caller write an arbitrarily large attacker-controlled file into socket_dir.
+    // The size check must therefore reject before any file is created or any
+    // child process is launched.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let tool = SpawnTool::new(vec![], true).with_socket_dir(dir.path().to_path_buf());
+
+    let huge = "g".repeat(crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES + 1);
+    let spec = WorkflowSpec {
+        template: WorkflowTemplate {
+            id: "oversized".into(),
+            label: "Oversized".into(),
+            description: "spec exceeding the byte cap".into(),
+            when_to_use: None,
+            steps: vec![WorkflowTemplateStep {
+                key: "step".into(),
+                label: "Step".into(),
+                phase: "phase".into(),
+                guidance: Some(huge),
+            }],
+            guards: vec![],
+        },
+    };
+
+    let mut config = tool
+        .parse_args(r#"{"task":"go"}"#)
+        .expect("baseline args parse");
+    config.workflow_spec = Some(spec);
+
+    let err = tool
+        .launch_uds_agent(&config)
+        .await
+        .expect_err("an oversized workflow spec must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("workflow spec too large"),
+        "expected the size-cap error, got: {msg}"
+    );
+
+    // Nothing was written to the socket dir before the rejection.
+    let leaked: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("read socket dir")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "spec file leaked before rejection: {leaked:?}"
+    );
 }

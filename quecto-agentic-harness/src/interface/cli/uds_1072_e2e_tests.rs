@@ -16,7 +16,7 @@ use super::{EventSink, PromptOutcome, PromptRun, run_agent_message};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::interface::cli::uds_session::AgentSession;
 
@@ -97,6 +97,72 @@ fn droppable_history_message(turn: u32) -> Message {
     let mut msg = Message::assistant("lorem ipsum dolor sit amet ".repeat(90), vec![]);
     msg.turn = Some(turn);
     msg
+}
+
+#[tokio::test]
+async fn scripted_provider_trait_surface_methods_are_invoked() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(vec![
+            LlmResponse {
+                content: Some("scripted-ok".into()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            },
+            LlmResponse {
+                content: Some("scripted-ok".into()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            },
+        ]),
+    };
+    assert_eq!(provider.name(), "scripted");
+    assert!(provider.as_any().is::<()>());
+
+    let request = ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "test",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    assert_eq!(
+        provider
+            .chat_stream(request)
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("scripted-ok")
+    );
+
+    let request = ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "test",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let mut rx = provider.chat_stream_incremental(request).await;
+    match rx.recv().await.unwrap() {
+        StreamEvent::Done(resp) => assert_eq!(resp.content.as_deref(), Some("scripted-ok")),
+        other => panic!("unexpected stream event: {other:?}"),
+    }
 }
 
 /// Drives the full production prompt pipeline (`run_agent_message`) with a
@@ -221,7 +287,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
             messages
                 .iter()
                 .find(|m| m.id().to_string() == *id)
-                .unwrap_or_else(|| panic!("ref {id} must resolve to a ledger message"))
+                .expect("ref must resolve to a ledger message")
         })
         .collect();
     assert!(
@@ -311,4 +377,18 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
          spurious dirty latch forces a full compact-rewrite every turn and \
          defeats the save_clean_delta fast path"
     );
+}
+
+#[test]
+fn fixed_tool_default_session_key_is_noop_for_1072_helper() {
+    let tool = FixedTool {
+        def: ToolDefinition {
+            name: "fixed1072".into(),
+            description: "fixed helper".into(),
+            parameters_schema: "{}".into(),
+        },
+        output: "ok".into(),
+    };
+    Tool::set_session_key(&tool, "session".into());
+    assert_eq!(Tool::definition(&tool).name, "fixed1072");
 }

@@ -554,3 +554,7 @@ fn collapse_whitespace(text: &str) -> String {
 #[cfg(test)]
 #[path = "web_fetch_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "web_fetch_cov_tests.rs"]
+mod cov_tests;

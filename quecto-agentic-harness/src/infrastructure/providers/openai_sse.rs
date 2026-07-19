@@ -10,7 +10,7 @@ use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome, p
 use super::OpenAiProvider;
 
 /// SSE line handler for OpenAI chat completions.
-struct OpenAiSseHandler {
+pub(crate) struct OpenAiSseHandler {
     content: String,
     tool_calls: Vec<ToolCall>,
     usage: Option<UsageInfo>,

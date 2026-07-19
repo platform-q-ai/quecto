@@ -7,13 +7,13 @@ use std::pin::Pin;
 use std::sync::Mutex;
 
 #[derive(Debug)]
-struct StubStore {
+pub(super) struct StubStore {
     loaded: Mutex<Result<Option<Session>, DomainError>>,
     load_keys: Mutex<Vec<String>>,
 }
 
 impl StubStore {
-    fn with_loaded(loaded: Result<Option<Session>, DomainError>) -> Self {
+    pub(super) fn with_loaded(loaded: Result<Option<Session>, DomainError>) -> Self {
         Self {
             loaded: Mutex::new(loaded),
             load_keys: Mutex::new(Vec::new()),

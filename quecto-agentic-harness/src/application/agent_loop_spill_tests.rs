@@ -433,3 +433,32 @@ async fn ephemeral_session_spills_both_tool_output_and_conversation_messages() {
         entries.iter().map(|e| &e.id).collect::<Vec<_>>()
     );
 }
+
+#[tokio::test]
+async fn mock_spill_store_trait_surface_recalls_and_clears() {
+    let store = MockSpillStore::default();
+    let entry = SpillEntry {
+        id: "id1".into(),
+        tool: "bash".into(),
+        input_preview: "echo".into(),
+        tokens: 2,
+        content: "out".into(),
+    };
+    store.append("s", &entry).await.unwrap();
+    assert_eq!(
+        store.recall("s", "id1").await.unwrap().unwrap().content,
+        "out"
+    );
+    store.clear("s").await.unwrap();
+    assert_eq!(
+        store.recall("s", "id1").await.unwrap().unwrap().content,
+        "out"
+    );
+}
+
+#[tokio::test]
+async fn failing_spill_store_trait_surface_errors_on_recall_and_clear() {
+    let store = FailingSpillStore;
+    assert!(store.recall("s", "missing").await.unwrap().is_none());
+    assert!(store.clear("s").await.is_ok());
+}

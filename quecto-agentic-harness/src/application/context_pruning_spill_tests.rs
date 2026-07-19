@@ -107,7 +107,7 @@ fn ceiling_ladder_never_demotes_most_recent_turns() {
         let msg = messages
             .iter()
             .find(|m| m.turn == Some(turn))
-            .unwrap_or_else(|| panic!("turn {turn} is tail-pinned and must remain"));
+            .expect("tail-pinned turn must remain");
         assert!(
             !msg.is_collapsed,
             "turn {turn} is within the pinned tail and must never be demoted"
@@ -176,7 +176,7 @@ fn ceiling_ladder_tail_fallback_protects_previous_prompt_turns() {
         let msg = messages
             .iter()
             .find(|m| m.turn == Some(turn))
-            .unwrap_or_else(|| panic!("previous prompt's turn {turn} must stay tail-pinned"));
+            .expect("previous prompt tail-pinned turn must stay");
         assert!(!msg.is_collapsed, "tail-pinned turn {turn} stays full");
     }
 }
@@ -363,4 +363,20 @@ fn stamped_trailing_user_feedback_does_not_usurp_prompt_boundary() {
         !messages.iter().any(|m| m.turn == Some(7)),
         "the earlier prompt's turn must still be droppable"
     );
+}
+
+#[tokio::test]
+async fn mem_store_trait_surface_clear_empties_entries() {
+    let store = MemStore::default();
+    let entry = SpillEntry {
+        id: "id1".into(),
+        tool: "bash".into(),
+        input_preview: "echo".into(),
+        tokens: 2,
+        content: "out".into(),
+    };
+    store.append("s", &entry).await.unwrap();
+    assert_eq!(store.list_entries("s").await.unwrap().len(), 1);
+    store.clear("s").await.unwrap();
+    assert!(store.list_entries("s").await.unwrap().is_empty());
 }
