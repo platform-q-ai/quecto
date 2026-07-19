@@ -118,6 +118,9 @@ fn terminal_class_guidance(err: &DomainError) -> Option<&'static str> {
         ProviderErrorClass::Auth => Some(
             "Authentication: the provider rejected your credentials (not retryable). Check the API key or re-authenticate (`quecto auth login`), then retry.",
         ),
+        ProviderErrorClass::Billing => Some(
+            "Billing/quota: the provider reports exhausted credit or a billing limit (not retryable). Check the account plan, billing, or quota before retrying.",
+        ),
         ProviderErrorClass::Client
         | ProviderErrorClass::Cancelled
         | ProviderErrorClass::Unknown => None,

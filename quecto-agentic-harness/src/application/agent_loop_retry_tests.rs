@@ -116,6 +116,80 @@ async fn does_not_retry_streaming_provider_failures_after_output() {
 }
 
 #[tokio::test]
+async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
+    let provider = Arc::new(MockProvider::new_results(vec![Err(DomainError::Provider(
+        r#"HTTP 429 from OpenAI: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#.to_string(),
+    ))]));
+    let retrying = Arc::new(
+        crate::infrastructure::providers::retry::RetryingProvider::new(
+            provider.clone(),
+            crate::infrastructure::providers::retry::RetryConfig::no_delay(4),
+        ),
+    );
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: retrying,
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "quota-non-stream-test".into(),
+        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    })
+    .with_max_tool_iterations(1);
+
+    let mut messages = vec![Message::user("hello")];
+    let err = agent.process(&mut messages).await.unwrap_err().to_string();
+
+    assert!(err.contains("HTTP 429 from OpenAI"), "{err}");
+    assert!(err.contains("insufficient_quota"), "{err}");
+    assert_eq!(provider.request_count(), 1, "quota failures are terminal");
+}
+
+#[tokio::test]
+async fn does_not_retry_streaming_openai_insufficient_quota_429() {
+    let provider = Arc::new(MockStreamingProvider::new(vec![vec![
+        crate::domain::provider::StreamEvent::Error(
+            r#"HTTP 429 from OpenAI: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#.to_string(),
+        ),
+    ]]));
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: provider.clone(),
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "quota-stream-test".into(),
+        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: true,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    })
+    .with_max_tool_iterations(1);
+
+    let mut messages = vec![Message::user("hello")];
+    let err = agent.process(&mut messages).await.unwrap_err().to_string();
+
+    assert!(err.contains("HTTP 429 from OpenAI"), "{err}");
+    assert!(err.contains("insufficient_quota"), "{err}");
+    assert_eq!(provider.request_count(), 1, "quota failures are terminal");
+}
+
+#[tokio::test]
 async fn provider_context_limit_errors_are_actionable() {
     let provider = Arc::new(MockProvider::new_results(vec![Err(DomainError::Provider(
         "HTTP 400 from OpenAI: maximum context length is 100000 tokens; requested 100001 tokens"

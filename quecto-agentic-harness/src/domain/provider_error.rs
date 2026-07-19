@@ -9,6 +9,7 @@ use crate::domain::error::DomainError;
 #[serde(rename_all = "snake_case")]
 pub enum ProviderErrorClass {
     RateLimit,
+    Billing,
     Auth,
     Server,
     Client,
@@ -35,6 +36,7 @@ impl ProviderErrorClass {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::RateLimit => "rate_limit",
+            Self::Billing => "billing",
             Self::Auth => "auth",
             Self::Server => "server",
             Self::Client => "client",
@@ -58,6 +60,10 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
     };
 
     let lowered = msg.to_ascii_lowercase();
+
+    if declares_billing_or_quota_error(&lowered) {
+        return ProviderErrorClass::Billing;
+    }
 
     if let Some(status) = extract_http_status(&lowered) {
         let class = ProviderErrorClass::from_status(status);
@@ -152,6 +158,17 @@ fn extract_parenthesized_status(lowered: &str) -> Option<u16> {
 fn declares_client_error_code(lowered: &str) -> bool {
     json_field_is(lowered, "code", "invalid_request_error")
         || json_field_is(lowered, "type", "invalid_request_error")
+}
+
+/// Recognise terminal quota/billing failures that may arrive with HTTP 429 but
+/// are not transient rate limits. OpenAI uses `insufficient_quota` in both
+/// `type` and `code` for exhausted-credit accounts; retrying those failures only
+/// delays surfacing the actionable billing error to the operator.
+fn declares_billing_or_quota_error(lowered: &str) -> bool {
+    json_field_is(lowered, "code", "insufficient_quota")
+        || json_field_is(lowered, "type", "insufficient_quota")
+        || json_field_is(lowered, "code", "billing_hard_limit_reached")
+        || json_field_is(lowered, "type", "billing_hard_limit_reached")
 }
 
 /// Whitespace-tolerant match for a JSON `"field": "value"` pair in an already
