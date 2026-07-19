@@ -69,12 +69,24 @@ mod tests {
         gauge.observe_provider_truth(1_000, 100);
         assert_eq!(gauge.reconcile_before_call(80), 980);
         assert_eq!(gauge.reconcile_before_call(130), 1_030);
+        // Unchanged estimate keeps the calibrated provider value stable.
+        assert_eq!(gauge.reconcile_before_call(130), 1_030);
 
         gauge.observe_estimate_only(10);
         assert_eq!(
             gauge.reconcile_before_call(130),
             1_030,
             "estimate-only observations must not replace provider truth once calibrated"
+        );
+    }
+
+    #[test]
+    fn context_gauge_debug_fmt_includes_struct_name() {
+        let gauge = ContextGaugeCalibration::default();
+        let rendered = format!("{gauge:?}");
+        assert!(
+            rendered.contains("ContextGaugeCalibration"),
+            "Debug output should name the calibration type: {rendered}"
         );
     }
 }

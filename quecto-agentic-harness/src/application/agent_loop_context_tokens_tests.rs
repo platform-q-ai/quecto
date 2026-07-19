@@ -138,3 +138,12 @@ async fn thinking_context_tokens_carry_provider_truth_forward_across_collapse() 
         "next provider usage report should replace calibrated value with exact provider truth"
     );
 }
+
+#[test]
+fn context_gauge_wrappers_recover_from_poisoned_mutex() {
+    let (agent, _) = make_agent(
+        vec![response_with_provider_input_tokens("hello", 100)],
+        vec![],
+    );
+    agent.exercise_poisoned_context_gauge_for_test();
+}

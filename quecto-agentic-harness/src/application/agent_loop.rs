@@ -224,6 +224,35 @@ impl AgentLoopImpl {
             .observe_estimate_only(estimate);
     }
 
+    /// Poison the context-gauge mutex so coverage exercises the
+    /// `unwrap_or_else(|e| e.into_inner())` recovery paths (#1128).
+    #[cfg(test)]
+    pub(super) fn poison_context_gauge_lock_for_test(&self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = self.context_gauge.lock().unwrap();
+            panic!("poison context gauge mutex for coverage");
+        }));
+        assert!(
+            self.context_gauge.is_poisoned(),
+            "context gauge mutex must be poisoned after the intentional panic"
+        );
+    }
+
+    /// Drive all three gauge entry points against a poisoned mutex.
+    #[cfg(test)]
+    pub(super) fn exercise_poisoned_context_gauge_for_test(&self) {
+        self.poison_context_gauge_lock_for_test();
+        assert_eq!(self.reconcile_context_gauge(42), 42);
+        self.observe_provider_context_gauge(1_000, 100);
+        assert_eq!(self.reconcile_context_gauge(80), 980);
+        self.observe_estimated_context_gauge(1);
+        assert_eq!(
+            self.reconcile_context_gauge(80),
+            980,
+            "estimate-only must not clobber provider truth after poison recovery"
+        );
+    }
+
     /// Fire a progress event to the registered callback, if any. Takes a closure
     /// so the event is only constructed when a callback is registered; on the
     /// headless path (`progress_callback = None`) it's never called.
