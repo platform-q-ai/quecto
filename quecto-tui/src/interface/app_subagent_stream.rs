@@ -506,17 +506,6 @@ impl App {
         }
     }
 
-    /// Mirror a routed workflow snapshot onto the agent's panel (`subagent_local`)
-    /// entry so the LEFT side panel renders the FULL per-step bar — filled markers
-    /// up to `done` and empty markers up to `total` (e.g. 3/20 = 3 filled + 17
-    /// empty) — from the child's OWN live `workflow_state` / `get_state`, not only
-    /// the periodic `subagent_state_changed` push (#869b). Preserves BOTH the
-    /// completed and total counts so the indicator never collapses to filled-only.
-    /// Per-agent keyed, so a descendant's update never overwrites an ancestor row.
-    /// Whether `agent_id` currently shows a workflow on EITHER surface — the
-    /// LEFT panel cells (`steps_total > 0`) or the main-pane bar
-    /// (`workflow_bar.is_visible()`). The stickiness guard (#901) uses this so a
-    /// transient/empty event never blanks an indicator that is already visible.
     fn subagent_workflow_visible(&self, agent_id: &str) -> bool {
         let panel_visible = self
             .subagents
@@ -530,7 +519,11 @@ impl App {
         panel_visible || bar_visible
     }
 
-    fn record_subagent_workflow(&mut self, agent_id: &str, bar: &workflow_bar::WorkflowBarState) {
+    pub(super) fn record_subagent_workflow(
+        &mut self,
+        agent_id: &str,
+        bar: &workflow_bar::WorkflowBarState,
+    ) {
         if let Some(tracked) = self.subagents.tracked.get_mut(agent_id) {
             let mode = tracked
                 .info
