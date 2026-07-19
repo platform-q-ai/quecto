@@ -26,11 +26,12 @@ The agent prints the socket path to stderr on startup. Options:
 ## Wire format
 
 - **Transport:** Unix domain socket (stream)
-- **Framing:** One JSON object per line (`\n`-delimited), max 1 MiB per line
+- **Framing:** Length-prefixed UTF-8 JSON frames (ADR-0008), with dual-mode readers that also accept legacy `\n`-delimited JSON lines during the deprecation window. Shared bound: **8 MiB** per message (`quecto-line-io::PROTOCOL_LINE_CAP_BYTES`, including the trailing newline on legacy lines)
 - **Direction:** Client sends **commands**, agent emits **events**
 - **Multi-client:** Multiple clients can connect simultaneously. Events are broadcast to all clients; commands from all clients merge into a single serial dispatch loop
 - **Shutdown:** By default the agent exits when all clients disconnect. Pass `--persist` to keep it running.  Socket file is removed on exit
 - **Security:** Socket file is created with `chmod 0600` (owner-only). Stale sockets older than 24h are reaped on startup
+- **See also:** [ADR-0008](architecture-design-records/adr-0008-length-prefixed-uds-framing-and-bounded-events.md) for version negotiation and the NDJSON deprecation window
 
 ## Correlation IDs
 
@@ -72,7 +73,7 @@ Send a user message to the agent. This is the primary command — it triggers an
 3. `token` (zero or more) — incremental streaming tokens
 4. `tool_execution_start` / `tool_execution_end` (if tools are called)
 5. `turn_end` — LLM call completed, includes assistant message
-6. `agent_end` — run finished, includes all messages from this run
+6. `agent_end` — run finished; carries `messageRefs` for this run (legacy `messages` is empty after #1060)
 7. `response` with `command: "prompt"` and `success: true`
 
 On error, emits `response` with `command: "agent_error"` instead of steps 6-7.
@@ -293,7 +294,10 @@ Return the current session state.
   "isStreaming": false,
   "sessionKey": "cli:default",
   "messageCount": 6,
-  "pendingMessageCount": 0
+  "pendingMessageCount": 0,
+  "maxContextTokens": 300000,
+  "effort": "low",
+  "effortLevels": ["none", "low", "medium", "high", "xhigh", "max"]
 }
 ```
 
@@ -304,6 +308,10 @@ Return the current session state.
 | `sessionKey` | string | Session identifier for persistence |
 | `messageCount` | integer | Total messages in conversation history |
 | `pendingMessageCount` | integer | Number of queued follow-up/steer messages |
+| `maxContextTokens` | integer | Active model context-window limit in tokens (`0` when unknown) |
+| `effort` | string \| null | Effective session effort (`null` means provider default / unset) |
+| `effortLevels` | string[] | Effort vocabulary valid for the active model's provider |
+| `workflow` | object \| omitted | Workflow snapshot when workflow is enabled for the session |
 
 ---
 
@@ -406,6 +414,7 @@ ranged response is capped to fit the UDS frame limit (#1094).
 | `offset` | integer | no | Content byte offset to start the returned range; omit only when the caller knows the full message fits in one frame |
 | `limit` | integer | no | Requested maximum content bytes for this page; the server may return fewer bytes to preserve the frame cap |
 | `agent_id` | string | no | Forward the lookup to a spawned child agent |
+| `toolCallId` | string | no | When set, recover that tool call's arguments instead of the message body |
 
 **Response data:** the message fields above plus range metadata when `offset` or
 `limit` is present:
@@ -470,8 +479,8 @@ Return token usage and cost statistics for the current session.
 | `totalMessages` | integer | Total messages (including system, tool) |
 | `tokens` | object | Token usage breakdown (input, output, cache) |
 | `cost` | number | Estimated cost in USD |
-
-> **Note:** Token counts and cost are currently zeroed — usage tracking from the LLM response is not yet threaded through to session stats.
+| `contextTokens` | integer | Provider-reported prompt occupancy when available, else local estimate |
+| `maxContextTokens` | integer | Active model context-window limit (`0` when unknown) |
 
 ---
 
@@ -505,6 +514,97 @@ You must provide either `model` OR both `provider` + `modelId`. Providing neithe
 
 ```json
 {"type":"set_model","id":"sm-2","provider":"anthropic","modelId":"claude-sonnet-4-6"}
+```
+
+---
+
+### `set_effort`
+
+Switch the session reasoning-effort level at runtime (#1067). Applied to every subsequent turn. Validated against the active model's provider vocabulary (OpenAI reasoning models use `none`–`xhigh`; Anthropic 4.6 uses `low`/`medium`/`high`/`max`).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"set_effort"` | yes | |
+| `id` | string | no | Correlation ID |
+| `effort` | string | yes | Effort level string |
+
+**Response data (success):**
+
+```json
+{"effort": "high"}
+```
+
+**Error:** `success: false` with a message listing the valid levels for the active model.
+
+**Example:**
+
+```json
+{"type":"set_effort","id":"se-1","effort":"xhigh"}
+```
+
+---
+
+### `list_models`
+
+Return configured and built-in models from the runtime registry (`models.json` + built-ins).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"list_models"` | yes | |
+| `id` | string | no | Correlation ID |
+
+---
+
+### `new_session`
+
+Switch to a fresh user-chat session. The previous session is saved first. Rejected while the agent is streaming.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"new_session"` | yes | |
+| `id` | string | no | Correlation ID |
+
+---
+
+### `rewind_to`
+
+Rewind conversation history to a selected user-message boundary. Prefer stable `messageId` (from paged history). `messageIndex` is retained only for single-page conversations; beyond one history page it is rejected rather than misapplied.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"rewind_to"` | yes | |
+| `id` | string | no | Correlation ID |
+| `messageId` | string | preferred | Stable message id to rewind to |
+| `messageIndex` | integer | legacy | Page-local index — only honoured while history fits one page |
+
+---
+
+### `reload`
+
+Force a provider/model config reload (runtime registry + config watch surfaces).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"reload"` | yes | |
+| `id` | string | no | Correlation ID |
+
+---
+
+### `get_subagents`
+
+Return the current list of spawned subagents and their live status (#524).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"get_subagents"` | yes | |
+| `id` | string | no | Correlation ID |
+
+**Response data:** an array of subagent snapshots. Each entry includes `agentId`, `status` (`starting` / `idle` / `running` / `error` / `exited`), optional `lastTool` / `lastError`, `pid`, optional `socketPath`, optional `parentId`, optional `workflow`, and `readOnly` (observer spawn with write/edit disabled).
+
+**Example:**
+
+```json
+{"type":"get_subagents","id":"gs-1"}
 ```
 
 ---
@@ -657,10 +757,24 @@ Emitted when the agent begins processing a prompt.
 
 ### `agent_end`
 
-Emitted when the agent finishes processing. Contains all messages produced during this run (assistant replies, tool calls, tool results).
+Emitted when the agent finishes processing a prompt run. After #1060 / ADR-0008 part 2, full message bodies are **not** re-carried: `messages` is always empty and clients resolve content via `get_message` using the stable refs (or from stream tokens they already held).
 
 ```json
-{"type":"agent_end","messages":[{"role":"assistant","content":"Here are the files...","toolCalls":[],"toolCallId":null,"toolName":null}]}
+{"type":"agent_end","messages":[],"messageRefs":["8f14e45f-ceea-4670-9f5c-2f1a72f1a72f"]}
+```
+
+### `workflow_idle`
+
+Emitted after the post-turn drain finds no further workflow continuation runnable. Optional `reason` distinguishes intervention-worthy exhaustion from deliberate stops so supervisors do not alert on an abort they requested:
+
+| `reason` | Meaning |
+|---|---|
+| `exhausted` | Auto-continuation gave up (no-progress / nudge cap / unfinished with no nudge) |
+| `explicit_abort` | Parent explicitly aborted |
+| `completed` | Workflow reached a terminal state (or none bound) |
+
+```json
+{"type":"workflow_idle","reason":"exhausted"}
 ```
 
 ### `token`
@@ -681,16 +795,20 @@ A new LLM call begins (the agent may make multiple calls per prompt if tools are
 
 ### `turn_end`
 
-An LLM call completed. Contains the assistant's message, optional usage statistics, and tool results.
+An LLM call completed. After #1060 the assistant body is not re-carried on the wire: use stream tokens and/or `messageRefs` + `get_message`. Occupancy fields power the TUI context gauge.
 
 ```json
 {
   "type": "turn_end",
   "message": {
     "role": "assistant",
-    "content": "Here are the files in the directory...",
+    "content": "",
+    "messageRefs": ["9b74e45f-ceea-4670-9f5c-2f1a72f1a730"],
     "usage": {"input": 150, "output": 42, "total": 192},
-    "stopReason": "end_turn"
+    "stopReason": "end_turn",
+    "contextTokens": 4200,
+    "maxContextTokens": 300000,
+    "contentLength": 128
   },
   "toolResults": []
 }
@@ -799,6 +917,30 @@ Broadcast when the extension list changes (after `register_tools`, `unregister_t
 }
 ```
 
+### `subagent_notification`
+
+Passive child-agent notification for human/UI visibility (completion, error, exit).
+
+```json
+{"type":"subagent_notification","agentId":"reviewer","sequence":3,"message":"child exited"}
+```
+
+### `subagent_state_changed`
+
+Broadcast replacement snapshot of all spawned subagent statuses (clients do a simple replace). Entries match the `get_subagents` shape, including `readOnly`.
+
+```json
+{"type":"subagent_state_changed","subagents":[{"agentId":"reviewer","status":"idle","pid":1234,"readOnly":true}]}
+```
+
+### `subagent_messages_appended`
+
+Emitted when a (sub)agent completes a turn, carrying stable refs for messages appended during that turn. A child emits this on its own stream; the parent's monitor may re-stamp `agent_id` and forward it so inspectors can stream child output turn-by-turn without re-carrying full bodies (#1060).
+
+```json
+{"type":"subagent_messages_appended","agent_id":"reviewer","messages":[],"messageRefs":["…"]}
+```
+
 ### `error` (lagged client)
 
 Sent when a client falls behind on the broadcast channel (buffer overflow). The client should call `get_messages` to re-sync.
@@ -813,7 +955,7 @@ Sent when a client falls behind on the broadcast channel (buffer overflow). The 
 
 - **Malformed JSON:** Returns `response` with `command: "parse_error"` and `success: false`. The `error` text preserves the detailed serde parse error in both single-client and multi-client modes; clients that previously string-matched the old generic `"invalid JSON command"` text should switch to the structured `command: "parse_error"` / `success: false` fields.
 - **Unknown command type:** Returns `response` with `success: false`
-- **Line too long:** Returns `response` with `command: "parse_error"` and error `"line exceeds 1 MiB limit"`
+- **Line/frame too long:** Oversized inbound messages are rejected against the shared **8 MiB** protocol cap (`quecto-line-io`); clients should recover large content via ranged `get_message` rather than a single oversized frame
 - **Agent error during prompt:** Returns `response` with `command: "agent_error"`. The agent stays alive — subsequent commands are processed normally
 - **Unroutable model:** If `set_model` was set to a provider that doesn't exist, the next `prompt` returns an `agent_error` with `"no configured provider matches model prefix 'X'"`. Use `set_model` to switch to a valid model and retry
 
@@ -1015,7 +1157,11 @@ All flags for `quecto agent` that affect UDS mode:
 | `--max-time <secs>` | Wall-clock timeout for the entire agent |
 | `--no-sandbox` | Disable workspace path restriction (DANGEROUS) |
 | `--persist` | Keep agent alive after all clients disconnect |
-| `--effort <level>` | Effort level for 4.6 models (`low`/`medium`/`high`/`max`). Overrides config and env var |
+| `--effort <level>` | Reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`). Provider vocabulary still applies at request time. Overrides config and env var |
+| `--workflow` | Start workflow-driven prompt injection immediately |
+| `--workflow-guards` | Enable workflow bash command guards |
+| `--no-workflow` | Disable workflow tool/state/prompt |
+| `--parent-id <id>` | Declare this agent's parent in the unit tree (set automatically by `spawn`) |
 | `--disable-tool <name>` | Remove a tool from the registry (repeatable) |
 | `--config <path>` | Override config file path |
 

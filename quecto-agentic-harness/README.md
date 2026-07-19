@@ -93,11 +93,12 @@ selector, and `Ctrl+O` toggles tool output expansion. Slash commands include
 
 | Binary | Package | Purpose |
 |---|---|---|
-| `quecto` | root package | Main CLI, REPL, one-shot agent, and persistent UDS event bus |
+| `quecto` | `quecto-agentic-harness` | Main CLI, REPL, one-shot agent, and persistent UDS event bus |
 | `quecto-tui` | `quecto-tui` | Lightweight terminal UI client that spawns or connects to a UDS agent |
 | `quecto-api` | `quecto-api` | HTTP/WebSocket gateway for a running UDS agent; see [`quecto-api/README.md`](../quecto-api/README.md) |
 | `quecto-mcp` | `quecto-mcp` | UDS extension that discovers MCP tools, registers them with Quecto, and proxies tool calls; see [`quecto-mcp/README.md`](../quecto-mcp/README.md) |
 | `quecto-runtime-manager` | `quecto-runtime-manager` | HTTP runtime manager for provisioning and supervising isolated Quecto runtimes |
+| *(library)* | `quecto-line-io` | Shared bounded length-prefixed / legacy-line UDS framing (8 MiB cap) |
 
 ## Architecture
 
@@ -184,7 +185,7 @@ The UDS agent is the sole integration point for external consumers (TUIs, IDE pl
 
 | Module | Responsibility |
 |---|---|
-| `protocol.rs` | `AgentCommand` enum (19 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages` (optional `count`/`before`), `get_message` (`messageId` plus optional `offset`/`limit` for bounded single-message paging), `get_session_stats`, `list_sessions`, `resume_session`, `set_model`, `get_extensions`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `set_workflow_automation`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`, `subagent_notification`, `subagent_state_changed`, `workflow_state`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands except `tool_result` carry optional `id` for request/response correlation |
+| `protocol.rs` | `AgentCommand` enum (documented surface: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages` (optional `count`/`before`/`agent_id`), `get_message` (`messageId` plus optional `offset`/`limit`/`agent_id`/`toolCallId` for bounded recovery), `get_session_stats`, `list_models`, `list_sessions`, `new_session`, `resume_session`, `set_model`, `set_effort`, `get_extensions`, `reload`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `rewind_to`, `set_workflow_automation`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end` (`messageRefs`; legacy `messages` empty after #1060), `workflow_idle`, `token`, `turn_start`, `turn_end` (`messageRefs` / context occupancy fields), `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`, `subagent_notification`, `subagent_state_changed`, `subagent_messages_appended`, `workflow_state`), `StreamingBehavior`, `SessionState` (includes `effort` / `effortLevels` / `maxContextTokens`), `SessionStats` (includes `contextTokens` / `maxContextTokens`). All commands except `tool_result` carry optional `id` for request/response correlation |
 | `uds.rs` | Entry point (`run_uds_loop`), socket binding (`chmod 0600`), stale socket reaping, single-client backward-compatible path, shared dispatch loop (`dispatch_command`), system prompt injection/removal |
 | `uds_multi.rs` | Multi-client accept loop (Docker-style event bus). `tokio::sync::broadcast` delivers events to all connected clients. `tokio::sync::mpsc` merges commands from all clients into a single dispatch loop (no concurrent session mutation). Max 64 clients. Agent shuts down when all clients disconnect. RAII `ClientGuard` tracks client count. Lagged clients receive a re-sync notification |
 | `uds_session.rs` | `AgentSession` — in-memory state tracker (model, streaming flag, pending message queue with `VecDeque`, max 64 pending). `compute_session_stats()`, `message_to_json()`, `messages_tail_json()` |
@@ -297,37 +298,44 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `steer` | `message`, optional `id` | Interrupt after current tool, deliver this message next |
 | `follow_up` | `message`, optional `id` | Queue message for after current run completes; if idle, run it immediately |
 | `abort` | optional `id` | Cancel the current agent run |
-| `get_state` | optional `id` | Return session state (model, streaming, message count, and workflow snapshot when enabled) |
+| `get_state` | optional `id` | Return session state (model, streaming, message count, `effort` / `effortLevels`, `maxContextTokens`, and workflow snapshot when enabled) |
 | `get_messages` | optional `count`, optional `before`, optional `agent_id`, optional `id` | Return newest bounded history page; `count` requests an older-client newest slice, `before` pages backward, and `agent_id` targets a sub-agent. Responses include `messages`, `before`, and `hasMoreBefore` so older history is explicitly reachable. Oversized history entries are returned as recoverable summaries (`id`, role/tool metadata, preview `content`, `contentLength`, `collapsed: true`, `truncated: true`) and can be fetched deliberately with ranged `get_message`. |
-| `get_message` | `messageId`, optional `offset`, optional `limit`, optional `agent_id`, optional `id` | Return one stable message by id. With `offset`/`limit`, returns a bounded content byte range plus `nextOffset`, `contentLength`, and `hasMoreContent` so oversized messages can be paged without exceeding the frame cap; `agent_id` targets a sub-agent. |
-| `get_session_stats` | optional `id` | Return token usage and cost statistics |
+| `get_message` | `messageId`, optional `offset`, optional `limit`, optional `agent_id`, optional `toolCallId`, optional `id` | Return one stable message by id. With `offset`/`limit`, returns a bounded content byte range plus `nextOffset`, `contentLength`, and `hasMoreContent` so oversized messages can be paged without exceeding the frame cap; `agent_id` targets a sub-agent; `toolCallId` recovers tool-call arguments instead of message content |
+| `get_session_stats` | optional `id` | Return token usage, cost, and context occupancy (`contextTokens` / `maxContextTokens`) |
+| `list_models` | optional `id` | Return configured and built-in models from the runtime registry |
 | `list_sessions` | optional `id` | Return persisted CLI sessions available for resume |
+| `new_session` | optional `id` | Switch to a fresh user-chat session (idle only) |
 | `resume_session` | `session`, optional `id` | Switch the active UDS conversation to a persisted CLI session |
 | `set_model` | `model` or `provider`+`modelId`, optional `id` | Switch model at runtime |
+| `set_effort` | `effort`, optional `id` | Set session reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the active model's provider vocabulary) |
 | `get_extensions` | optional `id` | Return list of registered extensions |
+| `reload` | optional `id` | Force a provider/model config reload |
 | `reload_extensions` | optional `id` | **Deprecated no-op** (returns success immediately) |
 | `register_tools` | `tools` array, optional `id` | Register extension tools from a connected client |
 | `unregister_tools` | `tools` array (names), optional `id` | Remove previously registered extension tools |
 | `tool_result` | `toolCallId`, `content`, optional `isError` | Return result of an `execute_tool` request |
 | `clear_history` | optional `id` | Clear conversation history, preserve system prompt |
+| `rewind_to` | `messageId` (preferred) or `messageIndex`, optional `id` | Rewind conversation to a user-message boundary |
 | `set_workflow_automation` | optional `id`, `autoContinue`, `completionNudge` | Toggle core workflow auto-continue/completion nudges for this UDS session |
 | `get_subagents` | optional `id` | Return spawned subagents and live status. Each entry includes `readOnly` to identify observer sub-agents spawned with write/edit disabled |
 
-**Events** (emitted as length-prefixed JSON frames):
+**Events** (emitted as length-prefixed JSON frames; payload cap 8 MiB via `quecto-line-io`):
 
 | Type | Description |
 |---|---|
 | `agent_start` | Agent begins processing a prompt |
-| `agent_end` | Agent finished; includes messages from this run |
+| `agent_end` | Run finished; `messageRefs` identify this run's messages (legacy `messages` is empty after #1060 — resolve content via `get_message`) |
+| `workflow_idle` | Post-turn drain found no further workflow continuation; optional `reason` (`exhausted` / `explicit_abort` / `completed`) |
 | `token` | Incremental text token from streaming LLM |
 | `turn_start` | New LLM call begins |
-| `turn_end` | LLM call completed; includes assistant message |
+| `turn_end` | LLM call completed; `message` carries `messageRefs` / occupancy fields rather than full re-carried body after #1060 |
 | `tool_execution_start` | Tool began executing (with `toolCallId`, `toolName`, `args`) |
 | `tool_execution_end` | Tool finished (with `toolCallId`, `toolName`, `result`, `isError`) |
 | `execute_tool` | Routed to extension client that registered the tool (not broadcast) |
 | `extensions_changed` | Broadcast when extension list changes |
 | `subagent_notification` | Passive child-agent completion/error/exit notification for UI visibility |
 | `subagent_state_changed` | Broadcast replacement snapshot of spawned subagent statuses, including `readOnly` observer status |
+| `subagent_messages_appended` | Child turn completed; `messageRefs` for the appended messages (`agent_id` set when forwarded onto a parent stream) |
 | `workflow_state` | Broadcast when workflow mode/progress/template state changes |
 | `response` | Response to a command (with `id`, `command`, `success`, optional `data`/`error`) |
 
