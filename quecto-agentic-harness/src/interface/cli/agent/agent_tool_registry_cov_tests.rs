@@ -137,3 +137,56 @@ fn load_workflow_spec_reports_io_and_json_errors_and_success() {
     assert_eq!(spec.template.id, "cov-template");
     assert_eq!(spec.template.steps.len(), 1);
 }
+
+#[test]
+fn load_workflow_spec_reports_missing_unreadable_and_malformed_specs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    // 1. Absent file: metadata fails before anything is read.
+    let missing = dir.path().join("absent.json");
+    let err = load_workflow_spec(&missing).expect_err("an absent spec must fail");
+    assert!(!err.is_empty(), "error message should not be empty");
+
+    // 2. A directory in place of the spec: metadata succeeds, the read fails.
+    let as_dir = dir.path().join("spec-dir.json");
+    std::fs::create_dir(&as_dir).expect("create dir");
+    load_workflow_spec(&as_dir).expect_err("a directory is not a readable spec");
+
+    // 3. Well-formed file, malformed JSON.
+    let bad = dir.path().join("bad.json");
+    std::fs::write(&bad, b"{ not a spec").expect("write malformed spec");
+    let err = load_workflow_spec(&bad).expect_err("malformed JSON must fail");
+    assert!(
+        err.contains("expected") || err.contains("key") || err.contains("column"),
+        "expected a serde parse message, got: {err}"
+    );
+}
+
+#[test]
+fn load_workflow_spec_consumes_the_file_on_success() {
+    use crate::domain::workflow::{WorkflowSpec, WorkflowTemplate, WorkflowTemplateStep};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("spec.json");
+    let spec = WorkflowSpec {
+        template: WorkflowTemplate {
+            id: "t1".into(),
+            label: "T1".into(),
+            description: "d".into(),
+            when_to_use: None,
+            steps: vec![WorkflowTemplateStep {
+                key: "s".into(),
+                label: "S".into(),
+                phase: "p".into(),
+                guidance: None,
+            }],
+            guards: vec![],
+        },
+    };
+    std::fs::write(&path, serde_json::to_string(&spec).unwrap()).expect("write spec");
+
+    let loaded = load_workflow_spec(&path).expect("a well-formed spec loads");
+    assert_eq!(loaded.template.id, "t1");
+    // Single-use: the spec must not linger beside the socket after being read.
+    assert!(!path.exists(), "spec file was not consumed after loading");
+}

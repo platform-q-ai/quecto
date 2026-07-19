@@ -169,3 +169,61 @@ async fn w5_context_spill_cache_recall_and_clear_error_paths() {
     FileContextSpillStore::scrub_session_spill_sync(tmp.path(), "warm");
     assert!(!store.spill_path("warm").exists());
 }
+
+#[tokio::test]
+async fn append_reports_a_spill_file_that_cannot_be_opened() {
+    // A directory sitting where spill.jsonl belongs: create+append must fail
+    // with the open-stage message rather than panicking or silently dropping
+    // the spilled entry.
+    let tmp = TempDir::new().expect("tempdir");
+    let spill = tmp
+        .path()
+        .join("sessions")
+        .join("blocked-session")
+        .join("spill.jsonl");
+    std::fs::create_dir_all(&spill).expect("create dir where the spill file belongs");
+
+    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    let err = store
+        .append("blocked-session", &entry("turn1:bash:0"))
+        .await
+        .expect_err("an unopenable spill file must surface as an error");
+
+    assert!(
+        err.to_string().contains("failed to open spill file"),
+        "expected the open-stage message, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn clear_reports_failure_when_the_temp_file_cannot_be_written() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // clear() writes an empty temp file beside the spill file and renames it
+    // over the target. If the directory is not writable the clear must be
+    // reported, not silently swallowed -- a caller that believes the spill was
+    // cleared would keep recalling stale content.
+    let tmp = TempDir::new().expect("tempdir");
+    let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+    store
+        .append("sess", &entry("turn1:bash:0"))
+        .await
+        .expect("seed the spill file");
+
+    let dir = tmp.path().join("sessions").join("sess");
+    let original = std::fs::metadata(&dir).unwrap().permissions();
+    let mut readonly = original.clone();
+    readonly.set_mode(0o500); // r-x: traversable, not writable
+    std::fs::set_permissions(&dir, readonly).expect("make spill dir read-only");
+
+    let result = store.clear("sess").await;
+
+    // Restore before asserting so the TempDir can always be cleaned up.
+    std::fs::set_permissions(&dir, original).expect("restore permissions");
+
+    let err = result.expect_err("clear must fail when the temp file cannot be written");
+    assert!(
+        err.to_string().contains("failed to write temp clear file"),
+        "expected the temp-write message, got: {err}"
+    );
+}

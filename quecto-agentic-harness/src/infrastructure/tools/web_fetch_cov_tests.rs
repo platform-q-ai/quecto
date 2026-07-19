@@ -59,3 +59,20 @@ fn html_helpers_cover_entities_and_restricted_addresses() {
         "A &B\nC <broken"
     );
 }
+
+#[tokio::test]
+async fn malformed_url_is_rejected_before_any_request() {
+    let tool = WebFetchTool::new();
+    // Not a parse-able URL at all: must fail at validation, not surface as a
+    // network error (which would imply a request was attempted).
+    let err = tool
+        .execute(r#"{"url":"http://[not a url"}"#)
+        .await
+        .expect_err("a malformed URL must fail before any request is attempted");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Invalid URL"),
+        "expected the URL-parse message, got: {msg}"
+    );
+}

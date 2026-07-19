@@ -207,3 +207,91 @@ fn workflow_guard_rejects_missing_template_and_invalid_config() {
             .contains("unknown step key")
     );
 }
+
+#[test]
+fn select_template_rejects_an_unknown_template_id() {
+    let tool = WorkflowTool::new(engine_handle());
+    let err = tool
+        .handle_action(r#"{"action":"select_template","template":"does-not-exist"}"#)
+        .expect_err("selecting an unknown template must fail");
+    assert!(!err.is_empty(), "error message should not be empty");
+    // The failed selection must not leave a template bound.
+    let status = tool
+        .handle_action(r#"{"action":"status"}"#)
+        .unwrap_or_default();
+    assert!(
+        !status.contains("does-not-exist"),
+        "a rejected template must not become active: {status}"
+    );
+}
+
+#[test]
+fn guard_check_surfaces_a_poisoned_engine_rather_than_allowing_the_command() {
+    let handle = engine_handle();
+    handle
+        .lock()
+        .unwrap()
+        .select_template("feature", None)
+        .unwrap();
+    let guard = WorkflowGuard::new(handle.clone());
+
+    let poisoned = handle.clone();
+    let _ = std::thread::spawn(move || {
+        let _g = poisoned.lock().unwrap();
+        panic!("poison the production workflow engine mutex");
+    })
+    .join();
+
+    // Fail closed: a poisoned engine must not silently permit a guarded command.
+    let err = guard
+        .check("bash", r#"{"command":"cargo test"}"#)
+        .expect_err("a poisoned engine must not allow the command through");
+    assert!(
+        err.contains("workflow engine poisoned"),
+        "expected the poison message, got: {err}"
+    );
+}
+
+#[test]
+fn engine_construction_rejects_a_guard_rule_naming_a_missing_step() {
+    // The guard's own `unknown step key` arm is unreachable defence-in-depth:
+    // WorkflowEngine::new refuses such a config up front, so a rule referring to
+    // a missing step can never reach ToolGuard::check. Pin that earlier gate.
+    let mut template = guarded_template("broken");
+    template.guards = vec![WorkflowGuardRule {
+        commands: vec!["cargo test".into()],
+        before_step_key: "no-such-step".into(),
+        message: "unreachable".into(),
+    }];
+    let config = WorkflowConfig {
+        templates: vec![template],
+        ..WorkflowConfig::default()
+    };
+
+    let err = WorkflowEngine::new(config, true)
+        .expect_err("a guard naming a missing step is an invalid configuration");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("no-such-step") && msg.contains("broken"),
+        "error should name both the template and the bad step key: {msg}"
+    );
+}
+
+#[test]
+fn workflow_tool_debug_does_not_dump_engine_state() {
+    // WorkflowTool holds the shared engine behind a mutex. Debug must stay a
+    // bare struct name: deriving it would lock (or print) the whole template
+    // set on every trace line, and could deadlock inside a held lock.
+    let tool = WorkflowTool::new(engine_handle());
+    let rendered = format!("{tool:?}");
+
+    assert!(
+        !rendered.contains("feature") && !rendered.contains("Mutex"),
+        "Debug leaked engine internals: {rendered}"
+    );
+    assert!(
+        rendered.len() < 64,
+        "Debug should stay compact, got {} chars: {rendered}",
+        rendered.len()
+    );
+}

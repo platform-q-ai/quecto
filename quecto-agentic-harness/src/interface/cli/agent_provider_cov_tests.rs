@@ -341,3 +341,61 @@ fn build_agent_provider_errors_when_nothing_is_configured() {
         "error lacks remediation: {err}"
     );
 }
+
+#[test]
+fn build_agent_provider_surfaces_a_malformed_models_json() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("models.json"), "{ this is not json").unwrap();
+    let mut config = Config::default();
+    config.providers.openai.api_key = "sk-test".to_string();
+
+    let err = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect_err("a malformed models.json must fail the whole build, not be ignored");
+    // Must not fall through to "no providers configured": a corrupt override
+    // file is a different failure from an absent one.
+    assert!(
+        !err.contains("no LLM providers configured"),
+        "corrupt models.json was silently skipped: {err}"
+    );
+}
+
+#[test]
+fn build_agent_provider_rejects_remote_http_endpoint_unless_opted_in() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = Config::default();
+    // Plaintext HTTP to a non-loopback host leaks the API key; it must be
+    // refused unless the endpoint explicitly opts in.
+    config.providers.openai_compatible.endpoints =
+        vec![crate::infrastructure::config::OpenAiCompatibleEndpoint {
+            prefix: "remote".to_string(),
+            api_key: "k".to_string(),
+            api_base: "http://example.invalid/v1".to_string(),
+            allow_remote_http: false,
+        }];
+
+    let err = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect_err("remote plaintext HTTP must be refused without an explicit opt-in");
+    assert!(
+        err.contains("openai_compatible provider configuration error"),
+        "expected the endpoint configuration error, got: {err}"
+    );
+}
+
+#[test]
+fn build_single_provider_reports_configuration_errors_for_a_bad_api_base() {
+    // build_single_provider's error arm: an api_base that fails validation is
+    // reported against the provider name rather than panicking or silently
+    // yielding a provider that would fail later at request time.
+    let err = build_single_provider(
+        "openai",
+        "sk-test",
+        &Some("http://example.invalid/v1".to_string()),
+        &reqwest::Client::new(),
+        true,
+    )
+    .expect_err("an invalid api_base must be reported at construction time");
+    assert!(
+        err.contains("openai") && err.contains("provider configuration error"),
+        "error should name the provider and the stage: {err}"
+    );
+}

@@ -312,3 +312,23 @@ async fn w5_session_store_remaining_error_and_default_paths() {
     let err = append_or_compact(&as_dir, &session).await.unwrap_err();
     assert!(err.to_string().contains("failed to read session"), "{err}");
 }
+
+#[tokio::test]
+async fn list_summaries_reports_an_unreadable_sessions_dir() {
+    // `sessions` exists but is a regular file: exists() passes, read_dir fails.
+    // The store must surface that rather than reporting an empty session list,
+    // which would look identical to "no sessions yet".
+    let tmp = TempDir::new().expect("tempdir");
+    std::fs::write(tmp.path().join("sessions"), b"not a directory").expect("write blocker");
+
+    let store = FileSessionStore::new(tmp.path());
+    let err = store
+        .list(None)
+        .await
+        .expect_err("an unreadable sessions dir must not be reported as empty");
+
+    assert!(
+        err.to_string().contains("failed to read sessions dir"),
+        "expected the sessions-dir read error, got: {err}"
+    );
+}
