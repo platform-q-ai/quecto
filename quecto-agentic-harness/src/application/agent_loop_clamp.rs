@@ -73,6 +73,12 @@ impl AgentLoopImpl {
     /// context window when it is smaller than the configured
     /// `max_context_tokens`; the config value is the override/fallback
     /// (unknown windows leave the configured budget untouched).
+    ///
+    /// The footer numerator is provider-reported prompt occupancy when usage is
+    /// available, so it includes provider-side overhead such as tool schemas.
+    /// This denominator intentionally remains the enforced hot-context budget;
+    /// when no smaller model window is known, the percentage is a pruning-budget
+    /// proximity indicator rather than a full-window percentage.
     pub fn effective_max_context_tokens(&self) -> usize {
         match self.model_context_window {
             Some(window) => self.max_context_tokens.min(window),

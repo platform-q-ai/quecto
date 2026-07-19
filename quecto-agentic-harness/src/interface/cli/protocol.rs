@@ -705,7 +705,8 @@ pub struct SessionStats {
     pub total_messages: usize,
     pub tokens: TokenStats,
     pub cost: f64,
-    /// Estimated tokens currently occupying the active, pruned context.
+    /// User-facing context occupancy: provider-reported prompt tokens when
+    /// available, otherwise the local active-message estimate fallback.
     pub context_tokens: usize,
     /// The active model's context-window limit (tokens). `0` when unknown.
     pub max_context_tokens: usize,

@@ -19,7 +19,8 @@ pub struct AgentSession {
     streaming: bool,
     /// Cumulative provider-reported usage for this in-memory UDS session.
     usage: SessionUsage,
-    /// Latest estimated active/pruned context size reported by the agent loop.
+    /// Latest user-facing context occupancy reported by the agent loop:
+    /// provider-truth when available, estimate fallback otherwise.
     context_tokens: usize,
     /// `VecDeque` supports O(1) push_back (enqueue) and push_front (prepend/steer).
     pending: std::collections::VecDeque<PendingMessage>,

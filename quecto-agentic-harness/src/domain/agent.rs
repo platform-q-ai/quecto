@@ -12,7 +12,8 @@ use super::message::Message;
 pub enum AgentProgressEvent {
     /// The agent is waiting on the LLM for a response (thinking).
     Thinking {
-        /// Estimated tokens currently in the conversation context.
+        /// User-facing context occupancy: provider-reported prompt tokens when available,
+        /// otherwise the local estimate fallback.
         context_tokens: usize,
         /// Configured maximum context token budget.
         max_context_tokens: usize,
@@ -92,7 +93,9 @@ pub struct AgentResult {
     pub iteration_limit_reached: bool,
     /// Latest prompt/provider input token count for this run.
     pub input_tokens: u32,
-    /// Estimated tokens currently occupying the active, pruned context after this run.
+    /// User-facing context occupancy after this run: provider-reported prompt
+    /// tokens when available (including tool schemas/provider overhead), else
+    /// the local active-message estimate fallback.
     pub context_tokens: usize,
     /// Cumulative completion tokens from all LLM calls in this run.
     pub output_tokens: u32,

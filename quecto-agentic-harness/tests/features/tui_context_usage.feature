@@ -15,21 +15,21 @@ Feature: TUI context size and usage percentage display
     When each TurnEnd event includes current active conversation size
     Then the footer should reflect the latest active conversation size, not cumulative provider input
 
-  Scenario: Provider token usage does not drive the conversation-size gauge
+  Scenario: Provider token usage drives the context gauge
     Given a completed agent turn reports provider input usage above the configured context window
     And the active pruned conversation estimate remains below the configured context window
     When the agent emits TurnEnd and session stats for the TUI
-    Then contextTokens should equal the active pruned conversation estimate
+    Then contextTokens should equal the provider-reported context occupancy
     And maxContextTokens should equal the configured context window
-    And the provider token usage should remain available only in usage and cost totals
+    And the provider token usage should drive both the context gauge and usage totals
 
-  Scenario: Streaming provider token usage does not drive the conversation-size gauge
+  Scenario: Streaming provider token usage drives the context gauge
     Given a completed streamed agent turn reports provider input usage above the configured context window
     And the active pruned conversation estimate remains below the configured context window
     When the agent emits TurnEnd and session stats for the TUI
-    Then contextTokens should equal the active pruned conversation estimate
+    Then contextTokens should equal the provider-reported context occupancy
     And maxContextTokens should equal the configured context window
-    And the provider token usage should remain available only in usage and cost totals
+    And the provider token usage should drive both the context gauge and usage totals
 
   Scenario: Session stats accumulate provider usage and cost
     Given multiple LLM calls return input, output, cache, and cost usage
