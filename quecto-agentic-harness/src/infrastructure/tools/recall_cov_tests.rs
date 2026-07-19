@@ -168,3 +168,27 @@ fn debug_includes_session_key_when_lock_available() {
     assert!(rendered.contains("RecallTool"));
     assert!(rendered.contains("session-a"));
 }
+
+#[tokio::test]
+async fn failing_spill_store_trait_surface_defaults_are_exercised() {
+    let store = FailingSpillStore {
+        entries: vec![entry("turn1:bash:0", "echo ok", 2, "ok")],
+        fail_recall: false,
+        fail_list: false,
+    };
+
+    let appended = entry("turn2:bash:0", "echo add", 3, "add");
+    store.append("session", &appended).await.unwrap();
+    assert!(store.has_entries("session").await.unwrap());
+    assert_eq!(
+        store
+            .recall("session", "turn1:bash:0")
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
+        "ok"
+    );
+    assert_eq!(store.list_entries("session").await.unwrap().len(), 1);
+    store.clear("session").await.unwrap();
+}

@@ -136,6 +136,10 @@ pub trait ToolRegistry: Send + Sync {
 }
 
 #[cfg(test)]
+#[path = "tool_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

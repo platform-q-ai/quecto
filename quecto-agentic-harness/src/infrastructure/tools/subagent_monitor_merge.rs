@@ -168,3 +168,7 @@ pub fn forward_child_state_changed(
     let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
     merge_and_forward_state_changed(&value, registry, forwarding_child_id)
 }
+
+#[cfg(test)]
+#[path = "subagent_monitor_merge_cov_tests.rs"]
+mod cov_tests;

@@ -105,10 +105,10 @@ fn ledger_is_entry_bounded_for_tiny_messages() {
 }
 
 #[derive(Debug)]
-struct BlockingSpillStore {
-    entry: crate::domain::session::SpillEntry,
-    started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-    release: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+pub(super) struct BlockingSpillStore {
+    pub(super) entry: crate::domain::session::SpillEntry,
+    pub(super) started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    pub(super) release: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
 }
 
 impl crate::domain::session::ContextSpillStore for BlockingSpillStore {

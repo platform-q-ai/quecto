@@ -371,6 +371,10 @@ impl ContextSpillStore for FileContextSpillStore {
 }
 
 #[cfg(test)]
+#[path = "context_spill_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;

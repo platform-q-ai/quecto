@@ -70,6 +70,10 @@ impl ExtensionRegistry {
 }
 
 #[cfg(test)]
+#[path = "registry_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::error::DomainError;
@@ -200,5 +204,68 @@ mod tests {
             snippet: None,
         }));
         assert!(reg.system_prompt_snippets().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod registry_mock_surface_tests {
+    use crate::domain::error::DomainError;
+    use crate::domain::extension::Extension;
+    use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+
+    struct SurfaceTool;
+
+    impl Tool for SurfaceTool {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: "surface".into(),
+                description: "surface mock".into(),
+                parameters_schema: r#"{"type":"object"}"#.into(),
+            }
+        }
+
+        fn execute(
+            &self,
+            _arguments: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+            Box::pin(async {
+                Ok(ToolResult {
+                    content: "ok".into(),
+                    is_error: false,
+                    image_blocks: vec![],
+                })
+            })
+        }
+    }
+
+    struct SurfaceExt {
+        tools: Vec<Arc<dyn Tool>>,
+    }
+
+    impl Extension for SurfaceExt {
+        fn name(&self) -> &str {
+            "surface-ext"
+        }
+
+        fn tools(&self) -> Vec<Arc<dyn Tool>> {
+            self.tools.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn extension_and_tool_trait_surface_defaults_are_exercised() {
+        let tool = Arc::new(SurfaceTool);
+        tool.set_session_key("session-key".into());
+        assert_eq!(tool.definition().name, "surface");
+        assert_eq!(tool.execute("{}").await.unwrap().content, "ok");
+
+        let ext = SurfaceExt { tools: vec![tool] };
+        assert_eq!(ext.name(), "surface-ext");
+        assert_eq!(ext.description(), "");
+        assert_eq!(ext.tools().len(), 1);
+        assert!(ext.system_prompt_snippet().is_none());
     }
 }

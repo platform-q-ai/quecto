@@ -15,8 +15,8 @@ use crate::interface::cli::uds_ext_protocol::{ClientToolRegistry, new_client_too
 use crate::interface::cli::uds_session::AgentSession;
 use std::sync::Arc;
 #[derive(Debug, Default)]
-struct RecordingSpillStore {
-    cleared: std::sync::Mutex<Vec<String>>,
+pub(super) struct RecordingSpillStore {
+    pub(super) cleared: std::sync::Mutex<Vec<String>>,
 }
 impl ContextSpillStore for RecordingSpillStore {
     fn append(
@@ -74,8 +74,8 @@ impl ContextSpillStore for RecordingSpillStore {
     }
 }
 #[derive(Debug, Default)]
-struct SessionAwareTool {
-    seen: std::sync::Mutex<Vec<String>>,
+pub(super) struct SessionAwareTool {
+    pub(super) seen: std::sync::Mutex<Vec<String>>,
 }
 impl Tool for SessionAwareTool {
     fn definition(&self) -> ToolDefinition {
@@ -117,7 +117,7 @@ fn make_agent() -> AgentLoopImpl {
     )
 }
 
-fn make_agent_with(
+pub(super) fn make_agent_with(
     tool_registry: Box<dyn crate::domain::tool::ToolRegistry>,
     spill_store: Option<std::sync::Arc<dyn ContextSpillStore>>,
 ) -> AgentLoopImpl {

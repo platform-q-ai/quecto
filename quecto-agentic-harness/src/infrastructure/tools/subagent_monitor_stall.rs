@@ -174,3 +174,7 @@ pub(super) fn classify_workflow_idle_stall(
         deliver_or_retain_stall(registry, tx, agent_id, notification);
     }
 }
+
+#[cfg(test)]
+#[path = "subagent_monitor_stall_cov_tests.rs"]
+mod cov_tests;

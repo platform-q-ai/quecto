@@ -185,6 +185,10 @@ mod tests {
 }
 
 #[cfg(test)]
+#[path = "templates_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod coverage_tests {
     use super::*;
 

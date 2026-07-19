@@ -619,5 +619,8 @@ impl std::error::Error for ConfigError {}
 mod effort_1066_tests;
 
 #[cfg(test)]
+#[path = "config_cov_tests.rs"]
+mod cov_tests;
+#[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;

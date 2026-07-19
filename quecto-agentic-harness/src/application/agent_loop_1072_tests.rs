@@ -529,3 +529,22 @@ async fn under_budget_run_leaves_the_durable_prefix_clean() {
          persistence keeps the append-only fast path"
     );
 }
+
+#[tokio::test]
+async fn mem_spill_store_trait_surface_recalls_and_clears() {
+    let store = MemSpillStore::default();
+    let entry = SpillEntry {
+        id: "id1".into(),
+        tool: "bash".into(),
+        input_preview: "echo".into(),
+        tokens: 2,
+        content: "out".into(),
+    };
+    store.append("s", &entry).await.unwrap();
+    assert_eq!(
+        store.recall("s", "id1").await.unwrap().unwrap().content,
+        "out"
+    );
+    store.clear("s").await.unwrap();
+    assert!(store.recall("s", "id1").await.unwrap().is_none());
+}

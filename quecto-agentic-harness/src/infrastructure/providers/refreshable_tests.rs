@@ -529,3 +529,40 @@ fn owned_request_roundtrip_with_none_session() {
     let owned = OwnedRequest::from(&req);
     assert_eq!(owned.as_request().session_id, None);
 }
+
+#[tokio::test]
+async fn mock_provider_trait_surface_defaults_are_exercised() {
+    let count = Arc::new(AtomicU32::new(0));
+    let provider = MockRetryProvider::new(count, 0);
+
+    assert_eq!(provider.name(), "mock");
+    assert!(provider.as_any().downcast_ref::<()>().is_some());
+
+    let response = provider.chat_stream(test_request()).await.unwrap();
+    assert_eq!(response.content.as_deref(), Some("success"));
+
+    let mut rx = provider.chat_stream_incremental(test_request()).await;
+    match rx.recv().await.expect("default stream event") {
+        crate::domain::provider::StreamEvent::Done(done) => {
+            assert_eq!(done.content.as_deref(), Some("success"));
+        }
+        other => panic!("unexpected stream event: {other:?}"),
+    }
+    assert!(rx.recv().await.is_none());
+}
+
+#[test]
+fn wave3_refreshable_debug_names_decorator() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let provider = RefreshableProvider::new(RefreshableConfig {
+        inner: Arc::new(MockSuccessProvider),
+        store: Arc::new(CredentialStore::new(tmp.path())),
+        provider_name: "anthropic".to_string(),
+        credential_provider: "anthropic".to_string(),
+        refresh_fn: make_mock_refresh("unused"),
+        factory: noop_factory(),
+    });
+    let dbg = format!("{provider:?}");
+    assert!(dbg.contains("RefreshableProvider"));
+    assert!(dbg.contains("anthropic"));
+}

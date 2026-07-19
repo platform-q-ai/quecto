@@ -727,3 +727,19 @@ fn stub_without_recall_strips_only_the_trailing_clause() {
 fn stub_without_recall_is_identity_without_a_clause() {
     assert_eq!(message_stub_without_recall("plain text"), "plain text");
 }
+
+#[tokio::test]
+async fn mem_store_trait_surface_clear_empties_entries() {
+    let store = MemStore::default();
+    let entry = SpillEntry {
+        id: "id1".into(),
+        tool: "bash".into(),
+        input_preview: "echo".into(),
+        tokens: 2,
+        content: "out".into(),
+    };
+    store.append("s", &entry).await.unwrap();
+    assert_eq!(store.list_entries("s").await.unwrap().len(), 1);
+    store.clear("s").await.unwrap();
+    assert!(store.list_entries("s").await.unwrap().is_empty());
+}

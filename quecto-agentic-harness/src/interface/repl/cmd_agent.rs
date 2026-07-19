@@ -286,3 +286,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
 #[cfg(test)]
 #[path = "cmd_agent_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "cmd_agent_cov_tests.rs"]
+mod cov_tests;

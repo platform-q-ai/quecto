@@ -315,6 +315,10 @@ pub trait ContextSpillStore: Send + Sync {
 }
 
 #[cfg(test)]
+#[path = "session_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::message::{Role, ToolCall};

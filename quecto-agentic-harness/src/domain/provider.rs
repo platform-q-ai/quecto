@@ -303,6 +303,10 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
 }
 
 #[cfg(test)]
+#[path = "provider_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

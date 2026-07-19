@@ -480,3 +480,29 @@ fn truncate_prefix_short_and_multibyte_boundary() {
     // truncation lands mid-multibyte char → backs off to the char boundary
     assert_eq!(super::truncate_prefix("ééééé", 3), "é");
 }
+
+#[tokio::test]
+async fn slice_ptr_provider_trait_surface_defaults_are_exercised() {
+    let provider = SlicePtrProvider {
+        captured_msg_ptr: Mutex::new(None),
+        captured_tools_ptr: Mutex::new(None),
+    };
+    let messages = test_messages();
+
+    assert_eq!(provider.name(), "test");
+    assert!(provider.as_any().downcast_ref::<()>().is_some());
+
+    let response = provider.chat_stream(test_request(&messages)).await.unwrap();
+    assert_eq!(response.content.as_deref(), Some("ok"));
+
+    let mut rx = provider
+        .chat_stream_incremental(test_request(&messages))
+        .await;
+    match rx.recv().await.expect("default stream event") {
+        crate::domain::provider::StreamEvent::Done(done) => {
+            assert_eq!(done.content.as_deref(), Some("ok"));
+        }
+        other => panic!("unexpected stream event: {other:?}"),
+    }
+    assert!(rx.recv().await.is_none());
+}

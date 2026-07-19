@@ -354,3 +354,35 @@ async fn test_stream_initiation_failure_is_not_retried() {
         "streaming must not be retried mid-flight — exactly one initiation attempt"
     );
 }
+
+#[tokio::test]
+async fn counting_mock_provider_trait_surface_defaults_are_exercised() {
+    let count = Arc::new(AtomicU32::new(0));
+    let provider = CountingMockProvider::new(count, 0, "provider error (500): unused");
+
+    assert_eq!(provider.name(), "counting-mock");
+    assert!(provider.as_any().downcast_ref::<()>().is_some());
+
+    let response = provider.chat_stream(test_request()).await.unwrap();
+    assert_eq!(response.content.as_deref(), Some("success"));
+
+    let mut rx = provider.chat_stream_incremental(test_request()).await;
+    match rx.recv().await.expect("default stream event") {
+        crate::domain::provider::StreamEvent::Done(done) => {
+            assert_eq!(done.content.as_deref(), Some("success"));
+        }
+        other => panic!("unexpected stream event: {other:?}"),
+    }
+    assert!(rx.recv().await.is_none());
+}
+
+#[test]
+fn wave3_debug_and_jitter_zero_path() {
+    let count = Arc::new(AtomicU32::new(0));
+    let inner = Arc::new(CountingMockProvider::new(count, 0, "unused"));
+    let retrying = RetryingProvider::new(inner, RetryConfig::no_delay(2));
+    let dbg = format!("{retrying:?}");
+    assert!(dbg.contains("RetryingProvider"));
+    assert!(dbg.contains("max_attempts"));
+    assert_eq!(jitter(std::time::Duration::ZERO), std::time::Duration::ZERO);
+}

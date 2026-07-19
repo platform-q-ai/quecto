@@ -702,3 +702,7 @@ mod metadata_tests;
 #[cfg(test)]
 #[path = "session_store_chat_tests.rs"]
 mod chat_tests;
+
+#[cfg(test)]
+#[path = "session_store_cov_tests.rs"]
+mod cov_tests;

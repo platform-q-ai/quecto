@@ -14,7 +14,7 @@ use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
 
 #[derive(Debug, Default)]
-struct MemSpillStore {
+pub(super) struct MemSpillStore {
     entries: Mutex<HashMap<(String, String), SpillEntry>>,
     recalls: Mutex<Vec<(String, String)>>,
     recall_error: bool,
@@ -36,7 +36,7 @@ impl MemSpillStore {
         }
     }
 
-    fn with_recall_error() -> Self {
+    pub(super) fn with_recall_error() -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
             recalls: Mutex::new(Vec::new()),
@@ -44,11 +44,11 @@ impl MemSpillStore {
         }
     }
 
-    fn recall_count(&self) -> usize {
+    pub(super) fn recall_count(&self) -> usize {
         self.recalls.lock().unwrap().len()
     }
 
-    fn recalled(&self) -> Vec<(String, String)> {
+    pub(super) fn recalled(&self) -> Vec<(String, String)> {
         self.recalls.lock().unwrap().clone()
     }
 }

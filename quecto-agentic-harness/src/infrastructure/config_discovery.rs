@@ -264,5 +264,8 @@ fn load_workflow_template_file(
 }
 
 #[cfg(test)]
+#[path = "config_discovery_cov_tests.rs"]
+mod cov_tests;
+#[cfg(test)]
 #[path = "config_discovery_tests.rs"]
 mod tests;

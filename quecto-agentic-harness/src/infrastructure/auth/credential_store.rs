@@ -217,6 +217,10 @@ pub struct CredentialStatus {
 }
 
 #[cfg(test)]
+#[path = "credential_store_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;

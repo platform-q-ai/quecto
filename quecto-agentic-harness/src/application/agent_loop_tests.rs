@@ -620,3 +620,104 @@ fn take_durable_prefix_dirty_consumes_latch_once() {
     assert!(agent.take_durable_prefix_dirty());
     assert!(!agent.take_durable_prefix_dirty());
 }
+
+#[tokio::test]
+async fn mock_provider_trait_surface_chat_stream_defaults_to_chat() {
+    let provider = MockProvider::new(vec![text_response("stream default")]);
+    let messages = [];
+    let tools = [];
+    let request = ChatRequest {
+        messages: &messages,
+        tools: &tools,
+        model: "test-model",
+        max_tokens: 9,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let response = provider.chat_stream(request).await.unwrap();
+    assert_eq!(response.content.as_deref(), Some("stream default"));
+    assert_eq!(provider.request_count(), 1);
+}
+
+#[tokio::test]
+async fn mock_streaming_provider_trait_surface_chat_and_incremental() {
+    let provider =
+        MockStreamingProvider::new(vec![vec![crate::domain::provider::StreamEvent::Done(
+            text_response("done"),
+        )]]);
+    let messages = [];
+    let tools = [];
+    let request = ChatRequest {
+        messages: &messages,
+        tools: &tools,
+        model: "test-model",
+        max_tokens: 9,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    assert_eq!(provider.name(), "mock-streaming");
+    let mut rx = provider.chat_stream_incremental(request).await;
+    assert!(matches!(
+        rx.recv().await,
+        Some(crate::domain::provider::StreamEvent::Done(_))
+    ));
+    assert_eq!(provider.request_count(), 1);
+}
+
+#[test]
+fn mock_tool_debug_trait_surface_includes_name() {
+    let tool = MockTool::new("bash", "ok");
+    assert!(format!("{tool:?}").contains("bash"));
+}
+
+#[tokio::test]
+async fn mock_registry_and_tool_default_trait_surface_methods_are_inert() {
+    let tool = Arc::new(MockTool::new("bash", "ok"));
+    tool.set_session_key("session".into());
+    assert_eq!(tool.execute("{}").await.unwrap().content, "ok");
+
+    let mut registry = MockRegistry::new();
+    registry.set_session_key("session");
+    registry.register_extension(tool.clone());
+    registry.unregister_extension("bash");
+    assert!(registry.extension_names().is_empty());
+    registry.register(tool);
+    assert_eq!(registry.tool_count(), 1);
+    assert_eq!(registry.execute("bash", "{}").await.unwrap().content, "ok");
+}
+
+#[tokio::test]
+async fn mock_provider_default_as_any_and_incremental_surface() {
+    let provider = MockProvider::new(vec![text_response("done")]);
+    assert!(provider.as_any().is::<()>());
+    let messages = [];
+    let tools = [];
+    let request = ChatRequest {
+        messages: &messages,
+        tools: &tools,
+        model: "test-model",
+        max_tokens: 9,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let mut rx = provider.chat_stream_incremental(request).await;
+    assert!(matches!(
+        rx.recv().await,
+        Some(crate::domain::provider::StreamEvent::Done(_))
+    ));
+}

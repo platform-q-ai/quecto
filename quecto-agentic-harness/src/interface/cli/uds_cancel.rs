@@ -658,6 +658,9 @@ pub async fn forward_progress_event(
 }
 
 #[cfg(test)]
+#[path = "uds_cancel_1060_mock_surface_tests.rs"]
+mod issue_1060_mock_surface_tests;
+#[cfg(test)]
 #[path = "uds_cancel_1060_tests.rs"]
 mod issue_1060_tests;
 #[cfg(test)]

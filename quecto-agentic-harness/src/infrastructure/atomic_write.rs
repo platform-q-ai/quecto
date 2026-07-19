@@ -106,6 +106,10 @@ fn write_temp_file(path: &Path, bytes: &[u8], _mode: Option<u32>) -> io::Result<
 }
 
 #[cfg(test)]
+#[path = "atomic_write_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;

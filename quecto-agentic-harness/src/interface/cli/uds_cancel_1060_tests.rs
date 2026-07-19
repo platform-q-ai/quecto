@@ -18,8 +18,8 @@ use crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
 use crate::interface::cli::uds_session::AgentSession;
 
 #[derive(Debug)]
-struct ScriptedProvider {
-    responses: Mutex<Vec<LlmResponse>>,
+pub(super) struct ScriptedProvider {
+    pub(super) responses: Mutex<Vec<LlmResponse>>,
 }
 
 impl LlmProvider for ScriptedProvider {
@@ -42,9 +42,9 @@ impl LlmProvider for ScriptedProvider {
 /// assembled `Done` response. Used to prove the producer does NOT append a
 /// duplicate synthetic token on a streaming turn (#1060).
 #[derive(Debug)]
-struct StreamingProvider {
-    deltas: Vec<String>,
-    response: LlmResponse,
+pub(super) struct StreamingProvider {
+    pub(super) deltas: Vec<String>,
+    pub(super) response: LlmResponse,
 }
 
 impl LlmProvider for StreamingProvider {

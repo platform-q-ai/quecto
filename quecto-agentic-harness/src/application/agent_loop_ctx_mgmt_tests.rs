@@ -505,3 +505,22 @@ fn agent_loop_config_carries_context_knobs_as_constructor_fields() {
     assert_eq!(agent.context_collapse_after_messages, 7);
     assert_eq!(agent.model_context_window, Some(48_000));
 }
+
+#[tokio::test]
+async fn mem_spill_store_trait_surface_recalls_and_clears() {
+    let store = MemSpillStore::default();
+    let entry = SpillEntry {
+        id: "id1".into(),
+        tool: "bash".into(),
+        input_preview: "echo".into(),
+        tokens: 2,
+        content: "out".into(),
+    };
+    store.append("s", &entry).await.unwrap();
+    assert_eq!(
+        store.recall("s", "id1").await.unwrap().unwrap().content,
+        "out"
+    );
+    store.clear("s").await.unwrap();
+    assert!(store.recall("s", "id1").await.unwrap().is_none());
+}

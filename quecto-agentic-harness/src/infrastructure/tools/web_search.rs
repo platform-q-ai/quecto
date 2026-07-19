@@ -420,3 +420,7 @@ mod tests {
         assert_eq!(tool.definition().name, "web_search");
     }
 }
+
+#[cfg(test)]
+#[path = "web_search_cov_tests.rs"]
+mod cov_tests;

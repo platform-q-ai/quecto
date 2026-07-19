@@ -478,3 +478,7 @@ mod comprehensive_tests;
 #[cfg(test)]
 #[path = "workflow_tool_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "workflow_tool_cov_tests.rs"]
+mod cov_tests;

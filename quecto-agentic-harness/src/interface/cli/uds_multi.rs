@@ -671,5 +671,8 @@ mod issue_994_tests;
 #[path = "uds_paged_history_tests.rs"]
 mod paged_history_tests;
 #[cfg(test)]
+#[path = "uds_snapshot_mock_surface_tests.rs"]
+mod snapshot_mock_surface_tests;
+#[cfg(test)]
 #[path = "uds_snapshot_tests.rs"]
 mod snapshot_tests;

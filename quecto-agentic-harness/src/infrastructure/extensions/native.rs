@@ -139,6 +139,10 @@ pub fn build_native_extensions(
 }
 
 #[cfg(test)]
+#[path = "native_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::error::DomainError;
@@ -356,5 +360,55 @@ mod tests {
         exts.iter()
             .flat_map(|e| e.tools())
             .any(|t| t.definition().name.as_ref() == name)
+    }
+}
+
+#[cfg(test)]
+mod native_mock_surface_tests {
+    use crate::domain::error::DomainError;
+    use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+    use std::future::Future;
+    use std::pin::Pin;
+
+    #[derive(Debug)]
+    struct SurfaceTool;
+
+    impl Tool for SurfaceTool {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: "surface".into(),
+                description: "surface mock".into(),
+                parameters_schema: r#"{"type":"object"}"#.into(),
+            }
+        }
+
+        fn execute(
+            &self,
+            _arguments: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+            Box::pin(async {
+                Ok(ToolResult {
+                    content: "ok".into(),
+                    is_error: false,
+                    image_blocks: vec![],
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_trait_surface_defaults_are_exercised() {
+        let tool = SurfaceTool;
+        assert_eq!(format!("{tool:?}"), "SurfaceTool");
+        tool.set_session_key("session-key".into());
+
+        let ToolDefinition {
+            name, description, ..
+        } = tool.definition();
+        assert_eq!(name, "surface");
+        assert_eq!(description, "surface mock");
+        let result = tool.execute("{}").await.unwrap();
+        assert_eq!(result.content, "ok");
+        assert!(!result.is_error);
     }
 }

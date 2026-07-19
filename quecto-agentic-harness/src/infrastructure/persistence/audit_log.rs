@@ -203,6 +203,10 @@ fn is_leap(year: u64) -> bool {
 }
 
 #[cfg(test)]
+#[path = "audit_log_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::audit::AuditEvent;

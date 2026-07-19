@@ -502,3 +502,7 @@ fn load_session_messages_with_rt(
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mod_cov_tests.rs"]
+mod cov_tests;

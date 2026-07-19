@@ -16,3 +16,7 @@ pub(super) fn parse_forwarded_get_messages(line: &str) -> Result<serde_json::Val
         .cloned()
         .ok_or_else(|| "get_messages response missing data".into())
 }
+
+#[cfg(test)]
+#[path = "uds_forward_response_cov_tests.rs"]
+mod cov_tests;

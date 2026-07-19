@@ -358,3 +358,14 @@ fn test_rebuild_definitions_no_duplicates_after_re_register() {
         "re-registering a tool should not create duplicates"
     );
 }
+
+#[tokio::test]
+async fn dummy_test_tool_trait_surface_defaults_are_exercised() {
+    let tool = DummyTestTool::new("surface_tool");
+
+    tool.set_session_key("session-key".into());
+    assert_eq!(tool.definition().name, "surface_tool");
+    let result = tool.execute(r#"{}"#).await.unwrap();
+    assert_eq!(result.content, "ok");
+    assert!(!result.is_error);
+}
