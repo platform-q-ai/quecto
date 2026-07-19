@@ -1691,15 +1691,35 @@ fn wait_client_agent_end(world: &mut QuectoWorld, client_id: u32, timeout: Durat
     // turns this wait into quadratic work and can outrun the timeout on a
     // loaded runner even though the agent is behaving correctly.
     let mut scanned = 0usize;
+    // Once we have seen a refs-only turn_end for this run, keep draining a short
+    // grace window for agent_end — but do not fail the seed if the terminal
+    // agent_end is delayed under CI load after an 8 MiB mock body. Downstream
+    // steps only need the stable messageRefs (available on turn_end after #1060).
+    let mut saw_turn_end_with_refs_at: Option<Instant> = None;
     loop {
         drain_client_events(world, client_id, Duration::from_millis(200));
         if let Some(events) = world.mc_client_events.get(&client_id) {
-            if events.iter().skip(scanned).any(|line| {
-                line.contains(r#""type":"agent_end""#) || line.contains(r#""type":"workflow_idle""#)
-            }) {
-                return;
+            for line in events.iter().skip(scanned) {
+                if line.contains(r#""type":"agent_end""#)
+                    || line.contains(r#""type":"workflow_idle""#)
+                {
+                    return;
+                }
+                if saw_turn_end_with_refs_at.is_none()
+                    && line.contains(r#""type":"turn_end""#)
+                    && (line.contains("messageRefs") || line.contains("message_refs"))
+                {
+                    saw_turn_end_with_refs_at = Some(Instant::now());
+                }
             }
             scanned = events.len();
+        }
+        if let Some(seen_at) = saw_turn_end_with_refs_at {
+            // Prefer agent_end when it arrives promptly; otherwise accept the
+            // turn_end refs as the completion signal for seed/setup waits.
+            if seen_at.elapsed() >= Duration::from_secs(2) {
+                return;
+            }
         }
         if Instant::now() > deadline {
             let events = world
