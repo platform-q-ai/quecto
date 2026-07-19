@@ -132,6 +132,99 @@ fn apply_line_highlight_with_ansi_escapes() {
 }
 
 #[test]
+fn apply_line_highlight_survives_theme_reset_after_blockquote_gutter() {
+    // Markdown blockquotes are `dim("│ ")` + body. dim() ends with `\x1b[0m`,
+    // which must not kill reverse video for the following body text.
+    let gutter = crate::interface::theme::dim("│ ");
+    let line = format!("{gutter}quoted body text");
+    let end = crate::interface::utils::visible_width(&line) as u16;
+    let result = apply_line_highlight(&line, 0, end);
+
+    let plain = super::app_methods::strip_ansi(&result);
+    assert_eq!(plain, "│ quoted body text");
+
+    // Every body character after the gutter must sit inside a reverse span.
+    assert_visible_range_is_reversed(&result, 2, end);
+}
+
+#[test]
+fn apply_line_highlight_survives_theme_reset_after_bullet_marker() {
+    // List items are `accent("•")` + " " + body. accent/cyan ends with `\x1b[0m`.
+    let marker = format!("{} ", crate::interface::theme::accent("•"));
+    let line = format!("{marker}list item body");
+    let end = crate::interface::utils::visible_width(&line) as u16;
+    let result = apply_line_highlight(&line, 0, end);
+
+    let plain = super::app_methods::strip_ansi(&result);
+    assert_eq!(plain, "• list item body");
+    assert_visible_range_is_reversed(&result, 0, end);
+}
+
+/// Assert that every visible column in `[start_col, end_col)` is covered by an
+/// open reverse-video SGR (`\x1b[7m` … `\x1b[27m` / full reset), so a mid-line
+/// theme `\x1b[0m` cannot leave the body unhighlighted.
+fn assert_visible_range_is_reversed(line: &str, start_col: u16, end_col: u16) {
+    use crate::interface::ansi::{AnsiSegment, ansi_segments};
+    use unicode_width::UnicodeWidthChar;
+
+    let mut vis_col: u16 = 0;
+    let mut reverse_on = false;
+    let mut covered = 0u16;
+
+    for seg in ansi_segments(line) {
+        match seg {
+            AnsiSegment::Escape(esc) => {
+                if let Some(params) = esc
+                    .strip_prefix("\x1b[")
+                    .and_then(|rest| rest.strip_suffix('m'))
+                {
+                    // Net effect of this SGR on reverse (mirrors production).
+                    if params.is_empty() {
+                        reverse_on = false;
+                    } else {
+                        for p in params.split(';') {
+                            let code: u16 = if p.is_empty() {
+                                0
+                            } else {
+                                p.parse().unwrap_or(u16::MAX)
+                            };
+                            match code {
+                                0 => reverse_on = false,
+                                7 => reverse_on = true,
+                                27 => reverse_on = false,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            AnsiSegment::Text(text) => {
+                for ch in text.chars() {
+                    let w = ch.width().unwrap_or(0) as u16;
+                    if w == 0 {
+                        continue;
+                    }
+                    let next = vis_col.saturating_add(w);
+                    if next > start_col && vis_col < end_col {
+                        assert!(
+                            reverse_on,
+                            "visible col {vis_col} (char {ch:?}) in selection \
+                             [{start_col},{end_col}) is not reverse-highlighted: {line:?}"
+                        );
+                        covered = covered.saturating_add(w.min(end_col.saturating_sub(vis_col)));
+                    }
+                    vis_col = next;
+                }
+            }
+        }
+    }
+    assert!(
+        covered > 0,
+        "expected some reverse coverage in [{start_col},{end_col}): {line:?}"
+    );
+}
+
+#[test]
 fn apply_line_highlight_uses_display_columns_for_wide_chars() {
     let result = apply_line_highlight("ab界de", 4, 6);
 

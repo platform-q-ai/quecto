@@ -78,6 +78,13 @@ pub(super) fn apply_selection_highlight(
 /// Takes a rendered line (may contain ANSI escapes) and highlights columns
 /// `start_col..end_col` (0-indexed, exclusive end) by wrapping visible chars
 /// in that range with `\x1b[7m` (reverse) and `\x1b[27m` (reverse off).
+///
+/// Theme helpers (`dim`, `accent`, …) wrap markers with a full SGR reset
+/// (`\x1b[0m`). A bare pass-through of that reset would kill reverse video for
+/// the rest of the line, so only the gutter/bullet stayed highlighted while
+/// the following body text did not (#1146 follow-up). When we are inside the
+/// selection span, any escape that clears reverse is followed by a re-assert
+/// of `\x1b[7m` — the same pattern `theme::apply_bg` uses for box backgrounds.
 pub(super) fn apply_line_highlight(line: &str, start_col: u16, end_col: u16) -> String {
     use crate::interface::ansi::{AnsiSegment, ansi_segments};
 
@@ -91,7 +98,13 @@ pub(super) fn apply_line_highlight(line: &str, start_col: u16, end_col: u16) -> 
     for seg in ansi_segments(line) {
         match seg {
             // Pass through ANSI escape sequences without counting columns.
-            AnsiSegment::Escape(esc) => result.push_str(esc),
+            // Re-assert reverse when an SGR would clear it mid-selection.
+            AnsiSegment::Escape(esc) => {
+                result.push_str(esc);
+                if highlighted && sgr_clears_reverse(esc) {
+                    result.push_str("\x1b[7m");
+                }
+            }
             AnsiSegment::Text(text) => {
                 for ch in text.chars() {
                     let ch_width = ch.width().unwrap_or(0) as u16;
@@ -122,4 +135,51 @@ pub(super) fn apply_line_highlight(line: &str, start_col: u16, end_col: u16) -> 
         result.push_str("\x1b[27m");
     }
     result
+}
+
+/// Whether a CSI SGR escape leaves reverse-video off, so a live selection
+/// highlight must re-assert `\x1b[7m` after it.
+///
+/// Tracks net effect in parameter order: full reset (`0` / empty) and
+/// reverse-off (`27`) clear it; reverse-on (`7`) sets it. Non-SGR escapes
+/// (OSC, cursor, …) never touch reverse and return false.
+fn sgr_clears_reverse(esc: &str) -> bool {
+    let Some(params) = esc
+        .strip_prefix("\x1b[")
+        .and_then(|rest| rest.strip_suffix('m'))
+    else {
+        return false;
+    };
+    if params.is_empty() {
+        return true; // `\x1b[m` == full reset
+    }
+    let mut reverse_off = false;
+    let mut it = params.split(';');
+    while let Some(p) = it.next() {
+        let code: u16 = if p.is_empty() {
+            0
+        } else {
+            p.parse().unwrap_or(u16::MAX)
+        };
+        match code {
+            0 => reverse_off = true,
+            7 => reverse_off = false,
+            27 => reverse_off = true,
+            // Consume extended-colour value params so components are not
+            // misread as attribute codes (same discipline as apply_bg).
+            38 | 48 => match it.next().map(|x| x.parse::<u16>().unwrap_or(u16::MAX)) {
+                Some(5) => {
+                    it.next();
+                }
+                Some(2) => {
+                    it.next();
+                    it.next();
+                    it.next();
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    reverse_off
 }
