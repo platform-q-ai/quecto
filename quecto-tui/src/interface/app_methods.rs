@@ -1,4 +1,4 @@
-use super::app_selection::{SelectionAnchor, apply_selection_highlight};
+use super::app_selection::{SelectionAnchor, apply_selection_highlight, display_col_to_char_idx};
 use super::*;
 use crate::application::session_payloads::{self, ResumedChatMessage};
 use crate::interface::components::select_list::route_overlay_key;
@@ -696,6 +696,7 @@ impl App {
                 break;
             }
             let visible = strip_ansi_for_selection(&lines[row_idx]);
+            let visible_width = crate::interface::utils::visible_width(&visible);
             let chars: Vec<char> = visible.chars().collect();
 
             let col_start = if row == start.row {
@@ -706,13 +707,15 @@ impl App {
             let col_end = if row == end.row {
                 end.col as usize
             } else {
-                chars.len()
+                visible_width
             };
 
-            let col_start = col_start.max(body_start_col).min(chars.len());
-            let col_end = col_end.max(body_start_col).min(chars.len());
+            let col_start = col_start.max(body_start_col).min(visible_width);
+            let col_end = col_end.max(body_start_col).min(visible_width);
 
-            let segment: String = chars[col_start..col_end].iter().collect();
+            let start_idx = display_col_to_char_idx(&chars, col_start);
+            let end_idx = display_col_to_char_idx(&chars, col_end);
+            let segment: String = chars[start_idx..end_idx].iter().collect();
 
             if !result.is_empty() {
                 result.push('\n');

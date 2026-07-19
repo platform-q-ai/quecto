@@ -2,6 +2,20 @@
 //!
 //! Kept in a separate module to keep `app.rs` under the line-count gate.
 
+use unicode_width::UnicodeWidthChar;
+
+pub(super) fn display_col_to_char_idx(chars: &[char], target_col: usize) -> usize {
+    let mut vis_col = 0usize;
+    for (idx, ch) in chars.iter().enumerate() {
+        let next_col = vis_col.saturating_add(ch.width().unwrap_or(0));
+        if next_col > target_col {
+            return idx;
+        }
+        vis_col = next_col;
+    }
+    chars.len()
+}
+
 /// Mouse selection anchor for click-and-drag text copy (#528).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SelectionAnchor {
@@ -80,13 +94,23 @@ pub(super) fn apply_line_highlight(line: &str, start_col: u16, end_col: u16) -> 
             AnsiSegment::Escape(esc) => result.push_str(esc),
             AnsiSegment::Text(text) => {
                 for ch in text.chars() {
-                    if vis_col == start_col && !highlighted {
+                    let ch_width = ch.width().unwrap_or(0) as u16;
+                    let next_col = vis_col.saturating_add(ch_width);
+                    let intersects_selection =
+                        ch_width > 0 && next_col > start_col && vis_col < end_col;
+
+                    if intersects_selection && !highlighted {
                         result.push_str("\x1b[7m");
                         highlighted = true;
+                    } else if !intersects_selection && highlighted {
+                        result.push_str("\x1b[27m");
+                        highlighted = false;
                     }
+
                     result.push(ch);
-                    vis_col += 1;
-                    if vis_col == end_col && highlighted {
+                    vis_col = next_col;
+
+                    if highlighted && vis_col >= end_col {
                         result.push_str("\x1b[27m");
                         highlighted = false;
                     }

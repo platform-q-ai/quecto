@@ -132,6 +132,34 @@ fn apply_line_highlight_with_ansi_escapes() {
 }
 
 #[test]
+fn apply_line_highlight_uses_display_columns_for_wide_chars() {
+    let result = apply_line_highlight("ab界de", 4, 6);
+
+    assert!(
+        result.contains("ab界\x1b[7mde\x1b[27m"),
+        "highlight should use terminal display columns, not scalar counts: {result:?}"
+    );
+}
+
+#[test]
+fn apply_selection_highlight_body_clamp_uses_display_columns_with_wide_sidepanel() {
+    let mut lines = vec!["界".repeat(14) + "body row"];
+    let sel = Some(TextSelection {
+        start: SelectionAnchor { col: 0, row: 0 },
+        end: SelectionAnchor { col: 32, row: 0 },
+    });
+
+    apply_selection_highlight(&sel, &mut lines, 28);
+
+    assert_first_reverse_video_starts_at_or_after(&lines[0], 28, 0);
+    assert!(
+        lines[0].contains("界".repeat(14).as_str()),
+        "sidepanel text must stay unhighlighted and intact: {:?}",
+        lines[0]
+    );
+}
+
+#[test]
 fn apply_line_highlight_preserves_osc_sequences() {
     // OSC sequences (title setting) should pass through untouched.
     let input = "\x1b]0;title\x07hello";
@@ -273,7 +301,7 @@ fn assert_first_reverse_video_starts_at_or_after(line: &str, min_col: u16, row_i
         panic!("row {row_idx} should be highlighted: {line:?}");
     };
     let visible_before_highlight = super::app_methods::strip_ansi(&line[..byte_idx]);
-    let start_col = visible_before_highlight.chars().count() as u16;
+    let start_col = crate::interface::utils::visible_width(&visible_before_highlight) as u16;
     assert!(
         start_col >= min_col,
         "row {row_idx} highlight starts at visible col {start_col}, before body col {min_col}: {line:?}"
