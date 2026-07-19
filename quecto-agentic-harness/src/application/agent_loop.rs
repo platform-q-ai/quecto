@@ -680,14 +680,15 @@ impl AgentLoopImpl {
                 // Emit Done so the spinner is cleared before the limit message.
                 self.notify(|| AgentProgressEvent::Done);
                 let estimated_context_tokens = context_pruning::estimate_total_tokens(messages);
+                // `context_input_tokens` is the latest call's provider-reported
+                // occupancy (assigned, not accumulated, by UsageTotals::record), so
+                // report it directly; estimate-only providers observe the estimate.
                 let context_tokens = if usage_totals.context_input_tokens > 0 {
-                    self.reconcile_context_gauge(estimated_context_tokens)
+                    usage_totals.context_input_tokens as usize
                 } else {
+                    self.observe_estimated_context_gauge(estimated_context_tokens);
                     estimated_context_tokens
                 };
-                if usage_totals.context_input_tokens == 0 {
-                    self.observe_estimated_context_gauge(estimated_context_tokens);
-                }
                 return Ok(AgentResult {
                     response: format!(
                         "Tool iteration limit ({}) reached. Stopping.",
