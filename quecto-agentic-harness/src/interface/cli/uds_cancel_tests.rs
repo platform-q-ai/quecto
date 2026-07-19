@@ -8,7 +8,28 @@ use crate::infrastructure::tools::subagent_registry::{
 };
 
 #[test]
-fn cancellation_removes_prompt_at_its_logical_boundary_after_pruning() {
+fn cancellation_preserves_interrupted_prompt_for_next_turn_context() {
+    let prompt = Message::user("remember ESC_ABORT_123");
+    let prompt_id = prompt.id();
+    let mut messages = vec![
+        Message::user("previous"),
+        prompt,
+        Message::assistant("partial streamed text", vec![]),
+    ];
+
+    discard_interrupted_turn_after_prompt(&mut messages, prompt_id);
+
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].content, "previous");
+    assert_eq!(messages[1].content, "remember ESC_ABORT_123");
+    assert!(matches!(
+        messages[1].role,
+        crate::domain::message::Role::User
+    ));
+}
+
+#[test]
+fn cancellation_preserves_prompt_at_its_logical_boundary_after_pruning() {
     let prompt = Message::user("cancel me");
     let prompt_id = prompt.id();
     // The prompt is pushed at index 2 — the position a caller would have
@@ -36,16 +57,17 @@ fn cancellation_removes_prompt_at_its_logical_boundary_after_pruning() {
         "scenario setup: the drop must move the prompt off its recorded index"
     );
 
-    rollback_prompt(&mut messages, prompt_id);
+    discard_interrupted_turn_after_prompt(&mut messages, prompt_id);
 
     assert_eq!(
         messages.len(),
-        1,
-        "rollback must remove the prompt and everything after it, located by \
+        2,
+        "cancellation must preserve the prompt and remove only interrupted output, located by \
          id — a stale positional truncate at index {recorded_prompt_index} \
-         would have kept the cancelled prompt"
+         would have kept interrupted assistant output"
     );
     assert_eq!(messages[0].content, "survivor");
+    assert_eq!(messages[1].content, "cancel me");
 }
 
 fn make_notif(seq: u64) -> SequencedSubagentNotification {

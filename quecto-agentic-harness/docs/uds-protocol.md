@@ -151,8 +151,10 @@ a no-op.
 **Behavior:**
 - **Agent running:** Fires the cancellation signal. The agent stops after the
   current tool completes, in-flight tool calls and their child processes (e.g. a
-  long `bash`) are terminated via the process group, and the user message from
-  the cancelled run is removed from history.
+  long `bash`) are terminated via the process group. The cancelled run's user
+  message remains in history so the next prompt sees the same interrupted turn
+  the client displayed; any assistant/tool output appended after that user
+  message is discarded.
 - **Workflow auto-continue is suppressed:** if the agent is bound to a workflow,
   `abort` clears any queued work and prevents the workflow auto-continue nudge
   from re-driving it. The agent stays stopped until explicitly re-driven by a
