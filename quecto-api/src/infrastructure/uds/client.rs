@@ -214,6 +214,12 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
             obj
         }
         AgentCommand::Abort => serde_json::json!({"type": "abort", "id": id}),
+        AgentCommand::Steer { message } => {
+            serde_json::json!({"type": "steer", "id": id, "message": message})
+        }
+        AgentCommand::FollowUp { message } => {
+            serde_json::json!({"type": "follow_up", "id": id, "message": message})
+        }
         AgentCommand::GetState => serde_json::json!({"type": "get_state", "id": id}),
         AgentCommand::GetMessages { before } => {
             let mut v = serde_json::json!({"type": "get_messages", "id": id});
@@ -270,6 +276,11 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
             obj
         }
         AgentCommand::ClearHistory => serde_json::json!({"type": "clear_history", "id": id}),
+        AgentCommand::GetSubagents => serde_json::json!({"type": "get_subagents", "id": id}),
+        AgentCommand::GetExtensions => serde_json::json!({"type": "get_extensions", "id": id}),
+        AgentCommand::ReloadExtensions => {
+            serde_json::json!({"type": "reload_extensions", "id": id})
+        }
     }
 }
 
@@ -391,157 +402,5 @@ impl AgentGateway for UdsGateway {
 // assert on the one observable effect: which events actually reach a
 // subscriber.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::io::AsyncWriteExt;
-
-    #[tokio::test]
-    async fn oversized_event_line_is_dropped_but_later_valid_events_still_arrive() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let socket_path = dir.path().join("agent.sock");
-        let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind test socket");
-
-        // Gate the server writes on the subscription existing: broadcast
-        // sends before `subscribe()` are dropped (see the reader loop in
-        // `connect`), so writing immediately after accept races the
-        // subscription and flakes.
-        let (subscribed_tx, subscribed_rx) = tokio::sync::oneshot::channel::<()>();
-        let accept_task = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.expect("accept");
-            subscribed_rx.await.expect("subscribed signal");
-            // One giant unterminated-then-terminated line, well over
-            // MAX_LINE_BYTES, followed by a normal, valid event.
-            let oversized = format!(
-                "{{\"type\":\"token\",\"token\":\"{}\"}}\n",
-                "x".repeat(MAX_LINE_BYTES + 65_536)
-            );
-            stream
-                .write_all(oversized.as_bytes())
-                .await
-                .expect("write oversized line");
-            stream
-                .write_all(b"{\"type\":\"token\",\"token\":\"hi\"}\n")
-                .await
-                .expect("write valid line");
-        });
-
-        let gateway = UdsGateway::connect(&socket_path)
-            .await
-            .expect("connect to agent socket");
-        let mut sub = gateway.subscribe().await.expect("subscribe");
-        subscribed_tx.send(()).expect("signal subscribed");
-
-        let event = tokio::time::timeout(std::time::Duration::from_secs(3), sub.recv())
-            .await
-            .expect("subscriber should still receive an event after an oversized line within 3s")
-            .expect("event present");
-
-        match event {
-            AgentEvent::Token { token } => assert_eq!(
-                token, "hi",
-                "the oversized line must not be delivered as a parsed event, only the valid one that follows it"
-            ),
-            other => panic!("expected a Token event, got: {other:?}"),
-        }
-
-        accept_task.await.expect("accept task completed");
-    }
-
-    #[test]
-    fn max_line_bytes_matches_documented_protocol_limit() {
-        // 8 MiB interim cap (#1094); derives from the shared line-io constant.
-        assert_eq!(MAX_LINE_BYTES, 8 * 1_048_576);
-    }
-
-    // ── #1061 lockstep: paged history cursor reaches the wire ────────────────
-
-    #[test]
-    fn get_messages_command_serializes_optional_before_cursor() {
-        let newest = command_to_json(AgentCommand::GetMessages { before: None }, "req1");
-        assert_eq!(newest["type"], "get_messages");
-        assert!(
-            newest.get("before").is_none(),
-            "no cursor field when unset: {newest}"
-        );
-
-        let older = command_to_json(
-            AgentCommand::GetMessages {
-                before: Some("cursor-id".into()),
-            },
-            "req2",
-        );
-        assert_eq!(older["before"], "cursor-id");
-    }
-
-    // ── #1060 lockstep: refs preserved through the API event model ──────────
-
-    #[test]
-    fn get_message_command_serializes_to_wire() {
-        let v = command_to_json(
-            AgentCommand::GetMessage {
-                message_id: "m1".into(),
-                agent_id: None,
-                tool_call_id: None,
-                offset: None,
-                limit: None,
-            },
-            "req1",
-        );
-        assert_eq!(v["type"], "get_message");
-        assert_eq!(v["messageId"], "m1");
-        assert_eq!(v["id"], "req1");
-        assert!(v.get("agent_id").is_none());
-        assert!(v.get("offset").is_none());
-        assert!(v.get("limit").is_none());
-
-        let child = command_to_json(
-            AgentCommand::GetMessage {
-                message_id: "m2".into(),
-                agent_id: Some("worker".into()),
-                tool_call_id: None,
-                offset: Some(4096),
-                limit: Some(8192),
-            },
-            "req2",
-        );
-        assert_eq!(child["agent_id"], "worker");
-        assert_eq!(child["offset"], 4096);
-        assert_eq!(child["limit"], 8192);
-    }
-
-    #[test]
-    fn agent_end_preserves_message_refs_round_trip() {
-        // The harness emits agent_end refs-based (empty messages) after #1060.
-        let wire = r#"{"type":"agent_end","messages":[],"messageRefs":["a","b"]}"#;
-        let ev: AgentEvent = serde_json::from_str(wire).expect("parse agent_end");
-        match &ev {
-            AgentEvent::AgentEnd { message_refs, .. } => {
-                assert_eq!(message_refs, &vec!["a".to_string(), "b".to_string()]);
-            }
-            other => panic!("expected AgentEnd, got {other:?}"),
-        }
-        // Re-serialized to a WS client, the refs must survive (not be dropped).
-        let out = serde_json::to_value(&ev).unwrap();
-        assert_eq!(out["messageRefs"], serde_json::json!(["a", "b"]));
-    }
-
-    #[test]
-    fn subagent_messages_appended_is_modeled_not_unknown() {
-        let wire = r#"{"type":"subagent_messages_appended","agent_id":"worker","messages":[],"messageRefs":["x"]}"#;
-        let ev: AgentEvent = serde_json::from_str(wire).expect("parse");
-        match &ev {
-            AgentEvent::SubagentMessagesAppended {
-                agent_id,
-                message_refs,
-                ..
-            } => {
-                assert_eq!(agent_id, "worker");
-                assert_eq!(message_refs, &vec!["x".to_string()]);
-            }
-            other => panic!("expected SubagentMessagesAppended, not Unknown; got {other:?}"),
-        }
-        let out = serde_json::to_value(&ev).unwrap();
-        assert_eq!(out["type"], "subagent_messages_appended");
-        assert_eq!(out["messageRefs"], serde_json::json!(["x"]));
-    }
-}
+#[path = "client_tests.rs"]
+mod tests;

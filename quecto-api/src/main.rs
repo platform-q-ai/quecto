@@ -1,7 +1,5 @@
-use std::path::PathBuf;
-
-use quecto_api::infrastructure::http::router::build_router;
-use quecto_api::infrastructure::uds::client::UdsGateway;
+use quecto_api::interface::cli::Config;
+use quecto_api::interface::server;
 
 #[tokio::main]
 async fn main() {
@@ -11,60 +9,33 @@ async fn main() {
         )
         .init();
 
-    let mut socket: Option<PathBuf> = None;
-    let mut host = "127.0.0.1".to_string();
-    let mut port: u16 = 8080;
-
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--socket" => socket = args.next().map(PathBuf::from),
-            "--host" => {
-                if let Some(h) = args.next() {
-                    host = h;
-                }
-            }
-            "--port" => {
-                if let Some(p) = args.next() {
-                    port = p.parse().expect("invalid port");
-                }
-            }
-            other => {
-                eprintln!("unknown argument: {other}");
-                std::process::exit(1);
-            }
-        }
-    }
-
-    let socket = socket
-        .or_else(|| std::env::var_os("QUECTO_SOCKET").map(PathBuf::from))
-        .unwrap_or_else(|| {
-            eprintln!("missing --socket / QUECTO_SOCKET");
+    let config = Config::parse(std::env::args().skip(1), |key| std::env::var(key).ok())
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
             std::process::exit(1);
         });
 
     tracing::info!(
-        "quecto-api starting on {host}:{port}, socket: {}",
-        socket.display()
+        "quecto-api starting on {}:{}, socket: {}",
+        config.host,
+        config.port,
+        config.socket.display()
     );
 
-    let gateway = UdsGateway::connect(&socket).await.unwrap_or_else(|e| {
-        eprintln!("failed to connect to quecto agent: {e}");
+    let (listener, app) = server::bind(&config).await.unwrap_or_else(|e| {
+        eprintln!("{e}");
         std::process::exit(1);
     });
 
-    let app = build_router(gateway);
-    let addr: std::net::SocketAddr = format!("{host}:{port}").parse().expect("invalid address");
+    tracing::info!(
+        "quecto-api listening on http://{}",
+        listener.local_addr().expect("listener has address")
+    );
 
-    tracing::info!("quecto-api listening on http://{addr}");
-
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("bind failed");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("server error");
+    if let Err(e) = server::serve(listener, app, shutdown_signal()).await {
+        eprintln!("server error: {e}");
+        std::process::exit(1);
+    }
 }
 
 async fn shutdown_signal() {

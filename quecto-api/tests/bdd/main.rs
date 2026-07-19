@@ -68,7 +68,18 @@ impl AgentGateway for MockGateway {
             let mut data = serde_json::json!({"mock": true});
             let command_name = match cmd {
                 AgentCommand::Prompt { .. } => "prompt",
+                AgentCommand::Steer { message } => {
+                    data["messageEcho"] = serde_json::Value::String(message);
+                    "steer"
+                }
+                AgentCommand::FollowUp { message } => {
+                    data["messageEcho"] = serde_json::Value::String(message);
+                    "follow_up"
+                }
                 AgentCommand::Abort => "abort",
+                AgentCommand::GetSubagents => "get_subagents",
+                AgentCommand::GetExtensions => "get_extensions",
+                AgentCommand::ReloadExtensions => "reload_extensions",
                 AgentCommand::GetState => "get_state",
                 AgentCommand::GetMessages { before } => {
                     if let Some(before) = before {
@@ -135,6 +146,11 @@ impl AgentGateway for MockGateway {
                 AgentCommand::GetSessionStats => "get_session_stats",
                 AgentCommand::SetModel { .. } => "set_model",
                 AgentCommand::ClearHistory => "clear_history",
+                AgentCommand::Steer { .. } => "steer",
+                AgentCommand::FollowUp { .. } => "follow_up",
+                AgentCommand::GetSubagents => "get_subagents",
+                AgentCommand::GetExtensions => "get_extensions",
+                AgentCommand::ReloadExtensions => "reload_extensions",
             };
             Ok(AgentEvent::Response {
                 id: Some("mock-enqueued-id".to_string()),
@@ -288,8 +304,8 @@ async fn request_get(world: &mut ApiWorld, path: String) {
     world.response_body = Some(resp.text().await.unwrap_or_default());
 }
 
-#[when("I POST /prompt with body:")]
-async fn request_post_prompt(world: &mut ApiWorld, step: &cucumber::gherkin::Step) {
+#[when(regex = r#"^I POST (\S+) with body:$"#)]
+async fn request_post_path(world: &mut ApiWorld, path: String, step: &cucumber::gherkin::Step) {
     let body = step
         .docstring
         .as_ref()
@@ -297,12 +313,28 @@ async fn request_post_prompt(world: &mut ApiWorld, step: &cucumber::gherkin::Ste
         .trim()
         .to_string();
     let base = world.ensure_server().await;
-    let url = format!("{base}/prompt");
+    let url = format!("{base}{path}");
     let client = reqwest::Client::new();
     let resp = client
         .post(&url)
         .header("content-type", "application/json")
         .body(body)
+        .send()
+        .await
+        .expect("HTTP request failed");
+    world.response_status = Some(resp.status().as_u16());
+    world.response_body = Some(resp.text().await.unwrap_or_default());
+}
+
+#[when(regex = r#"^I POST (\S+) with an empty body$"#)]
+async fn request_post_empty(world: &mut ApiWorld, path: String) {
+    let base = world.ensure_server().await;
+    let url = format!("{base}{path}");
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .header("content-type", "application/json")
+        .body("{}")
         .send()
         .await
         .expect("HTTP request failed");
