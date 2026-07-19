@@ -154,7 +154,8 @@ a no-op.
   long `bash`) are terminated via the process group. The cancelled run's user
   message remains in history so the next prompt sees the same interrupted turn
   the client displayed; any assistant/tool output appended after that user
-  message is discarded.
+  message is discarded. `abort` is not a privacy delete: clients should not use
+  it to remove sensitive text that was already submitted to the agent/model.
 - **Workflow auto-continue is suppressed:** if the agent is bound to a workflow,
   `abort` clears any queued work and prevents the workflow auto-continue nudge
   from re-driving it. The agent stays stopped until explicitly re-driven by a
