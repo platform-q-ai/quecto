@@ -244,6 +244,21 @@ async fn extract_selection_omits_navigation_panel_and_divider_columns() {
 }
 
 #[tokio::test]
+async fn extract_selection_uses_display_columns_for_wide_text() {
+    let mut app = test_app_for_methods().await;
+    app.agent_connected = false;
+    app.agent_ever_connected = false;
+    app.last_rendered_lines = vec!["ab界de".to_string()];
+
+    let copied = app.extract_selection(
+        &SelectionAnchor { col: 4, row: 0 },
+        &SelectionAnchor { col: 6, row: 0 },
+    );
+
+    assert_eq!(copied, "de");
+}
+
+#[tokio::test]
 async fn extract_selection_multi_row_omits_panel_and_divider() {
     let mut app = test_app_for_methods().await;
     app.agent_connected = true;
