@@ -2,6 +2,12 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
+**Version `0.70.0` (pre-1.0).** The TUI is a UDS bus client of the harness: the
+wire protocol and session ownership live in `quecto`, so most breaking risk is
+upstream. This crate stays on `0.y` until Clean Architecture layering and public
+surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
+`1.0` freeze — not because the client is unused or unready for daily work.
+
 The TUI is a client. The Quecto kernel is the root `quecto` binary running
 `quecto agent --mode uds`; it owns the model session, tools, credentials,
 workflow state, and Unix socket. When no `--socket` is passed, `quecto-tui`
