@@ -306,8 +306,8 @@ async fn error_outcome_still_reconciles_persistence_after_demotion() {
 
 /// RED (#1072 re-review finding 2 / addendum finding 7): the dirty signal
 /// must survive a CANCELLED turn. Pruning runs before the provider call; the
-/// cancel rolls back only the prompt, and persistence still runs afterwards
-/// with the stubbed history at exactly the old watermark length (masked).
+/// cancel discards only interrupted output, and persistence still runs afterwards
+/// with the stubbed history plus the preserved interrupted prompt.
 #[tokio::test]
 async fn cancelled_outcome_still_reconciles_persistence_after_demotion() {
     let mut fx = Fixture::new();
@@ -331,10 +331,10 @@ async fn cancelled_outcome_still_reconciles_persistence_after_demotion() {
     );
     assert_eq!(
         fx.messages.len(),
-        4,
-        "scenario setup: rollback leaves exactly the four pre-run messages — \
-         the masked shape (length equals the old watermark)"
+        5,
+        "cancellation must preserve the interrupted prompt after demotion"
     );
+    assert!(fx.messages.iter().any(|m| m.content == "hi"));
     assert_durable_matches_live(&fx).await;
 }
 
@@ -351,9 +351,10 @@ fn droppable_history_message(turn: u32, big_chars: usize) -> Message {
 /// earlier entries, through the production dispatch path. The prompt's
 /// pre-turn index is stale; a revert to `messages.truncate(user_msg_idx)`
 /// becomes a no-op (index > len) and silently retains — and persists — the
-/// cancelled prompt. Only id-based rollback removes it.
+/// interrupted assistant output. Only id-based truncation preserves the prompt
+/// while removing anything appended after it.
 #[tokio::test]
-async fn cancellation_after_physical_drops_removes_the_cancelled_prompt() {
+async fn cancellation_after_physical_drops_preserves_prompt_only() {
     let mut fx = Fixture::new();
     fx.agent = budgeted_agent(std::sync::Arc::new(HangingProvider), 700);
     // 8 droppable oversized turns: rung 2 removes most of them on the first
@@ -380,15 +381,14 @@ async fn cancellation_after_physical_drops_removes_the_cancelled_prompt() {
         fx.messages.len()
     );
     assert!(
-        !fx.messages.iter().any(|m| m.content == "hi"),
-        "the cancelled prompt must be rolled back at its LOGICAL boundary — \
-         a stale positional truncate retains it after physical drops"
+        fx.messages.iter().any(|m| m.content == "hi"),
+        "the interrupted prompt must be preserved at its logical boundary"
     );
     assert!(
         fx.messages
             .iter()
-            .all(|m| m.content.starts_with('z') && m.turn.is_some()),
-        "only pre-existing survivors may remain after rollback"
+            .all(|m| m.content == "hi" || (m.content.starts_with('z') && m.turn.is_some())),
+        "only pre-existing survivors plus the interrupted prompt may remain after abort"
     );
     assert_durable_matches_live(&fx).await;
 }

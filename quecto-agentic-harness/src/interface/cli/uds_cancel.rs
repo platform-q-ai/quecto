@@ -292,9 +292,9 @@ fn prompt_position(messages: &[Message], prompt_id: uuid::Uuid) -> Option<usize>
         .position(|message| message.id() == prompt_id)
 }
 
-fn rollback_prompt(messages: &mut Vec<Message>, prompt_id: uuid::Uuid) {
+fn discard_interrupted_turn_after_prompt(messages: &mut Vec<Message>, prompt_id: uuid::Uuid) {
     if let Some(index) = prompt_position(messages, prompt_id) {
-        messages.truncate(index);
+        messages.truncate(index + 1);
     }
 }
 
@@ -363,7 +363,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
 
     match result {
         None => {
-            rollback_prompt(messages, prompt_id);
+            discard_interrupted_turn_after_prompt(messages, prompt_id);
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
