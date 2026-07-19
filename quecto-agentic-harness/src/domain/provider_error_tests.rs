@@ -30,6 +30,7 @@ fn is_retryable_only_for_transient_classes() {
     assert!(RateLimit.is_retryable());
     assert!(Server.is_retryable());
     assert!(Network.is_retryable());
+    assert!(!Billing.is_retryable());
     assert!(!Auth.is_retryable());
     assert!(!Client.is_retryable());
     assert!(!Cancelled.is_retryable());
@@ -41,6 +42,7 @@ fn as_str_and_display_match() {
     use ProviderErrorClass::*;
     let cases = [
         (RateLimit, "rate_limit"),
+        (Billing, "billing"),
         (Auth, "auth"),
         (Server, "server"),
         (Client, "client"),
@@ -81,6 +83,15 @@ fn classify_prefers_http_status_over_keywords() {
         classify_provider_error(&provider("auth failed (http/401)")),
         ProviderErrorClass::Auth
     );
+}
+
+#[test]
+fn classify_openai_insufficient_quota_is_terminal_billing_not_rate_limit() {
+    let err = provider(
+        r#"HTTP 429 from OpenAI: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#,
+    );
+
+    assert_eq!(classify_provider_error(&err), ProviderErrorClass::Billing);
 }
 
 #[test]
@@ -190,7 +201,9 @@ fn classify_keyword_fallbacks() {
 #[test]
 fn display_and_as_str_round_trip() {
     use ProviderErrorClass::*;
-    for class in [RateLimit, Auth, Server, Client, Network, Cancelled, Unknown] {
+    for class in [
+        RateLimit, Billing, Auth, Server, Client, Network, Cancelled, Unknown,
+    ] {
         assert_eq!(class.to_string(), class.as_str());
     }
 }
