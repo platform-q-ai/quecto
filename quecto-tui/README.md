@@ -17,7 +17,8 @@ starts that kernel by executing `quecto`, so `quecto` must be on `PATH`.
 Install both binaries from the workspace root:
 
 ```bash
-cargo install --path .
+# From the workspace root:
+cargo install --path quecto-agentic-harness
 cargo install --path quecto-tui
 ```
 
@@ -41,7 +42,7 @@ If you do not want to install, either make Cargo's build output visible on
 `PATH` so `quecto-tui` can spawn `target/debug/quecto`:
 
 ```bash
-cargo build -p quecto -p quecto-tui
+cargo build -p quecto-agentic-harness -p quecto-tui
 PATH="$PWD/target/debug:$PATH" cargo run -p quecto-tui --
 ```
 
@@ -49,7 +50,7 @@ Or run the kernel explicitly and connect the TUI to its socket from another
 terminal:
 
 ```bash
-cargo run -p quecto -- agent --mode uds --socket /tmp/quecto.sock --persist
+cargo run -p quecto-agentic-harness -- agent --mode uds --socket /tmp/quecto.sock --persist
 cargo run -p quecto-tui -- --socket /tmp/quecto.sock
 ```
 
