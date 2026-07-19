@@ -200,3 +200,132 @@ fn workflow_and_guards_combo_in_uds() {
     .unwrap();
     assert!(f.workflow && f.workflow_guards && !f.workflow_disabled);
 }
+
+#[test]
+fn parse_agent_flags_covers_boolean_bundle_and_missing_values() {
+    let mut stderr = String::new();
+    let flags = parse_agent_flags(
+        &argv(&[
+            "--workflow",
+            "--workflow-guards",
+            "--persist",
+            "--mode",
+            "uds",
+            "--message",
+            "hello",
+            "--system",
+            "sys",
+            "--model",
+            "local/model",
+            "--max-iterations",
+            "3",
+            "--max-time",
+            "4",
+            "--socket",
+            "/tmp/agent.sock",
+            "--disable-tool",
+            "bash",
+            "--effort",
+            "low",
+            "--workflow-spec",
+            "/tmp/spec.json",
+            "--parent-id",
+            "parent",
+            "--no-sandbox",
+            "--no-session",
+        ]),
+        &mut stderr,
+    )
+    .unwrap();
+    assert!(flags.workflow);
+    assert!(flags.workflow_guards);
+    assert!(flags.persist);
+    assert!(flags.uds_mode);
+    assert_eq!(flags.message.as_deref(), Some("hello"));
+    assert_eq!(flags.system_prompt.as_deref(), Some("sys"));
+    assert_eq!(flags.model_override.as_deref(), Some("local/model"));
+    assert_eq!(flags.max_iterations, Some(3));
+    assert_eq!(flags.max_time, Some(4));
+    assert!(flags.no_sandbox);
+    assert!(flags.no_session);
+    assert_eq!(flags.disabled_tools, vec!["bash".to_string()]);
+    assert!(stderr.is_empty());
+
+    for bad in [
+        vec!["--message"],
+        vec!["--system"],
+        vec!["--model"],
+        vec!["--max-iterations", "NaN"],
+        vec!["--max-time", "NaN"],
+        vec!["--workflow-spec"],
+    ] {
+        let mut e = String::new();
+        assert!(
+            parse_agent_flags(&argv(&bad), &mut e).is_none(),
+            "bad={bad:?}"
+        );
+        assert!(!e.is_empty(), "expected diagnostic for {bad:?}");
+    }
+}
+
+#[test]
+fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
+    let flags = AgentFlags {
+        session_name: None,
+        no_session: false,
+        message: None,
+        system_prompt: None,
+        model_override: None,
+        max_iterations: None,
+        max_time: None,
+        uds_mode: true,
+        no_sandbox: false,
+        socket_path: Some(std::path::PathBuf::from(format!(
+            "/tmp/{}",
+            "x".repeat(140)
+        ))),
+        persist: false,
+        disabled_tools: Vec::new(),
+        effort: None,
+        workflow: false,
+        workflow_guards: false,
+        workflow_disabled: true,
+        workflow_spec_path: None,
+        parent_id: None,
+    };
+    let ctx = CliContext::default();
+    let mut stderr = String::new();
+    assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
+    assert!(stderr.contains("socket path exceeds"), "{stderr}");
+
+    let mut flags = AgentFlags {
+        session_name: None,
+        no_session: false,
+        message: None,
+        system_prompt: None,
+        model_override: None,
+        max_iterations: None,
+        max_time: None,
+        uds_mode: true,
+        no_sandbox: false,
+        socket_path: Some(std::path::PathBuf::from(format!(
+            "/tmp/{}",
+            "y".repeat(140)
+        ))),
+        persist: false,
+        disabled_tools: Vec::new(),
+        effort: None,
+        workflow: false,
+        workflow_guards: false,
+        workflow_disabled: true,
+        workflow_spec_path: None,
+        parent_id: None,
+    };
+    flags.persist = true;
+    stderr.clear();
+    assert_eq!(cmd_agent_uds(&ctx, flags, &mut stderr), 1);
+    assert!(
+        !stderr.contains("--persist keeps"),
+        "length check should return first: {stderr}"
+    );
+}

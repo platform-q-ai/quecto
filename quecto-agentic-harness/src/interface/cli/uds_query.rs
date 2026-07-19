@@ -118,7 +118,7 @@ mod tests {
     use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
     use crate::interface::cli::uds_session::AgentSession;
 
-    struct Fx {
+    pub(crate) struct Fx {
         agent: AgentLoopImpl,
         messages: Vec<Message>,
         session: AgentSession,
@@ -129,7 +129,7 @@ mod tests {
     }
 
     impl Fx {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let tmp = tempfile::TempDir::new().unwrap();
             Self {
                 agent: AgentLoopImpl::new(AgentLoopConfig {
@@ -161,7 +161,7 @@ mod tests {
             }
         }
 
-        fn ctx(&mut self) -> crate::interface::cli::uds::DispatchCtx<'_> {
+        pub(crate) fn ctx(&mut self) -> crate::interface::cli::uds::DispatchCtx<'_> {
             let initial_stats = compute_session_stats_with_usage(
                 &self.session_key,
                 &self.messages,
@@ -579,5 +579,42 @@ mod tests {
         );
         assert!(query_response_data(&AgentCommand::GetSubagents { id: None }, &ctx).unwrap()["subagents"].is_array());
         assert!(query_response_data(&AgentCommand::ReloadExtensions { id: None }, &ctx).is_none());
+    }
+}
+
+#[cfg(test)]
+mod cov2_tests {
+    use super::{query_response_data, tests::Fx};
+    use crate::interface::cli::protocol::AgentCommand;
+
+    #[test]
+    fn get_state_query_ignores_poisoned_workflow_lock() {
+        let mut fx = Fx::new();
+        let state: std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>> =
+            std::sync::Arc::new(std::sync::Mutex::new(
+                crate::domain::workflow::WorkflowEngine::new(
+                    crate::domain::workflow::WorkflowConfig {
+                        auto_continue: true,
+                        completion_nudge: true,
+                        selector_prompt: None,
+                        dir: None,
+                        templates: vec![],
+                    },
+                    false,
+                )
+                .unwrap(),
+            ));
+        let poisoned = state.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.lock().unwrap();
+            panic!("poison workflow lock");
+        })
+        .join();
+
+        let mut ctx = fx.ctx();
+        ctx.workflow_state = Some(state);
+        let value = query_response_data(&AgentCommand::GetState { id: None }, &ctx).unwrap();
+        assert!(value.get("workflow").is_none());
+        assert_eq!(value["model"], "stub");
     }
 }

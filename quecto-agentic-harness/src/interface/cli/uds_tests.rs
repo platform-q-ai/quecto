@@ -687,3 +687,19 @@ mod progress_clear_tests;
 // #816 auto-await subagent completion notes (enqueue + idle delivery).
 #[path = "uds_subagent_notify_tests.rs"]
 mod subagent_notify_tests;
+
+#[test]
+fn session_summary_to_json_projects_stable_wire_fields() {
+    let summary = crate::domain::session::SessionSummary {
+        key: "cli:demo".into(),
+        title: "".into(),
+        message_count: 3,
+        updated_unix_secs: Some(1700000000),
+    };
+    let v = session_summary_to_json(&summary);
+    assert_eq!(v["key"], "cli:demo");
+    assert_eq!(v["title"], "(untitled)");
+    assert_eq!(v["messageCount"], 3);
+    assert_eq!(v["updatedUnixSecs"], 1700000000);
+    assert_eq!(v["updatedAt"], v["updatedUnixSecs"]);
+}

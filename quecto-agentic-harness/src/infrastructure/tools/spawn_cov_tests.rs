@@ -137,6 +137,27 @@ fn parse_args_accepts_all_optional_spawn_fields() {
 }
 
 #[test]
+fn parse_args_rejects_bad_json_config_path_and_disable_tool_shapes() {
+    let tool = SpawnTool::new(vec![], true);
+
+    let err = tool.parse_args("{").unwrap_err();
+    assert!(err.contains("invalid JSON"), "{err}");
+
+    let err = tool
+        .parse_args(r#"{"config":"../secret.toml"}"#)
+        .unwrap_err();
+    assert!(err.contains("contains '..'"), "{err}");
+
+    let err = tool.parse_args(r#"{"disable_tools":"write"}"#).unwrap_err();
+    assert!(err.contains("disable_tools must be an array"), "{err}");
+
+    let err = tool
+        .parse_args(r#"{"disable_tools":["write",7]}"#)
+        .unwrap_err();
+    assert!(err.contains("entries must be strings"), "{err}");
+}
+
+#[test]
 fn parse_args_rejects_specific_invalid_fields() {
     let tool = SpawnTool::new(vec!["ok".to_string()], true);
     let err = tool.parse_args(r#"{"agent_id":"bad space"}"#).unwrap_err();
@@ -312,4 +333,69 @@ async fn send_initial_prompt_writes_to_listening_socket() {
     let received = accept.await.unwrap();
     assert!(received.contains("do-the-thing"), "got: {received}");
     assert!(received.contains("\"type\":\"prompt\""), "got: {received}");
+}
+
+#[test]
+fn parse_args_workflow_spec_null_and_scalar_paths() {
+    let tool = SpawnTool::new(vec![], true);
+    let cfg = tool.parse_args(r#"{"workflow_spec":null}"#).unwrap();
+    assert!(cfg.workflow_spec.is_none());
+
+    let err = tool.parse_args(r#"{"workflow_spec":42}"#).unwrap_err();
+    assert!(err.contains("invalid workflow_spec"), "{err}");
+}
+
+fn poison_registry(registry: &SubagentRegistry) {
+    let cloned = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = cloned.lock().unwrap();
+        panic!("poison registry for coverage");
+    })
+    .join();
+    assert!(registry.lock().is_err(), "registry should be poisoned");
+}
+
+#[tokio::test]
+async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let (tx, rx) = tokio::sync::broadcast::channel(1);
+    drop(rx);
+    let cfg = SpawnTool::new(vec![], true)
+        .parse_args(r#"{"agent_id":"closed"}"#)
+        .unwrap();
+    let entry = initial_registry_entry(PathBuf::from("/tmp/closed.sock"), 0, None, &cfg, None);
+
+    register_and_broadcast(&registry, Some(&tx), "closed", entry);
+
+    assert!(registry.lock().unwrap().contains_key("closed"));
+}
+
+#[tokio::test]
+async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let cfg = SpawnTool::new(vec![], true)
+        .parse_args(r#"{"agent_id":"poison","read_only":true}"#)
+        .unwrap();
+    poison_registry(&registry);
+
+    register_and_broadcast(
+        &registry,
+        None,
+        "poison",
+        initial_registry_entry(PathBuf::from("/tmp/poison.sock"), 0, None, &cfg, None),
+    );
+    assert!(
+        registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key("poison")
+    );
+
+    shutdown_all(&registry);
+    assert!(
+        registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
+    );
 }

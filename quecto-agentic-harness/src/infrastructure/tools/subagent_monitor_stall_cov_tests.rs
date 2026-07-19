@@ -1,8 +1,19 @@
 use super::*;
+use crate::domain::error::DomainError;
 use crate::infrastructure::tools::subagent_registry::{
     SequencedSubagentNotification, SubagentEntry, SubagentNotification, WorkflowSnapshot,
     new_registry,
 };
+
+fn poison_registry(registry: &SubagentRegistry) {
+    let cloned = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = cloned.lock().unwrap();
+        panic!("poison registry for coverage");
+    })
+    .join();
+    assert!(registry.lock().is_err(), "registry should be poisoned");
+}
 
 fn note(seq: u64) -> SequencedSubagentNotification {
     SequencedSubagentNotification::new(
@@ -93,4 +104,145 @@ async fn classify_workflow_idle_only_sends_exhausted_stalls() {
         &serde_json::json!({"reason":"exhausted"}),
     );
     assert_eq!(rx.recv().await.unwrap().sequence, 2);
+}
+
+#[tokio::test]
+async fn stall_delivery_retains_on_full_channel_and_retry_no_tx_is_noop() {
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("bot".into(), SubagentEntry::new("/tmp/bot.sock".into(), 1));
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    tx.try_send(note(1)).unwrap();
+
+    deliver_or_retain_stall(&registry, &tx, "bot", note(2));
+    assert_eq!(
+        registry.lock().unwrap()["bot"]
+            .pending_stall
+            .as_ref()
+            .unwrap()
+            .sequence,
+        2
+    );
+    retry_pending_stalls(&registry, None);
+    assert!(registry.lock().unwrap()["bot"].pending_stall.is_some());
+    assert_eq!(rx.recv().await.unwrap().sequence, 1);
+}
+
+#[test]
+fn claim_pending_stall_rejects_mismatch_and_missing_agent() {
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+    entry.pending_stall = Some(note(7));
+    registry.lock().unwrap().insert("bot".into(), entry);
+
+    assert!(!claim_pending_stall(&registry, "missing", &note(7)));
+    assert!(!claim_pending_stall(&registry, "bot", &note(8)));
+    assert_eq!(
+        registry.lock().unwrap()["bot"]
+            .pending_stall
+            .as_ref()
+            .unwrap()
+            .sequence,
+        7
+    );
+    assert!(claim_pending_stall(&registry, "bot", &note(7)));
+    assert!(registry.lock().unwrap()["bot"].pending_stall.is_none());
+}
+
+#[test]
+fn stall_helpers_recover_from_poisoned_registry_lock() {
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+    entry.workflow = Some(WorkflowSnapshot {
+        mode: "active".into(),
+        steps_completed: 1,
+        steps_total: 2,
+    });
+    entry.stalled_armed = true;
+    entry.pending_stall = Some(note(9));
+    registry.lock().unwrap().insert("bot".into(), entry);
+    poison_registry(&registry);
+
+    assert!(!claim_pending_stall(&registry, "bot", &note(8)));
+    assert!(take_stalled_snapshot(&registry, "bot").is_some());
+    assert!(take_completion_armed(&registry, "bot"));
+    retry_pending_stalls(&registry, None);
+    assert!(
+        registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key("bot")
+    );
+}
+
+#[tokio::test]
+async fn retain_pending_stall_without_runtime_and_closed_channel_are_safe() {
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("bot".into(), SubagentEntry::new("/tmp/bot.sock".into(), 1));
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    drop(rx);
+    deliver_or_retain_stall(&registry, &tx, "missing", note(1));
+    deliver_or_retain_stall(&registry, &tx, "bot", note(2));
+    assert_eq!(
+        registry.lock().unwrap()["bot"]
+            .pending_stall
+            .as_ref()
+            .unwrap()
+            .sequence,
+        2
+    );
+}
+
+#[test]
+fn retain_pending_stall_from_sync_context_does_not_require_runtime() {
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("bot".into(), SubagentEntry::new("/tmp/bot.sock".into(), 1));
+    let (tx, rx) = tokio::sync::mpsc::channel::<SequencedSubagentNotification>(1);
+    drop(rx);
+    deliver_or_retain_stall(&registry, &tx, "bot", note(3));
+    assert_eq!(
+        registry.lock().unwrap()["bot"]
+            .pending_stall
+            .as_ref()
+            .unwrap()
+            .sequence,
+        3
+    );
+}
+
+#[test]
+fn touch_domain_error_import_for_test_kind_coverage() {
+    let err = DomainError::Tool("stall".into());
+    assert!(err.to_string().contains("stall"));
+}
+
+#[test]
+fn take_stalled_snapshot_none_for_missing_no_workflow_complete_and_unknown_modes() {
+    let registry = new_registry();
+    assert!(take_stalled_snapshot(&registry, "missing").is_none());
+
+    let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+    entry.stalled_armed = true;
+    registry.lock().unwrap().insert("bot".into(), entry);
+    assert!(take_stalled_snapshot(&registry, "bot").is_none());
+
+    for mode in ["complete", "unknown"] {
+        let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+        entry.stalled_armed = true;
+        entry.workflow = Some(WorkflowSnapshot {
+            mode: mode.into(),
+            steps_completed: 1,
+            steps_total: 1,
+        });
+        registry.lock().unwrap().insert(mode.into(), entry);
+        assert!(take_stalled_snapshot(&registry, mode).is_none(), "{mode}");
+    }
 }

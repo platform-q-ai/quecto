@@ -173,7 +173,7 @@ fn builtin_gpt_5_6_tiers_resolve_for_api_key_and_oauth_with_published_limits() {
         for (id, input, output) in tiers {
             let m = registry
                 .find(provider, id)
-                .unwrap_or_else(|| panic!("{provider}/{id} should be built in"));
+                .expect("provider/id should be built in");
             assert_eq!(m.api, ProviderApi::OpenAiCompletions);
             // Published limits (OpenAI, 2026-07-09): shared across the tiers.
             assert_eq!(m.context_window, 1_050_000, "{id} context window");
@@ -240,12 +240,12 @@ fn builtin_claude_sonnet_5_is_ordered_before_sonnet_4_6_for_each_auth_mode() {
             .models()
             .iter()
             .position(|m| m.provider == provider && m.id == "claude-sonnet-5")
-            .unwrap_or_else(|| panic!("missing {provider}/claude-sonnet-5"));
+            .expect("missing claude-sonnet-5");
         let sonnet_4_6 = registry
             .models()
             .iter()
             .position(|m| m.provider == provider && m.id == "claude-sonnet-4-6")
-            .unwrap_or_else(|| panic!("missing {provider}/claude-sonnet-4-6"));
+            .expect("missing claude-sonnet-4-6");
         assert!(
             sonnet_5 < sonnet_4_6,
             "{provider}/claude-sonnet-5 should appear before claude-sonnet-4-6"

@@ -23,6 +23,22 @@ fn config_from_str(json: &str) -> Config {
     Config::load(tmp.path().to_str().unwrap()).unwrap()
 }
 
+fn session_dir_entries(sessions_dir: &std::path::Path) -> Vec<std::fs::DirEntry> {
+    std::fs::read_dir(sessions_dir)
+        .expect("read sessions dir")
+        .map(|entry| entry.expect("read sessions dir entry"))
+        .collect()
+}
+
+#[test]
+fn session_dir_entries_reads_real_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sessions_dir = tmp.path().join("sessions");
+    std::fs::create_dir(&sessions_dir).unwrap();
+    std::fs::write(sessions_dir.join("one.json"), "{}").unwrap();
+    assert_eq!(session_dir_entries(&sessions_dir).len(), 1);
+}
+
 /// Helper: write a minimal config with a fake OpenAI key.
 fn write_fake_config(dir: &std::path::Path) {
     std::fs::write(
@@ -146,10 +162,7 @@ fn test_agent_ephemeral_session_no_file_created() {
     // matches the tool-output spill writer's ephemeral behaviour).
     let sessions_dir = tmp.path().join("sessions");
     if sessions_dir.exists() {
-        let entries: Vec<_> = std::fs::read_dir(&sessions_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .collect();
+        let entries = session_dir_entries(&sessions_dir);
         assert!(
             entries
                 .iter()
@@ -339,10 +352,7 @@ fn test_run_agent_session_ephemeral_no_save() {
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
     let sessions_dir = tmp.path().join("sessions");
     if sessions_dir.exists() {
-        let entries: Vec<_> = std::fs::read_dir(&sessions_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .collect();
+        let entries = session_dir_entries(&sessions_dir);
         assert!(entries.is_empty(), "no session files for ephemeral");
     }
 }

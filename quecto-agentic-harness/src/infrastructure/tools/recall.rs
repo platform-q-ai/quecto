@@ -314,10 +314,25 @@ mod tests {
     #[tokio::test]
     async fn test_recall_by_id() {
         let store = test_store_with_entry();
+        assert!(store.has_entries("test-session").await.unwrap());
+        let appended = SpillEntry {
+            id: "turn7:grep:0".to_string(),
+            tool: "grep".to_string(),
+            input_preview: "pattern".to_string(),
+            tokens: 7,
+            content: "match".to_string(),
+        };
+        store.append("test-session", &appended).await.unwrap();
+        let listed = store.list_entries("test-session").await.unwrap();
+        assert!(listed.iter().any(|e| e.id == "turn7:grep:0"));
+        store.clear("test-session").await.unwrap();
+        assert!(!store.has_entries("test-session").await.unwrap());
+        store.append("test-session", &appended).await.unwrap();
+
         let tool = RecallTool::new(store, "test-session".to_string());
-        let result = tool.execute(r#"{"id":"turn5:bash:0"}"#).await.unwrap();
+        let result = tool.execute(r#"{"id":"turn7:grep:0"}"#).await.unwrap();
         assert!(!result.is_error);
-        assert_eq!(result.content, "hello world output");
+        assert_eq!(result.content, "match");
     }
 
     #[tokio::test]
@@ -343,6 +358,21 @@ mod tests {
                 content: "new output".to_string(),
             },
         );
+        assert!(store.has_entries("old-session").await.unwrap());
+        assert!(store.has_entries("new-session").await.unwrap());
+        let extra = SpillEntry {
+            id: "turn2:bash:0".to_string(),
+            tool: "bash".to_string(),
+            input_preview: "extra".to_string(),
+            tokens: 2,
+            content: "extra output".to_string(),
+        };
+        store.append("new-session", &extra).await.unwrap();
+        assert_eq!(store.list_entries("new-session").await.unwrap().len(), 2);
+        store.clear("old-session").await.unwrap();
+        assert!(!store.has_entries("old-session").await.unwrap());
+        assert!(store.has_entries("new-session").await.unwrap());
+
         let tool = RecallTool::new(store, "old-session".to_string());
 
         tool.set_session_key("new-session".to_string());

@@ -132,6 +132,7 @@ async fn default_incremental_stream_emits_done_for_successful_chat_stream() {
     let messages = [];
     let tools = [];
 
+    assert_eq!(provider.name(), "ok");
     assert!(provider.as_any().is::<OkProvider>());
     let direct = provider
         .chat_stream(request(&messages, &tools))

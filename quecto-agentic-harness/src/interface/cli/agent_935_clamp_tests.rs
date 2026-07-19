@@ -45,7 +45,7 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
     let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .unwrap_or_else(|| panic!("build failed; stderr: {stderr}"));
+        .expect("agent build should succeed");
     assert_eq!(
         result.agent.effective_max_tokens(),
         65_536,

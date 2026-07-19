@@ -25,9 +25,11 @@ fn cascade_remove_removes_transitive_tree_only_and_reports_unknown_empty() {
     let mut ids: Vec<_> = removed.into_iter().map(|(id, _)| id).collect();
     ids.sort();
     assert_eq!(ids, vec!["child", "grand"]);
-    let guard = registry.lock().unwrap();
-    assert!(guard.contains_key("root"));
-    assert!(guard.contains_key("sibling"));
+    {
+        let guard = registry.lock().unwrap();
+        assert!(guard.contains_key("root"));
+        assert!(guard.contains_key("sibling"));
+    }
     assert!(cascade_remove(&registry, "missing").is_empty());
 }
 
@@ -72,4 +74,32 @@ fn cascade_remove_and_state_changed_returns_survivor_event_only_when_removed() {
     let none = cascade_remove_and_state_changed(&registry, "dead");
     assert!(none.removed.is_empty());
     assert!(none.event.is_none());
+}
+
+fn poison(registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry) {
+    let r = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = r.lock().unwrap();
+        panic!("poison the registry lock");
+    })
+    .join();
+}
+
+#[test]
+fn cascade_helpers_recover_from_poisoned_registry_lock() {
+    let registry = new_registry();
+    add(&registry, "root", None);
+    add(&registry, "kid", Some("root"));
+    poison(&registry);
+
+    // All three public helpers must recover via into_inner() and keep working.
+    let event = build_state_changed_event(&registry);
+    assert!(event.ends_with('\n') && event.contains("root"));
+
+    let removed = cascade_remove(&registry, "kid");
+    assert_eq!(removed.len(), 1);
+
+    let out = cascade_remove_and_state_changed(&registry, "root");
+    assert_eq!(out.removed.len(), 1);
+    assert!(out.event.unwrap().contains("subagent_state_changed"));
 }

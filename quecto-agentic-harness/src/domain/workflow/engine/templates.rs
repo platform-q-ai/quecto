@@ -130,12 +130,13 @@ mod tests {
         // both templates; after embedding+resolution each template carries a
         // fully inlined `hooks` step with the shared guidance.
         for t in default_templates() {
+            let template_id = t.id.clone();
             let hooks = t
                 .steps
                 .iter()
                 .find(|s| s.key == "hooks")
                 .unwrap_or_else(|| {
-                    panic!("template `{}` must resolve the shared hooks step", t.id)
+                    panic!("template `{template_id}` must resolve the shared hooks step")
                 });
             assert!(
                 hooks

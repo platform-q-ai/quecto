@@ -134,18 +134,24 @@ mod tests {
         assert_eq!(reg.extension_count(), 0);
     }
 
-    #[test]
-    fn test_register_and_get_tools() {
+    #[tokio::test]
+    async fn test_register_and_get_tools() {
         let mut reg = ExtensionRegistry::new();
-        reg.register(Arc::new(TestExt {
+        let ext = Arc::new(TestExt {
             name: "test".into(),
             tools: vec![Arc::new(DummyTool {
                 name: "mytool".into(),
                 desc: "desc".into(),
             })],
             snippet: None,
-        }));
-        assert_eq!(reg.all_tools().len(), 1);
+        });
+        assert_eq!(ext.name(), "test");
+        assert_eq!(ext.description(), "");
+        reg.register(ext);
+        let tools = reg.all_tools();
+        assert_eq!(tools.len(), 1);
+        tools[0].set_session_key("registry-test".into());
+        assert_eq!(tools[0].execute("{}").await.unwrap().content, "ok");
     }
 
     #[test]

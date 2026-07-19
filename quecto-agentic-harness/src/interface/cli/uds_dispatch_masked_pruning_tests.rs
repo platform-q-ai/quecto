@@ -64,6 +64,10 @@ impl LlmProvider for FailingProvider {
         "failing"
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn chat(
         &self,
         _request: ChatRequest<'_>,
@@ -85,6 +89,10 @@ impl LlmProvider for HangingProvider {
         "hanging"
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn chat(
         &self,
         _request: ChatRequest<'_>,
@@ -94,6 +102,61 @@ impl LlmProvider for HangingProvider {
             Err(DomainError::Provider("unreachable".to_string()))
         })
     }
+}
+
+fn empty_request<'a>() -> ChatRequest<'a> {
+    ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "stub",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    }
+}
+
+#[tokio::test]
+async fn masked_pruning_providers_use_trait_default_stream_surface() {
+    let failing = FailingProvider;
+    assert!(failing.as_any().downcast_ref::<FailingProvider>().is_some());
+    assert!(
+        failing
+            .chat_stream(empty_request())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("boom")
+    );
+    let mut rx = failing.chat_stream_incremental(empty_request()).await;
+    assert!(
+        matches!(rx.recv().await, Some(crate::domain::provider::StreamEvent::Error(e)) if e.contains("boom"))
+    );
+
+    let hanging = HangingProvider;
+    assert!(hanging.as_any().downcast_ref::<HangingProvider>().is_some());
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            hanging.chat_stream(empty_request())
+        )
+        .await
+        .is_err(),
+        "hanging provider should still be sleeping"
+    );
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            hanging.chat_stream_incremental(empty_request())
+        )
+        .await
+        .is_err(),
+        "default incremental awaits the hanging chat_stream before returning"
+    );
 }
 
 fn budgeted_agent(

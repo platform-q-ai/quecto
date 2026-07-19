@@ -98,12 +98,7 @@ async fn openai_api_key_reasoning_models_with_tools_use_responses_api_1066() {
         let responses_req = requests
             .iter()
             .find(|r| r.url.path().ends_with("/responses"))
-            .unwrap_or_else(|| {
-                panic!(
-                    "reasoning model {model} must be served by the Responses \
-                     endpoint (#1066); mock saw: {paths:?}"
-                )
-            });
+            .expect("reasoning model must be served by the Responses endpoint (#1066)");
         // Routing must be up-front per OpenAI's documentation — not an
         // error-driven "try Chat Completions, retry on 400" fallback.
         assert!(
@@ -199,11 +194,7 @@ async fn openai_api_key_toolless_reasoning_turn_uses_responses_and_transmits_eff
     let responses_req = requests
         .iter()
         .find(|r| r.url.path().ends_with("/responses"))
-        .unwrap_or_else(|| {
-            panic!(
-                "tool-less reasoning turn must use the Responses API (#1066); mock saw: {paths:?}"
-            )
-        });
+        .expect("tool-less reasoning turn must use the Responses API (#1066)");
     let body: serde_json::Value = serde_json::from_slice(&responses_req.body).unwrap();
     assert_eq!(
         body["reasoning"]["effort"], "xhigh",

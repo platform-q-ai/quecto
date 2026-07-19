@@ -71,7 +71,7 @@ cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-su
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
 
-COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-87}"
+COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-95}"
 HARNESS_BDD_COV_THRESHOLD="${QUECTO_HARNESS_BDD_COV_THRESHOLD:-72}"
 TUI_BDD_COV_THRESHOLD="${QUECTO_TUI_BDD_COV_THRESHOLD:-62}"
 

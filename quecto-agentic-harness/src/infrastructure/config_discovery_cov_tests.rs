@@ -81,7 +81,7 @@ fn load_template_files_resolve_refs_and_reject_strict_errors() {
     write_template(
         tmp.path(),
         "b.json",
-        r#"{"label":"B","description":"desc","steps":[{"ref":"step","guidance":"extra"}],"guards":[{"commands":["bash"],"before_step_key":"refstep","message":"stop"}]}"#,
+        r#"{"label":"B","description":"desc","steps":[{"ref":"steps/step","guidance":"extra"}],"guards":[{"commands":["bash"],"before_step_key":"refstep","message":"stop"}]}"#,
     );
     write_template(tmp.path(), "ignored.txt", "not json");
 
@@ -131,4 +131,105 @@ fn load_template_rejects_nested_step_guard_and_duplicate_keys() {
         err.contains("step entry") && err.contains("unknown field `typo`"),
         "{err}"
     );
+}
+
+#[test]
+fn load_workflow_templates_from_dir_reports_read_dir_error() {
+    let tmp = TempDir::new().unwrap();
+    let missing = tmp.path().join("missing-workflows");
+
+    let err = load_workflow_templates_from_dir(&missing)
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("missing-workflows"), "{err}");
+}
+
+#[test]
+fn load_template_file_rejects_non_utf8_content() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("bad_utf8.json"), [0xff, 0xfe, 0xfd]).unwrap();
+    let err = load_workflow_templates_from_dir(tmp.path())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("bad_utf8.json"), "{err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn load_template_file_rejects_non_utf8_filename_stem() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let tmp = TempDir::new().unwrap();
+    let mut bytes = b"bad_".to_vec();
+    bytes.push(0xff);
+    bytes.extend_from_slice(b".json");
+    std::fs::write(
+        tmp.path().join(OsString::from_vec(bytes)),
+        valid_template("Bad"),
+    )
+    .unwrap();
+    let err = load_workflow_templates_from_dir(tmp.path())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("template filename must be UTF-8"), "{err}");
+}
+
+#[test]
+fn load_template_file_rejects_missing_steps_and_too_many_steps() {
+    let tmp = TempDir::new().unwrap();
+    write_template(
+        tmp.path(),
+        "no_steps.json",
+        r#"{"label":"No Steps","description":"d"}"#,
+    );
+    let err = load_workflow_templates_from_dir(tmp.path())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no_steps.json"), "{err}");
+    assert!(err.contains("template must have a steps array"), "{err}");
+
+    std::fs::remove_file(tmp.path().join("no_steps.json")).unwrap();
+    let steps = (0..=crate::domain::workflow::MAX_STEPS_PER_TEMPLATE)
+        .map(|i| format!(r#"{{"key":"s{i}","label":"S{i}","phase":"plan"}}"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    write_template(
+        tmp.path(),
+        "too_many_steps.json",
+        &format!(r#"{{"label":"Too Many","description":"d","steps":[{steps}]}}"#),
+    );
+    let err = load_workflow_templates_from_dir(tmp.path())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("too_many_steps.json"), "{err}");
+    assert!(err.contains("too many steps"), "{err}");
+}
+
+#[test]
+fn load_template_file_rejects_bad_step_entry_and_template_deserialize_error() {
+    let tmp = TempDir::new().unwrap();
+    write_template(
+        tmp.path(),
+        "bad_step_entry.json",
+        r#"{"label":"Bad","description":"d","steps":[5]}"#,
+    );
+    let err = load_workflow_templates_from_dir(tmp.path())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("bad_step_entry.json"), "{err}");
+    assert!(err.contains("step entry must be"), "{err}");
+
+    std::fs::remove_file(tmp.path().join("bad_step_entry.json")).unwrap();
+    write_template(
+        tmp.path(),
+        "bad_label_type.json",
+        r#"{"label":5,"description":"d","steps":[{"key":"one","label":"One","phase":"plan"}]}"#,
+    );
+    let err = load_workflow_templates_from_dir(tmp.path())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("bad_label_type.json"), "{err}");
+    assert!(err.contains("invalid type"), "{err}");
 }

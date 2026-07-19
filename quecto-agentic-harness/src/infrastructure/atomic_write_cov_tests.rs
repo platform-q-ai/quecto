@@ -28,3 +28,14 @@ fn sync_parent_dir_reports_missing_parent() {
     let err = sync_parent_dir(&target).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::NotFound);
 }
+
+#[test]
+fn atomic_write_rejects_paths_without_parent_or_file_name() {
+    // "/" has no parent: the temp-path helper's no-parent closure must fire.
+    let err = atomic_write(std::path::Path::new("/"), b"x", None).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+
+    // "/tmp/.." has a parent but no file name: the no-file-name closure fires.
+    let err = atomic_write(std::path::Path::new("/tmp/.."), b"x", None).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}

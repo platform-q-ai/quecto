@@ -292,8 +292,8 @@ async fn emit_line(event: &AgentEvent) -> String {
 
 /// Parse an emitted line as JSON and assert its event `type`.
 fn parse_event_line(line: &str, expected_type: &str) -> serde_json::Value {
-    let v: serde_json::Value = serde_json::from_str(line.trim_end())
-        .unwrap_or_else(|e| panic!("capped line must be valid JSON ({expected_type}): {e}"));
+    let v: serde_json::Value =
+        serde_json::from_str(line.trim_end()).expect("capped line must be valid JSON");
     assert_eq!(v["type"], expected_type, "capped line must keep its type");
     v
 }

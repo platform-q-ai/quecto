@@ -6,6 +6,7 @@
 //! post-turn idle drain (`drain_pending_and_nudge`) must honour them.
 
 use super::dispatch_test_env::{DispatchTestEnv as Env, make_dispatch_test_agent};
+use crate::domain::provider::LlmProvider;
 use crate::interface::cli::protocol::{AgentCommand, StreamingBehavior};
 use crate::interface::cli::uds_session::PendingMessage;
 use crate::interface::shared::WorkflowStateHandle;
@@ -284,6 +285,10 @@ impl crate::domain::provider::LlmProvider for AdvanceThenAbortProvider {
         "advance-then-abort"
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn chat(
         &self,
         _request: crate::domain::provider::ChatRequest<'_>,
@@ -318,6 +323,51 @@ impl crate::domain::provider::LlmProvider for AdvanceThenAbortProvider {
             })
         })
     }
+}
+
+fn empty_advance_request<'a>() -> crate::domain::provider::ChatRequest<'a> {
+    crate::domain::provider::ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "stub",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    }
+}
+
+#[tokio::test]
+async fn advance_then_abort_provider_uses_trait_default_stream_surface() {
+    let env = Env::with_selected_feature();
+    let provider = AdvanceThenAbortProvider {
+        workflow: env.workflow.clone(),
+        turn_control: env.turn_control.clone(),
+        calls: std::sync::atomic::AtomicU32::new(0),
+    };
+    assert!(
+        provider
+            .as_any()
+            .downcast_ref::<AdvanceThenAbortProvider>()
+            .is_some()
+    );
+    let streamed = provider.chat_stream(empty_advance_request()).await.unwrap();
+    assert_eq!(streamed.content.as_deref(), Some("step"));
+
+    let mut rx = provider
+        .chat_stream_incremental(empty_advance_request())
+        .await;
+    match rx.recv().await.expect("done event") {
+        crate::domain::provider::StreamEvent::Done(resp) => {
+            assert_eq!(resp.content.as_deref(), Some("step"));
+        }
+        other => panic!("unexpected stream event: {other:?}"),
+    }
+    assert!(env.turn_control.is_abort_pending());
 }
 
 /// #930 regression: an abort fired WHILE the workflow is auto-continuing must

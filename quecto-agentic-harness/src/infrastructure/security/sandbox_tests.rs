@@ -309,16 +309,41 @@ fn test_lazy_canonicalization_caches_workspace() {
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().to_path_buf();
     let sb = Sandbox::new(Some(ws.clone()), true);
-    // First call computes the canonical workspace.
-    assert!(
-        sb.validate_path(ws.join("file.txt").to_str().unwrap())
-            .is_ok()
+    // First call computes the canonical workspace and canonicalizes an existing target.
+    let existing = ws.join("file.txt");
+    std::fs::write(&existing, "ok").unwrap();
+    assert_eq!(
+        sb.validate_path(existing.to_str().unwrap()).unwrap(),
+        existing
     );
     // Second call should reuse the cached canonical path without error.
     assert!(
         sb.validate_path(ws.join("other.txt").to_str().unwrap())
             .is_ok()
     );
+}
+
+#[test]
+fn validate_path_existing_parent_without_file_joins_filename() {
+    let tmp = TempDir::new().unwrap();
+    let ws = tmp.path().to_path_buf();
+    let child = ws.join("new-file.txt");
+    let sb = Sandbox::new(Some(ws.clone()), true);
+
+    let resolved = sb.validate_path(child.to_str().unwrap()).unwrap();
+    assert_eq!(resolved, ws.canonicalize().unwrap().join("new-file.txt"));
+}
+
+#[test]
+fn validate_path_missing_directory_uses_textual_resolution() {
+    let tmp = TempDir::new().unwrap();
+    let ws = tmp.path().join("future-workspace");
+    let sb = Sandbox::new(Some(ws.clone()), true);
+
+    let resolved = sb
+        .validate_path(ws.join("dir/file.txt").to_str().unwrap())
+        .unwrap();
+    assert_eq!(resolved, ws.join("dir/file.txt"));
 }
 
 #[test]

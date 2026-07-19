@@ -67,3 +67,64 @@ async fn async_open_creates_appendable_log() {
     assert!(content.contains("llm_turn_start"));
     assert!(format!("{log:?}").contains("async"));
 }
+
+#[tokio::test]
+async fn audit_log_error_mapping_closures_surface_open_and_write_failures() {
+    let tmp = TempDir::new().unwrap();
+    let file_base = tmp.path().join("file-base");
+    tokio::fs::write(&file_base, b"not a dir").await.unwrap();
+
+    let err = AuditLog::open(&file_base, "async").await.unwrap_err();
+    assert!(
+        err.to_string().contains("failed to create audit dir"),
+        "{err}"
+    );
+    let err = AuditLog::open_sync(&file_base, "sync").unwrap_err();
+    assert!(
+        err.to_string().contains("failed to create audit dir"),
+        "{err}"
+    );
+
+    let base = tmp.path().join("open-fails");
+    tokio::fs::create_dir_all(base.join("audit/bad.jsonl"))
+        .await
+        .unwrap();
+    let err = AuditLog::open(&base, "bad").await.unwrap_err();
+    assert!(
+        err.to_string().contains("failed to open audit log"),
+        "{err}"
+    );
+    let err = AuditLog::open_sync(&base, "bad").unwrap_err();
+    assert!(
+        err.to_string().contains("failed to open audit log"),
+        "{err}"
+    );
+
+    #[cfg(unix)]
+    {
+        let std_file = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .unwrap();
+        let log = AuditLog {
+            writer: Mutex::new(tokio::fs::File::from_std(std_file)),
+            session_key: "full".into(),
+        };
+        let err = log
+            .emit(
+                1,
+                AuditEvent::Error {
+                    source: "test".into(),
+                    tool: None,
+                    message: "fills device".into(),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("audit log write failed")
+                || err.to_string().contains("audit log flush failed"),
+            "{err}"
+        );
+    }
+}

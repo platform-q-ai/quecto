@@ -11,6 +11,9 @@ use crate::infrastructure::persistence::session_store::FileSessionStore;
 use uds_session_load::load_session;
 
 #[cfg(test)]
+#[path = "uds_lifecycle_cov2_tests.rs"]
+mod cov2_tests;
+#[cfg(test)]
 #[path = "uds_lifecycle_cov_tests.rs"]
 mod cov_tests;
 

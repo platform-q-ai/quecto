@@ -184,8 +184,8 @@ mod tests {
         assert_eq!(reg.tool_count(), reg.definitions().len());
     }
 
-    #[test]
-    fn extension_defaults_are_inert() {
+    #[tokio::test]
+    async fn extension_defaults_are_inert() {
         // Default ToolRegistry methods: no extension tracking; register/unregister no-op.
         let mut reg = EmptyRegistry { defs: vec![] };
         assert!(reg.extension_names().is_empty());
@@ -193,6 +193,9 @@ mod tests {
         reg.register_extension(std::sync::Arc::new(NoopTool)); // default no-op
         reg.unregister_extension("nope"); // no-op, must not panic
         assert!(reg.extension_names().is_empty());
+        let result = reg.execute("missing", "{}").await.unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "");
     }
 
     /// Minimal `Tool` exercising the trait's default `set_session_key`.
@@ -216,11 +219,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tool_default_set_session_key_is_inert() {
+    #[tokio::test]
+    async fn tool_default_set_session_key_is_inert() {
         let tool = NoopTool;
         tool.set_session_key("s".into()); // default no-op, must not panic
         assert_eq!(tool.definition().name, "noop");
+        let result = tool.execute("{}").await.unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "");
     }
 
     #[test]

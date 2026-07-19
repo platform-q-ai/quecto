@@ -50,8 +50,8 @@ impl Extension for Ext {
     }
 }
 
-#[test]
-fn default_debug_and_prompt_filtering_are_observable() {
+#[tokio::test]
+async fn default_debug_and_prompt_filtering_are_observable() {
     let mut reg = ExtensionRegistry::default();
     assert_eq!(reg.extension_count(), 0);
     assert!(format!("{reg:?}").contains("extension_count: 0"));
@@ -72,5 +72,25 @@ fn default_debug_and_prompt_filtering_are_observable() {
     let tools = reg.all_tools();
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].definition().name.as_ref(), "alpha");
+    assert_eq!(tools[0].execute("{}").await.unwrap().content, "ok");
+    tools[0].set_session_key("registry-cov".into());
+    assert_eq!(
+        Ext {
+            name: "ext",
+            tools: vec![],
+            snippet: None
+        }
+        .description(),
+        ""
+    );
+    assert_eq!(
+        Ext {
+            name: "ext",
+            tools: vec![],
+            snippet: None
+        }
+        .name(),
+        "ext"
+    );
     assert!(format!("{reg:?}").contains("extension_count: 2"));
 }

@@ -422,3 +422,24 @@ async fn handler_with_tool_defs_remaps_name() {
         Some(StreamEvent::ToolCallStart { name, .. }) if name == "read"
     ));
 }
+
+#[tokio::test]
+async fn anthropic_sse_handler_test_accessors_cover_new_and_into_response() {
+    let mut handler = AnthropicSseHandler::new_for_test(None);
+    let (tx, mut rx) = channel();
+    assert!(matches!(
+        handler
+            .process_line(r#"event: content_block_delta"#, &tx)
+            .await,
+        SseLineOutcome::Continue
+    ));
+    assert!(matches!(
+        handler
+            .process_line(r#"data: {"delta":{"type":"text_delta","text":"hi"}}"#, &tx)
+            .await,
+        SseLineOutcome::Continue
+    ));
+    assert!(matches!(rx.try_recv(), Ok(StreamEvent::TextDelta(text)) if text == "hi"));
+    let resp = handler.into_response();
+    assert_eq!(resp.content.as_deref(), Some("hi"));
+}

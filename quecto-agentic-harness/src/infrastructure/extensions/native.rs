@@ -192,13 +192,22 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_native_extension_name() {
-        let ext = NativeExtension::new(
-            "web_search",
-            "Search the web",
-            dummy_tool("web_search", "Search"),
+    #[tokio::test]
+    async fn test_native_extension_name() {
+        let tool = dummy_tool("web_search", "Search");
+        tool.set_session_key("native-test".into());
+        assert_eq!(tool.execute("{}").await.unwrap().content, "ok");
+        let debug = format!(
+            "{:?}",
+            DummyTool {
+                name: "dbg".into(),
+                desc: "Debug desc".into()
+            }
         );
+        assert!(debug.contains("DummyTool"));
+        assert!(debug.contains("dbg"));
+
+        let ext = NativeExtension::new("web_search", "Search the web", tool);
         assert_eq!(ext.name(), "web_search");
     }
 

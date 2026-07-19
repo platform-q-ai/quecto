@@ -1,4 +1,5 @@
 use super::*;
+use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
 use crate::infrastructure::model_registry::{AuthMode, ModelCost, ModelRecord, ProviderApi};
 
 fn model(provider: &str, api: ProviderApi, auth: AuthMode) -> ModelRecord {
@@ -120,4 +121,145 @@ fn build_registry_provider_reports_unimplemented_google_protocol() {
 
     assert!(err.contains("google-generative-ai"), "got: {err}");
     assert!(err.contains("not implemented"), "got: {err}");
+}
+
+#[test]
+fn registry_provider_factory_builds_openai_and_anthropic_refresh_targets() {
+    let client = reqwest::Client::new();
+    let openai_factory = registry_provider_factory(
+        ProviderApi::OpenAiCompletions,
+        "custom-openai".to_string(),
+        Some("http://127.0.0.1:9/v1".to_string()),
+        true,
+        client.clone(),
+    );
+    let openai = openai_factory("fresh-openai-token");
+    assert_eq!(openai.name(), "custom-openai");
+
+    let anthropic_factory = registry_provider_factory(
+        ProviderApi::AnthropicMessages,
+        "custom-anthropic".to_string(),
+        Some("http://127.0.0.1:9".to_string()),
+        true,
+        client,
+    );
+    let anthropic = anthropic_factory("fresh-anthropic-token");
+    assert_eq!(anthropic.name(), "custom-anthropic");
+}
+
+#[test]
+fn build_registry_provider_api_key_openai_and_oauth_anthropic_paths() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "oauth-token".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let client = reqwest::Client::new();
+
+    let mut openai = model(
+        "custom-openai",
+        ProviderApi::OpenAiCompletions,
+        AuthMode::ApiKey,
+    );
+    openai.base_url = Some("http://127.0.0.1:9/v1".to_string());
+    openai.allow_remote_http = true;
+    openai.api_key = Some("api-token".to_string());
+    let built = build_registry_provider(&openai, tmp.path(), &store, &refresh, &client)
+        .unwrap()
+        .expect("api-key provider");
+    assert_eq!(built.name(), "custom-openai");
+
+    let mut anthropic = model(
+        "custom-anthropic-oauth",
+        ProviderApi::AnthropicMessages,
+        AuthMode::OAuth,
+    );
+    anthropic.oauth_provider = Some("anthropic".to_string());
+    anthropic.base_url = Some("https://api.anthropic.com".to_string());
+    let built = build_registry_provider(&anthropic, tmp.path(), &store, &refresh, &client)
+        .unwrap()
+        .expect("oauth provider");
+    assert_eq!(built.name(), "custom-anthropic-oauth");
+}
+
+#[test]
+fn build_agent_provider_wraps_configured_builtin_providers() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.providers.openai.api_key = "sk-test".to_string();
+    config.providers.openai.api_base = "http://127.0.0.1:9/v1".to_string();
+    config.providers.anthropic.api_key = "sk-ant-test".to_string();
+    config.providers.anthropic.api_base = "http://127.0.0.1:9".to_string();
+
+    let built = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+    assert_eq!(built.name(), "router");
+}
+
+#[test]
+fn validate_oauth_base_url_accepts_canonical_host_with_path_and_registry_skips_oauth_without_credentials()
+ {
+    let configured = "https://api.openai.com/v1/responses".to_string();
+    let accepted = validate_oauth_base_url(
+        "custom-openai",
+        "openai",
+        Some(&configured),
+        "https://api.openai.com/v1",
+    )
+    .unwrap();
+    assert_eq!(accepted, configured);
+
+    let rejected = validate_oauth_base_url(
+        "custom-openai",
+        "openai",
+        Some(&"https://evil.example/v1".to_string()),
+        "https://api.openai.com/v1",
+    )
+    .unwrap_err();
+    assert!(rejected.contains("canonical OAuth host"), "{rejected}");
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let mut m = model(
+        "custom-openai-oauth",
+        ProviderApi::OpenAiCompletions,
+        AuthMode::OAuth,
+    );
+    m.oauth_provider = Some("openai".to_string());
+    m.base_url = Some("https://api.openai.com/v1".to_string());
+    let skipped =
+        build_registry_provider(&m, tmp.path(), &store, &refresh, &reqwest::Client::new())
+            .expect("missing credential is a skip");
+    assert!(skipped.is_none());
+}
+
+#[test]
+fn build_agent_provider_rejects_endpoint_over_limit_before_provider_creation() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = Config::default();
+    let template = crate::infrastructure::config::OpenAiCompatibleEndpoint {
+        prefix: "p".to_string(),
+        api_key: "k".to_string(),
+        api_base: "http://127.0.0.1:9/v1".to_string(),
+        allow_remote_http: true,
+    };
+    config.providers.openai_compatible.endpoints = (0..33)
+        .map(
+            |idx| crate::infrastructure::config::OpenAiCompatibleEndpoint {
+                prefix: format!("p{idx}"),
+                ..template.clone()
+            },
+        )
+        .collect();
+
+    let err = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap_err();
+    assert!(err.contains("exceeding the maximum"), "{err}");
 }

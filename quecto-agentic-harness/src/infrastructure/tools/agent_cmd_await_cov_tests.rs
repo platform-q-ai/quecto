@@ -1,4 +1,14 @@
 use super::*;
+
+fn poison_registry(registry: &SubagentRegistry) {
+    let cloned = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = cloned.lock().unwrap();
+        panic!("poison registry for coverage");
+    })
+    .join();
+    assert!(registry.lock().is_err(), "registry should be poisoned");
+}
 use crate::infrastructure::test_support::read_framed_command_async;
 use crate::infrastructure::tools::subagent_registry::{ExitSignal, new_exit_signal_channel};
 use serde::Deserialize;
@@ -149,7 +159,7 @@ async fn execute_await_exit_signal_wakes_immediately_with_reason() {
     let socket = tmp.path().join("exit.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let (_tx_keepalive, _rx_keepalive) = tokio::sync::oneshot::channel::<()>();
-    let (exit_tx, _) = new_exit_signal_channel();
+    let (exit_tx, _exit_rx) = new_exit_signal_channel();
     let (tool, registry) = tool_with_entry(
         "exiter",
         socket.clone(),
@@ -227,4 +237,93 @@ async fn execute_await_duplicate_active_awaiter_is_rejected() {
     );
     assert_eq!(got.status, "error");
     assert_eq!(got.reason.as_deref(), Some("another_await_active"));
+}
+
+#[tokio::test]
+async fn execute_await_exited_status_uses_signal_reason_from_registry() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("signal.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let accept = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+    let (exit_tx, _exit_rx) = new_exit_signal_channel();
+    exit_tx
+        .send(Some(ExitSignal {
+            exit_code: None,
+            signal: Some(15),
+        }))
+        .unwrap();
+    let (tool, registry) = tool_with_entry("sig", socket, SubagentStatus::Exited, Some(exit_tx));
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"sig","timeout":1,"idle_timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    accept.abort();
+
+    assert_eq!(got.status, "exited");
+    assert_eq!(got.reason.as_deref(), Some("signal_15"));
+    assert!(registry.lock().unwrap()["sig"].completion_consumed_by_await);
+}
+
+#[tokio::test]
+async fn execute_await_recoverable_error_without_run_error_returns_idle() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("recover.sock");
+    let server_socket = socket.clone();
+    let server = tokio::spawn(async move {
+        serve_one_get_state(
+            &server_socket,
+            serde_json::json!({"type":"response","data":{"workflow":{"mode":"active"}}}),
+        )
+        .await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let (tool, _) = tool_with_entry("recover", socket, SubagentStatus::Error, None);
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"recover","timeout":1,"idle_timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    server.await.unwrap();
+
+    assert_eq!(got.status, "idle");
+    assert_eq!(got.reason.as_deref(), Some("idle"));
+    assert!(got.error.is_none());
+    let wf = got.workflow.unwrap();
+    assert_eq!(wf.mode, "active");
+    assert_eq!(wf.steps_completed, 0);
+    assert_eq!(wf.steps_total, 0);
+}
+
+#[tokio::test]
+async fn execute_await_poisoned_locks_recover_for_lookup_duplicate_and_removed() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("poison.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let accept = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+    let active = new_active_awaits();
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new(socket, 1);
+    entry.status = SubagentStatus::Exited;
+    registry.lock().unwrap().insert("poison".into(), entry);
+    poison_registry(&registry);
+    let tool = AgentCmdTool::with_active_awaits(registry.clone(), active);
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"poison","timeout":1,"idle_timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    accept.abort();
+    assert_eq!(got.status, "exited");
+    assert_eq!(got.reason.as_deref(), Some("exit_code_0"));
+    assert!(
+        registry.lock().unwrap_or_else(|e| e.into_inner())["poison"].completion_consumed_by_await
+    );
 }

@@ -201,7 +201,7 @@ fn test_datetime_preamble_includes_day_of_week_time_and_timezone() {
     );
 
     // After AM/PM, there should be a timezone identifier
-    let ampm_pos = preamble.find("AM").or_else(|| preamble.find("PM"));
+    let ampm_pos = preamble.find("AM").or(preamble.find("PM"));
     if let Some(pos) = ampm_pos {
         let after = &preamble[pos + 2..];
         assert!(

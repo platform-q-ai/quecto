@@ -39,7 +39,7 @@ async fn scripted_provider_covers_name_chat_stream_incremental_and_as_any() {
         provider
             .as_any()
             .downcast_ref::<ScriptedProvider>()
-            .is_none()
+            .is_some()
     );
     assert_eq!(
         provider

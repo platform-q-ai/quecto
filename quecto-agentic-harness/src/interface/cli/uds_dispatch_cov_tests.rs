@@ -73,6 +73,16 @@ impl ContextSpillStore for RecordingSpillStore {
         Box::pin(async { Ok(()) })
     }
 }
+
+#[tokio::test]
+async fn recording_spill_store_default_has_entries_is_false() {
+    assert!(
+        !RecordingSpillStore::default()
+            .has_entries("s")
+            .await
+            .unwrap()
+    );
+}
 #[derive(Debug, Default)]
 pub(super) struct SessionAwareTool {
     pub(super) seen: std::sync::Mutex<Vec<String>>,
@@ -226,8 +236,6 @@ fn tool_reg(name: &str) -> ToolRegistration {
     }
 }
 
-// ─── handle_steer ────────────────────────────────────────────────────────────
-
 #[tokio::test]
 async fn steer_runs_immediately_when_idle() {
     // Idle steer is acted on now (drained), not left queued — this lets a
@@ -257,16 +265,12 @@ async fn steer_prepends_when_streaming() {
     assert_eq!(fx.session.drain_pending().len(), 1);
 }
 
-// ─── handle_abort ────────────────────────────────────────────────────────────
-
 #[tokio::test]
 async fn abort_returns_false() {
     let mut fx = Fixture::new();
     let mut ctx = fx.ctx();
     assert!(!handle_abort(&mut ctx, Some("a"), "abort").await);
 }
-
-// ─── handle_clear_history ────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn clear_history_blocked_while_streaming() {
@@ -286,8 +290,6 @@ async fn clear_history_clears_when_idle() {
     }
     assert!(fx.messages.is_empty());
 }
-
-// ─── handle_rewind_to ────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn rewind_blocked_while_streaming() {
@@ -341,8 +343,6 @@ async fn rewind_valid_clears_spill_store_for_current_key() {
 // `resolve_rewind_target` in uds_progress_clear_tests (a paged client's window
 // index is never valid against the full conversation).
 
-// ─── handle_new_session ──────────────────────────────────────────────────────
-
 #[tokio::test]
 async fn new_session_uses_fresh_key_and_clears_old_messages() {
     let mut fx = Fixture::new();
@@ -376,8 +376,6 @@ async fn new_session_updates_tools_and_clears_new_spill_key() {
     let cleared = spill.cleared.lock().unwrap();
     assert_eq!(cleared.as_slice(), &[fx.session_key.clone()]);
 }
-
-// ─── handle_resume_session ───────────────────────────────────────────────────
 
 #[tokio::test]
 async fn resume_blocked_while_streaming() {
@@ -475,8 +473,6 @@ async fn resume_loads_chat_session_by_full_key() {
     assert_eq!(fx.session_key, key);
     assert_eq!(fx.messages.len(), 1);
 }
-
-// ─── persist_current_session ─────────────────────────────────────────────────
 
 #[tokio::test]
 async fn persist_noop_when_ephemeral() {
@@ -646,7 +642,6 @@ async fn dispatch_routes_fieldless_get_state() {
     // Handled by the fieldless fast-path; returns early.
     assert!(!dispatch_command(cmd, &mut ctx).await);
 }
-// ─── extension command dispatch ──────────────────────────────────────────────
 
 #[tokio::test]
 async fn dispatch_register_then_unregister_tools() {
@@ -699,8 +694,6 @@ async fn dispatch_ext_command_unregister_unknown_noop() {
     let mut ctx = fx.ctx();
     assert!(!dispatch_ext_command(cmd, &mut ctx, None, "unregister_tools").await);
 }
-
-// ─── agent-targeted get_messages_tail forwarding (#795) ──────────────────────
 
 #[tokio::test]
 async fn dispatch_unknown_history_cursor_is_rejected() {

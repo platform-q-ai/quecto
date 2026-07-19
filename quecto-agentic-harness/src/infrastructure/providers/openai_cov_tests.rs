@@ -388,3 +388,82 @@ async fn chat_stream_incremental_reports_send_errors_as_stream_event() {
         other => panic!("expected error event, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn chat_stream_wiremock_success_assembles_sse_body() {
+    use crate::domain::provider::LlmProvider;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiProvider::new("sk-test".into(), Some(server.uri()));
+    let messages = vec![Message::user("hi")];
+    let response = provider
+        .chat_stream(req(&messages, &[], "gpt-test"))
+        .await
+        .unwrap();
+    assert_eq!(response.content.as_deref(), Some("ok"));
+}
+
+#[tokio::test]
+async fn chat_stream_incremental_wiremock_emits_text_and_done() {
+    use crate::domain::provider::LlmProvider;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"incr\"}}]}\n\ndata: [DONE]\n\n",
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiProvider::new("sk-test".into(), Some(server.uri()));
+    let messages = vec![Message::user("hi")];
+    let mut rx = provider
+        .chat_stream_incremental(req(&messages, &[], "gpt-test"))
+        .await;
+    assert!(matches!(rx.recv().await.unwrap(), StreamEvent::TextDelta(t) if t == "incr"));
+    match rx.recv().await.unwrap() {
+        StreamEvent::Done(done) => assert_eq!(done.content.as_deref(), Some("incr")),
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn chat_stream_http_error_includes_retry_after() {
+    use crate::domain::provider::LlmProvider;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "7")
+                .set_body_string("slow down"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiProvider::new("sk-test".into(), Some(server.uri()));
+    let messages = vec![Message::user("hi")];
+    let err = provider
+        .chat_stream(req(&messages, &[], "gpt-test"))
+        .await
+        .unwrap_err();
+    let text = err.to_string();
+    assert!(text.contains("HTTP 429 from OpenAI: slow down"), "{text}");
+    assert!(text.contains("retry-after: 7"), "{text}");
+}

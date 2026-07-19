@@ -306,6 +306,30 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_ls_invalid_json_is_tool_error() {
+        let (ws, sb, _tmp) = test_tools();
+        let tool = LsTool::new(ws, sb);
+        let result = tool.execute(r#"{"#).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("invalid JSON arguments"));
+    }
+
+    #[tokio::test]
+    async fn test_ls_float_limit_rounds_and_clamps_to_minimum() {
+        let (ws, sb, tmp) = test_tools();
+        for name in ["a", "b", "c"] {
+            std::fs::write(tmp.path().join(name), "").unwrap();
+        }
+        let tool = LsTool::new(ws, sb);
+        let result = tool.execute(r#"{"limit": 0.4}"#).await.unwrap();
+        assert!(!result.is_error);
+        let first = result.content.lines().next().unwrap();
+        assert!(["a", "b", "c"].contains(&first));
+        assert!(result.content.contains("1 entries limit reached"));
+        assert!(result.content.contains("limit=2"));
+    }
+
     #[test]
     fn test_ls_description_includes_example() {
         let (ws, sb, _tmp) = test_tools();

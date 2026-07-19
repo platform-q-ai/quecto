@@ -124,6 +124,39 @@ async fn test_no_providers() {
 async fn test_router_name() {
     let router = ProviderRouter::new(vec![]);
     assert_eq!(router.name(), "router");
+    assert!(router.as_any().is::<ProviderRouter>());
+
+    let test = TestProvider::succeeding("test", "ok");
+    assert_eq!(test.name(), "test");
+    assert!(test.as_any().is::<()>());
+    assert_eq!(
+        test.chat_stream(test_request(&test_messages()))
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("ok")
+    );
+
+    let tracking = TrackingProvider::succeeding("tracking", "tracked");
+    assert_eq!(tracking.name(), "tracking");
+    assert!(tracking.as_any().is::<()>());
+    assert_eq!(
+        tracking
+            .chat_stream(test_request(&test_messages()))
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("tracked")
+    );
+    let mut rx = tracking
+        .chat_stream_incremental(test_request(&test_messages()))
+        .await;
+    assert!(
+        matches!(rx.recv().await, Some(StreamEvent::Done(done)) if done.content.as_deref() == Some("tracked"))
+    );
+    assert!(rx.recv().await.is_none());
 }
 
 // ── Model routing ──────────────────────────────────────────────────────

@@ -57,3 +57,14 @@ fn cloned_message_gets_a_fresh_token_cache() {
     assert_eq!(cloned.cached_token_build_count_for_tests(), 1);
     assert_eq!(msg.cached_token_build_count_for_tests(), 1);
 }
+
+#[test]
+fn token_cache_clone_directly_resets_once_lock() {
+    let cache = TokenCache::default();
+    let cloned = cache.clone();
+    assert!(cloned.tokens.get().is_none());
+    assert_eq!(
+        cloned.build_count.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+}

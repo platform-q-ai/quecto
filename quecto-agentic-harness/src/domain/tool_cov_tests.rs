@@ -136,7 +136,8 @@ impl ToolRegistry for CovEmptyRegistry {
 #[tokio::test]
 async fn local_tool_and_registry_execute_trait_surface() {
     let tool = CovNoopTool;
-    tool.set_session_key("covered".into());
+    Tool::set_session_key(&tool, "covered".into());
+    assert_eq!(Tool::definition(&tool).name, "cov_noop");
     assert_eq!(tool.execute("{}").await.expect("tool ok").content, "ok");
 
     let mut registry = CovEmptyRegistry;

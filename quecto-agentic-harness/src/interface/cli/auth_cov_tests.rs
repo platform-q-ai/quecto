@@ -583,3 +583,9 @@ fn test_flush_stdout_clears_buffer() {
     flush_stdout(&ctx, &mut out);
     assert!(out.stdout.is_empty(), "buffer should be flushed/cleared");
 }
+
+#[test]
+fn extract_param_invalid_percent_escape_falls_back_to_raw_value() {
+    let got = extract_param_from_input("?code=%ZZ&state=ok", "code").unwrap();
+    assert_eq!(got, "%ZZ");
+}

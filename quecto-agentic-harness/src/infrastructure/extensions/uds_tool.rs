@@ -156,6 +156,15 @@ mod tests {
         let (tool, mut rx) =
             create_uds_tool(test_def("weather"), std::time::Duration::from_secs(5));
 
+        // Debug must render the definition but not the channel internals.
+        let concrete = UdsExtensionTool::new(
+            test_def("weather"),
+            tokio::sync::mpsc::channel(1).0,
+            std::time::Duration::from_secs(5),
+        );
+        let dbg = format!("{concrete:?}");
+        assert!(dbg.contains("UdsExtensionTool") && dbg.contains("weather"));
+
         // Simulate extension responding.
         let handle = tokio::spawn(async move {
             let req = rx.recv().await.unwrap();

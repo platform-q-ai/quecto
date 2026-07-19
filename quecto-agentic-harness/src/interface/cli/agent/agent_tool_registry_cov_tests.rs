@@ -98,3 +98,42 @@ fn build_tool_registry_uses_cli_session_name_and_model_override() {
     assert_eq!(built.model, "openai-api/gpt-5.6-sol");
     assert!(!built.extension_prompt_snippets.contains("failed"));
 }
+
+#[test]
+fn load_workflow_spec_reports_io_and_json_errors_and_success() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let missing = tmp.path().join("missing.json");
+    let missing_err = load_workflow_spec(&missing).unwrap_err();
+    assert!(
+        missing_err.contains("No such") || missing_err.contains("os error"),
+        "{missing_err}"
+    );
+
+    let bad = tmp.path().join("bad.json");
+    std::fs::write(&bad, "not-json").unwrap();
+    let json_err = load_workflow_spec(&bad).unwrap_err();
+    assert!(
+        json_err.contains("expected") || json_err.contains("invalid"),
+        "{json_err}"
+    );
+
+    let good = tmp.path().join("good.json");
+    std::fs::write(
+        &good,
+        serde_json::json!({
+            "template": {
+                "id": "cov-template",
+                "label": "Coverage Template",
+                "description": "test workflow spec",
+                "steps": [
+                    {"key": "one", "label": "One", "phase": "Act"}
+                ]
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let spec = load_workflow_spec(&good).unwrap();
+    assert_eq!(spec.template.id, "cov-template");
+    assert_eq!(spec.template.steps.len(), 1);
+}

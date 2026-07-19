@@ -311,6 +311,10 @@ impl LlmProvider for OpenAiProvider {
         &self.provider_name
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn chat(
         &self,
         request: ChatRequest<'_>,
@@ -391,7 +395,7 @@ impl LlmProvider for OpenAiProvider {
 }
 
 #[path = "openai_sse.rs"]
-mod openai_sse;
+pub(super) mod openai_sse;
 #[path = "openai_sse_parser.rs"]
 mod openai_sse_parser;
 

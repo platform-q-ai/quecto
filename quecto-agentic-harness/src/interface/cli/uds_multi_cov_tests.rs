@@ -1,6 +1,7 @@
 use super::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 #[test]
 fn busy_guard_sets_flag_and_clears_on_drop() {
@@ -121,4 +122,127 @@ fn client_message_variants_carry_client_ids() {
         ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 12),
         ClientMessage::Command(_) => panic!("expected disconnect"),
     }
+}
+
+#[tokio::test]
+async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
+    let (server, client) = tokio::net::UnixStream::pair().unwrap();
+    let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(1);
+    broadcast_tx.send(r#"{"type":"old"}"#.to_string()).unwrap();
+    broadcast_tx.send(r#"{"type":"new"}"#.to_string()).unwrap();
+    let (targeted_tx, targeted_rx) = tokio::sync::mpsc::channel::<String>(2);
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(4);
+    let guard_tx = cmd_tx.clone();
+    let live = Arc::new(AtomicU32::new(1));
+    let registry = super::super::uds_ext_protocol::new_client_tool_registry();
+    let turn_control: super::super::uds_cancel::TurnControlHandle = Arc::default();
+    let cancel_handle: super::super::uds_cancel::CancelHandle = Arc::new(std::sync::Mutex::new(
+        super::super::uds_cancel::CancelSlot::Idle,
+    ));
+    let snapshot = Arc::new(tokio::sync::RwLock::new(
+        super::super::uds_snapshots::ConversationSnapshotData::default(),
+    ));
+
+    let task = tokio::spawn(handle_client(ClientHandlerArgs {
+        stream: server,
+        broadcast_rx,
+        targeted_rx,
+        cmd_tx,
+        cancel_handle,
+        turn_control: turn_control.clone(),
+        client_id: 77,
+        client_tool_registry: registry,
+        conversation_snapshot: snapshot,
+        _guard: ClientGuard {
+            live_clients: live.clone(),
+            cmd_tx: guard_tx,
+            client_id: 77,
+        },
+    }));
+
+    let (reader, mut writer) = tokio::io::split(client);
+    let mut lines = tokio::io::BufReader::new(reader).lines();
+
+    let lag_line = lines.next_line().await.unwrap().unwrap();
+    assert!(lag_line.contains("dropped 1 events"), "{lag_line}");
+    let new_line = lines.next_line().await.unwrap().unwrap();
+    assert!(new_line.contains(r#""type":"new""#), "{new_line}");
+
+    targeted_tx
+        .send(r#"{"type":"execute_tool","toolName":"owned"}"#.to_string())
+        .await
+        .unwrap();
+    let targeted_line = lines.next_line().await.unwrap().unwrap();
+    assert!(targeted_line.contains("execute_tool"), "{targeted_line}");
+
+    writer
+        .write_all(
+            br#"{"type":"abort","id":"a1"}
+{"type":"get_state","id":"s1"}
+"#,
+        )
+        .await
+        .unwrap();
+    writer.shutdown().await.unwrap();
+
+    match cmd_rx.recv().await.unwrap() {
+        ClientMessage::Command(command) => {
+            assert_eq!(command.client_id, 77);
+            assert!(command.line.contains("abort"));
+        }
+        ClientMessage::Disconnected(_) => panic!("expected abort command first"),
+    }
+    assert!(turn_control.is_abort_pending());
+    match cmd_rx.recv().await.unwrap() {
+        ClientMessage::Command(command) => assert!(command.line.contains("get_state")),
+        ClientMessage::Disconnected(_) => panic!("expected get_state command second"),
+    }
+    match cmd_rx.recv().await.unwrap() {
+        ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 77),
+        ClientMessage::Command(_) => panic!("expected disconnect sentinel"),
+    }
+    assert_eq!(live.load(Ordering::SeqCst), 0);
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
+    let (server, mut client) = tokio::net::UnixStream::pair().unwrap();
+    let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(1);
+    let (_targeted_tx, targeted_rx) = tokio::sync::mpsc::channel::<String>(1);
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(2);
+    let live = Arc::new(AtomicU32::new(1));
+    let registry = super::super::uds_ext_protocol::new_client_tool_registry();
+    let snapshot = Arc::new(tokio::sync::RwLock::new(
+        super::super::uds_snapshots::ConversationSnapshotData::default(),
+    ));
+
+    let task = tokio::spawn(handle_client(ClientHandlerArgs {
+        stream: server,
+        broadcast_rx,
+        targeted_rx,
+        cmd_tx: cmd_tx.clone(),
+        cancel_handle: Arc::new(std::sync::Mutex::new(
+            super::super::uds_cancel::CancelSlot::Idle,
+        )),
+        turn_control: Arc::default(),
+        client_id: 88,
+        client_tool_registry: registry,
+        conversation_snapshot: snapshot,
+        _guard: ClientGuard {
+            live_clients: live.clone(),
+            cmd_tx,
+            client_id: 88,
+        },
+    }));
+    drop(broadcast_tx);
+
+    client.write_all(&[0xFF, 0, 0, 0]).await.unwrap();
+    task.await.unwrap();
+    assert_eq!(live.load(Ordering::SeqCst), 0);
+    match cmd_rx.recv().await.unwrap() {
+        ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 88),
+        ClientMessage::Command(_) => panic!("expected disconnect only"),
+    }
+    assert!(cmd_rx.try_recv().is_err());
 }

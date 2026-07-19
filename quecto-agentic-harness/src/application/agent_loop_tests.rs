@@ -3,10 +3,6 @@ use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
 use std::sync::{Arc, Mutex};
 
-// -----------------------------------------------------------------------
-// Mock LLM Provider for unit tests
-// -----------------------------------------------------------------------
-
 #[derive(Debug)]
 pub(super) struct MockProvider {
     responses: Mutex<Vec<Result<LlmResponse, DomainError>>>,
@@ -78,7 +74,15 @@ impl LlmProvider for MockStreamingProvider {
         _request: ChatRequest<'_>,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + '_>>
     {
-        Box::pin(async { unreachable!("streaming test should use chat_stream_incremental") })
+        *self.request_count.lock().unwrap() += 1;
+        let events = self.responses.lock().unwrap().remove(0);
+        let response = events.into_iter().find_map(|event| match event {
+            crate::domain::provider::StreamEvent::Done(response) => Some(response),
+            _ => None,
+        });
+        Box::pin(async move {
+            response.ok_or_else(|| DomainError::Provider("missing done event".into()))
+        })
     }
 
     fn chat_stream_incremental(
@@ -141,10 +145,6 @@ impl LlmProvider for MockProvider {
     }
 }
 
-// -----------------------------------------------------------------------
-// Mock Tool Registry for unit tests (application layer only)
-// -----------------------------------------------------------------------
-
 #[derive(Default)]
 pub(super) struct MockRegistry {
     tools: Vec<Arc<dyn Tool>>,
@@ -188,10 +188,6 @@ impl ToolRegistry for MockRegistry {
         Box::pin(async move { Err(err) })
     }
 }
-
-// -----------------------------------------------------------------------
-// Mock Tool for unit tests
-// -----------------------------------------------------------------------
 
 pub(super) struct MockTool {
     def: ToolDefinition,
@@ -240,10 +236,6 @@ impl crate::domain::tool::Tool for MockTool {
     }
 }
 
-// -----------------------------------------------------------------------
-// Helper to build an AgentLoopImpl with mock components
-// -----------------------------------------------------------------------
-
 /// Baseline test config; override individual fields with functional-update
 /// syntax (`AgentLoopConfig { field: ..., ..test_config(...) }`).
 pub(super) fn test_config(
@@ -281,6 +273,65 @@ pub(super) fn make_agent(
     }
     let agent = AgentLoopImpl::new(test_config(provider.clone(), Box::new(registry)));
     (agent, provider)
+}
+
+fn empty_chat_request() -> ChatRequest<'static> {
+    ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "test",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    }
+}
+
+#[tokio::test]
+async fn mock_providers_trait_surface_methods_are_invoked() {
+    let streaming =
+        MockStreamingProvider::new(vec![vec![crate::domain::provider::StreamEvent::Done(
+            LlmResponse {
+                content: Some("streamed".into()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            },
+        )]]);
+    assert_eq!(streaming.name(), "mock-streaming");
+    assert!(streaming.as_any().is::<()>());
+    assert_eq!(
+        streaming
+            .chat_stream(empty_chat_request())
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("streamed")
+    );
+
+    let provider = MockProvider::new(vec![LlmResponse {
+        content: Some("plain".into()),
+        tool_calls: vec![],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    }]);
+    assert_eq!(provider.name(), "mock");
+    assert_eq!(
+        provider
+            .chat_stream(empty_chat_request())
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("plain")
+    );
 }
 
 pub(super) fn text_response(content: &str) -> LlmResponse {
@@ -366,10 +417,6 @@ pub(super) fn tool_call_response(name: &str, args: &str) -> LlmResponse {
         thinking_blocks: vec![],
     }
 }
-
-// -----------------------------------------------------------------------
-// Unit tests
-// -----------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_simple_text_response() {
@@ -526,10 +573,6 @@ async fn test_default_max_iterations() {
     assert_eq!(agent.max_tool_iterations, DEFAULT_MAX_TOOL_ITERATIONS);
 }
 
-// -----------------------------------------------------------------------
-// Progress callback tests
-// -----------------------------------------------------------------------
-
 /// Helper: build an AgentLoopImpl with a progress callback that records events.
 fn make_agent_with_callback(
     responses: Vec<LlmResponse>,
@@ -666,40 +709,18 @@ async fn mock_streaming_provider_trait_surface_chat_and_incremental() {
         effort: None,
     };
     assert_eq!(provider.name(), "mock-streaming");
+    assert!(provider.as_any().is::<()>());
     let mut rx = provider.chat_stream_incremental(request).await;
     assert!(matches!(
         rx.recv().await,
         Some(crate::domain::provider::StreamEvent::Done(_))
     ));
     assert_eq!(provider.request_count(), 1);
-}
 
-#[test]
-fn mock_tool_debug_trait_surface_includes_name() {
-    let tool = MockTool::new("bash", "ok");
-    assert!(format!("{tool:?}").contains("bash"));
-}
-
-#[tokio::test]
-async fn mock_registry_and_tool_default_trait_surface_methods_are_inert() {
-    let tool = Arc::new(MockTool::new("bash", "ok"));
-    tool.set_session_key("session".into());
-    assert_eq!(tool.execute("{}").await.unwrap().content, "ok");
-
-    let mut registry = MockRegistry::new();
-    registry.set_session_key("session");
-    registry.register_extension(tool.clone());
-    registry.unregister_extension("bash");
-    assert!(registry.extension_names().is_empty());
-    registry.register(tool);
-    assert_eq!(registry.tool_count(), 1);
-    assert_eq!(registry.execute("bash", "{}").await.unwrap().content, "ok");
-}
-
-#[tokio::test]
-async fn mock_provider_default_as_any_and_incremental_surface() {
-    let provider = MockProvider::new(vec![text_response("done")]);
-    assert!(provider.as_any().is::<()>());
+    let provider =
+        MockStreamingProvider::new(vec![vec![crate::domain::provider::StreamEvent::Done(
+            text_response("chat done"),
+        )]]);
     let messages = [];
     let tools = [];
     let request = ChatRequest {
@@ -715,9 +736,6 @@ async fn mock_provider_default_as_any_and_incremental_surface() {
         cancel_flag: None,
         effort: None,
     };
-    let mut rx = provider.chat_stream_incremental(request).await;
-    assert!(matches!(
-        rx.recv().await,
-        Some(crate::domain::provider::StreamEvent::Done(_))
-    ));
+    let response = provider.chat(request).await.unwrap();
+    assert_eq!(response.content.as_deref(), Some("chat done"));
 }

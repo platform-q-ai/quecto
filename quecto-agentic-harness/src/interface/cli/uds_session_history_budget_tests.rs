@@ -5,7 +5,7 @@ fn message_content<'a>(message: &'a serde_json::Value, field: &str) -> &'a str {
     message
         .get(field)
         .and_then(|value| value.as_str())
-        .unwrap_or_else(|| panic!("history message should include string field {field}: {message}"))
+        .expect("history message should include requested string field")
 }
 
 fn page_messages(page: &serde_json::Value) -> &[serde_json::Value] {

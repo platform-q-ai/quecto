@@ -1,8 +1,4 @@
 //! Regression tests for #1093: `get_message` resolves collapsed spill refs.
-
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::{Message, ToolCall};
 use crate::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
@@ -12,7 +8,8 @@ use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
-
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 #[derive(Debug, Default)]
 pub(super) struct MemSpillStore {
     entries: Mutex<HashMap<(String, String), SpillEntry>>,
@@ -745,4 +742,8 @@ async fn get_message_idle_keeps_collapsed_stub_when_spill_recall_errors() {
         Arc::new(MemSpillStore::with_recall_error()),
     )
     .await;
+}
+#[tokio::test]
+async fn mem_spill_store_default_has_entries_is_false() {
+    assert!(!MemSpillStore::default().has_entries("s").await.unwrap());
 }

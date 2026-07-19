@@ -27,6 +27,10 @@ fn parse_loopback_redirect_accepts_loopback_and_rejects_remote() {
         parse_loopback_redirect("http://localhost:1455/auth/callback").unwrap(),
         ("localhost:1455".to_string(), "/auth/callback".to_string())
     );
+    assert_eq!(
+        parse_loopback_redirect("http://[::1]:1455/?ignored=yes").unwrap(),
+        ("[::1]:1455".to_string(), "/".to_string())
+    );
     assert!(parse_loopback_redirect("https://127.0.0.1:1/cb").is_err());
     assert!(parse_loopback_redirect("http://example.com:1/cb").is_err());
     assert!(parse_loopback_redirect("http://127.0.0.1/cb").is_err());
@@ -69,4 +73,53 @@ async fn wait_for_oauth_callback_zero_timeout_errors_without_hanging() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("timed out") || err.contains("address already in use"));
+}
+
+#[tokio::test]
+async fn refresh_xai_token_error_discards_body_and_reports_status_only() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("secret-provider-body"))
+        .mount(&server)
+        .await;
+    let config = OAuthConfig {
+        authorization_url: "http://unused/auth".into(),
+        device_code_url: "http://unused/device".into(),
+        token_url: format!("{}/token", server.uri()),
+        client_id: "client-1".into(),
+        redirect_uri: "http://127.0.0.1:1/cb".into(),
+        scopes: String::new(),
+    };
+
+    let err = refresh_xai_token(&config, "refresh-secret")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("xAI token refresh failed (401)"), "{err}");
+    assert!(!err.contains("secret-provider-body"), "{err}");
+}
+
+#[tokio::test]
+async fn refresh_xai_token_invalid_json_reports_parse_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
+        .mount(&server)
+        .await;
+    let config = OAuthConfig {
+        authorization_url: "http://unused/auth".into(),
+        device_code_url: "http://unused/device".into(),
+        token_url: format!("{}/token", server.uri()),
+        client_id: "client-1".into(),
+        redirect_uri: "http://127.0.0.1:1/cb".into(),
+        scopes: String::new(),
+    };
+
+    let err = refresh_xai_token(&config, "refresh-secret")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("failed to parse refresh response"), "{err}");
 }

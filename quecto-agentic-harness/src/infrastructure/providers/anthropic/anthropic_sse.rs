@@ -394,7 +394,7 @@ impl AnthropicProvider {
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 
 /// SSE line handler for the Anthropic Messages API.
-pub(super) struct AnthropicSseHandler {
+pub(crate) struct AnthropicSseHandler {
     current_event: String,
     acc: SseAccumulator,
 }
@@ -411,7 +411,7 @@ impl AnthropicSseHandler {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub(super) fn new_for_test(tool_defs: Option<Vec<ToolDefinition>>) -> Self {
+    pub(crate) fn new_for_test(tool_defs: Option<Vec<ToolDefinition>>) -> Self {
         Self::new(tool_defs)
     }
 

@@ -44,8 +44,8 @@ fn debug_and_extension_methods_do_not_dump_tool_values() {
     assert!(!debug.contains("TinyTool"));
 }
 
-#[test]
-fn build_native_extensions_combines_search_and_fetch_in_one_web_extension() {
+#[tokio::test]
+async fn build_native_extensions_combines_search_and_fetch_in_one_web_extension() {
     let mut web = crate::infrastructure::config::WebToolConfig::default();
     web.brave.enabled = true;
     web.brave.api_key = "key".into();
@@ -53,6 +53,11 @@ fn build_native_extensions_combines_search_and_fetch_in_one_web_extension() {
     web.fetch.enabled = true;
     web.fetch.max_response_kb = 1;
     let client = reqwest::Client::new();
+
+    let tiny = TinyTool;
+    tiny.set_session_key("native-cov".into());
+    assert_eq!(tiny.definition().name.as_ref(), "tiny");
+    assert_eq!(tiny.execute("{}").await.unwrap().content, "ok");
 
     let exts = build_native_extensions(&web, &client);
 

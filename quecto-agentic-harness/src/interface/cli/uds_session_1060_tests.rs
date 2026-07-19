@@ -42,12 +42,7 @@ fn message_to_json_exposes_stable_id_for_all_roles() {
 
     for msg in [&user, &assistant, &tool] {
         let v = message_to_json(msg);
-        let id = wire_id(&v).unwrap_or_else(|| {
-            panic!(
-                "message_to_json must expose a stable id for role {:?}: {v}",
-                msg.role
-            )
-        });
+        let id = wire_id(&v).expect("message_to_json must expose a stable id");
         assert_eq!(id, msg.id().to_string());
     }
 }
@@ -71,4 +66,12 @@ fn history_message_ids_are_distinct_and_non_empty() {
         );
     }
     assert_eq!(seen.len(), 3);
+}
+
+#[test]
+fn wire_id_filters_empty_wire_identifiers() {
+    let v = serde_json::json!({ "id": "" });
+    assert_eq!(wire_id(&v), None);
+    let v = serde_json::json!({ "messageId": "" });
+    assert_eq!(wire_id(&v), None);
 }

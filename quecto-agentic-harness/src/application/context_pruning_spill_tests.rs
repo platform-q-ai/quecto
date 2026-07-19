@@ -107,7 +107,7 @@ fn ceiling_ladder_never_demotes_most_recent_turns() {
         let msg = messages
             .iter()
             .find(|m| m.turn == Some(turn))
-            .unwrap_or_else(|| panic!("turn {turn} is tail-pinned and must remain"));
+            .expect("tail-pinned turn must remain");
         assert!(
             !msg.is_collapsed,
             "turn {turn} is within the pinned tail and must never be demoted"
@@ -176,7 +176,7 @@ fn ceiling_ladder_tail_fallback_protects_previous_prompt_turns() {
         let msg = messages
             .iter()
             .find(|m| m.turn == Some(turn))
-            .unwrap_or_else(|| panic!("previous prompt's turn {turn} must stay tail-pinned"));
+            .expect("previous prompt tail-pinned turn must stay");
         assert!(!msg.is_collapsed, "tail-pinned turn {turn} stays full");
     }
 }

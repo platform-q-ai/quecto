@@ -696,6 +696,9 @@ pub(super) async fn dispatch_ext_command(
 }
 
 #[cfg(test)]
+#[path = "uds_dispatch_cov2_tests.rs"]
+mod cov2_tests;
+#[cfg(test)]
 #[path = "uds_dispatch_cov_tests.rs"]
 mod cov_tests;
 #[cfg(test)]

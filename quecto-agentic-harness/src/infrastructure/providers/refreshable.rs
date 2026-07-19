@@ -163,6 +163,10 @@ impl LlmProvider for RefreshableProvider {
         &self.provider_name
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn chat<'a>(
         &'a self,
         request: ChatRequest<'a>,
