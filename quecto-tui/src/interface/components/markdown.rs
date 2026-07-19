@@ -78,9 +78,10 @@ impl Markdown {
                         flush_current_line!();
                         heading_level = level as u8;
                     }
-                    Tag::Paragraph => {
+                    Tag::Paragraph if !in_blockquote => {
                         flush_current_line!();
                     }
+                    Tag::Paragraph => {}
                     Tag::CodeBlock(kind) => {
                         flush_current_line!();
                         in_code_block = true;
@@ -185,8 +186,10 @@ impl Markdown {
                         heading_level = 0;
                     }
                     TagEnd::Paragraph => {
-                        flush_current_line!();
-                        if !in_blockquote {
+                        if in_blockquote {
+                            flush_blockquote_line(&mut current_line, &mut blockquote_lines);
+                        } else {
+                            flush_current_line!();
                             lines.push(RenderedLine::blank()); // spacing after paragraph
                         }
                     }
@@ -216,14 +219,14 @@ impl Markdown {
                         flush_current_line!();
                     }
                     TagEnd::BlockQuote(_) => {
-                        flush_current_line!();
-                        // Prefix each blockquote line with a border.
+                        flush_blockquote_line(&mut current_line, &mut blockquote_lines);
+                        let gutter = theme::dim("│ ");
+                        let gutter_width = visible_width("│ ");
                         for ql in &blockquote_lines {
-                            lines.push(RenderedLine::plain(format!(
-                                "{} {}",
-                                theme::dim("│"),
-                                theme::italic(&theme::dim(ql))
-                            )));
+                            lines.push(RenderedLine::wrapped(
+                                format!("{}{}", gutter, theme::italic(&theme::dim(ql))),
+                                gutter_width,
+                            ));
                         }
                         lines.push(RenderedLine::blank());
                         in_blockquote = false;
@@ -260,7 +263,7 @@ impl Markdown {
                             &crate::interface::ansi::sanitize_control_keep_newlines(&text),
                         );
                     } else if in_blockquote {
-                        blockquote_lines.push(sanitize_for_display(&text));
+                        current_line.push_str(&sanitize_for_display(&text));
                     } else {
                         let sanitized = sanitize_for_display(&text);
                         let styled = apply_inline_styles(&sanitized, &style_stack);
@@ -287,6 +290,8 @@ impl Markdown {
                         current_cell.push(' ');
                     } else if in_code_block {
                         code_block_content.push('\n');
+                    } else if in_blockquote {
+                        flush_blockquote_line(&mut current_line, &mut blockquote_lines);
                     } else {
                         current_line.push(' ');
                     }
@@ -296,8 +301,7 @@ impl Markdown {
                     if in_table {
                         current_cell.push(' ');
                     } else if in_blockquote {
-                        let text = std::mem::take(&mut current_line);
-                        blockquote_lines.push(text);
+                        flush_blockquote_line(&mut current_line, &mut blockquote_lines);
                     } else {
                         flush_current_line!();
                     }
@@ -499,13 +503,6 @@ fn flush_table(table_rows: &[Vec<String>], content_width: usize, lines: &mut Vec
     lines.push(RenderedLine::blank());
 }
 
-/// Flush a fenced code block into rendered lines as styled code (#799).
-///
-/// The fence markers (```` ```lang ````/```` ``` ````) are intentionally NOT
-/// emitted as visible text. Each code line is rendered behind a dimmed left
-/// gutter bar (`│ `), preceded by an optional dimmed language label, and
-/// followed by a trailing blank line. The gutter bar is a deliberate,
-/// locked-in design choice (see #799), so the tests assert it explicitly.
 fn flush_code_block(lang: &str, content: &str, indented: bool, lines: &mut Vec<RenderedLine>) {
     // CommonMark demotes a 4+-space-indented fence to an *indented* code block,
     // so the literal ```` ```lang ````/```` ``` ```` markers survive as body text
@@ -523,12 +520,13 @@ fn flush_code_block(lang: &str, content: &str, indented: bool, lines: &mut Vec<R
     if !lang.is_empty() {
         lines.push(RenderedLine::plain(theme::dim(lang)));
     }
+    let gutter = theme::dim("│ ");
+    let gutter_width = visible_width("│ ");
     for code_line in content.lines() {
-        lines.push(RenderedLine::plain(format!(
-            "{}{}",
-            theme::dim("│ "),
-            theme::dim(code_line)
-        )));
+        lines.push(RenderedLine::wrapped(
+            format!("{}{}", gutter, theme::dim(code_line)),
+            gutter_width,
+        ));
     }
     lines.push(RenderedLine::blank());
 }
@@ -680,6 +678,7 @@ fn push_wrapped_with_hanging_indent(
 ) {
     let split_at = byte_index_for_visible_width(line, hanging_indent);
     let (prefix, rest) = line.split_at(split_at);
+    let plain_prefix = crate::interface::ansi::sanitize_control(prefix);
     let available = content_width.saturating_sub(hanging_indent);
 
     if available == 0 {
@@ -692,9 +691,13 @@ fn push_wrapped_with_hanging_indent(
     let wrapped = wrap_text(rest, available);
     if let Some((first, tail)) = wrapped.split_first() {
         result.push(format!("{}{}{}", pad, prefix, first));
-        let continuation_indent = " ".repeat(hanging_indent);
+        let continuation_prefix = if plain_prefix == "│ " {
+            plain_prefix
+        } else {
+            " ".repeat(hanging_indent)
+        };
         for wl in tail {
-            result.push(format!("{}{}{}", pad, continuation_indent, wl));
+            result.push(format!("{}{}{}", pad, continuation_prefix, wl));
         }
     }
 }
@@ -706,6 +709,13 @@ fn byte_index_for_visible_width(s: &str, target_width: usize) -> usize {
         }
     }
     s.len()
+}
+
+fn flush_blockquote_line(current: &mut String, lines: &mut Vec<String>) {
+    let text = std::mem::take(current);
+    if !text.is_empty() {
+        lines.push(text);
+    }
 }
 
 fn flush_line(

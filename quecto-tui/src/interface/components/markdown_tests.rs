@@ -40,6 +40,18 @@ fn render_plain_nonempty(text: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
+fn gutter_rows(markdown: &str, width: usize) -> Vec<String> {
+    let lines: Vec<String> = render_plain_nonempty(markdown, width)
+        .into_iter()
+        .filter(|line| line != "json")
+        .collect();
+    assert!(
+        lines.len() > 1 && lines.iter().all(|line| line.starts_with("│ ")),
+        "{lines:?}"
+    );
+    lines
+}
+
 #[test]
 fn heading_level_1() {
     let lines = render_md("# Hello", 80);
@@ -258,6 +270,47 @@ fn standalone_blockquote_has_no_extra_blank_lines() {
         .collect();
 
     assert_eq!(lines, vec!["│ This is a quote"]);
+}
+
+#[test]
+fn long_blockquote_wraps_with_gutter_on_every_row() {
+    let lines = gutter_rows(
+        "> This is a very long quoted paragraph that continues for a long time and should keep the gutter on every wrapped row.",
+        44,
+    );
+
+    assert!(lines.iter().all(|line| visible_width(line) <= 44));
+}
+
+#[test]
+fn multiline_blockquote_keeps_gutter_on_every_body_row() {
+    let lines = gutter_rows("> {\n>   \"ok\": true,\n>   \"items\": [1, 2, 3]\n> }", 80);
+
+    assert_eq!(
+        lines,
+        vec!["│ {", "│ \"ok\": true,", "│ \"items\": [1, 2, 3]", "│ }"]
+    );
+}
+
+#[test]
+fn long_fenced_json_line_wraps_with_gutter_on_every_row() {
+    let lines = gutter_rows(
+        "```json\n{\"items\":[\"alpha\",\"beta\",\"gamma\",\"delta\",\"epsilon\"],\"ok\":true}\n```",
+        36,
+    );
+
+    assert!(lines.iter().all(|line| visible_width(line) <= 36));
+}
+
+#[test]
+fn multiline_fenced_body_keeps_gutter_on_every_body_row() {
+    let lines = gutter_rows(
+        "```json\n{\n  \"ok\": true,\n  \"items\": [1, 2, 3]\n}\n```",
+        80,
+    );
+
+    assert_eq!(lines.len(), 4);
+    assert!(lines[1].contains("\"ok\": true"));
 }
 
 #[test]
