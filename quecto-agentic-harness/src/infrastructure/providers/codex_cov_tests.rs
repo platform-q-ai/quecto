@@ -365,7 +365,7 @@ async fn chat_stream_incremental_emits_error_on_invalid_model() {
 async fn chat_stream_incremental_pumps_sse_to_done() {
     let server = wiremock::MockServer::start().await;
     let sse = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\
-               data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n";
+               data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1000000,\"output_tokens\":1000000,\"input_tokens_details\":{\"cached_tokens\":500000}}}}\n";
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(sse))
         .mount(&server)
@@ -373,13 +373,17 @@ async fn chat_stream_incremental_pumps_sse_to_done() {
     let provider = CodexProvider::new("k".into(), "acct".into(), Some(server.uri()));
     let messages = vec![Message::system("Sys"), Message::user("U")];
     let mut rx = provider
-        .chat_stream_incremental(req(&messages, &[], "gpt-5.2", None))
+        .chat_stream_incremental(req(&messages, &[], "gpt-5.6-luna", Some("openai-api")))
         .await;
 
     let mut saw_done = false;
     while let Some(ev) = rx.recv().await {
         if let StreamEvent::Done(resp) = ev {
             assert_eq!(resp.content.as_deref(), Some("Hi"));
+            assert_eq!(
+                resp.usage.unwrap().cost.unwrap().total_cost_micro_usd,
+                6_550_000
+            );
             saw_done = true;
         }
     }

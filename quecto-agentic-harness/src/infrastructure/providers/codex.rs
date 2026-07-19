@@ -438,6 +438,7 @@ impl CodexProvider {
         &self,
         url: &str,
         body: serde_json::Value,
+        model: String,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
     ) {
         let mut response = match self
@@ -468,7 +469,7 @@ impl CodexProvider {
                 .await;
             return;
         }
-        let mut handler = CodexSseHandler::new();
+        let mut handler = CodexSseHandler::new_for_model(Some(model));
         super::sse_common::pump_sse(&mut response, &tx, &mut handler).await;
     }
 
@@ -624,13 +625,14 @@ impl LlmProvider for CodexProvider {
                 rx
             });
         }
+        let model = request.model.to_string();
         let body = Self::build_request_body(&request);
         let url = self.responses_url();
         let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {
-                provider.pump_codex_sse(&url, body, tx).await;
+                provider.pump_codex_sse(&url, body, model, tx).await;
             });
             rx
         })
@@ -645,9 +647,17 @@ struct CodexSseHandler {
 }
 
 impl CodexSseHandler {
+    #[cfg(test)]
     fn new() -> Self {
+        Self::new_for_model(None)
+    }
+
+    fn new_for_model(model: Option<String>) -> Self {
         Self {
-            acc: SseAccumulator::default(),
+            acc: SseAccumulator {
+                model,
+                ..SseAccumulator::default()
+            },
         }
     }
 

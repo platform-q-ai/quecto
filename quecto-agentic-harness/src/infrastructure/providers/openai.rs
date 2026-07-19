@@ -265,6 +265,7 @@ impl OpenAiProvider {
         &self,
         body: serde_json::Value,
         url: &str,
+        model: String,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
     ) {
         let request_builder = self
@@ -297,7 +298,7 @@ impl OpenAiProvider {
                 .await;
             return;
         }
-        openai_sse::pump_sse_bytes(&mut response, &tx).await;
+        openai_sse::pump_sse_bytes_for_model(&mut response, &tx, Some(model)).await;
     }
 
     fn apply_delta(
@@ -383,12 +384,13 @@ impl LlmProvider for OpenAiProvider {
         body["stream"] = serde_json::Value::Bool(true);
         // Request a final usage chunk (see `chat_stream`).
         body["stream_options"] = serde_json::json!({ "include_usage": true });
+        let model = request.model.to_string();
         let url = format!("{}/chat/completions", self.api_base);
         let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {
-                provider.pump_sse_incremental(body, &url, tx).await;
+                provider.pump_sse_incremental(body, &url, model, tx).await;
             });
             rx
         })

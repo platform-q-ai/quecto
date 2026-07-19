@@ -26,8 +26,10 @@ fn opt_u32_field(obj: &Map<String, Value>, key: &str) -> Option<u32> {
 
 /// Parse an OpenAI chat-completions `usage` object.
 ///
-/// OpenAI's `prompt_tokens` already counts the full prompt (cached tokens are
-/// a subset), so `context_tokens` is taken from `total_tokens` when present.
+/// OpenAI's `prompt_tokens` counts the full prompt with cached tokens as a
+/// subset. `prompt_tokens` in `UsageInfo` is normalized to non-cached input
+/// tokens so `ModelPricing::cost_for` can bill cached tokens only at the
+/// cache-read rate. `context_tokens` preserves provider total occupancy.
 pub fn parse_openai_usage(obj: &Map<String, Value>) -> UsageInfo {
     parse_openai_usage_inner(obj, None)
 }
@@ -37,14 +39,16 @@ pub fn parse_openai_usage_for_model(obj: &Map<String, Value>, model: &str) -> Us
 }
 
 fn parse_openai_usage_inner(obj: &Map<String, Value>, pricing: Option<ModelPricing>) -> UsageInfo {
+    let cache_read_tokens = obj
+        .get("prompt_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(Value::as_u64)
+        .and_then(|n| u32::try_from(n).ok());
     let mut usage = UsageInfo {
-        prompt_tokens: u32_field(obj, "prompt_tokens"),
+        prompt_tokens: u32_field(obj, "prompt_tokens")
+            .saturating_sub(cache_read_tokens.unwrap_or(0)),
         completion_tokens: u32_field(obj, "completion_tokens"),
-        cache_read_tokens: obj
-            .get("prompt_tokens_details")
-            .and_then(|d| d.get("cached_tokens"))
-            .and_then(Value::as_u64)
-            .and_then(|n| u32::try_from(n).ok()),
+        cache_read_tokens,
         cache_write_tokens: None,
         context_tokens: opt_u32_field(obj, "total_tokens"),
         cost: None,
@@ -55,9 +59,11 @@ fn parse_openai_usage_inner(obj: &Map<String, Value>, pricing: Option<ModelPrici
 
 /// Parse a Codex/OpenAI Responses `usage` object.
 ///
-/// Codex `input_tokens` already counts the full prompt (cached tokens are a
-/// subset), so `context_tokens` is left `None` and the gauge falls back to
-/// `prompt_tokens`. Cached tokens are reported under `input_tokens_details`.
+/// Codex `input_tokens` counts the full prompt with cached tokens as a
+/// subset. `prompt_tokens` in `UsageInfo` is normalized to non-cached input
+/// tokens so `ModelPricing::cost_for` can bill cached tokens only at the
+/// cache-read rate. `context_tokens` is left `None` and the gauge falls back to
+/// provider-reported input tokens plus cache-read tokens.
 pub fn parse_codex_usage(obj: &Map<String, Value>) -> UsageInfo {
     parse_codex_usage_inner(obj, None)
 }
@@ -73,7 +79,8 @@ fn parse_codex_usage_inner(obj: &Map<String, Value>, pricing: Option<ModelPricin
         .and_then(Value::as_u64)
         .and_then(|n| u32::try_from(n).ok());
     let mut usage = UsageInfo {
-        prompt_tokens: u32_field(obj, "input_tokens"),
+        prompt_tokens: u32_field(obj, "input_tokens")
+            .saturating_sub(cache_read_tokens.unwrap_or(0)),
         completion_tokens: u32_field(obj, "output_tokens"),
         cache_read_tokens,
         cache_write_tokens: None,
@@ -86,8 +93,12 @@ fn parse_codex_usage_inner(obj: &Map<String, Value>, pricing: Option<ModelPricin
 
 fn pricing_for_model(model: &str) -> Option<ModelPricing> {
     model_pricing(model).or_else(|| {
-        let (provider, id) = model.split_once('/')?;
-        let cost = ModelRegistry::builtin().find(provider, id)?.cost.clone();
+        let registry = ModelRegistry::builtin();
+        let cost = if let Some((provider, id)) = model.split_once('/') {
+            registry.find(provider, id)?.cost.clone()
+        } else {
+            registry.find("openai-api", model)?.cost.clone()
+        };
         model_cost_to_pricing(&cost)
     })
 }
@@ -139,7 +150,7 @@ mod tests {
             "input_tokens_details": { "cached_tokens": 30 }
         });
         let u = parse_codex_usage(v.as_object().unwrap());
-        assert_eq!(u.prompt_tokens, 100);
+        assert_eq!(u.prompt_tokens, 70);
         assert_eq!(u.completion_tokens, 40);
         assert_eq!(u.cache_read_tokens, Some(30));
         assert_eq!(u.context_tokens, None);
@@ -155,10 +166,11 @@ mod tests {
         });
         let u = parse_openai_usage_for_model(v.as_object().unwrap(), "openai-api/gpt-5.6-luna");
         let cost = u.cost.unwrap();
-        assert_eq!(cost.input_cost_micro_usd, 1_000_000);
+        assert_eq!(u.prompt_tokens, 500_000);
+        assert_eq!(cost.input_cost_micro_usd, 500_000);
         assert_eq!(cost.output_cost_micro_usd, 6_000_000);
         assert_eq!(cost.cache_read_cost_micro_usd, 50_000);
-        assert_eq!(cost.total_cost_micro_usd, 7_050_000);
+        assert_eq!(cost.total_cost_micro_usd, 6_550_000);
     }
 
     #[test]
@@ -179,6 +191,7 @@ mod tests {
             "input_tokens_details": { "cached_tokens": 500_000 }
         });
         let u = parse_codex_usage_for_model(v.as_object().unwrap(), "openai-api/gpt-5.6-luna");
-        assert_eq!(u.cost.unwrap().total_cost_micro_usd, 7_050_000);
+        assert_eq!(u.prompt_tokens, 500_000);
+        assert_eq!(u.cost.unwrap().total_cost_micro_usd, 6_550_000);
     }
 }

@@ -95,7 +95,7 @@ fn consolidated_codex_usage_parser() {
         "input_tokens_details": { "cached_tokens": 30 }
     });
     let u = usage::parse_codex_usage(v.as_object().unwrap());
-    assert_eq!(u.prompt_tokens, 100);
+    assert_eq!(u.prompt_tokens, 70);
     assert_eq!(u.completion_tokens, 40);
     assert_eq!(u.cache_read_tokens, Some(30));
     assert_eq!(u.context_tokens, None);

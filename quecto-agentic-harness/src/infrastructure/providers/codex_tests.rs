@@ -349,7 +349,7 @@ fn test_parse_response_text() {
     assert_eq!(resp.content.unwrap(), "Hello!");
     assert!(resp.tool_calls.is_empty());
     let usage = resp.usage.unwrap();
-    assert_eq!(usage.prompt_tokens, 10);
+    assert_eq!(usage.prompt_tokens, 3);
     assert_eq!(usage.completion_tokens, 5);
     assert_eq!(usage.cache_read_tokens, Some(7));
 }

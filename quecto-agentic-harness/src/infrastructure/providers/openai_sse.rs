@@ -21,6 +21,7 @@ pub(crate) struct OpenAiSseHandler {
 }
 
 impl OpenAiSseHandler {
+    #[cfg(test)]
     fn new() -> Self {
         Self::new_for_model(None)
     }
@@ -106,11 +107,20 @@ impl SseHandler for OpenAiSseHandler {
 }
 
 /// Consume an OpenAI SSE byte stream, emitting `StreamEvent`s per delta.
+#[cfg(test)]
 pub(crate) async fn pump_sse_bytes(
     response: &mut reqwest::Response,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
 ) {
-    let mut handler = OpenAiSseHandler::new();
+    pump_sse_bytes_for_model(response, tx, None).await;
+}
+
+pub(crate) async fn pump_sse_bytes_for_model(
+    response: &mut reqwest::Response,
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    model: Option<String>,
+) {
+    let mut handler = OpenAiSseHandler::new_for_model(model);
     pump_sse(response, tx, &mut handler).await;
 }
 

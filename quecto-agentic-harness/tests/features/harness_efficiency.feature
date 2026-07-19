@@ -16,7 +16,7 @@ Feature: Harness per-call efficiency cleanups (issue #996)
 
   Scenario: Codex token usage is recorded from a provider usage report
     When a Codex response reports 100 input, 40 output and 30 cached tokens
-    Then the recorded usage shows 100 prompt, 40 completion and 30 cached tokens
+    Then the recorded usage shows 70 billable prompt, 40 completion and 30 cached tokens
 
   Scenario: A config written by an older release still loads
     When a provider config written by an older release is loaded

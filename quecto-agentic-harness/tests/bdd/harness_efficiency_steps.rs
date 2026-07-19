@@ -72,10 +72,10 @@ fn when_parse_codex_usage(world: &mut QuectoWorld) {
     world.efficiency_usage = Some(usage::parse_codex_usage(v.as_object().unwrap()));
 }
 
-#[then("the recorded usage shows 100 prompt, 40 completion and 30 cached tokens")]
+#[then("the recorded usage shows 70 billable prompt, 40 completion and 30 cached tokens")]
 fn then_codex_usage(world: &mut QuectoWorld) {
     let u = world.efficiency_usage.as_ref().expect("usage parsed");
-    assert_eq!(u.prompt_tokens, 100);
+    assert_eq!(u.prompt_tokens, 70);
     assert_eq!(u.completion_tokens, 40);
     assert_eq!(u.cache_read_tokens, Some(30));
 }

@@ -424,7 +424,7 @@ async fn chat_stream_incremental_wiremock_emits_text_and_done() {
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_string(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"incr\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"incr\"}}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":1000000,\"completion_tokens\":1000000,\"total_tokens\":2000000,\"prompt_tokens_details\":{\"cached_tokens\":500000}}}\n\ndata: [DONE]\n\n",
         ))
         .mount(&server)
         .await;
@@ -432,11 +432,17 @@ async fn chat_stream_incremental_wiremock_emits_text_and_done() {
     let provider = OpenAiProvider::new("sk-test".into(), Some(server.uri()));
     let messages = vec![Message::user("hi")];
     let mut rx = provider
-        .chat_stream_incremental(req(&messages, &[], "gpt-test"))
+        .chat_stream_incremental(req(&messages, &[], "openai-api/gpt-5.6-luna"))
         .await;
     assert!(matches!(rx.recv().await.unwrap(), StreamEvent::TextDelta(t) if t == "incr"));
     match rx.recv().await.unwrap() {
-        StreamEvent::Done(done) => assert_eq!(done.content.as_deref(), Some("incr")),
+        StreamEvent::Done(done) => {
+            assert_eq!(done.content.as_deref(), Some("incr"));
+            assert_eq!(
+                done.usage.unwrap().cost.unwrap().total_cost_micro_usd,
+                6_550_000
+            );
+        }
         other => panic!("unexpected event: {other:?}"),
     }
 }
