@@ -26,9 +26,18 @@ pub fn warn_count_containing(captured: &[(tracing::Level, String)], needle: &str
         .count()
 }
 
+/// The exact message the client must warn with when dropping an oversized
+/// outbound command (#1125).
+pub const OVERSIZED_OUTBOUND_WARN_MSG: &str = "dropping oversized outbound command";
+
 /// How many captured events are exactly-WARN inbound oversized-drop warnings.
 pub fn oversized_warn_count(captured: &[(tracing::Level, String)]) -> usize {
     warn_count_containing(captured, OVERSIZED_WARN_MSG)
+}
+
+/// How many captured events are exactly-WARN outbound oversized-drop warnings.
+pub fn oversized_outbound_warn_count(captured: &[(tracing::Level, String)]) -> usize {
+    warn_count_containing(captured, OVERSIZED_OUTBOUND_WARN_MSG)
 }
 
 /// Install a fresh [`WarnCapture`] as the *thread-scoped* tracing default.

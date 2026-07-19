@@ -514,7 +514,10 @@ impl Client {
                     // for oversized frames — instead of tearing down the whole
                     // session for a single per-message validation refusal. (No
                     // stderr: the TUI owns the terminal.)
-                    Err(FrameError::Oversized { .. }) => continue,
+                    Err(e @ FrameError::Oversized { .. }) => {
+                        tracing::warn!("dropping oversized outbound command: {e}");
+                        continue;
+                    }
                     // A real transport error (or a protocol version mismatch)
                     // is fatal: stop the writer; the closed channel surfaces
                     // the disconnect to the UI on the next send.
@@ -522,7 +525,7 @@ impl Client {
                 }
             }
         };
-        tokio::spawn(writer_task);
+        tokio::spawn(writer_task.with_subscriber(connect_dispatch.clone()));
 
         let (tx, rx) = mpsc::channel(256);
         let dropped_oversized = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));

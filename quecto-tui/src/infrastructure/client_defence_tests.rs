@@ -1,5 +1,7 @@
 use super::*;
-use crate::infrastructure::warn_capture::{install_warn_capture, oversized_warn_count};
+use crate::infrastructure::warn_capture::{
+    install_warn_capture, oversized_outbound_warn_count, oversized_warn_count,
+};
 use tokio::io::AsyncWriteExt;
 
 /// Guard that removes a test's temp dir (and its socket) on drop, so reruns
@@ -115,6 +117,59 @@ async fn client_connect_drops_invalid_utf8_instead_of_normalizing_it() {
     }
 
     server.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_outbound_command_emits_warning_and_keeps_writer_alive() {
+    let (listener, socket_path, _dir) = bind_test_socket("oversized-outbound-warn-test");
+
+    let (warnings, _guard) = install_warn_capture();
+    let oversized_message = "x".repeat(MAX_LINE_BYTES + 1);
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        // Consume the framed-mode hello.
+        let mut len = [0_u8; 4];
+        tokio::io::AsyncReadExt::read_exact(&mut stream, &mut len)
+            .await
+            .unwrap();
+        assert_eq!(u32::from_be_bytes(len), 0);
+
+        tokio::io::AsyncReadExt::read_exact(&mut stream, &mut len)
+            .await
+            .unwrap();
+        let len = u32::from_be_bytes(len) as usize;
+        let mut payload = vec![0_u8; len];
+        tokio::io::AsyncReadExt::read_exact(&mut stream, &mut payload)
+            .await
+            .unwrap();
+        assert!(
+            std::str::from_utf8(&payload)
+                .unwrap()
+                .contains(r#""type":"get_state""#),
+            "writer must keep running after dropping the oversized command"
+        );
+    });
+
+    let mut client = Client::connect(&socket_path).await.unwrap();
+    client
+        .send(&Command::Prompt {
+            id: None,
+            message: oversized_message,
+            streaming_behavior: None,
+        })
+        .await
+        .unwrap();
+    client.send(&Command::GetState { id: None }).await.unwrap();
+
+    server.await.unwrap();
+    let captured = warnings.lock().unwrap();
+    assert_eq!(
+        oversized_outbound_warn_count(&captured),
+        1,
+        "dropping one oversized outbound command must emit exactly one tracing::warn! (#1125); \
+         captured events: {captured:?}"
+    );
 }
 
 #[tokio::test]
