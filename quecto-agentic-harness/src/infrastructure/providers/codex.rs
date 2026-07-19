@@ -315,7 +315,7 @@ impl CodexProvider {
 
     /// Parse a non-streaming Responses API response.
     #[cfg(test)]
-    fn parse_response(body: &serde_json::Value) -> Result<LlmResponse, DomainError> {
+    fn parse_response(body: &serde_json::Value, model: &str) -> Result<LlmResponse, DomainError> {
         let output = body["output"]
             .as_array()
             .ok_or_else(|| DomainError::Provider("missing output in response".into()))?;
@@ -354,9 +354,9 @@ impl CodexProvider {
             }
         }
 
-        let usage = body["usage"]
-            .as_object()
-            .map(crate::infrastructure::providers::usage::parse_codex_usage);
+        let usage = body["usage"].as_object().map(|u| {
+            crate::infrastructure::providers::usage::parse_codex_usage_for_model(u, model)
+        });
 
         Ok(LlmResponse {
             content,
@@ -368,8 +368,18 @@ impl CodexProvider {
     }
 
     /// Parse SSE stream from the Responses API and assemble a complete response.
-    fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
-        let mut acc = SseAccumulator::default();
+    fn parse_sse_response_for_model(raw: &str, model: &str) -> Result<LlmResponse, DomainError> {
+        Self::parse_sse_response_inner(raw, Some(model.to_string()))
+    }
+
+    fn parse_sse_response_inner(
+        raw: &str,
+        model: Option<String>,
+    ) -> Result<LlmResponse, DomainError> {
+        let mut acc = SseAccumulator {
+            model,
+            ..SseAccumulator::default()
+        };
 
         for line in raw.lines() {
             let line = line.trim();
@@ -465,7 +475,7 @@ impl CodexProvider {
     /// Public accessor for `parse_sse_response` (for BDD/integration tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn parse_sse_response_public(raw: &str) -> Result<LlmResponse, DomainError> {
-        Self::parse_sse_response(raw)
+        Self::parse_sse_response_for_model(raw, "gpt-5.3-codex")
     }
 }
 
@@ -484,6 +494,7 @@ struct SseAccumulator {
     /// Maps SSE `output_index` to the index in `tool_calls`.
     output_index_to_tool: HashMap<usize, usize>,
     usage: Option<UsageInfo>,
+    model: Option<String>,
 }
 
 impl SseAccumulator {
@@ -507,9 +518,10 @@ impl SseAccumulator {
             }
             Some("response.completed") => {
                 if let Some(resp) = event.get("response") {
-                    self.usage = resp["usage"]
-                        .as_object()
-                        .map(crate::infrastructure::providers::usage::parse_codex_usage);
+                    self.usage = resp["usage"].as_object().map(|u| match self.model.as_deref() {
+                        Some(model) => crate::infrastructure::providers::usage::parse_codex_usage_for_model(u, model),
+                        None => crate::infrastructure::providers::usage::parse_codex_usage(u),
+                    });
                 }
             }
             _ => {}
@@ -559,6 +571,7 @@ impl LlmProvider for CodexProvider {
             return Box::pin(async move { Err(err) });
         }
 
+        let model = request.model.to_string();
         let body = Self::build_request_body(&request);
         let url = self.responses_url();
 
@@ -589,7 +602,7 @@ impl LlmProvider for CodexProvider {
                 .await
                 .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
 
-            Self::parse_sse_response(&raw)
+            Self::parse_sse_response_for_model(&raw, &model)
         })
     }
 

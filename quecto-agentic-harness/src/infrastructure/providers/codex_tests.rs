@@ -301,7 +301,7 @@ data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":
 data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":3}}}
 data: [DONE]
 "#;
-    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    let resp = CodexProvider::parse_sse_response_for_model(sse, "gpt-5.3-codex").unwrap();
     assert!(resp.content.is_none());
     assert_eq!(resp.tool_calls.len(), 1);
     assert_eq!(resp.tool_calls[0].id, "call_x");
@@ -318,7 +318,7 @@ data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":
 data: {"type":"response.function_call_arguments.delta","output_index":2,"delta":"{\"content\":\"hi\"}"}
 data: [DONE]
 "#;
-    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    let resp = CodexProvider::parse_sse_response_for_model(sse, "gpt-5.3-codex").unwrap();
     assert_eq!(resp.tool_calls.len(), 2);
     assert_eq!(resp.tool_calls[0].name, "read");
     assert_eq!(resp.tool_calls[0].arguments, r#"{"path":"a.rs"}"#);
@@ -345,7 +345,7 @@ fn test_parse_response_text() {
             }
         }
     });
-    let resp = CodexProvider::parse_response(&body).unwrap();
+    let resp = CodexProvider::parse_response(&body, "gpt-5.3-codex").unwrap();
     assert_eq!(resp.content.unwrap(), "Hello!");
     assert!(resp.tool_calls.is_empty());
     let usage = resp.usage.unwrap();
@@ -370,7 +370,7 @@ fn test_parse_response_without_cached_token_details() {
             "output_tokens": 5
         }
     });
-    let resp = CodexProvider::parse_response(&body).unwrap();
+    let resp = CodexProvider::parse_response(&body, "gpt-5.3-codex").unwrap();
     let usage = resp.usage.unwrap();
     assert_eq!(usage.cache_read_tokens, None);
 }
@@ -387,7 +387,7 @@ fn test_parse_response_tool_call() {
             }
         ]
     });
-    let resp = CodexProvider::parse_response(&body).unwrap();
+    let resp = CodexProvider::parse_response(&body, "gpt-5.3-codex").unwrap();
     assert!(resp.content.is_none());
     assert_eq!(resp.tool_calls.len(), 1);
     assert_eq!(resp.tool_calls[0].id, "call_abc");
@@ -402,7 +402,7 @@ data: {"type":"response.output_text.delta","delta":" world"}
 data: {"type":"response.completed","response":{"usage":{"input_tokens":8,"output_tokens":2}}}
 data: [DONE]
 "#;
-    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    let resp = CodexProvider::parse_sse_response_for_model(sse, "gpt-5.3-codex").unwrap();
     assert_eq!(resp.content.unwrap(), "Hello world");
     let usage = resp.usage.unwrap();
     assert_eq!(usage.prompt_tokens, 8);
@@ -415,7 +415,7 @@ fn test_parse_sse_text_response_without_cached_token_details() {
 data: {"type":"response.completed","response":{"usage":{"input_tokens":8,"output_tokens":2}}}
 data: [DONE]
 "#;
-    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    let resp = CodexProvider::parse_sse_response_for_model(sse, "gpt-5.3-codex").unwrap();
     let usage = resp.usage.unwrap();
     assert_eq!(usage.cache_read_tokens, None);
 }
@@ -429,7 +429,7 @@ data: {"type":"response.function_call_arguments.done","output_index":0,"argument
 data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":3}}}
 data: [DONE]
 "#;
-    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    let resp = CodexProvider::parse_sse_response_for_model(sse, "gpt-5.3-codex").unwrap();
     assert!(resp.content.is_none());
     assert_eq!(resp.tool_calls.len(), 1);
     assert_eq!(resp.tool_calls[0].id, "call_x");

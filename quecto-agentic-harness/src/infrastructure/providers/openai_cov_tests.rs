@@ -139,14 +139,14 @@ fn build_request_body_leading_only_system_unchanged() {
 #[test]
 fn parse_response_missing_choices_is_error() {
     let body = serde_json::json!({ "usage": {} });
-    let err = OpenAiProvider::parse_response(&body).unwrap_err();
+    let err = OpenAiProvider::parse_response(&body, "gpt-4").unwrap_err();
     assert!(err.to_string().contains("missing choices"));
 }
 
 #[test]
 fn parse_response_empty_choices_is_error() {
     let body = serde_json::json!({ "choices": [] });
-    let err = OpenAiProvider::parse_response(&body).unwrap_err();
+    let err = OpenAiProvider::parse_response(&body, "gpt-4").unwrap_err();
     assert!(err.to_string().contains("empty choices"));
 }
 
@@ -165,7 +165,7 @@ fn parse_response_extracts_tool_calls_and_usage() {
         }],
         "usage": { "prompt_tokens": 12, "completion_tokens": 4 }
     });
-    let resp = OpenAiProvider::parse_response(&body).unwrap();
+    let resp = OpenAiProvider::parse_response(&body, "gpt-4").unwrap();
     assert!(resp.content.is_none());
     assert_eq!(resp.tool_calls.len(), 1);
     assert_eq!(resp.tool_calls[0].id, "c1");
@@ -180,7 +180,7 @@ fn parse_response_text_without_usage() {
     let body = serde_json::json!({
         "choices": [{ "message": { "role": "assistant", "content": "hello" } }]
     });
-    let resp = OpenAiProvider::parse_response(&body).unwrap();
+    let resp = OpenAiProvider::parse_response(&body, "gpt-4").unwrap();
     assert_eq!(resp.content.as_deref(), Some("hello"));
     assert!(resp.tool_calls.is_empty());
     assert!(resp.usage.is_none());
@@ -260,7 +260,7 @@ data: not-json\n\
 data: {\"id\":\"x\"}\n\
 data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\
 data: [DONE]\n";
-    let resp = OpenAiProvider::parse_sse_response(sse).unwrap();
+    let resp = OpenAiProvider::parse_sse_response_for_model(sse, "gpt-4").unwrap();
     assert_eq!(resp.content.as_deref(), Some("ok"));
 }
 
@@ -271,7 +271,7 @@ fn parse_sse_response_extracts_usage_chunk() {
         "data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n",
         "data: [DONE]\n\n",
     );
-    let response = OpenAiProvider::parse_sse_response(sse).unwrap();
+    let response = OpenAiProvider::parse_sse_response_for_model(sse, "gpt-4").unwrap();
     assert_eq!(response.content.as_deref(), Some("Hello"));
     let usage = response.usage.expect("usage chunk should be captured");
     assert_eq!(usage.prompt_tokens, 10);

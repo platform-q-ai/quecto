@@ -223,7 +223,7 @@ fn build_request_body_includes_tools_array_and_cache_key() {
 #[test]
 fn parse_response_missing_output_is_error() {
     let body = serde_json::json!({ "usage": { "input_tokens": 1, "output_tokens": 1 } });
-    let err = CodexProvider::parse_response(&body).unwrap_err();
+    let err = CodexProvider::parse_response(&body, "gpt-5.3-codex").unwrap_err();
     assert!(err.to_string().contains("missing output"));
 }
 
@@ -235,7 +235,7 @@ fn parse_response_skips_reasoning_items() {
             { "type": "message", "content": [{ "type": "output_text", "text": "Done" }] },
         ]
     });
-    let resp = CodexProvider::parse_response(&body).unwrap();
+    let resp = CodexProvider::parse_response(&body, "gpt-5.3-codex").unwrap();
     assert_eq!(resp.content.unwrap(), "Done");
     assert!(resp.usage.is_none());
 }
@@ -254,7 +254,7 @@ fn parse_response_concatenates_multiple_output_text_parts() {
             ] }
         ]
     });
-    let resp = CodexProvider::parse_response(&body).unwrap();
+    let resp = CodexProvider::parse_response(&body, "gpt-5.3-codex").unwrap();
     assert_eq!(resp.content.unwrap(), "Hello world");
     assert!(resp.tool_calls.is_empty());
 }
@@ -270,7 +270,7 @@ fn parse_sse_response_skips_non_data_lines() {
                \n\
                data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\
                data: [DONE]\n";
-    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    let resp = CodexProvider::parse_sse_response_for_model(sse, "gpt-5.3-codex").unwrap();
     assert_eq!(resp.content.unwrap(), "Hi");
 }
 

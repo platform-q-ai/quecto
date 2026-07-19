@@ -13,7 +13,14 @@ const MAX_TOOL_CALLS: usize = 128;
 ///
 /// Captures content deltas, tool-call deltas, and the final `usage` chunk
 /// (when `stream_options.include_usage` is enabled).
-pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
+pub(crate) fn parse_sse_response_for_model(
+    raw: &str,
+    model: &str,
+) -> Result<LlmResponse, DomainError> {
+    parse_sse_response_inner(raw, Some(model))
+}
+
+fn parse_sse_response_inner(raw: &str, model: Option<&str>) -> Result<LlmResponse, DomainError> {
     let mut content = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut usage: Option<UsageInfo> = None;
@@ -39,9 +46,12 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
         }
 
         if let Some(u) = chunk.get("usage").and_then(|v| v.as_object()) {
-            usage = Some(crate::infrastructure::providers::usage::parse_openai_usage(
-                u,
-            ));
+            usage = Some(match model {
+                Some(model) => {
+                    crate::infrastructure::providers::usage::parse_openai_usage_for_model(u, model)
+                }
+                None => crate::infrastructure::providers::usage::parse_openai_usage(u),
+            });
         }
     }
 
@@ -105,7 +115,7 @@ mod tests {
 data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\
 data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\
 data: [DONE]\n";
-        let result = parse_sse_response(sse).unwrap();
+        let result = parse_sse_response_for_model(sse, "gpt-4").unwrap();
         assert_eq!(result.content.as_deref(), Some("Hello world"));
         assert!(result.tool_calls.is_empty());
     }
@@ -117,7 +127,7 @@ data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"cmd\\\"\"}}]}}]}\n\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\": \\\"ls\\\"}\"}}]}}]}\n\
 data: [DONE]\n";
-        let result = parse_sse_response(sse).unwrap();
+        let result = parse_sse_response_for_model(sse, "gpt-4").unwrap();
         assert!(result.content.is_none());
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].id, "call_1");
@@ -128,7 +138,7 @@ data: [DONE]\n";
     #[test]
     fn test_parse_sse_empty() {
         let sse = "data: [DONE]\n";
-        let result = parse_sse_response(sse).unwrap();
+        let result = parse_sse_response_for_model(sse, "gpt-4").unwrap();
         assert!(result.content.is_none());
         assert!(result.tool_calls.is_empty());
     }
@@ -140,7 +150,7 @@ data: [DONE]\n";
             "data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n",
             "data: [DONE]\n\n",
         );
-        let response = parse_sse_response(sse).unwrap();
+        let response = parse_sse_response_for_model(sse, "gpt-4").unwrap();
         assert_eq!(response.content.as_deref(), Some("Hello"));
         let usage = response.usage.expect("usage chunk should be captured");
         assert_eq!(usage.prompt_tokens, 10);

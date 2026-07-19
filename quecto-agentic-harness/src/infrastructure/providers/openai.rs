@@ -160,7 +160,7 @@ impl OpenAiProvider {
     }
 
     /// Parse the OpenAI response JSON into our domain LlmResponse.
-    fn parse_response(body: &serde_json::Value) -> Result<LlmResponse, DomainError> {
+    fn parse_response(body: &serde_json::Value, model: &str) -> Result<LlmResponse, DomainError> {
         let choices = body["choices"]
             .as_array()
             .ok_or_else(|| DomainError::Provider("missing choices in response".to_string()))?;
@@ -198,7 +198,9 @@ impl OpenAiProvider {
         // that per-path behaviour after consolidating onto the shared parser.
         let usage = body["usage"]
             .as_object()
-            .map(crate::infrastructure::providers::usage::parse_openai_usage)
+            .map(|u| {
+                crate::infrastructure::providers::usage::parse_openai_usage_for_model(u, model)
+            })
             .map(|u| UsageInfo {
                 context_tokens: None,
                 ..u
@@ -220,6 +222,7 @@ impl OpenAiProvider {
         &self,
         body: serde_json::Value,
         url: &str,
+        model: &str,
     ) -> Result<LlmResponse, DomainError> {
         let request_builder = self
             .client
@@ -250,11 +253,11 @@ impl OpenAiProvider {
             .await
             .map_err(|e| DomainError::Provider(format!("failed to read stream: {}", e)))?;
 
-        Self::parse_sse_response(&full)
+        Self::parse_sse_response_for_model(&full, model)
     }
 
-    fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
-        openai_sse_parser::parse_sse_response(raw)
+    fn parse_sse_response_for_model(raw: &str, model: &str) -> Result<LlmResponse, DomainError> {
+        openai_sse_parser::parse_sse_response_for_model(raw, model)
     }
 
     /// Consume SSE body incrementally, emitting `StreamEvent`s per delta.
@@ -315,6 +318,7 @@ impl LlmProvider for OpenAiProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        let model = request.model.to_string();
         let body = Self::build_request_body(&request);
         let url = format!("{}/chat/completions", self.api_base);
 
@@ -352,7 +356,7 @@ impl LlmProvider for OpenAiProvider {
                     DomainError::Provider(format!("failed to parse response JSON: {}", e))
                 })?;
 
-            Self::parse_response(&response_json)
+            Self::parse_response(&response_json, &model)
         })
     }
 
@@ -366,8 +370,9 @@ impl LlmProvider for OpenAiProvider {
         // final usage chunk so we report exact context tokens instead of a
         // heuristic estimate.
         body["stream_options"] = serde_json::json!({ "include_usage": true });
+        let model = request.model.to_string();
         let url = format!("{}/chat/completions", self.api_base);
-        Box::pin(async move { self.stream_chat_with_body(body, &url).await })
+        Box::pin(async move { self.stream_chat_with_body(body, &url, &model).await })
     }
 
     fn chat_stream_incremental(
@@ -591,7 +596,7 @@ mod tests {
 data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\
 data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\
 data: [DONE]\n";
-        let result = openai_sse_parser::parse_sse_response(sse).unwrap();
+        let result = openai_sse_parser::parse_sse_response_for_model(sse, "gpt-4").unwrap();
         assert_eq!(result.content.as_deref(), Some("Hello world"));
         assert!(result.tool_calls.is_empty());
     }
@@ -603,7 +608,7 @@ data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"cmd\\\"\"}}]}}]}\n\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\": \\\"ls\\\"}\"}}]}}]}\n\
 data: [DONE]\n";
-        let result = openai_sse_parser::parse_sse_response(sse).unwrap();
+        let result = openai_sse_parser::parse_sse_response_for_model(sse, "gpt-4").unwrap();
         assert!(result.content.is_none());
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].id, "call_1");
@@ -614,7 +619,7 @@ data: [DONE]\n";
     #[test]
     fn test_parse_sse_empty() {
         let sse = "data: [DONE]\n";
-        let result = openai_sse_parser::parse_sse_response(sse).unwrap();
+        let result = openai_sse_parser::parse_sse_response_for_model(sse, "gpt-4").unwrap();
         assert!(result.content.is_none());
         assert!(result.tool_calls.is_empty());
     }

@@ -14,6 +14,7 @@ pub(crate) struct OpenAiSseHandler {
     content: String,
     tool_calls: Vec<ToolCall>,
     usage: Option<UsageInfo>,
+    model: Option<String>,
     /// Reused sink for `apply_delta`'s content extraction (which we ignore
     /// here, since content is accumulated into `content` directly).
     delta_scratch: String,
@@ -21,10 +22,15 @@ pub(crate) struct OpenAiSseHandler {
 
 impl OpenAiSseHandler {
     fn new() -> Self {
+        Self::new_for_model(None)
+    }
+
+    fn new_for_model(model: Option<String>) -> Self {
         Self {
             content: String::new(),
             tool_calls: Vec::new(),
             usage: None,
+            model,
             delta_scratch: String::new(),
         }
     }
@@ -62,9 +68,14 @@ impl SseHandler for OpenAiSseHandler {
             // Final usage chunk (requested via stream_options.include_usage).
             // Emitted with an empty `choices` array and a populated `usage`.
             if let Some(usage) = chunk.get("usage").and_then(|u| u.as_object()) {
-                self.usage = Some(crate::infrastructure::providers::usage::parse_openai_usage(
-                    usage,
-                ));
+                self.usage = Some(match self.model.as_deref() {
+                    Some(model) => {
+                        crate::infrastructure::providers::usage::parse_openai_usage_for_model(
+                            usage, model,
+                        )
+                    }
+                    None => crate::infrastructure::providers::usage::parse_openai_usage(usage),
+                });
             }
             if let Some(choices) = chunk.get("choices").and_then(|v| v.as_array()) {
                 // Content is accumulated directly into `self.content` above, so
