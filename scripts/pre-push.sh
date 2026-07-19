@@ -164,15 +164,20 @@ fi
 
 COV_FAIL=0
 
+# Test-only apparatus is excluded from coverage: it exists to *drive* tests
+# (headless TUI harness, warn capture, provider/test fixtures), so counting its
+# unexercised helpers against production coverage only inflates the denominator.
+COV_IGNORE_REGEX='(tui_harness|test_support|warn_capture)'
+
 echo "  quecto (core)..."
-COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto-agentic-harness --fail-under-functions "$COV_THRESHOLD" 2>&1) || {
+COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto-agentic-harness --ignore-filename-regex "$COV_IGNORE_REGEX" --fail-under-functions "$COV_THRESHOLD" 2>&1) || {
     echo -e "  ${RED}FAIL${NC}: quecto function coverage below ${COV_THRESHOLD}%"
     COV_FAIL=1
 }
 echo "$COV_OUT_QUECTO" | tail -3
 
 echo "  quecto-tui..."
-COV_OUT_TUI=$(cargo llvm-cov --lib -p quecto-tui --fail-under-functions "$COV_THRESHOLD" 2>&1) || {
+COV_OUT_TUI=$(cargo llvm-cov --lib -p quecto-tui --ignore-filename-regex "$COV_IGNORE_REGEX" --fail-under-functions "$COV_THRESHOLD" 2>&1) || {
     echo -e "  ${RED}FAIL${NC}: quecto-tui function coverage below ${COV_THRESHOLD}%"
     COV_FAIL=1
 }

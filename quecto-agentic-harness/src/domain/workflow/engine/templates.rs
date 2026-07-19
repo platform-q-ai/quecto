@@ -183,3 +183,34 @@ mod tests {
         assert!(feature().steps.iter().any(|s| s.key == "version_bump"));
     }
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    #[test]
+    fn phase_display_name_maps_known_phases_and_borrows_unknown() {
+        assert_eq!(phase_display_name("red"), "RED");
+        assert_eq!(phase_display_name("green"), "GREEN");
+        assert_eq!(phase_display_name("refactor"), "REFACTOR");
+        assert_eq!(phase_display_name("ci_cd"), "CI/CD");
+        assert_eq!(phase_display_name("review"), "REVIEW");
+        assert_eq!(phase_display_name("security"), "security");
+    }
+
+    #[test]
+    fn parse_embedded_template_injects_id_and_accepts_json_extension_references() {
+        let template = parse_embedded_template(
+            "custom",
+            r#"{"label":"Custom","description":"desc","steps":["steps/shared.json"]}"#,
+            &[(
+                "steps/shared",
+                r#"{"key":"shared","label":"Shared","phase":"green","guidance":"from shared"}"#,
+            )],
+        );
+        assert_eq!(template.id, "custom");
+        assert_eq!(template.steps.len(), 1);
+        assert_eq!(template.steps[0].key, "shared");
+        assert_eq!(template.steps[0].guidance.as_deref(), Some("from shared"));
+    }
+}

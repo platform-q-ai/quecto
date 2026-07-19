@@ -332,3 +332,59 @@ fn openai_streaming_task_clone_preserves_all_fields() {
     assert_eq!(cloned.api_base, "https://openai.example");
     assert_eq!(cloned.account_id, Some("acct-42".to_string()));
 }
+
+#[test]
+fn constructor_defaults_base_and_name_and_omits_oauth_when_disabled() {
+    let provider = OpenAiProvider::with_client_and_name_and_oauth_headers(
+        "compat",
+        jwt_with_account("acct-disabled"),
+        None,
+        reqwest::Client::new(),
+        false,
+    );
+    assert_eq!(provider.name(), "compat");
+    assert_eq!(provider.api_base, "https://api.openai.com/v1");
+    assert_eq!(provider.account_id, None);
+    let request = provider
+        .apply_auth_headers(provider.client.get("https://example.invalid"))
+        .build()
+        .unwrap();
+    assert!(request.headers().get("chatgpt-account-id").is_none());
+    assert_eq!(
+        request.headers()["authorization"],
+        format!("Bearer {}", provider.api_key)
+    );
+}
+
+#[test]
+fn build_request_body_invalid_tool_schema_defaults_to_null_parameters() {
+    let messages = vec![Message::user("hi")];
+    let tools = vec![ToolDefinition {
+        name: "bad".into(),
+        description: "bad schema".into(),
+        parameters_schema: "{not json".into(),
+    }];
+    let body = OpenAiProvider::build_request_body(&req(&messages, &tools, "gpt-5.2"));
+    assert_eq!(body["tools"][0]["function"]["name"], "bad");
+    assert!(body["tools"][0]["function"]["parameters"].is_null());
+}
+
+#[tokio::test]
+async fn chat_stream_incremental_reports_send_errors_as_stream_event() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+    let provider = OpenAiProvider::new("sk-test".into(), Some(url));
+    let messages = vec![Message::user("hi")];
+    let mut rx = provider
+        .chat_stream_incremental(req(&messages, &[], "gpt-test"))
+        .await;
+    let event = rx
+        .recv()
+        .await
+        .expect("incremental stream should report the connection error");
+    match event {
+        StreamEvent::Error(text) => assert!(text.contains("HTTP error"), "{text}"),
+        other => panic!("expected error event, got {other:?}"),
+    }
+}

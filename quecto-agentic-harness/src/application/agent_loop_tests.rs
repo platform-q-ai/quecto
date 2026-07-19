@@ -591,3 +591,32 @@ mod context_tokens_tests;
 mod progress_tests;
 #[path = "agent_loop_931_tests.rs"]
 mod retry_malformed_tests;
+
+#[test]
+fn new_threads_context_knobs_and_model_window_into_observable_budget() {
+    let provider = Arc::new(MockProvider::new(vec![]));
+    let registry = MockRegistry::new();
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        pin_recent_turns: 7,
+        context_collapse_after_messages: 11,
+        max_context_tokens: 10_000,
+        model_context_window: Some(4_096),
+        max_tokens: 512,
+        ..test_config(provider, Box::new(registry))
+    });
+    assert_eq!(agent.context_knob_snapshot(), (7, 11));
+    assert_eq!(agent.max_context_tokens(), 4_096);
+    let debug = format!("{agent:?}");
+    assert!(debug.contains("test-model"));
+    assert!(debug.contains("max_tool_iterations"));
+    assert!(!debug.contains("temperature"));
+}
+
+#[test]
+fn take_durable_prefix_dirty_consumes_latch_once() {
+    let (agent, _) = make_agent(vec![], vec![]);
+    assert!(!agent.take_durable_prefix_dirty());
+    agent.latch_durable_prefix_dirty();
+    assert!(agent.take_durable_prefix_dirty());
+    assert!(!agent.take_durable_prefix_dirty());
+}

@@ -243,3 +243,100 @@ async fn replacing_history_compacts_to_the_requested_messages() {
     assert_eq!(loaded.messages[0].content, "message 4");
     assert_eq!(loaded.messages[1].content, "message 5");
 }
+
+#[tokio::test]
+async fn load_malformed_json_returns_parse_error() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    let dir = tmp.path().join("sessions");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    tokio::fs::write(dir.join("bad_json.json"), b"not-json")
+        .await
+        .unwrap();
+
+    let err = store.load("bad:json").await.unwrap_err();
+    assert!(err.to_string().contains("failed to parse session"));
+}
+
+#[tokio::test]
+async fn list_skips_malformed_and_non_json_files() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    let mut good = Session::new("ok:list");
+    good.messages
+        .push(make_message(Role::User, "visible title"));
+    store.save(&good).await.unwrap();
+
+    let dir = tmp.path().join("sessions");
+    tokio::fs::write(dir.join("bad.json"), b"not-json")
+        .await
+        .unwrap();
+    tokio::fs::write(dir.join("ignored.txt"), b"not-json")
+        .await
+        .unwrap();
+
+    let summaries = store.list(None).await.unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].key, "ok:list");
+    assert_eq!(summaries[0].title, "visible title");
+}
+
+#[tokio::test]
+async fn load_legacy_snapshot_json_migrates_to_session() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    let dir = tmp.path().join("sessions");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    tokio::fs::write(
+        dir.join("legacy_key.json"),
+        br#"{"key":"legacy:key","messages":[{"role":"assistant","content":"old","tool_calls":[{"id":"c1","name":"n","arguments":"{}"}]}]}"#,
+    )
+    .await
+    .unwrap();
+
+    let loaded = store.load("legacy:key").await.unwrap().unwrap();
+    assert_eq!(loaded.key, "legacy:key");
+    assert_eq!(loaded.messages.len(), 1);
+    assert_eq!(loaded.messages[0].role, Role::Assistant);
+    assert_eq!(loaded.messages[0].tool_calls.len(), 1);
+}
+
+#[tokio::test]
+async fn append_or_compact_rewrites_legacy_snapshot_as_jsonl() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    let dir = tmp.path().join("sessions");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    let path = dir.join("legacy_rewrite.json");
+    tokio::fs::write(
+        &path,
+        br#"{"key":"legacy:rewrite","messages":[{"role":"user","content":"old"}]}"#,
+    )
+    .await
+    .unwrap();
+
+    let mut session = Session::new("legacy:rewrite");
+    session.messages.push(make_message(Role::User, "new"));
+    store.save(&session).await.unwrap();
+
+    let raw = tokio::fs::read_to_string(&path).await.unwrap();
+    assert!(raw.starts_with(r#"{"type":"snapshot""#), "raw={raw}");
+    let loaded = store.load("legacy:rewrite").await.unwrap().unwrap();
+    assert_eq!(loaded.messages[0].content, "new");
+}
+
+#[tokio::test]
+async fn save_clean_delta_with_zero_watermark_compacts() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    let messages = vec![make_message(Role::User, "clean compact")];
+    store
+        .save_clean_delta("clean:zero", &messages, 0, None)
+        .await
+        .unwrap();
+    let raw = tokio::fs::read_to_string(tmp.path().join("sessions/clean_zero.json"))
+        .await
+        .unwrap();
+    assert!(raw.starts_with(r#"{"type":"snapshot""#), "raw={raw}");
+}

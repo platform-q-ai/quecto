@@ -569,3 +569,7 @@ mod subagent_snapshot;
 #[cfg(test)]
 #[path = "subagent_registry_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "subagent_registry_cov_tests.rs"]
+mod cov_tests;

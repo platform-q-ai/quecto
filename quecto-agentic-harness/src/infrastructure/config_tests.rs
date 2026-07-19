@@ -695,3 +695,55 @@ fn test_legacy_config_with_removed_sections_still_deserializes() {
     let config: Config = serde_json::from_str(json).unwrap();
     assert_eq!(config.agents.defaults.model, "gpt-4");
 }
+
+#[test]
+fn test_apply_env_overrides_context_temperature_workspace_and_brave_key() {
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    write!(tmp, "{{}}").unwrap();
+    let mut env = HashMap::new();
+    env.insert("QUECTO_AGENTS_DEFAULTS_TEMPERATURE".into(), "0.25".into());
+    env.insert(
+        "QUECTO_AGENTS_DEFAULTS_WORKSPACE".into(),
+        "/tmp/custom-ws".into(),
+    );
+    env.insert(
+        "QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES".into(),
+        "17".into(),
+    );
+    env.insert("QUECTO_MAX_CONTEXT_TOKENS".into(), "12345".into());
+    env.insert("ANTHROPIC_API_KEY".into(), "anthropic-secret".into());
+    env.insert(
+        "QUECTO_TOOLS_WEB_BRAVE_API_KEY".into(),
+        "brave-secret".into(),
+    );
+    let config = Config::load_with_env(tmp.path().to_str().unwrap(), &env).unwrap();
+    assert!((config.agents.defaults.temperature - 0.25).abs() < f32::EPSILON);
+    assert_eq!(config.agents.defaults.workspace, "/tmp/custom-ws");
+    assert_eq!(config.agents.defaults.max_session_messages, 17);
+    assert_eq!(config.agents.defaults.max_context_tokens, 12_345);
+    assert_eq!(config.providers.anthropic.api_key, "anthropic-secret");
+    assert_eq!(config.tools.web.brave.api_key, "brave-secret");
+}
+
+#[test]
+fn test_web_tool_defaults_and_debug_redact_secrets() {
+    let config: Config = serde_json::from_str(r#"{"tools":{"web":{"fetch":{"enabled":true},"brave":{"enabled":true,"api_key":"brave-secret"}}},"providers":{"openai_compatible":{"endpoints":[{"prefix":"local","api_key":"endpoint-secret","api_base":"http://127.0.0.1:9999/v1"}]}}}"#).unwrap();
+    assert!(config.tools.web.fetch.enabled);
+    assert_eq!(config.tools.web.fetch.max_response_kb, 32);
+    assert_eq!(config.tools.web.brave.max_results, 5);
+    let brave_debug = format!("{:?}", config.tools.web.brave);
+    assert!(brave_debug.contains("[REDACTED]"));
+    assert!(!brave_debug.contains("brave-secret"));
+    let compat_debug = format!("{:?}", config.providers.openai_compatible);
+    assert!(compat_debug.contains("local"));
+    assert!(!compat_debug.contains("endpoint-secret"));
+}
+
+#[test]
+fn test_load_config_io_error_reports_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = Config::load(dir.path().to_str().unwrap()).unwrap_err();
+    let text = err.to_string();
+    assert!(text.contains("failed to read config file"), "{text}");
+    assert!(text.contains(dir.path().to_str().unwrap()), "{text}");
+}

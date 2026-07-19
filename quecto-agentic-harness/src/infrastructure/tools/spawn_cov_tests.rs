@@ -32,6 +32,90 @@ fn inherited_runtime_config_path_is_callable() {
     }
 }
 
+#[test]
+fn effective_config_path_prefers_explicit_over_inherited() {
+    let explicit = PathBuf::from("explicit.toml");
+    let inherited = PathBuf::from("inherited.toml");
+    assert_eq!(
+        effective_config_path(Some(&explicit), Some(inherited.clone())).as_deref(),
+        Some(explicit.as_path())
+    );
+    assert_eq!(
+        effective_config_path(None, Some(inherited.clone())).as_deref(),
+        Some(inherited.as_path())
+    );
+    assert!(effective_config_path(None, None).is_none());
+}
+
+#[test]
+fn parse_disable_tools_rejects_malformed_values() {
+    let err = parse_disable_tools(&serde_json::json!({"read_only":"yes"})).unwrap_err();
+    assert_eq!(err, "read_only must be a boolean");
+    let err = parse_disable_tools(&serde_json::json!({"disable_tools":"write"})).unwrap_err();
+    assert_eq!(err, "disable_tools must be an array of tool names");
+    let err = parse_disable_tools(&serde_json::json!({"disable_tools":["write",7]})).unwrap_err();
+    assert_eq!(err, "disable_tools entries must be strings (tool names)");
+}
+
+#[test]
+fn parse_disable_tools_read_only_first_and_deduped() {
+    let tools = parse_disable_tools(
+        &serde_json::json!({"read_only":true,"disable_tools":["edit","grep","write"]}),
+    )
+    .unwrap();
+    assert_eq!(tools, vec!["write", "edit", "grep"]);
+}
+
+#[test]
+fn validate_config_path_rejects_parent_dir_component() {
+    let err = validate_config_path("configs/../secret.toml").unwrap_err();
+    assert!(err.contains("contains '..'"));
+    assert_eq!(
+        validate_config_path("configs/child.toml").unwrap(),
+        PathBuf::from("configs/child.toml")
+    );
+}
+
+#[tokio::test]
+async fn execute_parse_error_returns_llm_addressable_tool_error() {
+    let tool = SpawnTool::new(vec![], true);
+    let result = tool.execute(r#"{"read_only":"yes"}"#).await.unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("read_only must be a boolean"));
+}
+
+#[tokio::test]
+async fn stub_spawn_duplicate_id_replaces_existing_entry_without_panic() {
+    let tool = SpawnTool::new(vec![], true);
+    tool.execute(r#"{"agent_id":"dup"}"#).await.unwrap();
+    tool.execute(r#"{"agent_id":"dup","task":"now busy"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry.lock().unwrap();
+    assert_eq!(registry.len(), 1);
+    assert_eq!(
+        registry.get("dup").unwrap().status,
+        SubagentStatus::Starting
+    );
+}
+
+#[tokio::test]
+async fn launch_uds_agent_duplicate_id_fails_before_spawning() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    registry.lock().unwrap().insert(
+        "taken".to_string(),
+        SubagentEntry::new(PathBuf::from("/tmp/taken.sock"), 0),
+    );
+    let tool = SpawnTool::with_base_dir(vec![], true, dir.path().to_path_buf())
+        .with_socket_dir(dir.path().to_path_buf())
+        .with_registry(registry);
+    let cfg = tool.parse_args(r#"{"agent_id":"taken"}"#).unwrap();
+    let result = tool.launch_uds_agent(&cfg).await.unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("already running"));
+}
+
 // --- write_private_new error branch (non-AlreadyExists) ---
 
 #[test]
