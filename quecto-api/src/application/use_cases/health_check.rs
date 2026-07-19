@@ -16,55 +16,18 @@ pub fn execute(gateway: &dyn AgentGateway) -> HealthCheckResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::agent_gateway::{AgentCommand, EventSubscriber};
-    use crate::domain::error::ApiError;
-    use crate::domain::event::AgentEvent;
-    use std::future::Future;
-    use std::pin::Pin;
-
-    struct MockGateway {
-        connected: bool,
-    }
-
-    impl AgentGateway for MockGateway {
-        fn send(
-            &self,
-            _cmd: AgentCommand,
-        ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
-            Box::pin(async { Err(ApiError::AgentNotConnected) })
-        }
-
-        fn enqueue(
-            &self,
-            _cmd: AgentCommand,
-        ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
-            Box::pin(async { Err(ApiError::AgentNotConnected) })
-        }
-
-        fn subscribe(
-            &self,
-        ) -> Pin<Box<dyn Future<Output = Result<Box<dyn EventSubscriber>, ApiError>> + Send + '_>>
-        {
-            Box::pin(async { Err(ApiError::AgentNotConnected) })
-        }
-
-        fn is_connected(&self) -> bool {
-            self.connected
-        }
-    }
+    use crate::application::use_cases::test_support::MockGateway;
 
     #[test]
     fn healthy_when_connected() {
-        let gw = MockGateway { connected: true };
-        let result = execute(&gw);
+        let result = execute(&MockGateway::connected());
         assert!(result.healthy);
         assert!(result.agent_connected);
     }
 
     #[test]
     fn unhealthy_when_disconnected() {
-        let gw = MockGateway { connected: false };
-        let result = execute(&gw);
+        let result = execute(&MockGateway::disconnected());
         assert!(!result.healthy);
         assert!(!result.agent_connected);
     }

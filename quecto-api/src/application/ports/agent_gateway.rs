@@ -16,6 +16,14 @@ pub enum AgentCommand {
         message: String,
         streaming_behavior: Option<String>,
     },
+    /// Interrupt after the current tool, then deliver this message.
+    Steer {
+        message: String,
+    },
+    /// Deliver this message when the agent finishes the current run.
+    FollowUp {
+        message: String,
+    },
     Abort,
     GetState,
     /// #1061: history is paged — the agent returns the newest bounded page plus
@@ -43,7 +51,19 @@ pub enum AgentCommand {
         provider: Option<String>,
         model_id: Option<String>,
     },
+    /// Set the reasoning effort for subsequent turns. Validated against the
+    /// active model's provider vocabulary by the agent.
+    SetEffort {
+        effort: String,
+    },
+    /// Clear conversation history in-place without restarting the agent.
     ClearHistory,
+    /// #524: list spawned subagents and their live status.
+    GetSubagents,
+    /// List registered extensions.
+    GetExtensions,
+    /// Re-scan extension directories and reload script extensions.
+    ReloadExtensions,
 }
 
 /// Subscriber handle — receives broadcast events from the agent.

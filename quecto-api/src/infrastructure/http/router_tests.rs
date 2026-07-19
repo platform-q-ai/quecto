@@ -345,3 +345,5 @@ async fn message_handler_forwards_range_query_to_gateway() {
         other => panic!("expected ranged get_message command, got {other:?}"),
     }
 }
+
+include!("router_handler_tests.rs");

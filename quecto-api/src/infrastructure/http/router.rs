@@ -26,6 +26,15 @@ pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
     Router::new()
         .route("/health", get(health_handler::<G>))
         .route("/prompt", post(prompt_handler::<G>))
+        .route("/steer", post(steer_handler::<G>))
+        .route("/follow_up", post(follow_up_handler::<G>))
+        .route("/abort", post(abort_handler::<G>))
+        .route("/model", post(set_model_handler::<G>))
+        .route("/effort", post(set_effort_handler::<G>))
+        .route("/clear_history", post(clear_history_handler::<G>))
+        .route("/subagents", get(subagents_handler::<G>))
+        .route("/extensions", get(extensions_handler::<G>))
+        .route("/extensions/reload", post(extensions_reload_handler::<G>))
         .route("/state", get(state_handler::<G>))
         .route("/messages", get(messages_handler::<G>))
         .route("/messages/tail", get(messages_tail_handler::<G>))
@@ -160,6 +169,122 @@ async fn prompt_handler<G: AgentGateway>(
     };
 
     match use_cases::send_prompt::execute(&state.gateway, input).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+// ── Steer / Follow-up / Abort ──────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct MessageRequest {
+    message: String,
+}
+
+async fn steer_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+    Json(body): Json<MessageRequest>,
+) -> impl IntoResponse {
+    match use_cases::steer::execute(&state.gateway, body.message).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+async fn follow_up_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+    Json(body): Json<MessageRequest>,
+) -> impl IntoResponse {
+    match use_cases::follow_up::execute(&state.gateway, body.message).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+async fn abort_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+) -> impl IntoResponse {
+    match use_cases::abort::execute(&state.gateway).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+// ── Set model ──────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SetModelRequest {
+    model: Option<String>,
+    provider: Option<String>,
+    #[serde(rename = "modelId")]
+    model_id: Option<String>,
+}
+
+async fn set_model_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+    Json(body): Json<SetModelRequest>,
+) -> impl IntoResponse {
+    let input = use_cases::set_model::SetModelInput {
+        model: body.model,
+        provider: body.provider,
+        model_id: body.model_id,
+    };
+    match use_cases::set_model::execute(&state.gateway, input).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+// ── Set effort / Clear history ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SetEffortRequest {
+    effort: String,
+}
+
+async fn set_effort_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+    Json(body): Json<SetEffortRequest>,
+) -> impl IntoResponse {
+    match use_cases::set_effort::execute(&state.gateway, body.effort).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+async fn clear_history_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+) -> impl IntoResponse {
+    match use_cases::clear_history::execute(&state.gateway).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+// ── Subagents / Extensions ─────────────────────────────────────────────────────
+
+async fn subagents_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+) -> impl IntoResponse {
+    match use_cases::get_subagents::execute(&state.gateway).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+async fn extensions_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+) -> impl IntoResponse {
+    match use_cases::extensions::list(&state.gateway).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+async fn extensions_reload_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+) -> impl IntoResponse {
+    match use_cases::extensions::reload(&state.gateway).await {
         Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
         Err(e) => api_error_response(e).into_response(),
     }
