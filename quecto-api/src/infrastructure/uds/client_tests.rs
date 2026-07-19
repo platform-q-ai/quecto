@@ -246,6 +246,57 @@ async fn send_returns_correlated_response() {
     }
 }
 
+/// Spawn a stub agent that ignores the request's correlation id and replies
+/// with an uncorrelated `agent_error` response. Exercises `send()`'s fallback
+/// that matches `agent_error` to an in-flight `prompt` when the id is absent.
+async fn spawn_agent_error_agent(dir: &tempfile::TempDir) -> std::path::PathBuf {
+    let socket_path = dir.path().join("agent.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind");
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        let mut lines = TokioBufReader::new(read_half).lines();
+        while let Ok(Some(_line)) = lines.next_line().await {
+            // Deliberately omit the correlation id so only the command-name
+            // fallback can match this response.
+            let reply = serde_json::json!({
+                "type": "response",
+                "command": "agent_error",
+                "success": false,
+                "error": "boom",
+            });
+            let mut bytes = serde_json::to_vec(&reply).unwrap();
+            bytes.push(b'\n');
+            write_half.write_all(&bytes).await.expect("write reply");
+        }
+    });
+    socket_path
+}
+
+#[tokio::test]
+async fn send_matches_uncorrelated_agent_error_for_prompt() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = spawn_agent_error_agent(&dir).await;
+    let gw = UdsGateway::connect(&path).await.unwrap();
+
+    let event = gw
+        .send(AgentCommand::Prompt {
+            message: "hi".into(),
+            streaming_behavior: None,
+        })
+        .await
+        .unwrap();
+    match event {
+        AgentEvent::Response {
+            command, success, ..
+        } => {
+            assert_eq!(command, "agent_error");
+            assert!(!success);
+        }
+        other => panic!("expected agent_error Response, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn enqueue_returns_accepted_without_waiting() {
     let dir = tempfile::tempdir().unwrap();

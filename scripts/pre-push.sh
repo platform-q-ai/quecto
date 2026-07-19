@@ -72,6 +72,7 @@ cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-su
     -W clippy::too_many_lines
 
 COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-95}"
+API_COV_THRESHOLD="${QUECTO_API_COV_THRESHOLD:-93}"
 HARNESS_BDD_COV_THRESHOLD="${QUECTO_HARNESS_BDD_COV_THRESHOLD:-72}"
 TUI_BDD_COV_THRESHOLD="${QUECTO_TUI_BDD_COV_THRESHOLD:-62}"
 
@@ -183,6 +184,13 @@ COV_OUT_TUI=$(cargo llvm-cov --lib -p quecto-tui --ignore-filename-regex "$COV_I
 }
 echo "$COV_OUT_TUI" | tail -3
 
+echo "  quecto-api..."
+COV_OUT_API=$(cargo llvm-cov --lib -p quecto-api --ignore-filename-regex "$COV_IGNORE_REGEX" --fail-under-functions "$API_COV_THRESHOLD" 2>&1) || {
+    echo -e "  ${RED}FAIL${NC}: quecto-api function coverage below ${API_COV_THRESHOLD}%"
+    COV_FAIL=1
+}
+echo "$COV_OUT_API" | tail -3
+
 if [[ "$COV_FAIL" -ne 0 ]]; then
     echo -e "\n${RED}FAIL${NC}: Function coverage below ${COV_THRESHOLD}% threshold."
     echo "  Run: cargo llvm-cov --workspace --lib   to see full report"
@@ -250,7 +258,7 @@ fi
 step "11/11" "Pre-push summary"
 echo "All local push gates passed."
 echo "BDD shards: ${BDD_SHARDS}; TUI BDD shards: ${TUI_BDD_SHARDS}; timeout per shard: ${E2E_TIMEOUT}"
-echo "Lib function coverage threshold: ${COV_THRESHOLD}%"
+echo "Lib function coverage threshold: ${COV_THRESHOLD}% (quecto-api ${API_COV_THRESHOLD}%)"
 echo "BDD function coverage thresholds: harness ${HARNESS_BDD_COV_THRESHOLD}%; TUI ${TUI_BDD_COV_THRESHOLD}%"
 
 echo -e "\n${GREEN}Pre-push passed.${NC}"

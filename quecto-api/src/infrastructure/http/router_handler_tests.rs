@@ -409,6 +409,21 @@ fn audit_log_path_uses_env_overrides() {
     }
 }
 
+#[test]
+fn audit_log_path_falls_back_to_defaults_when_env_absent() {
+    let _env = ENV_LOCK.blocking_lock();
+    // Both vars are removed so the `unwrap_or_else` default branches are hit.
+    // SAFETY: single-threaded test serialized by ENV_LOCK; sets/reads process env.
+    unsafe {
+        std::env::remove_var("QUECTO_BASE_DIR");
+        std::env::remove_var("QUECTO_SESSION_KEY");
+    }
+    let path = audit_log_path();
+    let shown = path.to_string_lossy();
+    assert!(shown.starts_with("/home/appuser/.quecto/audit/"), "{shown}");
+    assert!(shown.ends_with("default.jsonl"), "{shown}");
+}
+
 #[tokio::test]
 async fn read_audit_events_missing_file_is_empty() {
     let _env = ENV_LOCK.lock().await;
