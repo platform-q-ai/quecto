@@ -4,8 +4,8 @@
 //!  * The TUI footer context gauge, driven by real `TurnEnd` events and the
 //!    real `get_session_stats` response path through the headless harness.
 //!  * The real agent loop, to prove `AgentResult.context_tokens` reflects the
-//!    active pruned-conversation estimate (not the raw provider input usage),
-//!    which is exactly what production maps onto the TurnEnd `contextTokens`.
+//!    provider-reported context occupancy when usage is available (with the
+//!    active pruned-conversation estimate kept separate for pruning).
 
 use super::*;
 use quecto::application::agent_loop::AgentLoopConfig;
@@ -184,12 +184,11 @@ fn given_streaming_turn(world: &mut QuectoWorld) {
 
 #[given("the active pruned conversation estimate remains below the configured context window")]
 fn given_estimate_below_window(world: &mut QuectoWorld) {
-    let result = world.tui_ctx_agent_result.as_ref().expect("agent result");
+    let estimate = estimate_total_tokens(&world.tui_ctx_messages);
     let window = world.tui_ctx_window.expect("window");
     assert!(
-        result.context_tokens < window,
-        "the active pruned estimate ({}) should stay below the window ({window})",
-        result.context_tokens
+        estimate < window,
+        "the active pruned estimate ({estimate}) should stay below the window ({window})"
     );
 }
 
@@ -198,24 +197,23 @@ fn when_emits_turn_end_and_stats(world: &mut QuectoWorld) {
     let result = world.tui_ctx_agent_result.as_ref().expect("agent result");
     let window = world.tui_ctx_window.expect("window");
     // Mirror the production emit mapping (uds_cancel.rs): contextTokens comes
-    // from the agent's pruned estimate, maxContextTokens from the window, and
-    // provider input rides the usage totals only.
+    // from the agent's provider-truth gauge value, and maxContextTokens remains
+    // the enforced pruning/window budget.
     turn_end_with_context(world, result.context_tokens as u64, window as u64);
 }
 
-#[then("contextTokens should equal the active pruned conversation estimate")]
-fn then_context_equals_estimate(world: &mut QuectoWorld) {
+#[then("contextTokens should equal the provider-reported context occupancy")]
+fn then_context_equals_provider_truth(world: &mut QuectoWorld) {
     let result = world.tui_ctx_agent_result.as_ref().expect("agent result");
     let estimate = estimate_total_tokens(&world.tui_ctx_messages);
     assert_eq!(
-        result.context_tokens, estimate,
-        "AgentResult.context_tokens must equal the active pruned conversation estimate"
+        result.context_tokens, PROVIDER_INPUT_TOKENS as usize,
+        "AgentResult.context_tokens must use provider-reported context occupancy, not the active-message estimate ({estimate})"
     );
-    // And the footer gauge is driven by that estimate, not the 280k provider input.
     let footer = with_harness(world, |h| h.bottom_stack());
     assert!(
-        !footer.contains("140.0%") && !footer.contains("147"),
-        "the gauge must not reflect the over-window provider input, got:\n{footer}"
+        footer.contains("147.4%") || footer.contains("280k/190k"),
+        "the gauge must reflect the over-window provider-reported occupancy, got:\n{footer}"
     );
 }
 
@@ -228,17 +226,17 @@ fn then_max_equals_window(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the provider token usage should remain available only in usage and cost totals")]
-fn then_provider_usage_in_totals(world: &mut QuectoWorld) {
+#[then("the provider token usage should drive both the context gauge and usage totals")]
+fn then_provider_usage_drives_gauge_and_totals(world: &mut QuectoWorld) {
     let result = world.tui_ctx_agent_result.as_ref().expect("agent result");
     assert_eq!(
         result.input_tokens, PROVIDER_INPUT_TOKENS,
         "the provider input usage should remain intact in the usage totals"
     );
-    assert_ne!(
+    assert_eq!(
         result.context_tokens as u64,
         u64::from(result.input_tokens),
-        "the pruned conversation estimate must not be the provider input usage"
+        "the context gauge should match provider-reported occupancy"
     );
 }
 

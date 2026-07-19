@@ -11,9 +11,11 @@ use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error}
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::ToolRegistry;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 #[path = "agent_loop_clamp.rs"]
 mod agent_loop_clamp;
+#[path = "agent_loop_context_gauge.rs"]
+mod agent_loop_context_gauge;
 #[path = "agent_loop_effort.rs"]
 mod agent_loop_effort;
 #[path = "agent_loop_errors.rs"]
@@ -27,6 +29,7 @@ mod agent_loop_session;
 mod agent_loop_spill;
 #[path = "agent_loop_tool_exec.rs"]
 mod agent_loop_tool_exec;
+use agent_loop_context_gauge::ContextGaugeCalibration;
 use agent_loop_errors::{
     append_malformed_feedback, enhance_provider_error, is_context_or_output_limit_error,
     provider_failure_audit_event,
@@ -107,6 +110,11 @@ pub struct AgentLoopImpl {
     /// Cancelled turn so persistence can still reconcile. Consumed via
     /// [`Self::take_durable_prefix_dirty`].
     durable_prefix_dirty: std::sync::atomic::AtomicBool,
+    /// Latest provider-truth context occupancy and the message-estimate snapshot
+    /// it corresponded to. Pruning still uses message estimates, but user-facing
+    /// gauges carry provider truth forward across estimate-only collapses until
+    /// the next LLM call reports an exact value.
+    context_gauge: Mutex<ContextGaugeCalibration>,
 }
 impl std::fmt::Debug for AgentLoopImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -121,6 +129,7 @@ struct StreamProviderError {
     error: DomainError,
     emitted_event: bool,
 }
+
 /// End-of-loop bookkeeping for the final text response (avoids the clippy
 /// argument-count limit on `finalize_text_response`).
 struct TurnEnd {
@@ -152,6 +161,7 @@ impl AgentLoopImpl {
             default_effort: config.effort,
             audit_log: config.audit_log,
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
+            context_gauge: Mutex::new(ContextGaugeCalibration::default()),
         }
     }
     /// Read-and-clear the durable-prefix dirty latch (#1072).
@@ -193,6 +203,27 @@ impl AgentLoopImpl {
     pub fn context_knob_snapshot(&self) -> (u32, u32) {
         (self.pin_recent_turns, self.context_collapse_after_messages)
     }
+    fn reconcile_context_gauge(&self, estimate: usize) -> usize {
+        self.context_gauge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .reconcile_before_call(estimate)
+    }
+
+    fn observe_provider_context_gauge(&self, reported_tokens: usize, estimate_at_call: usize) {
+        self.context_gauge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .observe_provider_truth(reported_tokens, estimate_at_call);
+    }
+
+    fn observe_estimated_context_gauge(&self, estimate: usize) {
+        self.context_gauge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .observe_estimate_only(estimate);
+    }
+
     /// Fire a progress event to the registered callback, if any. Takes a closure
     /// so the event is only constructed when a callback is registered; on the
     /// headless path (`progress_callback = None`) it's never called.
@@ -205,6 +236,12 @@ impl AgentLoopImpl {
     /// Set the maximum number of tool iterations (overrides default).
     pub fn with_max_tool_iterations(mut self, max: u32) -> Self {
         self.max_tool_iterations = max;
+        self
+    }
+
+    #[cfg(test)]
+    pub fn with_progress_callback(mut self, callback: Option<ProgressCallback>) -> Self {
+        self.progress_callback = callback;
         self
     }
     /// Replace the tool registry with a new one.
@@ -304,11 +341,21 @@ impl AgentLoopImpl {
         assistant_message.turn = Some(end.current_turn);
         self.spill_conversation_message(&mut assistant_message)
             .await;
-        let context_tokens = end
+        let estimate_context_tokens = end
             .pre_response_context_tokens
             .saturating_add(context_pruning::estimate_message_tokens(&assistant_message));
         messages.push(assistant_message);
         let usage = end.usage;
+        let context_tokens = if usage.context_input_tokens > 0 {
+            usage.context_input_tokens as usize
+        } else {
+            estimate_context_tokens
+        };
+        if usage.context_input_tokens > 0 {
+            self.observe_provider_context_gauge(context_tokens, end.pre_response_context_tokens);
+        } else {
+            self.observe_estimated_context_gauge(estimate_context_tokens);
+        }
         AgentResult {
             response: text,
             tool_iterations: end.iterations,
@@ -455,14 +502,17 @@ impl AgentLoopImpl {
         let mut malformed_retries: u32 = 0;
 
         loop {
-            let context_tokens = self
+            let estimated_context_tokens = self
                 .apply_context_pruning(messages, current_turn, spills_dirty)
                 .await;
+            let display_context_tokens = self.reconcile_context_gauge(estimated_context_tokens);
 
             // Emit Thinking before every LLM call so the REPL spinner activates
-            // immediately, including during multi-turn tool loops.
+            // immediately, including during multi-turn tool loops. The gauge
+            // value is provider-truth when known, calibrated across estimate-only
+            // pruning/collapse changes; pruning itself still uses the estimate.
             self.notify(|| AgentProgressEvent::Thinking {
-                context_tokens,
+                context_tokens: display_context_tokens,
                 max_context_tokens: self.effective_max_context_tokens(),
                 provider: self.provider.name().to_string(),
                 model: self.model.clone(),
@@ -474,7 +524,7 @@ impl AgentLoopImpl {
                 self.audit(
                     current_turn,
                     AuditEvent::LlmTurnStart {
-                        input_tokens_estimate: context_tokens,
+                        input_tokens_estimate: estimated_context_tokens,
                         message_count: messages.len(),
                     },
                 )
@@ -533,7 +583,7 @@ impl AgentLoopImpl {
                     .usage
                     .as_ref()
                     .map(|u| (u.context_input_tokens() as _, u.completion_tokens as _))
-                    .unwrap_or((context_tokens, 0));
+                    .unwrap_or((estimated_context_tokens, 0));
                 let stop = response
                     .stop_reason
                     .as_ref()
@@ -561,7 +611,7 @@ impl AgentLoopImpl {
                 let end = TurnEnd {
                     iterations,
                     usage: usage_totals,
-                    pre_response_context_tokens: context_tokens,
+                    pre_response_context_tokens: estimated_context_tokens,
                     current_turn,
                 };
                 let mut result = self.finalize_text_response(messages, response, end).await;
@@ -600,6 +650,15 @@ impl AgentLoopImpl {
             if iterations >= self.max_tool_iterations {
                 // Emit Done so the spinner is cleared before the limit message.
                 self.notify(|| AgentProgressEvent::Done);
+                let estimated_context_tokens = context_pruning::estimate_total_tokens(messages);
+                let context_tokens = if usage_totals.context_input_tokens > 0 {
+                    self.reconcile_context_gauge(estimated_context_tokens)
+                } else {
+                    estimated_context_tokens
+                };
+                if usage_totals.context_input_tokens == 0 {
+                    self.observe_estimated_context_gauge(estimated_context_tokens);
+                }
                 return Ok(AgentResult {
                     response: format!(
                         "Tool iteration limit ({}) reached. Stopping.",
@@ -608,7 +667,7 @@ impl AgentLoopImpl {
                     tool_iterations: iterations,
                     iteration_limit_reached: true,
                     input_tokens: usage_totals.context_input_tokens,
-                    context_tokens: context_pruning::estimate_total_tokens(messages),
+                    context_tokens,
                     output_tokens: usage_totals.output_tokens,
                     billed_input_tokens: usage_totals.billed_input_tokens,
                     billed_output_tokens: usage_totals.billed_output_tokens,
