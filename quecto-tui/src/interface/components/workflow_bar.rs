@@ -415,7 +415,7 @@ fn truncate_line(text: &str, width: usize) -> String {
 }
 
 fn ellipsize_clean(text: &str, max_chars: usize) -> String {
-    crate::interface::utils::sanitize_truncate_chars_with_ellipsis(text, max_chars, "…")
+    crate::interface::utils::sanitize_truncate_width_with_ellipsis(text, max_chars, "…")
 }
 
 /// Parse a `workflow_state` JSON event into `WorkflowBarState`.

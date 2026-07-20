@@ -359,7 +359,7 @@ pub(super) fn render_subagent(
                     format!(
                         "{} — {}",
                         agent,
-                        crate::interface::utils::truncate_chars_with_ellipsis(&task, 50, "...")
+                        crate::interface::utils::truncate_to_width(&task, 50, Some("..."))
                     )
                 };
                 (detail, Some(agent))
@@ -682,8 +682,10 @@ pub(super) fn extract_path(args: &Option<serde_json::Value>) -> String {
 pub(super) fn extract_best_arg(v: &serde_json::Value) -> String {
     for key in &["command", "path", "query", "url", "content", "oldText"] {
         if let Some(val) = v.get(key).and_then(|v| v.as_str()) {
-            return sanitize(&crate::interface::utils::truncate_chars_with_ellipsis(
-                val, 60, "...",
+            return sanitize(&crate::interface::utils::truncate_to_width(
+                val,
+                60,
+                Some("..."),
             ));
         }
     }
@@ -708,7 +710,7 @@ pub(super) fn sanitize(s: &str) -> String {
 
 #[cfg(test)]
 pub(super) fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
-    crate::interface::utils::truncate_chars_with_ellipsis(s, max_chars, "...")
+    crate::interface::utils::truncate_to_width(s, max_chars, Some("..."))
 }
 
 /// Expand tab characters to spaces using 8-column tab stops, ANSI-aware.

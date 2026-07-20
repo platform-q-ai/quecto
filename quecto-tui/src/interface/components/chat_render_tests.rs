@@ -207,7 +207,8 @@ fn truncate_exact_length_no_ellipsis() {
 #[test]
 fn truncate_long_string_appends_ellipsis() {
     let result = truncate_with_ellipsis("hello world", 5);
-    assert_eq!(result, "hello...");
+    assert_eq!(crate::interface::ansi::strip_ansi(&result), "he...");
+    assert!(crate::interface::utils::visible_width(&result) <= 5);
 }
 
 #[test]
@@ -218,14 +219,42 @@ fn truncate_empty_string() {
 #[test]
 fn truncate_zero_max_chars() {
     let result = truncate_with_ellipsis("hello", 0);
-    assert_eq!(result, "...");
+    assert_eq!(crate::interface::ansi::strip_ansi(&result), "");
+    assert_eq!(crate::interface::utils::visible_width(&result), 0);
 }
 
 #[test]
 fn truncate_counts_chars_not_bytes() {
-    // "héllo" is 5 chars, 6 bytes — truncate at 3 chars
-    let result = truncate_with_ellipsis("héllo", 3);
-    assert_eq!(result, "hél...");
+    // "héllo" is 5 chars, 6 bytes and 5 columns — truncate by columns.
+    let result = truncate_with_ellipsis("héllo", 4);
+    assert_eq!(crate::interface::ansi::strip_ansi(&result), "h...");
+    assert!(crate::interface::utils::visible_width(&result) <= 4);
+}
+
+#[test]
+fn truncate_cjk_display_width_exact_fit_no_ellipsis() {
+    assert_eq!(truncate_with_ellipsis("日本語", 6), "日本語");
+}
+
+#[test]
+fn truncate_cjk_display_width_one_over_adds_ellipsis_within_limit() {
+    let result = truncate_with_ellipsis("日本語", 5);
+    assert_eq!(crate::interface::ansi::strip_ansi(&result), "日...");
+    assert!(crate::interface::utils::visible_width(&result) <= 5);
+}
+
+#[test]
+fn truncate_emoji_display_width_one_over_adds_ellipsis_within_limit() {
+    let result = truncate_with_ellipsis("🦀abcd", 5);
+    assert_eq!(crate::interface::ansi::strip_ansi(&result), "🦀...");
+    assert!(crate::interface::utils::visible_width(&result) <= 5);
+}
+
+#[test]
+fn truncate_ansi_styled_input_uses_visible_width() {
+    let result = truncate_with_ellipsis("\x1b[31m日本語\x1b[0m", 5);
+    assert_eq!(crate::interface::ansi::strip_ansi(&result), "日...");
+    assert!(crate::interface::utils::visible_width(&result) <= 5);
 }
 
 // ── render_tool_execution smoke tests ───────────────────────────────────

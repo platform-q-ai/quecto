@@ -474,6 +474,19 @@ fn compact_line_ellipsizes_long_step_label() {
 }
 
 #[test]
+fn compact_line_ellipsizes_cjk_step_label_by_display_width() {
+    let mut state = make_state(Some(1), 0, 2);
+    state.steps[0].label = "日本語日本語日本語日本語日本語日本語".into();
+    let line = render_compact_line(&state).expect("active workflow should render a compact line");
+    let clean = crate::interface::ansi::strip_ansi(&line);
+    assert!(clean.contains("日本語日本語日本語日本語日本語…"), "{clean}");
+    assert!(
+        !clean.contains("日本語日本語日本語日本語日本語日本"),
+        "{clean}"
+    );
+}
+
+#[test]
 fn compact_line_complete_state_has_no_misleading_step() {
     let state = make_state(Some(7), 14, 14);
     let line = render_compact_line(&state).expect("a complete workflow is still visible");
