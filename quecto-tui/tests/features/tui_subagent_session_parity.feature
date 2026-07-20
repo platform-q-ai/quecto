@@ -79,6 +79,13 @@ Feature: Sub-agent session view + interaction parity, Tab focus model, focus div
     Then the prompt appears in sub-agent "a1"'s session
     And no prompt is sent to the master
 
+  Scenario: Enter while a running sub-agent is active queues a follow-up without claiming steer
+    Given a TUI viewing running sub-agent "a1"
+    When I send the prompt "message for running child"
+    Then the follow-up is sent to sub-agent "a1"
+    And the sub-agent command does not claim steer
+    And no prompt is sent to the master
+
   Scenario: Aborting while a sub-agent is active targets that sub-agent
     Given a TUI viewing sub-agent "a1"
     When I abort

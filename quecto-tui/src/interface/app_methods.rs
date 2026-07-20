@@ -74,7 +74,7 @@ impl App {
              \x20 Enter          Send message (idle) / queue follow-up (running)\n\
              \x20 Shift+Enter    Insert newline\n\
              \x20 Alt+Enter      Insert newline\n\
-             \x20 Escape         Abort agent / clear editor; Esc then Enter to steer\n\
+             \x20 Escape         Abort/cancel running agent or clear editor\n\
              \x20 Esc Esc        Choose a previous turn to go back to\n\
              \x20 Ctrl+C         Clear editor first, abort if empty\n\
              \x20 Ctrl+D         Exit\n\

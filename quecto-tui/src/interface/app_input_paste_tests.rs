@@ -39,6 +39,7 @@ async fn assert_draft_without_model_action(h: &mut TuiHarness, chunks: &[Vec<u8>
     assert!(
         !commands.iter().any(|command| {
             command.contains("\"type\":\"prompt\"")
+                || command.contains("\"type\":\"follow_up\"")
                 || command.contains("\"type\":\"steer\"")
                 || command.contains("\"streamingBehavior\":\"steer\"")
         }),
