@@ -294,6 +294,77 @@ impl App {
 
     // ── Input handling ────────────────────────────────────────────────
 
+    pub(super) async fn process_stdin_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+        stdin_rx: &mut mpsc::Receiver<Vec<u8>>,
+        escape_timeout: Duration,
+        kitty_fallback_done: &mut bool,
+    ) -> bool {
+        // Check for Kitty protocol response before buffering.
+        if !self.kitty.active && !*kitty_fallback_done {
+            if let Some(_flags) = KittyProtocol::parse_response(&bytes) {
+                self.kitty.enable();
+                *kitty_fallback_done = true;
+                return false;
+            }
+        }
+
+        // Feed bytes into the StdinBuffer. Kitty release events are filtered per
+        // decoded sequence in `process_key_sequence` (filtering the raw read could
+        // drop a press when a press+release arrive together).
+        self.stdin_buffer.feed(&bytes);
+        self.drain_complete_key_sequences();
+        self.drain_pending_stdin_bytes(stdin_rx, escape_timeout)
+            .await;
+        true
+    }
+
+    async fn drain_pending_stdin_bytes(
+        &mut self,
+        stdin_rx: &mut mpsc::Receiver<Vec<u8>>,
+        escape_timeout: Duration,
+    ) {
+        if !self.stdin_buffer.has_pending() || self.should_exit {
+            return;
+        }
+
+        let mut retries = 0;
+        while self.stdin_buffer.has_pending() && retries < MAX_ESCAPE_RETRIES && !self.should_exit {
+            retries += 1;
+            match tokio::time::timeout(escape_timeout, stdin_rx.recv()).await {
+                Ok(Some(more)) => {
+                    self.stdin_buffer.feed(&more);
+                    self.drain_complete_key_sequences();
+                }
+                Ok(None) => break, // Channel closed (stdin EOF).
+                Err(_) => break,   // Timeout — no more data coming.
+            }
+        }
+
+        // Force drain anything still pending after retries exhausted (bare
+        // Escape, etc.).
+        if !self.should_exit {
+            let forced = self.stdin_buffer.drain_all();
+            for seq in &forced {
+                self.process_key_sequence(seq);
+                if self.should_exit {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn drain_complete_key_sequences(&mut self) {
+        let complete = self.stdin_buffer.drain_complete();
+        for seq in &complete {
+            self.process_key_sequence(seq);
+            if self.should_exit {
+                break;
+            }
+        }
+    }
+
     /// Process a single complete key sequence from the StdinBuffer.
     pub(super) fn process_key_sequence(&mut self, seq: &[u8]) {
         // Kitty key release events can arrive in the same stdin read as a key

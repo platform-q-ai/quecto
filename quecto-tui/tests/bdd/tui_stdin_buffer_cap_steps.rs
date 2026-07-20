@@ -53,12 +53,12 @@ fn feed_one_more(world: &mut TuiWorld) {
     feed(world, b"x");
 }
 
-#[then("the oversized staged input should be rejected as a whole")]
-fn oversized_input_rejected(world: &mut TuiWorld) {
+#[then("the extra byte should be silently dropped")]
+fn extra_byte_dropped(world: &mut TuiWorld) {
     assert_eq!(
         world.tui_stdin_last_feed_ok,
         Some(false),
-        "feed() past the cap must reject the staged event"
+        "feed() past the cap must report bytes were dropped (returns false)"
     );
 }
 
@@ -137,16 +137,15 @@ fn paste_content_follows(world: &mut TuiWorld) {
 
 #[then("the buffer should stop accepting data at 64KB")]
 fn buffer_stops_at_cap(world: &mut TuiWorld) {
-    // Overflow rejects the entire staged paste and emits only a typed overflow
-    // event; compatibility key-sequence draining must expose no partial bytes.
+    // The paste never completes (no end marker), so nothing drains as complete.
     assert!(
         buffer(world).drain_complete().is_empty(),
-        "a broken overflowing paste must not yield partial content"
+        "a broken paste (no end marker) must not yield a complete sequence"
     );
     assert_eq!(
         world.tui_stdin_last_feed_ok,
         Some(false),
-        "once the cap is reached, further feed() calls must report rejection"
+        "once the cap is reached, further feed() calls must report drops"
     );
 }
 

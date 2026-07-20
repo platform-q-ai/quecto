@@ -496,16 +496,10 @@ impl Component for Editor {
                 true
             }
             Key::Paste(text) => {
-                let mut chars = text.chars().peekable();
-                while let Some(ch) = chars.next() {
-                    if ch == '\r' {
-                        if chars.peek() == Some(&'\n') {
-                            chars.next();
-                        }
+                for ch in text.chars() {
+                    if ch == '\n' {
                         self.insert_newline();
-                    } else if ch == '\n' {
-                        self.insert_newline();
-                    } else {
+                    } else if ch != '\r' {
                         self.insert_char(ch);
                     }
                 }
