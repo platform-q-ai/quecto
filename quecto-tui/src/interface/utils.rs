@@ -36,14 +36,24 @@ pub fn truncate_to_width(s: &str, max_width: usize, ellipsis: Option<&str>) -> S
         return s.to_string();
     }
 
-    let target = max_width.saturating_sub(ell_width);
+    let use_ellipsis = ell_width <= max_width;
+    let target = if use_ellipsis {
+        max_width - ell_width
+    } else {
+        max_width
+    };
 
     let mut result = String::new();
     let mut width = 0;
+    let mut active_osc8: Option<String> = None;
+    let mut active_sgr = String::new();
     'outer: for seg in ansi_segments(s) {
         match seg {
             // Escape sequences are preserved verbatim and never count as width.
-            AnsiSegment::Escape(esc) => result.push_str(esc),
+            AnsiSegment::Escape(esc) => {
+                track_active_escape(esc, &mut active_osc8, &mut active_sgr);
+                result.push_str(esc);
+            }
             AnsiSegment::Text(text) => {
                 for ch in text.chars() {
                     let ch_width = ch.width().unwrap_or(0);
@@ -63,10 +73,10 @@ pub fn truncate_to_width(s: &str, max_width: usize, ellipsis: Option<&str>) -> S
         }
     }
 
-    // Append ellipsis
-    result.push_str(ell);
-    // Append SGR reset so truncated escape sequences don't leak
-    result.push_str("\x1b[0m");
+    if use_ellipsis {
+        result.push_str(ell);
+    }
+    close_active_controls(&mut result, &active_osc8, &active_sgr);
     result
 }
 
@@ -85,10 +95,36 @@ pub fn truncate_chars_with_ellipsis(s: &str, max_chars: usize, ellipsis: &str) -
 
 /// Sanitize, then truncate by visible display width with an ellipsis on overflow.
 pub fn sanitize_truncate_width_with_ellipsis(s: &str, max_width: usize, ellipsis: &str) -> String {
-    let clean = crate::interface::ansi::sanitize_control(s);
-    let mut out = truncate_to_width(&clean, max_width, Some(ellipsis));
-    if let Some(stripped) = out.strip_suffix("\x1b[0m") {
-        out.truncate(stripped.len());
+    let ell_width = visible_width(ellipsis);
+    let use_ellipsis = ell_width <= max_width;
+    let target = if use_ellipsis {
+        max_width - ell_width
+    } else {
+        max_width
+    };
+    let mut out = String::with_capacity(s.len().min(max_width.saturating_add(ellipsis.len())));
+    let mut width = 0usize;
+    let mut truncated = false;
+
+    'outer: for seg in ansi_segments(s) {
+        if let AnsiSegment::Text(text) = seg {
+            for ch in text.chars() {
+                if !crate::interface::ansi::keep_char(ch, false) {
+                    continue;
+                }
+                let ch_width = ch.width().unwrap_or(0);
+                if ch_width > 0 && width + ch_width > target {
+                    truncated = true;
+                    break 'outer;
+                }
+                out.push(ch);
+                width += ch_width;
+            }
+        }
+    }
+
+    if truncated && use_ellipsis {
+        out.push_str(ellipsis);
     }
     out
 }
@@ -360,6 +396,31 @@ mod tests {
     fn truncate_to_zero_width() {
         let result = truncate_to_width("hello", 0, None);
         assert_eq!(visible_width(&result), 0);
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_never_exceeds_width_when_ellipsis_too_wide() {
+        let result = truncate_to_width("hello", 0, Some("..."));
+        assert_eq!(visible_width(&result), 0);
+        assert!(crate::interface::ansi::strip_ansi(&result).is_empty());
+    }
+
+    #[test]
+    fn truncate_closes_active_osc8_when_cut_before_closer() {
+        let input = "\x1b]8;;https://example.com\x07abcdef\x1b]8;;\x07";
+        let result = truncate_to_width(input, 3, None);
+        assert!(
+            result.starts_with("\x1b]8;;https://example.com\x07abc"),
+            "{result:?}"
+        );
+        assert!(result.ends_with("\x1b]8;;\x07"), "{result:?}");
+    }
+
+    #[test]
+    fn sanitize_truncate_width_does_not_scan_unbounded_prefix() {
+        let input = format!("{}visible tail", "\x01".repeat(10_000));
+        let result = sanitize_truncate_width_with_ellipsis(&input, 8, "…");
+        assert_eq!(result, "visible…");
     }
 
     #[test]

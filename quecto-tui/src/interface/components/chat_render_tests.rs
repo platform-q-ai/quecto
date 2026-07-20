@@ -219,7 +219,8 @@ fn truncate_empty_string() {
 #[test]
 fn truncate_zero_max_chars() {
     let result = truncate_with_ellipsis("hello", 0);
-    assert_eq!(crate::interface::ansi::strip_ansi(&result), "...");
+    assert_eq!(crate::interface::ansi::strip_ansi(&result), "");
+    assert_eq!(crate::interface::utils::visible_width(&result), 0);
 }
 
 #[test]

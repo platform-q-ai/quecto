@@ -257,7 +257,7 @@ pub fn sanitize_control_truncated(s: &str, max_chars: usize) -> (String, bool) {
 /// Drops ASCII/Unicode control characters (optionally keeping `\n`) and the
 /// bidirectional formatting/override characters used in Trojan-Source display
 /// spoofing.
-fn keep_char(ch: char, keep_newlines: bool) -> bool {
+pub(crate) fn keep_char(ch: char, keep_newlines: bool) -> bool {
     if keep_newlines && ch == '\n' {
         return true;
     }
