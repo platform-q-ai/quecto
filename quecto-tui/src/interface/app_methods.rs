@@ -2,7 +2,9 @@ use super::app_selection::{SelectionAnchor, apply_selection_highlight, display_c
 use super::*;
 use crate::application::session_payloads::{self, ResumedChatMessage};
 use crate::interface::components::select_list::route_overlay_key;
-use crate::interface::select_overlay::{build_select_list_overlay, build_select_overlay};
+use crate::interface::select_overlay::{
+    build_resume_selector_overlay, build_rewind_selector_overlay, build_select_overlay,
+};
 use crate::interface::theme;
 
 /// Format a Unix timestamp as `YYYY-MM-DD HH:MM` in **local** time, falling
@@ -476,23 +478,13 @@ impl App {
         // time). All three splice through the same ANSI-aware helper so the
         // centering and escape-safe splice rule lives in one place.
         if let Some(selector) = &mut self.resume_selector {
-            let (selector_lines, overlay_width) = build_select_list_overlay(
-                "Resume session",
-                "Enter resume · Esc cancel",
-                selector,
-                width,
-                height,
-            );
+            let (selector_lines, overlay_width) =
+                build_resume_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
         if let Some(selector) = &mut self.rewind.selector {
-            let (selector_lines, overlay_width) = build_select_list_overlay(
-                "Go back to…",
-                "Enter select · Esc cancel",
-                selector,
-                width,
-                height,
-            );
+            let (selector_lines, overlay_width) =
+                build_rewind_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
         if let Some(selector) = &mut self.model_selector {
