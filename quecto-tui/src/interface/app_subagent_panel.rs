@@ -303,7 +303,7 @@ impl App {
         let tx = self.subagents.event_tx.clone();
         let agent_id = id.to_string();
         let path = std::path::PathBuf::from(socket);
-        // Outbound channel so the editor's send/abort path can steer this child
+        // Outbound channel so the editor's send/follow-up/abort path can target this child
         // (#802); the connection task forwards queued commands onto its socket.
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<Command>(32);
         use tracing::instrument::WithSubscriber;

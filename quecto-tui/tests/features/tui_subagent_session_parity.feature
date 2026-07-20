@@ -2,7 +2,7 @@
 Feature: Sub-agent session view + interaction parity, Tab focus model, focus divider (#802)
   As a human operator driving a workflow with sub-agents in the TUI
   I want a selected sub-agent to render its OWN full session (chat + workflow bar +
-  footer gauges + spinner), to steer it anytime, and a NeoVim-ish two-pane focus
+  footer gauges + spinner), to send prompts/follow-ups, and a NeoVim-ish two-pane focus
   model with a focus-highlighted divider
   So that selecting a sub-agent resumes that agent's own session rather than a
   different chat in the master shell
@@ -73,9 +73,9 @@ Feature: Sub-agent session view + interaction parity, Tab focus model, focus div
     Then focus is on the input
     And the active session is "a1"
 
-  Scenario: Sending while a sub-agent is active steers that sub-agent
+  Scenario: Sending while a sub-agent is active targets that sub-agent
     Given a TUI viewing sub-agent "a1"
-    When I send the prompt "steer please"
+    When I send the prompt "message for child"
     Then the prompt appears in sub-agent "a1"'s session
     And no prompt is sent to the master
 

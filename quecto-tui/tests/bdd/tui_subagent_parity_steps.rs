@@ -375,7 +375,7 @@ fn then_focus_stays_input(world: &mut TuiWorld) {
 fn then_prompt_in_session(world: &mut TuiWorld, _id: String) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
-        frame.contains("steer please"),
+        frame.contains("message for child"),
         "the prompt must land in the active sub-agent's session body, got:\n{frame}"
     );
 }
@@ -386,7 +386,7 @@ fn then_no_master_prompt(world: &mut TuiWorld) {
     assert!(
         !cmds
             .iter()
-            .any(|c| c.contains("\"prompt\"") && c.contains("steer please")),
+            .any(|c| c.contains("\"prompt\"") && c.contains("message for child")),
         "the prompt must route to the active sub-agent, not the master: {cmds:?}"
     );
 }

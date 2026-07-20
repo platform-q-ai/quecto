@@ -165,7 +165,7 @@ async fn esc_in_panel_focus_keeps_active_selection() {
     );
 }
 
-// ── Goal 2: interaction parity (steer the active session) ────────────────
+// ── Goal 2: interaction parity (target the active session) ───────────────
 
 #[tokio::test]
 async fn send_routes_to_active_subagent_not_master() {
@@ -174,12 +174,12 @@ async fn send_routes_to_active_subagent_not_master() {
     // handle_submit always sends to the master client.
     let mut h = harness_with_subagents(1).await;
     h.app_mut().select_agent(Some("a1"));
-    h.app_mut().handle_submit("steer please");
+    h.app_mut().handle_submit("message for child");
     // POSITIVE: the prompt lands in a1's OWN session transcript (observable in
     // the body), proving it was routed to that session — not silently dropped.
     let frame = frame_text(&mut h);
     assert!(
-        frame.contains("steer please"),
+        frame.contains("message for child"),
         "prompt must land in the active sub-agent's session body, got:\n{frame}"
     );
     // NEGATIVE: it must NOT be sent to the master connection.
@@ -187,7 +187,7 @@ async fn send_routes_to_active_subagent_not_master() {
     assert!(
         !cmds
             .iter()
-            .any(|c| c.contains("\"prompt\"") && c.contains("steer please")),
+            .any(|c| c.contains("\"prompt\"") && c.contains("message for child")),
         "prompt must route to the active sub-agent, not the master: {cmds:?}"
     );
 }

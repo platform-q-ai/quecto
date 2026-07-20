@@ -132,7 +132,7 @@ async fn slash_command_looking_paste_does_not_execute() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn paste_while_agent_runs_does_not_steer_before_explicit_submit() {
+async fn paste_while_agent_runs_does_not_follow_up_before_explicit_submit() {
     let mut h = TuiHarness::new().await;
     h.app_mut().agent_state.start();
     let text = "alpha\nbeta\n";
@@ -140,10 +140,14 @@ async fn paste_while_agent_runs_does_not_steer_before_explicit_submit() {
 
     drive_stdin_chunks(&mut h, &[b"\r".to_vec()]).await;
     let commands = h.drain_commands().await;
-    let steers: Vec<_> = commands
+    let follow_ups: Vec<_> = commands
         .iter()
-        .filter(|command| command.contains("\"streamingBehavior\":\"steer\""))
+        .filter(|command| command.contains("\"type\":\"follow_up\""))
         .collect();
-    assert_eq!(steers.len(), 1, "only explicit Enter may steer");
-    assert!(steers[0].contains("alpha\\nbeta\\n"));
+    assert_eq!(
+        follow_ups.len(),
+        1,
+        "only explicit Enter may queue a follow-up"
+    );
+    assert!(follow_ups[0].contains("alpha\\nbeta\\n"));
 }

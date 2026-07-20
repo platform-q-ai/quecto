@@ -71,10 +71,10 @@ impl App {
     pub(super) fn show_help(&mut self) {
         let mut text = String::from(
             "Keyboard shortcuts:\n\
-             \x20 Enter          Send message\n\
+             \x20 Enter          Send message (idle) / queue follow-up (running)\n\
              \x20 Shift+Enter    Insert newline\n\
              \x20 Alt+Enter      Insert newline\n\
-             \x20 Escape         Abort agent / clear editor\n\
+             \x20 Escape         Abort agent / clear editor; Esc then Enter to steer\n\
              \x20 Esc Esc        Choose a previous turn to go back to\n\
              \x20 Ctrl+C         Clear editor first, abort if empty\n\
              \x20 Ctrl+D         Exit\n\
@@ -329,9 +329,9 @@ impl App {
                 bottom.extend(spinner.render(width));
             }
         } else if self.active_subagent_running() {
-            // The active session is mid-turn (a sub-agent processing a queued
-            // steer, or the master before its spinner exists); show the working
-            // indicator so it never looks dead.
+            // The active session is mid-turn (a sub-agent processing queued
+            // follow-up work, or the master before its spinner exists); show the
+            // working indicator so it never looks dead.
             bottom.push(subagent_activity_line(1, self.subagents.frame));
         } else if !self.subagents.tracked.is_empty() {
             // Parent is idle but sub-agents are tracked. Keep the reserved slot

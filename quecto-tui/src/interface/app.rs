@@ -183,9 +183,9 @@ pub(crate) struct SubagentUi {
     /// handle to abort its forwarding task on deselect/teardown (#800).
     active_conn: Option<(String, tokio::task::JoinHandle<()>)>,
     /// Outbound command channel to the active sub-agent's own UDS connection
-    /// (#802). Lets the editor's send/abort path steer the selected sub-agent —
-    /// its dispatch loop queues the prompt until its current turn ends. `None`
-    /// when the master is active or the child's socket is unknown.
+    /// (#802). Lets the editor's send/follow-up/abort path target the selected
+    /// sub-agent. `None` when the master is active or the child's socket is
+    /// unknown.
     active_cmd_tx: Option<(String, mpsc::Sender<Command>)>,
     /// Which pane has keyboard focus: the editor or the side panel (#802).
     focus: Focus,
