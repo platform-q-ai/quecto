@@ -298,8 +298,7 @@ impl SpawnTool {
     }
 
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {
-        let binary = std::env::current_exe()
-            .map_err(|e| DomainError::Tool(format!("cannot find quecto binary: {e}")))?;
+        let binary = super::spawn_binary::resolve_child_binary()?;
 
         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 

@@ -9,6 +9,7 @@ pub mod path_utils;
 pub mod recall;
 pub mod registry;
 pub mod spawn;
+mod spawn_binary;
 mod spawn_launch_args;
 pub mod subagent_cascade;
 pub mod subagent_monitor;
