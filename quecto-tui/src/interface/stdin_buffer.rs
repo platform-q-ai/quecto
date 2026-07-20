@@ -255,6 +255,16 @@ impl StdinBuffer {
 
     fn refresh_mode(&mut self) {
         match self.mode {
+            // A genuine non-bracketed raw paste is printable text and never
+            // contains a raw ESC byte. If an ESC ever lands in a staged raw
+            // candidate/paste (e.g. a key escape sequence arriving in a read
+            // after the candidate was established), it is typed input, not a
+            // paste: revert to Ground so the ordinary key path decodes it and
+            // the ESC/CSI bytes are never emitted as literal paste text.
+            Mode::RawCandidate | Mode::RawPaste if self.buf.contains(&0x1b) => {
+                self.mode = Mode::Ground;
+                self.raw_paste_latched = false;
+            }
             Mode::RawCandidate if confirms_raw_multiline(&self.buf) => {
                 self.mode = Mode::RawPaste;
                 self.raw_paste_latched = true;
@@ -311,6 +321,15 @@ impl StdinBuffer {
         let mut events = self.drain_events();
         events.extend(self.finish_pending(true));
         events_as_sequences(events)
+    }
+
+    /// Test-support: like [`drain_all`], but returns the typed [`InputEvent`]
+    /// values so tests can assert on paste boundaries directly.
+    #[cfg(test)]
+    pub fn drain_all_events(&mut self) -> Vec<InputEvent> {
+        let mut events = self.drain_events();
+        events.extend(self.finish_pending(true));
+        events
     }
 }
 

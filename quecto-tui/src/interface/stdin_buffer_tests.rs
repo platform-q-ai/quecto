@@ -417,3 +417,63 @@ fn paste_end_marker_found_with_windows() {
     assert_eq!(seqs.len(), 1, "paste should be one sequence");
     assert!(seqs[0].starts_with(b"\x1b[200~"));
 }
+
+#[test]
+fn csi_after_raw_candidate_is_not_pasted_as_text() {
+    // Regression for the #1180 CSI-leak: text stages a raw candidate, then a
+    // modifyOtherKeys CSI sequence arrives in a later read. The ESC/CSI bytes
+    // must be decoded as a key sequence, never emitted inside paste text.
+    let mut buf = StdinBuffer::new();
+    buf.feed(b"hello");
+    buf.feed(b"\x1b[27;2;13~");
+    buf.feed(b"world\nmore\n");
+    let events = buf.drain_all_events();
+    for ev in &events {
+        if let InputEvent::Paste(text) = ev {
+            assert!(
+                !text.as_bytes().contains(&0x1b),
+                "ESC leaked into paste text: {text:?}"
+            );
+        }
+    }
+    // The CSI is preserved as its own key sequence.
+    let seqs = events_as_sequences(events);
+    assert!(
+        seqs.iter().any(|s| s.as_slice() == b"\x1b[27;2;13~"),
+        "CSI key sequence should be decoded intact: {seqs:?}"
+    );
+}
+
+#[test]
+fn shift_enter_csi_within_burst_is_not_pasted() {
+    // A confirmed multiline raw paste latches; a Shift+Enter CSI arriving
+    // afterwards must not be folded into paste text.
+    let mut buf = StdinBuffer::new();
+    buf.feed(b"line one\nline two\n");
+    let _ = buf.drain_complete();
+    buf.feed(b"\x1b[27;2;13~");
+    let events = buf.drain_all_events();
+    for ev in &events {
+        if let InputEvent::Paste(text) = ev {
+            assert!(!text.as_bytes().contains(&0x1b), "ESC leaked: {text:?}");
+        }
+    }
+}
+
+#[test]
+fn raw_multiline_burst_still_pastes_without_esc() {
+    // The #1180 large-paste behavior must remain: a genuine multiline burst
+    // (no ESC) is one paste event, not per-line Enter submits.
+    let mut buf = StdinBuffer::new();
+    buf.feed(b"alpha\nbeta\ngamma\n");
+    let events = buf.drain_all_events();
+    let pastes: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            InputEvent::Paste(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pastes.len(), 1, "one paste event expected: {events:?}");
+    assert!(pastes[0].contains("alpha") && pastes[0].contains("gamma"));
+}
