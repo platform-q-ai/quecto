@@ -71,7 +71,8 @@ cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-su
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
 
-COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-93}"
+HARNESS_LIB_COV_THRESHOLD="${QUECTO_HARNESS_COV_THRESHOLD:-${QUECTO_COV_THRESHOLD:-93}}"
+TUI_LIB_COV_THRESHOLD="${QUECTO_TUI_COV_THRESHOLD:-${QUECTO_COV_THRESHOLD:-94}}"
 API_COV_THRESHOLD="${QUECTO_API_COV_THRESHOLD:-95}"
 HARNESS_BDD_COV_THRESHOLD="${QUECTO_HARNESS_BDD_COV_THRESHOLD:-72}"
 TUI_BDD_COV_THRESHOLD="${QUECTO_TUI_BDD_COV_THRESHOLD:-62}"
@@ -152,7 +153,7 @@ if [[ "$FAIL" -ne 0 ]]; then
     exit 1
 fi
 
-step "7/11" "Code coverage (cargo llvm-cov, function coverage, threshold ${COV_THRESHOLD}%)"
+step "7/11" "Code coverage (cargo llvm-cov, function coverage; harness ${HARNESS_LIB_COV_THRESHOLD}%, TUI ${TUI_LIB_COV_THRESHOLD}%, API ${API_COV_THRESHOLD}%)"
 
 # Resolve llvm tools — cargo-llvm-cov needs these when llvm-tools-preview
 # isn't installed via rustup (e.g. system Rust on Arch Linux).
@@ -171,15 +172,15 @@ COV_FAIL=0
 COV_IGNORE_REGEX='(tui_harness|test_support|warn_capture)'
 
 echo "  quecto (core)..."
-COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto-agentic-harness --ignore-filename-regex "$COV_IGNORE_REGEX" --fail-under-functions "$COV_THRESHOLD" 2>&1) || {
-    echo -e "  ${RED}FAIL${NC}: quecto function coverage below ${COV_THRESHOLD}%"
+COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto-agentic-harness --ignore-filename-regex "$COV_IGNORE_REGEX" --fail-under-functions "$HARNESS_LIB_COV_THRESHOLD" 2>&1) || {
+    echo -e "  ${RED}FAIL${NC}: quecto function coverage below ${HARNESS_LIB_COV_THRESHOLD}%"
     COV_FAIL=1
 }
 echo "$COV_OUT_QUECTO" | tail -3
 
 echo "  quecto-tui..."
-COV_OUT_TUI=$(cargo llvm-cov --lib -p quecto-tui --ignore-filename-regex "$COV_IGNORE_REGEX" --fail-under-functions "$COV_THRESHOLD" 2>&1) || {
-    echo -e "  ${RED}FAIL${NC}: quecto-tui function coverage below ${COV_THRESHOLD}%"
+COV_OUT_TUI=$(cargo llvm-cov --lib -p quecto-tui --ignore-filename-regex "$COV_IGNORE_REGEX" --fail-under-functions "$TUI_LIB_COV_THRESHOLD" 2>&1) || {
+    echo -e "  ${RED}FAIL${NC}: quecto-tui function coverage below ${TUI_LIB_COV_THRESHOLD}%"
     COV_FAIL=1
 }
 echo "$COV_OUT_TUI" | tail -3
@@ -192,7 +193,7 @@ COV_OUT_API=$(cargo llvm-cov --lib -p quecto-api --ignore-filename-regex "$COV_I
 echo "$COV_OUT_API" | tail -3
 
 if [[ "$COV_FAIL" -ne 0 ]]; then
-    echo -e "\n${RED}FAIL${NC}: Function coverage below ${COV_THRESHOLD}% threshold."
+    echo -e "\n${RED}FAIL${NC}: Function coverage below one or more package thresholds."
     echo "  Run: cargo llvm-cov --workspace --lib   to see full report"
     echo "  Run: cargo llvm-cov --html --workspace --lib   for HTML report"
     exit 1
@@ -258,7 +259,7 @@ fi
 step "11/11" "Pre-push summary"
 echo "All local push gates passed."
 echo "BDD shards: ${BDD_SHARDS}; TUI BDD shards: ${TUI_BDD_SHARDS}; timeout per shard: ${E2E_TIMEOUT}"
-echo "Lib function coverage threshold: ${COV_THRESHOLD}% (quecto-api ${API_COV_THRESHOLD}%)"
+echo "Lib function coverage thresholds: harness ${HARNESS_LIB_COV_THRESHOLD}%; TUI ${TUI_LIB_COV_THRESHOLD}%; API ${API_COV_THRESHOLD}%"
 echo "BDD function coverage thresholds: harness ${HARNESS_BDD_COV_THRESHOLD}%; TUI ${TUI_BDD_COV_THRESHOLD}%"
 
 echo -e "\n${GREEN}Pre-push passed.${NC}"
