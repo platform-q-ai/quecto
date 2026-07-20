@@ -9,7 +9,7 @@ Feature: TUI stdin buffer size cap — prevent unbounded memory growth
     When 64KB of data is fed into the buffer
     Then the buffer should accept the data
     When 1 more byte is fed
-    Then the extra byte should be silently dropped
+    Then the oversized staged input should be rejected as a whole
     And the buffer size should not exceed 64KB
 
   Scenario: Normal input well within cap
