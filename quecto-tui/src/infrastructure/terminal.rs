@@ -6,7 +6,12 @@
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 
-const ENTER_TUI: &str = "\x1b[?1049h\x1b[?2004h";
+const ENTER_TUI: &str = concat!(
+    "\x1b[?1049h", // Enter alternate screen buffer
+    "\x1b[?2004h", // Enable bracketed paste
+    "\x1b[?1006h", // Enable SGR mouse encoding for wheel/selection events
+    "\x1b[?1002h", // Enable button-event tracking (press/drag/release + wheel)
+);
 const EXIT_TUI: &str = concat!(
     "\x1b[?1006l", // Disable SGR mouse reporting if an older build enabled it
     "\x1b[?1002l", // Disable button event tracking (drag) if enabled
@@ -85,15 +90,11 @@ impl Terminal {
 
         self.saved = Some(saved);
 
-        // Enter alternate screen buffer and enable bracketed paste.
-        // The alternate buffer prevents scrollback interference which
-        // causes border duplication during streaming (#479).
-        //
-        // Do NOT enable terminal mouse reporting here. DECSET 1000/1002 causes
-        // terminals to deliver clicks to the TUI instead of activating OSC 8
-        // hyperlinks, so markdown links can render correctly yet remain
-        // unopenable (#1145). Leaving mouse reporting off lets terminals that
-        // support OSC 8 open safe markdown links directly.
+        // Enter alternate screen buffer, enable bracketed paste, and restore
+        // SGR button-event mouse reporting for wheel scroll + drag selection.
+        // OSC 8 links remain terminal-openable via the standard modifier-click
+        // path used by DEC-mouse terminals (for example Ctrl/Cmd+click), while
+        // unmodified mouse events continue to reach the TUI (#1145).
         let _ = std::io::stdout().write_all(ENTER_TUI.as_bytes());
         let _ = std::io::stdout().flush();
     }
@@ -186,13 +187,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn enter_tui_keeps_mouse_reporting_disabled_so_osc8_links_are_clickable() {
-        assert_eq!(ENTER_TUI, "\x1b[?1049h\x1b[?2004h");
+    fn enter_tui_restores_sgr_mouse_reporting_for_scroll_and_selection() {
+        assert!(ENTER_TUI.contains("\x1b[?1006h"));
+        assert!(ENTER_TUI.contains("\x1b[?1002h"));
         assert!(
-            !ENTER_TUI.contains("?1000h")
-                && !ENTER_TUI.contains("?1002h")
-                && !ENTER_TUI.contains("?1006h"),
-            "enabling terminal mouse reporting captures clicks before OSC 8 hyperlinks can open"
+            !ENTER_TUI.contains("?1000h"),
+            "button-event mode is enough; avoid broader basic click tracking"
         );
     }
 

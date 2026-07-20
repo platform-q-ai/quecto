@@ -134,22 +134,60 @@ fn track_active_escape(esc: &str, active_osc8: &mut Option<String>, active_sgr: 
     }
 }
 
+fn close_active_controls(line: &mut String, active_osc8: &Option<String>, active_sgr: &str) {
+    if !active_sgr.is_empty() {
+        line.push_str("\x1b[0m");
+    }
+    if active_osc8.is_some() {
+        line.push_str("\x1b]8;;\x07");
+    }
+}
+
+fn reopen_active_controls(line: &mut String, active_osc8: &Option<String>, active_sgr: &str) {
+    if let Some(osc8) = active_osc8 {
+        line.push_str(osc8);
+    }
+    line.push_str(active_sgr);
+}
+
+fn push_wrapped_line(
+    lines: &mut Vec<String>,
+    current_line: &mut String,
+    active_osc8: &Option<String>,
+    active_sgr: &str,
+) {
+    let mut line = current_line.trim_end().to_string();
+    close_active_controls(&mut line, active_osc8, active_sgr);
+    lines.push(line);
+    current_line.clear();
+}
+
 fn wrap_segment(s: &str, max_width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current_line = String::new();
     let mut current_width = 0;
+    let mut active_osc8: Option<String> = None;
+    let mut active_sgr = String::new();
 
     for word in s.split_inclusive(|c: char| c.is_whitespace()) {
         let word_width = visible_width(word);
 
         if current_width + word_width <= max_width {
-            current_line.push_str(word);
+            for seg in ansi_segments(word) {
+                match seg {
+                    AnsiSegment::Escape(esc) => {
+                        track_active_escape(esc, &mut active_osc8, &mut active_sgr);
+                        current_line.push_str(esc);
+                    }
+                    AnsiSegment::Text(text) => current_line.push_str(text),
+                }
+            }
             current_width += word_width;
         } else if word_width > max_width {
             // Word is longer than one line — break it. Preserve escape
-            // sequences atomically so wrapping cannot split SGR/OSC controls.
-            let mut active_osc8: Option<String> = None;
-            let mut active_sgr = String::new();
+            // sequences atomically so wrapping cannot split SGR/OSC controls,
+            // and carry any SGR/OSC state that was already active before this
+            // long word began.
             for seg in ansi_segments(word) {
                 match seg {
                     AnsiSegment::Escape(esc) => {
@@ -160,16 +198,14 @@ fn wrap_segment(s: &str, max_width: usize) -> Vec<String> {
                         for ch in text.chars() {
                             let ch_width = ch.width().unwrap_or(0);
                             if current_width + ch_width > max_width && current_width > 0 {
-                                current_line.push_str("\x1b[0m");
-                                if active_osc8.is_some() {
-                                    current_line.push_str("\x1b]8;;\x07");
-                                }
+                                close_active_controls(&mut current_line, &active_osc8, &active_sgr);
                                 lines.push(current_line);
                                 current_line = String::new();
-                                if let Some(osc8) = &active_osc8 {
-                                    current_line.push_str(osc8);
-                                }
-                                current_line.push_str(&active_sgr);
+                                reopen_active_controls(
+                                    &mut current_line,
+                                    &active_osc8,
+                                    &active_sgr,
+                                );
                                 current_width = 0;
                             }
                             current_line.push(ch);
@@ -179,13 +215,22 @@ fn wrap_segment(s: &str, max_width: usize) -> Vec<String> {
                 }
             }
         } else {
-            // Start a new line
+            // Start a new line at a word boundary. Close active controls before
+            // the physical line boundary, then reopen them on the continuation
+            // so OSC 8/SGR never leak sideways and never drop on spaced labels.
             if !current_line.is_empty() {
-                // Trim trailing whitespace from the line we're finishing
-                let trimmed = current_line.trim_end().to_string();
-                lines.push(trimmed);
+                push_wrapped_line(&mut lines, &mut current_line, &active_osc8, &active_sgr);
             }
-            current_line = word.to_string();
+            reopen_active_controls(&mut current_line, &active_osc8, &active_sgr);
+            for seg in ansi_segments(word) {
+                match seg {
+                    AnsiSegment::Escape(esc) => {
+                        track_active_escape(esc, &mut active_osc8, &mut active_sgr);
+                        current_line.push_str(esc);
+                    }
+                    AnsiSegment::Text(text) => current_line.push_str(text),
+                }
+            }
             current_width = word_width;
         }
     }
@@ -317,6 +362,19 @@ mod tests {
     fn truncate_cjk_respects_double_width() {
         let result = truncate_to_width("日本語テスト", 6, None);
         assert!(visible_width(&result) <= 6);
+    }
+
+    #[test]
+    fn wrap_long_word_preserves_sgr_active_before_word() {
+        let lines = wrap_text("\x1b[31mabc defghijkl", 6);
+        assert!(
+            lines.len() > 1,
+            "test must hard-wrap the long word: {lines:?}"
+        );
+        assert!(
+            lines[1].starts_with("\x1b[31m"),
+            "continuation should reopen active red SGR: {lines:?}"
+        );
     }
 
     #[test]
