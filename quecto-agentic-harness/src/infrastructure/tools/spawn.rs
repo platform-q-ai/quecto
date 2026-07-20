@@ -298,8 +298,6 @@ impl SpawnTool {
     }
 
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {
-        let binary = super::spawn_binary::resolve_child_binary()?;
-
         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 
         {
@@ -365,6 +363,7 @@ impl SpawnTool {
             },
         );
 
+        let binary = super::spawn_binary::resolve_child_binary()?;
         let mut cmd = tokio::process::Command::new(&binary);
         cmd.args(&cli_args);
 
