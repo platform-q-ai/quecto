@@ -107,6 +107,16 @@ impl StdinBuffer {
         while offset < self.buf.len() {
             let remaining = &self.buf[offset..];
 
+            if could_be_incomplete_raw_multiline_paste(remaining) {
+                // A raw (non-bracketed) paste can be split across stdin reads at
+                // paragraph/line boundaries. Do not emit a trailing CR/LF as
+                // Enter yet; hold the burst briefly so the event loop can
+                // coalesce following chunks. If nothing follows, drain_all()
+                // will force these bytes out and ordinary typed Enter still
+                // submits.
+                break;
+            }
+
             if looks_like_raw_multiline_paste(remaining) {
                 let paste = wrap_raw_paste_sequence(remaining);
                 sequences.push(paste);
@@ -251,6 +261,15 @@ fn looks_like_raw_multiline_paste(data: &[u8]) -> bool {
     let newline_count = data.iter().filter(|&&b| b == b'\n' || b == b'\r').count();
     newline_count > 0
         && (newline_count > 1 || data.last().is_some_and(|&b| b != b'\n' && b != b'\r'))
+}
+
+const RAW_PASTE_BOUNDARY_MIN_LEN: usize = 8;
+
+fn could_be_incomplete_raw_multiline_paste(data: &[u8]) -> bool {
+    data.len() >= RAW_PASTE_BOUNDARY_MIN_LEN
+        && data[0] != 0x1b
+        && data.last().is_some_and(|&b| b == b'\n' || b == b'\r')
+        && data.iter().any(|&b| b != b'\n' && b != b'\r')
 }
 
 fn wrap_raw_paste_sequence(data: &[u8]) -> Vec<u8> {
@@ -472,6 +491,54 @@ mod tests {
                 b"\x1b[A".to_vec(),
                 b"\x1b[200~alpha\nbeta\x1b[201~".to_vec(),
             ]
+        );
+    }
+
+    #[test]
+    fn chunked_raw_lf_paste_holds_newline_boundary_until_next_read() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"first paragraph\n");
+        assert_eq!(buf.drain_complete(), Vec::<Vec<u8>>::new());
+        assert!(buf.has_pending());
+
+        buf.feed(b"second paragraph\nthird paragraph");
+        let seqs = buf.drain_complete();
+        assert_eq!(
+            seqs,
+            vec![b"\x1b[200~first paragraph\nsecond paragraph\nthird paragraph\x1b[201~".to_vec()]
+        );
+    }
+
+    #[test]
+    fn chunked_raw_crlf_paste_holds_paragraph_boundary_until_next_read() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"first paragraph\r\n\r\n");
+        assert_eq!(buf.drain_complete(), Vec::<Vec<u8>>::new());
+        assert!(buf.has_pending());
+
+        buf.feed(b"second paragraph\r\nthird paragraph");
+        let seqs = buf.drain_complete();
+        assert_eq!(
+            seqs,
+            vec![
+                b"\x1b[200~first paragraph\r\n\r\nsecond paragraph\r\nthird paragraph\x1b[201~"
+                    .to_vec()
+            ]
+        );
+    }
+
+    #[test]
+    fn chunked_raw_cr_paste_holds_newline_boundary_until_next_read() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"first paragraph\r");
+        assert_eq!(buf.drain_complete(), Vec::<Vec<u8>>::new());
+        assert!(buf.has_pending());
+
+        buf.feed(b"second paragraph\rthird paragraph");
+        let seqs = buf.drain_complete();
+        assert_eq!(
+            seqs,
+            vec![b"\x1b[200~first paragraph\rsecond paragraph\rthird paragraph\x1b[201~".to_vec()]
         );
     }
 
