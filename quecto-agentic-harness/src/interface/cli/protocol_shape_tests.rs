@@ -165,7 +165,10 @@ fn get_session_stats_tokens_camel_case() {
     assert_eq!(j["tokens"]["cacheRead"], 40000);
     assert_eq!(j["tokens"]["cacheWrite"], 5000);
     assert_eq!(j["tokens"]["total"], 105000);
-    assert!((j["cost"].as_f64().unwrap() - 0.45).abs() < 1e-9);
+    assert!(
+        j.get("cost").is_none(),
+        "get_session_stats must not report misleading monetary cost: {j}"
+    );
     assert_eq!(j["maxContextTokens"], 200_000);
 }
 

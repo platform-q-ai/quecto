@@ -283,30 +283,31 @@ fn when_tui_requests_stats(world: &mut QuectoWorld) {
     });
 }
 
-#[then("the stats response should include non-zero token totals and cost")]
-fn then_stats_non_zero(world: &mut QuectoWorld) {
+#[then("the stats response should include non-zero token totals and no cost")]
+fn then_stats_non_zero_tokens_no_cost(world: &mut QuectoWorld) {
     let data = world.tui_session_stats_json.as_ref().expect("stats json");
     let total = data
         .get("tokens")
         .and_then(|t| t.get("total"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
-    let cost = data.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
     assert!(total > 0, "token totals should be non-zero, got {total}");
-    assert!(cost > 0.0, "cost should be non-zero, got {cost}");
+    assert!(
+        data.get("cost").is_none(),
+        "stats response must not expose misleading monetary cost: {data}"
+    );
 }
 
-#[then("the TUI should display those token totals and cost instead of zeros")]
-fn then_tui_displays_totals(world: &mut QuectoWorld) {
+#[then("the TUI should display those token totals without cost")]
+fn then_tui_displays_totals_without_cost(world: &mut QuectoWorld) {
     let frame = with_harness(world, |h| h.full_frame());
-    // show_session_stats renders "... Tokens: ↑2000 ↓500 | Cost: $0.0060".
     assert!(
         frame.contains("↑2000") && frame.contains("↓500"),
         "the TUI should display accumulated input/output token totals, frame:\n{frame}"
     );
     assert!(
-        frame.contains("$0.0060"),
-        "the TUI should display the accumulated cost, frame:\n{frame}"
+        !frame.contains("$0.0060") && !frame.contains("Cost:"),
+        "the TUI should not display accumulated monetary cost, frame:\n{frame}"
     );
 }
 

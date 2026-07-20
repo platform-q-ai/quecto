@@ -733,12 +733,12 @@ fn when_subagent_reports_state(
     });
 }
 
-#[then(expr = "the footer shows cost {string} and context {string}")]
-fn then_footer_shows_cost_and_context(world: &mut TuiWorld, cost: String, context: String) {
+#[then(expr = "the footer shows context {string} without cost {string}")]
+fn then_footer_shows_context_without_cost(world: &mut TuiWorld, context: String, cost: String) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
-        frame.contains(&cost) && frame.contains(&context),
-        "footer should show cost {cost:?} and context {context:?}, got:\n{frame}"
+        frame.contains(&context) && !frame.contains(&cost),
+        "footer should show context {context:?} without cost {cost:?}, got:\n{frame}"
     );
 }
 

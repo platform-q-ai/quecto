@@ -31,11 +31,11 @@ Feature: TUI context size and usage percentage display
     And maxContextTokens should equal the configured context window
     And the provider token usage should drive both the context gauge and usage totals
 
-  Scenario: Session stats accumulate provider usage and cost
+  Scenario: Session stats accumulate provider token usage without displaying cost
     Given multiple LLM calls return input, output, cache, and cost usage
     When the TUI requests session stats
-    Then the stats response should include non-zero token totals and cost
-    And the TUI should display those token totals and cost instead of zeros
+    Then the stats response should include non-zero token totals and no cost
+    And the TUI should display those token totals without cost
 
   Scenario: High usage shows warning color
     Given context usage exceeds 70%

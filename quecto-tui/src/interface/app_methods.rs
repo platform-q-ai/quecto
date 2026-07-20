@@ -192,12 +192,8 @@ impl App {
         let stats = session_payloads::parse_session_stats(data);
         self.master_session.chat.add_entry(ChatEntry::Status {
             text: format!(
-                "Session: {} | Messages: {} | Tokens: ↑{} ↓{} | Cost: ${:.4}",
-                stats.session_key,
-                stats.total_messages,
-                stats.input_tokens,
-                stats.output_tokens,
-                stats.cost
+                "Session: {} | Messages: {} | Tokens: ↑{} ↓{}",
+                stats.session_key, stats.total_messages, stats.input_tokens, stats.output_tokens
             ),
         });
     }

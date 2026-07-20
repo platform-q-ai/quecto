@@ -704,6 +704,7 @@ pub struct SessionStats {
     pub tool_results: usize,
     pub total_messages: usize,
     pub tokens: TokenStats,
+    #[serde(skip_serializing, default)]
     pub cost: f64,
     /// User-facing context occupancy: provider-reported prompt tokens when
     /// available, otherwise the local active-message estimate fallback.
