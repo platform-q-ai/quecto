@@ -1,21 +1,13 @@
-//! Routing a sub-agent's live UDS stream into its `SessionView` (#800/
-//! #828). Split out of `app_subagent_panel.rs` to keep that file within the
-//! source line cap; the master and per-session note defer/flush policy and the
-//! connect-on-select history backfill reconcile live here in ONE place.
-
 use super::*;
-
 /// Defensive cap on a deferred sub-agent-note buffer (master or per-session,
 /// #828): the OLDEST note is evicted past the cap so a chatty grandchild during
 /// a long parent turn cannot grow it without bound; newest notes always survive.
 pub(super) const DEFERRED_NOTE_CAP: usize = 256;
 
 impl App {
-    /// Is `id` an agent we still render — either live-tracked or with a retained
-    /// (post-exit) session? The drop-stale invariant (#800): a stale frame or a
-    /// forwarded id we don't track must never resurrect/create a session. Hoisted
-    /// so the predicate lives in ONE place instead of being copied per guard site.
-    fn is_tracked_agent(&self, id: &str) -> bool {
+    /// Is `id` still rendered (live-tracked or retained post-exit)? The drop-stale
+    /// invariant (#800): stale/untracked frames must never resurrect sessions.
+    pub(super) fn is_retained_or_tracked_agent(&self, id: &str) -> bool {
         self.subagents.sessions.contains_key(id) || self.subagents.tracked.contains_key(id)
     }
 
@@ -50,7 +42,7 @@ impl App {
             // to an already-tracked/retained session, so a misbehaving id can at
             // worst overwrite another visible agent's workflow bar (display-only,
             // no privilege/data crossover) and can never create a session.
-            if !self.is_tracked_agent(target) {
+            if !self.is_retained_or_tracked_agent(target) {
                 return;
             }
             self.ensure_session(target);
@@ -166,7 +158,7 @@ impl App {
         } = &ev
         {
             if command == "get_state" {
-                if !self.is_tracked_agent(agent_id) {
+                if !self.is_retained_or_tracked_agent(agent_id) {
                     return;
                 }
                 self.ensure_session(agent_id);
@@ -229,7 +221,7 @@ impl App {
         // that are neither still tracked nor have a retained session, so a
         // stale frame cannot resurrect a session `evict_retained_sessions`
         // just dropped (#800 review).
-        if !self.is_tracked_agent(agent_id) {
+        if !self.is_retained_or_tracked_agent(agent_id) {
             return;
         }
         self.ensure_session(agent_id);
@@ -566,12 +558,19 @@ impl App {
         extend_prefix: bool,
     ) {
         use crate::application::session_payloads::{self, ResumedChatMessage};
-        if session.history_backfilled {
+        if session.history_backfilled && (session.master_stream_appended_len == 0 || extend_prefix)
+        {
             return;
         }
         let Ok(messages) = session_payloads::parse_resumed_messages(data) else {
             return;
         };
+        let message_ids = data["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|message| message["id"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>();
         let history: Vec<ChatEntry> = messages
             .into_iter()
             .map(|message| {
@@ -604,6 +603,8 @@ impl App {
         if history.is_empty() {
             return;
         }
+        let appended_len = session.master_stream_appended_len;
+        let was_backfilled = session.history_backfilled;
         let history_len = history.len();
         let trimmed = data
             .get("trimmed")
@@ -616,6 +617,16 @@ impl App {
             // This session's own older page grows the loaded prefix.
             session.chat.prepend_history(history);
             session.partial_backfill_len.unwrap_or(0) + history_len
+        } else if appended_len > 0 && was_backfilled {
+            let entry_count = session.chat.entry_count();
+            session.chat.replace_range(0, entry_count, history);
+            session.master_stream_appended_len = 0;
+            history_len
+        } else if appended_len > 0 {
+            // The authoritative snapshot replaces the initial warmed prefix.
+            session.chat.replace_history_prefix(appended_len, history);
+            session.master_stream_appended_len = 0;
+            history_len
         } else if let Some(partial_len) = session.partial_backfill_len {
             // A prior partial snapshot / paged prefix already contributed:
             // replace it all; paging restarts from the cursors set above.
@@ -625,6 +636,7 @@ impl App {
             session.chat.prepend_history(history);
             history_len
         };
+        session.seen_message_ids.extend(message_ids);
         if trimmed || has_more_before {
             session.partial_backfill_len = Some(loaded_prefix);
             session.history_backfilled = false;
