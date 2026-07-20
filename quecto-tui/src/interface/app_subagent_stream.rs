@@ -506,7 +506,7 @@ impl App {
         }
     }
 
-    fn subagent_workflow_visible(&self, agent_id: &str) -> bool {
+    pub(super) fn subagent_workflow_visible(&self, agent_id: &str) -> bool {
         let panel_visible = self
             .subagents
             .tracked_workflow(agent_id)
@@ -525,14 +525,8 @@ impl App {
         bar: &workflow_bar::WorkflowBarState,
     ) {
         if let Some(tracked) = self.subagents.tracked.get_mut(agent_id) {
-            let mode = tracked
-                .info
-                .workflow
-                .as_ref()
-                .map(|w| w.mode.clone())
-                .unwrap_or_else(|| "active".to_string());
             tracked.info.workflow = Some(crate::infrastructure::client::SubagentWorkflow {
-                mode,
+                mode: bar.mode.clone().unwrap_or_else(|| "active".to_string()),
                 steps_completed: bar.done,
                 steps_total: bar.total,
             });

@@ -313,6 +313,12 @@ impl App {
                     &active_template,
                     &available_templates,
                 );
+                if bar.has_no_progress()
+                    && !bar.signals_end_or_reset()
+                    && self.subagent_workflow_visible(id)
+                {
+                    return;
+                }
                 self.record_subagent_workflow(id, &bar);
                 return;
             }
