@@ -130,20 +130,25 @@ fn wrap_segment(s: &str, max_width: usize) -> Vec<String> {
             current_line.push_str(word);
             current_width += word_width;
         } else if word_width > max_width {
-            // Word is longer than one line — break it
-            for ch in word.chars() {
-                let ch_width = if ch == '\x1b' {
-                    0
-                } else {
-                    ch.width().unwrap_or(0)
-                };
-                if current_width + ch_width > max_width && current_width > 0 {
-                    lines.push(current_line);
-                    current_line = String::new();
-                    current_width = 0;
+            // Word is longer than one line — break it. Preserve escape
+            // sequences atomically so wrapping cannot split SGR/OSC controls.
+            for seg in ansi_segments(word) {
+                match seg {
+                    AnsiSegment::Escape(esc) => current_line.push_str(esc),
+                    AnsiSegment::Text(text) => {
+                        for ch in text.chars() {
+                            let ch_width = ch.width().unwrap_or(0);
+                            if current_width + ch_width > max_width && current_width > 0 {
+                                current_line.push_str("\x1b[0m");
+                                lines.push(current_line);
+                                current_line = String::new();
+                                current_width = 0;
+                            }
+                            current_line.push(ch);
+                            current_width += ch_width;
+                        }
+                    }
                 }
-                current_line.push(ch);
-                current_width += ch_width;
             }
         } else {
             // Start a new line

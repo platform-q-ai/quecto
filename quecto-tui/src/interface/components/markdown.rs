@@ -319,15 +319,12 @@ impl Markdown {
             }
         }
 
-        // Flush remaining content.
         flush_current_line!();
 
-        // Remove trailing empty lines.
         while lines.last().map(|l| l.text.is_empty()).unwrap_or(false) {
             lines.pop();
         }
 
-        // Wrap and pad each line.
         let mut result = Vec::new();
         for line in &lines {
             if line.text.is_empty() {
@@ -362,8 +359,6 @@ impl Component for Markdown {
 
     fn invalidate(&mut self) {}
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 struct RenderedLine {
@@ -429,13 +424,19 @@ fn apply_inline_styles(text: &str, stack: &[InlineStyle]) -> String {
             InlineStyle::Bold => theme::bold(&result),
             InlineStyle::Italic => theme::italic(&result),
             InlineStyle::Strikethrough => format!("\x1b[9m{}\x1b[29m", result),
-            InlineStyle::Link(_) => theme::underline(&theme::blue(&result)),
+            InlineStyle::Link(url) => apply_link_style(&result, url),
         };
     }
     result
 }
+fn apply_link_style(text: &str, url: &str) -> String {
+    if url.is_empty() {
+        text.to_string()
+    } else {
+        format!("\x1b]8;;{url}\x07\x1b[4m\x1b[34m{text}\x1b[0m\x1b]8;;\x07")
+    }
+}
 
-/// Shrink column widths to fit available space (#550).
 ///
 /// Leaves narrow columns at their natural width; only shrinks columns
 /// that exceed their fair share. Iterates until all columns fit.
@@ -493,7 +494,6 @@ fn shrink_columns(widths: &mut [usize], avail: usize) {
 }
 
 /// Flush a collected markdown table into rendered lines (with trailing blank).
-/// No-op when there are no rows.
 fn flush_table(table_rows: &[Vec<String>], content_width: usize, lines: &mut Vec<RenderedLine>) {
     if table_rows.is_empty() {
         return;
@@ -738,6 +738,10 @@ fn flush_line(
 #[cfg(test)]
 #[path = "markdown_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "markdown_link_tests.rs"]
+mod link_tests;
 
 #[cfg(test)]
 #[path = "markdown_table_tests.rs"]
