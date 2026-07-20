@@ -3,8 +3,8 @@
 //! Multi-fragment CSI escape reassembly is driven against REAL production code:
 //!  * `quecto_tui::interface::stdin_buffer::StdinBuffer` for feed/drain/force-drain
 //!    reassembly (fragment-by-fragment, exactly as the event loop feeds it), and
-//!  * the real app pending-input loop `process_stdin_bytes` (with separate
-//!    escape, bracketed-paste, and raw-paste lifetimes) via the headless harness.
+//!  * the real app retry loop `process_stdin_bytes` (with `MAX_ESCAPE_RETRIES`
+//!    and the 10ms escape timeout) via the headless harness for the retry cap.
 //!
 //! Emitted key identity is confirmed through the real `keys::parse_key`.
 
@@ -113,8 +113,8 @@ fn when_process_complete(world: &mut TuiWorld) {
 
 #[when("the retry loop runs")]
 fn when_retry_loop_runs(world: &mut TuiWorld) {
-    // Drive the real app pending-input loop. Queued fragments arrive before the
-    // timeout and are consumed without an arbitrary read-count cap.
+    // Drive the REAL app retry loop. Queue more never-completing follow-up
+    // fragments than the cap allows, so the leftover proves the loop stopped.
     let first = world.tui_stdin_fragments[0].clone();
     let followups: Vec<&[u8]> = vec![b"1"; 8];
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -184,12 +184,13 @@ fn then_buffer_empty(world: &mut TuiWorld) {
     );
 }
 
-#[then("it should consume all queued escape fragments before timeout")]
-fn then_no_fragment_cap(world: &mut TuiWorld) {
+#[then("it should stop after at most 5 retry iterations")]
+fn then_cap_iterations(world: &mut TuiWorld) {
+    // 8 follow-up fragments queued; a cap of 5 leaves exactly 3 unconsumed.
     let leftover = world.tui_stdin_leftover.expect("retry loop leftover");
     assert_eq!(
-        leftover, 0,
-        "escape reassembly must not stop at an arbitrary fragment-count cap"
+        leftover, 3,
+        "the loop must consume at most 5 fragments (8 queued − 5 = 3 leftover)"
     );
 }
 

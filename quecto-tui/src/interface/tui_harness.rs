@@ -345,11 +345,11 @@ impl TuiHarness {
         self.app.stdin_buffer.has_pending()
     }
 
-    /// Drive the real reason-specific pending-input loop (`process_stdin_bytes`)
-    /// with an initial chunk plus pre-queued follow-up fragments. Escape/UTF-8
-    /// ambiguity uses the short key timeout, bracketed paste is marker-delimited,
-    /// and confirmed raw paste has no fragment-count cap. Returns the number of
-    /// follow-up fragments left unconsumed.
+    /// Drive the REAL multi-fragment escape retry loop (`process_stdin_bytes`)
+    /// with an initial chunk plus pre-queued follow-up fragments, using the
+    /// real 10ms escape timeout and `MAX_ESCAPE_RETRIES` cap. Returns the count
+    /// of follow-up fragments the loop left unconsumed in the channel (a
+    /// non-zero leftover proves the retry cap stopped the loop early).
     pub async fn drive_stdin_retry_loop(&mut self, first: &[u8], followups: &[&[u8]]) -> usize {
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
         for f in followups {
