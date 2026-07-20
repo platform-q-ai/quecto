@@ -299,11 +299,27 @@ impl App {
             active_template,
             available_templates,
         } = workflow;
-        // Only the connected agent's OWN workflow_state updates its bar; events
-        // with a different agent_id are descendants' forwarded events (Stage B).
-        // Compare to the connected id so a *named*/resumed agent still updates.
+        // Forwarded background subagent workflow_state events must update the
+        // left-panel data model immediately, but must not clobber the connected
+        // session's own workflow bar. Compare to the connected id so a
+        // *named*/resumed agent still updates its main bar.
         if let Some(id) = agent_id.as_deref() {
             if self.connected_agent_id.as_deref() != Some(id) {
+                let bar = build_workflow_state(
+                    &steps,
+                    &progress,
+                    &active_issue,
+                    &mode,
+                    &active_template,
+                    &available_templates,
+                );
+                if bar.has_no_progress()
+                    && !bar.signals_end_or_reset()
+                    && self.subagent_workflow_visible(id)
+                {
+                    return;
+                }
+                self.record_subagent_workflow(id, &bar);
                 return;
             }
         }
@@ -444,3 +460,6 @@ pub(super) fn uuid_like() -> String {
 #[cfg(test)]
 #[path = "app_events_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "app_events_1172_tests.rs"]
+mod tests_1172;
