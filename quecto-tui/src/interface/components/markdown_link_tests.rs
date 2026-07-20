@@ -21,15 +21,32 @@ fn safe_http_link_label_is_real_osc8_hyperlink() {
 }
 
 #[test]
-fn wrapped_link_lines_end_with_sgr_reset_to_prevent_style_bleed() {
+fn wrapped_link_reopens_and_closes_osc8_on_every_physical_line() {
+    let url = "https://example.com";
     let lines = render_md("[averyveryverylonglinklabel](https://example.com)", 10);
 
     assert!(lines.len() > 1, "test must exercise wrapping: {lines:?}");
-    for line in lines {
+    let link_lines: Vec<_> = lines
+        .iter()
+        .filter(|line| line.contains(&format!("\x1b]8;;{url}\x07")))
+        .collect();
+    assert!(
+        link_lines.len() > 1,
+        "link label must span wrapped chunks: {lines:?}"
+    );
+
+    for line in &link_lines {
         assert!(
-            line.ends_with("\x1b[0m"),
-            "styled wrapped link line must end reset to avoid pane bleed: {line:?}"
+            line.starts_with(&format!("\x1b]8;;{url}\x07\x1b[4m\x1b[34m")),
+            "every wrapped link chunk must reopen OSC 8 + SGR styling: {line:?}"
         );
+        assert!(
+            line.contains("\x1b[0m\x1b]8;;\x07"),
+            "every wrapped link chunk must close SGR + OSC 8 before pane boundary: {line:?}"
+        );
+    }
+
+    for line in lines {
         assert!(
             visible_width(&line) <= 10,
             "wrapped link line must stay clipped to chat width: {line:?}"

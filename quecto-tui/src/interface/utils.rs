@@ -118,6 +118,22 @@ pub fn wrap_text(s: &str, max_width: usize) -> Vec<String> {
 }
 
 /// Word-wrap a single newline-free segment to `max_width` columns.
+fn track_active_escape(esc: &str, active_osc8: &mut Option<String>, active_sgr: &mut String) {
+    if esc.starts_with("\x1b]8;;") {
+        if esc == "\x1b]8;;\x07" || esc == "\x1b]8;;\x1b\\" {
+            *active_osc8 = None;
+        } else {
+            *active_osc8 = Some(esc.to_string());
+        }
+    } else if esc.starts_with("\x1b[") && esc.ends_with('m') {
+        if esc == "\x1b[0m" {
+            active_sgr.clear();
+        } else {
+            active_sgr.push_str(esc);
+        }
+    }
+}
+
 fn wrap_segment(s: &str, max_width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current_line = String::new();
@@ -132,16 +148,28 @@ fn wrap_segment(s: &str, max_width: usize) -> Vec<String> {
         } else if word_width > max_width {
             // Word is longer than one line — break it. Preserve escape
             // sequences atomically so wrapping cannot split SGR/OSC controls.
+            let mut active_osc8: Option<String> = None;
+            let mut active_sgr = String::new();
             for seg in ansi_segments(word) {
                 match seg {
-                    AnsiSegment::Escape(esc) => current_line.push_str(esc),
+                    AnsiSegment::Escape(esc) => {
+                        track_active_escape(esc, &mut active_osc8, &mut active_sgr);
+                        current_line.push_str(esc);
+                    }
                     AnsiSegment::Text(text) => {
                         for ch in text.chars() {
                             let ch_width = ch.width().unwrap_or(0);
                             if current_width + ch_width > max_width && current_width > 0 {
                                 current_line.push_str("\x1b[0m");
+                                if active_osc8.is_some() {
+                                    current_line.push_str("\x1b]8;;\x07");
+                                }
                                 lines.push(current_line);
                                 current_line = String::new();
+                                if let Some(osc8) = &active_osc8 {
+                                    current_line.push_str(osc8);
+                                }
+                                current_line.push_str(&active_sgr);
                                 current_width = 0;
                             }
                             current_line.push(ch);
