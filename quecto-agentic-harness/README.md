@@ -84,10 +84,14 @@ Useful `quecto-tui` flags:
 Handy TUI controls: `Shift+Enter` or `Alt+Enter` inserts a newline, `Escape`
 aborts the active run (or clears the editor when idle), `Ctrl+C` clears the
 editor first and otherwise aborts the active run, `Ctrl+L` opens the model
-selector, and `Ctrl+O` toggles tool output expansion. Slash commands include
+selector, and `Ctrl+O` toggles tool output expansion. Safe `http(s)` markdown
+links are OSC 8 hyperlinks; with mouse capture on for scroll/selection, use
+**`Shift+click`** (Alacritty and many other terminals; some use Ctrl/Cmd+click)
+to open a link in the browser — plain click selects text. Slash commands include
 `/model`, `/clear`, `/new`, `/session`, `/workflow-auto`, `/workflow-nudge`,
 `/help` (also `/hotkeys`), and `/quit` (also `/exit`). See
-[`quecto-tui/README.md`](../quecto-tui/README.md) for a dedicated TUI reference.
+[`quecto-tui/README.md`](../quecto-tui/README.md) for a dedicated TUI reference
+(including mouse/link gestures; `/help` is the in-app source of truth).
 
 ## Workspace binaries
 

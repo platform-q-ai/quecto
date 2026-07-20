@@ -2,7 +2,7 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
-**Version `0.70.1` (pre-1.0).** The TUI is a UDS bus client of the harness: the
+**Version `0.70.3` (pre-1.0).** The TUI is a UDS bus client of the harness: the
 wire protocol and session ownership live in `quecto`, so most breaking risk is
 upstream. This crate stays on `0.y` until Clean Architecture layering and public
 surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
@@ -114,6 +114,24 @@ the 30s deadline instead.
 | `Ctrl+Z` | Suspend the TUI (`fg` to resume) |
 | `PageUp` / `PageDown` | Scroll chat |
 | `Up` / `Down` | Browse input history |
+
+## Mouse and markdown links
+
+Safe `http(s)` markdown links in chat are emitted as real **OSC 8** hyperlinks
+(blue + underline). The TUI enables DEC/SGR mouse reporting so the wheel scrolls
+chat and drag selects text; while that capture is on, a plain click starts
+selection instead of opening the link.
+
+To open a link in the browser, use your terminal’s mouse-capture bypass:
+
+| Gesture | Typical terminals |
+|---|---|
+| **`Shift+click`** | Alacritty and many other DEC-mouse terminals |
+| `Ctrl+click` / `Cmd+click` | Some terminals use a different modifier |
+
+The same note appears in the in-app `/help` (also `/hotkeys`) listing. The
+modifier is a terminal feature, not a Quecto keybinding — if plain click ever
+opens links natively, that help line is the single place to update first.
 
 ## Slash commands
 
