@@ -104,11 +104,12 @@ async fn every_read_size_from_one_to_256_preserves_newlines_and_utf8() {
     let text = format!("αlpha\n{}\n雪-tail\n", "middle🙂".repeat(40));
     for read_size in 1..=256 {
         let mut h = TuiHarness::new().await;
-        // Start in a confirmed paste burst, then exercise every possible read
-        // size around all subsequent newline and UTF-8 boundaries.
-        let mut chunks = vec![b"seed\nnext\n".to_vec()];
-        chunks.extend(text.as_bytes().chunks(read_size).map(<[u8]>::to_vec));
-        assert_draft_without_model_action(&mut h, &chunks, &format!("seed\nnext\n{text}")).await;
+        let chunks: Vec<Vec<u8>> = text
+            .as_bytes()
+            .chunks(read_size)
+            .map(<[u8]>::to_vec)
+            .collect();
+        assert_draft_without_model_action(&mut h, &chunks, &text).await;
     }
 }
 

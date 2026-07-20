@@ -45,6 +45,9 @@ pub struct StdinBuffer {
     /// insertion but do not turn later burst fragments into Enter events. A
     /// standalone Enter after a quiet boundary clears this latch and submits.
     raw_paste_latched: bool,
+    /// Streaming prefix length for ESC[201~ while rejecting an oversized
+    /// bracketed paste. This makes discard recovery partition-independent.
+    discarded_end_match: usize,
     overflowed: bool,
 }
 
@@ -54,6 +57,7 @@ impl StdinBuffer {
             buf: Vec::new(),
             mode: Mode::Ground,
             raw_paste_latched: false,
+            discarded_end_match: 0,
             overflowed: false,
         }
     }
@@ -64,8 +68,9 @@ impl StdinBuffer {
     /// truncated paste.
     pub fn feed(&mut self, data: &[u8]) -> bool {
         if self.buf.len().saturating_add(data.len()) > MAX_BUFFER_SIZE {
+            let was_bracketed = self.mode == Mode::BracketedPaste;
             self.buf.clear();
-            self.mode = if self.mode == Mode::BracketedPaste {
+            self.mode = if was_bracketed {
                 // Keep discarding this marker-delimited event until its end
                 // marker arrives; otherwise its tail could be decoded as keys.
                 Mode::DiscardingBracketedPaste
@@ -73,7 +78,11 @@ impl StdinBuffer {
                 Mode::Ground
             };
             self.raw_paste_latched = false;
+            self.discarded_end_match = 0;
             self.overflowed = true;
+            if was_bracketed {
+                self.discard_bracketed_bytes(data);
+            }
             return false;
         }
 
@@ -81,21 +90,16 @@ impl StdinBuffer {
         if starts_fresh && self.mode == Mode::Ground {
             if self.raw_paste_latched && is_raw_burst_data(data) {
                 self.mode = Mode::RawPaste;
-            } else if is_raw_burst_data(data) && (contains_line_break(data) || data.len() > 1) {
-                // A multi-byte read is a potential terminal burst. It is staged
-                // until either a newline confirms raw paste or the short quiet
-                // boundary replays it as ordinary key input. Even a one-byte
-                // LF/CR is staged so arbitrary read partitioning is safe.
+            } else if is_raw_burst_data(data) {
+                // Every printable/text fragment is staged until the short quiet
+                // boundary. This is what permits raw paste confirmation even
+                // when the terminal partitions the burst into one-byte reads.
                 self.mode = Mode::RawCandidate;
             }
         }
 
         if self.mode == Mode::DiscardingBracketedPaste {
-            if let Some(end) = find_subsequence(data, BRACKETED_PASTE_END) {
-                self.mode = Mode::Ground;
-                self.buf
-                    .extend_from_slice(&data[end + BRACKETED_PASTE_END.len()..]);
-            }
+            self.discard_bracketed_bytes(data);
             // This entire marker-delimited event was rejected, including every
             // fragment discarded until its exact end marker.
             return false;
@@ -160,7 +164,9 @@ impl StdinBuffer {
         Some(match self.mode {
             Mode::RawCandidate => PendingReason::RawCandidate,
             Mode::RawPaste => PendingReason::RawPaste,
-            Mode::BracketedPaste if self.buf == b"\x1b" => PendingReason::Escape,
+            Mode::BracketedPaste if self.buf.len() < BRACKETED_PASTE_START.len() => {
+                PendingReason::Escape
+            }
             Mode::BracketedPaste | Mode::DiscardingBracketedPaste => PendingReason::BracketedPaste,
             Mode::Ground => match complete_sequence_len(&self.buf) {
                 SequenceStatus::Pending(reason) => reason,
@@ -229,6 +235,22 @@ impl StdinBuffer {
             .into_iter()
             .map(|byte| InputEvent::KeySequence(vec![byte]))
             .collect()
+    }
+
+    fn discard_bracketed_bytes(&mut self, data: &[u8]) {
+        for (index, byte) in data.iter().copied().enumerate() {
+            if byte == BRACKETED_PASTE_END[self.discarded_end_match] {
+                self.discarded_end_match += 1;
+                if self.discarded_end_match == BRACKETED_PASTE_END.len() {
+                    self.mode = Mode::Ground;
+                    self.discarded_end_match = 0;
+                    self.buf.extend_from_slice(&data[index + 1..]);
+                    return;
+                }
+            } else {
+                self.discarded_end_match = usize::from(byte == BRACKETED_PASTE_END[0]);
+            }
+        }
     }
 
     fn refresh_mode(&mut self) {

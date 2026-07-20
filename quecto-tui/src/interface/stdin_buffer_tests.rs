@@ -364,6 +364,36 @@ fn broken_bracketed_paste_overflow_never_emits_partial_content() {
 }
 
 #[test]
+fn overflowing_bracketed_paste_recovers_across_split_end_marker() {
+    let mut buf = StdinBuffer::new();
+    assert!(buf.feed(BRACKETED_PASTE_START));
+    let mut oversized = vec![b'x'; MAX_BUFFER_SIZE];
+    oversized.extend_from_slice(b"\x1b[20");
+    assert!(!buf.feed(&oversized));
+    assert!(!buf.feed(b"1~tail"));
+    assert_eq!(
+        buf.drain_events(),
+        vec![
+            InputEvent::Overflow,
+            InputEvent::KeySequence(b"t".to_vec()),
+            InputEvent::KeySequence(b"a".to_vec()),
+            InputEvent::KeySequence(b"i".to_vec()),
+            InputEvent::KeySequence(b"l".to_vec())
+        ]
+    );
+}
+
+#[test]
+fn bracketed_start_prefix_uses_escape_timeout_until_full_marker() {
+    for prefix in [b"\x1b[".as_slice(), b"\x1b[2", b"\x1b[20", b"\x1b[200"] {
+        let mut buf = StdinBuffer::new();
+        buf.feed(prefix);
+        assert_eq!(buf.pending_reason(), Some(PendingReason::Escape));
+        assert!(!buf.finish_pending(false).is_empty());
+    }
+}
+
+#[test]
 fn eof_discards_incomplete_bracketed_paste_explicitly() {
     let mut buf = StdinBuffer::new();
     buf.feed(b"\x1b[200~partial");
