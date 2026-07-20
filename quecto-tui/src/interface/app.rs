@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -108,15 +109,13 @@ pub struct App {
     git_repo: Option<PathBuf>,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
-    /// Whether session stats were already requested as a fallback to learn
-    /// the real context window for the current session/model.
+    /// Session stats fallback to learn real context window for current session/model.
     context_stats_requested: bool,
-    /// #1060: request-id → pending in-flight recovery fetch (gated, applied in ref order).
-    pending_message_recovery: std::collections::HashMap<String, PendingMessageRecovery>,
+    pending_message_recovery: HashMap<String, PendingMessageRecovery>,
     /// Recovery batches (client-local id → turn chat range) guarding late overwrites.
-    message_recovery_batches: std::collections::HashMap<String, MessageRecoveryBatch>,
-    pending_stub_recall: std::collections::HashMap<String, app_paged_history::StubRecall>,
-    failed_stub_recalls: std::collections::HashSet<(Option<String>, String)>,
+    message_recovery_batches: HashMap<String, MessageRecoveryBatch>,
+    pending_stub_recall: HashMap<String, app_paged_history::StubRecall>,
+    failed_stub_recalls: HashSet<(Option<String>, String)>,
     /// Tool boxes observed since the current master AgentStart (#1060 recovery).
     tools_this_turn: usize,
     /// Tool starts not yet matched by an end; > 0 forces recovery on a dropped end.
@@ -248,10 +247,11 @@ pub(crate) struct SessionView {
     observed_run_state: bool,
     /// Chat entry index at which this child's active turn began.
     active_turn_start: usize,
-    /// Tool starts in THIS child turn (reset each turn); drives recovery (#1060 F2).
     tools_this_turn: usize,
     /// Child tool starts not yet ended; forces recovery on a dropped end (review 3).
     open_tool_calls: usize,
+    master_stream_appended_len: usize,
+    seen_message_ids: HashSet<String>,
 }
 
 impl SessionView {
@@ -280,6 +280,8 @@ impl SessionView {
             active_turn_start: 0,
             tools_this_turn: 0,
             open_tool_calls: 0,
+            master_stream_appended_len: 0,
+            seen_message_ids: HashSet::new(),
         }
     }
 }
@@ -351,10 +353,10 @@ impl App {
             git_repo,
             last_rendered_lines: Vec::new(),
             context_stats_requested: false,
-            pending_message_recovery: std::collections::HashMap::new(),
-            message_recovery_batches: std::collections::HashMap::new(),
-            pending_stub_recall: std::collections::HashMap::new(),
-            failed_stub_recalls: std::collections::HashSet::new(),
+            pending_message_recovery: HashMap::new(),
+            message_recovery_batches: HashMap::new(),
+            pending_stub_recall: HashMap::new(),
+            failed_stub_recalls: HashSet::new(),
             tools_this_turn: 0,
             open_tool_calls: 0,
             active_turn_start: 0,
@@ -441,6 +443,8 @@ mod app_response;
 mod app_rewind;
 #[path = "app_selection.rs"]
 mod app_selection;
+#[path = "app_subagent_appended.rs"]
+mod app_subagent_appended;
 #[path = "app_subagent_panel.rs"]
 mod app_subagent_panel;
 #[path = "app_subagent_state.rs"]

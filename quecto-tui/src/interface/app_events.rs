@@ -37,8 +37,11 @@ impl App {
             Event::SubagentNotification {
                 agent_id, message, ..
             } => self.handle_subagent_notification(agent_id, message),
-            // Superseded by connect-on-select direct child streaming (#797/#800).
-            Event::SubagentMessagesAppended { .. } => {}
+            Event::SubagentMessagesAppended {
+                agent_id,
+                messages,
+                message_refs,
+            } => self.handle_subagent_messages_appended(agent_id, messages, message_refs),
             Event::WorkflowState {
                 agent_id,
                 steps,

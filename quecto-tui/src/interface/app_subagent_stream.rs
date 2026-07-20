@@ -1,6 +1,5 @@
-//! Routing a sub-agent's live UDS stream into its `SessionView` (#800/
-//! #828). Split out of `app_subagent_panel.rs` to keep that file within the
-//! source line cap; the master and per-session note defer/flush policy and the
+//! Routing a sub-agent's live UDS stream into its `SessionView` (#800/#828).
+//! Split from `app_subagent_panel.rs`; master/per-session note defer/flush and
 //! connect-on-select history backfill reconcile live here in ONE place.
 
 use super::*;
@@ -11,11 +10,9 @@ use super::*;
 pub(super) const DEFERRED_NOTE_CAP: usize = 256;
 
 impl App {
-    /// Is `id` an agent we still render — either live-tracked or with a retained
-    /// (post-exit) session? The drop-stale invariant (#800): a stale frame or a
-    /// forwarded id we don't track must never resurrect/create a session. Hoisted
-    /// so the predicate lives in ONE place instead of being copied per guard site.
-    fn is_tracked_agent(&self, id: &str) -> bool {
+    /// Is `id` still rendered (live-tracked or retained post-exit)? The drop-stale
+    /// invariant (#800): stale/untracked frames must never resurrect sessions.
+    pub(super) fn is_retained_or_tracked_agent(&self, id: &str) -> bool {
         self.subagents.sessions.contains_key(id) || self.subagents.tracked.contains_key(id)
     }
 
@@ -50,7 +47,7 @@ impl App {
             // to an already-tracked/retained session, so a misbehaving id can at
             // worst overwrite another visible agent's workflow bar (display-only,
             // no privilege/data crossover) and can never create a session.
-            if !self.is_tracked_agent(target) {
+            if !self.is_retained_or_tracked_agent(target) {
                 return;
             }
             self.ensure_session(target);
@@ -166,7 +163,7 @@ impl App {
         } = &ev
         {
             if command == "get_state" {
-                if !self.is_tracked_agent(agent_id) {
+                if !self.is_retained_or_tracked_agent(agent_id) {
                     return;
                 }
                 self.ensure_session(agent_id);
@@ -229,7 +226,7 @@ impl App {
         // that are neither still tracked nor have a retained session, so a
         // stale frame cannot resurrect a session `evict_retained_sessions`
         // just dropped (#800 review).
-        if !self.is_tracked_agent(agent_id) {
+        if !self.is_retained_or_tracked_agent(agent_id) {
             return;
         }
         self.ensure_session(agent_id);
@@ -567,6 +564,12 @@ impl App {
     ) {
         use crate::application::session_payloads::{self, ResumedChatMessage};
         if session.history_backfilled {
+            if session.master_stream_appended_len > 0 && !extend_prefix {
+                session
+                    .chat
+                    .replace_range(0, session.master_stream_appended_len, Vec::new());
+                session.master_stream_appended_len = 0;
+            }
             return;
         }
         let Ok(messages) = session_payloads::parse_resumed_messages(data) else {
@@ -604,6 +607,7 @@ impl App {
         if history.is_empty() {
             return;
         }
+        let appended_len = session.master_stream_appended_len;
         let history_len = history.len();
         let trimmed = data
             .get("trimmed")
@@ -616,6 +620,14 @@ impl App {
             // This session's own older page grows the loaded prefix.
             session.chat.prepend_history(history);
             session.partial_backfill_len.unwrap_or(0) + history_len
+        } else if appended_len > 0 {
+            // The master stream warmed this unfocused child before its first
+            // direct backfill. The direct snapshot is authoritative and already
+            // contains the same persisted turns, so replace the warmed prefix
+            // instead of prepending duplicates (#1186).
+            session.chat.replace_history_prefix(appended_len, history);
+            session.master_stream_appended_len = 0;
+            history_len
         } else if let Some(partial_len) = session.partial_backfill_len {
             // A prior partial snapshot / paged prefix already contributed:
             // replace it all; paging restarts from the cursors set above.
