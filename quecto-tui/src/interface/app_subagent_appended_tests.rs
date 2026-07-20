@@ -276,3 +276,63 @@ async fn later_direct_backfill_replaces_master_appended_prefix_without_duplicate
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert_eq!(frame.matches("WARMED_CHILD_TURN").count(), 1, "{frame}");
 }
+
+#[tokio::test]
+async fn direct_backfill_after_later_warm_append_preserves_old_history() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent("worker", "idle", None)]));
+    h.select(Some("worker"));
+    h.route(
+        "worker",
+        backfill_event(vec![serde_json::json!({
+            "role": "assistant", "id": "old", "content": "OLD_TURN"
+        })]),
+    );
+    h.select(None);
+    h.event(Event::SubagentMessagesAppended {
+        agent_id: "worker".into(),
+        messages: vec![serde_json::json!({
+            "role": "assistant", "id": "new", "content": "NEW_TURN"
+        })],
+        message_refs: vec!["new".into()],
+    });
+    h.select(Some("worker"));
+    h.route(
+        "worker",
+        backfill_event(vec![
+            serde_json::json!({"role": "assistant", "id": "old", "content": "OLD_TURN"}),
+            serde_json::json!({"role": "assistant", "id": "new", "content": "NEW_TURN"}),
+        ]),
+    );
+
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert_eq!(frame.matches("OLD_TURN").count(), 1, "{frame}");
+    assert_eq!(frame.matches("NEW_TURN").count(), 1, "{frame}");
+}
+
+#[tokio::test]
+async fn delayed_master_append_after_direct_backfill_is_deduplicated() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent("worker", "idle", None)]));
+    h.select(Some("worker"));
+    h.route(
+        "worker",
+        backfill_event(vec![serde_json::json!({
+            "role": "assistant", "id": "m1", "content": "ONCE"
+        })]),
+    );
+    h.select(None);
+    h.event(Event::SubagentMessagesAppended {
+        agent_id: "worker".into(),
+        messages: vec![serde_json::json!({
+            "role": "assistant", "id": "m1", "content": "ONCE"
+        })],
+        message_refs: vec!["m1".into()],
+    });
+
+    h.select(Some("worker"));
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert_eq!(frame.matches("ONCE").count(), 1, "{frame}");
+}

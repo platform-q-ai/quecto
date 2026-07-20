@@ -1,9 +1,4 @@
-//! Routing a sub-agent's live UDS stream into its `SessionView` (#800/#828).
-//! Split from `app_subagent_panel.rs`; master/per-session note defer/flush and
-//! connect-on-select history backfill reconcile live here in ONE place.
-
 use super::*;
-
 /// Defensive cap on a deferred sub-agent-note buffer (master or per-session,
 /// #828): the OLDEST note is evicted past the cap so a chatty grandchild during
 /// a long parent turn cannot grow it without bound; newest notes always survive.
@@ -563,18 +558,19 @@ impl App {
         extend_prefix: bool,
     ) {
         use crate::application::session_payloads::{self, ResumedChatMessage};
-        if session.history_backfilled {
-            if session.master_stream_appended_len > 0 && !extend_prefix {
-                session
-                    .chat
-                    .replace_range(0, session.master_stream_appended_len, Vec::new());
-                session.master_stream_appended_len = 0;
-            }
+        if session.history_backfilled && (session.master_stream_appended_len == 0 || extend_prefix)
+        {
             return;
         }
         let Ok(messages) = session_payloads::parse_resumed_messages(data) else {
             return;
         };
+        let message_ids = data["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|message| message["id"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>();
         let history: Vec<ChatEntry> = messages
             .into_iter()
             .map(|message| {
@@ -608,6 +604,7 @@ impl App {
             return;
         }
         let appended_len = session.master_stream_appended_len;
+        let was_backfilled = session.history_backfilled;
         let history_len = history.len();
         let trimmed = data
             .get("trimmed")
@@ -620,11 +617,13 @@ impl App {
             // This session's own older page grows the loaded prefix.
             session.chat.prepend_history(history);
             session.partial_backfill_len.unwrap_or(0) + history_len
+        } else if appended_len > 0 && was_backfilled {
+            let entry_count = session.chat.entry_count();
+            session.chat.replace_range(0, entry_count, history);
+            session.master_stream_appended_len = 0;
+            history_len
         } else if appended_len > 0 {
-            // The master stream warmed this unfocused child before its first
-            // direct backfill. The direct snapshot is authoritative and already
-            // contains the same persisted turns, so replace the warmed prefix
-            // instead of prepending duplicates (#1186).
+            // The authoritative snapshot replaces the initial warmed prefix.
             session.chat.replace_history_prefix(appended_len, history);
             session.master_stream_appended_len = 0;
             history_len
@@ -637,6 +636,7 @@ impl App {
             session.chat.prepend_history(history);
             history_len
         };
+        session.seen_message_ids.extend(message_ids);
         if trimmed || has_more_before {
             session.partial_backfill_len = Some(loaded_prefix);
             session.history_backfilled = false;

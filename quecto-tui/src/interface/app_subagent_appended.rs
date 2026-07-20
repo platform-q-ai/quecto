@@ -153,7 +153,7 @@ impl App {
                 duration_ms,
             } => ChatEntry::ToolExecution {
                 tool_call_id,
-                tool_name,
+                tool_name: crate::interface::ansi::sanitize_control_keep_newlines(&tool_name),
                 args: crate::interface::ansi::sanitize_control_keep_newlines(&args),
                 parsed_args,
                 result: result
@@ -177,9 +177,9 @@ impl App {
             return;
         }
         if refs.iter().any(|message_id| {
-            self.pending_message_recovery
-                .values()
-                .any(|pending| pending.message_id == *message_id)
+            self.pending_message_recovery.values().any(|pending| {
+                pending.agent_id.as_deref() == Some(agent_id) && pending.message_id == *message_id
+            })
         }) {
             return;
         }
@@ -191,13 +191,26 @@ impl App {
             super::app_events::uuid_like()
         );
         let target = session.chat.entry_count();
+        let reserved = refs.len();
+        if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
+            session.chat.replace_range(
+                target,
+                target,
+                (0..reserved)
+                    .map(|_| ChatEntry::Status {
+                        text: String::new(),
+                    })
+                    .collect(),
+            );
+            session.master_stream_appended_len += reserved;
+        }
         self.message_recovery_batches.insert(
             batch_id.clone(),
             MessageRecoveryBatch {
                 refs: refs.to_vec(),
                 responses: std::collections::HashMap::new(),
                 target_start: target,
-                target_end: target,
+                target_end: target + reserved,
                 agent_id: Some(agent_id.to_string()),
             },
         );
