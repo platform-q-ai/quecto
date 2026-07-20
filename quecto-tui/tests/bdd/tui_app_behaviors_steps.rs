@@ -800,15 +800,23 @@ fn then_rewind_refresh_sent(world: &mut TuiWorld) {
     );
 }
 
-#[then(expr = "the master prompt command includes streaming behavior {string}")]
-fn then_master_prompt_has_streaming_behavior(world: &mut TuiWorld, behavior: String) {
-    let prompt = command_of_type(&world.tui_last_commands, "prompt")
-        .unwrap_or_else(|| panic!("expected prompt command, got {:?}", world.tui_last_commands));
-    let value: serde_json::Value = serde_json::from_str(prompt).expect("prompt command json");
+#[then(expr = "the master follow-up command is sent with message {string}")]
+fn then_master_follow_up_sent(world: &mut TuiWorld, message: String) {
+    let follow_up = command_of_type(&world.tui_last_commands, "follow_up").unwrap_or_else(|| {
+        panic!(
+            "expected follow-up command, got {:?}",
+            world.tui_last_commands
+        )
+    });
+    let value: serde_json::Value = serde_json::from_str(follow_up).expect("follow-up command json");
     assert_eq!(
-        value.get("streamingBehavior").and_then(|v| v.as_str()),
-        Some(behavior.as_str()),
-        "streaming master submit should steer: {prompt}"
+        value.get("message").and_then(|v| v.as_str()),
+        Some(message.as_str()),
+        "streaming master submit should queue a follow-up: {follow_up}"
+    );
+    assert!(
+        value.get("streamingBehavior").is_none(),
+        "follow-up command must not carry steer streaming behavior: {follow_up}"
     );
 }
 

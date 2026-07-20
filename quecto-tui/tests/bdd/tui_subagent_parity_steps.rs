@@ -158,6 +158,15 @@ fn given_tracking_two_focus_panel(world: &mut TuiWorld) {
 
 #[given(expr = "a TUI viewing sub-agent {string}")]
 fn given_viewing(world: &mut TuiWorld, id: String) {
+    given_viewing_with_status(world, id, "idle");
+}
+
+#[given(expr = "a TUI viewing running sub-agent {string}")]
+fn given_viewing_running(world: &mut TuiWorld, id: String) {
+    given_viewing_with_status(world, id, "running");
+}
+
+fn given_viewing_with_status(world: &mut TuiWorld, id: String, status: &str) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let (mut h, cmd_rx) = rt.block_on(async {
         let mut h = TuiHarness::new().await;
@@ -166,7 +175,7 @@ fn given_viewing(world: &mut TuiWorld, id: String) {
         let (socket, cmd_rx) = spawn_subagent_socket_with_commands(&id);
         h.event(subagents_changed(vec![subagent_with_socket(
             &id,
-            "running",
+            status,
             Some(("active", 0, 3)),
             Some(socket),
         )]));
@@ -375,7 +384,7 @@ fn then_focus_stays_input(world: &mut TuiWorld) {
 fn then_prompt_in_session(world: &mut TuiWorld, _id: String) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
-        frame.contains("steer please"),
+        frame.contains("message for child"),
         "the prompt must land in the active sub-agent's session body, got:\n{frame}"
     );
 }
@@ -384,10 +393,34 @@ fn then_prompt_in_session(world: &mut TuiWorld, _id: String) {
 fn then_no_master_prompt(world: &mut TuiWorld) {
     let cmds = drain_master_commands(world);
     assert!(
-        !cmds
-            .iter()
-            .any(|c| c.contains("\"prompt\"") && c.contains("steer please")),
+        !cmds.iter().any(|c| {
+            (c.contains("\"type\":\"prompt\"") || c.contains("\"type\":\"follow_up\""))
+                && (c.contains("message for child") || c.contains("message for running child"))
+        }),
         "the prompt must route to the active sub-agent, not the master: {cmds:?}"
+    );
+}
+
+#[then(expr = "the follow-up is sent to sub-agent {string}")]
+fn then_follow_up_sent_to_subagent(world: &mut TuiWorld, _id: String) {
+    let cmds = drain_subagent_commands(world);
+    assert!(
+        cmds.iter().any(|c| {
+            c.contains("\"type\":\"follow_up\"") && c.contains("message for running child")
+        }),
+        "running sub-agent submit must emit a follow-up to the child: {cmds:?}"
+    );
+    world.tui_last_commands = cmds;
+}
+
+#[then("the sub-agent command does not claim steer")]
+fn then_subagent_command_not_steer(world: &mut TuiWorld) {
+    assert!(
+        !world.tui_last_commands.iter().any(|c| {
+            c.contains("\"type\":\"steer\"") || c.contains("\"streamingBehavior\":\"steer\"")
+        }),
+        "running sub-agent submit must not claim steer behavior: {:?}",
+        world.tui_last_commands
     );
 }
 
@@ -495,6 +528,26 @@ fn then_appears_above(world: &mut TuiWorld, upper: String, lower: String) {
         matches!((up, lo), (Some(u), Some(l)) if u < l),
         "history {upper:?} must render ABOVE live content {lower:?}, got:\n{frame}"
     );
+}
+
+fn drain_subagent_commands(world: &mut TuiWorld) -> Vec<String> {
+    let handle = world
+        .tui_parity_rt
+        .as_ref()
+        .expect("harness runtime")
+        .handle()
+        .clone();
+    let rx = world
+        .tui_subagent_commands
+        .as_mut()
+        .expect("sub-agent command receiver");
+    handle.block_on(async {
+        let mut cmds = Vec::new();
+        while let Ok(cmd) = rx.try_recv() {
+            cmds.push(cmd);
+        }
+        cmds
+    })
 }
 
 /// Drain the commands the MASTER client would have emitted (within the runtime).

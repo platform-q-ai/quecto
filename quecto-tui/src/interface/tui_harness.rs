@@ -396,7 +396,7 @@ impl TuiHarness {
         self
     }
 
-    /// Submit a prompt through the real submit path (steers the active session).
+    /// Submit text through the real submit path (prompt or queued follow-up).
     pub fn submit(&mut self, text: &str) -> &mut Self {
         self.app.handle_submit(text);
         self.capture();

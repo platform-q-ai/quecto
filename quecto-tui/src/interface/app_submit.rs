@@ -85,14 +85,21 @@ impl App {
         }
 
         // Route to the ACTIVE session (#802). A selected sub-agent's prompt
-        // steers THAT agent over its own connection (its dispatch loop queues
-        // the prompt until its turn ends) and lands in its session, not master's.
+        // targets THAT agent over its own connection and lands in its session,
+        // not master's. When the selected child is already running, Enter queues
+        // a follow-up behind the current turn; it does not interrupt/steer.
         if self.subagents.active_agent_id.is_some() {
-            let steer = self.active_subagent_running();
-            let cmd = Command::Prompt {
-                id: None,
-                message: text.to_string(),
-                streaming_behavior: steer.then(|| "steer".to_string()),
+            let cmd = if self.active_subagent_running() {
+                Command::FollowUp {
+                    id: None,
+                    message: text.to_string(),
+                }
+            } else {
+                Command::Prompt {
+                    id: None,
+                    message: text.to_string(),
+                    streaming_behavior: None,
+                }
             };
             // Append to the sub-agent transcript ONLY when the route actually
             // enqueued it (#804 review): a failed route (no live sender / full
@@ -110,14 +117,17 @@ impl App {
         self.master_session.chat.add_entry(ChatEntry::User {
             text: text.to_string(),
         });
-        let cmd = Command::Prompt {
-            id: None,
-            message: text.to_string(),
-            streaming_behavior: if self.agent_state.is_running() {
-                Some("steer".to_string())
-            } else {
-                None
-            },
+        let cmd = if self.agent_state.is_running() {
+            Command::FollowUp {
+                id: None,
+                message: text.to_string(),
+            }
+        } else {
+            Command::Prompt {
+                id: None,
+                message: text.to_string(),
+                streaming_behavior: None,
+            }
         };
         self.send_command(cmd);
     }

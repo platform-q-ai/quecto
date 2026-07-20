@@ -208,11 +208,11 @@ Feature: TUI app event routing and command behaviours
     Then the app notification includes "Rewound conversation"
     And a rewind refresh command is sent
 
-  Scenario: Master submit while streaming sends a steer prompt
+  Scenario: Master submit while streaming queues a follow-up
     Given a fresh TUI app harness
     And the master assistant is currently streaming
     When I submit the master prompt "add more detail"
-    Then the master prompt command includes streaming behavior "steer"
+    Then the master follow-up command is sent with message "add more detail"
     And the master chat shows "add more detail"
 
   Scenario: Sub-agent live stream updates only the selected sub-agent session

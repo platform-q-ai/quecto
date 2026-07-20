@@ -479,17 +479,6 @@ async fn handle_submit_regular_message_adds_user_entry() {
 }
 
 #[tokio::test]
-async fn handle_submit_steer_when_agent_running() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.agent_state.start();
-    a.handle_submit("steer this");
-    // When running, the command should be a steer (not a new prompt).
-    // Just verify the user message is still added.
-    assert!(a.master_session.chat.entry_count() > 0);
-}
-
-#[tokio::test]
 async fn handle_submit_resume_sends_list_sessions() {
     let mut h = harness().await;
     h.app_mut().handle_submit("/resume");
@@ -582,15 +571,20 @@ async fn handle_submit_quit_does_not_send_prompt() {
 }
 
 #[tokio::test]
-async fn handle_submit_steer_command_when_running() {
+async fn handle_submit_follow_up_command_when_running() {
     let mut h = harness().await;
     h.app_mut().agent_state.start();
-    h.app_mut().handle_submit("steer message");
+    h.app_mut().handle_submit("follow-up message");
     let cmds = h.drain_commands().await;
     assert!(
-        cmds.iter()
+        cmds.iter().any(|c| c.contains("\"type\":\"follow_up\"")),
+        "Enter while running should queue a follow-up command: {cmds:?}"
+    );
+    assert!(
+        !cmds
+            .iter()
             .any(|c| c.contains("\"streamingBehavior\":\"steer\"")),
-        "should send steer behavior when agent is running: {cmds:?}"
+        "Enter while running must not claim steer behavior: {cmds:?}"
     );
 }
 
