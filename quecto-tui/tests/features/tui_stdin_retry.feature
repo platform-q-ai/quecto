@@ -30,10 +30,10 @@ Feature: TUI stdin buffer retry loop — multi-fragment escape sequences
     Then ESC should be emitted as a bare Escape key
     And the buffer should be empty
 
-  Scenario: Retry loop is capped to prevent infinite wait
+  Scenario: Escape timeout is independent of a fragment-count cap
     Given an incomplete CSI sequence that never completes
     When the retry loop runs
-    Then it should stop after at most 5 retry iterations
+    Then it should consume all queued escape fragments before timeout
     And force-drain the incomplete bytes
 
   Scenario: Complete sequence does not trigger retry loop
