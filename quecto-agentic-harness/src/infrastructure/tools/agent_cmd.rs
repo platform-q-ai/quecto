@@ -414,7 +414,7 @@ impl Tool for AgentCmdTool {
                 hasMoreBefore:true, pass its before cursor to page older history — \
                 the note/await summary is one line, not the result. \
                 get_state reports live status/model/message counts; get_session_stats \
-                reports token/cost accounting. While a child is BUSY mid-turn, \
+                reports token usage and context occupancy. While a child is BUSY mid-turn, \
                 get_messages/get_state are served from a snapshot of its last \
                 completed turn (tagged snapshot:true / isStreaming:true), so the \
                 data may lag the in-flight turn."

@@ -653,6 +653,34 @@ fn test_session_stats_serializes() {
 }
 
 #[test]
+fn test_session_stats_deserializes_without_cost() {
+    let json = r#"{
+        "sessionKey": "cli:test",
+        "userMessages": 2,
+        "assistantMessages": 2,
+        "toolCalls": 3,
+        "toolResults": 3,
+        "totalMessages": 10,
+        "tokens": {
+            "input": 1000,
+            "output": 200,
+            "cacheRead": 800,
+            "cacheWrite": 100,
+            "total": 2100
+        },
+        "contextTokens": 12000,
+        "maxContextTokens": 200000
+    }"#;
+
+    let stats: SessionStats = serde_json::from_str(json)
+        .expect("SessionStats should deserialize no-cost get_session_stats JSON");
+
+    assert_eq!(stats.session_key, "cli:test");
+    assert_eq!(stats.tokens.total, 2100);
+    assert_eq!(stats.cost, 0.0);
+}
+
+#[test]
 fn unit_tree_reconstructs_parentage_from_events() {
     let events = vec![
         serde_json::json!({"agent_id":"root","parent_id":null}),
