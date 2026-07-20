@@ -29,9 +29,10 @@ use tokio::sync::mpsc;
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 pub(super) const STREAM_RENDER_INTERVAL: Duration = Duration::from_millis(33);
 const MOUSE_SCROLL_LINES: usize = 3;
-/// Retry cap for reassembling multi-fragment escape sequences (5-fragment CSI
-/// splits on slow SSH/serial); max wait = 5 × escape_timeout (10ms) = 50ms.
-const MAX_ESCAPE_RETRIES: usize = 5;
+/// Raw unmarked paste is delimited by a quiet period. Unlike escape-key
+/// disambiguation, each arriving chunk resets this deadline and there is no
+/// read-count cap on the paste lifetime.
+const RAW_PASTE_QUIET_TIMEOUT: Duration = Duration::from_millis(10);
 
 #[path = "app_commands.rs"]
 mod app_commands;
@@ -421,6 +422,8 @@ mod app_event_loop;
 mod app_events;
 #[path = "app_git.rs"]
 mod app_git;
+#[path = "app_stdin.rs"]
+mod app_stdin;
 pub const GIT_BRANCH_POLL_INTERVAL: std::time::Duration = app_git::GIT_BRANCH_POLL_INTERVAL;
 #[path = "app_idle_efficiency.rs"]
 mod app_idle_efficiency;
@@ -681,6 +684,9 @@ mod app_git_tests;
 #[cfg(test)]
 #[path = "app_idle_efficiency_tests.rs"]
 mod app_idle_efficiency_tests;
+#[cfg(test)]
+#[path = "app_input_paste_tests.rs"]
+mod app_input_paste_tests;
 #[cfg(test)]
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;

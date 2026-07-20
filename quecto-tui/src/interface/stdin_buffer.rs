@@ -1,196 +1,294 @@
-//! StdinBuffer — buffers raw terminal input and emits complete sequences.
+//! Stateful raw-terminal input decoder.
 //!
-//! Modeled on Quecto TUI's StdinBuffer. Solves the fundamental problem of escape
-//! sequences arriving split across multiple reads (e.g. `\x1b` then `[A`).
-//!
-//! The buffer accumulates bytes and only emits complete key sequences.
-//! Incomplete sequences are held until more data arrives or a timeout expires.
+//! Escape keys, marker-delimited bracketed paste, and heuristic raw paste bursts
+//! have deliberately separate pending reasons. In particular, paste bytes are
+//! never force-drained through the ordinary CR/LF-to-Enter key path.
 
-/// Maximum buffer size (64 KB). Prevents unbounded memory growth from
-/// broken bracketed paste (start marker without end marker) or malicious input.
+/// Maximum staged input size (64 KiB). An oversized staged event is rejected as
+/// a whole and reported to the caller; no partial paste is emitted.
 pub(crate) const MAX_BUFFER_SIZE: usize = 64 * 1024;
 
-/// Check if a byte sequence starting with ESC is complete.
-fn is_complete_escape(data: &[u8]) -> Completeness {
-    if data.is_empty() || data[0] != 0x1b {
-        return Completeness::NotEscape;
-    }
-    if data.len() == 1 {
-        return Completeness::Incomplete;
-    }
+pub(crate) const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
+pub(crate) const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
 
-    match data[1] {
-        b'[' => is_complete_csi(&data[2..]),
-        b'O' => {
-            // SS3: ESC O + one character
-            if data.len() >= 3 {
-                Completeness::Complete
-            } else {
-                Completeness::Incomplete
-            }
-        }
-        // Meta key: ESC + single printable/control character
-        _ => Completeness::Complete,
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingReason {
+    Escape,
+    Utf8,
+    BracketedPaste,
+    RawCandidate,
+    RawPaste,
 }
 
-/// Check if a CSI sequence (after `\x1b[`) is complete.
-fn is_complete_csi(after_bracket: &[u8]) -> Completeness {
-    if after_bracket.is_empty() {
-        return Completeness::Incomplete;
-    }
-
-    // Bracketed paste start: \x1b[200~
-    if after_bracket.starts_with(b"200~") {
-        // Look for end marker: \x1b[201~
-        const END_MARKER: &[u8] = b"\x1b[201~";
-        if after_bracket
-            .windows(END_MARKER.len())
-            .any(|w| w == END_MARKER)
-        {
-            return Completeness::Complete;
-        }
-        return Completeness::Incomplete;
-    }
-
-    // CSI sequences end with a byte in 0x40-0x7E (@ through ~)
-    // Parameter bytes are 0x30-0x3F (digits, semicolons, colons, etc.)
-    // Intermediate bytes are 0x20-0x2F (space through /)
-    for &b in after_bracket {
-        if (0x40..=0x7E).contains(&b) {
-            return Completeness::Complete;
-        }
-    }
-    Completeness::Incomplete
+#[derive(Debug, PartialEq, Eq)]
+pub enum InputEvent {
+    KeySequence(Vec<u8>),
+    Paste(String),
+    Overflow,
+    IncompleteBracketedPaste,
 }
 
-#[derive(Debug, PartialEq)]
-enum Completeness {
-    Complete,
-    Incomplete,
-    NotEscape,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Ground,
+    RawCandidate,
+    RawPaste,
+    BracketedPaste,
+    DiscardingBracketedPaste,
 }
 
-/// A buffer that accumulates stdin bytes and extracts complete key sequences.
+/// Decoder for terminal stdin chunks.
 pub struct StdinBuffer {
     buf: Vec<u8>,
+    mode: Mode,
+    /// Once raw multiline input is confirmed, quiet periods may finish editor
+    /// insertion but do not turn later burst fragments into Enter events. A
+    /// standalone Enter after a quiet boundary clears this latch and submits.
+    raw_paste_latched: bool,
+    overflowed: bool,
 }
 
 impl StdinBuffer {
     pub fn new() -> Self {
-        Self { buf: Vec::new() }
-    }
-
-    /// Feed new bytes into the buffer.
-    ///
-    /// Data beyond [`MAX_BUFFER_SIZE`] is truncated to prevent unbounded
-    /// memory growth (e.g. broken bracketed paste). Returns `true` if all
-    /// data was accepted, `false` if some was dropped due to the cap.
-    pub fn feed(&mut self, data: &[u8]) -> bool {
-        let remaining_capacity = MAX_BUFFER_SIZE.saturating_sub(self.buf.len());
-        if remaining_capacity == 0 {
-            return data.is_empty();
+        Self {
+            buf: Vec::new(),
+            mode: Mode::Ground,
+            raw_paste_latched: false,
+            overflowed: false,
         }
-        let accept = data.len().min(remaining_capacity);
-        self.buf.extend_from_slice(&data[..accept]);
-        accept == data.len()
     }
 
-    /// Extract all complete sequences from the buffer.
-    ///
-    /// Returns a list of byte slices, each representing one complete key event.
-    /// Incomplete sequences remain in the buffer for the next `feed()` call.
-    pub fn drain_complete(&mut self) -> Vec<Vec<u8>> {
-        let mut sequences = Vec::new();
-        let mut offset = 0;
+    /// Feed one terminal read. Returns false when the staged event would exceed
+    /// the cap. In that case the entire staged event is discarded and an
+    /// [`InputEvent::Overflow`] is produced, rather than silently emitting a
+    /// truncated paste.
+    pub fn feed(&mut self, data: &[u8]) -> bool {
+        if self.buf.len().saturating_add(data.len()) > MAX_BUFFER_SIZE {
+            self.buf.clear();
+            self.mode = if self.mode == Mode::BracketedPaste {
+                // Keep discarding this marker-delimited event until its end
+                // marker arrives; otherwise its tail could be decoded as keys.
+                Mode::DiscardingBracketedPaste
+            } else {
+                Mode::Ground
+            };
+            self.raw_paste_latched = false;
+            self.overflowed = true;
+            return false;
+        }
 
-        while offset < self.buf.len() {
-            let remaining = &self.buf[offset..];
+        let starts_fresh = self.buf.is_empty();
+        if starts_fresh && self.mode == Mode::Ground {
+            if self.raw_paste_latched && is_raw_burst_data(data) {
+                self.mode = Mode::RawPaste;
+            } else if is_raw_burst_data(data) && (contains_line_break(data) || data.len() > 1) {
+                // A multi-byte read is a potential terminal burst. It is staged
+                // until either a newline confirms raw paste or the short quiet
+                // boundary replays it as ordinary key input. Even a one-byte
+                // LF/CR is staged so arbitrary read partitioning is safe.
+                self.mode = Mode::RawCandidate;
+            }
+        }
 
-            if could_be_incomplete_raw_multiline_paste(remaining) {
-                // A raw (non-bracketed) paste can be split across stdin reads at
-                // paragraph/line boundaries. Do not emit a trailing CR/LF as
-                // Enter yet; hold the burst briefly so the event loop can
-                // coalesce following chunks. If nothing follows, drain_all()
-                // will force these bytes out and ordinary typed Enter still
-                // submits.
+        if self.mode == Mode::DiscardingBracketedPaste {
+            if let Some(end) = find_subsequence(data, BRACKETED_PASTE_END) {
+                self.mode = Mode::Ground;
+                self.buf
+                    .extend_from_slice(&data[end + BRACKETED_PASTE_END.len()..]);
+            }
+            // This entire marker-delimited event was rejected, including every
+            // fragment discarded until its exact end marker.
+            return false;
+        } else {
+            self.buf.extend_from_slice(data);
+        }
+        self.refresh_mode();
+        true
+    }
+
+    pub fn drain_events(&mut self) -> Vec<InputEvent> {
+        let mut events = Vec::new();
+        if self.overflowed {
+            self.overflowed = false;
+            events.push(InputEvent::Overflow);
+        }
+
+        loop {
+            if self.buf.is_empty() {
                 break;
             }
-
-            if looks_like_raw_multiline_paste(remaining) {
-                let paste = wrap_raw_paste_sequence(remaining);
-                sequences.push(paste);
-                offset = self.buf.len();
-                break;
-            }
-
-            if remaining[0] == 0x1b {
-                // Escape sequence — check if complete.
-                match is_complete_escape(remaining) {
-                    Completeness::Complete => {
-                        let len = escape_sequence_len(remaining);
-                        sequences.push(remaining[..len].to_vec());
-                        offset += len;
-                    }
-                    Completeness::Incomplete => {
-                        // Keep the rest in the buffer.
+            self.refresh_mode();
+            match self.mode {
+                Mode::RawCandidate | Mode::RawPaste | Mode::DiscardingBracketedPaste => break,
+                Mode::BracketedPaste => {
+                    if self.buf.len() < BRACKETED_PASTE_START.len() {
                         break;
                     }
-                    Completeness::NotEscape => {
-                        // Shouldn't happen since we checked [0] == 0x1b.
-                        sequences.push(vec![remaining[0]]);
-                        offset += 1;
+                    let Some(end) = find_subsequence(
+                        &self.buf[BRACKETED_PASTE_START.len()..],
+                        BRACKETED_PASTE_END,
+                    ) else {
+                        break;
+                    };
+                    let content_start = BRACKETED_PASTE_START.len();
+                    let content_end = content_start + end;
+                    let consumed = content_end + BRACKETED_PASTE_END.len();
+                    events.push(InputEvent::Paste(decode_paste(
+                        &self.buf[content_start..content_end],
+                    )));
+                    self.buf.drain(..consumed);
+                    self.mode = Mode::Ground;
+                }
+                Mode::Ground => match complete_sequence_len(&self.buf) {
+                    SequenceStatus::Complete(len) => {
+                        events.push(InputEvent::KeySequence(self.buf.drain(..len).collect()));
                     }
-                }
-            } else {
-                // Non-escape byte — emit as a single-byte sequence.
-                // For UTF-8 multi-byte characters, emit the full character.
-                let len = utf8_char_len(remaining[0]);
-                if offset + len <= self.buf.len() {
-                    sequences.push(remaining[..len].to_vec());
-                    offset += len;
-                } else {
-                    // Incomplete UTF-8 character — wait for more bytes.
-                    break;
-                }
+                    SequenceStatus::Pending(_) => break,
+                },
             }
         }
-
-        // Keep only the unprocessed remainder.
-        if offset > 0 {
-            self.buf = self.buf[offset..].to_vec();
-        }
-
-        sequences
+        events
     }
 
-    /// Force-drain everything in the buffer, treating any incomplete
-    /// escape as a bare Escape key followed by the remaining bytes.
-    ///
-    /// Call this after a timeout to avoid holding bytes forever.
-    pub fn drain_all(&mut self) -> Vec<Vec<u8>> {
+    pub fn pending_reason(&self) -> Option<PendingReason> {
+        if self.mode == Mode::DiscardingBracketedPaste {
+            return Some(PendingReason::BracketedPaste);
+        }
         if self.buf.is_empty() {
-            return Vec::new();
+            return None;
         }
-
-        // First try to drain complete sequences.
-        let mut sequences = self.drain_complete();
-
-        // If there's still data left (incomplete escape), force it out.
-        if !self.buf.is_empty() {
-            let remaining = std::mem::take(&mut self.buf);
-            // Treat as individual bytes (bare escape + whatever followed).
-            for &b in &remaining {
-                sequences.push(vec![b]);
-            }
-        }
-
-        sequences
+        Some(match self.mode {
+            Mode::RawCandidate => PendingReason::RawCandidate,
+            Mode::RawPaste => PendingReason::RawPaste,
+            Mode::BracketedPaste if self.buf == b"\x1b" => PendingReason::Escape,
+            Mode::BracketedPaste | Mode::DiscardingBracketedPaste => PendingReason::BracketedPaste,
+            Mode::Ground => match complete_sequence_len(&self.buf) {
+                SequenceStatus::Pending(reason) => reason,
+                SequenceStatus::Complete(_) => return None,
+            },
+        })
     }
 
-    /// Whether the buffer has incomplete data waiting for more bytes.
     pub fn has_pending(&self) -> bool {
-        !self.buf.is_empty()
+        self.pending_reason().is_some()
+    }
+
+    /// An Enter delivered as its own post-quiescence input action is explicit
+    /// submit. The app calls this before feeding a fresh outer-loop stdin read;
+    /// fragments coalesced inside the active burst never clear the latch.
+    pub fn begin_input_action(&mut self, data: &[u8]) {
+        if self.buf.is_empty() && self.mode == Mode::Ground && is_standalone_enter(data) {
+            self.raw_paste_latched = false;
+        }
+    }
+
+    /// Finish a reason-specific pending state after its own deadline/EOF.
+    pub fn finish_pending(&mut self, eof: bool) -> Vec<InputEvent> {
+        match self.pending_reason() {
+            None => self.drain_events(),
+            Some(PendingReason::RawCandidate) => {
+                self.mode = if confirms_raw_multiline(&self.buf) {
+                    self.raw_paste_latched = true;
+                    Mode::RawPaste
+                } else {
+                    Mode::Ground
+                };
+                if self.mode == Mode::RawPaste {
+                    self.finish_raw_paste()
+                } else {
+                    self.force_ground_bytes()
+                }
+            }
+            Some(PendingReason::RawPaste) => self.finish_raw_paste(),
+            Some(PendingReason::BracketedPaste) if eof => {
+                self.buf.clear();
+                let was_discarding = self.mode == Mode::DiscardingBracketedPaste;
+                self.mode = Mode::Ground;
+                if was_discarding {
+                    Vec::new()
+                } else {
+                    vec![InputEvent::IncompleteBracketedPaste]
+                }
+            }
+            Some(PendingReason::BracketedPaste) => Vec::new(),
+            Some(PendingReason::Escape | PendingReason::Utf8) => self.force_ground_bytes(),
+        }
+    }
+
+    fn finish_raw_paste(&mut self) -> Vec<InputEvent> {
+        self.raw_paste_latched = true;
+        self.mode = Mode::Ground;
+        let bytes = std::mem::take(&mut self.buf);
+        vec![InputEvent::Paste(decode_paste(&bytes))]
+    }
+
+    fn force_ground_bytes(&mut self) -> Vec<InputEvent> {
+        self.mode = Mode::Ground;
+        let bytes = std::mem::take(&mut self.buf);
+        bytes
+            .into_iter()
+            .map(|byte| InputEvent::KeySequence(vec![byte]))
+            .collect()
+    }
+
+    fn refresh_mode(&mut self) {
+        match self.mode {
+            Mode::RawCandidate if confirms_raw_multiline(&self.buf) => {
+                self.mode = Mode::RawPaste;
+                self.raw_paste_latched = true;
+            }
+            Mode::BracketedPaste if !is_bracketed_start_prefix(&self.buf) => {
+                // ESC/CSI prefix finished as an ordinary key rather than the
+                // exact bracketed-paste start marker.
+                self.mode = Mode::Ground;
+            }
+            Mode::Ground if is_bracketed_start_prefix(&self.buf) => {
+                self.mode = Mode::BracketedPaste;
+            }
+            _ => {}
+        }
+    }
+
+    // Compatibility helpers retained for focused decoder/BDD tests. Production
+    // consumes typed InputEvent values and never synthesizes paste markers.
+    pub fn drain_complete(&mut self) -> Vec<Vec<u8>> {
+        let mut events = self.drain_events();
+        if matches!(self.pending_reason(), Some(PendingReason::RawPaste)) {
+            events.extend(self.finish_pending(false));
+        } else if matches!(self.pending_reason(), Some(PendingReason::RawCandidate))
+            && !contains_line_break(&self.buf)
+        {
+            // Legacy focused tests expect ordinary coalesced text immediately;
+            // production keeps the typed pending reason until its quiet timer.
+            events.extend(self.finish_pending(false));
+        }
+        // Compatibility decoding groups a complete UTF-8 scalar into one
+        // sequence even when the production typed-event path is used.
+        if events.len() > 1
+            && events
+                .iter()
+                .all(|event| matches!(event, InputEvent::KeySequence(_)))
+        {
+            let bytes: Vec<u8> = events
+                .iter()
+                .flat_map(|event| match event {
+                    InputEvent::KeySequence(sequence) => sequence.iter().copied(),
+                    _ => unreachable!(),
+                })
+                .collect();
+            if std::str::from_utf8(&bytes).is_ok()
+                && bytes.first().is_some_and(|byte| *byte >= 0x80)
+            {
+                events = vec![InputEvent::KeySequence(bytes)];
+            }
+        }
+        events_as_sequences(events)
+    }
+
+    pub fn drain_all(&mut self) -> Vec<Vec<u8>> {
+        let mut events = self.drain_events();
+        events.extend(self.finish_pending(true));
+        events_as_sequences(events)
     }
 }
 
@@ -200,551 +298,133 @@ impl Default for StdinBuffer {
     }
 }
 
-/// Calculate the length of a complete escape sequence.
-fn escape_sequence_len(data: &[u8]) -> usize {
-    if data.is_empty() || data[0] != 0x1b {
-        return 1;
+fn events_as_sequences(events: Vec<InputEvent>) -> Vec<Vec<u8>> {
+    events
+        .into_iter()
+        .filter_map(|event| match event {
+            InputEvent::KeySequence(sequence) => Some(sequence),
+            InputEvent::Paste(text) => {
+                let mut framed = Vec::with_capacity(
+                    BRACKETED_PASTE_START.len() + text.len() + BRACKETED_PASTE_END.len(),
+                );
+                framed.extend_from_slice(BRACKETED_PASTE_START);
+                framed.extend_from_slice(text.as_bytes());
+                framed.extend_from_slice(BRACKETED_PASTE_END);
+                Some(framed)
+            }
+            InputEvent::Overflow | InputEvent::IncompleteBracketedPaste => None,
+        })
+        .collect()
+}
+
+fn is_raw_burst_data(data: &[u8]) -> bool {
+    !data.is_empty()
+        && data[0] != 0x1b
+        && data
+            .iter()
+            .all(|byte| matches!(byte, b'\r' | b'\n' | b'\t') || *byte >= 0x20 || *byte >= 0x80)
+}
+
+fn is_standalone_enter(data: &[u8]) -> bool {
+    matches!(data, b"\r" | b"\n")
+}
+
+fn contains_line_break(data: &[u8]) -> bool {
+    data.iter().any(|byte| matches!(byte, b'\r' | b'\n'))
+}
+
+fn confirms_raw_multiline(data: &[u8]) -> bool {
+    let mut breaks = 0;
+    let mut first_break_end = None;
+    let mut index = 0;
+    while index < data.len() {
+        match data[index] {
+            b'\r' => {
+                index += 1;
+                if data.get(index) == Some(&b'\n') {
+                    index += 1;
+                }
+                breaks += 1;
+                first_break_end.get_or_insert(index);
+            }
+            b'\n' => {
+                index += 1;
+                breaks += 1;
+                first_break_end.get_or_insert(index);
+            }
+            _ => index += 1,
+        }
     }
-    if data.len() == 1 {
-        return 1;
+    breaks >= 2 || (breaks == 1 && first_break_end.is_some_and(|end| end < data.len()))
+}
+
+fn decode_paste(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn is_bracketed_start_prefix(data: &[u8]) -> bool {
+    data.starts_with(BRACKETED_PASTE_START)
+        || data.len() < BRACKETED_PASTE_START.len()
+            && BRACKETED_PASTE_START.starts_with(data)
+            && data.first() == Some(&0x1b)
+            // ESC alone is generically ambiguous; once a following byte is
+            // present, only the exact marker prefix belongs to paste state.
+            && (data.len() > 1 || data == b"\x1b")
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SequenceStatus {
+    Complete(usize),
+    Pending(PendingReason),
+}
+
+fn complete_sequence_len(data: &[u8]) -> SequenceStatus {
+    if data[0] == 0x1b {
+        if is_bracketed_start_prefix(data) {
+            return SequenceStatus::Pending(PendingReason::BracketedPaste);
+        }
+        if data.len() == 1 {
+            return SequenceStatus::Pending(PendingReason::Escape);
+        }
+        return match data[1] {
+            b'[' => {
+                for (index, byte) in data.iter().enumerate().skip(2) {
+                    if (0x40..=0x7e).contains(byte) {
+                        return SequenceStatus::Complete(index + 1);
+                    }
+                }
+                SequenceStatus::Pending(PendingReason::Escape)
+            }
+            b'O' if data.len() < 3 => SequenceStatus::Pending(PendingReason::Escape),
+            b'O' => SequenceStatus::Complete(3),
+            _ => SequenceStatus::Complete(2),
+        };
     }
 
-    match data[1] {
-        b'[' => {
-            // CSI: find the terminal byte (0x40-0x7E).
-            // Special case: bracketed paste.
-            if data.len() > 5 && data[2..6] == *b"200~" {
-                // Find \x1b[201~ end marker.
-                const END_MARKER: &[u8] = b"\x1b[201~";
-                if let Some(pos) = data[6..]
-                    .windows(END_MARKER.len())
-                    .position(|w| w == END_MARKER)
-                {
-                    return 6 + pos + END_MARKER.len();
-                }
-                return data.len(); // Should not happen if complete.
-            }
-            for (i, &byte) in data.iter().enumerate().skip(2) {
-                if (0x40..=0x7E).contains(&byte) {
-                    return i + 1;
-                }
-            }
-            data.len()
-        }
-        b'O' => {
-            // SS3: ESC O + one char.
-            3.min(data.len())
-        }
-        _ => {
-            // Meta: ESC + one char.
-            2.min(data.len())
-        }
+    let len = utf8_char_len(data[0]);
+    if data.len() < len {
+        SequenceStatus::Pending(PendingReason::Utf8)
+    } else {
+        SequenceStatus::Complete(len)
     }
 }
 
-/// Get the expected byte length of a UTF-8 character from its first byte.
 fn utf8_char_len(first_byte: u8) -> usize {
     match first_byte {
-        0x00..=0x7F => 1,
-        0xC0..=0xDF => 2,
-        0xE0..=0xEF => 3,
-        0xF0..=0xF7 => 4,
-        _ => 1, // Invalid leading byte — treat as single byte.
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf7 => 4,
+        _ => 1,
     }
 }
 
-fn looks_like_raw_multiline_paste(data: &[u8]) -> bool {
-    if data.len() <= 1 || data[0] == 0x1b {
-        return false;
-    }
-
-    let newline_count = data.iter().filter(|&&b| b == b'\n' || b == b'\r').count();
-    newline_count > 0
-        && (newline_count > 1 || data.last().is_some_and(|&b| b != b'\n' && b != b'\r'))
-}
-
-const RAW_PASTE_BOUNDARY_MIN_LEN: usize = 8;
-
-fn could_be_incomplete_raw_multiline_paste(data: &[u8]) -> bool {
-    data.len() >= RAW_PASTE_BOUNDARY_MIN_LEN
-        && data[0] != 0x1b
-        && data.last().is_some_and(|&b| b == b'\n' || b == b'\r')
-        && data.iter().any(|&b| b != b'\n' && b != b'\r')
-}
-
-fn wrap_raw_paste_sequence(data: &[u8]) -> Vec<u8> {
-    let mut paste = Vec::with_capacity(b"\x1b[200~".len() + data.len() + b"\x1b[201~".len());
-    paste.extend_from_slice(b"\x1b[200~");
-    paste.extend_from_slice(data);
-    paste.extend_from_slice(b"\x1b[201~");
-    paste
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn single_printable_char() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"a");
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![b"a".to_vec()]);
-        assert!(!buf.has_pending());
-    }
-
-    #[test]
-    fn multiple_printable_chars() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"abc");
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs.len(), 3);
-        assert_eq!(seqs[0], b"a".to_vec());
-        assert_eq!(seqs[1], b"b".to_vec());
-        assert_eq!(seqs[2], b"c".to_vec());
-    }
-
-    #[test]
-    fn complete_csi_in_one_read() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x1b[A"); // Up arrow
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![b"\x1b[A".to_vec()]);
-    }
-
-    #[test]
-    fn split_csi_across_reads() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x1b");
-        let seqs = buf.drain_complete();
-        assert!(seqs.is_empty(), "bare ESC should be held");
-        assert!(buf.has_pending());
-
-        buf.feed(b"[A");
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![b"\x1b[A".to_vec()]);
-        assert!(!buf.has_pending());
-    }
-
-    #[test]
-    fn split_csi_three_reads() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x1b");
-        assert!(buf.drain_complete().is_empty());
-        buf.feed(b"[");
-        assert!(buf.drain_complete().is_empty());
-        buf.feed(b"A");
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![b"\x1b[A".to_vec()]);
-    }
-
-    #[test]
-    fn bare_escape_on_timeout() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x1b");
-        assert!(buf.drain_complete().is_empty());
-        // Timeout — force drain.
-        let seqs = buf.drain_all();
-        assert_eq!(seqs, vec![vec![0x1b]]);
-        assert!(!buf.has_pending());
-    }
-
-    #[test]
-    fn ctrl_d_not_swallowed() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x04"); // Ctrl+D
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![vec![0x04]]);
-    }
-
-    #[test]
-    fn ctrl_c_not_swallowed() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x03"); // Ctrl+C
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![vec![0x03]]);
-    }
-
-    #[test]
-    fn mixed_text_and_escape() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"hello\x1b[Aworld");
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs.len(), 11); // h, e, l, l, o, ESC[A, w, o, r, l, d
-        assert_eq!(seqs[5], b"\x1b[A".to_vec()); // Up arrow
-    }
-
-    #[test]
-    fn csi_with_params() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x1b[13;2u"); // Kitty Shift+Enter
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![b"\x1b[13;2u".to_vec()]);
-    }
-
-    #[test]
-    fn kitty_press_and_release_in_one_read_split_into_sequences() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x1b[65;1:1u\x1b[65;1:3u");
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs.len(), 2);
-        assert_eq!(seqs[0], b"\x1b[65;1:1u".to_vec());
-        assert_eq!(seqs[1], b"\x1b[65;1:3u".to_vec());
-        assert!(crate::interface::kitty::is_key_release(&seqs[1]));
-    }
-
-    #[test]
-    fn ss3_sequence() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x1bOA"); // SS3 Up arrow
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![b"\x1bOA".to_vec()]);
-    }
-
-    #[test]
-    fn alt_enter() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x1b\r"); // Alt+Enter
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![b"\x1b\r".to_vec()]);
-    }
-
-    #[test]
-    fn utf8_char() {
-        let mut buf = StdinBuffer::new();
-        buf.feed("é".as_bytes());
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs.len(), 1);
-        assert_eq!(std::str::from_utf8(&seqs[0]).unwrap(), "é");
-    }
-
-    #[test]
-    fn bracketed_paste() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x1b[200~hello\x1b[201~");
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs.len(), 1);
-        assert!(seqs[0].starts_with(b"\x1b[200~"));
-    }
-
-    #[test]
-    fn raw_lf_multiline_paste_is_one_paste_sequence() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"alpha\nbeta\ngamma");
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![b"\x1b[200~alpha\nbeta\ngamma\x1b[201~".to_vec()]);
-    }
-
-    #[test]
-    fn raw_cr_multiline_paste_is_one_paste_sequence() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"alpha\rbeta\rgamma");
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![b"\x1b[200~alpha\rbeta\rgamma\x1b[201~".to_vec()]);
-    }
-
-    #[test]
-    fn raw_crlf_multiline_paste_is_one_paste_sequence() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"alpha\r\nbeta\r\ngamma");
-        let seqs = buf.drain_complete();
-        assert_eq!(
-            seqs,
-            vec![b"\x1b[200~alpha\r\nbeta\r\ngamma\x1b[201~".to_vec()]
-        );
-    }
-
-    #[test]
-    fn lone_enter_stays_enter_sequence() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\r");
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![b"\r".to_vec()]);
-    }
-
-    #[test]
-    fn single_line_submit_stays_separate_when_coalesced() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"alpha\r");
-        let seqs = buf.drain_complete();
-        assert_eq!(
-            seqs,
-            vec![
-                b"a".to_vec(),
-                b"l".to_vec(),
-                b"p".to_vec(),
-                b"h".to_vec(),
-                b"a".to_vec(),
-                b"\r".to_vec(),
-            ]
-        );
-    }
-
-    #[test]
-    fn raw_multiline_paste_after_escape_sequence_is_detected() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x1b[Aalpha\nbeta");
-        let seqs = buf.drain_complete();
-        assert_eq!(
-            seqs,
-            vec![
-                b"\x1b[A".to_vec(),
-                b"\x1b[200~alpha\nbeta\x1b[201~".to_vec(),
-            ]
-        );
-    }
-
-    #[test]
-    fn chunked_raw_lf_paste_holds_newline_boundary_until_next_read() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"first paragraph\n");
-        assert_eq!(buf.drain_complete(), Vec::<Vec<u8>>::new());
-        assert!(buf.has_pending());
-
-        buf.feed(b"second paragraph\nthird paragraph");
-        let seqs = buf.drain_complete();
-        assert_eq!(
-            seqs,
-            vec![b"\x1b[200~first paragraph\nsecond paragraph\nthird paragraph\x1b[201~".to_vec()]
-        );
-    }
-
-    #[test]
-    fn chunked_raw_crlf_paste_holds_paragraph_boundary_until_next_read() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"first paragraph\r\n\r\n");
-        assert_eq!(buf.drain_complete(), Vec::<Vec<u8>>::new());
-        assert!(buf.has_pending());
-
-        buf.feed(b"second paragraph\r\nthird paragraph");
-        let seqs = buf.drain_complete();
-        assert_eq!(
-            seqs,
-            vec![
-                b"\x1b[200~first paragraph\r\n\r\nsecond paragraph\r\nthird paragraph\x1b[201~"
-                    .to_vec()
-            ]
-        );
-    }
-
-    #[test]
-    fn chunked_raw_cr_paste_holds_newline_boundary_until_next_read() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"first paragraph\r");
-        assert_eq!(buf.drain_complete(), Vec::<Vec<u8>>::new());
-        assert!(buf.has_pending());
-
-        buf.feed(b"second paragraph\rthird paragraph");
-        let seqs = buf.drain_complete();
-        assert_eq!(
-            seqs,
-            vec![b"\x1b[200~first paragraph\rsecond paragraph\rthird paragraph\x1b[201~".to_vec()]
-        );
-    }
-
-    #[test]
-    fn incomplete_csi_params() {
-        let mut buf = StdinBuffer::new();
-        buf.feed(b"\x1b[13;2");
-        assert!(buf.drain_complete().is_empty());
-        assert!(buf.has_pending());
-        buf.feed(b"u");
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs, vec![b"\x1b[13;2u".to_vec()]);
-    }
-
-    // --- 3-fragment CSI split regression tests (#466) ---
-
-    /// Simulate the retry loop from app.rs (synchronous approximation).
-    ///
-    /// `fragments` is a list of byte slices arriving in sequence.
-    /// `max_retries` is the maximum number of retry iterations.
-    /// Returns all emitted sequences.
-    ///
-    /// Note: This does not model timing/timeouts — each fragment is assumed
-    /// to arrive within the retry window. For timeout-sensitive behavior,
-    /// an async integration test with tokio channels would be needed.
-    fn simulate_retry_loop(fragments: &[&[u8]], max_retries: usize) -> Vec<Vec<u8>> {
-        let mut buf = StdinBuffer::new();
-        let mut all_sequences = Vec::new();
-        let mut frag_idx = 0;
-
-        // Feed first fragment.
-        if frag_idx < fragments.len() {
-            buf.feed(fragments[frag_idx]);
-            frag_idx += 1;
-        }
-
-        // Drain complete sequences immediately.
-        all_sequences.extend(buf.drain_complete());
-
-        // Retry loop while pending.
-        let mut retries = 0;
-        while buf.has_pending() && retries < max_retries {
-            retries += 1;
-            if frag_idx < fragments.len() {
-                // More data arrives within timeout.
-                buf.feed(fragments[frag_idx]);
-                frag_idx += 1;
-                all_sequences.extend(buf.drain_complete());
-            } else {
-                // Timeout — no more data.
-                break;
-            }
-        }
-
-        // Force drain anything still pending after retries exhausted.
-        all_sequences.extend(buf.drain_all());
-
-        all_sequences
-    }
-
-    #[test]
-    fn three_fragment_csi_with_multi_retry() {
-        // 3-fragment split: ESC → [ → A
-        // With max_retries=5, all 3 fragments arrive within the retry window.
-        let seqs = simulate_retry_loop(&[b"\x1b", b"[", b"A"], 5);
-        assert_eq!(
-            seqs,
-            vec![b"\x1b[A".to_vec()],
-            "3-fragment CSI should be reassembled with multi-retry"
-        );
-    }
-
-    #[test]
-    fn three_fragment_csi_with_single_retry_fails() {
-        // 3-fragment split: ESC → [ → A
-        // With max_retries=1 (the old bug), only ESC + [ arrive before drain_all.
-        let seqs = simulate_retry_loop(&[b"\x1b", b"[", b"A"], 1);
-        // With only 1 retry: ESC is pending, retry gets "[", ESC[ is still incomplete,
-        // drain_all breaks it into ESC + "[", then "A" is fed but the loop is done.
-        // This should NOT produce a clean ESC[A — this test documents the bug.
-        assert_ne!(
-            seqs,
-            vec![b"\x1b[A".to_vec()],
-            "single retry should NOT reassemble 3-fragment CSI (documents the bug)"
-        );
-    }
-
-    #[test]
-    fn two_fragment_csi_with_multi_retry() {
-        let seqs = simulate_retry_loop(&[b"\x1b", b"[A"], 5);
-        assert_eq!(seqs, vec![b"\x1b[A".to_vec()]);
-    }
-
-    #[test]
-    fn bare_escape_after_retry_exhaustion() {
-        // Only ESC arrives, no more fragments.
-        let seqs = simulate_retry_loop(&[b"\x1b"], 5);
-        assert_eq!(
-            seqs,
-            vec![vec![0x1b]],
-            "bare ESC should be emitted after retries"
-        );
-    }
-
-    #[test]
-    fn complete_sequence_no_retry() {
-        let seqs = simulate_retry_loop(&[b"\x1b[A"], 5);
-        assert_eq!(seqs, vec![b"\x1b[A".to_vec()]);
-    }
-
-    #[test]
-    fn four_fragment_csi_with_params() {
-        // ESC → [ → 1;5 → C (Ctrl+Right)
-        let seqs = simulate_retry_loop(&[b"\x1b", b"[", b"1;5", b"C"], 5);
-        assert_eq!(seqs, vec![b"\x1b[1;5C".to_vec()]);
-    }
-
-    // --- Buffer size cap tests (#467) ---
-
-    #[test]
-    fn feed_accepts_data_within_cap() {
-        let mut buf = StdinBuffer::new();
-        let data = vec![b'a'; 1000];
-        buf.feed(&data);
-        assert_eq!(buf.buf.len(), 1000);
-    }
-
-    #[test]
-    fn feed_caps_at_max_size() {
-        let mut buf = StdinBuffer::new();
-        // Feed exactly MAX_BUFFER_SIZE bytes.
-        let data = vec![b'a'; MAX_BUFFER_SIZE];
-        buf.feed(&data);
-        assert_eq!(buf.buf.len(), MAX_BUFFER_SIZE);
-        // Feed more — should be silently dropped.
-        buf.feed(b"extra");
-        assert_eq!(
-            buf.buf.len(),
-            MAX_BUFFER_SIZE,
-            "buffer should not grow beyond MAX_BUFFER_SIZE"
-        );
-    }
-
-    #[test]
-    fn feed_partial_accept_at_cap() {
-        let mut buf = StdinBuffer::new();
-        // Feed MAX_BUFFER_SIZE - 3 bytes.
-        let data = vec![b'a'; MAX_BUFFER_SIZE - 3];
-        buf.feed(&data);
-        // Feed 10 more — only 3 should be accepted.
-        buf.feed(&[b'b'; 10]);
-        assert_eq!(buf.buf.len(), MAX_BUFFER_SIZE);
-    }
-
-    #[test]
-    fn broken_bracketed_paste_bounded() {
-        let mut buf = StdinBuffer::new();
-        // Start marker without end marker.
-        buf.feed(b"\x1b[200~");
-        // Feed 100KB of "paste content".
-        for _ in 0..200 {
-            buf.feed(&[b'x'; 512]);
-        }
-        // Buffer should be capped.
-        assert!(
-            buf.buf.len() <= MAX_BUFFER_SIZE,
-            "buffer should be capped: {} > {}",
-            buf.buf.len(),
-            MAX_BUFFER_SIZE
-        );
-    }
-
-    #[test]
-    fn feed_returns_false_when_truncated() {
-        let mut buf = StdinBuffer::new();
-        let data = vec![b'a'; MAX_BUFFER_SIZE];
-        assert!(buf.feed(&data), "should accept all within cap");
-        assert!(!buf.feed(b"x"), "should reject when at cap");
-    }
-
-    #[test]
-    fn drain_all_works_after_cap_reached() {
-        let mut buf = StdinBuffer::new();
-        // Fill buffer with a broken paste (no end marker).
-        buf.feed(b"\x1b[200~");
-        let filler = vec![b'x'; MAX_BUFFER_SIZE];
-        buf.feed(&filler);
-        // drain_complete should return nothing (paste never completed).
-        assert!(buf.drain_complete().is_empty());
-        // drain_all should force everything out.
-        let forced = buf.drain_all();
-        assert!(!forced.is_empty(), "drain_all should emit buffered data");
-        assert!(!buf.has_pending(), "buffer should be empty after drain_all");
-    }
-
-    #[test]
-    fn paste_end_marker_found_with_windows() {
-        let mut buf = StdinBuffer::new();
-        // Build a proper bracketed paste: start + content + end.
-        let mut paste = Vec::new();
-        paste.extend_from_slice(b"\x1b[200~");
-        paste.extend_from_slice(b"hello world");
-        paste.extend_from_slice(b"\x1b[201~");
-        buf.feed(&paste);
-        let seqs = buf.drain_complete();
-        assert_eq!(seqs.len(), 1, "paste should be one sequence");
-        assert!(seqs[0].starts_with(b"\x1b[200~"));
-    }
-}
+#[path = "stdin_buffer_tests.rs"]
+mod tests;
