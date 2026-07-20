@@ -523,12 +523,7 @@ fn strip_ansi_for_selection(s: &str) -> String {
 fn truncate_args(args: &str) -> String {
     // sanitize_control (rather than a printable-range filter) so CSI bodies —
     // whose bytes are all printable — don't leak into the spinner line.
-    let clean = crate::interface::ansi::sanitize_control(args);
-    if clean.chars().count() > 40 {
-        crate::interface::utils::truncate_chars_with_ellipsis(&clean, 37, "...")
-    } else {
-        clean
-    }
+    crate::interface::utils::sanitize_truncate_width_with_ellipsis(args, 40, "...")
 }
 
 // ── Agent state machine (extracted for testability) ───────────────────────
@@ -654,7 +649,7 @@ const STATUS_EXITED: &str = "exited";
 const EXITED_SUBAGENT_GRACE: Duration = Duration::from_secs(5);
 
 fn sanitize_workflow_status_text(text: &str, max_chars: usize) -> String {
-    crate::interface::utils::sanitize_truncate_chars_with_ellipsis(text, max_chars, "…")
+    crate::interface::utils::sanitize_truncate_width_with_ellipsis(text, max_chars, "…")
 }
 
 fn sanitize_agent_id(id: &str) -> String {

@@ -83,6 +83,16 @@ pub fn truncate_chars_with_ellipsis(s: &str, max_chars: usize, ellipsis: &str) -
     }
 }
 
+/// Sanitize, then truncate by visible display width with an ellipsis on overflow.
+pub fn sanitize_truncate_width_with_ellipsis(s: &str, max_width: usize, ellipsis: &str) -> String {
+    let clean = crate::interface::ansi::sanitize_control(s);
+    let mut out = truncate_to_width(&clean, max_width, Some(ellipsis));
+    if let Some(stripped) = out.strip_suffix("\x1b[0m") {
+        out.truncate(stripped.len());
+    }
+    out
+}
+
 /// Sanitize, then truncate by Unicode scalar count with an ellipsis on overflow.
 pub fn sanitize_truncate_chars_with_ellipsis(s: &str, max_chars: usize, ellipsis: &str) -> String {
     let (mut out, truncated) = crate::interface::ansi::sanitize_control_truncated(s, max_chars);
