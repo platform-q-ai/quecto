@@ -178,12 +178,7 @@ impl Component for Footer {
             (_, None) => format!("?/{}", window),
         };
 
-        let left = match self.session_cost {
-            // Append the cumulative session cost after the context %, e.g.
-            // "123k/200k (61.5%) · $0.0421".
-            Some(cost) if cost > 0.0 => format!("{} · ${:.4}", context_str, cost),
-            _ => context_str,
-        };
+        let left = context_str;
         // Prefix the model with a streaming indicator while a response is
         // streaming so the toggled flag is actually visible (issue #760), and
         // suffix the active effort level (#1067) — "default" when never set,
@@ -325,18 +320,17 @@ mod tests {
     }
 
     #[test]
-    fn footer_shows_cost_after_context() {
+    fn footer_does_not_show_monetary_cost_after_context() {
         let mut f = Footer::new();
         f.update_context_usage(120_000, 200_000);
         f.set_cost(Some(0.0421));
         let lines = f.render(120);
         let joined = lines.join("\n");
         assert!(joined.contains("120k/200k"), "context first: {joined}");
-        assert!(joined.contains("$0.0421"), "cost shown: {joined}");
-        // Cost must come after the context usage in the rendered line.
-        let ctx_idx = joined.find("120k/200k").unwrap();
-        let cost_idx = joined.find("$0.0421").unwrap();
-        assert!(cost_idx > ctx_idx, "cost should follow context: {joined}");
+        assert!(
+            !joined.contains('$'),
+            "footer must not show misleading monetary cost: {joined}"
+        );
     }
 
     #[test]

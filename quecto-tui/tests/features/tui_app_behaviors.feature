@@ -7,14 +7,14 @@ Feature: TUI app event routing and command behaviours
   Scenario: Successful session stats response updates the footer without a chat notification
     Given a fresh TUI app harness
     When a quiet session stats footer response arrives with cost "$0.1234" and context "42k"
-    Then the footer shows cost "$0.1234" and context "42k"
+    Then the footer shows context "42k" without cost "$0.1234"
     And the chat transcript does not show a session stats notification
 
   @app-response @session-payloads
   Scenario: Interactive session stats response adds a chat summary and footer values
     Given a fresh TUI app harness
     When an interactive session stats response arrives for "cli:demo" with cost "$0.5000" and tokens 123 input 456 output
-    Then the footer shows cost "$0.5000" and context "8.0k"
+    Then the footer shows context "8.0k" without cost "$0.5000"
     And the app master session shows "Session: cli:demo"
     And the app master session shows "Tokens: ↑123 ↓456"
 

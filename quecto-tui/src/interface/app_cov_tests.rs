@@ -197,13 +197,13 @@ async fn update_footer_stats_sets_context_and_clears_zero_cost() {
 }
 
 #[tokio::test]
-async fn update_footer_stats_sets_positive_cost_without_context() {
+async fn update_footer_stats_ignores_positive_cost_without_context() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.update_footer_stats(&serde_json::json!({ "cost": 1.25 }));
     assert!(!a.context_stats_requested);
     let footer = a.master_session.footer.render(120).join("\n");
-    assert!(footer.contains("$"), "{footer}");
+    assert!(!footer.contains("$"), "{footer}");
 }
 
 // ── app_methods: resume selector ─────────────────────────────────────
