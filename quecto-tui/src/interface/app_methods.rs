@@ -86,6 +86,13 @@ impl App {
              \x20 PageUp/Down    Scroll chat\n\
              \x20 Up/Down        Input history\n\
              \n\
+             Mouse / links:\n\
+             \x20 Wheel          Scroll chat\n\
+             \x20 Drag           Select text\n\
+             \x20 Shift+click    Open markdown/OSC 8 link in browser\n\
+             \x20                (when mouse capture is on; some terminals\n\
+             \x20                use Ctrl/Cmd+click instead)\n\
+             \n\
              Slash commands:",
         );
         // Derive the slash-command listing from the single source of truth so it

@@ -1,8 +1,4 @@
 //! Region-coverage tests for `app_methods`, `app_rewind`, and `app_response`.
-//!
-//! These drive the real `App` built by the headless render harness (no TTY,
-//! drained socket) and assert on state transitions for the slash-command
-//! handlers, selectors, rewind flow, and UDS response dispatch.
 
 use super::app_selection::{SelectionAnchor, TextSelection};
 use super::tui_harness::TuiHarness;
@@ -15,8 +11,9 @@ async fn harness() -> TuiHarness {
 }
 
 fn chat_text(app: &mut App) -> String {
-    let lines = app.master_session.chat.render(120);
-    lines
+    app.master_session
+        .chat
+        .render(120)
         .iter()
         .map(|l| super::app_methods::strip_ansi(l))
         .collect::<Vec<_>>()
@@ -32,8 +29,7 @@ async fn reject_unknown_slash_command_adds_status_and_notifies() {
     let before = a.master_session.chat.entry_count();
     a.reject_unknown_slash_command("/bogus");
     assert_eq!(a.master_session.chat.entry_count(), before + 1);
-    assert!(!a.notifications.is_empty());
-    assert!(chat_text(a).contains("/bogus"));
+    assert!(!a.notifications.is_empty() && chat_text(a).contains("/bogus"));
 }
 
 #[tokio::test]
@@ -41,8 +37,15 @@ async fn show_help_appends_shortcut_status() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.show_help();
-    assert!(chat_text(a).contains("Keyboard shortcuts"));
-    assert!(chat_text(a).contains("/resume"));
+    let t = chat_text(a);
+    // #1179: Shift+click opens OSC 8 links under mouse capture.
+    assert!(
+        t.contains("Keyboard shortcuts")
+            && t.contains("/resume")
+            && t.contains("Shift+click")
+            && t.contains("OSC 8"),
+        "{t}"
+    );
 }
 
 #[tokio::test]
@@ -677,10 +680,9 @@ fn format_time_helpers_cover_epoch_leap_and_pre_epoch_paths() {
 
 #[test]
 fn subagent_activity_line_singular_plural_and_frame_wrap() {
-    let one = super::app_methods::subagent_activity_line(1, 0);
-    let many = super::app_methods::subagent_activity_line(2, 999);
-    assert!(super::app_methods::strip_ansi(&one).contains("1 subagent working"));
-    assert!(super::app_methods::strip_ansi(&many).contains("2 subagents working"));
+    let one = super::app_methods::strip_ansi(&super::app_methods::subagent_activity_line(1, 0));
+    let many = super::app_methods::strip_ansi(&super::app_methods::subagent_activity_line(2, 999));
+    assert!(one.contains("1 subagent working") && many.contains("2 subagents working"));
 }
 
 #[test]
@@ -693,11 +695,8 @@ fn strip_ansi_handles_csi_osc_and_plain() {
 }
 
 #[tokio::test]
-async fn main_pane_compact_line_reflects_live_auto_continue_state(// #897 AC2
-) {
-    // Drive the REAL event→render path: a workflow_state event seeds the bar
-    // (which hard-codes auto_continue=false), then the live App toggle must be
-    // reflected by the always-visible compact line — not the dead field.
+async fn main_pane_compact_line_reflects_live_auto_continue_state() {
+    // #897 AC2: live auto-continue must drive the compact line after rebuild.
     let mut h = harness().await;
     let wf = serde_json::json!({
         "steps": [{"index": 0, "label": "Build it", "phase": "build", "done": false}],
@@ -705,7 +704,6 @@ async fn main_pane_compact_line_reflects_live_auto_continue_state(// #897 AC2
         "activeIssue": {"number": 7, "title": "thing"}
     });
     h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
-
     let now = tokio::time::Instant::now();
     let render = |a: &App| -> String {
         a.render_main_pane_workflow(120, 120, now)
@@ -714,16 +712,11 @@ async fn main_pane_compact_line_reflects_live_auto_continue_state(// #897 AC2
             .collect::<Vec<_>>()
             .join("\n")
     };
-
-    // Default: auto-continue off.
     assert!(
         render(h.app_mut()).contains("auto:off"),
         "{}",
         render(h.app_mut())
     );
-
-    // Drive the REAL response path that updates live auto-continue state; the
-    // rendered compact line must follow.
     h.app_mut().handle_response(
         Some("workflow-auto".into()),
         "set_workflow_automation".into(),
@@ -736,10 +729,6 @@ async fn main_pane_compact_line_reflects_live_auto_continue_state(// #897 AC2
         "{}",
         render(h.app_mut())
     );
-
-    // A subsequent workflow_state rebuild must PRESERVE the live state — the bug
-    // was that every event reset the bar field to the hard-coded false. This
-    // mirrors handle_workflow_state's (rebuild → mirror_automation_to_bar) flow.
     h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
     h.app_mut().mirror_automation_to_bar();
     assert!(

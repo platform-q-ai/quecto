@@ -101,7 +101,12 @@ Useful built-in shortcuts and commands:
 - `Ctrl+O` toggles tool output expansion
 - `Ctrl+Shift+A` toggles workflow auto-continue
 - `Ctrl+Shift+N` toggles workflow completion nudge
+- **`Shift+click`** opens a markdown/OSC 8 `http(s)` link in the browser when
+  mouse capture is on (plain click selects text; some terminals use Ctrl/Cmd+click)
 - `/model`, `/clear`, `/new`, `/session`, `/workflow-auto`, `/workflow-nudge`, `/help`, `/quit`
+
+See [`quecto-tui/README.md`](../../quecto-tui/README.md) for the full mouse/link
+note; in-app `/help` lists the same gesture.
 
 ## Your first prompt
 
