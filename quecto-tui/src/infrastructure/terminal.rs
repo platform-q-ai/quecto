@@ -6,6 +6,19 @@
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 
+const ENTER_TUI: &str = "\x1b[?1049h\x1b[?2004h";
+const EXIT_TUI: &str = concat!(
+    "\x1b[?1006l", // Disable SGR mouse reporting if an older build enabled it
+    "\x1b[?1002l", // Disable button event tracking (drag) if enabled
+    "\x1b[?1000l", // Disable basic mouse reporting if enabled
+    "\x1b[?1049l", // Leave alternate screen buffer (restores main)
+    "\x1b[?2004l", // Disable bracketed paste
+    "\x1b[?25h",   // Show cursor
+    "\x1b[0m",     // Reset all SGR attributes
+    "\x1b[>4;0m",  // Reset modifyOtherKeys (xterm/tmux)
+    "\x1b[<u",     // Pop Kitty keyboard protocol flags
+);
+
 /// Saved terminal state for restoration on exit.
 struct SavedTermios {
     original: libc::termios,
@@ -72,16 +85,16 @@ impl Terminal {
 
         self.saved = Some(saved);
 
-        // Enter alternate screen buffer, enable bracketed paste, and enable
-        // SGR mouse reporting (scroll wheel + click/drag events).
+        // Enter alternate screen buffer and enable bracketed paste.
         // The alternate buffer prevents scrollback interference which
         // causes border duplication during streaming (#479).
-        // Mouse: 1000 = basic events, 1002 = button event tracking (drag),
-        //        1006 = SGR extended format.
-        // 1002 supersedes 1000 (adds drag events for text selection #528).
-        // Both are enabled for terminal compatibility.
-        let _ =
-            std::io::stdout().write_all(b"\x1b[?1049h\x1b[?2004h\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+        //
+        // Do NOT enable terminal mouse reporting here. DECSET 1000/1002 causes
+        // terminals to deliver clicks to the TUI instead of activating OSC 8
+        // hyperlinks, so markdown links can render correctly yet remain
+        // unopenable (#1145). Leaving mouse reporting off lets terminals that
+        // support OSC 8 open safe markdown links directly.
+        let _ = std::io::stdout().write_all(ENTER_TUI.as_bytes());
         let _ = std::io::stdout().flush();
     }
 
@@ -93,20 +106,7 @@ impl Terminal {
         if let Some(saved) = self.saved.take() {
             // Leave alt screen FIRST — it restores the main buffer's saved
             // cursor/attributes. Then reset everything on the main buffer.
-            let _ = std::io::stdout().write_all(
-                concat!(
-                    "\x1b[?1006l", // Disable SGR mouse reporting
-                    "\x1b[?1002l", // Disable button event tracking (drag)
-                    "\x1b[?1000l", // Disable basic mouse reporting
-                    "\x1b[?1049l", // Leave alternate screen buffer (restores main)
-                    "\x1b[?2004l", // Disable bracketed paste
-                    "\x1b[?25h",   // Show cursor
-                    "\x1b[0m",     // Reset all SGR attributes
-                    "\x1b[>4;0m",  // Reset modifyOtherKeys (xterm/tmux)
-                    "\x1b[<u",     // Pop Kitty keyboard protocol flags
-                )
-                .as_bytes(),
-            );
+            let _ = std::io::stdout().write_all(EXIT_TUI.as_bytes());
             let _ = std::io::stdout().flush();
 
             // Restore original termios settings (cooked mode, echo, etc.).
@@ -184,6 +184,24 @@ fn get_terminal_size() -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enter_tui_keeps_mouse_reporting_disabled_so_osc8_links_are_clickable() {
+        assert_eq!(ENTER_TUI, "\x1b[?1049h\x1b[?2004h");
+        assert!(
+            !ENTER_TUI.contains("?1000h")
+                && !ENTER_TUI.contains("?1002h")
+                && !ENTER_TUI.contains("?1006h"),
+            "enabling terminal mouse reporting captures clicks before OSC 8 hyperlinks can open"
+        );
+    }
+
+    #[test]
+    fn exit_tui_still_disables_legacy_mouse_modes() {
+        assert!(EXIT_TUI.contains("\x1b[?1006l"));
+        assert!(EXIT_TUI.contains("\x1b[?1002l"));
+        assert!(EXIT_TUI.contains("\x1b[?1000l"));
+    }
 
     #[test]
     fn terminal_size_is_reasonable() {
