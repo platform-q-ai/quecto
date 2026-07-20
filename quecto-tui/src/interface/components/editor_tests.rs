@@ -174,6 +174,13 @@ fn paste_inserts_text() {
 }
 
 #[test]
+fn paste_inserts_cr_as_newline() {
+    let mut e = Editor::new();
+    e.handle_input(&Key::Paste("hello\rworld".to_string()));
+    assert_eq!(e.text(), "hello\nworld");
+}
+
+#[test]
 fn word_left_movement() {
     let mut e = Editor::new();
     e.set_text("hello world test");

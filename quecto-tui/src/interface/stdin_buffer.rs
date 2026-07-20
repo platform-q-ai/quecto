@@ -107,6 +107,13 @@ impl StdinBuffer {
         while offset < self.buf.len() {
             let remaining = &self.buf[offset..];
 
+            if looks_like_raw_multiline_paste(remaining) {
+                let paste = wrap_raw_paste_sequence(remaining);
+                sequences.push(paste);
+                offset = self.buf.len();
+                break;
+            }
+
             if remaining[0] == 0x1b {
                 // Escape sequence — check if complete.
                 match is_complete_escape(remaining) {
@@ -234,6 +241,24 @@ fn utf8_char_len(first_byte: u8) -> usize {
         0xF0..=0xF7 => 4,
         _ => 1, // Invalid leading byte — treat as single byte.
     }
+}
+
+fn looks_like_raw_multiline_paste(data: &[u8]) -> bool {
+    if data.len() <= 1 || data[0] == 0x1b {
+        return false;
+    }
+
+    let newline_count = data.iter().filter(|&&b| b == b'\n' || b == b'\r').count();
+    newline_count > 0
+        && (newline_count > 1 || data.last().is_some_and(|&b| b != b'\n' && b != b'\r'))
+}
+
+fn wrap_raw_paste_sequence(data: &[u8]) -> Vec<u8> {
+    let mut paste = Vec::with_capacity(b"\x1b[200~".len() + data.len() + b"\x1b[201~".len());
+    paste.extend_from_slice(b"\x1b[200~");
+    paste.extend_from_slice(data);
+    paste.extend_from_slice(b"\x1b[201~");
+    paste
 }
 
 #[cfg(test)]
@@ -381,6 +406,73 @@ mod tests {
         let seqs = buf.drain_complete();
         assert_eq!(seqs.len(), 1);
         assert!(seqs[0].starts_with(b"\x1b[200~"));
+    }
+
+    #[test]
+    fn raw_lf_multiline_paste_is_one_paste_sequence() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"alpha\nbeta\ngamma");
+        let seqs = buf.drain_complete();
+        assert_eq!(seqs, vec![b"\x1b[200~alpha\nbeta\ngamma\x1b[201~".to_vec()]);
+    }
+
+    #[test]
+    fn raw_cr_multiline_paste_is_one_paste_sequence() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"alpha\rbeta\rgamma");
+        let seqs = buf.drain_complete();
+        assert_eq!(seqs, vec![b"\x1b[200~alpha\rbeta\rgamma\x1b[201~".to_vec()]);
+    }
+
+    #[test]
+    fn raw_crlf_multiline_paste_is_one_paste_sequence() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"alpha\r\nbeta\r\ngamma");
+        let seqs = buf.drain_complete();
+        assert_eq!(
+            seqs,
+            vec![b"\x1b[200~alpha\r\nbeta\r\ngamma\x1b[201~".to_vec()]
+        );
+    }
+
+    #[test]
+    fn lone_enter_stays_enter_sequence() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"\r");
+        let seqs = buf.drain_complete();
+        assert_eq!(seqs, vec![b"\r".to_vec()]);
+    }
+
+    #[test]
+    fn single_line_submit_stays_separate_when_coalesced() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"alpha\r");
+        let seqs = buf.drain_complete();
+        assert_eq!(
+            seqs,
+            vec![
+                b"a".to_vec(),
+                b"l".to_vec(),
+                b"p".to_vec(),
+                b"h".to_vec(),
+                b"a".to_vec(),
+                b"\r".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn raw_multiline_paste_after_escape_sequence_is_detected() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"\x1b[Aalpha\nbeta");
+        let seqs = buf.drain_complete();
+        assert_eq!(
+            seqs,
+            vec![
+                b"\x1b[A".to_vec(),
+                b"\x1b[200~alpha\nbeta\x1b[201~".to_vec(),
+            ]
+        );
     }
 
     #[test]
