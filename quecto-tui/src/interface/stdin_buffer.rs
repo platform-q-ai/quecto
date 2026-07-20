@@ -74,11 +74,15 @@ enum Completeness {
 /// A buffer that accumulates stdin bytes and extracts complete key sequences.
 pub struct StdinBuffer {
     buf: Vec<u8>,
+    ready: Vec<Vec<u8>>,
 }
 
 impl StdinBuffer {
     pub fn new() -> Self {
-        Self { buf: Vec::new() }
+        Self {
+            buf: Vec::new(),
+            ready: Vec::new(),
+        }
     }
 
     /// Feed new bytes into the buffer.
@@ -87,13 +91,42 @@ impl StdinBuffer {
     /// memory growth (e.g. broken bracketed paste). Returns `true` if all
     /// data was accepted, `false` if some was dropped due to the cap.
     pub fn feed(&mut self, data: &[u8]) -> bool {
+        let accepted = self.feed_bytes(data);
+        if accepted > 0 && self.buf_has_raw_multiline_paste() {
+            let mut paste_sequence = b"\x1b[200~".to_vec();
+            paste_sequence.extend_from_slice(&std::mem::take(&mut self.buf));
+            paste_sequence.extend_from_slice(b"\x1b[201~");
+            self.ready.push(paste_sequence);
+        }
+        accepted == data.len()
+    }
+
+    fn feed_bytes(&mut self, data: &[u8]) -> usize {
         let remaining_capacity = MAX_BUFFER_SIZE.saturating_sub(self.buf.len());
         if remaining_capacity == 0 {
-            return data.is_empty();
+            return 0;
         }
         let accept = data.len().min(remaining_capacity);
         self.buf.extend_from_slice(&data[..accept]);
-        accept == data.len()
+        accept
+    }
+
+    fn buf_has_raw_multiline_paste(&self) -> bool {
+        if self.buf.contains(&0x1b) {
+            return false;
+        }
+
+        let mut saw_newline = false;
+        for &b in &self.buf {
+            if saw_newline {
+                if b != b'\r' && b != b'\n' {
+                    return true;
+                }
+            } else if b == b'\r' || b == b'\n' {
+                saw_newline = true;
+            }
+        }
+        false
     }
 
     /// Extract all complete sequences from the buffer.
@@ -101,7 +134,7 @@ impl StdinBuffer {
     /// Returns a list of byte slices, each representing one complete key event.
     /// Incomplete sequences remain in the buffer for the next `feed()` call.
     pub fn drain_complete(&mut self) -> Vec<Vec<u8>> {
-        let mut sequences = Vec::new();
+        let mut sequences = std::mem::take(&mut self.ready);
         let mut offset = 0;
 
         while offset < self.buf.len() {
@@ -173,7 +206,7 @@ impl StdinBuffer {
 
     /// Whether the buffer has incomplete data waiting for more bytes.
     pub fn has_pending(&self) -> bool {
-        !self.buf.is_empty()
+        !self.ready.is_empty() || !self.buf.is_empty()
     }
 }
 
@@ -587,5 +620,42 @@ mod tests {
         let seqs = buf.drain_complete();
         assert_eq!(seqs.len(), 1, "paste should be one sequence");
         assert!(seqs[0].starts_with(b"\x1b[200~"));
+    }
+
+    #[test]
+    fn raw_multiline_burst_is_one_paste_sequence() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"alpha\nbeta\ngamma");
+        assert_eq!(
+            buf.drain_complete(),
+            vec![b"\x1b[200~alpha\nbeta\ngamma\x1b[201~".to_vec()]
+        );
+    }
+
+    #[test]
+    fn single_line_burst_is_not_paste() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"fast typed text");
+        let seqs = buf.drain_complete();
+        assert_eq!(seqs.first(), Some(&b"f".to_vec()));
+        assert!(!seqs.iter().any(|s| s.starts_with(b"\x1b[200~")));
+    }
+
+    #[test]
+    fn esc_leading_chunk_is_not_raw_paste() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"\x1b[201~hello\nworld");
+        let seqs = buf.drain_complete();
+        assert_eq!(seqs.first(), Some(&b"\x1b[201~".to_vec()));
+        assert!(!seqs.iter().any(|s| s.starts_with(b"\x1b[200~")));
+    }
+
+    #[test]
+    fn modify_other_keys_sequence_adjacent_to_typing_is_not_text() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"abc\x1b[27;2;13~def");
+        let seqs = buf.drain_complete();
+        assert!(seqs.contains(&b"\x1b[27;2;13~".to_vec()));
+        assert!(!seqs.iter().any(|s| s.starts_with(b"\x1b[200~")));
     }
 }
