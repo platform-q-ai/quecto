@@ -133,7 +133,7 @@ fn then_log_includes_span(world: &mut QuectoWorld, span_name: String) {
         output.contains(&span_name),
         "expected log to include span '{}', got:\n{}",
         span_name,
-        &*output
+        *output
     );
 }
 
@@ -148,7 +148,7 @@ fn then_log_includes_field(world: &mut QuectoWorld, field_name: String) {
         output.contains(&field_name),
         "expected log to include field '{}', got:\n{}",
         field_name,
-        &*output
+        *output
     );
 }
 
@@ -163,7 +163,7 @@ fn then_log_not_contain(world: &mut QuectoWorld, unexpected: String) {
         !output.contains(&unexpected),
         "expected log NOT to contain '{}', but got:\n{}",
         unexpected,
-        &*output
+        *output
     );
 }
 
@@ -177,7 +177,7 @@ fn then_log_contains_redacted(world: &mut QuectoWorld) {
     assert!(
         output.contains("sk-***") || output.contains("***"),
         "expected log to contain redacted placeholder, got:\n{}",
-        &*output
+        *output
     );
 }
 

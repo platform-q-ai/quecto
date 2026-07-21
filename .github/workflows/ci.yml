@@ -15,7 +15,7 @@ concurrency:
 jobs:
   unit-tests:
     name: Unit Tests
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04-16core
     timeout-minutes: 15
 
     steps:
@@ -38,7 +38,7 @@ jobs:
 
   mock-llm-e2e:
     name: Mock LLM E2E Tests
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04-16core
     timeout-minutes: 20
 
     steps:
@@ -55,7 +55,7 @@ jobs:
 
   tui-bdd:
     name: TUI BDD Tests
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04-16core
     timeout-minutes: 20
 
     steps:
@@ -72,7 +72,7 @@ jobs:
 
   non-real-bdd:
     name: Non-Real BDD Tests
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04-16core
     timeout-minutes: 20
 
     steps:
@@ -95,7 +95,7 @@ jobs:
   # at the same time so PRs don't hang waiting on a check that never reports).
   # provider-smoke:
   #   name: Provider Smoke Tests
-  #   runs-on: blacksmith-32vcpu-ubuntu-2404
+  #   runs-on: ubuntu-24.04-16core
   #   timeout-minutes: 10
   #
   #   steps:
