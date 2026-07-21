@@ -84,6 +84,39 @@ fn assert_no_imports(layer: &str, dir: &Path, forbidden: &[&str]) {
     }
 }
 
+fn assert_no_inline_test_modules(crate_src: &Path) {
+    let mut offenders = Vec::new();
+    collect_rs_files(crate_src, &mut offenders);
+
+    let offenders: Vec<_> = offenders
+        .iter()
+        .filter_map(|file_content| {
+            let (file_path, content) = file_content.split_once(":\n").unwrap();
+            (content.contains("#[cfg(test)]") && content.contains("mod tests {"))
+                .then_some(file_path)
+        })
+        .collect();
+
+    assert!(
+        offenders.is_empty(),
+        "production files must keep tests in sibling *_tests.rs modules, not inline `mod tests` blocks:\n{}",
+        offenders.join("\n")
+    );
+}
+
+#[test]
+fn production_files_do_not_contain_inline_test_modules() {
+    for crate_src in [
+        "src",
+        "../quecto-api/src",
+        "../quecto-line-io/src",
+        "../quecto-runtime-manager/src",
+        "../quecto-tui/src",
+    ] {
+        assert_no_inline_test_modules(Path::new(crate_src));
+    }
+}
+
 #[test]
 fn all_architecture_layers_exist() {
     assert!(Path::new("src/domain").exists(), "src/domain/ must exist");

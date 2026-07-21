@@ -382,6 +382,200 @@ fn build_agent_provider_rejects_remote_http_endpoint_unless_opted_in() {
 }
 
 #[test]
+fn build_registry_provider_rejects_registry_oauth_models_without_oauth_provider() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let client = reqwest::Client::new();
+
+    let missing_provider = model(
+        "missing-oauth-provider",
+        ProviderApi::OpenAiCompletions,
+        AuthMode::OAuth,
+    );
+    let err = build_registry_provider(&missing_provider, tmp.path(), &store, &refresh, &client)
+        .expect_err("oauth registry models must name their OAuth provider");
+    assert!(err.contains("missing oauthProvider"), "got: {err}");
+
+    let mut unknown_provider = model(
+        "unknown-oauth-provider",
+        ProviderApi::OpenAiCompletions,
+        AuthMode::OAuth,
+    );
+    unknown_provider.oauth_provider = Some("not-a-provider".to_string());
+    let err = build_registry_provider(&unknown_provider, tmp.path(), &store, &refresh, &client)
+        .expect_err("unknown OAuth providers must be rejected");
+    assert!(err.contains("not a kernel OAuth provider"), "got: {err}");
+}
+
+#[test]
+fn build_registry_provider_skips_registry_oauth_models_when_stored_credential_is_not_oauth() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+    store
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: "plain-token".to_string(),
+            method: AuthMethod::Token,
+            expires_at: Some(i64::MAX),
+            refresh_token: None,
+            account_id: None,
+        })
+        .unwrap();
+    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let mut token_credential = model(
+        "token-credential",
+        ProviderApi::OpenAiCompletions,
+        AuthMode::OAuth,
+    );
+    token_credential.oauth_provider = Some("openai".to_string());
+
+    let skipped = build_registry_provider(
+        &token_credential,
+        tmp.path(),
+        &store,
+        &refresh,
+        &reqwest::Client::new(),
+    )
+    .expect("token credentials are not OAuth credentials");
+    assert!(skipped.is_none());
+}
+
+#[test]
+fn build_registry_provider_skips_registry_oauth_models_when_stored_oauth_token_is_empty() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+    store
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: "".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let mut token_credential = model(
+        "empty-token-credential",
+        ProviderApi::OpenAiCompletions,
+        AuthMode::OAuth,
+    );
+    token_credential.oauth_provider = Some("openai".to_string());
+
+    let skipped = build_registry_provider(
+        &token_credential,
+        tmp.path(),
+        &store,
+        &refresh,
+        &reqwest::Client::new(),
+    )
+    .expect("empty OAuth credentials are skipped");
+    assert!(skipped.is_none());
+}
+
+#[test]
+fn build_registry_provider_openai_oauth_builds_refreshable_provider() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+    store
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: "oauth-token".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let mut m = model(
+        "custom-openai-oauth",
+        ProviderApi::OpenAiCompletions,
+        AuthMode::OAuth,
+    );
+    m.oauth_provider = Some("openai".to_string());
+    m.base_url = Some("https://api.openai.com/v1".to_string());
+
+    let built = build_registry_provider(&m, tmp.path(), &store, &refresh, &reqwest::Client::new())
+        .unwrap()
+        .expect("valid OAuth registry provider");
+    assert_eq!(built.name(), "custom-openai-oauth");
+    assert!(
+        built
+            .as_any()
+            .downcast_ref::<RefreshableProvider>()
+            .is_some(),
+        "OAuth registry providers must be wrapped for lazy token refresh"
+    );
+}
+
+#[test]
+fn build_registry_provider_xai_oauth_builds_openai_compatible_refreshable_provider() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+    store
+        .store(Credential {
+            provider: "xai".to_string(),
+            token: "xai-oauth-token".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let mut m = model(
+        "xai-custom",
+        ProviderApi::OpenAiCompletions,
+        AuthMode::OAuth,
+    );
+    m.oauth_provider = Some("xai".to_string());
+    m.base_url = Some("https://api.x.ai/v1".to_string());
+
+    let built = build_registry_provider(&m, tmp.path(), &store, &refresh, &reqwest::Client::new())
+        .unwrap()
+        .expect("valid xAI OAuth registry provider");
+    assert_eq!(built.name(), "xai-custom");
+    assert!(
+        built
+            .as_any()
+            .downcast_ref::<RefreshableProvider>()
+            .is_some(),
+        "xAI OAuth registry providers must be wrapped for lazy token refresh"
+    );
+}
+
+#[test]
+fn build_registry_provider_rejects_noncanonical_openai_oauth_base_url() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+    store
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: "oauth-token".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let mut m = model(
+        "evil-openai-oauth",
+        ProviderApi::OpenAiCompletions,
+        AuthMode::OAuth,
+    );
+    m.oauth_provider = Some("openai".to_string());
+    m.base_url = Some("https://attacker.example/v1".to_string());
+
+    let err = build_registry_provider(&m, tmp.path(), &store, &refresh, &reqwest::Client::new())
+        .expect_err("OAuth registry providers must pin canonical hosts");
+    assert!(err.contains("canonical OAuth host"), "got: {err}");
+    assert!(err.contains("evil-openai-oauth"), "got: {err}");
+}
+
+#[test]
 fn build_single_provider_reports_configuration_errors_for_a_bad_api_base() {
     // build_single_provider's error arm: an api_base that fails validation is
     // reported against the provider name rather than panicking or silently

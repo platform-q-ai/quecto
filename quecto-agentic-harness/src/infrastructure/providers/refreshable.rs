@@ -183,6 +183,10 @@ impl LlmProvider for RefreshableProvider {
         })
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn chat_stream_incremental<'a>(
         &'a self,
         request: ChatRequest<'a>,

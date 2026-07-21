@@ -457,3 +457,75 @@ async fn launch_uds_agent_rejects_an_oversized_workflow_spec_before_spawning() {
         "spec file leaked before rejection: {leaked:?}"
     );
 }
+
+#[test]
+fn parse_args_provider_model_id_form_sets_model() {
+    let tool = SpawnTool::new(vec![], true);
+
+    let cfg = tool
+        .parse_args(r#"{"provider":"openai","model_id":"gpt-5"}"#)
+        .expect("provider/model_id form should parse");
+
+    assert_eq!(cfg.model.as_deref(), Some("openai/gpt-5"));
+}
+
+#[tokio::test]
+async fn launch_uds_agent_duplicate_with_poisoned_registry_recovers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    registry.lock().unwrap().insert(
+        "taken".to_string(),
+        SubagentEntry::new(PathBuf::from("/tmp/taken.sock"), 0),
+    );
+    poison_registry(&registry);
+
+    let tool = SpawnTool::with_base_dir(vec![], true, dir.path().to_path_buf())
+        .with_socket_dir(dir.path().to_path_buf())
+        .with_registry(registry);
+    let cfg = tool.parse_args(r#"{"agent_id":"taken"}"#).unwrap();
+
+    let result = tool.launch_uds_agent(&cfg).await.unwrap();
+
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("already running"),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn launch_uds_agent_maps_workflow_spec_write_failure() {
+    use crate::domain::workflow::{WorkflowSpec, WorkflowTemplate, WorkflowTemplateStep};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    // Missing socket directory: writing the by-value workflow spec fails before
+    // resolving or spawning any child binary.
+    let missing_socket_dir = dir.path().join("missing-socket-dir");
+    let tool = SpawnTool::with_base_dir(vec![], true, dir.path().to_path_buf())
+        .with_socket_dir(missing_socket_dir);
+
+    let mut cfg = tool.parse_args(r#"{"agent_id":"wf-child"}"#).unwrap();
+    cfg.workflow_spec = Some(WorkflowSpec {
+        template: WorkflowTemplate {
+            id: "wf".into(),
+            label: "Workflow".into(),
+            description: "small valid spec".into(),
+            when_to_use: None,
+            steps: vec![WorkflowTemplateStep {
+                key: "step".into(),
+                label: "Step".into(),
+                phase: "phase".into(),
+                guidance: None,
+            }],
+            guards: vec![],
+        },
+    });
+
+    let err = tool
+        .launch_uds_agent(&cfg)
+        .await
+        .expect_err("missing socket dir must map spec write failure");
+    let msg = err.to_string();
+    assert!(msg.contains("failed to write workflow spec"), "got: {msg}");
+}

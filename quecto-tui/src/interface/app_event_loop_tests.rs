@@ -734,11 +734,13 @@ async fn handle_key_ctrl_shift_n_sends_toggle_command() {
 async fn handle_key_at_files_flow_replaces_token_on_tab() {
     let mut h = harness().await;
     let a = h.app_mut();
-    // Type "@fi" to trigger the @files autocomplete.
-    a.editor.set_text("@fi");
-    a.files_autocomplete.update("@fi", 3);
-    // Simulate Tab accepting the first suggestion (if any).
-    // Just verify the flow doesn't panic — files_autocomplete may be empty
-    // in the test env (no git ls-files), but the routing logic is exercised.
+    a.editor.set_text("see @fi");
+    a.files_autocomplete =
+        crate::interface::components::files_autocomplete::FilesAutocomplete::with_files(
+            vec!["first.rs".into()],
+            4,
+        );
+    a.refresh_files_autocomplete_from_editor();
     a.handle_key(Key::Tab);
+    assert_eq!(a.editor.text(), "see @first.rs ");
 }
