@@ -433,6 +433,7 @@ fn build_get_state_line_serializes_status_snapshot() {
         effort: None,
         effort_levels: Vec::new(),
         workflow: None,
+        sync: 1,
     };
 
     let line = build_get_state_line(&state);
@@ -462,6 +463,7 @@ fn busy_get_state_line_marks_snapshot() {
         effort: None,
         effort_levels: Vec::new(),
         workflow: None,
+        sync: 1,
     };
 
     let line = crate::interface::cli::uds_snapshots::build_get_state_line_live(&state, &None, true);
@@ -600,6 +602,7 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
         effort: None,
         effort_levels: Vec::new(),
         workflow: Some(frozen_wf),
+        sync: 1,
     };
 
     // Steps get checked off MID-TURN via the workflow tool — engine now at 2/3.

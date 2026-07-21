@@ -57,6 +57,7 @@ fn make_args(
             effort: None,
             effort_levels: Vec::new(),
             workflow: None,
+            sync: 1,
         })),
         session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(
             crate::interface::cli::uds_session::compute_session_stats(

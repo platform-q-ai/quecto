@@ -556,6 +556,7 @@ fn test_session_state_serializes() {
         effort: None,
         effort_levels: Vec::new(),
         workflow: None,
+        sync: 1,
     };
     let json = serde_json::to_string(&state).unwrap();
     assert!(json.contains("\"isStreaming\":false"));
@@ -580,6 +581,7 @@ fn test_session_state_with_workflow_serializes() {
             "mode": "active",
             "progress": { "done": 1, "total": 7, "percent": 14 }
         })),
+        sync: 1,
     };
     let json = serde_json::to_string(&state).unwrap();
     assert!(json.contains("\"workflow\""));
@@ -598,6 +600,7 @@ fn test_session_state_without_workflow_omits_field() {
         effort: None,
         effort_levels: Vec::new(),
         workflow: None,
+        sync: 1,
     };
     let json = serde_json::to_string(&state).unwrap();
     assert!(

@@ -229,6 +229,23 @@ impl<'a> EventSink<'a> {
     /// The broadcast sender, when this is a broadcast sink. Subagent
     /// notifications are a multi-client concern and only ever fire on this
     /// variant.
+    pub(crate) async fn emit_ledger_advanced(
+        &mut self,
+        advance: super::uds_snapshots::LedgerAdvance,
+    ) {
+        if advance.changed {
+            self.emit_serialized(
+                serde_json::json!({
+                    "type": "ledger_advanced",
+                    "epoch": advance.epoch,
+                    "rev": advance.rev,
+                })
+                .to_string(),
+            )
+            .await;
+        }
+    }
+
     fn broadcast_sender(&self) -> Option<&tokio::sync::broadcast::Sender<String>> {
         match self {
             EventSink::Broadcast(tx) => Some(tx),
@@ -318,7 +335,8 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     let prompt_id = message.id();
     messages.push(message);
     if let Some(snapshot) = &conversation_snapshot {
-        snapshot.write().await.publish(messages);
+        let advance = snapshot.write().await.publish(messages);
+        sink.emit_ledger_advanced(advance).await;
     }
 
     // Install a progress callback that forwards events to a bounded channel.
@@ -403,8 +421,11 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             // (#1060 review 1a; 1b: full publish, not a length-based extend).
             if let Some(snapshot) = &conversation_snapshot {
                 let mut snap = snapshot.write().await;
-                snap.publish(messages);
-                snap.record_full(&agent_result.appended_messages);
+                let publish = snap.publish(messages);
+                let full = snap.record_full(&agent_result.appended_messages);
+                drop(snap);
+                sink.emit_ledger_advanced(publish).await;
+                sink.emit_ledger_advanced(full).await;
             }
             let message_refs: Vec<String> = agent_result
                 .appended_messages
