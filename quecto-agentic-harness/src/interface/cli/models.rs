@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::io::Read;
+use std::path::Path;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -93,21 +95,29 @@ const MAX_MODEL_DISCOVERY_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_MODEL_DISCOVERY_MODELS: usize = 10_000;
 
 pub fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<usize, String> {
+    discover_once_with(ctx, provider_key, fetch_openai_models, |path, bytes| {
+        atomic_write(path, bytes, Some(0o600)).map_err(|e| e.to_string())
+    })
+}
+
+fn discover_once_with<F, W>(
+    ctx: &CliContext,
+    provider_key: &str,
+    fetch: F,
+    publish: W,
+) -> Result<usize, String>
+where
+    F: FnOnce(&str, Option<&str>) -> Result<Vec<Value>, String>,
+    W: FnOnce(&Path, &[u8]) -> Result<(), String>,
+{
     let path = ctx.base_dir().join("models.json");
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-    let mut registry: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("failed to parse {}: {e}", path.display()))?;
-    let provider = registry
-        .get_mut("providers")
-        .and_then(Value::as_object_mut)
-        .and_then(|providers| providers.get_mut(provider_key))
-        .and_then(Value::as_object_mut)
-        .ok_or_else(|| format!("provider '{provider_key}' not found in {}", path.display()))?;
-    let api = provider
-        .get("api")
-        .and_then(Value::as_str)
-        .unwrap_or("openai-completions");
+    let registry = read_registry(&path)?;
+    let provider = provider_object(&registry, provider_key, &path)?;
+    let api = match provider.get("api") {
+        None | Some(Value::Null) => "openai-completions",
+        Some(Value::String(api)) => api,
+        Some(_) => return Err(format!("provider '{provider_key}' api must be a string")),
+    };
     if api != "openai-completions" {
         return Err(format!(
             "provider '{provider_key}' is not an openai-completions provider"
@@ -116,12 +126,10 @@ pub fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<usize, Stri
     let base_url = provider
         .get("baseUrl")
         .or_else(|| provider.get("apiBase"))
-        .or_else(|| provider.get("api_base"))
         .and_then(Value::as_str)
         .ok_or_else(|| format!("provider '{provider_key}' is missing baseUrl"))?;
     let allow_remote_http = provider
         .get("allowRemoteHttp")
-        .or_else(|| provider.get("allow_remote_http"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let url = discover_models_url(provider_key, base_url, allow_remote_http)?;
@@ -141,16 +149,53 @@ pub fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<usize, Stri
         .or_else(|| provider.get("apiKey"))
         .and_then(Value::as_str)
         .map(|value| resolve_registry_value(value, |name| std::env::var(name).ok()));
-    let discovered = fetch_openai_models(&url, auth.as_deref())?;
+    let discovered = fetch(&url, auth.as_deref())?;
     let count = discovered.len();
-    provider.insert("models".to_string(), Value::Array(discovered));
-    let bytes = serde_json::to_vec_pretty(&registry)
+
+    // Fetching may take seconds. Re-read immediately before the whole-file
+    // publication so unrelated providers changed meanwhile are preserved.
+    let mut latest = read_registry(&path)?;
+    provider_object_mut(&mut latest, provider_key, &path)?
+        .insert("models".to_string(), Value::Array(discovered));
+    let bytes = serde_json::to_vec_pretty(&latest)
         .map_err(|e| format!("failed to serialize registry: {e}"))?;
     serde_json::from_slice::<Value>(&bytes)
         .map_err(|e| format!("serialized registry was invalid JSON: {e}"))?;
-    atomic_write(&path, &bytes, Some(0o600))
+    publish(&path, &bytes)
         .map_err(|e| format!("failed to write {} atomically: {e}", path.display()))?;
     Ok(count)
+}
+
+fn read_registry(path: &Path) -> Result<Value, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    serde_json::from_str(&text).map_err(|e| format!("failed to parse {}: {e}", path.display()))
+}
+
+fn provider_object<'a>(
+    registry: &'a Value,
+    provider_key: &str,
+    path: &Path,
+) -> Result<&'a serde_json::Map<String, Value>, String> {
+    registry
+        .get("providers")
+        .and_then(Value::as_object)
+        .and_then(|providers| providers.get(provider_key))
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("provider '{provider_key}' not found in {}", path.display()))
+}
+
+fn provider_object_mut<'a>(
+    registry: &'a mut Value,
+    provider_key: &str,
+    path: &Path,
+) -> Result<&'a mut serde_json::Map<String, Value>, String> {
+    registry
+        .get_mut("providers")
+        .and_then(Value::as_object_mut)
+        .and_then(|providers| providers.get_mut(provider_key))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| format!("provider '{provider_key}' not found in {}", path.display()))
 }
 
 fn discover_models_url(
@@ -236,20 +281,22 @@ fn fetch_openai_models(url: &str, auth: Option<&str>) -> Result<Vec<Value>, Stri
             "model catalog contains more than {MAX_MODEL_DISCOVERY_MODELS} entries"
         ));
     }
-    data.iter()
-        .map(|m| {
-            let id = m
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "model entry missing string id".to_string())?;
-            let name = m
-                .get("name")
-                .or_else(|| m.get("owned_by"))
-                .and_then(Value::as_str)
-                .unwrap_or(id);
-            Ok(json!({ "id": id, "name": name }))
-        })
-        .collect()
+    let mut models_by_id = HashMap::with_capacity(data.len());
+    for model in data {
+        let id = model
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "model entry missing string id".to_string())?;
+        let name = model
+            .get("name")
+            .or_else(|| model.get("owned_by"))
+            .and_then(Value::as_str)
+            .unwrap_or(id);
+        models_by_id.insert(id.to_string(), json!({ "id": id, "name": name }));
+    }
+    let mut models: Vec<_> = models_by_id.into_values().collect();
+    models.sort_unstable_by(|left, right| left["id"].as_str().cmp(&right["id"].as_str()));
+    Ok(models)
 }
 
 #[cfg(test)]

@@ -159,9 +159,3 @@ fn read_registry(world: &QuectoWorld) -> serde_json::Value {
     serde_json::from_str(&std::fs::read_to_string(base_path(world).join("models.json")).unwrap())
         .unwrap()
 }
-
-#[then("the discovery implementation should use the atomic write helper")]
-fn then_uses_atomic_write_helper(_world: &mut QuectoWorld) {
-    let source = std::fs::read_to_string("src/interface/cli/models.rs").unwrap();
-    assert!(source.contains("atomic_write(&path"));
-}

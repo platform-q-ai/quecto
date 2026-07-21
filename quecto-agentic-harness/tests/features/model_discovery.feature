@@ -19,5 +19,4 @@ Feature: Runtime model discovery
     And the OpenAI-compatible catalog for "local-openai" returns model "local"
     When I discover models for provider "local-openai"
     Then the models registry should remain valid JSON
-    And the discovery implementation should use the atomic write helper
     And no discovery temporary file should remain

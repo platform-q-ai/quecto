@@ -39,7 +39,7 @@ quecto models discover openrouter --watch --interval 3600
 or install an external scheduler, for example cron:
 
 ```cron
-17 * * * * /usr/local/bin/quecto models discover openrouter >/tmp/quecto-models-discover.log 2>&1
+17 * * * * /usr/local/bin/quecto models discover openrouter 2>&1 | logger -t quecto-models-discover
 ```
 
 A systemd timer should invoke the same one-shot command. Because writes use a same-directory temporary file plus rename, running agents see either the previous complete registry or the next complete registry; malformed JSON is never intentionally published.

@@ -84,7 +84,7 @@ fn discover_writes_valid_json_and_leaves_no_temp_file_for_literal_provider_key()
             .await;
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("models.json"), serde_json::json!({
-            "providers": {"local/openai": {"api": "openai-completions", "api_base": format!("{}/v1", server.uri()), "models": []}}
+            "providers": {"local/openai": {"api": "openai-completions", "apiBase": format!("{}/v1", server.uri()), "models": []}}
         }).to_string()).unwrap();
         let ctx = CliContext { base_dir: Some(tmp.path().to_path_buf()), ..Default::default() };
 
@@ -267,6 +267,105 @@ fn fetch_openai_models_rejects_oversized_body_and_catalog() {
             "unexpected catalog error: {err}"
         );
     });
+}
+
+#[test]
+fn discovery_rejects_non_string_api_before_fetching() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        serde_json::json!({"providers": {"broken": {
+            "api": 123,
+            "baseUrl": "https://example.test/v1",
+            "models": []
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+
+    let err = discover_once(&ctx, "broken").unwrap_err();
+    assert!(
+        err.contains("api must be a string"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn fetched_models_are_deduplicated_by_id() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {"id": "alpha", "name": "First"},
+                    {"id": "alpha", "name": "Last"}
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let models = tokio::task::spawn_blocking({
+            let url = format!("{}/v1/models", server.uri());
+            move || fetch_openai_models(&url, None)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            models,
+            vec![serde_json::json!({"id": "alpha", "name": "Last"})]
+        );
+    });
+}
+
+#[test]
+fn discovery_merges_into_registry_reread_after_fetch_and_uses_publisher() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("models.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({"providers": {"target": {
+        "api": "openai-completions", "baseUrl": "https://example.test/v1", "models": []
+    }, "other": {"models": [{"id": "before"}]}}})
+        .to_string(),
+    )
+    .unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let published = std::cell::Cell::new(false);
+
+    discover_once_with(
+        &ctx,
+        "target",
+        |_url, _auth| {
+            let mut latest: Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            latest["providers"]["other"]["models"] = serde_json::json!([{"id": "concurrent"}]);
+            std::fs::write(&path, serde_json::to_vec(&latest).unwrap()).unwrap();
+            Ok(vec![serde_json::json!({"id": "new", "name": "new"})])
+        },
+        |publish_path, bytes| {
+            published.set(true);
+            atomic_write(publish_path, bytes, Some(0o600)).map_err(|e| e.to_string())
+        },
+    )
+    .unwrap();
+
+    let after: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(
+        published.get(),
+        "discovery did not invoke its atomic publisher seam"
+    );
+    assert_eq!(after["providers"]["other"]["models"][0]["id"], "concurrent");
+    assert_eq!(after["providers"]["target"]["models"][0]["id"], "new");
 }
 
 #[test]
