@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::io::Read;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -6,6 +6,9 @@ use serde_json::{Value, json};
 use super::CliContext;
 use crate::infrastructure::atomic_write::atomic_write;
 use crate::infrastructure::model_registry::resolve_registry_value;
+use crate::infrastructure::providers::{
+    ProviderFactoryError, validate_provider_api_base_with_options,
+};
 
 pub fn cmd_models(
     ctx: &CliContext,
@@ -84,6 +87,11 @@ fn cmd_discover(
     }
 }
 
+// Keep unattended discovery bounded: provider catalogs are small JSON lists,
+// while compromised endpoints can otherwise stream arbitrary bytes/items.
+const MAX_MODEL_DISCOVERY_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
+const MAX_MODEL_DISCOVERY_MODELS: usize = 10_000;
+
 pub fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<usize, String> {
     let path = ctx.base_dir().join("models.json");
     let text = std::fs::read_to_string(&path)
@@ -107,10 +115,16 @@ pub fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<usize, Stri
     }
     let base_url = provider
         .get("baseUrl")
+        .or_else(|| provider.get("apiBase"))
         .or_else(|| provider.get("api_base"))
         .and_then(Value::as_str)
         .ok_or_else(|| format!("provider '{provider_key}' is missing baseUrl"))?;
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let allow_remote_http = provider
+        .get("allowRemoteHttp")
+        .or_else(|| provider.get("allow_remote_http"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let url = discover_models_url(provider_key, base_url, allow_remote_http)?;
     if provider
         .get("auth")
         .and_then(|auth| auth.get("mode"))
@@ -129,8 +143,7 @@ pub fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<usize, Stri
         .map(|value| resolve_registry_value(value, |name| std::env::var(name).ok()));
     let discovered = fetch_openai_models(&url, auth.as_deref())?;
     let count = discovered.len();
-    let models = merge_discovered_models(provider.get("models"), discovered);
-    provider.insert("models".to_string(), Value::Array(models));
+    provider.insert("models".to_string(), Value::Array(discovered));
     let bytes = serde_json::to_vec_pretty(&registry)
         .map_err(|e| format!("failed to serialize registry: {e}"))?;
     serde_json::from_slice::<Value>(&bytes)
@@ -140,40 +153,31 @@ pub fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<usize, Stri
     Ok(count)
 }
 
-fn merge_discovered_models(existing: Option<&Value>, discovered: Vec<Value>) -> Vec<Value> {
-    let existing_by_id: HashMap<String, Value> = existing
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|model| {
-            model
-                .get("id")
-                .and_then(Value::as_str)
-                .map(|id| (id.to_string(), model.clone()))
-        })
-        .collect();
-
-    discovered
-        .into_iter()
-        .map(|model| {
-            let Some(id) = model.get("id").and_then(Value::as_str) else {
-                return model;
-            };
-            let mut merged = existing_by_id
-                .get(id)
-                .cloned()
-                .unwrap_or(Value::Object(Default::default()));
-            if let Some(obj) = merged.as_object_mut() {
-                obj.insert("id".to_string(), Value::String(id.to_string()));
-                if let Some(name) = model.get("name") {
-                    obj.insert("name".to_string(), name.clone());
-                }
-                merged
-            } else {
-                model
-            }
-        })
-        .collect()
+fn discover_models_url(
+    provider_key: &str,
+    base_url: &str,
+    allow_remote_http: bool,
+) -> Result<String, String> {
+    validate_provider_api_base_with_options(provider_key, base_url, allow_remote_http, true)
+        .map_err(|e| match e {
+            ProviderFactoryError::InvalidApiBase { reason, .. } => format!(
+                "provider '{provider_key}' has invalid baseUrl '{}': {reason}",
+                redact_url_for_error(base_url)
+            ),
+            other => other.to_string(),
+        })?;
+    let parsed = reqwest::Url::parse(base_url).map_err(|e| {
+        format!("provider '{provider_key}' has invalid baseUrl '<invalid url>': {e}")
+    })?;
+    let base_path = parsed.path().trim_end_matches('/').to_string();
+    if !base_path.ends_with("/v1") {
+        return Err(format!(
+            "provider '{provider_key}' baseUrl must end at an OpenAI-compatible /v1 endpoint"
+        ));
+    }
+    let mut models_url = parsed;
+    models_url.set_path(&format!("{base_path}/models"));
+    Ok(models_url.to_string())
 }
 
 fn redact_url_for_error(url: &str) -> String {
@@ -182,10 +186,16 @@ fn redact_url_for_error(url: &str) -> String {
             let _ = parsed.set_username("");
             let _ = parsed.set_password(None);
             parsed.set_query(None);
+            parsed.set_fragment(None);
             parsed.to_string()
         }
         Err(_) => "<invalid url>".to_string(),
     }
+}
+
+fn format_reqwest_error(display_url: &str, e: reqwest::Error) -> String {
+    let without_url = e.without_url();
+    format!("GET {display_url} failed: {without_url}")
 }
 
 fn fetch_openai_models(url: &str, auth: Option<&str>) -> Result<Vec<Value>, String> {
@@ -200,18 +210,33 @@ fn fetch_openai_models(url: &str, auth: Option<&str>) -> Result<Vec<Value>, Stri
     }
     let resp = req
         .send()
-        .map_err(|e| format!("GET {display_url} failed: {e}"))?;
+        .map_err(|e| format_reqwest_error(&display_url, e))?;
     let status = resp.status();
     if !status.is_success() {
         return Err(format!("GET {display_url} returned {status}"));
     }
-    let body: Value = resp
-        .json()
+    let mut capped = resp.take((MAX_MODEL_DISCOVERY_RESPONSE_BYTES + 1) as u64);
+    let mut bytes = Vec::new();
+    capped
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("GET {display_url} failed while reading response: {e}"))?;
+    if bytes.len() > MAX_MODEL_DISCOVERY_RESPONSE_BYTES {
+        return Err(format!(
+            "GET {display_url} response body exceeds {MAX_MODEL_DISCOVERY_RESPONSE_BYTES} bytes"
+        ));
+    }
+    let body: Value = serde_json::from_slice(&bytes)
         .map_err(|e| format!("GET {display_url} returned invalid JSON: {e}"))?;
-    body.get("data")
+    let data = body
+        .get("data")
         .and_then(Value::as_array)
-        .ok_or_else(|| "model list response missing data array".to_string())?
-        .iter()
+        .ok_or_else(|| "model list response missing data array".to_string())?;
+    if data.len() > MAX_MODEL_DISCOVERY_MODELS {
+        return Err(format!(
+            "model catalog contains more than {MAX_MODEL_DISCOVERY_MODELS} entries"
+        ));
+    }
+    data.iter()
         .map(|m| {
             let id = m
                 .get("id")

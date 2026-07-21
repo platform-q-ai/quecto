@@ -77,7 +77,7 @@ fn validate_provider_api_base(provider: &str, api_base: &str) -> Result<(), Prov
     validate_provider_api_base_with_options(provider, api_base, false, false)
 }
 
-fn validate_provider_api_base_with_options(
+pub(crate) fn validate_provider_api_base_with_options(
     provider: &str,
     api_base: &str,
     allow_remote_http: bool,
