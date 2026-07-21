@@ -669,6 +669,9 @@ mod app_cov_tests;
 #[path = "app_disconnect_tests.rs"]
 mod app_disconnect_tests;
 #[cfg(test)]
+#[path = "app_event_loop_cov_tests.rs"]
+mod app_event_loop_cov_tests;
+#[cfg(test)]
 #[path = "app_event_loop_tests.rs"]
 mod app_event_loop_tests;
 #[cfg(test)]

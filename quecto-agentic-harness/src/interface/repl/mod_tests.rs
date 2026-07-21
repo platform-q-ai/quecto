@@ -664,3 +664,65 @@ fn test_run_non_ephemeral_saves_on_exit() {
         .expect("expected session to be saved on exit");
     assert!(!loaded.messages.is_empty(), "expected messages to be saved");
 }
+
+#[test]
+fn agent_command_lifecycle_exercises_create_list_show_edit_remove_and_validation() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut repl = make_repl_loop(tmp.path(), "", TestReplOpts::default());
+    let rt = build_repl_runtime().unwrap();
+
+    repl.handle_agent("/agent", &rt);
+    repl.handle_agent("/agent create", &rt);
+    repl.handle_agent("/agent show", &rt);
+    repl.handle_agent("/agent edit missing", &rt);
+    repl.handle_agent("/agent remove missing", &rt);
+    assert!(repl.validated_agent_path("../escape").is_none());
+
+    repl.handle_agent(
+        "/agent create helper --system You summarize repository changes clearly.",
+        &rt,
+    );
+    repl.handle_agent("/agent list", &rt);
+    repl.handle_agent("/agent show helper", &rt);
+    repl.handle_agent("/agent edit helper", &rt);
+    repl.handle_agent("/agent remove helper", &rt);
+    repl.handle_agent("/agent list", &rt);
+
+    let out = repl_output(&repl);
+    assert!(
+        out.contains("Usage: /agent"),
+        "usage should be printed: {out}"
+    );
+    assert!(
+        out.contains("Agent 'helper' created"),
+        "create output: {out}"
+    );
+    assert!(
+        out.contains("helper"),
+        "list/show/edit should mention helper: {out}"
+    );
+    assert!(
+        out.contains("Agent 'helper' removed"),
+        "remove output: {out}"
+    );
+}
+
+#[test]
+fn spawn_command_reports_usage_and_missing_agent_without_running_child() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut repl = make_repl_loop(tmp.path(), "", TestReplOpts::default());
+    let rt = build_repl_runtime().unwrap();
+
+    repl.handle_spawn("/spawn --help", &rt);
+    repl.handle_spawn("/spawn --agent missing-agent please help", &rt);
+
+    let out = repl_output(&repl);
+    assert!(
+        out.contains("Usage: /spawn"),
+        "usage should be printed: {out}"
+    );
+    assert!(
+        out.contains("Agent not found") || out.contains("not found"),
+        "missing agent should be reported without spawning: {out}"
+    );
+}

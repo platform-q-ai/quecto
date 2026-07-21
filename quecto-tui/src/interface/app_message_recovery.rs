@@ -360,3 +360,86 @@ pub(super) fn recovered_chat_entries(
     }
     entries
 }
+
+#[cfg(test)]
+mod recovery_cov_tests {
+    use super::*;
+    use crate::interface::components::chat::ChatEntry;
+
+    #[test]
+    fn recovered_chat_entries_handles_suppressed_calls_errors_and_unknown_roles() {
+        let refs = vec![
+            "suppressed-start".to_string(),
+            "suppressed-result".to_string(),
+            "standalone-tool".to_string(),
+            "assistant-text".to_string(),
+            "unknown".to_string(),
+        ];
+        let responses = std::collections::HashMap::from([
+            (
+                "suppressed-start".to_string(),
+                serde_json::json!({
+                    "role": "assistant",
+                    "toolCalls": [{"id": "spawn-1", "name": "spawn", "arguments": {"task": "secret"}}]
+                }),
+            ),
+            (
+                "suppressed-result".to_string(),
+                serde_json::json!({
+                    "role": "tool",
+                    "toolCallId": "spawn-1",
+                    "toolName": "spawn",
+                    "content": "hidden search result"
+                }),
+            ),
+            (
+                "standalone-tool".to_string(),
+                serde_json::json!({
+                    "role": "tool",
+                    "toolCallId": "call-2",
+                    "toolName": "bash",
+                    "content": "boom",
+                    "isError": true
+                }),
+            ),
+            (
+                "assistant-text".to_string(),
+                serde_json::json!({"role": "assistant", "content": "visible answer"}),
+            ),
+            (
+                "unknown".to_string(),
+                serde_json::json!({"role": "system", "content": "ignored"}),
+            ),
+        ]);
+
+        let entries = recovered_chat_entries(&refs, &responses);
+
+        assert_eq!(
+            entries.len(),
+            2,
+            "suppressed and unknown records are skipped: {entries:?}"
+        );
+        match &entries[0] {
+            ChatEntry::ToolExecution {
+                tool_call_id,
+                tool_name,
+                result,
+                is_error,
+                ..
+            } => {
+                assert_eq!(tool_call_id, "call-2");
+                assert_eq!(tool_name, "bash");
+                assert_eq!(result.as_deref(), Some("boom"));
+                assert!(*is_error);
+            }
+            other => panic!("expected standalone tool entry, got {other:?}"),
+        }
+        match &entries[1] {
+            ChatEntry::Assistant { text, streaming } => {
+                assert_eq!(text, "visible answer");
+                assert!(!streaming);
+            }
+            other => panic!("expected assistant entry, got {other:?}"),
+        }
+    }
+}

@@ -531,6 +531,63 @@ fn parse_no_workflow_before_workflow_allows_reenable() {
 }
 
 #[test]
+fn parse_workflow_flags_and_build_agent_args_are_forwarded() {
+    let mut flags = parse_flags(&args(
+        "--no-sandbox --workflow --workflow-guards --config /tmp/cfg.json --system prompt --disable-tool write",
+    ));
+    apply_workflow_defaults(&mut flags);
+
+    let built = build_agent_args(&flags);
+    assert_eq!(&built[..3], ["agent", "--mode", "uds"]);
+    assert!(built.windows(1).any(|w| w == ["--no-sandbox"]));
+    assert!(built.windows(1).any(|w| w == ["--workflow"]));
+    assert!(built.windows(1).any(|w| w == ["--workflow-guards"]));
+    assert!(built.windows(2).any(|w| w == ["--config", "/tmp/cfg.json"]));
+    assert!(built.windows(2).any(|w| w == ["--system", "prompt"]));
+    assert!(built.windows(2).any(|w| w == ["--disable-tool", "write"]));
+}
+
+#[test]
+fn build_agent_args_for_explicit_no_workflow() {
+    let flags = parse_flags(&args("--workflow --no-workflow"));
+    let built = build_agent_args(&flags);
+    assert!(built.windows(1).any(|w| w == ["--no-workflow"]));
+    assert!(!built.windows(1).any(|w| w == ["--workflow"]));
+    assert!(!built.windows(1).any(|w| w == ["--workflow-guards"]));
+}
+
+#[test]
+fn parse_system_file_read_error_leaves_prompt_unset() {
+    let missing = tmp_dir("missing-system-file").join("does-not-exist.txt");
+    let flags = parse_flags(&[
+        "quecto-tui".to_string(),
+        "--system-file".to_string(),
+        missing.display().to_string(),
+    ]);
+    assert!(flags.system_prompt.is_none());
+    let _ = std::fs::remove_dir_all(missing.parent().unwrap());
+}
+
+#[test]
+fn startup_failure_formats_stderr_context_only_when_present() {
+    assert_eq!(format_agent_startup_failure("boom", &[]), "boom");
+    let formatted = format_agent_startup_failure("boom", &["line one".into(), "line two".into()]);
+    assert!(formatted.contains("boom\nAgent stderr:\nline one\nline two"));
+}
+
+#[tokio::test]
+async fn capped_line_reader_lossy_decodes_invalid_utf8_mid_line() {
+    let input = [b'a', 0xff, b'b', b'\n'];
+    let mut reader = tokio::io::BufReader::new(&input[..]);
+    let mut line = String::new();
+    let consumed = read_stderr_line_capped(&mut reader, &mut line)
+        .await
+        .expect("read invalid utf8 line");
+    assert_eq!(consumed, input.len());
+    assert_eq!(line, "a\u{FFFD}b");
+}
+
+#[test]
 fn redact_named_secret_handles_single_quotes_and_json_stop() {
     let out = redact_named_secret_values("refresh_token: 'secret-value' other=ok");
     assert!(out.contains("'[REDACTED]'"), "{out}");
@@ -570,4 +627,88 @@ fn allowed_socket_roots_ignores_relative_env_values() {
         !roots.iter().any(|p| p.ends_with("relative-xdg")),
         "relative XDG_RUNTIME_DIR value must be rejected: {roots:?}"
     );
+}
+
+#[test]
+fn run_with_unreachable_direct_socket_returns_failure() {
+    let dir = tmp_dir("run-direct-missing-socket");
+    let socket = dir.join("missing.sock");
+
+    let code = run(vec![
+        "quecto-tui".to_string(),
+        "--socket".to_string(),
+        socket.display().to_string(),
+    ]);
+
+    assert_eq!(code, 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn spawn_agent_program_reports_spawn_error_for_missing_program() {
+    let flags = parse_flags(&args(""));
+    let err = spawn_agent_program("/definitely/not/quecto", &flags)
+        .await
+        .expect_err("missing program should report spawn failure");
+
+    assert!(
+        err.contains("failed to spawn /definitely/not/quecto"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn spawn_agent_program_exited_before_socket_includes_stderr_and_terminates() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tmp_dir("spawn-eof");
+    let script = dir.join("fake-agent.sh");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\necho 'startup failed: no providers configured' >&2\nexit 7\n",
+    )
+    .expect("write fake agent script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+        .expect("mark script executable");
+
+    let flags = parse_flags(&args(""));
+    let err = spawn_agent_program_retry_etxtbsy(script.to_str().unwrap(), &flags)
+        .await
+        .expect_err("fake child exits before socket");
+
+    assert!(
+        err.contains("agent exited before announcing socket"),
+        "{err}"
+    );
+    assert!(err.contains("Agent stderr:"), "{err}");
+    assert!(err.contains("startup failed"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn spawn_agent_program_rejects_announced_regular_file_socket() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tmp_dir("spawn-bad-socket");
+    let fake_socket = dir.join("agent.sock");
+    std::fs::write(&fake_socket, b"not a socket").expect("fake socket file");
+    let script = dir.join("fake-agent.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho 'quecto-agent-socket: {}' >&2\nsleep 30\n",
+            fake_socket.display()
+        ),
+    )
+    .expect("write fake agent script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+        .expect("mark script executable");
+
+    let flags = parse_flags(&args(""));
+    let err = spawn_agent_program_retry_etxtbsy(script.to_str().unwrap(), &flags)
+        .await
+        .expect_err("regular file socket must be rejected");
+
+    assert!(err.contains("not a Unix socket"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

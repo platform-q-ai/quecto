@@ -83,3 +83,34 @@ fn write_osc52_clipboard_sequence_returns_flush_failure() {
     assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
     assert!(err.to_string().contains("flush failed"));
 }
+
+#[test]
+fn copy_to_clipboard_uses_stdout_osc52_path() {
+    // The production helper should be a thin wrapper around the OSC52 writer.
+    // It writes to stdout; in the test harness stdout is captured by libtest, so
+    // the assertion is simply that the real I/O path is well-formed and does not
+    // fail for a small valid selection.
+    super::copy_to_clipboard("clipboard smoke test").expect("stdout OSC52 copy should succeed");
+}
+
+#[test]
+fn write_osc52_clipboard_sequence_caps_large_payload() {
+    let mut writer = FailingClipboardWriter::success();
+    let text = "x".repeat(super::MAX_CLIPBOARD_BYTES + 3);
+
+    super::write_osc52_clipboard_sequence(&text, &mut writer)
+        .expect("large clipboard payload should be capped and written");
+
+    let written = String::from_utf8(writer.bytes).expect("OSC52 bytes should be UTF-8");
+    assert!(written.starts_with("\x1b]52;c;"));
+    assert!(written.ends_with('\x07'));
+    let encoded = written
+        .strip_prefix("\x1b]52;c;")
+        .and_then(|s| s.strip_suffix('\x07'))
+        .expect("OSC52 wrapper should be present");
+    assert_eq!(encoded.len(), super::MAX_CLIPBOARD_BYTES.div_ceil(3) * 4);
+    assert!(
+        encoded.len() < text.len().div_ceil(3) * 4,
+        "payload should be encoded only after being capped"
+    );
+}

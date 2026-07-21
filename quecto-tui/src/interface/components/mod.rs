@@ -15,4 +15,7 @@ pub mod suggestion_list;
 pub mod workflow_bar;
 
 #[cfg(test)]
+mod default_invalidate_tests;
+
+#[cfg(test)]
 mod list_render_characterization_tests;
