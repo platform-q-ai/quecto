@@ -697,6 +697,8 @@ pub struct QuectoWorld {
     pub gateway_oauth_mock_uri: Option<String>,
     /// Leaked wiremock server ref for OAuth refresh mock (kept alive)
     pub _gateway_oauth_mock_server: Option<&'static wiremock::MockServer>,
+    /// Mock OpenAI-compatible model catalog server for discovery scenarios.
+    pub _model_discovery_mock_server: Option<&'static wiremock::MockServer>,
     /// Token exchange result (for issue #257 scenarios)
     pub gateway_token_exchange_result: Option<
         Result<
@@ -1309,6 +1311,7 @@ mod find_steps;
 mod grep_steps;
 mod harness_efficiency_steps;
 mod ls_steps;
+mod model_discovery_steps;
 mod observability_steps;
 mod openai_routing_1066_steps;
 mod path_utils_steps;

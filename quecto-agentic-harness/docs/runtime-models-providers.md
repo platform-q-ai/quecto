@@ -18,6 +18,32 @@ Quecto's runtime model registry lives at `~/.quecto/models.json`. It is the user
 
 So: **edit the file, save, send the next prompt or reopen `/model` — the new provider/model is live.**
 
+## Auto-discover OpenAI-compatible model lists
+
+Discovery is an external sidecar operation: Quecto does not fetch remote catalogs from the registry loader. Instead, run the CLI helper to rewrite `~/.quecto/models.json`; the existing hot reload gate picks up the atomic file replacement.
+
+For any provider in `models.json` with `"api": "openai-completions"` and a `baseUrl` ending at an OpenAI-compatible `/v1` endpoint:
+
+```bash
+quecto models discover openrouter
+```
+
+The helper calls `GET <baseUrl>/models`, maps each returned entry to the registry model schema (`id` is kept opaque; `name` uses the provider `name`, then `owned_by`, then `id`), and replaces only that provider's `models` array. Other providers, provider options, and `auth` blocks are preserved. `auth.apiKey` may reference `$ENV` or `${ENV}`; discovery resolves it only for the outgoing request and writes the original auth block back unchanged. It never writes `!command` auth.
+
+To keep a catalog fresh, either run a watch loop:
+
+```bash
+quecto models discover openrouter --watch --interval 3600
+```
+
+or install an external scheduler, for example cron:
+
+```cron
+17 * * * * /usr/local/bin/quecto models discover openrouter >/tmp/quecto-models-discover.log 2>&1
+```
+
+A systemd timer should invoke the same one-shot command. Because writes use a same-directory temporary file plus rename, running agents see either the previous complete registry or the next complete registry; malformed JSON is never intentionally published.
+
 ## Where keys go (do not mix these up)
 
 | Provider kind | Where the API key lives | Example |

@@ -1,6 +1,7 @@
 mod agent;
 mod auth;
 mod commands;
+mod models;
 pub mod protocol;
 pub mod provider_reload;
 #[cfg(test)]
@@ -184,6 +185,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
             "agent" => agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
             "status" => commands::cmd_status(ctx, &mut stdout, &mut stderr),
             "auth" => auth::cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
+            "models" => models::cmd_models(ctx, &args[2..], &mut stdout, &mut stderr),
             "help" | "--help" | "-h" => {
                 help_text(&mut stdout);
                 0
@@ -541,6 +543,7 @@ fn help_text(out: &mut String) {
         "                       --disable-tool <name>  Remove a tool from the registry (repeatable)\n",
     );
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
+    out.push_str("  models      Manage runtime model registry (discover)\n");
     out.push_str("  status      Show status\n");
     out.push_str("  help        Show this help\n");
     out.push_str("  version     Show version information\n");
