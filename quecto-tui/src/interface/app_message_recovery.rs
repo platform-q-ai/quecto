@@ -244,7 +244,7 @@ impl App {
     }
 }
 
-pub(super) fn recovered_chat_entries(
+pub(crate) fn recovered_chat_entries(
     refs: &[String],
     responses: &std::collections::HashMap<String, serde_json::Value>,
 ) -> Vec<crate::interface::components::chat::ChatEntry> {
@@ -259,6 +259,11 @@ pub(super) fn recovered_chat_entries(
         let role = data.get("role").and_then(|v| v.as_str()).unwrap_or("");
         let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("");
         match role {
+            "user" if !content.is_empty() => {
+                entries.push(ChatEntry::User {
+                    text: content.to_string(),
+                });
+            }
             "assistant" => {
                 if let Some(calls) = data
                     .get("toolCalls")

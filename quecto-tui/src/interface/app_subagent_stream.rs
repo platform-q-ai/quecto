@@ -15,15 +15,7 @@ impl App {
     /// `SessionView`, mirroring the master render path so the body is visibly
     /// equivalent to how the master renders (#800).
     pub(super) fn route_subagent_event(&mut self, agent_id: &str, ev: Event) {
-        // Per-session workflow bar so a selected sub-agent renders its OWN
-        // workflow/phase bar (#802). The kernel re-broadcasts a descendant's
-        // `workflow_state` onto an ancestor's stream, re-stamped with the
-        // descendant's own inner `agent_id` (#840 / `canonical_workflow_forward`).
-        // Such a forwarded event is tagged here with the CONNECTION's id, so
-        // route by the event's INNER `agent_id` when present: a grandchild G's
-        // workflow must land on G's session, never overwrite the connected
-        // child's bar. The connected agent's own events carry no inner id, so
-        // they fall back to the connection id.
+        // Route forwarded descendant workflow by its inner id; otherwise use the connection id.
         if let Event::WorkflowState {
             agent_id: inner_id,
             steps,
@@ -151,17 +143,26 @@ impl App {
                 return;
             }
         }
+        if let Event::LedgerAdvanced { epoch, rev } = &ev {
+            self.note_ledger_advanced(agent_id, *epoch, *rev);
+            return;
+        }
         if let Event::Response {
             command,
             data: Some(data),
             ..
         } = &ev
         {
+            if command == "sync" {
+                self.route_sync_response(agent_id, data);
+                return;
+            }
             if command == "get_state" {
                 if !self.is_retained_or_tracked_agent(agent_id) {
                     return;
                 }
                 self.ensure_session(agent_id);
+                self.note_sync_capability(agent_id, data);
                 if let Some(wf) = data.get("workflow") {
                     let bar = workflow_bar::parse_workflow_event(wf);
                     self.record_subagent_workflow(agent_id, &bar);

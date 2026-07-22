@@ -18,11 +18,7 @@ impl App {
             return;
         }
         if self.subagents.active_agent_id.as_deref() == Some(agent_id.as_str())
-            && self
-                .subagents
-                .active_conn
-                .as_ref()
-                .is_some_and(|(connected, _)| connected == &agent_id)
+            && self.subagents.feeds.contains_key(&agent_id)
         {
             return;
         }

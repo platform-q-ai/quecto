@@ -145,6 +145,14 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Pull committed ledger messages after `sinceRev` for `epoch` (#1194 PR2).
+    Sync {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        epoch: u64,
+        #[serde(rename = "sinceRev")]
+        since_rev: u64,
+    },
 }
 
 /// An event received from the agent.
@@ -228,6 +236,10 @@ pub enum Event {
         messages: Vec<serde_json::Value>,
         #[serde(rename = "messageRefs", default)]
         message_refs: Vec<String>,
+    },
+    LedgerAdvanced {
+        epoch: u64,
+        rev: u64,
     },
     /// Workflow state changed — step checked/unchecked/reset (#563).
     WorkflowState {
@@ -386,6 +398,7 @@ impl Command {
             Self::ClearHistory { .. } => "clear_history",
             Self::RewindTo { .. } => "rewind_to",
             Self::GetSubagents { .. } => "get_subagents",
+            Self::Sync { .. } => "sync",
         }
     }
 }
@@ -665,6 +678,10 @@ mod client_defence_tests;
 #[cfg(test)]
 #[path = "client_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "client_sync_tests.rs"]
+mod client_sync_tests;
 
 #[cfg(test)]
 #[path = "client_1060_tests.rs"]

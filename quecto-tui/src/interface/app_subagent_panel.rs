@@ -148,13 +148,12 @@ impl App {
         let Some(id) = self.subagents.active_agent_id.clone() else {
             return false;
         };
-        let Some((conn_id, tx)) = &self.subagents.active_cmd_tx else {
+        let Some(feed) = self.subagents.feeds.get(&id) else {
             return false;
         };
-        if conn_id != &id {
-            return false;
-        }
-        tx.try_send(cmd).is_ok()
+        // Exact active-agent-id lookup is the command-routing guard: callers
+        // cannot accidentally route through a stale non-active feed entry.
+        feed.cmd_tx.try_send(cmd).is_ok()
     }
 
     pub(super) fn select_agent(&mut self, agent_id: Option<&str>) {
@@ -288,74 +287,6 @@ impl App {
         {
             self.subagents.panel_nav.set_selected(idx);
         }
-    }
-
-    // ── Connect-on-select ──────────────────────────────────────────────
-
-    /// Open a direct UDS connection to `id`'s own socket and fan its live
-    /// stream into the shared `subagent_event_rx`, tagged with the agent id.
-    /// No-op when the socket path is unknown (older kernel / non-local agent).
-    fn open_subagent_connection(&mut self, id: &str) {
-        let tracked = &self.subagents.tracked;
-        let Some(socket) = tracked.get(id).and_then(|t| t.info.socket_path.clone()) else {
-            return;
-        };
-        let tx = self.subagents.event_tx.clone();
-        let agent_id = id.to_string();
-        let path = std::path::PathBuf::from(socket);
-        // Outbound channel so the editor's send/follow-up/abort path can target this child
-        // (#802); the connection task forwards queued commands onto its socket.
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<Command>(32);
-        use tracing::instrument::WithSubscriber;
-        let connect_dispatch = tracing::dispatcher::get_default(Clone::clone);
-        let connect_task = async move {
-            let Ok(mut client) = Client::connect(&path).await else {
-                return;
-            };
-            // Reconcile the kernel's connect-time busy-child snapshot (#828).
-            let _ = client
-                .send(&Command::GetMessages {
-                    id: Some("subagent-history".into()),
-                    before: None,
-                })
-                .await;
-            let _ = client
-                .send(&Command::GetState {
-                    id: Some("subagent-state".into()),
-                })
-                .await;
-            loop {
-                tokio::select! {
-                    ev = client.recv() => match ev {
-                        Some(ev) => {
-                            if tx.send((agent_id.clone(), ev)).await.is_err() {
-                                break;
-                            }
-                        }
-                        None => break,
-                    },
-                    cmd = cmd_rx.recv() => match cmd {
-                        // Steer/abort routed from the editor; the child's single
-                        // dispatch loop queues a prompt until its turn ends.
-                        Some(cmd) => {
-                            let _ = client.send(&cmd).await;
-                        }
-                        None => break,
-                    },
-                }
-            }
-        };
-        let handle = tokio::spawn(connect_task.with_subscriber(connect_dispatch));
-        self.subagents.active_conn = Some((id.to_string(), handle));
-        self.subagents.active_cmd_tx = Some((id.to_string(), cmd_tx));
-    }
-
-    /// Abort the active sub-agent connection's forwarding task, if any.
-    fn teardown_active_connection(&mut self) {
-        if let Some((_, handle)) = self.subagents.active_conn.take() {
-            handle.abort();
-        }
-        self.subagents.active_cmd_tx = None;
     }
 
     // ── Panel rendering ────────────────────────────────────────────────

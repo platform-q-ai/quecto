@@ -22,6 +22,7 @@ use crate::interface::components::notification::{Notification, NotificationStack
 use crate::interface::components::select_list::{SelectItem, SelectList};
 use crate::interface::components::spinner::Spinner;
 use crate::interface::components::workflow_bar;
+use crate::interface::feed_state::FeedState;
 use crate::interface::keys::{self, Key};
 use crate::interface::kitty::KittyProtocol;
 use app_selection::TextSelection;
@@ -179,14 +180,10 @@ pub(crate) struct SubagentUi {
     /// Each item is `(agent_id, event)`; routed into that agent's session.
     event_tx: mpsc::Sender<(String, Event)>,
     event_rx: mpsc::Receiver<(String, Event)>,
-    /// The agent id of the currently-open connect-on-select connection and a
-    /// handle to abort its forwarding task on deselect/teardown (#800).
-    active_conn: Option<(String, tokio::task::JoinHandle<()>)>,
-    /// Outbound command channel to the active sub-agent's own UDS connection
-    /// (#802). Lets the editor's send/follow-up/abort path target the selected
-    /// sub-agent. `None` when the master is active or the child's socket is
-    /// unknown.
-    active_cmd_tx: Option<(String, mpsc::Sender<Command>)>,
+    /// Per-subagent feed state. PR 2 keeps legacy singleton connect-on-select
+    /// behaviour, but stores it behind the feed map so later PRs can warm more
+    /// feeds without changing routing invariants.
+    feeds: std::collections::BTreeMap<String, FeedState>,
     /// Which pane has keyboard focus: the editor or the side panel (#802).
     focus: Focus,
 }
@@ -217,8 +214,7 @@ impl SubagentUi {
             panel_nav: crate::interface::components::list_navigator::ListNavigator::new(),
             event_tx,
             event_rx,
-            active_conn: None,
-            active_cmd_tx: None,
+            feeds: std::collections::BTreeMap::new(),
             focus: Focus::Input,
         }
     }
@@ -429,8 +425,10 @@ mod app_stdin;
 pub const GIT_BRANCH_POLL_INTERVAL: std::time::Duration = app_git::GIT_BRANCH_POLL_INTERVAL;
 #[path = "app_idle_efficiency.rs"]
 mod app_idle_efficiency;
+#[path = "app_ledger_sync.rs"]
+mod app_ledger_sync;
 #[path = "app_message_recovery.rs"]
-mod app_message_recovery;
+pub(crate) mod app_message_recovery;
 #[path = "app_methods.rs"]
 mod app_methods;
 #[path = "app_models.rs"]
@@ -445,6 +443,8 @@ mod app_rewind;
 mod app_selection;
 #[path = "app_subagent_appended.rs"]
 mod app_subagent_appended;
+#[path = "app_subagent_feed.rs"]
+mod app_subagent_feed;
 #[path = "app_subagent_panel.rs"]
 mod app_subagent_panel;
 #[path = "app_subagent_state.rs"]
