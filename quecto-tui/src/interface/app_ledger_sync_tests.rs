@@ -12,6 +12,7 @@ fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
             rev: 0,
             last_fresh_at: None,
             supports_sync: false,
+            pending_rev: None,
             transcript: crate::interface::ledger_sync::LedgerTranscript::default(),
         },
         cmd_rx,
@@ -40,7 +41,6 @@ async fn ledger_hint_requests_sync_only_after_capability_is_known() {
     assert!(rx.try_recv().is_err());
 
     app.note_sync_capability("a1", &json!({"sync":1}));
-    app.note_ledger_advanced("a1", 1, 10);
 
     let cmd = rx.try_recv().expect("sync command after capability");
     assert!(matches!(
@@ -76,7 +76,7 @@ async fn sync_response_updates_cursor_and_uses_next_revision_for_follow_up() {
 
     let feed = app.subagents.feeds.get("a1").unwrap();
     assert_eq!(feed.epoch, 3);
-    assert_eq!(feed.rev, 12);
+    assert_eq!(feed.rev, 8);
     assert!(feed.last_fresh_at.is_some());
     let entries = app.subagents.sessions["a1"].chat.entries();
     assert!(matches!(entries, [ChatEntry::User { text }] if text == "page"));

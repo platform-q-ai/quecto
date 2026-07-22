@@ -52,6 +52,7 @@ impl App {
                 rev: 0,
                 last_fresh_at: None,
                 supports_sync: false,
+                pending_rev: None,
                 transcript: crate::interface::ledger_sync::LedgerTranscript::default(),
             },
         );

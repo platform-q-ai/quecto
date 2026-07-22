@@ -10,5 +10,6 @@ pub(crate) struct FeedState {
     pub(crate) rev: u64,
     pub(crate) last_fresh_at: Option<Instant>,
     pub(crate) supports_sync: bool,
+    pub(crate) pending_rev: Option<u64>,
     pub(crate) transcript: LedgerTranscript,
 }
