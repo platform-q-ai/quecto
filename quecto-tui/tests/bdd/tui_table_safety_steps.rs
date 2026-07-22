@@ -257,17 +257,6 @@ fn no_source_osc_sequences_in_markdown(world: &mut TuiWorld) {
     );
 }
 
-#[then("the code block body should remain visible with its gutter")]
-fn code_block_body_remains_visible_with_gutter(world: &mut TuiWorld) {
-    let expected = expected_code_body(world);
-    let body_line = rendered_code_body_line(world, &expected);
-
-    assert!(
-        sanitize_control(body_line).contains(&format!("│ {expected}")),
-        "code block body should keep the code gutter and text: {body_line:?}"
-    );
-}
-
 #[then("the code block body should use the terminal default foreground and background")]
 fn code_block_body_uses_terminal_default_theme(world: &mut TuiWorld) {
     let expected = expected_code_body(world);

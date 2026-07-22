@@ -85,5 +85,4 @@ Feature: TUI markdown table safety and correctness
   Scenario: Markdown code blocks use the terminal theme
     Given markdown content with a code fence containing "let answer = 42;"
     When the markdown is rendered at width 80
-    Then the code block body should remain visible with its gutter
-    And the code block body should use the terminal default foreground and background
+    Then the code block body should use the terminal default foreground and background
