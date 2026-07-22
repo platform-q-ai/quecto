@@ -159,3 +159,18 @@ fn collapse_republish_keeps_message_id_without_advancing_rev() {
     assert_eq!(data["messages"][0]["id"], id);
     assert_eq!(data["messages"][0]["content"], "stub");
 }
+
+#[test]
+fn resync_preserves_history_pagination_cursors() {
+    let mut snap = ConversationSnapshotData::default();
+    let messages: Vec<_> = (0..(super::protocol::HISTORY_PAGE_SIZE + 1))
+        .map(|i| Message::user(format!("message-{i}")))
+        .collect();
+    snap.publish(&messages);
+
+    let stale = snap.sync_json(snap.epoch.wrapping_add(1), snap.rev);
+    assert_eq!(stale["resync"], true);
+    assert_eq!(stale["caughtUp"], true);
+    assert_eq!(stale["hasMoreBefore"], true);
+    assert!(stale["before"].as_str().is_some());
+}

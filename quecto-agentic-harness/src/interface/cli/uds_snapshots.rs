@@ -320,8 +320,6 @@ impl ConversationSnapshotData {
                 obj.insert("nextRev".into(), serde_json::Value::Null);
                 obj.insert("caughtUp".into(), serde_json::json!(true));
                 obj.insert("resync".into(), serde_json::json!(true));
-                obj.remove("before");
-                obj.remove("hasMoreBefore");
             }
             return data;
         }
@@ -334,26 +332,29 @@ impl ConversationSnapshotData {
             .collect();
         let mut selected: Vec<(u64, serde_json::Value)> = Vec::new();
         let mut used = 0usize;
-        let mut forced_oversized_single = false;
+        let mut next_rev = None;
         for (rev, msg) in &candidates {
-            let value = message_to_json_for_history_page(msg);
+            let value = sync_message_json(msg);
             let sz = serde_json::to_vec(&value)
                 .map(|v| v.len())
                 .unwrap_or(usize::MAX)
                 + 1;
             if used.saturating_add(sz) > super::uds_session::HISTORY_PAGE_JSON_BUDGET {
-                if selected.is_empty() {
-                    forced_oversized_single = true;
-                    selected.push((*rev, value));
-                }
+                // If even the first bounded representation is too large for a
+                // sync frame, do not emit an over-cap success that the
+                // transport will replace with an unstructured frame-limit
+                // error. Instead return a small sync page that advances through
+                // the oversized ledger revision; the message remains available
+                // through get_message/get_messages summary paths.
+                next_rev = Some(*rev);
                 break;
             }
             used = used.saturating_add(sz);
             selected.push((*rev, value));
         }
-        let next_rev = selected.last().and_then(|(newest, _)| {
-            (forced_oversized_single || candidates.len() > selected.len()).then_some(*newest)
-        });
+        if next_rev.is_none() && candidates.len() > selected.len() {
+            next_rev = selected.last().map(|(newest, _)| *newest);
+        }
         serde_json::json!({
             "epoch": self.epoch,
             "rev": self.rev,
@@ -474,6 +475,10 @@ pub(crate) async fn resolve_get_message(
         GetMessageResolution::Recall { stub, .. } => Some(stub),
         GetMessageResolution::NotFound => None,
     }
+}
+
+fn sync_message_json(msg: &Message) -> serde_json::Value {
+    message_to_json_for_history_page(msg)
 }
 
 pub(crate) type SessionStatsSnapshot =
