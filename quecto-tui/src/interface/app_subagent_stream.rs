@@ -73,13 +73,8 @@ impl App {
             }
             return;
         }
-        // A connect-time / polled `get_state` snapshot for THIS connection carries
-        // the child's workflow data (#842). Mirror the master path
-        // (`app_response.rs`) so a child viewed MID-workflow renders its bar at
-        // once, instead of waiting for the next live `workflow_state` transition
-        // (#869a). A `get_state` response is NOT forwarded across streams, so it
-        // is keyed by the connection id; the guard still confines the write to an
-        // already-tracked/retained session.
+        // A get_state snapshot for THIS connection carries the child's workflow
+        // data (#842/#869a); it is keyed by the connection id, not forwarded.
         if let Event::Response {
             command,
             success: false,
@@ -217,12 +212,14 @@ impl App {
                 return;
             }
         }
-        // Tearing down a connection mid-stream can leave already-queued
-        // `(old_id, ev)` items in `subagent_event_rx`. Drop events for agents
-        // that are neither still tracked nor have a retained session, so a
-        // stale frame cannot resurrect a session `evict_retained_sessions`
-        // just dropped (#800 review).
+        // Tearing down a connection mid-stream can leave queued events. Drop events
+        // for agents no longer tracked or retained so stale frames cannot resurrect
+        // sessions just dropped by `evict_retained_sessions` (#800 review).
         if !self.is_retained_or_tracked_agent(agent_id) {
+            return;
+        }
+        if let Event::SubagentStateChanged { subagents } = ev {
+            self.update_subagent_bar_from_source(Some(agent_id), subagents);
             return;
         }
         self.ensure_session(agent_id);

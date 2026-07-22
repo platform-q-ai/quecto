@@ -1,3 +1,4 @@
+use super::app_subagents::usable_socket_path;
 use super::*;
 
 impl App {
@@ -8,6 +9,9 @@ impl App {
         let Some(socket) = tracked.get(id).and_then(|t| t.info.socket_path.clone()) else {
             return;
         };
+        if !usable_socket_path(Some(&socket)) {
+            return;
+        }
         let tx = self.subagents.event_tx.clone();
         let agent_id = id.to_string();
         let path = std::path::PathBuf::from(socket);
