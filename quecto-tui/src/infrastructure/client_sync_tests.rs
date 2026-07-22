@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn command_sync_serializes_pr1194_wire_shape() {
+fn sync_command_includes_epoch_and_since_revision() {
     let cmd = Command::Sync {
         id: Some("sync-1".into()),
         epoch: 2,

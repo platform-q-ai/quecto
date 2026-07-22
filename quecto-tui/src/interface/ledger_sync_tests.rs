@@ -13,7 +13,7 @@ fn delta(messages: Vec<serde_json::Value>, resync: bool) -> SyncDelta {
 }
 
 #[test]
-fn apply_sync_delta_is_idempotent_by_message_id() {
+fn repeated_sync_delta_does_not_duplicate_messages() {
     let mut t = LedgerTranscript::default();
     let d = delta(
         vec![json!({"id":"u1","role":"user","content":"hello"})],
@@ -26,7 +26,7 @@ fn apply_sync_delta_is_idempotent_by_message_id() {
 }
 
 #[test]
-fn apply_sync_delta_preserves_tool_cards() {
+fn synced_tool_calls_and_results_render_as_tool_cards() {
     let mut t = LedgerTranscript::default();
     let entries = t.apply_sync_delta(&delta(vec![
             json!({"id":"a1","role":"assistant","content":"done","toolCalls":[{"id":"tc1","name":"bash","arguments":{"command":"echo hi"}}]}),
@@ -80,7 +80,7 @@ fn capability_parsing_accepts_top_level_or_nested_sync_one() {
 }
 
 #[test]
-fn sync_delta_deserializes_continuation_cursor() {
+fn sync_response_can_request_a_follow_up_page() {
     let d: SyncDelta = serde_json::from_value(json!({
         "epoch":7,
         "rev":11,
