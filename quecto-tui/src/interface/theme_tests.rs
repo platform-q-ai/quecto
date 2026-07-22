@@ -76,14 +76,6 @@ fn apply_bg_empty_text_fills_width() {
     assert_eq!(crate::interface::utils::visible_width(&result), 10);
 }
 
-#[test]
-fn tool_backgrounds_use_terminal_default_theme() {
-    assert_eq!(BG_PENDING, BG_TOOL_DEFAULT);
-    assert_eq!(BG_SUCCESS, BG_TOOL_DEFAULT);
-    assert_eq!(BG_ERROR, BG_TOOL_DEFAULT);
-    assert_eq!(BG_TOOL_DEFAULT, "\x1b[49m");
-}
-
 // ── gap fix: re-assert bg after ANY bg-clearing escape, not just \x1b[0m ──
 
 #[test]

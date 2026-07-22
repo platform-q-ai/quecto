@@ -138,9 +138,11 @@ pub fn tool_output(text: &str) -> String {
 // Tool boxes use the terminal's default background so they follow the active
 // light/dark terminal or OS theme instead of painting hardcoded dark panels.
 
+const TOOL_DEFAULT_BG: &str = "\x1b[49m";
+
 /// Default terminal background: `\x1b[49m`.
 fn bg_default(text: &str) -> String {
-    format!("{BG_TOOL_DEFAULT}{text}\x1b[0m")
+    format!("{TOOL_DEFAULT_BG}{text}\x1b[0m")
 }
 
 /// Apply background color to a line, padding to full width.
@@ -156,11 +158,10 @@ pub fn apply_bg(text: &str, width: usize, bg_fn: fn(&str) -> String) -> String {
     apply_bg_code(text, width, bg_code_from_fn(bg_fn))
 }
 
-/// Background ANSI code for tool boxes: the terminal's DEFAULT background.
-pub const BG_TOOL_DEFAULT: &str = "\x1b[49m";
-pub const BG_PENDING: &str = BG_TOOL_DEFAULT;
-pub const BG_SUCCESS: &str = BG_TOOL_DEFAULT;
-pub const BG_ERROR: &str = BG_TOOL_DEFAULT;
+/// Background ANSI codes for tool boxes: the terminal's DEFAULT background.
+pub const BG_PENDING: &str = TOOL_DEFAULT_BG;
+pub const BG_SUCCESS: &str = TOOL_DEFAULT_BG;
+pub const BG_ERROR: &str = TOOL_DEFAULT_BG;
 /// Modal overlay background — the terminal's DEFAULT background (`\x1b[49m`), so
 /// overlays follow the active theme (light or dark) like the rest of the TUI
 /// instead of painting a hardcoded fill. Modals are delineated by a box border.

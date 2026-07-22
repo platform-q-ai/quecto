@@ -280,8 +280,9 @@ impl Markdown {
                         current_cell.push_str(&sanitized);
                         current_cell.push('`');
                     } else {
-                        let styled = theme::cyan(&format!("`{}`", sanitized));
-                        current_line.push_str(&styled);
+                        current_line.push('`');
+                        current_line.push_str(&sanitized);
+                        current_line.push('`');
                     }
                 }
 

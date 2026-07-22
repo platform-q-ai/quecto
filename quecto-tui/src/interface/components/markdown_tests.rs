@@ -713,14 +713,17 @@ fn indented_fence_bash_block_renders_without_backticks() {
 }
 
 #[test]
-fn inline_code_still_renders_with_backticks() {
-    // Regression guard: inline code must keep its single backticks.
-    let plain = render_plain("Use the `cargo build` command", 80);
-    assert!(
-        plain.contains("`cargo build`"),
-        "inline code must keep backticks: {}",
-        plain
-    );
+fn inline_code_still_renders_with_backticks_and_terminal_default_theme() {
+    let rendered = render_md("Use the `cargo build` command", 80).join("\n");
+    assert!(strip_ansi(&rendered).contains("`cargo build`"));
+    assert_no_sgr_spans_text(&rendered, "`cargo build`");
+}
+
+fn assert_no_sgr_spans_text(rendered: &str, expected: &str) {
+    let start = rendered.find(expected).expect("expected text");
+    let active_prefix = rendered[..start].rsplit("\x1b[0m").next().unwrap_or("");
+    assert!(!active_prefix.contains('\x1b'), "active SGR: {rendered:?}");
+    assert!(!rendered[start..start + expected.len()].contains('\x1b'));
 }
 
 #[test]
