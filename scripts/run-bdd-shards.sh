@@ -87,7 +87,39 @@ fi
 # always a real directory in both the main checkout and worktrees.
 GIT_DIR_RESOLVED="$(git rev-parse --git-common-dir)"
 [[ "$GIT_DIR_RESOLVED" = /* ]] || GIT_DIR_RESOLVED="$ROOT/$GIT_DIR_RESOLVED"
+
+# Reclaim scratch dirs left by prior runs of THIS suite before creating a new
+# one. A fully successful run self-cleans via the EXIT trap below; a failed or
+# interrupted run's dir is deliberately retained so its shard logs/coverage stay
+# inspectable, so this prune is what bounds how many such dirs survive (keeping
+# the most recent $SHARD_DIR_KEEP). Without it every run's multi-GB llvm-cov
+# target dir leaked forever (#1203: 114 GB across 62 dirs observed). Cleanup
+# failures must never fail the test run, hence the trailing `|| true`.
+SHARD_DIR_KEEP="${QUECTO_BDD_SHARD_KEEP:-3}"
+find "$GIT_DIR_RESOLVED" -maxdepth 1 -type d -name "${SUITE_NAME}-shards.*" \
+    -printf '%T@ %p\n' 2>/dev/null \
+    | sort -rn \
+    | awk -v keep="$SHARD_DIR_KEEP" 'NR>keep {print $2}' \
+    | while IFS= read -r stale; do rm -rf -- "$stale"; done || true
+
 TMP_DIR="$(mktemp -d "$GIT_DIR_RESOLVED/${SUITE_NAME}-shards.XXXXXX")"
+
+# Remove the scratch dir on a fully successful run — its per-run llvm-cov
+# target/ dir alone is several GB (#1203). Retain it on any failure so the
+# failing shards' logs and coverage report remain inspectable; the startup
+# prune above bounds how many retained dirs accumulate. Set
+# QUECTO_BDD_KEEP_SCRATCH=1 to always keep it (e.g. to inspect a passing run).
+RUN_STATUS="incomplete"
+cleanup_shard_dir() {
+    local rc=$?
+    if [[ "$RUN_STATUS" == "success" && "${QUECTO_BDD_KEEP_SCRATCH:-0}" != "1" ]]; then
+        rm -rf -- "$TMP_DIR"
+    else
+        echo "Scratch dir retained for inspection: ${TMP_DIR}" >&2
+    fi
+    return "$rc"
+}
+trap cleanup_shard_dir EXIT
 
 echo "Running ${SUITE_NAME} in ${SHARDS} shard(s); package: ${PACKAGE}; features: ${FEATURES}; timeout per shard: ${TIMEOUT_PER_SHARD}"
 [[ -n "$TAG" ]] && echo "Tag filter: ${TAG}"
@@ -179,4 +211,5 @@ if [[ "$COVERAGE" == "1" ]]; then
     echo "Coverage report: ${TMP_DIR}/coverage.txt"
 fi
 
-echo "${SUITE_NAME} shards passed. Logs in ${TMP_DIR}"
+RUN_STATUS="success"
+echo "${SUITE_NAME} shards passed."
