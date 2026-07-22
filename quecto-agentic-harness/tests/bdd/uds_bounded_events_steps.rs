@@ -1696,14 +1696,23 @@ fn wait_client_agent_end(world: &mut QuectoWorld, client_id: u32, timeout: Durat
     // agent_end is delayed under CI load after an 8 MiB mock body. Downstream
     // steps only need the stable messageRefs (available on turn_end after #1060).
     let mut saw_turn_end_with_refs_at: Option<Instant> = None;
+    // `workflow_idle` is emitted *after* prompt success handling (response ok +
+    // idle drain). Under writer-task / CI scheduling it can land in the client
+    // buffer while `turn_end`/`agent_end` (the only carriers of messageRefs for
+    // `completed_turn_refs`) are still in flight or still unread. Returning on
+    // bare `workflow_idle` caused the issue-1094 seed step to flake on PR #1197
+    // with drained events ending at response + workflow_idle and no refs.
+    // Treat workflow_idle as completion only once refs are already observed.
+    let mut saw_workflow_idle = false;
     loop {
         drain_client_events(world, client_id, Duration::from_millis(200));
         if let Some(events) = world.mc_client_events.get(&client_id) {
             for line in events.iter().skip(scanned) {
-                if line.contains(r#""type":"agent_end""#)
-                    || line.contains(r#""type":"workflow_idle""#)
-                {
+                if line.contains(r#""type":"agent_end""#) {
                     return;
+                }
+                if line.contains(r#""type":"workflow_idle""#) {
+                    saw_workflow_idle = true;
                 }
                 if saw_turn_end_with_refs_at.is_none()
                     && line.contains(r#""type":"turn_end""#)
@@ -1714,10 +1723,10 @@ fn wait_client_agent_end(world: &mut QuectoWorld, client_id: u32, timeout: Durat
             }
             scanned = events.len();
         }
+        // Refs already on turn_end: return immediately if the post-turn idle
+        // boundary has also arrived, otherwise keep a short grace for agent_end.
         if let Some(seen_at) = saw_turn_end_with_refs_at {
-            // Prefer agent_end when it arrives promptly; otherwise accept the
-            // turn_end refs as the completion signal for seed/setup waits.
-            if seen_at.elapsed() >= Duration::from_secs(2) {
+            if saw_workflow_idle || seen_at.elapsed() >= Duration::from_secs(2) {
                 return;
             }
         }
