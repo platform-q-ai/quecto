@@ -2,6 +2,7 @@
 //! `collect_notification` arm (#994 review follow-up).
 
 use super::*;
+use crate::application::agent_loop::AgentLoopImpl;
 use crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES as SHARED_EVENT_LINE_CAP_BYTES;
 use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentNotification, mark_completion_consumed_by_await, new_registry,
@@ -156,6 +157,54 @@ fn writer_sink_dedupe_flag_consumed_once() {
 
 fn make_handle() -> CancelHandle {
     std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle))
+}
+
+#[tokio::test]
+async fn cancelled_prompt_keeps_user_message_in_conversation() {
+    let mut agent = AgentLoopImpl::new(crate::application::agent_loop::AgentLoopConfig {
+        provider: crate::interface::test_support::make_stub_provider(),
+        tool_registry: Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
+        model: "stub".into(),
+        max_tokens: 100,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "cli:test".into(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    });
+    let mut messages = Vec::new();
+    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    drop(cancel_tx);
+    let mut notification_rx = None;
+    let subagent_registry = None;
+    let mut bytes = Vec::new();
+    let mut sink = EventSink::writer(&mut bytes);
+
+    let outcome = run_agent_message(PromptRun {
+        agent: &mut agent,
+        messages: &mut messages,
+        conversation_snapshot: None,
+        session: &mut session,
+        sink: &mut sink,
+        message: crate::domain::message::Message::user("keep interrupted prompt"),
+        cancel_rx,
+        notification_rx: &mut notification_rx,
+        subagent_registry: &subagent_registry,
+    })
+    .await;
+
+    assert!(matches!(outcome, PromptOutcome::Cancelled));
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].role, crate::domain::message::Role::User);
+    assert_eq!(messages[0].content, "keep interrupted prompt");
 }
 
 #[test]

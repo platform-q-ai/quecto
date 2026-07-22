@@ -21,6 +21,7 @@ use crate::domain::message::Message;
 #[cfg(test)]
 use crate::domain::message::Role;
 use crate::domain::session::{Session, SessionStore};
+use crate::domain::workflow::WorkflowRunPersisted;
 use crate::infrastructure::model_registry::ModelRegistry;
 
 type ExtRegistry = std::sync::Arc<
@@ -406,6 +407,38 @@ struct PromptCommand {
     streaming_behavior: Option<StreamingBehavior>,
 }
 
+fn persisted_workflow_run(ctx: &DispatchCtx<'_>) -> Option<WorkflowRunPersisted> {
+    ctx.workflow_state
+        .as_ref()
+        .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run()))
+}
+
+async fn persist_user_prompt_before_run(
+    ctx: &mut DispatchCtx<'_>,
+    message: &str,
+) -> Result<(), crate::domain::error::DomainError> {
+    if ctx.ephemeral || ctx.session_key.is_empty() {
+        return Ok(());
+    }
+    let mut persisted_messages = ctx.messages.clone();
+    remove_injected_system_prompt(&mut persisted_messages, ctx.system_prompt);
+    persisted_messages.push(Message::user(message));
+    let persisted_len = persisted_messages.len();
+    let result = ctx
+        .session_store
+        .save_delta(
+            ctx.session_key,
+            &persisted_messages,
+            ctx.last_persisted_message_index,
+            persisted_workflow_run(ctx),
+        )
+        .await;
+    if result.is_ok() {
+        ctx.last_persisted_message_index = persisted_len;
+    }
+    result
+}
+
 async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
     // A prompt clears any stale substring-detected steer gate (#896 AC3).
     ctx.turn_control.clear_steer();
@@ -436,6 +469,9 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         drain_and_run_pending(ctx).await;
         return false;
     };
+    if let Err(err) = persist_user_prompt_before_run(ctx, &message).await {
+        tracing::warn!("failed to persist user prompt before turn: {err}");
+    }
     let outcome = run_prompt_dispatch(ctx, message, cancel_rx).await;
     disarm_cancel(&ctx.cancel_handle);
     // #1072: the agent's durable-prefix dirty latch is drained centrally by
