@@ -7,11 +7,11 @@
 use super::tui_harness::TuiHarness;
 use super::*;
 
-async fn harness() -> TuiHarness {
+pub(super) async fn harness() -> TuiHarness {
     TuiHarness::new().await
 }
 
-fn info(id: &str, status: &str) -> crate::infrastructure::client::SubagentInfoEvent {
+pub(super) fn info(id: &str, status: &str) -> crate::infrastructure::client::SubagentInfoEvent {
     crate::infrastructure::client::SubagentInfoEvent {
         agent_id: id.to_string(),
         status: status.to_string(),
@@ -302,7 +302,7 @@ async fn subagent_bar_cleared_from_compose_when_empty() {
 
 // ── #831: a state-changed dropping a subtree clears the panel + footer ──
 
-fn info_with_parent(
+pub(super) fn info_with_parent(
     id: &str,
     status: &str,
     parent: &str,

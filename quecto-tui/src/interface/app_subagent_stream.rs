@@ -219,7 +219,10 @@ impl App {
             return;
         }
         if let Event::SubagentStateChanged { subagents } = ev {
-            self.update_subagent_bar_from_source(Some(agent_id), subagents);
+            // Retained history does not grant authority to publish topology.
+            if self.subagents.tracked.contains_key(agent_id) {
+                self.update_subagent_bar_from_source(Some(agent_id), subagents);
+            }
             return;
         }
         self.ensure_session(agent_id);

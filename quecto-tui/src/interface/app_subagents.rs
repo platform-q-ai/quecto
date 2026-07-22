@@ -116,23 +116,41 @@ impl App {
         subagents: Vec<crate::infrastructure::client::SubagentInfoEvent>,
     ) {
         let source_agent_id = source_agent_id.map(sanitize_agent_id);
-        let mut incoming = std::collections::BTreeMap::new();
+        let mut candidates = std::collections::BTreeMap::new();
         for mut s in subagents {
             if !usable_socket_path(s.socket_path.as_deref()) {
                 s.socket_path = None;
             }
-            let id = sanitize_agent_id(&s.agent_id);
-            if let Some(source) = source_agent_id.as_deref()
-                && s.parent_id.as_deref() != Some(source)
-                && !is_descendant_of(
-                    s.parent_id.as_deref().unwrap_or(""),
-                    source,
-                    &self.subagents.tracked,
-                )
-            {
-                continue;
+            candidates.insert(sanitize_agent_id(&s.agent_id), s);
+        }
+        let mut incoming = std::collections::BTreeMap::new();
+        if let Some(source) = source_agent_id.as_deref() {
+            // Accept the source's existing subtree plus descendants introduced in
+            // this same snapshot. Existing IDs outside that subtree remain owned
+            // by their current authority and cannot be hijacked or cycled.
+            loop {
+                let before = incoming.len();
+                candidates.retain(|id, s| {
+                    let existing_owned = !self.subagents.tracked.contains_key(id)
+                        || is_descendant_of(id, source, &self.subagents.tracked);
+                    let parent_owned = s.parent_id.as_deref() == Some(source)
+                        || s.parent_id.as_deref().is_some_and(|parent| {
+                            incoming.contains_key(parent)
+                                || is_descendant_of(parent, source, &self.subagents.tracked)
+                        });
+                    if id != source && existing_owned && parent_owned {
+                        incoming.insert(id.clone(), s.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+                if incoming.len() == before {
+                    break;
+                }
             }
-            incoming.insert(id, s);
+        } else {
+            incoming = candidates;
         }
 
         let mut new_map = self.subagents.tracked.clone();
@@ -154,14 +172,26 @@ impl App {
         for (id, s) in incoming {
             if let Some(mut existing) = new_map.remove(&id) {
                 existing.optimistic = false;
-                existing.update_info(s);
+                if source_agent_id.is_some() || existing.roster_source.is_none() {
+                    existing.update_info(s);
+                }
+                if source_agent_id.is_some() {
+                    existing.roster_source = source_agent_id.clone();
+                }
                 new_map.insert(id, existing);
             } else if let Some(mut existing) = self.subagents.tracked.get(&id).cloned() {
                 existing.optimistic = false;
-                existing.update_info(s);
+                if source_agent_id.is_some() || existing.roster_source.is_none() {
+                    existing.update_info(s);
+                }
+                if source_agent_id.is_some() {
+                    existing.roster_source = source_agent_id.clone();
+                }
                 new_map.insert(id, existing);
             } else {
-                new_map.insert(id, TrackedSubagent::new(s));
+                let mut entry = TrackedSubagent::new(s);
+                entry.roster_source = source_agent_id.clone();
+                new_map.insert(id, entry);
             }
         }
 
