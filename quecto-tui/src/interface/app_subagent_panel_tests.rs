@@ -1,19 +1,4 @@
-//! RED-phase behavioural tests for the sub-agent-first persistent left panel
-//! and multi-session switching (#800), driven through the headless render
-//! harness and the real key handler.
-//!
-//! These pin the acceptance criteria from the issue:
-//!   * the panel appears in the normal view once a sub-agent exists (no
-//!     separate mode), and is absent — layout unchanged — with none;
-//!   * the panel lists Master + sub-agents, nesting grandchildren under their
-//!     parent as a tree via `parent_id`;
-//!   * ↑/↓ moves selection and switches `active_agent_id` to that agent's
-//!     session; Esc returns to the master;
-//!   * switching preserves each session; an exited agent's session remains
-//!     viewable per the retention policy;
-//!   * `compose_frame` stays render-idempotent (no flash) with the panel.
-//!
-//! They drive not-yet-existing `App` API on purpose (TDD RED).
+//! Behavioural tests for the sub-agent-first persistent left panel.
 
 // Coalescing of `◆` completion DISPLAY notes (#900) lives in its own file to
 // respect the 750-line cap; wired here so it shares this module's test scope.
@@ -467,12 +452,22 @@ async fn tui_consumes_socket_path_from_the_wire() {
     // REAL wire deserializer.
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
-    h.event_line(
-        r#"{"type":"subagent_state_changed","subagents":[{"agentId":"worker","status":"running","pid":7,"socketPath":"/run/quecto/worker.sock"}]}"#,
-    );
+    let socket = spawn_subagent_socket("worker-wire");
+    let socket_path = socket.to_string_lossy().to_string();
+    let line = serde_json::json!({
+        "type": "subagent_state_changed",
+        "subagents": [{
+            "agentId": "worker",
+            "status": "running",
+            "pid": 7,
+            "socketPath": socket_path,
+        }],
+    })
+    .to_string();
+    h.event_line(&line);
     assert_eq!(
         h.app_mut().subagent_socket_path("worker").as_deref(),
-        Some("/run/quecto/worker.sock"),
+        Some(socket_path.as_str()),
         "the TUI must store the wire socketPath for connect-on-select"
     );
 }

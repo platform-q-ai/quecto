@@ -14,6 +14,7 @@ fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
             supports_sync: false,
             pending_rev: None,
             transcript: crate::interface::ledger_sync::LedgerTranscript::default(),
+            authority: crate::interface::feed_state::FeedAuthority::LegacySelected,
         },
         cmd_rx,
     )
@@ -89,6 +90,40 @@ async fn sync_response_updates_cursor_and_uses_next_revision_for_follow_up() {
             ..
         }
     ));
+}
+
+#[tokio::test]
+async fn capability_alone_does_not_make_warm_feed_authoritative() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (mut feed, _rx) = feed_with_rx();
+    feed.authority = crate::interface::feed_state::FeedAuthority::WarmSync;
+    app.subagents.feeds.insert("a1".into(), feed);
+
+    app.note_sync_capability("a1", &json!({"sync":1}));
+
+    assert_eq!(
+        app.subagents.feeds["a1"].authority,
+        crate::interface::feed_state::FeedAuthority::WarmSync,
+        "a feed is authoritative only after a sync delta is applied"
+    );
+}
+
+#[tokio::test]
+async fn sync_response_promotes_warm_feed_to_authoritative() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (mut feed, _rx) = feed_with_rx();
+    feed.authority = crate::interface::feed_state::FeedAuthority::WarmSync;
+    app.subagents.feeds.insert("a1".into(), feed);
+    app.ensure_session("a1");
+
+    app.route_sync_response("a1", &sync_delta(1, 1));
+
+    assert_eq!(
+        app.subagents.feeds["a1"].authority,
+        crate::interface::feed_state::FeedAuthority::SyncedAuthoritative
+    );
 }
 
 #[tokio::test]

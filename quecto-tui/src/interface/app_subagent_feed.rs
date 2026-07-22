@@ -2,9 +2,32 @@ use super::app_subagents::usable_socket_path;
 use super::*;
 
 impl App {
+    /// Open a legacy direct UDS connection to `id` on selection. This path is
+    /// retained only for agents that have not yet proven ledger-sync support.
+    pub(super) fn open_subagent_connection(&mut self, id: &str) {
+        self.open_subagent_feed(
+            id,
+            crate::interface::feed_state::FeedAuthority::LegacySelected,
+        );
+    }
+
+    pub(super) fn ensure_synced_subagent_feed(&mut self, id: &str) {
+        if self.subagents.feeds.contains_key(id) {
+            return;
+        }
+        self.open_subagent_feed(id, crate::interface::feed_state::FeedAuthority::WarmSync);
+    }
+
     /// Open a direct UDS connection to `id`'s own socket and fan its live stream
     /// into the shared `subagent_event_rx`, tagged with the agent id.
-    pub(super) fn open_subagent_connection(&mut self, id: &str) {
+    fn open_subagent_feed(
+        &mut self,
+        id: &str,
+        authority: crate::interface::feed_state::FeedAuthority,
+    ) {
+        if self.subagents.feeds.contains_key(id) {
+            return;
+        }
         let tracked = &self.subagents.tracked;
         let Some(socket) = tracked.get(id).and_then(|t| t.info.socket_path.clone()) else {
             return;
@@ -22,17 +45,36 @@ impl App {
             let Ok(mut client) = Client::connect(&path).await else {
                 return;
             };
-            let _ = client
-                .send(&Command::GetMessages {
-                    id: Some("subagent-history".into()),
-                    before: None,
-                })
-                .await;
-            let _ = client
-                .send(&Command::GetState {
-                    id: Some("subagent-state".into()),
-                })
-                .await;
+            match authority {
+                crate::interface::feed_state::FeedAuthority::LegacySelected => {
+                    let _ = client
+                        .send(&Command::GetMessages {
+                            id: Some("subagent-history".into()),
+                            before: None,
+                        })
+                        .await;
+                    let _ = client
+                        .send(&Command::GetState {
+                            id: Some("subagent-state".into()),
+                        })
+                        .await;
+                }
+                crate::interface::feed_state::FeedAuthority::WarmSync
+                | crate::interface::feed_state::FeedAuthority::SyncedAuthoritative => {
+                    let _ = client
+                        .send(&Command::GetState {
+                            id: Some("subagent-state".into()),
+                        })
+                        .await;
+                    let _ = client
+                        .send(&Command::Sync {
+                            id: Some("subagent-sync".into()),
+                            epoch: 0,
+                            since_rev: 0,
+                        })
+                        .await;
+                }
+            }
             loop {
                 tokio::select! {
                     ev = client.recv() => match ev {
@@ -58,14 +100,8 @@ impl App {
                 supports_sync: false,
                 pending_rev: None,
                 transcript: crate::interface::ledger_sync::LedgerTranscript::default(),
+                authority,
             },
         );
-    }
-
-    /// Abort the active sub-agent connection's forwarding task, if any.
-    pub(super) fn teardown_active_connection(&mut self) {
-        for (_, feed) in std::mem::take(&mut self.subagents.feeds) {
-            feed.handle.abort();
-        }
     }
 }

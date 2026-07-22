@@ -1,5 +1,7 @@
 use super::*;
 use crate::interface::theme;
+const MAX_WARM_AGENT_FEEDS: usize = MAX_RETAINED_SESSIONS;
+
 impl App {
     // ── Visibility / active session ────────────────────────────────────
 
@@ -33,11 +35,7 @@ impl App {
         tracked.info.socket_path.clone()
     }
 
-    /// The active session — the master (`active_agent_id == None`) or the
-    /// selected sub-agent — modeled identically as a [`SessionView`] (#828).
-    /// This is the SINGLE place that maps the active id to its session; every
-    /// render/input accessor below delegates here so there is no master-vs-
-    /// sub-agent branching scattered across the render path.
+    /// The active session, master or selected sub-agent.
     pub(super) fn active_session(&self) -> &SessionView {
         let ui = &self.subagents;
         match ui.active_agent_id.as_deref() {
@@ -133,17 +131,7 @@ impl App {
         self.subagents.panel_nav.selected()
     }
 
-    /// Send a command to the active sub-agent's own connection (#802). Returns
-    /// `true` only if it was actually enqueued onto a live matching sender.
-    ///
-    /// Enqueues synchronously with `try_send` rather than spawning a task per
-    /// call: independent tasks gave no ordering guarantee, so a routed `Abort`
-    /// could overtake the `Prompt` it was meant to cancel (#804 review). A
-    /// single bounded channel drained by the connection task now preserves
-    /// submit order. A missing/mismatched sender (older kernel, or the
-    /// connection task failed `Client::connect`) or a full channel returns
-    /// `false` so the caller can surface the dropped command rather than
-    /// reporting a phantom success.
+    /// Send a command to the active sub-agent connection.
     pub(super) fn send_to_active_subagent(&mut self, cmd: Command) -> bool {
         let Some(id) = self.subagents.active_agent_id.clone() else {
             return false;
@@ -161,7 +149,7 @@ impl App {
         if new_active == self.subagents.active_agent_id {
             return;
         }
-        self.teardown_active_connection();
+        let old_active = self.subagents.active_agent_id.clone();
         self.subagents.active_agent_id = new_active.clone();
         self.sync_panel_selection_to_active();
         let Some(id) = new_active else {
@@ -169,6 +157,14 @@ impl App {
             self.current_model = self.master_session.footer.known_model().map(str::to_string);
             self.current_effort = self.master_session.footer.effort().map(str::to_string);
             self.effort_levels.clear();
+            if let Some(old) = old_active {
+                let drop_legacy = self.is_legacy_selected_feed(&old);
+                if drop_legacy {
+                    if let Some(feed) = self.subagents.feeds.remove(&old) {
+                        feed.handle.abort();
+                    }
+                }
+            }
             self.send_state_resync();
             return;
         };
@@ -178,15 +174,21 @@ impl App {
         self.current_effort = f.and_then(|f| f.effort()).map(str::to_string);
         self.effort_levels.clear();
         self.seed_session_bar_from_snapshot(&id);
-        self.open_subagent_connection(&id);
+        self.upgrade_warm_feed_for_selection(&id);
+        self.refresh_synced_feed_for_focus(&id);
+        if !self.subagents.feeds.contains_key(&id) {
+            self.open_subagent_connection(&id);
+        }
+        if let Some(old) = old_active {
+            let drop_legacy = self.is_legacy_selected_feed(&old);
+            if drop_legacy {
+                if let Some(feed) = self.subagents.feeds.remove(&old) {
+                    feed.handle.abort();
+                }
+            }
+        }
     }
 
-    /// Reconcile the active/pending session when the viewed sub-agent leaves
-    /// the live list (e.g. it exited and its grace period elapsed). The panel
-    /// only lists tracked agents, so an `active_agent_id` that is no longer
-    /// tracked would leave the body rendering a session with no matching panel
-    /// row — and the panel itself may have vanished. Fall back to the master so
-    /// body and panel always agree (#800 review).
     fn reconcile_active_agent(&mut self) {
         if let Some(active) = self.subagents.active_agent_id.clone() {
             if !self.subagents.tracked.contains_key(&active) {
@@ -227,6 +229,69 @@ impl App {
             };
             let victim = subs.session_order.remove(pos);
             subs.sessions.remove(&victim);
+            if let Some(feed) = subs.feeds.remove(&victim) {
+                feed.handle.abort();
+            }
+        }
+    }
+
+    fn upgrade_warm_feed_for_selection(&mut self, id: &str) {
+        let warm_unsynced = self.subagents.feeds.get(id).is_some_and(|feed| {
+            feed.authority == crate::interface::feed_state::FeedAuthority::WarmSync
+                && !feed.supports_sync
+        });
+        if warm_unsynced {
+            if let Some(feed) = self.subagents.feeds.remove(id) {
+                feed.handle.abort();
+            }
+        }
+    }
+
+    fn refresh_synced_feed_for_focus(&mut self, id: &str) {
+        let stale = self.subagents.feeds.get(id).is_some_and(|feed| {
+            feed.authority == crate::interface::feed_state::FeedAuthority::SyncedAuthoritative
+                && feed
+                    .last_fresh_at
+                    .is_none_or(|fresh| fresh.elapsed().as_secs() > 0)
+        });
+        if stale {
+            if let Some(feed) = self.subagents.feeds.get_mut(id) {
+                let _ = feed.cmd_tx.try_send(Command::Sync {
+                    id: Some("subagent-sync".into()),
+                    epoch: feed.epoch,
+                    since_rev: feed.rev,
+                });
+            }
+        }
+    }
+
+    pub(super) fn is_legacy_selected_feed(&self, id: &str) -> bool {
+        self.subagents.feeds.get(id).is_some_and(|feed| {
+            feed.authority == crate::interface::feed_state::FeedAuthority::LegacySelected
+        })
+    }
+
+    pub(super) fn is_synced_authoritative_feed(&self, id: &str) -> bool {
+        self.subagents.feeds.get(id).is_some_and(|feed| {
+            feed.authority == crate::interface::feed_state::FeedAuthority::SyncedAuthoritative
+        })
+    }
+
+    pub(super) fn enforce_warm_feed_cap(&mut self) {
+        while self.subagents.feeds.len() > MAX_WARM_AGENT_FEEDS {
+            let Some(victim) = self
+                .subagents
+                .session_order
+                .iter()
+                .filter(|id| Some(*id) != self.subagents.active_agent_id.as_ref())
+                .find(|id| self.subagents.feeds.contains_key(id.as_str()))
+                .cloned()
+            else {
+                break;
+            };
+            if let Some(feed) = self.subagents.feeds.remove(&victim) {
+                feed.handle.abort();
+            }
         }
     }
 

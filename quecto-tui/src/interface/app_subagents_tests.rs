@@ -4,7 +4,7 @@
 //! These drive the real `App` via the headless render harness (no TTY,
 //! drained socket) to exercise the subagent bar lifecycle.
 
-use super::tui_harness::TuiHarness;
+use super::tui_harness::{TuiHarness, spawn_subagent_socket};
 use super::*;
 
 pub(super) async fn harness() -> TuiHarness {
@@ -312,7 +312,7 @@ pub(super) fn info_with_parent(
     i
 }
 
-fn info_with_parent_and_socket(
+pub(super) fn info_with_parent_and_socket(
     id: &str,
     status: &str,
     parent: &str,
@@ -656,55 +656,48 @@ async fn source_scoped_child_feed_takes_precedence_for_own_subtree() {
 }
 
 #[tokio::test]
-async fn malformed_socket_paths_are_not_registered_for_connection() {
+async fn malformed_or_non_socket_paths_are_not_registered_for_connection() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("a", "running")]);
+
+    let non_socket =
+        std::env::temp_dir().join(format!("quecto-tui-not-a-socket-{}", std::process::id()));
+    std::fs::write(&non_socket, b"not a socket").unwrap();
+    let real_socket = spawn_subagent_socket("socket-ok");
 
     a.update_subagent_bar_from_source(
         Some("a"),
         vec![
             info_with_parent_and_socket("empty", "running", "a", Some("   ")),
             info_with_parent_and_socket("relative", "running", "a", Some("relative.sock")),
+            info_with_parent_and_socket(
+                "file",
+                "running",
+                "a",
+                Some(&non_socket.to_string_lossy()),
+            ),
+            info_with_parent_and_socket(
+                "socket-ok",
+                "running",
+                "a",
+                Some(&real_socket.to_string_lossy()),
+            ),
         ],
     );
     a.open_subagent_connection("empty");
     a.open_subagent_connection("relative");
+    a.open_subagent_connection("file");
 
     assert_eq!(a.subagents.tracked["empty"].info.socket_path, None);
     assert_eq!(a.subagents.tracked["relative"].info.socket_path, None);
+    assert_eq!(a.subagents.tracked["file"].info.socket_path, None);
+    assert!(a.subagents.tracked["socket-ok"].info.socket_path.is_some());
     assert!(!a.subagents.feeds.contains_key("empty"));
     assert!(!a.subagents.feeds.contains_key("relative"));
-}
-
-#[tokio::test]
-async fn recursive_discovery_registers_grandchild_without_auto_connect() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.update_subagent_bar(vec![info("a", "running")]);
-    a.update_subagent_bar_from_source(Some("a"), vec![info_with_parent("a1", "running", "a")]);
-
-    a.route_subagent_event(
-        "a1",
-        crate::infrastructure::client::Event::SubagentStateChanged {
-            subagents: vec![info_with_parent_and_socket(
-                "g1",
-                "running",
-                "a1",
-                Some("/tmp/g1.sock"),
-            )],
-        },
-    );
-
-    assert_eq!(
-        a.subagents.tracked["g1"].info.parent_id.as_deref(),
-        Some("a1")
-    );
-    assert_eq!(
-        a.subagents.tracked["g1"].info.socket_path.as_deref(),
-        Some("/tmp/g1.sock")
-    );
-    assert!(!a.subagents.feeds.contains_key("g1"));
+    assert!(!a.subagents.feeds.contains_key("file"));
+    assert!(a.subagents.feeds.contains_key("socket-ok"));
+    let _ = std::fs::remove_file(non_socket);
 }
 
 #[tokio::test]

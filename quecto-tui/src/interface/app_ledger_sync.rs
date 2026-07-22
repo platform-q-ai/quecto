@@ -56,6 +56,7 @@ impl App {
                     since_rev: next_rev,
                 });
             }
+            feed.authority = crate::interface::feed_state::FeedAuthority::SyncedAuthoritative;
             if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
                 session.chat.clear();
                 for entry in entries {
