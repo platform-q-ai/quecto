@@ -524,7 +524,7 @@ fn flush_code_block(lang: &str, content: &str, indented: bool, lines: &mut Vec<R
     let gutter_width = visible_width("│ ");
     for code_line in content.lines() {
         lines.push(RenderedLine::wrapped(
-            format!("{}{}", gutter, theme::dim(code_line)),
+            format!("{}{}", gutter, code_line),
             gutter_width,
         ));
     }
