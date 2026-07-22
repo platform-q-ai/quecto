@@ -78,7 +78,8 @@ async fn sync_response_updates_cursor_and_uses_next_revision_for_follow_up() {
     assert_eq!(feed.epoch, 3);
     assert_eq!(feed.rev, 12);
     assert!(feed.last_fresh_at.is_some());
-    assert_eq!(app.subagents.sessions["a1"].chat.entry_count(), 1);
+    let entries = app.subagents.sessions["a1"].chat.entries();
+    assert!(matches!(entries, [ChatEntry::User { text }] if text == "page"));
     let cmd = rx.try_recv().expect("continuation sync command");
     assert!(matches!(
         cmd,
