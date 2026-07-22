@@ -7,11 +7,11 @@
 use super::tui_harness::TuiHarness;
 use super::*;
 
-async fn harness() -> TuiHarness {
+pub(super) async fn harness() -> TuiHarness {
     TuiHarness::new().await
 }
 
-fn info(id: &str, status: &str) -> crate::infrastructure::client::SubagentInfoEvent {
+pub(super) fn info(id: &str, status: &str) -> crate::infrastructure::client::SubagentInfoEvent {
     crate::infrastructure::client::SubagentInfoEvent {
         agent_id: id.to_string(),
         status: status.to_string(),
@@ -302,13 +302,24 @@ async fn subagent_bar_cleared_from_compose_when_empty() {
 
 // ── #831: a state-changed dropping a subtree clears the panel + footer ──
 
-fn info_with_parent(
+pub(super) fn info_with_parent(
     id: &str,
     status: &str,
     parent: &str,
 ) -> crate::infrastructure::client::SubagentInfoEvent {
     let mut i = info(id, status);
     i.parent_id = Some(parent.to_string());
+    i
+}
+
+fn info_with_parent_and_socket(
+    id: &str,
+    status: &str,
+    parent: &str,
+    socket: Option<&str>,
+) -> crate::infrastructure::client::SubagentInfoEvent {
+    let mut i = info_with_parent(id, status, parent);
+    i.socket_path = socket.map(str::to_string);
     i
 }
 
@@ -591,4 +602,127 @@ async fn optimistic_entry_expires_if_never_confirmed() {
         !a.subagents.tracked.contains_key("w1"),
         "#866: an unconfirmed optimistic entry past the grace window must be removed"
     );
+}
+
+#[tokio::test]
+async fn source_scoped_child_roster_preserves_unrelated_sibling() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.update_subagent_bar(vec![info("a", "running"), info("b", "running")]);
+
+    a.update_subagent_bar_from_source(Some("a"), vec![info_with_parent("a1", "running", "a")]);
+
+    assert!(a.subagents.tracked.contains_key("b"));
+    assert_eq!(
+        a.subagents.tracked["a1"].info.parent_id.as_deref(),
+        Some("a")
+    );
+}
+
+#[tokio::test]
+async fn source_scoped_child_roster_removes_only_source_subtree() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.update_subagent_bar(vec![info("a", "running"), info("b", "running")]);
+    a.update_subagent_bar_from_source(
+        Some("a"),
+        vec![
+            info_with_parent("a1", "running", "a"),
+            info_with_parent("a2", "running", "a"),
+        ],
+    );
+
+    a.update_subagent_bar_from_source(Some("a"), vec![]);
+
+    assert!(a.subagents.tracked.contains_key("a"));
+    assert!(a.subagents.tracked.contains_key("b"));
+    assert!(!a.subagents.tracked.contains_key("a1"));
+    assert!(!a.subagents.tracked.contains_key("a2"));
+}
+
+#[tokio::test]
+async fn source_scoped_child_feed_takes_precedence_for_own_subtree() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.update_subagent_bar(vec![
+        info("a", "running"),
+        info_with_parent("old", "running", "a"),
+    ]);
+
+    a.update_subagent_bar_from_source(Some("a"), vec![info_with_parent("fresh", "running", "a")]);
+
+    assert!(a.subagents.tracked.contains_key("fresh"));
+    assert!(!a.subagents.tracked.contains_key("old"));
+}
+
+#[tokio::test]
+async fn malformed_socket_paths_are_not_registered_for_connection() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.update_subagent_bar(vec![info("a", "running")]);
+
+    a.update_subagent_bar_from_source(
+        Some("a"),
+        vec![
+            info_with_parent_and_socket("empty", "running", "a", Some("   ")),
+            info_with_parent_and_socket("relative", "running", "a", Some("relative.sock")),
+        ],
+    );
+    a.open_subagent_connection("empty");
+    a.open_subagent_connection("relative");
+
+    assert_eq!(a.subagents.tracked["empty"].info.socket_path, None);
+    assert_eq!(a.subagents.tracked["relative"].info.socket_path, None);
+    assert!(!a.subagents.feeds.contains_key("empty"));
+    assert!(!a.subagents.feeds.contains_key("relative"));
+}
+
+#[tokio::test]
+async fn recursive_discovery_registers_grandchild_without_auto_connect() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.update_subagent_bar(vec![info("a", "running")]);
+    a.update_subagent_bar_from_source(Some("a"), vec![info_with_parent("a1", "running", "a")]);
+
+    a.route_subagent_event(
+        "a1",
+        crate::infrastructure::client::Event::SubagentStateChanged {
+            subagents: vec![info_with_parent_and_socket(
+                "g1",
+                "running",
+                "a1",
+                Some("/tmp/g1.sock"),
+            )],
+        },
+    );
+
+    assert_eq!(
+        a.subagents.tracked["g1"].info.parent_id.as_deref(),
+        Some("a1")
+    );
+    assert_eq!(
+        a.subagents.tracked["g1"].info.socket_path.as_deref(),
+        Some("/tmp/g1.sock")
+    );
+    assert!(!a.subagents.feeds.contains_key("g1"));
+}
+
+#[tokio::test]
+async fn subagent_state_changed_does_not_make_synced_feed_authoritative() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.update_subagent_bar(vec![info("a", "running")]);
+
+    a.route_subagent_event(
+        "a",
+        crate::infrastructure::client::Event::SubagentStateChanged {
+            subagents: vec![info_with_parent("a1", "running", "a")],
+        },
+    );
+
+    assert_eq!(
+        a.subagents.tracked["a1"].info.parent_id.as_deref(),
+        Some("a")
+    );
+    assert!(a.subagents.active_agent_id.is_none());
 }

@@ -9,8 +9,7 @@ use crate::infrastructure::terminal::Terminal;
 use crate::infrastructure::workspace_files::list_workspace_files;
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResult};
-use crate::interface::components::chat::Chat;
-use crate::interface::components::chat::ChatEntry;
+use crate::interface::components::chat::{Chat, ChatEntry};
 use crate::interface::components::editor::Editor;
 use crate::interface::components::effort_selector::{EffortSelector, EffortSelectorResult};
 use crate::interface::components::files_autocomplete::FilesAutocomplete;
@@ -716,6 +715,9 @@ mod app_subagent_panel_observer_tests;
 #[cfg(test)]
 #[path = "app_subagent_panel_tests.rs"]
 mod app_subagent_panel_tests;
+#[cfg(test)]
+#[path = "app_subagent_roster_authority_tests.rs"]
+mod app_subagent_roster_authority_tests;
 #[cfg(test)]
 #[path = "app_subagent_workflow_sticky_tests.rs"]
 mod app_subagent_workflow_sticky_tests;

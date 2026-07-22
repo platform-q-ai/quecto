@@ -1,5 +1,63 @@
 use super::*;
 
+pub(crate) fn usable_socket_path(path: Option<&str>) -> bool {
+    path.is_some_and(|p| {
+        let p = p.trim();
+        !p.is_empty() && std::path::Path::new(p).is_absolute()
+    })
+}
+
+fn has_incoming_root_ancestor(
+    id: &str,
+    incoming: &std::collections::BTreeMap<String, crate::infrastructure::client::SubagentInfoEvent>,
+    map: &std::collections::BTreeMap<String, TrackedSubagent>,
+) -> bool {
+    let mut current = map
+        .get(id)
+        .and_then(|entry| entry.info.parent_id.as_deref());
+    let mut guard = 0usize;
+    while let Some(parent) = current {
+        if incoming
+            .get(parent)
+            .is_some_and(|entry| entry.parent_id.is_none())
+        {
+            return true;
+        }
+        guard += 1;
+        if guard > map.len() {
+            return false;
+        }
+        current = map
+            .get(parent)
+            .and_then(|entry| entry.info.parent_id.as_deref());
+    }
+    false
+}
+
+fn is_descendant_of(
+    id: &str,
+    ancestor: &str,
+    map: &std::collections::BTreeMap<String, TrackedSubagent>,
+) -> bool {
+    let mut current = map
+        .get(id)
+        .and_then(|entry| entry.info.parent_id.as_deref());
+    let mut guard = 0usize;
+    while let Some(parent) = current {
+        if parent == ancestor {
+            return true;
+        }
+        guard += 1;
+        if guard > map.len() {
+            return false;
+        }
+        current = map
+            .get(parent)
+            .and_then(|entry| entry.info.parent_id.as_deref());
+    }
+    false
+}
+
 /// Grace window during which an unconfirmed optimistic subagent entry (created
 /// from the spawn ToolStart, before the kernel registers the child) survives a
 /// snapshot that omits it. Generous enough to bridge slow socket readiness, yet
@@ -49,38 +107,95 @@ impl App {
         &mut self,
         subagents: Vec<crate::infrastructure::client::SubagentInfoEvent>,
     ) {
-        // Merge server data with existing local state to preserve exited_at
-        // timestamps. New entries are inserted; entries absent from the
-        // server push are removed unless they have an active grace period OR
-        // they are an ancestor of a surviving entry (see below).
-        let mut new_map = std::collections::BTreeMap::new();
-        for s in subagents {
-            let id = sanitize_agent_id(&s.agent_id);
-            if let Some(mut existing) = self.subagents.tracked.remove(&id) {
-                // The kernel reported this agent — it is now confirmed, so it is
-                // no longer an unconfirmed local guess and reverts to normal
-                // full-replace reconciliation thereafter (#866).
-                existing.optimistic = false;
-                existing.update_info(s);
-                new_map.insert(id, existing);
-            } else {
-                new_map.insert(id, TrackedSubagent::new(s));
+        self.update_subagent_bar_from_source(None, subagents);
+    }
+
+    pub(super) fn update_subagent_bar_from_source(
+        &mut self,
+        source_agent_id: Option<&str>,
+        subagents: Vec<crate::infrastructure::client::SubagentInfoEvent>,
+    ) {
+        let source_agent_id = source_agent_id.map(sanitize_agent_id);
+        let mut candidates = std::collections::BTreeMap::new();
+        for mut s in subagents {
+            if !usable_socket_path(s.socket_path.as_deref()) {
+                s.socket_path = None;
+            }
+            candidates.insert(sanitize_agent_id(&s.agent_id), s);
+        }
+        let mut incoming = std::collections::BTreeMap::new();
+        if let Some(source) = source_agent_id.as_deref() {
+            // Accept the source's existing subtree plus descendants introduced in
+            // this same snapshot. Existing IDs outside that subtree remain owned
+            // by their current authority and cannot be hijacked or cycled.
+            loop {
+                let before = incoming.len();
+                candidates.retain(|id, s| {
+                    let existing_owned = !self.subagents.tracked.contains_key(id)
+                        || is_descendant_of(id, source, &self.subagents.tracked);
+                    let parent_owned = s.parent_id.as_deref() == Some(source)
+                        || s.parent_id.as_deref().is_some_and(|parent| {
+                            incoming.contains_key(parent)
+                                || is_descendant_of(parent, source, &self.subagents.tracked)
+                        });
+                    if id != source && existing_owned && parent_owned {
+                        incoming.insert(id.clone(), s.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+                if incoming.len() == before {
+                    break;
+                }
+            }
+        } else {
+            incoming = candidates;
+        }
+
+        let mut new_map = self.subagents.tracked.clone();
+        match source_agent_id.as_deref() {
+            None => {
+                new_map.retain(|id, _entry| {
+                    incoming.contains_key(id)
+                        || has_incoming_root_ancestor(id, &incoming, &self.subagents.tracked)
+                });
+            }
+            Some(source) => {
+                new_map.retain(|id, _entry| {
+                    incoming.contains_key(id)
+                        || !is_descendant_of(id, source, &self.subagents.tracked)
+                });
             }
         }
-        // The remaining (un-pushed) entries from the previous roster. Kept by
-        // reference so we can both grace-preserve exited ones AND pull in any
-        // that are still referenced as ancestors of a surviving entry.
-        let leftover = std::mem::take(&mut self.subagents.tracked);
 
-        // Ancestor preservation (grandchild-nesting bug): a `subagent_state_changed`
-        // is treated as a FULL replace, but a forwarded child's-eye-view push
-        // lists only a sub-tree (a child's OWN children) and omits the
-        // intermediate parent itself. A naive full-replace would then EVICT that
-        // parent, so `subagent_tree_order` can no longer resolve a grandchild's
-        // `parent_id` in the map and re-roots it to depth 1 (sometimes ABOVE its
-        // parent). Walk every surviving entry's parent chain and carry over any
-        // ancestor the push omitted, so intermediate parents are never dropped
-        // and nesting depth is preserved regardless of which source pushed.
+        for (id, s) in incoming {
+            if let Some(mut existing) = new_map.remove(&id) {
+                existing.optimistic = false;
+                if source_agent_id.is_some() || existing.roster_source.is_none() {
+                    existing.update_info(s);
+                }
+                if source_agent_id.is_some() {
+                    existing.roster_source = source_agent_id.clone();
+                }
+                new_map.insert(id, existing);
+            } else if let Some(mut existing) = self.subagents.tracked.get(&id).cloned() {
+                existing.optimistic = false;
+                if source_agent_id.is_some() || existing.roster_source.is_none() {
+                    existing.update_info(s);
+                }
+                if source_agent_id.is_some() {
+                    existing.roster_source = source_agent_id.clone();
+                }
+                new_map.insert(id, existing);
+            } else {
+                let mut entry = TrackedSubagent::new(s);
+                entry.roster_source = source_agent_id.clone();
+                new_map.insert(id, entry);
+            }
+        }
+
+        let leftover = std::mem::take(&mut self.subagents.tracked);
         let mut pending: Vec<String> = new_map
             .values()
             .filter_map(|t| t.info.parent_id.clone())
@@ -97,15 +212,15 @@ impl App {
             }
         }
 
-        // Preserve locally-tracked exited entries whose grace period hasn't
-        // elapsed yet (server may stop reporting them immediately), AND
-        // unconfirmed optimistic entries within their own grace window: a child
-        // can be omitted from a snapshot taken before the kernel registered it,
-        // and dropping it would make a long-first-turn agent invisible until it
-        // finishes (#866). The grace bounds a never-confirmed spawn (e.g. a
-        // failed launch) so it can't linger forever.
         let now = tokio::time::Instant::now();
         for (id, entry) in leftover {
+            if new_map.contains_key(&id)
+                || source_agent_id
+                    .as_deref()
+                    .is_some_and(|source| is_descendant_of(&id, source, &new_map))
+            {
+                continue;
+            }
             if let Some(exited_at) = entry.exited_at {
                 if now.saturating_duration_since(exited_at) < EXITED_SUBAGENT_GRACE {
                     new_map.entry(id).or_insert(entry);
@@ -117,7 +232,6 @@ impl App {
             }
         }
         self.subagents.tracked = new_map;
-        // Keep the panel cursor in bounds after the list changes (#800).
         self.clamp_panel_selection();
     }
 

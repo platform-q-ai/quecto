@@ -17,6 +17,9 @@ pub(super) struct TrackedSubagent {
     /// because a snapshot predating its registration omits it (#866); cleared
     /// once any payload includes the agent.
     pub(super) optimistic: bool,
+    /// Direct feed whose roster is authoritative for this entry. Master snapshots
+    /// may preserve membership, but must not overwrite fresher direct metadata.
+    pub(super) roster_source: Option<String>,
 }
 
 /// Whether a subagent status counts as "actively running" for the timer.
@@ -50,6 +53,7 @@ impl TrackedSubagent {
             stopped_at: if active { None } else { Some(now) },
             exited_at,
             optimistic: false,
+            roster_source: None,
         }
     }
 
