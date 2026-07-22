@@ -1183,14 +1183,16 @@ fn when_bash_tool_call_runs(world: &mut TuiWorld, command: String, line_count: u
         .map(|n| format!("line-{n}"))
         .collect::<Vec<_>>()
         .join("\n");
-    drive(world, |h| {
+    let raw = drive(world, |h| {
         h.event(tool_start(
             "bdd-bash",
             "bash",
             serde_json::json!({ "command": command }),
         ));
         h.event(tool_success("bdd-bash", "bash", &output));
+        h.full_frame_raw()
     });
+    world.tui_tool_rendered_raw = Some(raw);
 }
 
 #[when(expr = "a read tool call previews path {string} with controlled content")]
@@ -1268,6 +1270,37 @@ fn then_raw_tool_frame_has_no_title_escapes(world: &mut TuiWorld) {
         !raw.contains("\u{1b}]") && !raw.contains("\u{9d}"),
         "raw rendered frame must not contain OSC/title controls, got:\n{raw:?}"
     );
+}
+
+#[then("the tool block uses the terminal default background")]
+fn then_tool_block_uses_terminal_default_background(world: &mut TuiWorld) {
+    let raw = world
+        .tui_tool_rendered_raw
+        .as_deref()
+        .expect("tool rendering captured by the When step");
+    assert!(
+        raw.contains("$ printf theme"),
+        "tool block should render, got:\n{raw:?}"
+    );
+    assert_no_explicit_background_sgr(raw);
+}
+
+fn assert_no_explicit_background_sgr(raw: &str) {
+    for segment in raw.split("\u{1b}[").skip(1) {
+        let Some(params) = segment.split_once('m').map(|(params, _)| params) else {
+            continue;
+        };
+        let normalized = params.replace(':', ";");
+        for code in normalized
+            .split(';')
+            .filter_map(|part| part.parse::<u16>().ok())
+        {
+            assert!(
+                !(code == 48 || (40..=47).contains(&code) || (100..=107).contains(&code)),
+                "tool block must not paint an explicit background SGR {params:?}: {raw:?}"
+            );
+        }
+    }
 }
 
 #[then("every tool rendering line should fit within the viewport")]

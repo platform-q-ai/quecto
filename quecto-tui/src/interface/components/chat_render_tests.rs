@@ -297,6 +297,51 @@ fn render_tool_success() {
 }
 
 #[test]
+fn render_tool_blocks_use_terminal_default_background_for_all_states() {
+    let cases = [
+        (None, false),
+        (Some("line-1"), false),
+        (Some("line-1"), true),
+    ];
+
+    for (result, is_error) in cases {
+        let lines = render_tool_execution(ToolRenderArgs {
+            tool_name: "bash",
+            args_json: &Some(serde_json::json!({"command": "printf theme"})),
+            result,
+            is_error,
+            duration_ms: None,
+            expanded: false,
+            width: 80,
+        });
+        let rendered = lines.join("\n");
+        assert!(
+            rendered.contains("$ printf theme"),
+            "tool block should render command: {rendered:?}"
+        );
+        assert_no_explicit_background_sgr(&rendered);
+    }
+}
+
+fn assert_no_explicit_background_sgr(rendered: &str) {
+    for segment in rendered.split("\x1b[").skip(1) {
+        let Some(params) = segment.split_once('m').map(|(params, _)| params) else {
+            continue;
+        };
+        let normalized = params.replace(':', ";");
+        for code in normalized
+            .split(';')
+            .filter_map(|part| part.parse::<u16>().ok())
+        {
+            assert!(
+                !(code == 48 || (40..=47).contains(&code) || (100..=107).contains(&code)),
+                "tool block must not paint an explicit background SGR {params:?}: {rendered:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn render_tool_long_unbroken_result_wraps_without_losing_text() {
     let lines = render_tool_execution(ToolRenderArgs {
         tool_name: "custom_tool",

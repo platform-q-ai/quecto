@@ -41,3 +41,8 @@ Feature: TUI tool execution rendering
     Then the tool rendering shows "workflow check step 2"
     And the tool rendering shows "Step 2 checked."
     And the tool rendering hides "extra detail"
+
+  Scenario: Tool blocks use the terminal theme
+    Given a fresh TUI tool rendering harness
+    When a bash tool call runs command "printf theme" with 1 output lines
+    Then the tool block uses the terminal default background

@@ -135,14 +135,12 @@ pub fn tool_output(text: &str) -> String {
 
 // ── Background colors for tool boxes ─────────────────────────────────────────
 //
-// Colors match Quecto's dark theme exactly (from dark.json):
-//   toolPendingBg: #282832 — very dark blue-gray
-//   toolSuccessBg: #283228 — very dark muted green
-//   toolErrorBg:   #3c2828 — very dark muted red
+// Tool boxes use the terminal's default background so they follow the active
+// light/dark terminal or OS theme instead of painting hardcoded dark panels.
 
-/// Truecolor background: `\x1b[48;2;R;G;Bm`.
-fn bg_rgb(r: u8, g: u8, b: u8, text: &str) -> String {
-    format!("\x1b[48;2;{};{};{}m{}\x1b[0m", r, g, b, text)
+/// Default terminal background: `\x1b[49m`.
+fn bg_default(text: &str) -> String {
+    format!("{BG_TOOL_DEFAULT}{text}\x1b[0m")
 }
 
 /// Apply background color to a line, padding to full width.
@@ -158,10 +156,11 @@ pub fn apply_bg(text: &str, width: usize, bg_fn: fn(&str) -> String) -> String {
     apply_bg_code(text, width, bg_code_from_fn(bg_fn))
 }
 
-/// Background ANSI codes for the three tool states (truecolor, matching Quecto).
-pub const BG_PENDING: &str = "\x1b[48;2;40;40;50m"; // #282832
-pub const BG_SUCCESS: &str = "\x1b[48;2;40;50;40m"; // #283228
-pub const BG_ERROR: &str = "\x1b[48;2;60;40;40m"; // #3c2828
+/// Background ANSI code for tool boxes: the terminal's DEFAULT background.
+pub const BG_TOOL_DEFAULT: &str = "\x1b[49m";
+pub const BG_PENDING: &str = BG_TOOL_DEFAULT;
+pub const BG_SUCCESS: &str = BG_TOOL_DEFAULT;
+pub const BG_ERROR: &str = BG_TOOL_DEFAULT;
 /// Modal overlay background — the terminal's DEFAULT background (`\x1b[49m`), so
 /// overlays follow the active theme (light or dark) like the rest of the TUI
 /// instead of painting a hardcoded fill. Modals are delineated by a box border.
@@ -269,19 +268,19 @@ fn sgr_clears_bg(params: &str) -> bool {
     bg_off
 }
 
-/// Tool pending background — #282832 (very dark blue-gray, matches Quecto).
+/// Tool pending background: terminal default.
 pub fn tool_pending_bg(text: &str) -> String {
-    bg_rgb(40, 40, 50, text)
+    bg_default(text)
 }
 
-/// Tool success background — #283228 (very dark muted green, matches Quecto).
+/// Tool success background: terminal default.
 pub fn tool_success_bg(text: &str) -> String {
-    bg_rgb(40, 50, 40, text)
+    bg_default(text)
 }
 
-/// Tool error background — #3c2828 (very dark muted red, matches Quecto).
+/// Tool error background: terminal default.
 pub fn tool_error_bg(text: &str) -> String {
-    bg_rgb(60, 40, 40, text)
+    bg_default(text)
 }
 
 /// Apply the opaque modal overlay background to a line, padding to full width.

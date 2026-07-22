@@ -77,10 +77,11 @@ fn apply_bg_empty_text_fills_width() {
 }
 
 #[test]
-fn bg_colors_match_quecto_dark_theme() {
-    assert_eq!(BG_PENDING, "\x1b[48;2;40;40;50m");
-    assert_eq!(BG_SUCCESS, "\x1b[48;2;40;50;40m");
-    assert_eq!(BG_ERROR, "\x1b[48;2;60;40;40m");
+fn tool_backgrounds_use_terminal_default_theme() {
+    assert_eq!(BG_PENDING, BG_TOOL_DEFAULT);
+    assert_eq!(BG_SUCCESS, BG_TOOL_DEFAULT);
+    assert_eq!(BG_ERROR, BG_TOOL_DEFAULT);
+    assert_eq!(BG_TOOL_DEFAULT, "\x1b[49m");
 }
 
 // ── gap fix: re-assert bg after ANY bg-clearing escape, not just \x1b[0m ──
