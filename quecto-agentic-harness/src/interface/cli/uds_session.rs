@@ -350,6 +350,7 @@ impl AgentSession {
                 .map(|l| l.as_str().to_string())
                 .collect(),
             workflow,
+            sync: 1,
         }
     }
 }
@@ -403,7 +404,10 @@ pub fn compute_session_stats_with_usage(
 
 #[path = "uds_session_history.rs"]
 pub(crate) mod uds_session_history;
-pub(crate) use uds_session_history::{HISTORY_PAGE_SIZE, position_by_wire_id};
+pub(crate) use uds_session_history::{
+    HISTORY_PAGE_JSON_BUDGET, HISTORY_PAGE_SIZE, message_to_json_for_history_page,
+    position_by_wire_id,
+};
 pub use uds_session_history::{messages_page_json, messages_tail_json};
 
 /// Static wire name for a role — no per-message throwaway `String` allocation

@@ -76,6 +76,16 @@ pub enum AgentCommand {
         #[serde(rename = "agent_id", default, skip_serializing_if = "Option::is_none")]
         agent_id: Option<String>,
     },
+    /// Return committed transcript changes after `sinceRev` in `epoch`.
+    Sync {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        epoch: u64,
+        #[serde(rename = "sinceRev")]
+        since_rev: u64,
+        #[serde(rename = "agent_id", default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+    },
     /// Deprecated alias for `get_messages` with `count`.
     ///
     /// When `agent_id` is set, the request is forwarded to that spawned
@@ -263,6 +273,7 @@ impl AgentCommand {
             Self::Abort { id } => id.as_deref(),
             Self::GetState { id } => id.as_deref(),
             Self::GetMessages { id, .. } => id.as_deref(),
+            Self::Sync { id, .. } => id.as_deref(),
             Self::GetExtensions { id } => id.as_deref(),
             Self::Reload { id } => id.as_deref(),
             Self::ReloadExtensions { id } => id.as_deref(),
@@ -294,6 +305,7 @@ impl AgentCommand {
             Self::Abort { .. } => "abort",
             Self::GetState { .. } => "get_state",
             Self::GetMessages { .. } => "get_messages",
+            Self::Sync { .. } => "sync",
             Self::GetMessagesTail { .. } => "get_messages_tail",
             Self::GetSessionStats { .. } => "get_session_stats",
             Self::ListModels { .. } => "list_models",
@@ -690,6 +702,8 @@ pub struct SessionState {
     pub effort_levels: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<serde_json::Value>,
+    #[serde(default)]
+    pub sync: u8,
 }
 
 // ─── Session statistics ──────────────────────────────────────────────────────

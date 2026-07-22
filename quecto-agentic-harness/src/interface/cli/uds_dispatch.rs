@@ -40,6 +40,26 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
+    if let AgentCommand::Sync {
+        epoch,
+        since_rev,
+        agent_id: Some(agent_id),
+        id,
+    } = &cmd
+    {
+        let tn = cmd.type_name();
+        let ev = super::uds_dispatch_sync_forward::forward_subagent_sync(
+            ctx,
+            id.as_deref(),
+            tn,
+            agent_id,
+            *epoch,
+            *since_rev,
+        )
+        .await;
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     // #1060: agent-targeted get_message — resolve the message on the child session.
     if let AgentCommand::GetMessage {
         message_id,
@@ -165,6 +185,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         | AgentCommand::GetState { .. }
         | AgentCommand::GetMessages { .. }
         | AgentCommand::GetMessagesTail { .. }
+        | AgentCommand::Sync { .. }
         | AgentCommand::GetSessionStats { .. }
         | AgentCommand::ListSessions { .. } => {
             tracing::error!(command = %type_name, "fieldless variant reached dispatch fallback");
@@ -360,10 +381,12 @@ pub(super) async fn handle_new_session(
     // Replace history and its spill namespace in one snapshot write so busy
     // readers can observe neither old refs under the new key nor new history
     // under the old key.
-    ctx.conversation_snapshot
+    let advance = ctx
+        .conversation_snapshot
         .write()
         .await
         .reset_to_with_spill_store(ctx.messages, ctx.agent.spill_store().cloned(), key.clone());
+    emit_ledger_advanced(ctx, advance).await;
     // Session-scoped effort must not leak into the fresh session (#1067).
     ctx.agent.reset_effort_to_default();
     set_workflow_run(ctx, None);
@@ -457,7 +480,8 @@ pub(super) async fn handle_resume_session(
     // Atomically reset history AND spill namespace to the resumed session so
     // refs from the previous session cannot resolve and collapsed refs from the
     // resumed session never query the previous session key.
-    ctx.conversation_snapshot
+    let advance = ctx
+        .conversation_snapshot
         .write()
         .await
         .reset_to_with_spill_store(
@@ -465,6 +489,7 @@ pub(super) async fn handle_resume_session(
             ctx.agent.spill_store().cloned(),
             new_key.clone(),
         );
+    emit_ledger_advanced(ctx, advance).await;
     let ev = AgentEvent::ok(
         id,
         type_name,
@@ -586,7 +611,8 @@ pub(super) async fn handle_clear_history(
         return false;
     }
     clear_conversation(ctx.messages);
-    ctx.conversation_snapshot.write().await.clear();
+    let advance = ctx.conversation_snapshot.write().await.clear();
+    emit_ledger_advanced(ctx, advance).await;
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.drain_pending();
@@ -642,10 +668,12 @@ pub(super) async fn handle_rewind_to(
     // Reset the stable-ref ledger to the truncated conversation so a rewound-away
     // message is no longer recoverable via get_message (same intent as the spill
     // clear below — truncated content must not be recallable) (#1060 review r4).
-    ctx.conversation_snapshot
+    let advance = ctx
+        .conversation_snapshot
         .write()
         .await
         .reset_to(ctx.messages);
+    emit_ledger_advanced(ctx, advance).await;
     // Clear spill store and remove retained spill references so stale truncated
     // tool output is not recallable or re-injected.
     if let Some(spill) = ctx.agent.spill_store() {

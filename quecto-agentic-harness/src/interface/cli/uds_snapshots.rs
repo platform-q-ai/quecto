@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::domain::message::Message;
@@ -5,7 +6,10 @@ use crate::domain::session::ContextSpillStore;
 
 use super::protocol::{AgentEvent, SessionState};
 use super::uds::DispatchCtx;
-use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, messages_page_json};
+use super::uds_session::{
+    HISTORY_PAGE_SIZE, compute_session_stats_with_usage, message_to_json_for_history_page,
+    messages_page_json,
+};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 
@@ -27,6 +31,23 @@ pub(crate) const LEDGER_MAX_ENTRIES: usize = 8192;
 /// message still consumes budget: it covers the id `String` stored twice (map
 /// key + order deque, ~2×UUID) plus the owned Message/ToolCall struct footprint.
 const LEDGER_ENTRY_OVERHEAD: usize = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LedgerAdvance {
+    pub epoch: u64,
+    pub rev: u64,
+    pub changed: bool,
+}
+
+impl LedgerAdvance {
+    fn unchanged(epoch: u64, rev: u64) -> Self {
+        Self {
+            epoch,
+            rev,
+            changed: false,
+        }
+    }
+}
 
 /// Approximate owned in-memory size of a ledger entry, for byte-budgeting —
 /// content + tool payloads + the fixed per-entry overhead above.
@@ -75,17 +96,20 @@ pub(crate) struct ConversationSnapshotData {
     /// preventing an old session/rewind lookup from crossing a lifecycle
     /// replacement while the snapshot lock is released for I/O.
     generation: u64,
+    pub epoch: u64,
+    pub rev: u64,
+    frontier: VecDeque<(u64, String)>,
 }
 
 impl ConversationSnapshotData {
     /// Fold one message into the ledger under the byte budget. `overwrite`
     /// replaces an existing (possibly collapsed) entry with a full copy; without
     /// it, an earlier full copy is kept (publish must not clobber it).
-    fn remember(&mut self, m: &Message, overwrite: bool) {
+    fn remember(&mut self, m: &Message, overwrite: bool) -> bool {
         let id = m.id().to_string();
         let already = self.ledger.contains_key(&id);
         if already && !overwrite {
-            return;
+            return false;
         }
         let new_sz = message_bytes(m);
         if already {
@@ -106,26 +130,51 @@ impl ConversationSnapshotData {
             };
             if let Some(old) = self.ledger.remove(&old_id) {
                 self.ledger_bytes = self.ledger_bytes.saturating_sub(message_bytes(&old));
+                if let Some(pos) = self.frontier.iter().position(|(_, fid)| fid == &old_id) {
+                    self.frontier.remove(pos);
+                }
             }
+        }
+        !already
+    }
+
+    fn advance_for_new_ids(&mut self, ids: Vec<String>) -> LedgerAdvance {
+        if ids.is_empty() {
+            return LedgerAdvance::unchanged(self.epoch, self.rev);
+        }
+        for id in ids {
+            self.rev = self.rev.wrapping_add(1);
+            self.frontier.push_back((self.rev, id));
+        }
+        LedgerAdvance {
+            epoch: self.epoch,
+            rev: self.rev,
+            changed: true,
         }
     }
 
     /// Replace the live view and fold its messages into the ledger WITHOUT
     /// overwriting existing entries — a full copy recorded earlier must survive
     /// a later in-place collapse of the live message.
-    pub fn publish(&mut self, messages: &[Message]) {
+    pub fn publish(&mut self, messages: &[Message]) -> LedgerAdvance {
+        let mut new_ids = Vec::new();
         for m in messages {
-            self.remember(m, false);
+            if self.remember(m, false) {
+                new_ids.push(m.id().to_string());
+            }
         }
         self.messages = messages.to_vec();
+        self.advance_for_new_ids(new_ids)
     }
 
-    /// Record authoritative FULL copies (the run's un-demoted `appended_messages`),
-    /// overwriting any earlier possibly-collapsed entry.
-    pub fn record_full(&mut self, messages: &[Message]) {
+    pub fn record_full(&mut self, messages: &[Message]) -> LedgerAdvance {
+        let mut new_ids = Vec::new();
         for m in messages {
-            self.remember(m, true);
+            if self.remember(m, true) {
+                new_ids.push(m.id().to_string());
+            }
         }
+        self.advance_for_new_ids(new_ids)
     }
 
     /// Attach a spill store for best-effort recall of live collapsed messages
@@ -193,10 +242,6 @@ impl ConversationSnapshotData {
         }
     }
 
-    /// Whether a deferred spill result still belongs to the currently
-    /// published history. The message id + spill id checks matter even within
-    /// one session: rewind/history replacement can reuse session-local spill
-    /// identifiers while changing which stable message owns them.
     pub fn recall_is_current(&self, recall: &RecallIdentity) -> bool {
         self.generation == recall.generation
             && self.spill_session_key == recall.session_key
@@ -205,15 +250,19 @@ impl ConversationSnapshotData {
             })
     }
 
-    /// Clear both the live snapshot and the full-message lookup ledger. Explicit
-    /// history lifecycle operations (for example `clear_history`) must make old
-    /// refs unresolvable rather than retaining full content out-of-band.
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self) -> LedgerAdvance {
         self.messages.clear();
         self.ledger.clear();
         self.ledger_order.clear();
+        self.frontier.clear();
         self.ledger_bytes = 0;
         self.generation = self.generation.wrapping_add(1);
+        self.epoch = self.epoch.wrapping_add(1);
+        LedgerAdvance {
+            epoch: self.epoch,
+            rev: self.rev,
+            changed: true,
+        }
     }
 
     /// Reset the snapshot to exactly `messages`: drop the whole prior ledger
@@ -223,31 +272,97 @@ impl ConversationSnapshotData {
     /// surviving messages stay resolvable (#1060 review round 4). Ops that also
     /// change the spill namespace (new_session, resume_session) use
     /// [`Self::reset_to_with_spill_store`] instead.
-    pub fn reset_to(&mut self, messages: &[Message]) {
-        self.clear();
-        self.publish(messages);
+    pub fn reset_to(&mut self, messages: &[Message]) -> LedgerAdvance {
+        let advance = self.clear();
+        let publish = self.publish(messages);
+        LedgerAdvance {
+            epoch: self.epoch,
+            rev: self.rev,
+            changed: advance.changed || publish.changed,
+        }
     }
 
-    /// Atomically replace both history and the namespace used to recall its
-    /// collapsed messages. Resume/new-session paths must not expose new
-    /// messages paired with the previous session's spill key, even briefly.
     pub fn reset_to_with_spill_store(
         &mut self,
         messages: &[Message],
         spill_store: Option<Arc<dyn ContextSpillStore>>,
         session_key: String,
-    ) {
-        self.clear();
+    ) -> LedgerAdvance {
+        let advance = self.clear();
         self.spill_store = spill_store;
         self.spill_session_key = session_key;
-        self.publish(messages);
+        let publish = self.publish(messages);
+        LedgerAdvance {
+            epoch: self.epoch,
+            rev: self.rev,
+            changed: advance.changed || publish.changed,
+        }
     }
 
-    /// Seed a snapshot from an initial conversation (test/lifecycle convenience).
     pub fn from_messages(messages: Vec<Message>) -> Self {
         let mut s = Self::default();
-        s.publish(&messages);
+        let _ = s.publish(&messages);
         s
+    }
+
+    pub fn sync_json(&self, epoch: u64, since_rev: u64) -> serde_json::Value {
+        let resync = epoch != self.epoch
+            || self.frontier.front().is_some_and(|(r, _)| since_rev < *r)
+            || self
+                .frontier
+                .iter()
+                .any(|(_, id)| self.lookup(id).is_none());
+        if resync {
+            let mut data = messages_page_json(&self.messages, HISTORY_PAGE_SIZE, None);
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("epoch".into(), serde_json::json!(self.epoch));
+                obj.insert("rev".into(), serde_json::json!(self.rev));
+                obj.insert("nextRev".into(), serde_json::Value::Null);
+                obj.insert("caughtUp".into(), serde_json::json!(true));
+                obj.insert("resync".into(), serde_json::json!(true));
+            }
+            return data;
+        }
+
+        let candidates: Vec<(u64, &Message)> = self
+            .frontier
+            .iter()
+            .filter(|(rev, _)| *rev > since_rev)
+            .filter_map(|(rev, id)| self.lookup(id).map(|m| (*rev, m)))
+            .collect();
+        let mut selected: Vec<(u64, serde_json::Value)> = Vec::new();
+        let mut used = 0usize;
+        let mut next_rev = None;
+        for (rev, msg) in &candidates {
+            let value = sync_message_json(msg);
+            let sz = serde_json::to_vec(&value)
+                .map(|v| v.len())
+                .unwrap_or(usize::MAX)
+                + 1;
+            if used.saturating_add(sz) > super::uds_session::HISTORY_PAGE_JSON_BUDGET {
+                // If even the first bounded representation is too large for a
+                // sync frame, do not emit an over-cap success that the
+                // transport will replace with an unstructured frame-limit
+                // error. Instead return a small sync page that advances through
+                // the oversized ledger revision; the message remains available
+                // through get_message/get_messages summary paths.
+                next_rev = Some(*rev);
+                break;
+            }
+            used = used.saturating_add(sz);
+            selected.push((*rev, value));
+        }
+        if next_rev.is_none() && candidates.len() > selected.len() {
+            next_rev = selected.last().map(|(newest, _)| *newest);
+        }
+        serde_json::json!({
+            "epoch": self.epoch,
+            "rev": self.rev,
+            "messages": selected.into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
+            "nextRev": next_rev,
+            "caughtUp": next_rev.is_none(),
+            "resync": false,
+        })
     }
 }
 
@@ -362,6 +477,10 @@ pub(crate) async fn resolve_get_message(
     }
 }
 
+fn sync_message_json(msg: &Message) -> serde_json::Value {
+    message_to_json_for_history_page(msg)
+}
+
 pub(crate) type SessionStatsSnapshot =
     std::sync::Arc<tokio::sync::RwLock<crate::interface::cli::protocol::SessionStats>>;
 
@@ -382,7 +501,17 @@ pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
 pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
     let mut snap = ctx.conversation_snapshot.write().await;
     snap.set_spill_store(ctx.agent.spill_store().cloned(), ctx.session_key.clone());
-    snap.publish(ctx.messages);
+    let advance = snap.publish(ctx.messages);
+    drop(snap);
+    if advance.changed
+        && let Some(tx) = ctx.broadcast_tx.as_ref()
+    {
+        let _ = tx.send(
+            serde_json::json!({"type":"ledger_advanced","epoch":advance.epoch,"rev":advance.rev})
+                .to_string()
+                + "\n",
+        );
+    }
 }
 
 pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
@@ -540,6 +669,7 @@ pub(crate) fn build_get_state_line_with_streaming(
 ) -> String {
     let mut state = state.clone();
     state.is_streaming = is_streaming;
+    state.sync = 1;
     let ev = AgentEvent::ok(
         None,
         "get_state",
@@ -566,6 +696,7 @@ pub(crate) fn build_get_state_line_live(
 ) -> String {
     let mut state = state.clone();
     state.is_streaming = is_streaming;
+    state.sync = 1;
     if let Some(ws) = workflow_state {
         if let Ok(engine) = ws.lock() {
             let mut live = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();

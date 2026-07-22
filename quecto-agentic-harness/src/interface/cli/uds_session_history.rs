@@ -4,7 +4,7 @@ use super::{message_to_json, role_wire_name};
 
 pub(crate) use super::super::protocol::HISTORY_PAGE_SIZE;
 
-pub(super) const HISTORY_PAGE_JSON_BUDGET: usize =
+pub(crate) const HISTORY_PAGE_JSON_BUDGET: usize =
     crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET / 2;
 pub(super) const HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES: usize = 2048;
 

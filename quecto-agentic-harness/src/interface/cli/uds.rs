@@ -188,6 +188,13 @@ pub(super) async fn emit_event_to_broadcast_or_writer(
     ctx.event_sink().emit(event).await;
 }
 
+pub(super) async fn emit_ledger_advanced(
+    ctx: &mut DispatchCtx<'_>,
+    advance: super::uds_snapshots::LedgerAdvance,
+) {
+    ctx.event_sink().emit_ledger_advanced(advance).await;
+}
+
 /// Emit a command response, replacing an over-cap success payload with a small,
 /// correlated error. Normal events reaching the cap are invariant violations;
 /// responses can instead tell callers how to retry without silently hanging.
@@ -197,13 +204,25 @@ async fn emit_response_or_frame_limit_error(
     command: &str,
     event: AgentEvent,
 ) {
+    emit_response_or_frame_limit_error_with_message(ctx, id, command, event, "").await;
+}
+
+async fn emit_response_or_frame_limit_error_with_message(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    command: &str,
+    event: AgentEvent,
+    oversized_message: &str,
+) {
     // Serialize exactly once: the length check reuses the same line the sink
     // delivers (multi-MiB pages are not serialized twice).
     let line = event.to_json_line();
     if line.len() > super::protocol::EVENT_LINE_JSON_BUDGET {
         // "Request a smaller page" is only actionable for paged commands;
         // a single-message lookup has no smaller unit to retry with.
-        let advice = if command == "get_message" {
+        let advice = if !oversized_message.is_empty() {
+            oversized_message
+        } else if command == "get_message" {
             "message exceeds the protocol frame limit and cannot be returned whole"
         } else {
             "response exceeds the protocol frame limit; request a smaller page"
@@ -380,6 +399,25 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return Some(false);
     }
+    if let AgentCommand::Sync {
+        epoch, since_rev, ..
+    } = cmd
+    {
+        let data = ctx
+            .conversation_snapshot
+            .read()
+            .await
+            .sync_json(*epoch, *since_rev);
+        emit_response_or_frame_limit_error_with_message(
+            ctx,
+            id,
+            tn,
+            AgentEvent::ok(id, tn, Some(data)),
+            super::uds_busy_sync::SYNC_OVERSIZED_ERROR,
+        )
+        .await;
+        return Some(false);
+    }
     if let Some(data) = query_response_data(cmd, ctx) {
         emit_response_or_frame_limit_error(ctx, id, tn, AgentEvent::ok(id, tn, Some(data))).await;
         return Some(false);
@@ -394,6 +432,8 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
 mod uds_dispatch;
 #[path = "uds_dispatch_get_message_forward.rs"]
 mod uds_dispatch_get_message_forward;
+#[path = "uds_dispatch_sync_forward.rs"]
+mod uds_dispatch_sync_forward;
 #[path = "uds_forward_response.rs"]
 mod uds_forward_response;
 pub(crate) use uds_dispatch::dispatch_command;
