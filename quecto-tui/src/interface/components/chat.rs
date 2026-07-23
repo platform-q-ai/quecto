@@ -722,6 +722,12 @@ use chat_render::*;
 #[path = "chat_cache_tests.rs"]
 mod cache_tests;
 #[cfg(test)]
+#[path = "chat_bg_tests.rs"]
+mod chat_bg_tests;
+#[cfg(test)]
+#[path = "chat_file_preview_tests.rs"]
+mod chat_file_preview_tests;
+#[cfg(test)]
 #[path = "chat_render_tests.rs"]
 mod chat_render_tests;
 #[path = "chat_stub.rs"]

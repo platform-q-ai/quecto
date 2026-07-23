@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+export PATH="${QUECTO_TUI_BIN_DIR:-${CARGO_HOME:-$HOME/.cargo}/bin}:$PATH"
 
 # Pre-warm the kernel page cache so the cold-binary cost of the first launch
 # after `cargo install` is paid before the TUI's socket-readiness window (#808).

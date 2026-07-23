@@ -40,7 +40,9 @@ Workflow-driven launch:
 quecto-tui --workflow --workflow-guards
 ```
 
-For the repository lead-developer prompt, use `scripts/run-tui.sh`.
+For the repository lead-developer prompt, use `scripts/run-tui.sh`. During TUI
+development, `scripts/dev-tui.sh` incrementally rebuilds and restarts it when
+workspace files change; this requires `cargo-watch`.
 
 ## Run from the workspace
 

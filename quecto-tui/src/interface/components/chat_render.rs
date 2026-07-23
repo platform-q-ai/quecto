@@ -512,7 +512,14 @@ pub(super) fn push_header(
     } else {
         format!("{icon} {title} {detail}{dur}")
     };
-    lines.push(truncate_to_width(&header, width, None));
+    lines.extend(wrap_tool_line(&header, width));
+}
+
+fn wrap_tool_line(line: &str, width: usize) -> Vec<String> {
+    crate::interface::utils::wrap_text(line, width)
+        .into_iter()
+        .map(|segment| truncate_to_width(&segment, width, None))
+        .collect()
 }
 
 /// Wrapped rows a single over-long source line may occupy in a collapsed

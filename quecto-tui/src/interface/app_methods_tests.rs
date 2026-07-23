@@ -418,7 +418,11 @@ async fn successful_resume_requests_full_messages_before_stats() {
     );
 
     let cmds = h.drain_commands().await;
-    assert_eq!(cmds.len(), 2, "expected get_messages and stats: {cmds:?}");
+    assert_eq!(
+        cmds.len(),
+        3,
+        "expected get_messages, stats, and state resync: {cmds:?}"
+    );
     assert!(
         cmds[0].contains("\"type\":\"get_messages\"")
             && cmds[0].contains("\"id\":\"resume-messages\"")
@@ -428,6 +432,10 @@ async fn successful_resume_requests_full_messages_before_stats() {
     assert!(
         cmds[1].contains("\"type\":\"get_session_stats\""),
         "resume should refresh stats after requesting messages: {cmds:?}"
+    );
+    assert!(
+        cmds[2].contains("\"type\":\"get_state\"") && cmds[2].contains("\"id\":\"resync\""),
+        "resume should resync session-scoped state after stats: {cmds:?}"
     );
 }
 
@@ -455,7 +463,7 @@ async fn successful_resume_with_one_message_response_displays_first_message() {
 
     let text = resume_chat_text(a);
     assert!(text.contains("first restored user prompt"), "{text}");
-    assert!(!text.contains("Session resumed"), "{text}");
+    assert!(text.contains("Session resumed"), "{text}");
 }
 
 #[tokio::test]

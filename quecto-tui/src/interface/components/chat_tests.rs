@@ -322,50 +322,6 @@ fn generic_tool_shows_name_and_summary() {
     );
 }
 
-// ── Background colors ────────────────────────────────────────────
-
-#[test]
-fn running_tool_has_pending_bg() {
-    let mut chat = Chat::new();
-    chat.start_tool("c-1".into(), "bash".into(), r#"{"command":"ls"}"#.into());
-    let lines = chat.render(80);
-    let tool_lines: Vec<_> = lines.iter().filter(|l| !l.is_empty()).collect();
-    assert!(!tool_lines.is_empty());
-    assert!(
-        tool_lines.iter().any(|l| l.contains(theme::BG_PENDING)),
-        "should have pending bg: {:?}",
-        tool_lines
-    );
-}
-
-#[test]
-fn success_tool_has_success_bg() {
-    let mut chat = Chat::new();
-    chat.start_tool("c-1".into(), "bash".into(), r#"{"command":"ls"}"#.into());
-    chat.complete_tool("c-1", "ok", false, None);
-    let lines = chat.render(80);
-    let tool_lines: Vec<_> = lines.iter().filter(|l| !l.is_empty()).collect();
-    assert!(
-        tool_lines.iter().any(|l| l.contains(theme::BG_SUCCESS)),
-        "should have success bg: {:?}",
-        tool_lines
-    );
-}
-
-#[test]
-fn error_tool_has_error_bg() {
-    let mut chat = Chat::new();
-    chat.start_tool("c-1".into(), "bash".into(), r#"{"command":"ls"}"#.into());
-    chat.complete_tool("c-1", "command not found", true, None);
-    let lines = chat.render(80);
-    let tool_lines: Vec<_> = lines.iter().filter(|l| !l.is_empty()).collect();
-    assert!(
-        tool_lines.iter().any(|l| l.contains(theme::BG_ERROR)),
-        "should have error bg: {:?}",
-        tool_lines
-    );
-}
-
 // ── Subagent rendering ───────────────────────────────────────────
 
 #[test]

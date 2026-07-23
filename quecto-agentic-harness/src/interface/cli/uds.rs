@@ -53,11 +53,6 @@ pub(super) enum LineResult {
     ParseError(String),
 }
 
-// NOTE: a `LineTooLong` variant used to live here, produced by a post-hoc
-// `line.len() > MAX_FRAME_PAYLOAD_BYTES` check. Since #1003 both reader loops enforce
-// the cap *while reading* (`quecto_line_io::read_bounded_line`) and surface
-// oversized lines before `parse_line` is ever called, so the variant was
-// unreachable and has been removed.
 pub(super) fn parse_line(line: &str) -> LineResult {
     let line = line.trim();
     if line.is_empty() {
