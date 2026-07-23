@@ -258,6 +258,7 @@ impl App {
             }
         };
 
+        let has_displayable_messages = !messages.is_empty();
         self.master_session.chat.clear();
         for message in messages {
             let (text, id, stub, is_user) = match message {
@@ -268,9 +269,11 @@ impl App {
                 .chat
                 .add_entry(Self::history_entry(text, id, stub, is_user));
         }
-        self.master_session.chat.add_entry(ChatEntry::Status {
-            text: "Session resumed".to_string(),
-        });
+        if !has_displayable_messages {
+            self.master_session.chat.add_entry(ChatEntry::Status {
+                text: "Session resumed".to_string(),
+            });
+        }
     }
 
     // ── Notifications ─────────────────────────────────────────────────

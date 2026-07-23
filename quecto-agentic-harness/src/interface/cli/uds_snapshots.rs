@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use crate::domain::message::Message;
+use crate::domain::message::{Message, Role};
 use crate::domain::session::ContextSpillStore;
 
 use super::protocol::{AgentEvent, SessionState};
@@ -10,6 +10,21 @@ use super::uds_session::{
     HISTORY_PAGE_SIZE, compute_session_stats_with_usage, message_to_json_for_history_page,
     messages_page_json,
 };
+
+pub(super) fn is_injected_system_prompt(message: &Message, prompt: &str) -> bool {
+    !prompt.is_empty()
+        && message.role == Role::System
+        && !message.is_manifest
+        && (message.content == prompt || message.content.starts_with(prompt))
+}
+
+pub(super) fn user_visible_messages(messages: &[Message], system_prompt: &str) -> Vec<Message> {
+    messages
+        .iter()
+        .filter(|m| !is_injected_system_prompt(m, system_prompt))
+        .cloned()
+        .collect()
+}
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 
@@ -501,7 +516,8 @@ pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
 pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
     let mut snap = ctx.conversation_snapshot.write().await;
     snap.set_spill_store(ctx.agent.spill_store().cloned(), ctx.session_key.clone());
-    let advance = snap.publish(ctx.messages);
+    let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
+    let advance = snap.publish(&visible_messages);
     drop(snap);
     if advance.changed
         && let Some(tx) = ctx.broadcast_tx.as_ref()
@@ -527,8 +543,9 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
             value
         })
     });
+    let visible_message_count = user_visible_messages(ctx.messages, ctx.system_prompt).len();
     let state = ctx.session.state_snapshot(
-        ctx.messages.len(),
+        visible_message_count,
         workflow,
         ctx.agent.max_context_tokens(),
         ctx.agent.effort().map(|l| l.as_str().to_string()),
@@ -538,9 +555,10 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
 }
 
 pub(super) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
+    let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
     let stats = compute_session_stats_with_usage(
         ctx.session_key,
-        ctx.messages,
+        &visible_messages,
         ctx.session.usage_snapshot(),
         ctx.session.context_tokens(),
         ctx.agent.max_context_tokens(),

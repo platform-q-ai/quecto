@@ -361,7 +361,9 @@ async fn response_get_messages_replaces_chat_when_no_match() {
     let a = h.app_mut();
     let data = serde_json::json!({"messages": [{"role": "user", "content": "hi"}]});
     respond(a, Some("other"), "get_messages", true, Some(data), None);
-    assert!(chat_text(a).contains("Session resumed"));
+    let text = chat_text(a);
+    assert!(text.contains("hi"));
+    assert!(!text.contains("Session resumed"));
 }
 
 #[tokio::test]

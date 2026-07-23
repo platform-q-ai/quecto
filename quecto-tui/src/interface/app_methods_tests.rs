@@ -386,3 +386,103 @@ fn composite_centered_splices_overlay_at_centered_origin() {
     assert_eq!(stripped[1], "..........");
     assert_eq!(stripped[4], "..........");
 }
+
+// ── resume transcript rendering ─────────────────────────────────────────
+
+async fn resume_harness() -> super::tui_harness::TuiHarness {
+    super::tui_harness::TuiHarness::new().await
+}
+
+fn resume_chat_text(app: &mut super::App) -> String {
+    app.master_session
+        .chat
+        .render(120)
+        .iter()
+        .map(|l| super::app_methods::strip_ansi(l))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[tokio::test]
+async fn successful_resume_requests_full_messages_before_stats() {
+    let mut h = resume_harness().await;
+    let data = serde_json::json!({"session": "chat-1"});
+    let a = h.app_mut();
+
+    a.handle_response(
+        Some("resume".into()),
+        "resume_session".into(),
+        true,
+        Some(data),
+        None,
+    );
+
+    let cmds = h.drain_commands().await;
+    assert_eq!(cmds.len(), 2, "expected get_messages and stats: {cmds:?}");
+    assert!(
+        cmds[0].contains("\"type\":\"get_messages\"")
+            && cmds[0].contains("\"id\":\"resume-messages\"")
+            && !cmds[0].contains("\"count\""),
+        "resume should request the full restored transcript, not a tail: {cmds:?}"
+    );
+    assert!(
+        cmds[1].contains("\"type\":\"get_session_stats\""),
+        "resume should refresh stats after requesting messages: {cmds:?}"
+    );
+}
+
+#[tokio::test]
+async fn successful_resume_with_one_message_response_displays_first_message() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+
+    a.handle_response(
+        Some("resume".into()),
+        "resume_session".into(),
+        true,
+        Some(serde_json::json!({"session": "chat-1"})),
+        None,
+    );
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({
+            "messages": [{"role": "user", "content": "first restored user prompt"}]
+        })),
+        None,
+    );
+
+    let text = resume_chat_text(a);
+    assert!(text.contains("first restored user prompt"), "{text}");
+    assert!(!text.contains("Session resumed"), "{text}");
+}
+
+#[tokio::test]
+async fn replace_chat_with_single_user_message_has_viewable_first_message() {
+    let mut h = resume_harness().await;
+    let data = serde_json::json!({
+        "messages": [
+            {"role": "user", "content": "first and only user message"}
+        ]
+    });
+    let a = h.app_mut();
+
+    a.replace_chat_with_messages(&data);
+
+    let text = resume_chat_text(a);
+    assert!(text.contains("first and only user message"));
+    assert!(!text.contains("Session resumed"));
+}
+
+#[tokio::test]
+async fn replace_chat_with_no_displayable_messages_shows_resume_status() {
+    let mut h = resume_harness().await;
+    let data = serde_json::json!({"messages": []});
+    let a = h.app_mut();
+
+    a.replace_chat_with_messages(&data);
+
+    let text = resume_chat_text(a);
+    assert!(text.contains("Session resumed"));
+}

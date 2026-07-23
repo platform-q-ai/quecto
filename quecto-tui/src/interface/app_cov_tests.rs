@@ -293,7 +293,7 @@ async fn replace_chat_with_messages_renders_roles() {
     let text = chat_text(a);
     assert!(text.contains("hi"));
     assert!(text.contains("hello there"));
-    assert!(text.contains("Session resumed"));
+    assert!(!text.contains("Session resumed"));
 }
 
 #[tokio::test]

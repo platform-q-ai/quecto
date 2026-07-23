@@ -4,6 +4,22 @@ use super::uds_session::{
     HISTORY_PAGE_SIZE, compute_session_stats_with_usage, messages_page_json, messages_tail_json,
     position_by_wire_id,
 };
+use crate::domain::message::Message;
+
+fn user_visible_messages(messages: &[Message], system_prompt: &str) -> Vec<Message> {
+    messages
+        .iter()
+        .filter(|m| !super::uds_snapshots::is_injected_system_prompt(m, system_prompt))
+        .cloned()
+        .collect()
+}
+
+fn user_visible_message_count(messages: &[Message], system_prompt: &str) -> usize {
+    messages
+        .iter()
+        .filter(|m| !super::uds_snapshots::is_injected_system_prompt(m, system_prompt))
+        .count()
+}
 
 pub(super) fn get_message_response_data(
     message_id: &str,
@@ -51,25 +67,30 @@ pub(super) fn query_response_data(
             // plus the provider's valid vocabulary, so the live-query and
             // busy-connect snapshot paths serve the same `get_state` shape.
             let state = ctx.session.state_snapshot(
-                ctx.messages.len(),
+                user_visible_message_count(ctx.messages, ctx.system_prompt),
                 workflow,
                 ctx.agent.max_context_tokens(),
                 ctx.agent.effort().map(|l| l.as_str().to_string()),
             );
             Some(serde_json::to_value(&state).unwrap_or_default())
         }
-        AgentCommand::GetMessages { count, before, .. } => Some(messages_page_json(
-            ctx.messages,
-            count.unwrap_or(HISTORY_PAGE_SIZE),
-            before.as_deref(),
-        )),
+        AgentCommand::GetMessages { count, before, .. } => {
+            let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
+            Some(messages_page_json(
+                &visible_messages,
+                count.unwrap_or(HISTORY_PAGE_SIZE),
+                before.as_deref(),
+            ))
+        }
         AgentCommand::GetMessagesTail { count, .. } => {
-            Some(messages_tail_json(ctx.messages, *count))
+            let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
+            Some(messages_tail_json(&visible_messages, *count))
         }
         AgentCommand::GetSessionStats { .. } => {
+            let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
             let stats = compute_session_stats_with_usage(
                 ctx.session_key,
-                ctx.messages,
+                &visible_messages,
                 ctx.session.usage_snapshot(),
                 ctx.session.context_tokens(),
                 ctx.agent.max_context_tokens(),
