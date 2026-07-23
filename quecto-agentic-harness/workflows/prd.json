@@ -1,0 +1,61 @@
+{
+  "label": "PRD",
+  "description": "Draft a design doc / PRD with a code-verified problem statement, adversarial review round, resolved decisions, then a docs-only PR (no auto-merge).",
+  "when_to_use": "Use when the deliverable is a design document — PRD, ADR, or proposal — not code. Do NOT use when implementing an already-written PRD (pick the implementation template its slices call for).",
+  "guards": [
+    {
+      "commands": [
+        "git commit",
+        "git push"
+      ],
+      "before_step_key": "commit",
+      "message": "Complete the adversarial review round and resolve every open question into a Decisions section before committing the document."
+    },
+    {
+      "commands": [
+        "git merge",
+        "gh pr merge"
+      ],
+      "before_step_key": "report",
+      "message": "This workflow does NOT merge — report the docs PR as ready for human review and stop."
+    }
+  ],
+  "steps": [
+    {
+      "key": "problem",
+      "label": "Verify the problem statement in code",
+      "phase": "setup",
+      "guidance": "Write the problem statement with every claim VERIFIED against the current code (file:line) — never from memory of how the system works. A PRD whose problem section is wrong poisons everything downstream. Done when each problem claim carries a citation or is explicitly marked unverified."
+    },
+    {
+      "key": "draft",
+      "label": "Draft goals, non-goals, design, slices",
+      "phase": "green",
+      "guidance": "Draft the document: goals, explicit non-goals (what this deliberately does not do), the design, acceptance criteria, and an implementation plan of independently shippable slices with risk notes. Record genuinely open questions in an Open Questions section rather than papering over them. Done when the draft is complete with slices and acceptance criteria."
+    },
+    {
+      "key": "review",
+      "label": "Adversarial review round",
+      "phase": "review",
+      "guidance": "Spawn parallel read-only reviewer subagents (read_only: true) with distinct lenses — e.g. is the problem real as stated (re-verify citations), is the design the simplest thing that works (YAGNI), do the slices ship independently, what breaks existing behaviour/consumers. Reviewers return concrete objections, not style notes. Address every valid objection in the draft or decline it with written rationale. Done when every objection is addressed or declined."
+    },
+    {
+      "key": "decide",
+      "label": "Resolve open questions into Decisions",
+      "phase": "review",
+      "guidance": "Convert each Open Question into a resolved entry in a Decisions section: the choice, the rationale, and the accepted trade-off. Questions that genuinely need the human stay listed as open, but flag them prominently in the final report. Done when the Decisions section exists and no silently-unresolved question remains."
+    },
+    {
+      "key": "commit",
+      "label": "Commit the doc and push",
+      "phase": "ci_cd",
+      "guidance": "Branch if on master; commit the document (docs-only — no code changes ride along). `git push` in the FOREGROUND and wait for the pre-push gate; never --no-verify. Done when the push exited with the gate passing."
+    },
+    {
+      "key": "report",
+      "label": "Open the docs PR and report (no merge)",
+      "phase": "ci_cd",
+      "guidance": "Open the PR with `gh pr create`, body summarizing the problem and key decisions. Report the PR number plus any questions left open for the human. Do NOT merge. Terminate straggler subagents (get_subagents). Done when reported."
+    }
+  ]
+}

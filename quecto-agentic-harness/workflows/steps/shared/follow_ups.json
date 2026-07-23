@@ -1,0 +1,6 @@
+{
+  "key": "follow_ups",
+  "label": "File follow-up issues for deferred work",
+  "phase": "ci_cd",
+  "guidance": "Review everything deferred, declined-with-rationale, discovered-but-out-of-scope, or left as an open question during this workflow. File a `gh issue create` for each with the evidence and context gathered here (file:line, decisions, why it was deferred) so the next person starts warm — never silently drop deferred work. Done when every deferred item has an issue number or an explicit 'nothing deferred' note."
+}

@@ -1,0 +1,62 @@
+{
+  "label": "Chore",
+  "description": "Small, low-risk maintenance change (deps, docs, config, tooling, CI) with hooks and the full push gate, but without BDD/TDD ceremony; hand off the PR for human review (no auto-merge).",
+  "when_to_use": "Use for small maintenance chores with no meaningful behaviour change and low blast radius: dependency bumps, doc fixes, config/CI/tooling tweaks, renames of non-code assets. Do NOT use when the issue's acceptance criteria describe new or altered observable behaviour (use 'feature') or a zero-behaviour-change code restructure (use 'refactor').",
+  "guards": [
+    {
+      "commands": [
+        "git commit",
+        "git push"
+      ],
+      "before_step_key": "commit",
+      "message": "Complete hook setup, the change itself, and targeted verification before committing."
+    },
+    {
+      "commands": [
+        "git merge",
+        "gh pr merge"
+      ],
+      "before_step_key": "report",
+      "message": "This workflow does NOT merge — verify the pre-push gate genuinely passed (never bypassed with --no-verify), then report the PR as ready for human review and stop. Never run gh pr merge / git merge or set auto-merge."
+    }
+  ],
+  "steps": [
+    "steps/shared/hooks",
+    {
+      "key": "scope",
+      "label": "Scope the chore and define done",
+      "phase": "setup",
+      "guidance": "Read the issue and comments with `gh issue view <N> --json title,body,comments` (or restate the ad-hoc request). Write down a short, checkable definition of done and the exact files you expect to touch. If the scope turns out to involve behaviour change, STOP and switch to the 'feature' template instead of stretching this one. Done when the definition of done and file list are written down."
+    },
+    {
+      "key": "implement",
+      "label": "Make the minimal change",
+      "phase": "green",
+      "guidance": "Create a branch if on master. Make the smallest change that satisfies the definition of done — no drive-by refactors, no speculative cleanup. Keep repo conventions: if you bump a crate version or touch docs, keep Cargo.toml, README 'Current version' and any version-asserting tests in lockstep. Done when the change matches the definition of done and nothing else changed."
+    },
+    {
+      "key": "verify",
+      "label": "Run targeted verification",
+      "phase": "verify",
+      "guidance": "Run the narrowest checks that exercise what you touched: targeted `cargo test -p <crate> --lib <name_substring>` for code, the relevant guard tests for docs/config (e.g. repo_docs, workflow_config), or a build/lint for tooling. Do NOT run the whole suite manually — the pre-push gate does that. Done when the targeted checks pass and you can name what they proved."
+    },
+    {
+      "key": "commit",
+      "label": "Commit and push through the full gate",
+      "phase": "ci_cd",
+      "guidance": "Stage only intended files and commit with a clear message. Then `git push` in the FOREGROUND and WAIT for the pre-push gate to exit — it runs the full suite and can take 10-15+ minutes. Fix any failure and push again; never use --no-verify. Done when the push has exited successfully with the gate passing."
+    },
+    {
+      "key": "pr",
+      "label": "Open the PR",
+      "phase": "ci_cd",
+      "guidance": "Open a PR against master with `gh pr create`: clear title, short body stating what changed and why it is a chore (no behaviour change). Confirm with `gh pr view <n> --json number,headRefOid,state` that the PR is OPEN and its head is your pushed commit. Done when the PR number and head SHA are confirmed."
+    },
+    {
+      "key": "report",
+      "label": "Report the PR ready and stop (no merge)",
+      "phase": "ci_cd",
+      "guidance": "Confirm the required CI checks are green with `gh pr checks <n>`, then report the PR number and a one-line summary. Do NOT merge and do NOT set auto-merge — hand off for human review. Done when the PR is reported and no further changes are pending."
+    }
+  ]
+}

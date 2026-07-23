@@ -22,7 +22,21 @@ fn snapshot_in_selector_mode_lists_templates() {
         .iter()
         .map(|t| t.id.as_str())
         .collect();
-    assert_eq!(ids, ["feature", "refactor"]);
+    assert_eq!(
+        ids,
+        [
+            "feature",
+            "adversarial-review",
+            "bugfix",
+            "chore",
+            "flake-hunt",
+            "investigate",
+            "plan",
+            "prd",
+            "refactor",
+            "remove",
+        ]
+    );
     assert!(snap.steps.is_empty());
 }
 

@@ -1,0 +1,50 @@
+{
+  "label": "Plan",
+  "description": "Produce an execution-ready phased implementation plan (Execution Checklist + per-phase Task checklists), reviewed and attached to the issue. Plans only — no implementation.",
+  "when_to_use": "Use when the deliverable is a phased implementation plan for already-agreed work (an approved PRD slice, a large issue needing decomposition). Do NOT use to decide WHAT to build ('prd') or to implement ('feature', 'bugfix', 'refactor', 'remove').",
+  "guards": [
+    {
+      "commands": [
+        "git commit",
+        "git push",
+        "git merge",
+        "gh pr merge"
+      ],
+      "before_step_key": "deliver",
+      "message": "This workflow produces a plan, not code. Only the plan document itself may be committed, and only after the review step."
+    }
+  ],
+  "steps": [
+    {
+      "key": "context",
+      "label": "Ground the plan in the issue and the code",
+      "phase": "setup",
+      "guidance": "Resolve the linked issue (explicit number → referenced doc/PRD → ask; if none exists, create one with `gh issue create` first — every plan needs a home). Read the issue, its comments, and any PRD it references, then VERIFY every assumption about the current code with file:line citations — a plan built on a stale mental model fails at phase 1. Done when the goal, constraints, and verified starting state are written down."
+    },
+    {
+      "key": "draft",
+      "label": "Draft phases with checklists",
+      "phase": "green",
+      "guidance": "Draft the plan in the gold-standard shape: a top-level `## Execution Checklist` (one checkbox per phase), then one section per phase, each with its deliverable, the files it touches, how it is verified, and a `### Task checklist` of concrete checkboxes. Every phase must be independently verifiable and leave the tree green; narrative-only prose is not a plan. Note explicit non-goals and open questions. Done when an executor could start phase 1 without asking anything."
+    },
+    {
+      "key": "review",
+      "label": "Adversarial plan review",
+      "phase": "review",
+      "guidance": "Spawn read-only reviewer subagents (read_only: true) with distinct lenses: are the code citations accurate, is each phase really independently shippable and ordered by dependency, is this the simplest sequencing (YAGNI), what existing behaviour could each phase break. Address every valid objection in the plan or decline it with written rationale. Done when every objection is addressed or declined."
+    },
+    {
+      "key": "deliver",
+      "label": "Attach the plan to the issue",
+      "phase": "ci_cd",
+      "guidance": "Post the plan as a comment on the linked issue (`gh issue comment`) so execution can check items off there; if the repo keeps plans as committed docs instead, commit it docs-only and push through the gate (never --no-verify). Done when the plan is attached and its location reported."
+    },
+    "steps/shared/follow_ups",
+    {
+      "key": "report",
+      "label": "Report and hand off",
+      "phase": "ci_cd",
+      "guidance": "Report: the plan location, phase count, key decisions, and any open questions needing the human. Recommend which implementation template each phase should run under ('feature', 'refactor', 'remove', 'chore'). Terminate straggler subagents (get_subagents). Done when reported."
+    }
+  ]
+}
