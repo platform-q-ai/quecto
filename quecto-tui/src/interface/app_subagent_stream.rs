@@ -313,7 +313,7 @@ impl App {
         early: bool,
     ) -> bool {
         if synced {
-            return true;
+            return early;
         }
         Self::apply_subagent_chat_event(session, ev);
         early

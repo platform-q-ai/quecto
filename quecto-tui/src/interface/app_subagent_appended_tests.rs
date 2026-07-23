@@ -194,6 +194,61 @@ async fn synced_authoritative_child_ignores_parent_appended_crumbs() {
 }
 
 #[tokio::test]
+async fn synced_authoritative_child_flushes_deferred_grandchild_notes_on_end() {
+    let socket = spawn_subagent_socket("synced-grandchild-notes");
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent_with_socket(
+        "synced-grandchild-notes",
+        "running",
+        Some(("active", 1, 3)),
+        Some(socket),
+    )]));
+    h.app_mut()
+        .note_sync_capability("synced-grandchild-notes", &serde_json::json!({"sync":1}));
+    h.app_mut().route_sync_response(
+        "synced-grandchild-notes",
+        &serde_json::json!({
+            "epoch": 1,
+            "rev": 1,
+            "messages": [{"id":"ledger-turn","role":"assistant","content":"LEDGER_TRANSCRIPT"}],
+            "nextRev": null,
+            "caughtUp": true,
+            "resync": false
+        }),
+    );
+
+    h.route("synced-grandchild-notes", Event::AgentStart);
+    h.route(
+        "synced-grandchild-notes",
+        Event::SubagentNotification {
+            agent_id: "grandchild".into(),
+            sequence: 1,
+            message: "grandchild finished".into(),
+        },
+    );
+    h.route(
+        "synced-grandchild-notes",
+        Event::AgentEnd {
+            messages: vec![],
+            message_refs: vec![],
+        },
+    );
+
+    let frame = strip_ansi(
+        &h.select(Some("synced-grandchild-notes"))
+            .app_mut()
+            .compose_frame()
+            .join("\n"),
+    );
+    assert!(frame.contains("LEDGER_TRANSCRIPT"), "{frame}");
+    assert!(
+        frame.contains("grandchild finished"),
+        "synced authoritative end-of-turn must flush deferred grandchild notes:\n{frame}"
+    );
+}
+
+#[tokio::test]
 async fn appended_messages_update_inactive_sibling_without_stealing_focus() {
     let active_socket = spawn_subagent_socket("active-child");
     let mut h = TuiHarness::new().await;
