@@ -36,7 +36,7 @@ impl App {
             return;
         };
         if let Some(feed) = self.subagents.feeds.get_mut(agent_id) {
-            if feed.epoch != 0 && delta.epoch != feed.epoch {
+            if feed.epoch != 0 && delta.epoch != feed.epoch && !delta.resync {
                 return;
             }
             let entries = feed.transcript.apply_sync_delta(&delta);
