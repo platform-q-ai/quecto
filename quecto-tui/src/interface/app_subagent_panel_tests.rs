@@ -116,7 +116,7 @@ async fn esc_cancels_running_subagent_instead_of_returning_to_master() {
     let mut h = with_two_subagents().await; // worker tracked as "running"
     h.app_mut().select_agent(Some("worker"));
     assert_eq!(h.app_mut().active_agent_id(), Some("worker"));
-    // connect-on-select joined mid-turn, so session.running is false — but the
+    // child-feed joined mid-turn, so session.running is false — but the
     // master tracks worker as running, so Esc must CANCEL the sub-agent's work
     // (staying on it), not navigate back to master.
     assert!(
@@ -448,7 +448,7 @@ async fn stale_event_for_untracked_agent_does_not_create_a_session() {
 #[tokio::test]
 async fn tui_consumes_socket_path_from_the_wire() {
     // The single sanctioned kernel change surfaces `socketPath`; prove the TUI
-    // deserializes and stores it (the value connect-on-select dials), via the
+    // deserializes and stores it (the value child-feed dials), via the
     // REAL wire deserializer.
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
@@ -468,121 +468,7 @@ async fn tui_consumes_socket_path_from_the_wire() {
     assert_eq!(
         h.app_mut().subagent_socket_path("worker").as_deref(),
         Some(socket_path.as_str()),
-        "the TUI must store the wire socketPath for connect-on-select"
-    );
-}
-
-// ── #828 Part 1: full conversation backfill reconcile ────────────────────────
-
-/// Build the `get_messages` backfill Response the connect-on-select path
-/// requests, carrying a user/assistant transcript that pre-dates the live
-/// stream.
-fn backfill_history(pairs: &[(&str, &str)]) -> Event {
-    let messages: Vec<serde_json::Value> = pairs
-        .iter()
-        .flat_map(|(u, a)| {
-            [
-                serde_json::json!({ "role": "user", "content": u }),
-                serde_json::json!({ "role": "assistant", "content": a }),
-            ]
-        })
-        .collect();
-    Event::Response {
-        id: Some("subagent-history".into()),
-        command: "get_messages".into(),
-        success: true,
-        data: Some(serde_json::json!({ "messages": messages })),
-        error: None,
-    }
-}
-
-#[tokio::test]
-async fn backfill_prepends_history_and_preserves_live_tokens() {
-    // #828 Part 1: a busy child streams live tokens BEFORE its dispatch loop can
-    // answer the connect-on-select get_messages backfill. When the backfill
-    // finally arrives it must reconcile as history PREPENDED above the live
-    // content — never a wholesale replace that drops the live tokens.
-    let mut h = with_two_subagents().await;
-    h.app_mut().select_agent(Some("worker"));
-    // Live stream arrives first (child is mid-turn).
-    h.app_mut().route_subagent_event(
-        "worker",
-        Event::Token {
-            token: "LIVE_AFTER_SELECT".into(),
-        },
-    );
-    // ...then the backfill history is finally answered.
-    h.app_mut().route_subagent_event(
-        "worker",
-        backfill_history(&[("earlier question", "earlier answer")]),
-    );
-
-    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
-    assert!(
-        frame.contains("earlier question") && frame.contains("earlier answer"),
-        "backfilled history must render in the session:\n{frame}"
-    );
-    assert!(
-        frame.contains("LIVE_AFTER_SELECT"),
-        "the late backfill must NOT drop the live token streamed before it:\n{frame}"
-    );
-    let hist = frame.find("earlier answer").expect("history present");
-    let live = frame.find("LIVE_AFTER_SELECT").expect("live present");
-    assert!(
-        hist < live,
-        "history must be PREPENDED above the live content:\n{frame}"
-    );
-}
-
-#[tokio::test]
-async fn backfill_is_idempotent_and_does_not_duplicate_history() {
-    // A re-delivered backfill (e.g. a reconnect) must not duplicate prior
-    // history nor lose live content.
-    let mut h = with_two_subagents().await;
-    h.app_mut().select_agent(Some("worker"));
-    h.app_mut().route_subagent_event(
-        "worker",
-        Event::Token {
-            token: "LIVEONE".into(),
-        },
-    );
-    let backfill = backfill_history(&[("the question", "the answer")]);
-    h.app_mut().route_subagent_event("worker", backfill.clone());
-    h.app_mut().route_subagent_event("worker", backfill);
-
-    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
-    assert_eq!(
-        frame.matches("the answer").count(),
-        1,
-        "re-delivered backfill must not duplicate history:\n{frame}"
-    );
-    assert!(
-        frame.contains("LIVEONE"),
-        "re-delivered backfill must not drop live content:\n{frame}"
-    );
-}
-
-#[tokio::test]
-async fn empty_backfill_does_not_latch_guard_against_later_history() {
-    // #828 review: an empty/filtered get_messages payload must NOT mark the
-    // backfill applied — otherwise a later populated backfill (reconnect, or a
-    // response racing ahead of persistence) is permanently suppressed and the
-    // session stays stuck showing no history.
-    let mut h = with_two_subagents().await;
-    h.app_mut().select_agent(Some("worker"));
-    // First backfill is empty.
-    h.app_mut()
-        .route_subagent_event("worker", backfill_history(&[]));
-    // Later, the populated backfill finally arrives.
-    h.app_mut().route_subagent_event(
-        "worker",
-        backfill_history(&[("real question", "real answer")]),
-    );
-
-    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
-    assert!(
-        frame.contains("real question") && frame.contains("real answer"),
-        "an empty backfill must not suppress a later populated backfill:\n{frame}"
+        "the TUI must store the wire socketPath for child feeds"
     );
 }
 
@@ -666,29 +552,6 @@ async fn master_defers_and_flushes_notes_like_a_session() {
     assert!(
         resp < note,
         "the flushed note must follow the finished response:\n{frame}"
-    );
-}
-
-#[tokio::test]
-async fn backfill_into_idle_session_renders_full_history_in_order() {
-    // #828 Part 1 (idle path): selecting an IDLE sub-agent with no live stream
-    // in flight must still backfill its FULL prior conversation, in order —
-    // never an empty session or mis-ordered history.
-    let mut h = with_two_subagents().await;
-    h.app_mut().select_agent(Some("worker"));
-    h.app_mut().route_subagent_event(
-        "worker",
-        backfill_history(&[("first question", "first answer")]),
-    );
-
-    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
-    let q = frame
-        .find("first question")
-        .expect("history question present");
-    let a = frame.find("first answer").expect("history answer present");
-    assert!(
-        q < a,
-        "idle backfill must render history in order (question above answer):\n{frame}"
     );
 }
 

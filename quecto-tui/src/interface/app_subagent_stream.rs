@@ -359,31 +359,12 @@ impl App {
                 let text = crate::infrastructure::client::extract_result_text(result);
                 chat.complete_tool(tool_call_id, &text, *is_error, None);
             }
-            Event::Response {
-                command, data, id, ..
-            } if command == "get_messages" => {
-                let own_page = session.is_pending_history_page(id.as_deref());
-                if let Some(data) = data {
-                    if own_page {
-                        // Older explicit pages EXTEND the existing prefix; only a
-                        // fuller snapshot superseding a partial one replaces it
-                        // (#1061 review). Mirror the master path.
-                        Self::reconcile_backfill_history(session, data, true);
-                    } else if id
-                        .as_deref()
-                        .is_some_and(|i| i.starts_with("history-page-"))
-                    {
-                        // Another client's older page (responses are broadcast) or
-                        // one orphaned by a session swap: applying it here would
-                        // prepend history at the wrong depth. Drop it.
-                    } else {
-                        Self::reconcile_backfill_history(session, data, false);
-                    }
-                } else if own_page {
-                    // Failed / no-data page fetch: clear the in-flight request so the
-                    // same older page can be retried on the next scroll (#1061 review).
-                    session.clear_pending_history_page();
-                }
+            Event::Response { command, id, .. }
+                if command == "get_messages" && session.is_pending_history_page(id.as_deref()) =>
+            {
+                // Failed / ignored child page fetch: clear the in-flight request so
+                // a future ledger-sync compatible pagination path can retry cleanly.
+                session.clear_pending_history_page();
             }
             _ => {}
         }
@@ -545,32 +526,23 @@ impl App {
         }
     }
 
-    /// `extend_prefix` distinguishes the two apply modes (#1061 review
-    /// follow-up — they must not share `partial_backfill_len` implicitly):
-    /// `true` for this session's OWN older page, which always prepends below
-    /// the already-loaded prefix; `false` for snapshots/backfills (attach,
-    /// id-less busy-connect), which replace the entire loaded backfill prefix
-    /// so a re-snapshot after paging cannot duplicate the newest slice or
-    /// leave an interior gap.
-    pub(super) fn reconcile_backfill_history(
+    /// Reconcile a master-session `get_messages` snapshot with already-streamed tail entries.
+    ///
+    /// This is retained for master attach/resume and explicit master history
+    /// pagination only; sub-agent transcripts now use ledger `sync` deltas rather
+    /// than the deleted parent-forwarded backfill fallback.
+    pub(super) fn reconcile_master_backfill_history(
         session: &mut SessionView,
         data: &serde_json::Value,
         extend_prefix: bool,
     ) {
         use crate::application::session_payloads::{self, ResumedChatMessage};
-        if session.history_backfilled && (session.master_stream_appended_len == 0 || extend_prefix)
-        {
+        if session.history_backfilled {
             return;
         }
         let Ok(messages) = session_payloads::parse_resumed_messages(data) else {
             return;
         };
-        let message_ids = data["messages"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|message| message["id"].as_str().map(str::to_owned))
-            .collect::<Vec<_>>();
         let history: Vec<ChatEntry> = messages
             .into_iter()
             .map(|message| {
@@ -603,8 +575,6 @@ impl App {
         if history.is_empty() {
             return;
         }
-        let appended_len = session.master_stream_appended_len;
-        let was_backfilled = session.history_backfilled;
         let history_len = history.len();
         let trimmed = data
             .get("trimmed")
@@ -617,16 +587,6 @@ impl App {
             // This session's own older page grows the loaded prefix.
             session.chat.prepend_history(history);
             session.partial_backfill_len.unwrap_or(0) + history_len
-        } else if appended_len > 0 && was_backfilled {
-            let entry_count = session.chat.entry_count();
-            session.chat.replace_range(0, entry_count, history);
-            session.master_stream_appended_len = 0;
-            history_len
-        } else if appended_len > 0 {
-            // The authoritative snapshot replaces the initial warmed prefix.
-            session.chat.replace_history_prefix(appended_len, history);
-            session.master_stream_appended_len = 0;
-            history_len
         } else if let Some(partial_len) = session.partial_backfill_len {
             // A prior partial snapshot / paged prefix already contributed:
             // replace it all; paging restarts from the cursors set above.
@@ -636,7 +596,6 @@ impl App {
             session.chat.prepend_history(history);
             history_len
         };
-        session.seen_message_ids.extend(message_ids);
         if trimmed || has_more_before {
             session.partial_backfill_len = Some(loaded_prefix);
             session.history_backfilled = false;

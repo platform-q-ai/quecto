@@ -219,19 +219,9 @@ impl App {
             }
             Some(child) => {
                 if let Some(session) = self.subagents.sessions.get_mut(child) {
-                    let recovered_len = entries.len();
-                    if recovered_len > 0 {
-                        for message_id in &batch.refs {
-                            session.seen_message_ids.insert(message_id.clone());
-                        }
-                    }
                     session
                         .chat
                         .replace_range(batch.target_start, batch.target_end, entries);
-                    session.master_stream_appended_len = session
-                        .master_stream_appended_len
-                        .saturating_sub(batch.target_end.saturating_sub(batch.target_start))
-                        .saturating_add(recovered_len);
                 }
             }
         }

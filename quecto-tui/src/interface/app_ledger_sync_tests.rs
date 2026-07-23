@@ -14,7 +14,7 @@ fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
             supports_sync: false,
             pending_rev: None,
             transcript: crate::interface::ledger_sync::LedgerTranscript::default(),
-            authority: crate::interface::feed_state::FeedAuthority::LegacySelected,
+            authority: crate::interface::feed_state::FeedAuthority::WarmSync,
         },
         cmd_rx,
     )

@@ -105,7 +105,11 @@ impl App {
                         self.replace_master_chat_with_history_page(&data, status);
                     } else if own_page {
                         // This client's own older page extends the loaded prefix.
-                        Self::reconcile_backfill_history(&mut self.master_session, &data, true);
+                        Self::reconcile_master_backfill_history(
+                            &mut self.master_session,
+                            &data,
+                            true,
+                        );
                     } else if id
                         .as_deref()
                         .is_some_and(|id| id.starts_with("history-page-"))
@@ -118,7 +122,11 @@ impl App {
                         // Attach backfill OR unsolicited busy-connect snapshot
                         // (id-less, see uds_snapshots): replace any loaded
                         // partial prefix (or prepend) + cursor reconciliation.
-                        Self::reconcile_backfill_history(&mut self.master_session, &data, false);
+                        Self::reconcile_master_backfill_history(
+                            &mut self.master_session,
+                            &data,
+                            false,
+                        );
                     } else {
                         self.replace_chat_with_messages(&data);
                     }

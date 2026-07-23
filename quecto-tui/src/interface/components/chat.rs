@@ -244,9 +244,9 @@ impl Chat {
     }
 
     /// Prepend history entries ABOVE the existing (live) content (#828). The
-    /// connect-on-select backfill for a busy sub-agent arrives AFTER live tokens
-    /// have already streamed in; reconciling it as a prefix preserves the live
-    /// content instead of a wholesale `clear()`+replace that would drop it.
+    /// Prepend durable history ABOVE existing live content. Master attach
+    /// backfill can arrive after live tokens; reconciling it as a prefix
+    /// preserves live content instead of a wholesale replace that would drop it.
     pub fn prepend_history(&mut self, entries: Vec<ChatEntry>) {
         if entries.is_empty() {
             return;

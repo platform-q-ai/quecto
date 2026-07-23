@@ -2,15 +2,6 @@ use super::app_subagents::usable_socket_path;
 use super::*;
 
 impl App {
-    /// Open a legacy direct UDS connection to `id` on selection. This path is
-    /// retained only for agents that have not yet proven ledger-sync support.
-    pub(super) fn open_subagent_connection(&mut self, id: &str) {
-        self.open_subagent_feed(
-            id,
-            crate::interface::feed_state::FeedAuthority::LegacySelected,
-        );
-    }
-
     pub(super) fn ensure_synced_subagent_feed(&mut self, id: &str) {
         if self.subagents.feeds.contains_key(id) {
             return;
@@ -45,36 +36,18 @@ impl App {
             let Ok(mut client) = Client::connect(&path).await else {
                 return;
             };
-            match authority {
-                crate::interface::feed_state::FeedAuthority::LegacySelected => {
-                    let _ = client
-                        .send(&Command::GetMessages {
-                            id: Some("subagent-history".into()),
-                            before: None,
-                        })
-                        .await;
-                    let _ = client
-                        .send(&Command::GetState {
-                            id: Some("subagent-state".into()),
-                        })
-                        .await;
-                }
-                crate::interface::feed_state::FeedAuthority::WarmSync
-                | crate::interface::feed_state::FeedAuthority::SyncedAuthoritative => {
-                    let _ = client
-                        .send(&Command::GetState {
-                            id: Some("subagent-state".into()),
-                        })
-                        .await;
-                    let _ = client
-                        .send(&Command::Sync {
-                            id: Some("subagent-sync".into()),
-                            epoch: 0,
-                            since_rev: 0,
-                        })
-                        .await;
-                }
-            }
+            let _ = client
+                .send(&Command::GetState {
+                    id: Some("subagent-state".into()),
+                })
+                .await;
+            let _ = client
+                .send(&Command::Sync {
+                    id: Some("subagent-sync".into()),
+                    epoch: 0,
+                    since_rev: 0,
+                })
+                .await;
             loop {
                 tokio::select! {
                     ev = client.recv() => match ev {

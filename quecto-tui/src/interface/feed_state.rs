@@ -5,7 +5,6 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FeedAuthority {
-    LegacySelected,
     WarmSync,
     SyncedAuthoritative,
 }

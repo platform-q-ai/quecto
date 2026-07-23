@@ -96,27 +96,3 @@ Feature: Sub-agent session view + interaction parity, Tab focus model, focus div
     Then a vertical divider is drawn between the panel and the body
     When I press Tab
     Then the divider styling reflects the focused pane
-
-  # ── #828 Part 1: full conversation backfill on select ────────────────
-  # Selecting a busy sub-agent connects mid-turn: live tokens stream in
-  # BEFORE the kernel's get_messages backfill can be answered. The backfill
-  # must reconcile as history PREPENDED above the live content — never a
-  # wholesale replace that drops the live tokens.
-  Scenario: Selecting a busy sub-agent shows prior history with live appended
-    Given a TUI viewing sub-agent "a1"
-    And sub-agent "a1" has streamed the live token "LIVENOW" since selection
-    When the backfill history "earlier question" then "earlier answer" arrives
-    Then the sub-agent's session shows "earlier question"
-    And the sub-agent's session shows "earlier answer"
-    And the sub-agent's session still shows "LIVENOW"
-    And "earlier answer" appears above "LIVENOW" in the session
-
-  # An IDLE sub-agent (no live stream in flight) must still backfill its FULL
-  # prior conversation in order — the simpler path that must not render empty
-  # or mis-ordered.
-  Scenario: Selecting an idle sub-agent shows its full prior history in order
-    Given a TUI viewing sub-agent "a1"
-    When the backfill history "first question" then "first answer" arrives
-    Then the sub-agent's session shows "first question"
-    And the sub-agent's session shows "first answer"
-    And "first question" appears above "first answer" in the session

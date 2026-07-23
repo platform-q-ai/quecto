@@ -33,14 +33,6 @@ Feature: TUI history backfill through paged UDS history
     And the oldest session message should become visible
 
   @done @issue-1061 @adr-0008-part3 @persist
-  Scenario: Sub-agent scroll-back uses the same paged history behaviour
-    Given the TUI is viewing a sub-agent with enough history to require backfill
-    When the operator scrolls back until the beginning of that history is reached
-    Then the sub-agent chat should reveal the first sub-agent message
-    And the revealed sub-agent history should contain each sub-agent message exactly once
-    And the revealed sub-agent history should contain no interior gap
-
-  @done @issue-1061 @adr-0008-part3 @persist
   Scenario: Resume keeps older messages reachable through paging
     Given a resumable session with enough history to require backfill
     When the operator resumes the session in the TUI
