@@ -1,0 +1,43 @@
+{
+  "label": "Investigate",
+  "description": "Read-only root-cause diagnosis: gather evidence, synthesize a cited conclusion, report or file an issue. Never modifies the repo.",
+  "when_to_use": "Use when the task is to understand or diagnose something — a bug's root cause, an architecture question, unexpected behaviour — with NO changes made. Do NOT use when a PR exists to review ('adversarial-review') or when the task is to implement a fix ('bugfix', 'feature').",
+  "guards": [
+    {
+      "commands": [
+        "git commit",
+        "git push",
+        "git merge",
+        "gh pr merge"
+      ],
+      "before_step_key": "report",
+      "message": "This workflow is READ-ONLY: diagnose and report, never change the repo. If a fix is wanted, start a 'bugfix' or 'feature' workflow afterwards."
+    }
+  ],
+  "steps": [
+    {
+      "key": "scope",
+      "label": "State the question and what would answer it",
+      "phase": "review",
+      "guidance": "Write down the precise question being investigated and what evidence would settle it (a log line, a code path, a failing command). Note the boundaries: which repos/subsystems are in scope. Done when the question and its answer-criteria are written down."
+    },
+    {
+      "key": "evidence",
+      "label": "Gather evidence (parallel read-only where useful)",
+      "phase": "review",
+      "guidance": "Collect concrete evidence: read the code paths, run read-only commands, reproduce observations. For separable angles, spawn parallel read-only investigator subagents (read_only: true), one angle each, requiring file:line citations. Distinguish observed facts from inference at every step. Done when each answer-criterion from scope has supporting or refuting evidence."
+    },
+    {
+      "key": "synthesize",
+      "label": "Synthesize the root cause / answer",
+      "phase": "review",
+      "guidance": "State the conclusion with its evidence chain (every claim cites file:line or a command output). Actively try to refute your own conclusion once: name the strongest alternative explanation and why the evidence rules it out — if it doesn't, say so and mark the conclusion as tentative. Done when the conclusion and its confidence level are written down."
+    },
+    {
+      "key": "report",
+      "label": "Report findings and clean up",
+      "phase": "review",
+      "guidance": "Deliver the diagnosis: question, conclusion, evidence, confidence, and recommended next action (e.g. file a gh issue with the evidence, or start a 'bugfix' workflow). Terminate any straggler subagents (get_subagents) and confirm `git status` is clean. Done when the report is delivered and nothing was modified."
+    }
+  ]
+}

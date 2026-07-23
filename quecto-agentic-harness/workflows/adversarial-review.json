@@ -1,0 +1,49 @@
+{
+  "label": "Adversarial Review",
+  "description": "Read-only PR review: parallel narrow finders, adversarial verification that tries to REFUTE each finding, then exactly one submitted review. Never modifies the repo.",
+  "when_to_use": "Use when asked to review an existing PR (or diff/branch) without making changes: findings only, evidence-backed, posted as a single review. Do NOT use when the task is to implement, fix or merge anything — use 'feature', 'chore' or 'refactor' for that.",
+  "guards": [
+    {
+      "commands": [
+        "git commit",
+        "git push",
+        "git merge",
+        "gh pr merge"
+      ],
+      "before_step_key": "report",
+      "message": "This workflow is READ-ONLY: it never commits, pushes or merges. Post findings as a single PR review and stop. If a fix is wanted, start a separate 'feature' or 'chore' workflow."
+    }
+  ],
+  "steps": [
+    {
+      "key": "scope",
+      "label": "Confirm the review target and fetch the diff",
+      "phase": "review",
+      "guidance": "Confirm the PR number (never accept a pasted raw diff — fetch it yourself with `gh pr diff <N>`) and record the head SHA from `gh pr view <N> --json number,headRefOid,state`. Read the linked issue's acceptance criteria if one exists. This workflow makes NO repo writes and NO GitHub writes except the single review posted at the end. Done when the PR number, head SHA and diff are in hand."
+    },
+    {
+      "key": "finders",
+      "label": "Dispatch parallel narrow finders",
+      "phase": "review",
+      "guidance": "Spawn parallel read-only finder subagents (read_only: true), ONE mechanical angle each — e.g. line-by-line hunk scan, removed-behaviour audit (name the invariant each deleted line enforced and where it is re-established), cross-file tracer (callers/callees of changed symbols), security, performance, test falsifiability (name the implementation change that would make each new test fail). Scale the fan-out to the diff: a small diff merges angles into 2-3 finders; only a large or risky diff runs the full set. Each finding must be structured: file:line, one-line summary, and a CONCRETE failure scenario (inputs/state -> wrong outcome) — a finding without one is dropped. Finders make no GitHub writes and return 'NO FINDINGS' when their angle is clean. Done when every finder has reported."
+    },
+    {
+      "key": "verify",
+      "label": "Adversarially verify every finding",
+      "phase": "review",
+      "guidance": "Dedupe findings that point at the same line/mechanism, then dispatch one read-only verifier subagent per surviving finding whose job is to REFUTE it: the verdict must start with CONFIRMED (can name the triggering inputs and wrong outcome), PLAUSIBLE (mechanism real, trigger uncertain — state what would confirm it), or REFUTED (quote the line that disproves or guards it). Only an explicit REFUTED drops a finding; an errored or empty verifier verdict keeps the finding as PLAUSIBLE. Done when every finding carries a verdict."
+    },
+    {
+      "key": "post",
+      "label": "Post exactly one submitted review",
+      "phase": "review",
+      "guidance": "Post ONE submitted review via the GitHub GraphQL API (`gh api graphql`, addPullRequestReview mutation, event COMMENT) carrying every surviving CONFIRMED/PLAUSIBLE finding as an inline comment anchored to the head commit. Anchor policy: anchor each comment to the nearest CHANGED line of the diff, and ALWAYS cite the semantic file:line in the comment body regardless of where the anchor landed. API gotcha: addPullRequestReview's comments array takes legacy diff `position` (offset within the hunk), not line numbers — for line/side anchoring use addPullRequestReviewThread instead; when an anchor is rejected either way, put that finding in the review body, still citing file:line. If nothing survived, submit one review saying no findings survived adversarial verification. CRITICAL: SUBMIT the review — verify submittedAt != null so it is never left PENDING/invisible. Done when the review is submitted and its findings count reported."
+    },
+    {
+      "key": "report",
+      "label": "Report findings summary and clean up",
+      "phase": "review",
+      "guidance": "Report the posted review: findings by severity, what was refuted and why, and any PLAUSIBLE items needing human judgement. Subagents that already reported completion have exited and need no cleanup; check `get_subagents` and terminate only still-running stragglers. Confirm the working tree is untouched (`git status` clean). Done when the summary is reported and no subagents or local changes remain."
+    }
+  ]
+}

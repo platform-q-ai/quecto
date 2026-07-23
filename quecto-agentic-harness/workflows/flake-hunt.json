@@ -1,0 +1,55 @@
+{
+  "label": "Flake Hunt",
+  "description": "CI flake triage: confirm it is a flake, capture evidence, isolate locally, then fix it or file a well-evidenced issue (no auto-merge).",
+  "when_to_use": "Use when a CI check or test fails intermittently or on an unrelated diff and the task is to triage it. Do NOT use for a test that fails deterministically because the code is wrong — that is a 'bugfix'.",
+  "guards": [
+    {
+      "commands": [
+        "git commit",
+        "git push"
+      ],
+      "before_step_key": "resolve",
+      "message": "Confirm flakiness and isolate the mechanism before committing any fix — a 'fix' for an unreproduced flake is guesswork."
+    },
+    {
+      "commands": [
+        "git merge",
+        "gh pr merge"
+      ],
+      "before_step_key": "report",
+      "message": "This workflow does NOT merge — report the fix PR or the filed issue and stop."
+    }
+  ],
+  "steps": [
+    {
+      "key": "confirm",
+      "label": "Confirm it is actually a flake",
+      "phase": "review",
+      "guidance": "Establish intermittency with evidence: `gh run list` history for the check, whether the failing scenario relates to the diff that triggered it, and a targeted re-run (`gh run rerun <id> --failed`). If it fails consistently on a clean re-run, it is not a flake — stop and switch to 'bugfix'. Done when pass/fail history is recorded and flakiness is confirmed or ruled out."
+    },
+    {
+      "key": "capture",
+      "label": "Capture the failure evidence",
+      "phase": "review",
+      "guidance": "Pull the failing job's logs (`gh run view <id> --log-failed`) before they age out: exact test/scenario name, failure message, timing, shard/runner, and anything anomalous (timeouts, ports, ordering). Compare against a passing run of the same test. Done when the evidence is saved and the failure signature is written down."
+    },
+    {
+      "key": "isolate",
+      "label": "Isolate the mechanism locally",
+      "phase": "review",
+      "guidance": "Try to reproduce locally: run the specific test repeatedly (loop it), under load or reduced timeouts if timing-related. Identify the mechanism class — shared state between tests, timing/timeout margin, ordering dependence, external resource — and cite the code (file:line) that makes it possible. A flake you cannot reproduce after a serious attempt still gets its suspected mechanism written down with confidence level. Done when the mechanism (or best hypothesis) is recorded."
+    },
+    {
+      "key": "resolve",
+      "label": "Fix it or file it",
+      "phase": "green",
+      "guidance": "If the mechanism is confirmed and the fix is small: fix it at the mechanism level (never just widen a timeout without justifying the new margin), prove it by looping the test, then branch/commit/push through the full gate (never --no-verify) and open a PR. Otherwise: file a gh issue carrying ALL captured evidence, the suspected mechanism, and the reproduction attempts, so the next hunter starts warm. Done when either the PR is open or the issue is filed."
+    },
+    {
+      "key": "report",
+      "label": "Report the outcome (no merge)",
+      "phase": "ci_cd",
+      "guidance": "Report: flake confirmed or ruled out, mechanism, and the action taken (PR number or issue number). If a PR was opened, confirm CI is green (`gh pr checks <n>`) but do NOT merge. Done when reported and `git status` is clean or matches the opened PR."
+    }
+  ]
+}

@@ -26,13 +26,34 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
             include_str!("../../../../workflows/feature.json"),
         ),
         (
+            "adversarial-review",
+            include_str!("../../../../workflows/adversarial-review.json"),
+        ),
+        ("bugfix", include_str!("../../../../workflows/bugfix.json")),
+        ("chore", include_str!("../../../../workflows/chore.json")),
+        (
+            "flake-hunt",
+            include_str!("../../../../workflows/flake-hunt.json"),
+        ),
+        (
+            "investigate",
+            include_str!("../../../../workflows/investigate.json"),
+        ),
+        ("plan", include_str!("../../../../workflows/plan.json")),
+        ("prd", include_str!("../../../../workflows/prd.json")),
+        (
             "refactor",
             include_str!("../../../../workflows/refactor.json"),
         ),
+        ("remove", include_str!("../../../../workflows/remove.json")),
     ];
     /// The canonical shared-step files, keyed by their reference path
     /// (relative to the workflow dir, `.json` extension omitted).
     const STEP_FILES: &[(&str, &str)] = &[
+        (
+            "steps/shared/follow_ups",
+            include_str!("../../../../workflows/steps/shared/follow_ups.json"),
+        ),
         (
             "steps/shared/hooks",
             include_str!("../../../../workflows/steps/shared/hooks.json"),
@@ -44,6 +65,14 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
         (
             "steps/shared/resolve_threads",
             include_str!("../../../../workflows/steps/shared/resolve_threads.json"),
+        ),
+        (
+            "steps/shared/write_scenarios",
+            include_str!("../../../../workflows/steps/shared/write_scenarios.json"),
+        ),
+        (
+            "steps/shared/write_step_tests",
+            include_str!("../../../../workflows/steps/shared/write_step_tests.json"),
         ),
     ];
 
@@ -71,19 +100,34 @@ fn parse_embedded_template(
         .and_then(serde_json::Value::as_array_mut)
         .unwrap_or_else(|| panic!("embedded workflow template `{id}` must have a steps array"));
     for entry in steps {
-        if let serde_json::Value::String(reference) = entry {
-            let resolved = step_files
-                .iter()
-                .find(|(path, _)| {
-                    *path == reference.as_str() || format!("{path}.json") == *reference
-                })
-                .map(|(_, step)| step)
-                .unwrap_or_else(|| {
-                    panic!("embedded template `{id}` references unembedded step `{reference}`")
-                });
-            *entry = serde_json::from_str(resolved)
-                .unwrap_or_else(|e| panic!("embedded shared step `{reference}` must parse: {e}"));
+        let reference = match entry {
+            serde_json::Value::String(reference) => Some(reference.clone()),
+            serde_json::Value::Object(object) => object
+                .get("ref")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            _ => None,
+        };
+        let Some(reference) = reference else { continue };
+        let resolved = step_files
+            .iter()
+            .find(|(path, _)| *path == reference || format!("{path}.json") == reference)
+            .map(|(_, step)| step)
+            .unwrap_or_else(|| {
+                panic!("embedded template `{id}` references unembedded step `{reference}`")
+            });
+        let mut resolved_value: serde_json::Value = serde_json::from_str(resolved)
+            .unwrap_or_else(|e| panic!("embedded shared step `{reference}` must parse: {e}"));
+        if let (Some(resolved_object), serde_json::Value::Object(overrides)) =
+            (resolved_value.as_object_mut(), &*entry)
+        {
+            for key in ["key", "label", "phase", "guidance"] {
+                if let Some(value) = overrides.get(key) {
+                    resolved_object.insert(key.to_owned(), value.clone());
+                }
+            }
         }
+        *entry = resolved_value;
     }
     serde_json::from_value(value)
         .unwrap_or_else(|e| panic!("embedded workflow template `{id}` must deserialize: {e}"))

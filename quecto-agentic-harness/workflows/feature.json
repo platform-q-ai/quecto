@@ -5,16 +5,14 @@
   "steps": [
     "steps/shared/hooks",
     {
+      "ref": "steps/shared/write_scenarios",
       "key": "scenarios",
-      "label": "Update Scenarios / Add new features",
-      "phase": "red",
-      "guidance": "First read the issue and comments with `gh issue view <N> --json title,body,comments`. Update BDD feature files and task-facing scenarios first, and identify explicit, checkable acceptance criteria for the change. BDD selection is by tag + sharding (no scenario-name filter unless implemented). The acceptance criteria identified here are the SAME checklist the later `conformance` step verifies against branch code, so make them concrete and testable. Write feature files to behaviourally-led BDD best practice: keep scenarios DECLARATIVE and behaviour-focused (describe the observable outcome from the user/stakeholder view, never implementation detail, UI selectors or incidental wiring); follow strict Given-When-Then discipline (Given = context/preconditions, When = the single triggering action, Then = the observable outcome) with one behaviour per scenario and one logical When; use ubiquitous/domain language so scenarios read as intent; do not smuggle multiple actions or assertions into conjunctive `And` steps; write reusable, well-abstracted, consistently-phrased steps; use Background only for genuinely shared context and Scenario Outline only for true data variations; scenario titles state the behaviour/intent (not \"test X works\"); and ensure every acceptance criterion maps to a scenario. Done when the scenarios are updated and the acceptance criteria are written down."
+      "label": "Update Scenarios / Add new features"
     },
     {
+      "ref": "steps/shared/write_step_tests",
       "key": "tests",
-      "label": "Write/update unit tests (run a quick smoke check; full suite runs on push)",
-      "phase": "red",
-      "guidance": "Write or update unit tests for the change. Use these crate names: kernel `cargo test -p quecto-agentic-harness --lib <name_substring>` (the package is `quecto-agentic-harness`; its lib target is named `quecto`, but `-p` takes the PACKAGE name); TUI `cargo test -p quecto-tui --lib <name_substring>`. Plain lib tests need no `--features`; render-harness-driven TUI BDD uses the integration `bdd` target with `--features test-harness`. Run a quick targeted smoke check to confirm tests compile; the full suite and coverage run on push. Write step tests and unit tests to the same discipline: assertions are BEHAVIOURAL (verify observable outcomes/contracts, not internal or private state), well-named, focused, DETERMINISTIC and ISOLATED (no cross-scenario state leakage or ambient/global mutation), and never HOLLOW/always-pass — each test must be able to fail, and must fail before the implementation exists (RED). Done when the new/modified tests compile and target the new behaviour."
+      "label": "Write/update step and unit tests"
     },
     {
       "key": "red",

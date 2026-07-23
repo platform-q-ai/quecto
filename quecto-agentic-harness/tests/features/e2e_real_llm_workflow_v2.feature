@@ -19,7 +19,7 @@ Feature: E2E Real LLM Workflow V2 UDS Tests
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the get_state response "gs-sel" should have workflow mode "selecting_template"
-    And the get_state response "gs-sel" should have 2 available templates
+    And the get_state response "gs-sel" should have 10 available templates
 
   @done @manual-real-llm @mock-llm
   Scenario: LLM selects a workflow template

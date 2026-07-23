@@ -14,7 +14,21 @@ fn embedded_canonical_folder_parses_into_both_templates() {
     // they cannot drift, and every shared-step reference must resolve.
     let templates = default_templates();
     let ids: Vec<&str> = templates.iter().map(|t| t.id.as_str()).collect();
-    assert_eq!(ids, ["feature", "refactor"]);
+    assert_eq!(
+        ids,
+        [
+            "feature",
+            "adversarial-review",
+            "bugfix",
+            "chore",
+            "flake-hunt",
+            "investigate",
+            "plan",
+            "prd",
+            "refactor",
+            "remove",
+        ]
+    );
     for t in &templates {
         assert!(!t.steps.is_empty(), "template `{}` must have steps", t.id);
     }
@@ -25,15 +39,15 @@ fn shared_step_references_resolve_to_inline_steps() {
     // AC2: `steps/shared/hooks` is defined once on disk and referenced by
     // both templates; after embedding+resolution each template carries a
     // fully inlined `hooks` step with the shared guidance.
-    for t in default_templates() {
-        let template_id = t.id.clone();
+    for t in default_templates()
+        .into_iter()
+        .filter(|t| t.steps.iter().any(|s| s.key == "hooks"))
+    {
         let hooks = t
             .steps
             .iter()
             .find(|s| s.key == "hooks")
-            .unwrap_or_else(|| {
-                panic!("template `{template_id}` must resolve the shared hooks step")
-            });
+            .unwrap_or_else(|| panic!("template `{}` must resolve the shared hooks step", t.id));
         assert!(
             hooks
                 .guidance
