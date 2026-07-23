@@ -37,16 +37,7 @@ impl App {
             Event::SubagentNotification {
                 agent_id, message, ..
             } => self.handle_subagent_notification(agent_id, message),
-            Event::SubagentMessagesAppended {
-                agent_id,
-                messages,
-                message_refs,
-            } => {
-                let synced = self.is_synced_authoritative_feed(&agent_id);
-                if !synced {
-                    self.handle_subagent_messages_appended(agent_id, messages, message_refs);
-                }
-            }
+            Event::SubagentMessagesAppended { .. } => {}
             Event::WorkflowState {
                 agent_id,
                 steps,

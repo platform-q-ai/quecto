@@ -243,8 +243,7 @@ impl App {
                     self.handle_command_send_failure(failure);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
-                // Events fanned in from the active sub-agent's direct
-                // connect-on-select connection (#800).
+                // Events fanned in from per-subagent ledger-sync feeds.
                 Some((agent_id, ev)) = self.subagents.event_rx.recv() => {
                     let is_token = Self::is_token_event(&ev);
                     self.route_subagent_event(&agent_id, ev);

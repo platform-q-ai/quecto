@@ -51,19 +51,6 @@ pub(super) fn chat_text(app: &mut App) -> String {
         .join("\n")
 }
 
-fn child_chat_text(app: &mut App, agent_id: &str) -> String {
-    app.subagents
-        .sessions
-        .get_mut(agent_id)
-        .expect("child session exists")
-        .chat
-        .render(120)
-        .iter()
-        .map(|line| super::app_methods::strip_ansi(line))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 pub(super) fn prime_active_viewport(app: &mut App) {
     let chat = app.active_chat_mut();
     chat.set_viewport_height(1);
@@ -148,7 +135,7 @@ async fn older_history_request_is_deduped_while_cursor_is_in_flight() {
 }
 
 #[tokio::test]
-async fn subagent_older_history_request_targets_active_child_session() {
+async fn subagent_older_history_request_is_disabled_after_legacy_backfill_removal() {
     let mut h = harness().await;
     h.event(Event::SubagentStateChanged {
         subagents: vec![crate::infrastructure::client::SubagentInfoEvent {
@@ -176,15 +163,9 @@ async fn subagent_older_history_request_targets_active_child_session() {
         session.chat.scroll_up(usize::MAX);
     }
 
-    let request = h
-        .app_mut()
-        .next_history_page_request()
-        .expect("child page request is available");
-
-    assert_eq!(request.1, "child-cursor");
     assert!(
-        request.2,
-        "selected sub-agent history must target the child connection"
+        h.app_mut().next_history_page_request().is_none(),
+        "sub-agent scrollback must not issue the deleted legacy get_messages backfill path"
     );
 }
 
@@ -503,93 +484,6 @@ async fn failed_stub_recall_does_not_retry_on_every_scroll() {
                 != Some("get_message")
         }),
         "a permanent get_message failure must not retry on every scroll"
-    );
-}
-
-#[tokio::test]
-async fn subagent_older_history_page_prepends_without_replacing_newest() {
-    let mut h = harness().await;
-    h.event(Event::SubagentStateChanged {
-        subagents: vec![crate::infrastructure::client::SubagentInfoEvent {
-            agent_id: "worker".into(),
-            status: "idle".into(),
-            last_tool: None,
-            last_error: None,
-            pid: 7,
-            socket_path: Some("/tmp/worker.sock".into()),
-            parent_id: None,
-            workflow: None,
-            read_only: false,
-        }],
-    });
-    h.select(Some("worker"));
-
-    // Initial (newest) child page reports older history before it.
-    h.route(
-        "worker",
-        Event::Response {
-            id: Some("child-backfill".into()),
-            command: "get_messages".into(),
-            success: true,
-            data: Some(page(
-                &[("m3", "third message"), ("m4", "fourth message")],
-                Some("m3"),
-                true,
-            )),
-            error: None,
-        },
-    );
-    // Register the older-page request through the production request builder so
-    // the response below correlates with the child's own in-flight id (#1061
-    // review: uncorrelated pages are dropped).
-    {
-        let session = h.app_mut().active_session_mut();
-        session.chat.set_viewport_height(1);
-        let _ = session.chat.render(120);
-        session.chat.scroll_up(usize::MAX);
-    }
-    let request = h
-        .app_mut()
-        .next_history_page_request()
-        .expect("child older-page request is available");
-    assert!(request.0.starts_with("history-page-"));
-    let request_id = request.0;
-    // The explicitly-requested older page must PREPEND, not replace the newest
-    // page (regression: the child reconciler used replace_history_prefix).
-    h.route(
-        "worker",
-        Event::Response {
-            id: Some(request_id),
-            command: "get_messages".into(),
-            success: true,
-            data: Some(page(
-                &[("m1", "first message"), ("m2", "second message")],
-                None,
-                false,
-            )),
-            error: None,
-        },
-    );
-
-    let frame = child_chat_text(h.app_mut(), "worker");
-    let first = frame.find("first message").expect("oldest page rendered");
-    let second = frame
-        .find("second message")
-        .expect("older page tail rendered");
-    let third = frame
-        .find("third message")
-        .expect("newer page head rendered");
-    let fourth = frame
-        .find("fourth message")
-        .expect("newest message rendered");
-    assert!(
-        first < second && second < third && third < fourth,
-        "child older page must join before the existing page without a gap:\n{frame}"
-    );
-    assert_eq!(
-        frame.matches("third message").count(),
-        1,
-        "child backfill must not duplicate or replace the newest page:\n{frame}"
     );
 }
 

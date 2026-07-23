@@ -151,7 +151,7 @@ async fn selecting_warm_synced_agent_reuses_existing_feed() {
 }
 
 #[tokio::test]
-async fn selecting_warm_unsynced_agent_reopens_legacy_backfill_feed() {
+async fn selecting_warm_unsynced_agent_does_not_reopen_legacy_backfill_feed() {
     let (socket, mut child_rx) = spawn_subagent_socket_with_commands("legacy-focus");
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
@@ -170,21 +170,15 @@ async fn selecting_warm_unsynced_agent_reopens_legacy_backfill_feed() {
     .await;
     assert!(
         initial.iter().any(|line| line.contains(r#""type":"sync""#)),
-        "discovery should first try warm ledger sync: {initial:?}"
+        "discovery should try ledger sync: {initial:?}"
     );
 
     h.select(Some("legacy-focus"));
-    let selected = wait_for_child_commands(&mut child_rx, |commands| {
-        commands
-            .iter()
-            .any(|line| line.contains(r#""type":"get_messages""#))
-    })
-    .await;
     assert!(
-        selected
-            .iter()
-            .any(|line| line.contains(r#""type":"get_messages""#)),
-        "selecting an unsynced warm feed must restore legacy history backfill: {selected:?}"
+        tokio::time::timeout(std::time::Duration::from_millis(20), child_rx.recv())
+            .await
+            .is_err(),
+        "focus must not reopen the deleted legacy get_messages backfill path"
     );
 }
 

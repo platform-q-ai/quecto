@@ -27,7 +27,7 @@ impl App {
         self.subagents.sessions.keys().cloned().collect()
     }
 
-    /// The socket path the connect-on-select connection would dial for `id`, as
+    /// The socket path the child-feed connection would dial for `id`, as
     /// surfaced by the kernel (#800). `None` when unknown.
     #[cfg(test)]
     pub(super) fn subagent_socket_path(&self, id: &str) -> Option<String> {
@@ -105,8 +105,8 @@ impl App {
         if session.observed_run_state {
             return false;
         }
-        // No stream state observed yet: connect-on-select may have joined
-        // MID-TURN and missed `agent_start`, so `session.running` reads a false
+        // No stream state observed yet: the child feed may have joined MID-TURN
+        // and missed `agent_start`, so `session.running` reads a false
         // negative. Fall back to the master's tracked status (`subagent_local`)
         // so Esc still cancels a busy sub-agent instead of navigating to master.
         let ui = &self.subagents;
@@ -149,7 +149,6 @@ impl App {
         if new_active == self.subagents.active_agent_id {
             return;
         }
-        let old_active = self.subagents.active_agent_id.clone();
         self.subagents.active_agent_id = new_active.clone();
         self.sync_panel_selection_to_active();
         let Some(id) = new_active else {
@@ -157,14 +156,6 @@ impl App {
             self.current_model = self.master_session.footer.known_model().map(str::to_string);
             self.current_effort = self.master_session.footer.effort().map(str::to_string);
             self.effort_levels.clear();
-            if let Some(old) = old_active {
-                let drop_legacy = self.is_legacy_selected_feed(&old);
-                if drop_legacy {
-                    if let Some(feed) = self.subagents.feeds.remove(&old) {
-                        feed.handle.abort();
-                    }
-                }
-            }
             self.send_state_resync();
             return;
         };
@@ -174,19 +165,8 @@ impl App {
         self.current_effort = f.and_then(|f| f.effort()).map(str::to_string);
         self.effort_levels.clear();
         self.seed_session_bar_from_snapshot(&id);
-        self.upgrade_warm_feed_for_selection(&id);
+        self.ensure_synced_subagent_feed(&id);
         self.refresh_synced_feed_for_focus(&id);
-        if !self.subagents.feeds.contains_key(&id) {
-            self.open_subagent_connection(&id);
-        }
-        if let Some(old) = old_active {
-            let drop_legacy = self.is_legacy_selected_feed(&old);
-            if drop_legacy {
-                if let Some(feed) = self.subagents.feeds.remove(&old) {
-                    feed.handle.abort();
-                }
-            }
-        }
     }
 
     fn reconcile_active_agent(&mut self) {
@@ -235,18 +215,6 @@ impl App {
         }
     }
 
-    fn upgrade_warm_feed_for_selection(&mut self, id: &str) {
-        let warm_unsynced = self.subagents.feeds.get(id).is_some_and(|feed| {
-            feed.authority == crate::interface::feed_state::FeedAuthority::WarmSync
-                && !feed.supports_sync
-        });
-        if warm_unsynced {
-            if let Some(feed) = self.subagents.feeds.remove(id) {
-                feed.handle.abort();
-            }
-        }
-    }
-
     fn refresh_synced_feed_for_focus(&mut self, id: &str) {
         let stale = self.subagents.feeds.get(id).is_some_and(|feed| {
             feed.authority == crate::interface::feed_state::FeedAuthority::SyncedAuthoritative
@@ -263,12 +231,6 @@ impl App {
                 });
             }
         }
-    }
-
-    pub(super) fn is_legacy_selected_feed(&self, id: &str) -> bool {
-        self.subagents.feeds.get(id).is_some_and(|feed| {
-            feed.authority == crate::interface::feed_state::FeedAuthority::LegacySelected
-        })
     }
 
     pub(super) fn is_synced_authoritative_feed(&self, id: &str) -> bool {

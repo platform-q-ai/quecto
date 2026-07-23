@@ -179,9 +179,7 @@ pub(crate) struct SubagentUi {
     /// Each item is `(agent_id, event)`; routed into that agent's session.
     event_tx: mpsc::Sender<(String, Event)>,
     event_rx: mpsc::Receiver<(String, Event)>,
-    /// Per-subagent feed state. PR 2 keeps legacy singleton connect-on-select
-    /// behaviour, but stores it behind the feed map so later PRs can warm more
-    /// feeds without changing routing invariants.
+    /// Per-subagent synced feed state keyed by agent id.
     feeds: std::collections::BTreeMap<String, FeedState>,
     /// Which pane has keyboard focus: the editor or the side panel (#802).
     focus: Focus,
@@ -245,8 +243,6 @@ pub(crate) struct SessionView {
     tools_this_turn: usize,
     /// Child tool starts not yet ended; forces recovery on a dropped end (review 3).
     open_tool_calls: usize,
-    master_stream_appended_len: usize,
-    seen_message_ids: HashSet<String>,
 }
 
 impl SessionView {
@@ -275,8 +271,6 @@ impl SessionView {
             active_turn_start: 0,
             tools_this_turn: 0,
             open_tool_calls: 0,
-            master_stream_appended_len: 0,
-            seen_message_ids: HashSet::new(),
         }
     }
 }
@@ -440,8 +434,6 @@ mod app_response;
 mod app_rewind;
 #[path = "app_selection.rs"]
 mod app_selection;
-#[path = "app_subagent_appended.rs"]
-mod app_subagent_appended;
 #[path = "app_subagent_feed.rs"]
 mod app_subagent_feed;
 #[path = "app_subagent_panel.rs"]

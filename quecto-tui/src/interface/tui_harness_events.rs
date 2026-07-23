@@ -40,9 +40,10 @@ pub fn subagent(id: &str, status: &str, wf: Option<(&str, u32, u32)>) -> Subagen
 
 /// Bind a real, drained Unix socket for a sub-agent and return its path. The
 /// listener task accepts one connection and drains its lines, so a TUI
-/// `connect-on-select` to this path succeeds and the per-child command channel
-/// stays live (its receiver is NOT dropped) — letting routing tests exercise
-/// the real `try_send` delivery path rather than the older-kernel `None` case.
+/// ledger-sync feed connection to this path succeeds and the per-child command
+/// channel stays live (its receiver is NOT dropped) — letting routing tests
+/// exercise the real `try_send` delivery path rather than the older-kernel
+/// `None` case.
 pub fn spawn_subagent_socket(id: &str) -> std::path::PathBuf {
     let (path, mut cmd_rx) = spawn_subagent_socket_with_commands(id);
     // Keep the receiver alive and drain commands so every accepted connection

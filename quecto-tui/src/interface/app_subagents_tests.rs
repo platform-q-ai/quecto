@@ -685,10 +685,6 @@ async fn malformed_or_non_socket_paths_are_not_registered_for_connection() {
             ),
         ],
     );
-    a.open_subagent_connection("empty");
-    a.open_subagent_connection("relative");
-    a.open_subagent_connection("file");
-
     assert_eq!(a.subagents.tracked["empty"].info.socket_path, None);
     assert_eq!(a.subagents.tracked["relative"].info.socket_path, None);
     assert_eq!(a.subagents.tracked["file"].info.socket_path, None);

@@ -80,28 +80,19 @@ impl App {
     }
 
     pub(super) fn request_active_older_history_page(&mut self) {
-        let Some((id, before, target_child)) = self.next_history_page_request() else {
+        let Some((id, before)) = self.next_history_page_request() else {
             return;
         };
-        let cmd = Command::GetMessages {
+        self.send_command(Command::GetMessages {
             id: Some(id),
             before: Some(before),
-        };
-        if target_child {
-            if !self.send_to_active_subagent(cmd) {
-                self.active_session_mut().history_pending_page = None;
-                self.notify(
-                    "Selected sub-agent is not ready for history backfill yet",
-                    NotifyLevel::Warning,
-                );
-            }
-        } else {
-            self.send_command(cmd);
-        }
+        });
     }
 
-    pub(super) fn next_history_page_request(&mut self) -> Option<(String, String, bool)> {
-        let target_child = self.subagents.active_agent_id.is_some();
+    pub(super) fn next_history_page_request(&mut self) -> Option<(String, String)> {
+        if self.subagents.active_agent_id.is_some() {
+            return None;
+        }
         let session = self.active_session_mut();
         if !session.history_has_more_before || !session.chat.is_at_oldest_loaded_history() {
             return None;
@@ -133,7 +124,7 @@ impl App {
             before: before.clone(),
             requested_at: std::time::Instant::now(),
         });
-        Some((request_id, before, target_child))
+        Some((request_id, before))
     }
 
     /// Auto-recall (#1061): request full content for any demoted history stub
@@ -317,7 +308,7 @@ impl App {
         self.master_session.history_backfilled = false;
         self.master_session.partial_backfill_len = None;
         // The cursors themselves are reconciled from `data` below.
-        Self::reconcile_backfill_history(&mut self.master_session, data, false);
+        Self::reconcile_master_backfill_history(&mut self.master_session, data, false);
         self.master_session.chat.add_entry(ChatEntry::Status {
             text: status.to_string(),
         });

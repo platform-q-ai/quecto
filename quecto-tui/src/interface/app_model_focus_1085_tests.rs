@@ -49,7 +49,7 @@ async fn late_master_set_model_success_does_not_clobber_focused_child_model() {
     ]));
     h.select(Some("child"));
     h.try_drain_commands();
-    // Drain connect-on-select traffic so later assertions are about /model only.
+    // Drain child-feed traffic so later assertions are about /model only.
     let _ = tokio::time::timeout(std::time::Duration::from_millis(50), child_rx.recv()).await;
     h.route(
         "child",
@@ -158,7 +158,7 @@ async fn model_change_refused_when_focused_child_connection_not_ready() {
     let mut h = harness().await;
     h.event(get_state_event("openai-api/gpt-5.5", Some("medium")));
     h.event(super::tui_harness::spawn_start("child"));
-    // No socket path → connect-on-select cannot install active_cmd_tx.
+    // No socket path → no child-feed command channel is installed.
     h.event(super::tui_harness::subagents_changed(vec![
         super::tui_harness::subagent("child", "idle", None),
     ]));
