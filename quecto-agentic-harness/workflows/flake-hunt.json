@@ -1,6 +1,6 @@
 {
   "label": "Flake Hunt",
-  "description": "CI flake triage: confirm it is a flake, capture evidence, isolate locally, then fix it or file a well-evidenced issue (no auto-merge).",
+  "description": "CI flake triage: confirm it is a flake, capture evidence, isolate locally, then fix it or file a well-evidenced issue (no auto-merge). If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
   "when_to_use": "Use when a CI check or test fails intermittently or on an unrelated diff and the task is to triage it. Do NOT use for a test that fails deterministically because the code is wrong — that is a 'bugfix'.",
   "guards": [
     {

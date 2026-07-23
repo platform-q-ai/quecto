@@ -1,6 +1,6 @@
 {
   "label": "Remove",
-  "description": "Staged feature/module removal: dependency impact scan, explicit strategy, teardown in reverse layer order, dead-code sweep, PR (no auto-merge).",
+  "description": "Staged feature/module removal: dependency impact scan, explicit strategy, teardown in reverse layer order, dead-code sweep, PR (no auto-merge). If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
   "when_to_use": "Use when the task is to remove, drop, or deprecate existing functionality. Do NOT use for restructuring code that stays ('refactor') or for behaviour changes that keep the feature ('feature', 'bugfix').",
   "guards": [
     {

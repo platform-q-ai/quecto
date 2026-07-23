@@ -1,6 +1,6 @@
 {
   "label": "Plan",
-  "description": "Produce an execution-ready phased implementation plan (Execution Checklist + per-phase Task checklists), reviewed and attached to the issue. Plans only — no implementation.",
+  "description": "Produce an execution-ready phased implementation plan (Execution Checklist + per-phase Task checklists), reviewed and attached to the issue. Plans only — no implementation. If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
   "when_to_use": "Use when the deliverable is a phased implementation plan for already-agreed work (an approved PRD slice, a large issue needing decomposition). Do NOT use to decide WHAT to build ('prd') or to implement ('feature', 'bugfix', 'refactor', 'remove').",
   "guards": [
     {

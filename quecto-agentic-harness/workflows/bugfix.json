@@ -1,6 +1,6 @@
 {
   "label": "Bugfix",
-  "description": "Repro-first fix: capture the wrong behaviour in a failing test, fix it, prove the repro passes, sweep for the same defect class; hand off the PR (no auto-merge).",
+  "description": "Repro-first fix: capture the wrong behaviour in a failing test, fix it, prove the repro passes, sweep for the same defect class; hand off the PR (no auto-merge). If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
   "when_to_use": "Use when existing observable behaviour is WRONG and must be corrected. Do NOT use for new/changed behaviour ('feature'), zero-behaviour-change restructures ('refactor'), or when only diagnosis is wanted ('investigate').",
   "guards": [
     {

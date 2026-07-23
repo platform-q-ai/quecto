@@ -1,6 +1,6 @@
 {
   "label": "Feature",
-  "description": "New capability with local hook verification, BDD/TDD, code review, then hand off the PR for human review (no auto-merge).",
+  "description": "New capability with local hook verification, BDD/TDD, code review, then hand off the PR for human review (no auto-merge). If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
   "when_to_use": "Use for behaviour-adding or behaviour-changing Quecto work (the issue's acceptance criteria describe new or altered observable behaviour) and for maintenance work such as docs, CI, tooling or dependency changes. Do NOT use for zero-behaviour-change code restructures — use 'refactor' for those.",
   "steps": [
     "steps/shared/hooks",
