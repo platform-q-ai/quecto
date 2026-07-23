@@ -27,6 +27,15 @@ Feature: TUI app event routing and command behaviours
     And the app master session shows "Invalid resume payload: messages field is not an array"
     And the app notification includes "Invalid resume payload: messages field is not an array"
 
+
+  @app-response @session-payloads
+  Scenario: Resumed conversations restore completed tool calls as tool cards
+    Given a fresh TUI app harness
+    When a resumed conversation includes a completed command "printf restored" with output "restored output"
+    Then the restored conversation should show the completed command "printf restored"
+    And the restored command should show output "restored output"
+    And the resumed conversation should continue after "restored output" with "done after restore"
+
   Scenario: Failed model switch response is shown as an error notification
     Given a fresh TUI app harness
     When a model switch response fails with "model not found"

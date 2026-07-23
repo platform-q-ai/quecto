@@ -1,6 +1,6 @@
 use super::app_selection::{SelectionAnchor, apply_selection_highlight, display_col_to_char_idx};
 use super::*;
-use crate::application::session_payloads::{self, ResumedChatMessage};
+use crate::application::session_payloads;
 use crate::interface::components::select_list::route_overlay_key;
 use crate::interface::select_overlay::{
     build_resume_selector_overlay, build_rewind_selector_overlay, build_select_overlay,
@@ -260,14 +260,8 @@ impl App {
 
         let has_displayable_messages = !messages.is_empty();
         self.master_session.chat.clear();
-        for message in messages {
-            let (text, id, stub, is_user) = match message {
-                ResumedChatMessage::User { text, id, stub } => (text, id, stub, true),
-                ResumedChatMessage::Assistant { text, id, stub } => (text, id, stub, false),
-            };
-            self.master_session
-                .chat
-                .add_entry(Self::history_entry(text, id, stub, is_user));
+        for entry in Self::resumed_chat_entries(messages) {
+            self.master_session.chat.add_entry(entry);
         }
         if !has_displayable_messages {
             self.master_session.chat.add_entry(ChatEntry::Status {

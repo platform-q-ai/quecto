@@ -430,6 +430,8 @@ mod app_models;
 mod app_paged_history;
 #[path = "app_response.rs"]
 mod app_response;
+#[path = "app_resumed_history.rs"]
+mod app_resumed_history;
 #[path = "app_rewind.rs"]
 mod app_rewind;
 #[path = "app_selection.rs"]

@@ -467,6 +467,118 @@ async fn successful_resume_with_one_message_response_displays_first_message() {
 }
 
 #[tokio::test]
+async fn successful_resume_restores_tool_calls_and_results_as_tool_cards() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({
+            "messages": [
+                {"role": "user", "content": "please run it"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [{
+                        "id": "call-1",
+                        "function": {
+                            "name": "bash",
+                            "arguments": r#"{"command":"printf restored"}"#
+                        }
+                    }]
+                },
+                {
+                    "role": "tool",
+                    "toolCallId": "call-1",
+                    "toolName": "bash",
+                    "content": "restored output",
+                    "isError": false
+                },
+                {"role": "assistant", "content": "done"}
+            ]
+        })),
+        None,
+    );
+
+    let text = resume_chat_text(a);
+    let user = text.find("please run it").expect("user message restored");
+    let tool = text
+        .find("$ printf restored")
+        .expect("tool call command restored as a tool card");
+    let result = text
+        .find("restored output")
+        .expect("tool result restored in the tool card");
+    let done = text
+        .find("done")
+        .expect("assistant text after tool restored");
+    assert!(
+        user < tool && tool < result && result < done,
+        "resume must preserve tool turn order:
+{text}"
+    );
+}
+
+#[tokio::test]
+async fn successful_resume_restores_pending_and_failed_tool_cards() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "call-1", "function": {"name": "bash", "arguments": r#"{"command":"missing-command"}"#}},
+                        {"id": "call-2", "function": {"name": "read", "arguments": r#"{"path":"pending.txt"}"#}}
+                    ]
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call-1",
+                    "tool_name": "bash",
+                    "content": "missing-command: not found",
+                    "is_error": true
+                }
+            ]
+        })),
+        None,
+    );
+
+    let text = resume_chat_text(a);
+    let failed = text
+        .find("$ missing-command")
+        .expect("failed tool command restored");
+    let failure_output = text
+        .find("missing-command: not found")
+        .expect("failed tool output restored");
+    let pending = text
+        .find("pending.txt")
+        .expect("pending tool call restored");
+    assert!(
+        failed < failure_output && failure_output < pending,
+        "resume must preserve multiple tool call order:
+{text}"
+    );
+    assert!(
+        text.contains("✗"),
+        "failed resumed tool should render error artifact:
+{text}"
+    );
+    assert!(
+        text.contains("⠋"),
+        "unresolved resumed tool should render pending artifact:
+{text}"
+    );
+}
+
+#[tokio::test]
 async fn replace_chat_with_single_user_message_has_viewable_first_message() {
     let mut h = resume_harness().await;
     let data = serde_json::json!({

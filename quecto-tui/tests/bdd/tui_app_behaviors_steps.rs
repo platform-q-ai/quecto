@@ -193,6 +193,46 @@ fn when_resumed_messages_non_array(world: &mut TuiWorld) {
     });
 }
 
+#[when(expr = "a resumed conversation includes a completed command {string} with output {string}")]
+fn when_resumed_conversation_with_completed_command(
+    world: &mut TuiWorld,
+    command: String,
+    output: String,
+) {
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("resume-messages".into()),
+            command: "get_messages".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "messages": [
+                    {"role": "user", "content": "please run it"},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "toolCalls": [{
+                            "id": "call-1",
+                            "function": {
+                                "name": "bash",
+                                "arguments": serde_json::json!({"command": command}).to_string()
+                            }
+                        }]
+                    },
+                    {
+                        "role": "tool",
+                        "toolCallId": "call-1",
+                        "toolName": "bash",
+                        "content": output,
+                        "isError": false
+                    },
+                    {"role": "assistant", "content": "done after restore"}
+                ]
+            })),
+            error: None,
+        });
+    });
+}
+
 #[when(expr = "a model switch response fails with {string}")]
 fn when_model_switch_fails(world: &mut TuiWorld, error: String) {
     drive(world, |h| {
@@ -835,6 +875,49 @@ fn then_selected_subagent_session_shows(world: &mut TuiWorld, expected: String) 
     assert!(
         frame.contains(&expected),
         "selected sub-agent session should show {expected:?}, got:\n{frame}"
+    );
+}
+
+#[then(expr = "the restored conversation should show the completed command {string}")]
+fn then_restored_conversation_shows_completed_command(world: &mut TuiWorld, command: String) {
+    let expected = format!("$ {command}");
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&expected),
+        "restored conversation should show completed command {expected:?}, got:
+{frame}"
+    );
+}
+
+#[then(expr = "the restored command should show output {string}")]
+fn then_restored_command_shows_output(world: &mut TuiWorld, output: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&output),
+        "restored command should show output {output:?}, got:
+{frame}"
+    );
+}
+
+#[then(expr = "the resumed conversation should continue after {string} with {string}")]
+fn then_resumed_conversation_continues_after(world: &mut TuiWorld, earlier: String, later: String) {
+    let frame = drive(world, |h| h.full_frame());
+    let earlier_pos = frame.find(&earlier).unwrap_or_else(|| {
+        panic!(
+            "expected earlier text {earlier:?}, got:
+{frame}"
+        )
+    });
+    let later_pos = frame.find(&later).unwrap_or_else(|| {
+        panic!(
+            "expected later text {later:?}, got:
+{frame}"
+        )
+    });
+    assert!(
+        earlier_pos < later_pos,
+        "resumed conversation should show {later:?} after {earlier:?}, got:
+{frame}"
     );
 }
 
