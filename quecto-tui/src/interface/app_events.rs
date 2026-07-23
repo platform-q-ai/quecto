@@ -41,7 +41,12 @@ impl App {
                 agent_id,
                 messages,
                 message_refs,
-            } => self.handle_subagent_messages_appended(agent_id, messages, message_refs),
+            } => {
+                let synced = self.is_synced_authoritative_feed(&agent_id);
+                if !synced {
+                    self.handle_subagent_messages_appended(agent_id, messages, message_refs);
+                }
+            }
             Event::WorkflowState {
                 agent_id,
                 steps,

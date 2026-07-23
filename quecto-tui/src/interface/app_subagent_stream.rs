@@ -1,7 +1,5 @@
 use super::*;
-/// Defensive cap on a deferred sub-agent-note buffer (master or per-session,
-/// #828): the OLDEST note is evicted past the cap so a chatty grandchild during
-/// a long parent turn cannot grow it without bound; newest notes always survive.
+/// Defensive cap on deferred sub-agent notes; oldest notes are evicted.
 pub(super) const DEFERRED_NOTE_CAP: usize = 256;
 
 impl App {
@@ -27,13 +25,6 @@ impl App {
         } = &ev
         {
             let target = inner_id.as_deref().unwrap_or(agent_id);
-            // Trust assumption (security #856 review): `inner_id` is set by the
-            // kernel's `canonical_workflow_forward`, which only re-stamps a true
-            // descendant's id onto an ancestor's stream; we do NOT re-verify the
-            // ancestry here. The drop-stale guard below still confines the write
-            // to an already-tracked/retained session, so a misbehaving id can at
-            // worst overwrite another visible agent's workflow bar (display-only,
-            // no privilege/data crossover) and can never create a session.
             if !self.is_retained_or_tracked_agent(target) {
                 return;
             }
@@ -226,10 +217,7 @@ impl App {
             return;
         }
         self.ensure_session(agent_id);
-        // Child recovery `get_message` no longer travels the child socket — it
-        // is routed through the master (F1), so its Response arrives on the
-        // master stream and is applied by `handle_get_message_recovery`, not
-        // here.
+        let synced_authoritative = self.is_synced_authoritative_feed(agent_id);
         let Some(session) = self.subagents.sessions.get_mut(agent_id) else {
             return;
         };
@@ -274,14 +262,12 @@ impl App {
         // streamed response is finalized below).
         let flush_notes = matches!(ev, Event::AgentEnd { .. } | Event::TurnEnd { .. });
         let recovery_refs = Self::subagent_end_of_turn_refs(&ev);
-        // `get_message` responses are handled and returned earlier in this
-        // function; only `get_messages` backfill can reach here (#1060 review).
         let early_return = matches!(
             &ev,
             Event::Response { command, .. } if command == "get_messages"
         );
-        Self::apply_subagent_chat_event(session, &ev);
-        if early_return {
+        if Self::apply_subagent_chat_event_or_skip(session, &ev, synced_authoritative, early_return)
+        {
             return;
         }
         if flush_notes {
@@ -318,6 +304,19 @@ impl App {
             }
             _ => None,
         }
+    }
+
+    fn apply_subagent_chat_event_or_skip(
+        session: &mut SessionView,
+        ev: &Event,
+        synced: bool,
+        early: bool,
+    ) -> bool {
+        if synced {
+            return early;
+        }
+        Self::apply_subagent_chat_event(session, ev);
+        early
     }
 
     /// Apply a single non-workflow child stream event to its chat.

@@ -137,6 +137,118 @@ async fn selected_child_direct_stream_is_not_duplicated_by_master_appended_event
 }
 
 #[tokio::test]
+async fn synced_authoritative_child_ignores_parent_appended_crumbs() {
+    let socket = spawn_subagent_socket("synced-child");
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent_with_socket(
+        "synced-child",
+        "running",
+        Some(("active", 1, 3)),
+        Some(socket),
+    )]));
+    h.app_mut()
+        .note_sync_capability("synced-child", &serde_json::json!({"sync":1}));
+    h.app_mut().route_sync_response(
+        "synced-child",
+        &serde_json::json!({
+            "epoch": 1,
+            "rev": 1,
+            "messages": [{"id":"ledger-turn","role":"assistant","content":"LEDGER_ONLY_OUTPUT"}],
+            "nextRev": null,
+            "caughtUp": true,
+            "resync": false
+        }),
+    );
+    assert_eq!(
+        h.app_mut().session_chat_entry_count("synced-child"),
+        Some(1)
+    );
+
+    h.event(Event::SubagentMessagesAppended {
+        agent_id: "synced-child".into(),
+        messages: vec![serde_json::json!({
+            "role": "assistant",
+            "id": "parent-crumb",
+            "content": "PARENT_CRUMB_OUTPUT"
+        })],
+        message_refs: vec!["parent-crumb".into()],
+    });
+
+    assert_eq!(
+        h.app_mut().session_chat_entry_count("synced-child"),
+        Some(1),
+        "synced authoritative child transcript must not be mutated by parent crumbs"
+    );
+    let frame = strip_ansi(
+        &h.select(Some("synced-child"))
+            .app_mut()
+            .compose_frame()
+            .join(
+                "
+",
+            ),
+    );
+    assert!(frame.contains("LEDGER_ONLY_OUTPUT"), "{frame}");
+    assert!(!frame.contains("PARENT_CRUMB_OUTPUT"), "{frame}");
+}
+
+#[tokio::test]
+async fn synced_authoritative_child_flushes_deferred_grandchild_notes_on_end() {
+    let socket = spawn_subagent_socket("synced-grandchild-notes");
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent_with_socket(
+        "synced-grandchild-notes",
+        "running",
+        Some(("active", 1, 3)),
+        Some(socket),
+    )]));
+    h.app_mut()
+        .note_sync_capability("synced-grandchild-notes", &serde_json::json!({"sync":1}));
+    h.app_mut().route_sync_response(
+        "synced-grandchild-notes",
+        &serde_json::json!({
+            "epoch": 1,
+            "rev": 1,
+            "messages": [{"id":"ledger-turn","role":"assistant","content":"LEDGER_TRANSCRIPT"}],
+            "nextRev": null,
+            "caughtUp": true,
+            "resync": false
+        }),
+    );
+
+    h.route("synced-grandchild-notes", Event::AgentStart);
+    h.route(
+        "synced-grandchild-notes",
+        Event::SubagentNotification {
+            agent_id: "grandchild".into(),
+            sequence: 1,
+            message: "grandchild finished".into(),
+        },
+    );
+    h.route(
+        "synced-grandchild-notes",
+        Event::AgentEnd {
+            messages: vec![],
+            message_refs: vec![],
+        },
+    );
+
+    let frame = strip_ansi(
+        &h.select(Some("synced-grandchild-notes"))
+            .app_mut()
+            .compose_frame()
+            .join("\n"),
+    );
+    assert!(frame.contains("LEDGER_TRANSCRIPT"), "{frame}");
+    assert!(
+        frame.contains("grandchild finished"),
+        "synced authoritative end-of-turn must flush deferred grandchild notes:\n{frame}"
+    );
+}
+
+#[tokio::test]
 async fn appended_messages_update_inactive_sibling_without_stealing_focus() {
     let active_socket = spawn_subagent_socket("active-child");
     let mut h = TuiHarness::new().await;

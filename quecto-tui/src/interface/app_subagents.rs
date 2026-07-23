@@ -3,7 +3,27 @@ use super::*;
 pub(crate) fn usable_socket_path(path: Option<&str>) -> bool {
     path.is_some_and(|p| {
         let p = p.trim();
-        !p.is_empty() && std::path::Path::new(p).is_absolute()
+        let path = std::path::Path::new(p);
+        if p.is_empty()
+            || !path.is_absolute()
+            || path
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt;
+            let Ok(metadata) = std::fs::symlink_metadata(path) else {
+                return false;
+            };
+            metadata.file_type().is_socket() && !metadata.file_type().is_symlink()
+        }
+        #[cfg(not(unix))]
+        {
+            true
+        }
     })
 }
 
@@ -232,6 +252,18 @@ impl App {
             }
         }
         self.subagents.tracked = new_map;
+        let warm_ids = self
+            .subagents
+            .tracked
+            .iter()
+            .filter(|(_, tracked)| usable_socket_path(tracked.info.socket_path.as_deref()))
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in warm_ids {
+            self.ensure_session(&id);
+            self.ensure_synced_subagent_feed(&id);
+        }
+        self.enforce_warm_feed_cap();
         self.clamp_panel_selection();
     }
 
