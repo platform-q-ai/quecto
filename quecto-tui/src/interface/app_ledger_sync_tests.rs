@@ -127,7 +127,7 @@ async fn sync_response_promotes_warm_feed_to_authoritative() {
 }
 
 #[tokio::test]
-async fn sync_response_for_wrong_epoch_is_ignored() {
+async fn sync_response_for_wrong_epoch_without_resync_is_ignored() {
     let mut h = super::tui_harness::TuiHarness::new().await;
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
@@ -142,4 +142,35 @@ async fn sync_response_for_wrong_epoch_is_ignored() {
     assert_eq!(feed.epoch, 2);
     assert_eq!(feed.rev, 5);
     assert_eq!(app.subagents.sessions["a1"].chat.entry_count(), 0);
+}
+
+#[tokio::test]
+async fn epoch_mismatch_resync_replaces_stale_synced_transcript() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (mut feed, _rx) = feed_with_rx();
+    feed.epoch = 2;
+    feed.rev = 5;
+    feed.supports_sync = true;
+    app.subagents.feeds.insert("a1".into(), feed);
+    app.ensure_session("a1");
+    app.route_sync_response("a1", &sync_delta(2, 5));
+
+    app.route_sync_response(
+        "a1",
+        &json!({
+            "epoch": 3,
+            "rev": 1,
+            "messages": [{"id":"fresh","role":"user","content":"fresh session"}],
+            "nextRev": null,
+            "caughtUp": true,
+            "resync": true
+        }),
+    );
+
+    let feed = app.subagents.feeds.get("a1").unwrap();
+    assert_eq!(feed.epoch, 3);
+    assert_eq!(feed.rev, 1);
+    let entries = app.subagents.sessions["a1"].chat.entries();
+    assert!(matches!(entries, [ChatEntry::User { text }] if text == "fresh session"));
 }
