@@ -15,7 +15,7 @@ pub(super) fn is_injected_system_prompt(message: &Message, prompt: &str) -> bool
     !prompt.is_empty()
         && message.role == Role::System
         && !message.is_manifest
-        && (message.content == prompt || message.content.starts_with(prompt))
+        && message.content == prompt
 }
 
 pub(super) fn user_visible_messages(messages: &[Message], system_prompt: &str) -> Vec<Message> {

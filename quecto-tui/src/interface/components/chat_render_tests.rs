@@ -684,3 +684,28 @@ fn strip_ansi(s: &str) -> String {
     }
     out
 }
+
+#[test]
+fn render_tool_long_header_is_bounded_with_truncation_hint() {
+    let long_command = "x".repeat(5000);
+    let lines = render_tool_execution(ToolRenderArgs {
+        tool_name: "bash",
+        args_json: &Some(serde_json::json!({"command": long_command})),
+        result: None,
+        is_error: false,
+        duration_ms: None,
+        expanded: false,
+        width: 40,
+    });
+    assert!(
+        lines.len() <= 9,
+        "header should be bounded: {} lines",
+        lines.len()
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| strip_ansi(line).contains("header truncated")),
+        "{lines:?}"
+    );
+}

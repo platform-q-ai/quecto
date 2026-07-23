@@ -14,9 +14,11 @@ async fn prompt_persists_user_message_before_assistant_reply() {
     let mut fx = Fixture::new();
     {
         let mut ctx = fx.ctx();
-        super::persist_user_prompt_before_run(&mut ctx, "first only")
+        let prompt = crate::domain::message::Message::user("first only");
+        super::persist_user_prompt_before_run(&mut ctx, &prompt)
             .await
             .unwrap();
+        ctx.messages.push(prompt);
     }
 
     let loaded = fx.store.load("cli:test").await.unwrap().unwrap();

@@ -515,11 +515,20 @@ pub(super) fn push_header(
     lines.extend(wrap_tool_line(&header, width));
 }
 
+const TOOL_HEADER_MAX_ROWS: usize = 8;
+
 fn wrap_tool_line(line: &str, width: usize) -> Vec<String> {
-    crate::interface::utils::wrap_text(line, width)
+    let mut rows: Vec<String> = crate::interface::utils::wrap_text(line, width)
         .into_iter()
         .map(|segment| truncate_to_width(&segment, width, None))
-        .collect()
+        .collect();
+    if rows.len() > TOOL_HEADER_MAX_ROWS {
+        rows.truncate(TOOL_HEADER_MAX_ROWS);
+        if let Some(last) = rows.last_mut() {
+            *last = truncate_to_width("… header truncated", width, None);
+        }
+    }
+    rows
 }
 
 /// Wrapped rows a single over-long source line may occupy in a collapsed

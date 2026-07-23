@@ -606,3 +606,88 @@ async fn replace_chat_with_no_displayable_messages_shows_resume_status() {
     let text = resume_chat_text(a);
     assert!(text.contains("Session resumed"));
 }
+
+#[tokio::test]
+async fn resume_empty_legacy_rewind_uses_rewind_status_once() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+    a.handle_response(
+        Some("rewind-refresh".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({"messages": []})),
+        None,
+    );
+    let text = resume_chat_text(a);
+    assert!(text.contains("Conversation rewound"), "{text}");
+    assert!(!text.contains("Session resumed"), "{text}");
+    assert_eq!(text.matches("Conversation rewound").count(), 1, "{text}");
+}
+
+#[tokio::test]
+async fn resumed_spawn_tool_call_is_suppressed_like_live_spawn() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({"messages": [
+            {"role":"assistant","content":"","toolCalls":[{"id":"spawn-1","function":{"name":"spawn","arguments":r#"{"task":"secret"}"#}}]},
+            {"role":"tool","toolCallId":"spawn-1","toolName":"spawn","content":"spawned"}
+        ]})),
+        None,
+    );
+    let text = resume_chat_text(a);
+    assert!(!text.contains("spawn"), "{text}");
+    assert!(!text.contains("secret"), "{text}");
+    assert!(!text.contains("spawned"), "{text}");
+}
+
+#[tokio::test]
+async fn resumed_tool_name_strips_terminal_control_sequences() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({"messages": [
+            {"role":"assistant","content":"","toolCalls":[{"id":"evil-1","function":{"name":"evil\u{1b}]8;;https://exfil\u{7}name","arguments":"{}"}}]}
+        ]})),
+        None,
+    );
+    let raw = a.master_session.chat.render(120).join("\n");
+    let text = resume_chat_text(a);
+    assert!(text.contains("evilname"), "{text}");
+    assert!(!raw.contains("\u{1b}]8"), "{raw:?}");
+}
+
+#[tokio::test]
+async fn resumed_duplicate_tool_ids_attach_results_chronologically() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({"messages": [
+            {"role":"assistant","content":"","toolCalls":[
+                {"id":"dup","function":{"name":"bash","arguments":r#"{"command":"first"}"#}},
+                {"id":"dup","function":{"name":"bash","arguments":r#"{"command":"second"}"#}}
+            ]},
+            {"role":"tool","toolCallId":"dup","toolName":"bash","content":"first result"},
+            {"role":"tool","toolCallId":"dup","toolName":"bash","content":"second result"}
+        ]})),
+        None,
+    );
+    let text = resume_chat_text(a);
+    let first = text.find("$ first").unwrap();
+    let first_result = text.find("first result").unwrap();
+    let second = text.find("$ second").unwrap();
+    let second_result = text.find("second result").unwrap();
+    assert!(
+        first < first_result && first_result < second && second < second_result,
+        "{text}"
+    );
+}

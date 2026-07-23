@@ -450,14 +450,14 @@ fn persisted_workflow_run(ctx: &DispatchCtx<'_>) -> Option<WorkflowRunPersisted>
 
 async fn persist_user_prompt_before_run(
     ctx: &mut DispatchCtx<'_>,
-    message: &str,
+    message: &Message,
 ) -> Result<(), crate::domain::error::DomainError> {
     if ctx.ephemeral || ctx.session_key.is_empty() {
         return Ok(());
     }
     let mut persisted_messages = ctx.messages.clone();
     remove_injected_system_prompt(&mut persisted_messages, ctx.system_prompt);
-    persisted_messages.push(Message::user(message));
+    persisted_messages.push(message.clone());
     let persisted_len = persisted_messages.len();
     let result = ctx
         .session_store
@@ -504,23 +504,21 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         drain_and_run_pending(ctx).await;
         return false;
     };
+    let message = Message::user(message);
     if let Err(err) = persist_user_prompt_before_run(ctx, &message).await {
         tracing::warn!("failed to persist user prompt before turn: {err}");
+    } else {
+        ctx.last_persisted_message_index = ctx.messages.len() + 1;
     }
     let outcome = run_prompt_dispatch(ctx, message, cancel_rx).await;
     disarm_cancel(&ctx.cancel_handle);
-    // #1072: the agent's durable-prefix dirty latch is drained centrally by
-    // `persist_current_session` (below), after EVERY outcome — pruning may
-    // have mutated history before an Error or a Cancelled ending too.
+    // #1072: persist_current_session drains the durable-prefix dirty latch after every outcome.
     if matches!(outcome, PromptOutcome::Success) {
         let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
     drain_pending_and_nudge(ctx).await;
-    // Publish the completed-turn state before any post-turn query waits behind
-    // the next command in the dispatch loop. This closes the boundary where a
-    // just-idle child could still hand a newly connecting inspector the previous
-    // busy snapshot (#1104).
+    // Publish completed-turn state before any post-turn query queues behind the next command (#1104).
     super::uds_snapshots::refresh_busy_snapshots(ctx).await;
     // Persist after every turn so the conversation survives an ungraceful exit.
     if let Err(err) = uds_dispatch::persist_current_session(ctx).await {
@@ -642,7 +640,7 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
 
 async fn run_prompt_dispatch(
     ctx: &mut DispatchCtx<'_>,
-    message: String,
+    message: Message,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> PromptOutcome {
     let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828: gates connect-time snapshot
@@ -653,7 +651,8 @@ async fn run_prompt_dispatch(
         conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
         session: ctx.session,
         sink: &mut sink,
-        message: Message::user(message),
+        message,
+        system_prompt: ctx.system_prompt,
         cancel_rx,
         notification_rx: &mut ctx.notification_rx,
         subagent_registry: &ctx.subagent_registry,
@@ -707,6 +706,7 @@ async fn run_drained_message(ctx: &mut DispatchCtx<'_>, msg: Message) {
         session: ctx.session,
         sink: &mut sink,
         message: msg,
+        system_prompt: ctx.system_prompt,
         cancel_rx: rx,
         notification_rx: &mut ctx.notification_rx,
         subagent_registry: &ctx.subagent_registry,

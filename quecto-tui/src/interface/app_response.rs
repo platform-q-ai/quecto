@@ -105,10 +105,11 @@ impl App {
                             self.replace_master_chat_with_history_page(&data, status);
                         } else {
                             self.clear_message_recovery();
-                            self.replace_chat_with_messages(&data);
-                            self.master_session.chat.add_entry(ChatEntry::Status {
-                                text: status.to_string(),
-                            });
+                            if self.replace_chat_with_messages_with_empty_status(&data, status) {
+                                self.master_session.chat.add_entry(ChatEntry::Status {
+                                    text: status.to_string(),
+                                });
+                            }
                         }
                     } else if own_page {
                         // This client's own older page extends the loaded prefix.

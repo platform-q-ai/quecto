@@ -284,6 +284,8 @@ pub(crate) struct PromptRun<'a, 's> {
     /// Sink the streamed events are delivered to (writer XOR broadcast).
     pub sink: &'a mut EventSink<'s>,
     pub message: Message,
+    /// System prompt to hide from user-visible busy snapshots.
+    pub system_prompt: &'a str,
     /// Oneshot cancellation receiver.  Resolves when the concurrent reader task
     /// (or `dispatch_command`) fires the cancel handle for this run.
     pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
@@ -323,6 +325,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         session: agent_session,
         sink,
         message,
+        system_prompt,
         cancel_rx,
         notification_rx,
         subagent_registry,
@@ -335,7 +338,8 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     let prompt_id = message.id();
     messages.push(message);
     if let Some(snapshot) = &conversation_snapshot {
-        let advance = snapshot.write().await.publish(messages);
+        let visible = super::uds_snapshots::user_visible_messages(messages, system_prompt);
+        let advance = snapshot.write().await.publish(&visible);
         sink.emit_ledger_advanced(advance).await;
     }
 
@@ -420,8 +424,9 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             // get_message even after the ladder later prunes/collapses them
             // (#1060 review 1a; 1b: full publish, not a length-based extend).
             if let Some(snapshot) = &conversation_snapshot {
+                let visible = super::uds_snapshots::user_visible_messages(messages, system_prompt);
                 let mut snap = snapshot.write().await;
-                let publish = snap.publish(messages);
+                let publish = snap.publish(&visible);
                 let full = snap.record_full(&agent_result.appended_messages);
                 drop(snap);
                 sink.emit_ledger_advanced(publish).await;

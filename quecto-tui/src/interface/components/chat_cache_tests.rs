@@ -409,3 +409,34 @@ fn replace_history_prefix_supersedes_partial_without_disturbing_live_tail() {
         "fuller prefix must render at the top: {top}"
     );
 }
+
+#[test]
+fn prepend_history_merges_split_tool_result_at_page_boundary() {
+    let mut chat = Chat::new();
+    chat.add_entry(ChatEntry::ToolExecution {
+        tool_call_id: "call-1".into(),
+        tool_name: "bash".into(),
+        parsed_args: None,
+        args: String::new(),
+        result: Some("newest page result".into()),
+        is_error: false,
+        duration_ms: None,
+    });
+    chat.prepend_history(vec![ChatEntry::ToolExecution {
+        tool_call_id: "call-1".into(),
+        tool_name: "bash".into(),
+        parsed_args: serde_json::from_str(r#"{"command":"older call"}"#).ok(),
+        args: r#"{"command":"older call"}"#.into(),
+        result: None,
+        is_error: false,
+        duration_ms: None,
+    }]);
+    let text = chat
+        .render(120)
+        .iter()
+        .map(|l| strip_ansi(l))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(text.matches("$ older call").count(), 1, "{text}");
+    assert_eq!(text.matches("newest page result").count(), 1, "{text}");
+}

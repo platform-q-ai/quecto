@@ -1,11 +1,4 @@
 //! Chat display component — renders conversation history.
-//!
-//! Displays user messages, assistant responses (with streaming), and
-//! tool execution results in a scrollable vertical layout.
-//!
-//! Tool rendering uses Quecto-style background-colored boxes with tool-specific
-//! formatting (#510): bash shows `$ command` + output tail, read/write show
-//! file path + content preview, edit shows diff.
 
 use crate::interface::component::Component;
 use crate::interface::components::markdown::Markdown;
@@ -30,13 +23,9 @@ pub enum ChatEntry {
         /// Whether this message is still being streamed.
         streaming: bool,
     },
-    /// A ladder-demoted history message shown in place as a stub (#1061). Carries
-    /// the stable server id so its full body can be recalled on demand via
-    /// `get_message` and swapped back into a plain `User`/`Assistant` entry.
-    /// Only ever produced by history backfill/resume, never by the live stream.
+    /// Ladder-demoted history message stub (#1061).
     Stub {
         id: String,
-        /// Role the recalled content will render as (`true` = user).
         is_user: bool,
         text: String,
     },
@@ -109,6 +98,32 @@ impl Default for Chat {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn merge_tool_history_boundary(prefix: &mut [ChatEntry], existing: &mut Vec<ChatEntry>) {
+    let matching = matches!((prefix.last(), existing.first()), (Some(ChatEntry::ToolExecution { tool_call_id, result: None, .. }), Some(ChatEntry::ToolExecution { tool_call_id: existing_id, result: Some(_), .. })) if tool_call_id == existing_id);
+    if !matching {
+        return;
+    }
+    let Some(ChatEntry::ToolExecution {
+        result: Some(result),
+        is_error,
+        ..
+    }) = existing.first_mut()
+    else {
+        return;
+    };
+    let (result, is_error) = (std::mem::take(result), *is_error);
+    if let Some(ChatEntry::ToolExecution {
+        result: target,
+        is_error: target_error,
+        ..
+    }) = prefix.last_mut()
+    {
+        *target = Some(result);
+        *target_error = is_error;
+    }
+    existing.remove(0);
 }
 
 impl Chat {
@@ -243,33 +258,25 @@ impl Chat {
         self.scroll_offset = 0;
     }
 
-    /// Prepend history entries ABOVE the existing (live) content (#828). The
-    /// Prepend durable history ABOVE existing live content. Master attach
-    /// backfill can arrive after live tokens; reconciling it as a prefix
-    /// preserves live content instead of a wholesale replace that would drop it.
-    pub fn prepend_history(&mut self, entries: Vec<ChatEntry>) {
+    /// Prepend durable history ABOVE existing live content (#828).
+    pub fn prepend_history(&mut self, mut entries: Vec<ChatEntry>) {
         if entries.is_empty() {
             return;
         }
+        merge_tool_history_boundary(&mut entries, &mut self.entries);
         let n = entries.len();
         self.entries.splice(0..0, entries);
         self.render_cache
             .splice(0..0, std::iter::repeat_with(|| None).take(n));
-        // Indices shifted, so the incremental offset table must rebuild fully.
         self.combined_width = None;
-        // `scroll_offset` is measured from the BOTTOM, and the backfill is
-        // prepended ABOVE existing content, so the bottom-relative position is
-        // unchanged — leave the offset untouched. Resetting to 0 here would yank
-        // a reader who scrolled up in a busy session back to the live tail when
-        // the async backfill lands (#828 review).
     }
 
-    /// Replace the first `old_len` history entries with `entries` (#1050). Used
-    /// when a complete attach-backfill supersedes a prior trimmed busy-connect
-    /// snapshot so the partial tail is not left duplicated under the fuller
-    /// prefix. Live content after the prefix is preserved.
-    pub fn replace_history_prefix(&mut self, old_len: usize, entries: Vec<ChatEntry>) {
+    /// Replace a durable history prefix while preserving live content (#1050).
+    pub fn replace_history_prefix(&mut self, old_len: usize, mut entries: Vec<ChatEntry>) {
         let remove = old_len.min(self.entries.len());
+        if remove == 0 {
+            merge_tool_history_boundary(&mut entries, &mut self.entries);
+        }
         let n = entries.len();
         self.entries.splice(0..remove, entries);
         if self.render_cache.len() >= remove {
@@ -279,9 +286,7 @@ impl Chat {
             self.render_cache.clear();
             self.render_cache.resize(self.entries.len(), None);
         }
-        // Prefix length changed; rebuild the incremental offset table fully.
         self.combined_width = None;
-        // Bottom-relative scroll is unchanged for content below the prefix.
     }
 
     pub fn set_viewport_height(&mut self, height: usize) {

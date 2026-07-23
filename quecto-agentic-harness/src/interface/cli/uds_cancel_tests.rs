@@ -195,6 +195,7 @@ async fn cancelled_prompt_keeps_user_message_in_conversation() {
         session: &mut session,
         sink: &mut sink,
         message: crate::domain::message::Message::user("keep interrupted prompt"),
+        system_prompt: "",
         cancel_rx,
         notification_rx: &mut notification_rx,
         subagent_registry: &subagent_registry,
