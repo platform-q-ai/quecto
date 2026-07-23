@@ -33,6 +33,12 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     And the architecture test target should enforce quecto-tui runtime I/O boundaries
     And the architecture test target should enforce quecto-tui root file placement
 
+  @issue-1151
+  Scenario: quecto-tui protocol DTO and use-case ownership exceptions are tracked
+    Then quecto-tui interface protocol DTO exceptions should be explicitly issue-linked
+    And quecto-tui interface-owned use-case exceptions should be explicitly issue-linked
+    And feed and ledger-sync interface exceptions should be tracked as bounded issue-linked exceptions
+
   @issue-1020
   Scenario: TUI standards are executable through BDD
     Then the BDD runners should not use wip as a default run inclusion gate

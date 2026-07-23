@@ -197,6 +197,118 @@ fn then_architecture_test_enforces_tui_root_file_placement(_world: &mut QuectoWo
     );
 }
 
+#[then("quecto-tui interface protocol DTO exceptions should be explicitly issue-linked")]
+fn then_tui_protocol_dto_exceptions_are_issue_linked(_world: &mut QuectoWorld) {
+    let architecture = read_architecture_tests();
+    let entries =
+        extract_tui_allowlist_entries(&architecture, "TUI_INTERFACE_PROTOCOL_DTO_ALLOWLIST");
+    assert!(
+        !entries.is_empty(),
+        "tests/architecture.rs must define active DTO exception entries"
+    );
+    assert!(
+        architecture.contains("fn tui_interface_protocol_dto_usage_is_allowlisted")
+            && architecture.contains("assert_tui_allowlist_entries_reference_issues"),
+        "tests/architecture.rs must enforce issue-linked protocol DTO exception entries"
+    );
+    assert_allowlist_entries_reference_issues("protocol DTO", &entries);
+}
+
+#[then("quecto-tui interface-owned use-case exceptions should be explicitly issue-linked")]
+fn then_tui_interface_owned_use_case_exceptions_are_issue_linked(_world: &mut QuectoWorld) {
+    let architecture = read_architecture_tests();
+    let entries = extract_tui_allowlist_entries(&architecture, "TUI_INTERFACE_USE_CASE_ALLOWLIST");
+    assert!(
+        !entries.is_empty(),
+        "tests/architecture.rs must define active use-case ownership exception entries"
+    );
+    assert!(
+        architecture.contains("fn tui_interface_use_case_ownership_is_allowlisted")
+            && architecture.contains("assert_tui_allowlist_entries_reference_issues"),
+        "tests/architecture.rs must enforce issue-linked use-case ownership exception entries"
+    );
+    assert_allowlist_entries_reference_issues("use-case ownership", &entries);
+}
+
+#[then(
+    "feed and ledger-sync interface exceptions should be tracked as bounded issue-linked exceptions"
+)]
+fn then_feed_and_ledger_sync_exceptions_are_bounded(_world: &mut QuectoWorld) {
+    let architecture = read_architecture_tests();
+    let dto_entries =
+        extract_tui_allowlist_entries(&architecture, "TUI_INTERFACE_PROTOCOL_DTO_ALLOWLIST");
+    let use_case_entries =
+        extract_tui_allowlist_entries(&architecture, "TUI_INTERFACE_USE_CASE_ALLOWLIST");
+    let all_entries: Vec<_> = dto_entries.iter().chain(use_case_entries.iter()).collect();
+    for hotspot in [
+        "interface/app_ledger_sync.rs",
+        "interface/app_subagent_feed.rs",
+        "interface/ledger_sync.rs",
+        "interface/feed_state.rs",
+        "interface/app_subagent_stream.rs",
+        "interface/app_subagent_panel.rs",
+        "interface/app_response.rs",
+        "interface/app_paged_history.rs",
+    ] {
+        let matching: Vec<_> = all_entries
+            .iter()
+            .copied()
+            .filter(|entry| entry.contains(hotspot))
+            .collect();
+        assert!(
+            !matching.is_empty(),
+            "quecto-tui architecture allowlists must track post-#1194 hotspot: {hotspot}"
+        );
+        assert_allowlist_entries_reference_issues(hotspot, &matching);
+    }
+}
+
+fn read_architecture_tests() -> String {
+    std::fs::read_to_string("tests/architecture.rs").expect("read architecture tests")
+}
+
+fn extract_tui_allowlist_entries(source: &str, constant_name: &str) -> Vec<String> {
+    let Some(start) = source.find(constant_name) else {
+        return Vec::new();
+    };
+    let after_name = &source[start..];
+    let Some(array_start) = after_name.find("&[") else {
+        return Vec::new();
+    };
+    let after_array_start = &after_name[array_start + 2..];
+    let Some(array_end) = after_array_start.find("];") else {
+        return Vec::new();
+    };
+    let mut entries = Vec::new();
+    let mut current = String::new();
+    for line in after_array_start[..array_end].lines().map(str::trim) {
+        if line.starts_with("TuiAllowlistEntry {") {
+            current.clear();
+            current.push_str(line);
+        } else if !current.is_empty() {
+            current.push(' ');
+            current.push_str(line);
+        }
+        if !current.is_empty() && line == "}," {
+            entries.push(current.clone());
+            current.clear();
+        }
+    }
+    entries
+}
+
+fn assert_allowlist_entries_reference_issues<T: AsRef<str>>(context: &str, entries: &[T]) {
+    for entry in entries {
+        assert!(
+            entry.as_ref().contains("#1149")
+                || entry.as_ref().contains("#115")
+                || entry.as_ref().contains("#116"),
+            "quecto-tui {context} allowlist entry must reference #1149 or a child issue: {}",
+            entry.as_ref()
+        );
+    }
+}
+
 fn misplaced_tui_production_files() -> Vec<String> {
     let mut misplaced = Vec::new();
     collect_misplaced_tui_rs_files(Path::new(TUI_ROOT), &mut misplaced);

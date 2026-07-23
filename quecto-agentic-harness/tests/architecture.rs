@@ -317,6 +317,244 @@ const TUI_INFRASTRUCTURE: &str = "../quecto-tui/src/infrastructure";
 const TUI_INTERFACE: &str = "../quecto-tui/src/interface";
 const TUI_ALLOWED_ROOT_RS: &[&str] = &["lib.rs", "main.rs"];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct TuiAllowlistEntry {
+    path: &'static str,
+    issue: &'static str,
+}
+
+// Temporary #1149/#1153/#1160 DTO-boundary exceptions: interface production
+// code still speaks infrastructure::client DTOs until application/domain
+// command and event vocabulary is introduced and mapped at the boundary.
+const TUI_INTERFACE_PROTOCOL_DTO_ALLOWLIST: &[TuiAllowlistEntry] = &[
+    TuiAllowlistEntry {
+        path: "interface/app.rs",
+        issue: "#1153",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_effort.rs",
+        issue: "#1153",
+    },
+    TuiAllowlistEntry {
+        path: "interface/cli.rs",
+        issue: "#1160",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_events.rs",
+        issue: "#1154",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_ledger_sync.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_models.rs",
+        issue: "#1153",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_paged_history.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_response.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_subagent_feed.rs",
+        issue: "#1156",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_subagent_panel.rs",
+        issue: "#1156",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_subagent_state.rs",
+        issue: "#1156",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_subagent_stream.rs",
+        issue: "#1156",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_subagents.rs",
+        issue: "#1156",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_event_loop.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_message_recovery.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_methods.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_rewind.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_submit.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/components/chat.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/components/chat_render.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/components/footer.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/components/workflow_bar.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/feed_state.rs",
+        issue: "#1156",
+    },
+    TuiAllowlistEntry {
+        path: "interface/ledger_sync.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/range_accumulator.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/tui_harness.rs",
+        issue: "#1160",
+    },
+    TuiAllowlistEntry {
+        path: "interface/tui_harness_disconnect.rs",
+        issue: "#1160",
+    },
+    TuiAllowlistEntry {
+        path: "interface/tui_harness_events.rs",
+        issue: "#1160",
+    },
+    TuiAllowlistEntry {
+        path: "interface/tui_harness_probes.rs",
+        issue: "#1160",
+    },
+];
+
+// Temporary #1149/#1155/#1156 use-case ownership exceptions: these interface
+// modules still own orchestration/policy that should move into application
+// services in the follow-up vertical slices.
+const TUI_INTERFACE_USE_CASE_ALLOWLIST: &[TuiAllowlistEntry] = &[
+    TuiAllowlistEntry {
+        path: "interface/app_effort.rs",
+        issue: "#1153",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_event_loop.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/cli.rs",
+        issue: "#1160",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_events.rs",
+        issue: "#1154",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_events_test_support.rs",
+        issue: "#1160",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_ledger_sync.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_message_recovery.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_methods.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_models.rs",
+        issue: "#1153",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_paged_history.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_response.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_rewind.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_submit.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_subagent_feed.rs",
+        issue: "#1156",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_subagent_panel.rs",
+        issue: "#1156",
+    },
+    TuiAllowlistEntry {
+        path: "interface/app_subagent_stream.rs",
+        issue: "#1156",
+    },
+    TuiAllowlistEntry {
+        path: "interface/components/chat.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/components/chat_render.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/components/footer.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/components/workflow_bar.rs",
+        issue: "#1162",
+    },
+    TuiAllowlistEntry {
+        path: "interface/feed_state.rs",
+        issue: "#1156",
+    },
+    TuiAllowlistEntry {
+        path: "interface/ledger_sync.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/range_accumulator.rs",
+        issue: "#1155",
+    },
+    TuiAllowlistEntry {
+        path: "interface/tui_harness.rs",
+        issue: "#1160",
+    },
+    TuiAllowlistEntry {
+        path: "interface/tui_harness_events.rs",
+        issue: "#1160",
+    },
+    TuiAllowlistEntry {
+        path: "interface/tui_harness_probes.rs",
+        issue: "#1160",
+    },
+];
+
 #[test]
 fn tui_architecture_layers_exist() {
     assert!(
@@ -452,6 +690,105 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
         if !in_layer && !allowed_root {
             misplaced.push(rel);
         }
+    }
+}
+
+#[test]
+fn tui_interface_protocol_dto_usage_is_allowlisted() {
+    assert_tui_allowlist_entries_reference_issues(TUI_INTERFACE_PROTOCOL_DTO_ALLOWLIST);
+    let offenders = tui_interface_files_containing(&[
+        "crate::infrastructure::client",
+        "infrastructure::client::",
+        "use crate::infrastructure::client",
+        "Command::",
+        "SubagentInfoEvent",
+        "SubagentWorkflow",
+        "SyncDelta",
+        "serde_json::Value",
+    ]);
+    assert_tui_offenders_are_allowlisted(
+        &offenders,
+        TUI_INTERFACE_PROTOCOL_DTO_ALLOWLIST,
+        "protocol DTO",
+    );
+}
+
+#[test]
+fn tui_interface_use_case_ownership_is_allowlisted() {
+    assert_tui_allowlist_entries_reference_issues(TUI_INTERFACE_USE_CASE_ALLOWLIST);
+    let offenders = tui_interface_files_containing(&[
+        "Command::",
+        "Client::connect",
+        "serde_json::from_value",
+        "serde_json::from_str",
+        "serde_json::to_string",
+        "serde_json::json!",
+        "serde_json::Value",
+        "LedgerTranscript",
+        "SyncDelta",
+        "pending_rev",
+        "supports_sync",
+        "request_sync",
+    ]);
+    assert_tui_offenders_are_allowlisted(
+        &offenders,
+        TUI_INTERFACE_USE_CASE_ALLOWLIST,
+        "use-case ownership",
+    );
+}
+
+fn tui_interface_files_containing(patterns: &[&str]) -> BTreeSet<String> {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new(TUI_INTERFACE), &mut files);
+    files
+        .iter()
+        .filter_map(|file_content| {
+            let (file_path, content) = file_content.split_once(":\n").unwrap();
+            patterns
+                .iter()
+                .any(|pattern| content.contains(pattern))
+                .then(|| {
+                    Path::new(file_path)
+                        .strip_prefix(TUI_SRC)
+                        .expect("strip quecto-tui src prefix")
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                })
+        })
+        .collect()
+}
+
+fn assert_tui_offenders_are_allowlisted(
+    offenders: &BTreeSet<String>,
+    allowlist: &[TuiAllowlistEntry],
+    category: &str,
+) {
+    let allowed: BTreeSet<_> = allowlist
+        .iter()
+        .map(|entry| entry.path.to_string())
+        .collect();
+    let missing: Vec<_> = offenders.difference(&allowed).cloned().collect();
+    assert!(
+        missing.is_empty(),
+        "quecto-tui interface {category} hotspots must be moved inward or explicitly allowlisted with issue references: {missing:?}"
+    );
+
+    let stale: Vec<_> = allowed.difference(offenders).cloned().collect();
+    assert!(
+        stale.is_empty(),
+        "quecto-tui interface {category} allowlist entries should be removed once no matching hotspot remains: {stale:?}"
+    );
+}
+
+fn assert_tui_allowlist_entries_reference_issues(allowlist: &[TuiAllowlistEntry]) {
+    assert!(!allowlist.is_empty(), "TUI allowlist must not be empty");
+    for entry in allowlist {
+        assert!(
+            entry.issue.starts_with("#11") && entry.issue[1..].chars().all(|c| c.is_ascii_digit()),
+            "TUI allowlist entry for {} must reference a #1149 child issue, got {}",
+            entry.path,
+            entry.issue
+        );
     }
 }
 
