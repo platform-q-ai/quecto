@@ -1,6 +1,6 @@
 {
   "label": "Adversarial Review",
-  "description": "Read-only PR review: parallel narrow finders, adversarial verification that tries to REFUTE each finding, then exactly one submitted review. Never modifies the repo.",
+  "description": "Read-only PR review: parallel narrow finders, adversarial verification that tries to REFUTE each finding, then exactly one submitted review. Never modifies the repo. If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
   "when_to_use": "Use when asked to review an existing PR (or diff/branch) without making changes: findings only, evidence-backed, posted as a single review. Do NOT use when the task is to implement, fix or merge anything — use 'feature', 'chore' or 'refactor' for that.",
   "guards": [
     {

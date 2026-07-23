@@ -1,6 +1,6 @@
 {
   "label": "Refactor",
-  "description": "Behaviour-preserving restructure: gate readiness, characterize current behaviour GREEN-first, prove falsifiability by mutation, freeze the suite, refactor under it, prove parity, then review and hand off the PR for human review (no auto-merge).",
+  "description": "Behaviour-preserving restructure: gate readiness, characterize current behaviour GREEN-first, prove falsifiability by mutation, freeze the suite, refactor under it, prove parity, then review and hand off the PR for human review (no auto-merge). If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
   "when_to_use": "Use when the issue mandates zero behaviour change: consolidation, extraction, dedup, renames, moving state. Acceptance criteria are structural/parity-only. If the issue adds or alters observable behaviour, use 'feature'. If mixed, stop and report that the issue must be split.",
   "steps": [
     "steps/shared/hooks",

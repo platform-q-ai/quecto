@@ -1,6 +1,6 @@
 {
   "label": "Chore",
-  "description": "Small, low-risk maintenance change (deps, docs, config, tooling, CI) with hooks and the full push gate, but without BDD/TDD ceremony; hand off the PR for human review (no auto-merge).",
+  "description": "Small, low-risk maintenance change (deps, docs, config, tooling, CI) with hooks and the full push gate, but without BDD/TDD ceremony; hand off the PR for human review (no auto-merge). If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
   "when_to_use": "Use for small maintenance chores with no meaningful behaviour change and low blast radius: dependency bumps, doc fixes, config/CI/tooling tweaks, renames of non-code assets. Do NOT use when the issue's acceptance criteria describe new or altered observable behaviour (use 'feature') or a zero-behaviour-change code restructure (use 'refactor').",
   "guards": [
     {
