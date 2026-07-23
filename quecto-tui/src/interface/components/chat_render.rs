@@ -23,16 +23,8 @@ pub(super) fn render_tool_execution(args: ToolRenderArgs<'_>) -> Vec<String> {
         expanded,
         width,
     } = args;
-    // Select background color based on state.
-    let bg_fn: fn(&str) -> String = if result.is_none() {
-        theme::tool_pending_bg
-    } else if is_error {
-        theme::tool_error_bg
-    } else {
-        theme::tool_success_bg
-    };
-
-    // Build content lines (without background — applied after).
+    // Build content lines. Tool blocks deliberately inherit the terminal's
+    // foreground/background so they stay readable in light and dark themes.
     let mut content: Vec<String> = Vec::new();
     let inner_width = width.saturating_sub(2); // 1 char padding each side
 
@@ -114,22 +106,14 @@ pub(super) fn render_tool_execution(args: ToolRenderArgs<'_>) -> Vec<String> {
         ),
     }
 
-    // Apply background color and padding to every line,
-    // with an empty bg line above and below to frame the box.
-    let empty_bg_line = theme::apply_bg("", width, bg_fn);
-    let mut result_lines = Vec::with_capacity(content.len() + 2);
-    result_lines.push(empty_bg_line.clone());
+    // A single quiet rule keeps each tool call visually distinct without a
+    // filled panel. Status glyphs provide a second, non-colour state cue.
+    let mut result_lines = Vec::with_capacity(content.len());
     for line in &content {
-        // Expand tabs to spaces before width/background handling. A literal
-        // tab advances the terminal cursor without painting the background,
-        // leaving dark gaps mid-box, and `visible_width` counts it as zero
-        // columns, throwing off the padding math. Expanding here keeps the
-        // box background contiguous and width calculations correct.
         let expanded = expand_tabs(line);
-        let padded = format!(" {} ", truncate_to_width(&expanded, inner_width, None));
-        result_lines.push(theme::apply_bg(&padded, width, bg_fn));
+        let text = truncate_to_width(&expanded, inner_width, None);
+        result_lines.push(format!("│ {text}"));
     }
-    result_lines.push(empty_bg_line);
     result_lines
 }
 

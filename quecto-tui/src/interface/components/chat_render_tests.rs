@@ -297,7 +297,7 @@ fn render_tool_success() {
 }
 
 #[test]
-fn render_tool_blocks_use_terminal_default_background_for_all_states() {
+fn render_tool_blocks_use_terminal_colors_and_visible_boundaries_for_all_states() {
     let cases = [
         (None, false),
         (Some("line-1"), false),
@@ -315,27 +315,30 @@ fn render_tool_blocks_use_terminal_default_background_for_all_states() {
             width: 80,
         });
         let rendered = lines.join("\n");
-        assert!(
-            rendered.contains("$ printf theme"),
-            "tool block should render command: {rendered:?}"
-        );
+        assert!(rendered.contains("$ printf theme"));
         assert_no_explicit_background_sgr(&rendered);
+        assert!(
+            strip_ansi(&rendered)
+                .lines()
+                .any(|line| line.starts_with('│')),
+            "tool block should have a visible boundary: {rendered:?}"
+        );
     }
 }
 
 fn assert_no_explicit_background_sgr(rendered: &str) {
     for segment in rendered.split("\x1b[").skip(1) {
-        let Some(params) = segment.split_once('m').map(|(params, _)| params) else {
+        let Some((params, _)) = segment.split_once('m') else {
             continue;
         };
-        let normalized = params.replace(':', ";");
-        for code in normalized
+        for code in params
+            .replace(':', ";")
             .split(';')
-            .filter_map(|part| part.parse::<u16>().ok())
+            .filter_map(|p| p.parse::<u16>().ok())
         {
             assert!(
-                !(code == 48 || (40..=47).contains(&code) || (100..=107).contains(&code)),
-                "tool block must not paint an explicit background SGR {params:?}: {rendered:?}"
+                code != 48 && !(40..=47).contains(&code) && !(100..=107).contains(&code),
+                "tool block must use the terminal background, found SGR {params:?}: {rendered:?}"
             );
         }
     }

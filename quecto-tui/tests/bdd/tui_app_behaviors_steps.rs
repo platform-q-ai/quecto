@@ -1246,7 +1246,10 @@ fn then_tool_rendering_includes_complete_long_value(world: &mut TuiWorld) {
     let frame = drive(world, |h| h.full_frame());
     let joined_tool_pane_lines: String = frame
         .lines()
-        .filter_map(|line| line.split_once('│').map(|(_, pane)| pane.trim()))
+        .filter_map(|line| {
+            line.split_once('│')
+                .map(|(_, pane)| pane.trim().trim_start_matches('│').trim())
+        })
         .collect();
     assert!(
         joined_tool_pane_lines.contains("alpha-beta-gamma-delta-epsilon-zeta"),
@@ -1272,35 +1275,77 @@ fn then_raw_tool_frame_has_no_title_escapes(world: &mut TuiWorld) {
     );
 }
 
-#[then("the tool block uses the terminal default background")]
-fn then_tool_block_uses_terminal_default_background(world: &mut TuiWorld) {
-    let raw = world
-        .tui_tool_rendered_raw
-        .as_deref()
-        .expect("tool rendering captured by the When step");
-    assert!(
-        raw.contains("$ printf theme"),
-        "tool block should render, got:\n{raw:?}"
-    );
-    assert_no_explicit_background_sgr(raw);
+#[when("a failed bash tool call is rendered")]
+fn when_failed_bash_tool_call_is_rendered(world: &mut TuiWorld) {
+    let raw = drive(world, |h| {
+        h.event(tool_start(
+            "bdd-failed-bash",
+            "bash",
+            serde_json::json!({ "command": "false" }),
+        ));
+        h.event(Event::ToolExecutionEnd {
+            tool_call_id: "bdd-failed-bash".into(),
+            tool_name: "bash".into(),
+            result: serde_json::json!({ "content": [{ "type": "text", "text": "command failed" }] }),
+            is_error: true,
+        });
+        h.full_frame_raw()
+    });
+    world.tui_tool_rendered_raw = Some(raw);
 }
 
-fn assert_no_explicit_background_sgr(raw: &str) {
-    for segment in raw.split("\u{1b}[").skip(1) {
-        let Some(params) = segment.split_once('m').map(|(params, _)| params) else {
-            continue;
-        };
-        let normalized = params.replace(':', ";");
-        for code in normalized
-            .split(';')
-            .filter_map(|part| part.parse::<u16>().ok())
-        {
-            assert!(
-                !(code == 48 || (40..=47).contains(&code) || (100..=107).contains(&code)),
-                "tool block must not paint an explicit background SGR {params:?}: {raw:?}"
-            );
-        }
-    }
+#[then("the tool block uses the terminal default background")]
+fn then_tool_block_uses_terminal_default_background(world: &mut TuiWorld) {
+    let violations = explicit_background_sgr(raw_tool_frame(world));
+    assert!(
+        violations.is_empty(),
+        "explicit backgrounds: {violations:?}"
+    );
+}
+
+#[then("the tool block has a visible boundary")]
+fn then_tool_block_has_visible_boundary(world: &mut TuiWorld) {
+    let plain = strip_ansi(raw_tool_frame(world));
+    assert!(
+        plain
+            .lines()
+            .any(|line| line.contains("│ ✓ $ printf theme"))
+    );
+}
+
+#[then("the tool block shows an error symbol and status text")]
+fn then_tool_block_shows_error_symbol_and_status_text(world: &mut TuiWorld) {
+    let plain = strip_ansi(raw_tool_frame(world));
+    assert!(
+        plain.contains("✗ $ false"),
+        "error symbol missing: {plain:?}"
+    );
+    assert!(
+        plain.contains("command failed"),
+        "error text missing: {plain:?}"
+    );
+}
+
+fn raw_tool_frame(world: &TuiWorld) -> &str {
+    world
+        .tui_tool_rendered_raw
+        .as_deref()
+        .expect("tool rendering captured by the When step")
+}
+
+fn explicit_background_sgr(raw: &str) -> Vec<u16> {
+    raw.split("\u{1b}[")
+        .skip(1)
+        .filter_map(|segment| segment.split_once('m').map(|(params, _)| params))
+        .flat_map(|params| {
+            params
+                .replace(':', ";")
+                .split(';')
+                .filter_map(|part| part.parse().ok())
+                .collect::<Vec<u16>>()
+        })
+        .filter(|code| *code == 48 || (40..=47).contains(code) || (100..=107).contains(code))
+        .collect()
 }
 
 #[then("every tool rendering line should fit within the viewport")]
