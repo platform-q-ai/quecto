@@ -17,6 +17,7 @@ use super::docs::DocsTool;
 use super::filesystem::{EditTool, LsTool, ReadTool, WriteTool};
 use super::find::FindTool;
 use super::grep::GrepTool;
+use super::rust_ast_graph::RustAstGraphTool;
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
@@ -114,6 +115,10 @@ impl ToolRegistryImpl {
         reg.register(Arc::new(LsTool::new(workspace.clone(), sandbox.clone())));
         reg.register(Arc::new(GrepTool::new(workspace.clone(), sandbox.clone())));
         reg.register(Arc::new(FindTool::new(workspace.clone(), sandbox.clone())));
+        reg.register(Arc::new(RustAstGraphTool::new(
+            workspace.clone(),
+            sandbox.clone(),
+        )));
         // Quecto's own capability docs, embedded in the binary.
         reg.register(Arc::new(DocsTool::new()));
 

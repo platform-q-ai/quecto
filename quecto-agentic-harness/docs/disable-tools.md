@@ -35,6 +35,7 @@ The following core tools can be disabled:
 | List | `ls` | List directory contents |
 | Grep | `grep` | Search file contents with regex |
 | Find | `find` | Find files by name pattern |
+| Rust AST Graph | `rust_ast_graph` | Navigate Rust syntax graph, symbols, references, call sites, and structural queries |
 | Web Fetch | `web_fetch` | Fetch URL contents |
 | Web Search | `web_search` | Search the web via Brave API |
 | Recall | `recall` | Retrieve spilled context |

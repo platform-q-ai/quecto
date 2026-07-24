@@ -1,6 +1,6 @@
 # Extensions
 
-Extensions add custom tools to Quecto beyond the built-in set (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `spawn`, `recall`, `workflow`). There are two extension mechanisms:
+Extensions add custom tools to Quecto beyond the built-in set (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `rust_ast_graph`, `spawn`, `recall`, `workflow`). There are two extension mechanisms:
 
 | Type | What it is | When to use |
 |------|-----------|-------------|
@@ -213,7 +213,7 @@ The extension process responds with `tool_result`:
 
 ### Shadow protection
 
-Extension tools (both native and UDS) cannot shadow built-in tools. If an extension tries to register a tool with the same name as a built-in (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `spawn`, `recall`, `workflow`), the registration is rejected.
+Extension tools (both native and UDS) cannot shadow built-in tools. If an extension tries to register a tool with the same name as a built-in (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `rust_ast_graph`, `spawn`, `recall`, `workflow`), the registration is rejected.
 
 ### Example: Rust UDS extension
 

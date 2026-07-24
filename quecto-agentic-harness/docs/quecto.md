@@ -28,7 +28,7 @@ with no name to list them.
 
 ## Operational guidance
 
-- Use built-in tools first: filesystem tools for code navigation, `grep`/`find` for discovery, `bash` for focused checks, `recall` for spilled context, and `spawn`/`agent_cmd` when parallel or delegated investigation helps.
+- Use built-in tools first: for Rust code navigation and impact assessment, prefer `rust_ast_graph` before broad text search; use filesystem tools for targeted reads/edits, `grep`/`find` for non-Rust or raw-text discovery, `bash` for focused checks, `recall` for spilled context, and `spawn`/`agent_cmd` when parallel or delegated investigation helps.
 - In UDS/TUI sessions, the `workflow` tool is normally available but dormant; ask to select a template when explicit progress tracking is useful. Use `--workflow` only when you want workflow prompt guidance from the first turn, and `--no-workflow` when the workflow tool must be hidden entirely.
 - Use subagents for separable investigations, parallel test/debug work, or preserving a focused parent context.
 - To make a subagent run a specific multi-step workflow, pass `spawn` a `workflow_spec` (the full template by value): the child is bound to exactly that workflow in Active mode and cannot pick another. Use this instead of `workflow: true` (which lets the child choose) when you want to dictate the child's process. See the `subagents` and `workflow` docs (via the `docs` tool).

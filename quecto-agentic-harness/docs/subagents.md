@@ -90,7 +90,7 @@ them at all:
   them — defense-in-depth beyond a prompt instruction.
 - **`read_only` (optional).** A convenience that expands to
   `disable_tools: ["write", "edit"]`. The child keeps `bash`, `read`, `grep`,
-  `find` and `agent_cmd`, but the `"write"` and `"edit"` tools are gone.
+  `find`, `rust_ast_graph` and `agent_cmd`, but the `"write"` and `"edit"` tools are gone.
 
 This is the recommended posture for reviewers, which should inspect and report
 but not mutate the repo:
@@ -107,7 +107,7 @@ but not mutate the repo:
 ```
 
 **Caveat — this is not a hard sandbox.** Removing `write`/`edit` stops those
-tools, but a child can still mutate via `bash` (e.g. `sed`, `>` redirects). Reviewers keep `bash`/`read`/`grep`/`find`/`agent_cmd` precisely so
+tools, but a child can still mutate via `bash` (e.g. `sed`, `>` redirects). Reviewers keep `bash`/`read`/`grep`/`find`/`rust_ast_graph`/`agent_cmd` precisely so
 they can fetch a diff and post comments; treat `read_only` as a guard against
 accidental writes, not an isolation boundary. For stronger guarantees use a
 workspace/sandbox posture. The CLI `--disable-tool` flag is the equivalent for a
