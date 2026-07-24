@@ -413,21 +413,34 @@ fn production_owner_map_files(feature_doc: &str) -> BTreeSet<String> {
 }
 
 fn current_tui_production_files() -> BTreeSet<String> {
-    let mut files = Vec::new();
-    collect_rs_files(Path::new(TUI_SRC), &mut files);
+    let mut files = BTreeSet::new();
+    collect_tui_production_rs_paths(Path::new(TUI_SRC), &mut files);
     files
-        .into_iter()
-        .map(|file_content| {
-            let (file_path, _) = file_content
-                .split_once(":\n")
-                .expect("file content has path");
-            Path::new(file_path)
-                .strip_prefix(TUI_SRC)
-                .expect("TUI source path is below TUI src root")
-                .to_string_lossy()
-                .to_string()
-        })
-        .collect()
+}
+
+fn collect_tui_production_rs_paths(dir: &Path, files: &mut BTreeSet<String>) {
+    if !dir.exists() {
+        return;
+    }
+    for entry in fs::read_dir(dir).expect("read dir") {
+        let entry = entry.expect("dir entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_tui_production_rs_paths(&path, files);
+        } else if path.extension().is_some_and(|ext| ext == "rs")
+            && !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("_tests.rs"))
+        {
+            files.insert(
+                path.strip_prefix(TUI_SRC)
+                    .expect("TUI source path is below TUI src root")
+                    .to_string_lossy()
+                    .to_string(),
+            );
+        }
+    }
 }
 
 #[test]
