@@ -1,5 +1,12 @@
 # Clean Architecture target model for `quecto-tui`
 
+> **SUPERSEDED.** Epic [#1149](https://github.com/platform-q-ai/quecto/issues/1149)
+> was rewritten around harness-facing presentation capability modules with
+> selective functional cores; this document describes the abandoned four-layer
+> target and is retained only for historical context. It will be rewritten or
+> removed under [#1219](https://github.com/platform-q-ai/quecto/issues/1219).
+> Do not use it as an implementation reference.
+
 Parent epic: [#1149](https://github.com/platform-q-ai/quecto/issues/1149).
 
 This note describes the desired Clean Architecture end state for `quecto-tui` and, more importantly, how to get there safely. The goal is not to move code into `domain/` and `application/` for its own sake. The goal is to move real TUI policy and orchestration out of `interface::App` behind typed, behavior-preserving boundaries.
