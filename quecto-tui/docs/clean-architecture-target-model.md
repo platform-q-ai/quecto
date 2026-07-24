@@ -532,6 +532,8 @@ Treat the current child issues as cross-cutting concerns and slice deliverables,
 
 | Existing issue | Recommended role |
 |---|---|
+| #1150 — Gap doc + guardrails | Superseded in part by this document; remaining scope is sequence step 0: characterization readiness and guardrail definition. |
+| #1151 — Stricter arch tests + allowlists | Implement sequence step 0 mechanically: import-direction tests plus ratcheting counts for interface raw JSON/DTO usage, with narrow issue-linked allowlists. |
 | #1152 — Domain value objects | Cross-slice checklist: introduce only needed IDs/cursors/value objects. Domain may remain thin. |
 | #1153 — Application commands/events | Reframe as per-area typed inputs/effects, not one global command/event vocabulary. |
 | #1154 — Map UDS DTOs | Establish mapper convention, then implement incrementally per migrated flow. |
