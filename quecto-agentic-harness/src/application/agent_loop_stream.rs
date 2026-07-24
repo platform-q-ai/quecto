@@ -1,6 +1,6 @@
 use crate::application::agent_usage::UsageTotals;
 use crate::domain::error::DomainError;
-use crate::domain::message::LlmResponse;
+use crate::domain::message::{LlmResponse, StopReason};
 
 pub(super) struct StreamProviderError {
     pub(super) error: DomainError,
@@ -18,4 +18,13 @@ pub(super) fn is_empty_streamed_response(response: &LlmResponse) -> bool {
     response.content.as_deref().unwrap_or_default().is_empty()
         && response.tool_calls.is_empty()
         && response.thinking_blocks.is_empty()
+}
+
+pub(super) fn empty_stream_error_message(response: &LlmResponse) -> String {
+    match response.stop_reason {
+        Some(StopReason::MaxTokens) => {
+            "stream completed without assistant output: stop_reason=max_tokens".to_string()
+        }
+        _ => "HTTP 503: stream completed without assistant output".to_string(),
+    }
 }

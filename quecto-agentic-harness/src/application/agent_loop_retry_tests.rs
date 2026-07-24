@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::message::StopReason;
 
 #[tokio::test]
 async fn retries_retryable_provider_failures_before_returning_success() {
@@ -265,4 +266,42 @@ async fn retries_empty_streaming_done_before_success() {
 
     assert_eq!(result.response, "stream recovered");
     assert_eq!(provider.request_count(), 2);
+}
+
+#[tokio::test]
+async fn empty_streaming_done_with_max_tokens_preserves_stop_reason() {
+    let provider = Arc::new(MockStreamingProvider::new(vec![vec![
+        crate::domain::provider::StreamEvent::Done(LlmResponse {
+            content: None,
+            tool_calls: vec![],
+            usage: None,
+            stop_reason: Some(StopReason::MaxTokens),
+            thinking_blocks: vec![],
+        }),
+    ]]));
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: provider.clone(),
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "empty-stream-max-tokens-test".into(),
+        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: true,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    })
+    .with_max_tool_iterations(1);
+
+    let mut messages = vec![Message::user("hello")];
+    let err = agent.process(&mut messages).await.unwrap_err().to_string();
+
+    assert!(err.contains("stop_reason=max_tokens"), "{err}");
+    assert_eq!(provider.request_count(), 1);
 }

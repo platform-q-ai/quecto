@@ -474,3 +474,30 @@ fn parse_sse_response_error_event_returns_error() {
     .unwrap_err();
     assert!(err.to_string().contains("overloaded_error"), "{err}");
 }
+
+#[test]
+fn parse_sse_response_empty_or_truncated_stream_returns_error() {
+    // No message_stop and no observable output → provider error, not Ok(empty).
+    let err =
+        AnthropicProvider::parse_sse_response(": keepalive\ndata: {not json\n", None).unwrap_err();
+    assert!(
+        err.to_string().contains("ended without completion"),
+        "{err}"
+    );
+}
+
+#[test]
+fn parse_sse_response_empty_max_tokens_stop_preserves_stop_reason() {
+    // Terminal message_stop with no content: parse succeeds (loop guard surfaces
+    // the empty turn) and the max_tokens stop reason is preserved.
+    let sse = "event: message_delta\n\
+               data: {\"delta\":{\"stop_reason\":\"max_tokens\"}}\n\
+               event: message_stop\n\
+               data: {}\n";
+    let resp = AnthropicProvider::parse_sse_response(sse, None).unwrap();
+    assert!(resp.content.is_none());
+    assert_eq!(
+        resp.stop_reason,
+        Some(crate::domain::message::StopReason::MaxTokens)
+    );
+}

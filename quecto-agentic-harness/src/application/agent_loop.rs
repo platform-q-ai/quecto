@@ -1,5 +1,5 @@
 use crate::application::agent_loop_stream::{
-    StreamProviderError, TurnEnd, is_empty_streamed_response,
+    StreamProviderError, TurnEnd, empty_stream_error_message, is_empty_streamed_response,
 };
 use crate::application::agent_usage::UsageTotals;
 use crate::application::context_pruning;
@@ -412,9 +412,7 @@ impl AgentLoopImpl {
                 StreamEvent::Done(response) => {
                     if is_empty_streamed_response(&response) {
                         return Err(StreamProviderError {
-                            error: DomainError::Provider(
-                                "HTTP 503: stream completed without assistant output".to_string(),
-                            ),
+                            error: DomainError::Provider(empty_stream_error_message(&response)),
                             emitted_event,
                         });
                     }

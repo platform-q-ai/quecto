@@ -11,7 +11,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
+use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 
 #[path = "codex_sse_state.rs"]
@@ -374,6 +374,7 @@ impl CodexProvider {
     /// Parse SSE stream from the Responses API and assemble a complete response.
     fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
         let mut acc = SseAccumulator::default();
+        let mut saw_terminal = false;
 
         for line in raw.lines() {
             let line = line.trim();
@@ -382,6 +383,7 @@ impl CodexProvider {
             }
             let data = &line[6..];
             if data == "[DONE]" {
+                saw_terminal = true;
                 break;
             }
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
@@ -389,7 +391,17 @@ impl CodexProvider {
                     return Err(DomainError::Provider(error));
                 }
                 acc.handle_event(&event);
+                if event["type"].as_str() == Some("response.completed") {
+                    saw_terminal = true;
+                    break;
+                }
             }
+        }
+
+        if !saw_terminal && !acc.has_observable_output() {
+            return Err(DomainError::Provider(
+                "Responses stream ended without completion".to_string(),
+            ));
         }
 
         Ok(acc.into_response())
@@ -521,6 +533,21 @@ impl SseAccumulator {
                 if let Some(delta) = event["delta"].as_str() {
                     self.content.push_str(delta);
                 }
+            }
+            // Documented Responses refusal events (#1230): surface refusal
+            // text as content with StopReason::Refusal, never an empty turn.
+            Some("response.refusal.delta") => {
+                if let Some(delta) = event["delta"].as_str() {
+                    self.content.push_str(delta);
+                }
+                self.stop_reason = Some(StopReason::Refusal);
+            }
+            Some("response.refusal.done") => {
+                match event["refusal"].as_str() {
+                    Some(refusal) if self.content.is_empty() => self.content.push_str(refusal),
+                    _ => {}
+                }
+                self.stop_reason = Some(StopReason::Refusal);
             }
             Some("response.output_item.added") => self.handle_item_added(event),
             Some("response.function_call_arguments.delta") => {

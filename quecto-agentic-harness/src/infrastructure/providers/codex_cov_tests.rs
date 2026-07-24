@@ -6,6 +6,7 @@
 //! mpsc channel.
 
 use super::*;
+use crate::domain::message::StopReason;
 use crate::domain::tool::ToolDefinition;
 
 fn req<'a>(
@@ -157,6 +158,35 @@ fn accumulator_item_added_non_function_call_is_skipped() {
         "item": { "type": "reasoning" },
     }));
     assert!(acc.into_response().tool_calls.is_empty());
+}
+
+#[test]
+fn accumulator_refusal_events_surface_text_and_refusal_stop_reason() {
+    // Documented Responses refusal events must not yield a silent empty turn.
+    let mut acc = SseAccumulator::default();
+    acc.handle_event(&serde_json::json!({
+        "type": "response.refusal.delta", "delta": "I can't "
+    }));
+    acc.handle_event(&serde_json::json!({
+        "type": "response.refusal.delta", "delta": "help with that."
+    }));
+    acc.handle_event(&serde_json::json!({
+        "type": "response.refusal.done", "refusal": "I can't help with that."
+    }));
+    let resp = acc.into_response();
+    assert_eq!(resp.content.as_deref(), Some("I can't help with that."));
+    assert_eq!(resp.stop_reason, Some(StopReason::Refusal));
+}
+
+#[test]
+fn accumulator_refusal_done_alone_populates_content() {
+    let mut acc = SseAccumulator::default();
+    acc.handle_event(&serde_json::json!({
+        "type": "response.refusal.done", "refusal": "Declined."
+    }));
+    let resp = acc.into_response();
+    assert_eq!(resp.content.as_deref(), Some("Declined."));
+    assert_eq!(resp.stop_reason, Some(StopReason::Refusal));
 }
 
 #[test]
@@ -451,6 +481,26 @@ fn parse_sse_response_failed_returns_error_instead_of_empty_success() {
     .unwrap_err();
     assert!(err.to_string().contains("server_error"), "{err}");
     assert!(err.to_string().contains("boom"), "{err}");
+}
+
+#[test]
+fn parse_sse_response_empty_or_malformed_stream_returns_error() {
+    let err = CodexProvider::parse_sse_response(": keepalive\ndata: {not json\n").unwrap_err();
+    assert!(
+        err.to_string().contains("ended without completion"),
+        "{err}"
+    );
+}
+
+#[test]
+fn parse_sse_response_completed_empty_stream_is_preserved_for_loop_guard() {
+    let resp = CodexProvider::parse_sse_response(
+        r#"data: {"type":"response.completed","response":{"status":"completed"}}"#,
+    )
+    .unwrap();
+    assert!(resp.content.is_none());
+    assert!(resp.tool_calls.is_empty());
+    assert_eq!(resp.stop_reason, Some(StopReason::EndTurn));
 }
 
 #[test]

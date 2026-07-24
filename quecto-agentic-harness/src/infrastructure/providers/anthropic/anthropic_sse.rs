@@ -329,6 +329,7 @@ impl AnthropicProvider {
             None => SseAccumulator::default(),
         };
         let mut current_event = String::new();
+        let mut saw_terminal = false;
 
         for line in raw.lines() {
             let line = line.trim();
@@ -348,12 +349,21 @@ impl AnthropicProvider {
                 "content_block_delta" => acc.handle_block_delta(&chunk),
                 "content_block_stop" => acc.handle_block_stop(),
                 "message_delta" => acc.handle_message_delta(&chunk),
-                "message_stop" => break,
+                "message_stop" => {
+                    saw_terminal = true;
+                    break;
+                }
                 "error" => {
                     return Err(DomainError::Provider(format_anthropic_stream_error(&chunk)));
                 }
                 _ => {}
             }
+        }
+
+        if !saw_terminal && !acc.has_observable_output() {
+            return Err(DomainError::Provider(
+                "Anthropic stream ended without completion".to_string(),
+            ));
         }
 
         Ok(acc.into_response())
