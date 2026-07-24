@@ -125,10 +125,10 @@ No shared helper was introduced, so consolidation completeness is not applicable
 | TUI public crate shape during migration | Compatibility modules and thin entrypoint remain available. | `cargo test -p quecto-agentic-harness --test architecture` passed, including existing TUI layer/root-file checks. | PASS |
 | Architecture documentation | README points to current feature-oriented doc; old Clean Architecture target is superseded; all target capability modules and boundary rules are documented. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_oriented_architecture_is_documented` passed; `QUECTO_TAG=issue-1149 cargo test -p quecto-agentic-harness --features test-support --test bdd` passed. | PASS |
 | Executable guardrails | New feature-oriented guardrail is additive and existing interim compatibility checks still run. | Full architecture integration test passed; BDD target compiled with `cargo test -p quecto-agentic-harness --features test-support --test bdd --no-run`. | PASS |
-| Frozen characterization suite | Frozen files were not edited after the freeze point. | `git hash-object` values still match the freeze manifest: `architecture.rs` `70f2d8b3635574da3a5f42406ac6726a072deb3b`; `tui_architecture_steps.rs` `6b1b263cc161f552f856cfeb681150d8b3d2e757`; `tui_clean_architecture.feature` `b331f192c2be90bc567932f82efab696c0637b44`. | PASS |
+| Frozen characterization suite | #1219 intentionally extends the architecture guardrail, so `architecture.rs` is not claimed frozen for this slice; the unchanged BDD feature and step files remain the #1149 characterization baseline. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_oriented_architecture_is_documented` passed, including the exact production-file/map comparison added for #1219. | PASS |
 | Visual parity | No render frames or visual surfaces are touched. | No files under `quecto-tui/src` changed; this slice only changes docs, tests, Cargo metadata, and lockfile. | PASS |
 | Performance parity | No specialized runtime/rendering code is replaced, so no allocation, cache, single-pass, or complexity characteristic changes. | No production code changed. Targeted clippy passed: `cargo clippy -p quecto-agentic-harness --test architecture -- -D warnings` and `cargo clippy -p quecto-tui --all-targets -- -D warnings`. | PASS |
-| Quantitative criteria | The issue asks for a net LOC decrease over the broader refactor epic; this slice deliberately adds architecture contract documentation and guardrails. | `git diff --shortstat HEAD~1..HEAD`: 8 files changed, 300 insertions(+), 15 deletions(-). Recorded as a review-time epic metric, not a test assertion. | PASS for slice / epic metric pending later code-moving slices |
+| Quantitative criteria | The issue asks for a net LOC decrease over the broader refactor epic; this slice deliberately adds architecture contract documentation and guardrails. | PR #1228 review-time shortstat after finder fixes: 8 files changed, 179 insertions(+), 9 deletions(-). Recorded as a review-time epic metric, not a test assertion. | PASS for slice / epic metric pending later code-moving slices |
 
 Additional clean checks for this parity pass:
 
@@ -242,7 +242,10 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `interface/select_overlay.rs` | `components` overlay primitive |
 | `interface/stdin_buffer.rs` | `shell` stdin adapter/policy |
 | `interface/theme.rs` | `components` styling primitive |
-| `interface/tui_harness*.rs` | `shell` test harness support |
+| `interface/tui_harness.rs` | `shell` test harness support |
+| `interface/tui_harness_disconnect.rs` | `shell` test harness support |
+| `interface/tui_harness_events.rs` | `shell` test harness support |
+| `interface/tui_harness_probes.rs` | `shell` test harness support |
 | `interface/utils.rs` | split by caller; keep shared UI helpers in `components` |
 | `lib.rs` | `shell` crate composition/export root |
 | `main.rs` | `shell` thin binary entrypoint |

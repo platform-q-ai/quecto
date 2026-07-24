@@ -365,6 +365,13 @@ fn tui_feature_oriented_architecture_is_documented() {
         );
     }
 
+    let mapped_files = production_owner_map_files(&feature_doc);
+    let current_files = current_tui_production_files();
+    assert_eq!(
+        mapped_files, current_files,
+        "feature-oriented TUI production owner map must exactly match current production files"
+    );
+
     let superseded_doc =
         fs::read_to_string(TUI_SUPERSEDED_ARCH_DOC).expect("read old quecto-tui architecture doc");
     assert!(
@@ -380,6 +387,47 @@ fn tui_feature_oriented_architecture_is_documented() {
             && readme.contains("superseded historical context"),
         "TUI README must point readers to the current feature-oriented architecture doc"
     );
+}
+
+fn production_owner_map_files(feature_doc: &str) -> BTreeSet<String> {
+    let mut files = BTreeSet::new();
+    let mut in_map = false;
+    for line in feature_doc.lines() {
+        if line == "### Production file target-owner map" {
+            in_map = true;
+            continue;
+        }
+        if in_map && line.starts_with("### ") {
+            break;
+        }
+        if !in_map || line.starts_with("|---") || line.starts_with("| Current production file") {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("| `") {
+            if let Some((file, _)) = rest.split_once('`') {
+                files.insert(file.to_string());
+            }
+        }
+    }
+    files
+}
+
+fn current_tui_production_files() -> BTreeSet<String> {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new(TUI_SRC), &mut files);
+    files
+        .into_iter()
+        .map(|file_content| {
+            let (file_path, _) = file_content
+                .split_once(":\n")
+                .expect("file content has path");
+            Path::new(file_path)
+                .strip_prefix(TUI_SRC)
+                .expect("TUI source path is below TUI src root")
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect()
 }
 
 #[test]
