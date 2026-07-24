@@ -129,6 +129,7 @@ impl AnthropicProvider {
         starts_with_ci(model, "claude-opus-4-6")
             || starts_with_ci(model, "claude-opus-4-7")
             || starts_with_ci(model, "claude-opus-4-8")
+            || starts_with_ci(model, "claude-opus-5")
             || starts_with_ci(model, "claude-sonnet-4-6")
             || starts_with_ci(model, "claude-sonnet-5")
             || starts_with_ci(model, "claude-fable-5")
@@ -137,6 +138,7 @@ impl AnthropicProvider {
     fn model_omits_interleaved_thinking_beta(model: &str) -> bool {
         use crate::domain::message::starts_with_ci;
         starts_with_ci(model, "claude-opus-4-6")
+            || starts_with_ci(model, "claude-opus-5")
             || starts_with_ci(model, "claude-sonnet-4-6")
             || starts_with_ci(model, "claude-sonnet-5")
             || starts_with_ci(model, "claude-fable-5")
