@@ -1,6 +1,6 @@
 [package]
 name = "quecto-tui"
-version = "0.70.12"
+version = "0.70.13"
 edition = "2024"
 description = "Lightweight terminal UI client for quecto"
 license = "LicenseRef-Proprietary"

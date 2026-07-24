@@ -316,6 +316,65 @@ const TUI_APPLICATION: &str = "../quecto-tui/src/application";
 const TUI_INFRASTRUCTURE: &str = "../quecto-tui/src/infrastructure";
 const TUI_INTERFACE: &str = "../quecto-tui/src/interface";
 const TUI_ALLOWED_ROOT_RS: &[&str] = &["lib.rs", "main.rs"];
+const TUI_FEATURE_ARCH_DOC: &str =
+    "../quecto-tui/docs/feature-oriented-presentation-architecture.md";
+const TUI_SUPERSEDED_ARCH_DOC: &str = "../quecto-tui/docs/clean-architecture-target-model.md";
+const TUI_README: &str = "../quecto-tui/README.md";
+
+#[test]
+fn tui_feature_oriented_architecture_is_documented() {
+    let feature_doc = fs::read_to_string(TUI_FEATURE_ARCH_DOC)
+        .expect("read quecto-tui feature-oriented architecture doc");
+    assert!(
+        feature_doc.contains("Feature-oriented presentation architecture"),
+        "feature-oriented TUI architecture doc must have the expected title"
+    );
+    for capability in [
+        "shell",
+        "protocol",
+        "conversation",
+        "sessions",
+        "agents",
+        "workflow",
+        "inference",
+        "workspace",
+        "components",
+    ] {
+        let target_bullet = format!("- `{capability}`:");
+        assert!(
+            feature_doc.contains(&target_bullet),
+            "feature-oriented TUI architecture doc must include target capability bullet {target_bullet:?}"
+        );
+    }
+    for required in [
+        "Raw UDS framing",
+        "raw JSON interpretation",
+        "Pure policy modules must not depend on terminal/widget types",
+        "Do not introduce a second global command/event hierarchy",
+        "Interim compatibility map",
+    ] {
+        assert!(
+            feature_doc.contains(required),
+            "feature-oriented TUI architecture doc must include {required:?}"
+        );
+    }
+
+    let superseded_doc =
+        fs::read_to_string(TUI_SUPERSEDED_ARCH_DOC).expect("read old quecto-tui architecture doc");
+    assert!(
+        superseded_doc.contains("SUPERSEDED")
+            && superseded_doc.contains("feature-oriented-presentation-architecture.md"),
+        "old TUI architecture target model must be marked superseded and point to the current doc"
+    );
+
+    let readme = fs::read_to_string(TUI_README).expect("read quecto-tui README");
+    assert!(
+        readme.contains("feature-oriented presentation adapter")
+            && readme.contains("docs/feature-oriented-presentation-architecture.md")
+            && readme.contains("superseded historical context"),
+        "TUI README must point readers to the current feature-oriented architecture doc"
+    );
+}
 
 #[test]
 fn tui_architecture_layers_exist() {

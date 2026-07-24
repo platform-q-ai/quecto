@@ -2,10 +2,10 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
-**Version `0.70.12` (pre-1.0).** The TUI is a UDS bus client of the harness: the
+**Version `0.70.13` (pre-1.0).** The TUI is a UDS bus client of the harness: the
 wire protocol and session ownership live in `quecto`, so most breaking risk is
-upstream. This crate stays on `0.y` until Clean Architecture layering and public
-surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
+upstream. This crate stays on `0.y` until feature-oriented presentation boundaries and
+public surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
 `1.0` freeze — not because the client is unused or unready for daily work.
 
 The TUI is a client. The Quecto kernel is the root `quecto` binary running
@@ -43,6 +43,15 @@ quecto-tui --workflow --workflow-guards
 For the repository lead-developer prompt, use `scripts/run-tui.sh`. During TUI
 development, `scripts/dev-tui.sh` incrementally rebuilds and restarts it when
 workspace files change; this requires `cargo-watch`.
+
+## Architecture direction
+
+`quecto-tui` is being refactored as a feature-oriented presentation adapter for
+harness-facing capabilities: conversation, sessions, agents, workflow,
+inference, workspace, protocol, shell, and reusable components. The current
+architecture direction is documented in
+[`docs/feature-oriented-presentation-architecture.md`](docs/feature-oriented-presentation-architecture.md);
+the older Clean Architecture target-model note is superseded historical context.
 
 ## Run from the workspace
 

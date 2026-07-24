@@ -1,11 +1,20 @@
 @done @tui
-Feature: TUI Clean Architecture and executable BDD enforcement
-  The quecto-tui crate must be shaped to the same architectural standards as
-  the main quecto crate. Its production source is organised into Clean
-  Architecture layers and the BDD suite executes TUI standards instead of only
-  keeping them as pending documentation.
+Feature: TUI feature-oriented architecture and executable BDD enforcement
+  The quecto-tui crate is a feature-oriented presentation adapter for the
+  harness. Its current Clean Architecture layer checks are interim compatibility
+  guardrails while production source migrates toward harness-facing capability
+  modules, and the BDD suite executes TUI standards instead of only keeping them
+  as pending documentation.
 
-  Scenario: quecto-tui exposes Clean Architecture layers
+  @issue-1149
+  Scenario: quecto-tui documents feature-oriented presentation boundaries
+    Given the quecto-tui architecture documents are present
+    Then the quecto-tui feature-oriented architecture document should list each target harness-facing capability module
+    And the quecto-tui feature-oriented architecture document should document protocol and pure-policy boundaries
+    And the old quecto-tui Clean Architecture target model should be superseded
+    And the quecto-tui README should point to the feature-oriented architecture document
+
+  Scenario: quecto-tui retains interim compatibility layers during migration
     Then the quecto-tui source tree should contain layer "domain"
     And the quecto-tui source tree should contain layer "application"
     And the quecto-tui source tree should contain layer "infrastructure"
