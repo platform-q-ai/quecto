@@ -295,6 +295,7 @@ fn builtin_commands_have_stable_order_and_names() {
             "new",
             "session",
             "refresh-tui",
+            "delete-all-subagents",
             "resume",
             "model",
             "effort",

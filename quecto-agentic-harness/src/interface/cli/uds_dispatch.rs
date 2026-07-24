@@ -175,9 +175,9 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         | AgentCommand::ToolResult { .. } => {
             dispatch_ext_command(cmd, ctx, id.as_deref(), &type_name).await
         }
-        // Exhaustive: variants handled above (queries by dispatch_fieldless_command,
-        // agent-targeted tails by the early intercept at the top).
+        // Exhaustive: variants handled above; agent-targeted tails by early intercept.
         AgentCommand::ClearHistory { .. }
+        | AgentCommand::DeleteAllSubagents { .. }
         | AgentCommand::ListModels { .. }
         | AgentCommand::GetExtensions { .. }
         | AgentCommand::GetSubagents { .. }

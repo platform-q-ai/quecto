@@ -659,6 +659,9 @@ mod app_clipboard_tests;
 #[path = "app_cov_tests.rs"]
 mod app_cov_tests;
 #[cfg(test)]
+#[path = "app_delete_all_subagents_tests.rs"]
+mod app_delete_all_subagents_tests;
+#[cfg(test)]
 #[path = "app_disconnect_tests.rs"]
 mod app_disconnect_tests;
 #[cfg(test)]

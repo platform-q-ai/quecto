@@ -46,6 +46,10 @@ impl App {
                     self.render_full();
                     return;
                 }
+                "/delete-all-subagents" => {
+                    self.delete_all_subagents();
+                    return;
+                }
                 "/workflow" => {
                     self.show_workflow_status();
                     return;

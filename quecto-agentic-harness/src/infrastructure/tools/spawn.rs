@@ -701,8 +701,20 @@ fn register_and_broadcast(
 /// Send SIGTERM to all tracked subagent processes and clear the registry.
 /// Also aborts all monitor tasks (#522).
 pub fn shutdown_all(registry: &SubagentRegistry) {
+    let _ = shutdown_all_with_count(registry);
+}
+
+/// Like [`shutdown_all`], returning the number of registry entries removed.
+pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let removed = entries.len();
     for (name, entry) in entries.iter() {
+        if let Some(ref tx) = entry.exit_signal_tx {
+            let _ = tx.send(Some(ExitSignal {
+                exit_code: None,
+                signal: Some(15), // SIGTERM
+            }));
+        }
         // Abort monitor task if running (#522).
         if let Some(ref handle) = entry.monitor_handle {
             handle.abort();
@@ -714,6 +726,7 @@ pub fn shutdown_all(registry: &SubagentRegistry) {
         }
     }
     entries.clear();
+    removed
 }
 
 #[cfg(test)]
