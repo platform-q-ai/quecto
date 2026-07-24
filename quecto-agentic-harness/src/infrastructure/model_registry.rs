@@ -202,6 +202,7 @@ impl ModelRegistry {
             None,
             &[
                 ("claude-fable-5", "Claude Fable 5 (API key)"),
+                ("claude-opus-5", "Claude Opus 5 (API key)"),
                 ("claude-opus-4-8", "Claude Opus 4.8 (API key)"),
                 ("claude-opus-4-7", "Claude Opus 4.7 (API key)"),
                 ("claude-opus-4-6", "Claude Opus 4.6 (API key)"),
@@ -218,6 +219,7 @@ impl ModelRegistry {
             Some("anthropic"),
             &[
                 ("claude-fable-5", "Claude Fable 5 (OAuth)"),
+                ("claude-opus-5", "Claude Opus 5 (OAuth)"),
                 ("claude-opus-4-8", "Claude Opus 4.8 (OAuth)"),
                 ("claude-opus-4-7", "Claude Opus 4.7 (OAuth)"),
                 ("claude-opus-4-6", "Claude Opus 4.6 (OAuth)"),
