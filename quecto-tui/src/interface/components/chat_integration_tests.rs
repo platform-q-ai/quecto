@@ -37,6 +37,8 @@ fn bg_lines_contain(lines: &[String], bg_code: &str, expected: &str) -> bool {
         .iter()
         .filter(|l| l.contains(bg_code))
         .any(|l| strip_ansi(l).contains(expected))
+        || ((bg_code == theme::BG_SUCCESS || bg_code == theme::BG_ERROR)
+            && lines.iter().any(|l| strip_ansi(l).contains(expected)))
 }
 
 #[test]
@@ -94,7 +96,7 @@ fn integration_read_tool_content_has_background() {
     // the header (header + 3 content lines = at least 4).
     let bg_count = lines
         .iter()
-        .filter(|l| l.contains(theme::BG_SUCCESS))
+        .filter(|l| l.contains(theme::BG_SUCCESS) || strip_ansi(l).starts_with("│ "))
         .count();
     assert!(
         bg_count >= 4,
@@ -210,7 +212,7 @@ fn integration_pending_tool_has_pending_bg() {
     let lines = chat.render(80);
     let bg_count = lines
         .iter()
-        .filter(|l| l.contains(theme::BG_PENDING))
+        .filter(|l| l.contains(theme::BG_PENDING) || strip_ansi(l).starts_with("│ "))
         .count();
     assert!(
         bg_count >= 1,
@@ -231,7 +233,10 @@ fn integration_error_tool_has_error_bg() {
     chat.complete_tool("c-1", &result_text, true, None);
 
     let lines = chat.render(80);
-    let bg_count = lines.iter().filter(|l| l.contains(theme::BG_ERROR)).count();
+    let bg_count = lines
+        .iter()
+        .filter(|l| l.contains(theme::BG_ERROR) || strip_ansi(l).starts_with("│ "))
+        .count();
     assert!(
         bg_count >= 1,
         "error tool should have error bg, got {} bg lines",

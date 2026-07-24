@@ -30,19 +30,11 @@ fn workflow_event() -> Event {
     }
 }
 
-/// Visible widths of the workflow status bar's top rule row, a representative
-/// tool-output background row, and the body-width contract. After #952 the
-/// workflow bar must equal the body/tool width and start at the same content
-/// column (one gutter space after the divider).
-fn workflow_tool_and_body_widths(h: &mut TuiHarness) -> (usize, usize, usize) {
-    h.app_mut().active_chat_mut().start_tool(
-        "c1".into(),
-        "bash".into(),
-        "{\"command\":\"echo hi\"}".into(),
-    );
-    h.app_mut()
-        .active_chat_mut()
-        .complete_tool("c1", "hi", false, Some(5));
+/// Visible width of the workflow status bar's top rule row and the body-width
+/// contract. Tool calls now render as compact content-width rows rather than
+/// filled panels, so this test pins the workflow bar's own full-width status-row
+/// contract and shared left gutter without constraining the tool-call component.
+fn workflow_and_body_widths(h: &mut TuiHarness) -> (usize, usize) {
     let body_w = h.app_mut().body_width();
     // Measure workflow box width from the actual rendered frame, not by calling
     // render_main_pane_workflow directly. This ensures we test the production
@@ -58,28 +50,18 @@ fn workflow_tool_and_body_widths(h: &mut TuiHarness) -> (usize, usize, usize) {
         .map(|l| visible_width(l))
         .expect("workflow status top rule should render")
         .saturating_sub(h.app_mut().frame_split().0 + h.app_mut().frame_split().1);
-    let tool_w = frame
-        .iter()
-        .find(|l| l.contains("$ echo hi"))
-        .map(|l| visible_width(l))
-        .expect("a tool-output box row should render")
-        .saturating_sub(h.app_mut().frame_split().0 + h.app_mut().frame_split().1);
-    (workflow_w, tool_w, body_w)
+    (workflow_w, body_w)
 }
 
 /// Pin the width contract after #952: the workflow status bar must equal the
-/// body/tool width and left-align to the same content column (one gutter after
-/// the divider). This fails against the post-#949 gutter-consuming render where
-/// the bar was one column wider.
+/// body width and left-align to the content column (one gutter after the
+/// divider). Tool-call rows are intentionally compact and are not used as a
+/// width oracle.
 fn assert_workflow_bar_aligned_with_tools(h: &mut TuiHarness, ctx: &str) {
-    let (workflow_w, tool_w, body_w) = workflow_tool_and_body_widths(h);
+    let (workflow_w, body_w) = workflow_and_body_widths(h);
     assert_eq!(
         workflow_w, body_w,
         "[{ctx}] workflow status bar width must equal the body width (not consume the gutter)"
-    );
-    assert_eq!(
-        workflow_w, tool_w,
-        "[{ctx}] workflow status bar width must equal the tool-output width"
     );
     // Verify left-edge alignment in the composed frame: the rule must appear
     // after the normal gutter (one space after the divider), matching tool rows.
@@ -155,14 +137,10 @@ async fn workflow_status_bar_truncates_at_narrow_width() {
         active_template: None,
         available_templates: None,
     });
-    let (workflow_w, tool_w, body_w) = workflow_tool_and_body_widths(&mut h);
+    let (workflow_w, body_w) = workflow_and_body_widths(&mut h);
     assert_eq!(
         workflow_w, body_w,
         "narrow: workflow status bar width must equal body width"
-    );
-    assert_eq!(
-        workflow_w, tool_w,
-        "narrow: workflow status bar width must equal tool width"
     );
     let frame: Vec<String> = h.full_frame().lines().map(|s| s.to_string()).collect();
     let rule_line = frame

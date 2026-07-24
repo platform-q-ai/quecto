@@ -41,6 +41,17 @@ pub enum ResumedChatMessage {
         id: Option<String>,
         stub: bool,
     },
+    ToolCall {
+        tool_call_id: String,
+        tool_name: String,
+        args: String,
+    },
+    ToolResult {
+        tool_call_id: String,
+        tool_name: Option<String>,
+        content: String,
+        is_error: bool,
+    },
 }
 
 /// Why a resumed-session messages payload could not be used safely.
@@ -130,7 +141,7 @@ pub fn parse_resumed_messages(
     let messages = message_values(data)?;
     Ok(messages
         .iter()
-        .filter_map(|message| {
+        .flat_map(|message| {
             let role = message.get("role").and_then(|v| v.as_str()).unwrap_or("");
             let content = message
                 .get("content")
@@ -148,20 +159,105 @@ pub fn parse_resumed_messages(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             match role {
-                "user" => Some(ResumedChatMessage::User {
+                "user" => vec![ResumedChatMessage::User {
                     text: content,
                     id,
                     stub,
-                }),
-                "assistant" if !content.is_empty() => Some(ResumedChatMessage::Assistant {
-                    text: content,
-                    id,
-                    stub,
-                }),
-                _ => None,
+                }],
+                "assistant" => parse_assistant_resume_messages(message, content, id, stub),
+                "tool" => parse_tool_result_resume_message(message, content)
+                    .into_iter()
+                    .collect(),
+                _ => Vec::new(),
             }
         })
         .collect())
+}
+
+fn parse_assistant_resume_messages(
+    message: &serde_json::Value,
+    content: String,
+    id: Option<String>,
+    stub: bool,
+) -> Vec<ResumedChatMessage> {
+    let mut resumed = Vec::new();
+    if !content.is_empty() {
+        resumed.push(ResumedChatMessage::Assistant {
+            text: content,
+            id,
+            stub,
+        });
+    }
+    resumed.extend(
+        message
+            .get("toolCalls")
+            .or_else(|| message.get("tool_calls"))
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(parse_tool_call_resume_message),
+    );
+    resumed
+}
+
+fn parse_tool_call_resume_message(call: &serde_json::Value) -> Option<ResumedChatMessage> {
+    let tool_call_id = call.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if tool_call_id.is_empty() {
+        return None;
+    }
+    let tool_name = call
+        .get("name")
+        .or_else(|| call.pointer("/function/name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("tool")
+        .to_string();
+    let args = call
+        .get("arguments")
+        .or_else(|| call.pointer("/function/arguments"))
+        .map(json_string_or_raw)
+        .unwrap_or_else(|| "{}".to_string());
+    Some(ResumedChatMessage::ToolCall {
+        tool_call_id: tool_call_id.to_string(),
+        tool_name,
+        args,
+    })
+}
+
+fn parse_tool_result_resume_message(
+    message: &serde_json::Value,
+    content: String,
+) -> Option<ResumedChatMessage> {
+    let tool_call_id = message
+        .get("toolCallId")
+        .or_else(|| message.get("tool_call_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if tool_call_id.is_empty() {
+        return None;
+    }
+    let tool_name = message
+        .get("toolName")
+        .or_else(|| message.get("tool_name"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let is_error = message
+        .get("isError")
+        .or_else(|| message.get("is_error"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Some(ResumedChatMessage::ToolResult {
+        tool_call_id: tool_call_id.to_string(),
+        tool_name,
+        content,
+        is_error,
+    })
+}
+
+fn json_string_or_raw(value: &serde_json::Value) -> String {
+    value
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| value.to_string())
 }
 
 /// Whether the payload explicitly contained session entries, even if none are

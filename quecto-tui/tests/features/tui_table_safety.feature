@@ -80,3 +80,9 @@ Feature: TUI markdown table safety and correctness
     And the markdown output should contain "safe link"
     And the markdown output should not contain "evil-title"
     And no source OSC control sequences should appear in markdown output
+
+  @markdown-render
+  Scenario: Markdown code blocks use the terminal theme
+    Given markdown content with a code fence containing "let answer = 42;"
+    When the markdown is rendered at width 80
+    Then the code block body should use the terminal default foreground and background

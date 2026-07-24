@@ -739,6 +739,9 @@ mod lifecycle_1060_tests;
 #[path = "uds_dispatch_masked_pruning_tests.rs"]
 mod masked_pruning_tests;
 #[cfg(test)]
+#[path = "uds_dispatch_resume_persist_tests.rs"]
+mod resume_persist_tests;
+#[cfg(test)]
 #[path = "uds_dispatch_1093_tests.rs"]
 mod tests_1093;
 

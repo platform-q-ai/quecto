@@ -193,6 +193,46 @@ fn when_resumed_messages_non_array(world: &mut TuiWorld) {
     });
 }
 
+#[when(expr = "a resumed conversation includes a completed command {string} with output {string}")]
+fn when_resumed_conversation_with_completed_command(
+    world: &mut TuiWorld,
+    command: String,
+    output: String,
+) {
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("resume-messages".into()),
+            command: "get_messages".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "messages": [
+                    {"role": "user", "content": "please run it"},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "toolCalls": [{
+                            "id": "call-1",
+                            "function": {
+                                "name": "bash",
+                                "arguments": serde_json::json!({"command": command}).to_string()
+                            }
+                        }]
+                    },
+                    {
+                        "role": "tool",
+                        "toolCallId": "call-1",
+                        "toolName": "bash",
+                        "content": output,
+                        "isError": false
+                    },
+                    {"role": "assistant", "content": "done after restore"}
+                ]
+            })),
+            error: None,
+        });
+    });
+}
+
 #[when(expr = "a model switch response fails with {string}")]
 fn when_model_switch_fails(world: &mut TuiWorld, error: String) {
     drive(world, |h| {
@@ -838,6 +878,49 @@ fn then_selected_subagent_session_shows(world: &mut TuiWorld, expected: String) 
     );
 }
 
+#[then(expr = "the restored conversation should show the completed command {string}")]
+fn then_restored_conversation_shows_completed_command(world: &mut TuiWorld, command: String) {
+    let expected = format!("$ {command}");
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&expected),
+        "restored conversation should show completed command {expected:?}, got:
+{frame}"
+    );
+}
+
+#[then(expr = "the restored command should show output {string}")]
+fn then_restored_command_shows_output(world: &mut TuiWorld, output: String) {
+    let frame = drive(world, |h| h.full_frame());
+    assert!(
+        frame.contains(&output),
+        "restored command should show output {output:?}, got:
+{frame}"
+    );
+}
+
+#[then(expr = "the resumed conversation should continue after {string} with {string}")]
+fn then_resumed_conversation_continues_after(world: &mut TuiWorld, earlier: String, later: String) {
+    let frame = drive(world, |h| h.full_frame());
+    let earlier_pos = frame.find(&earlier).unwrap_or_else(|| {
+        panic!(
+            "expected earlier text {earlier:?}, got:
+{frame}"
+        )
+    });
+    let later_pos = frame.find(&later).unwrap_or_else(|| {
+        panic!(
+            "expected later text {later:?}, got:
+{frame}"
+        )
+    });
+    assert!(
+        earlier_pos < later_pos,
+        "resumed conversation should show {later:?} after {earlier:?}, got:
+{frame}"
+    );
+}
+
 #[then(expr = "the app master session shows {string}")]
 fn then_app_master_session_shows(world: &mut TuiWorld, expected: String) {
     let frame = drive(world, |h| h.full_frame());
@@ -1183,14 +1266,16 @@ fn when_bash_tool_call_runs(world: &mut TuiWorld, command: String, line_count: u
         .map(|n| format!("line-{n}"))
         .collect::<Vec<_>>()
         .join("\n");
-    drive(world, |h| {
+    let raw = drive(world, |h| {
         h.event(tool_start(
             "bdd-bash",
             "bash",
             serde_json::json!({ "command": command }),
         ));
         h.event(tool_success("bdd-bash", "bash", &output));
+        h.full_frame_raw()
     });
+    world.tui_tool_rendered_raw = Some(raw);
 }
 
 #[when(expr = "a read tool call previews path {string} with controlled content")]
@@ -1244,7 +1329,10 @@ fn then_tool_rendering_includes_complete_long_value(world: &mut TuiWorld) {
     let frame = drive(world, |h| h.full_frame());
     let joined_tool_pane_lines: String = frame
         .lines()
-        .filter_map(|line| line.split_once('│').map(|(_, pane)| pane.trim()))
+        .filter_map(|line| {
+            line.split_once('│')
+                .map(|(_, pane)| pane.trim().trim_start_matches('│').trim())
+        })
         .collect();
     assert!(
         joined_tool_pane_lines.contains("alpha-beta-gamma-delta-epsilon-zeta"),
@@ -1268,6 +1356,79 @@ fn then_raw_tool_frame_has_no_title_escapes(world: &mut TuiWorld) {
         !raw.contains("\u{1b}]") && !raw.contains("\u{9d}"),
         "raw rendered frame must not contain OSC/title controls, got:\n{raw:?}"
     );
+}
+
+#[when("a failed bash tool call is rendered")]
+fn when_failed_bash_tool_call_is_rendered(world: &mut TuiWorld) {
+    let raw = drive(world, |h| {
+        h.event(tool_start(
+            "bdd-failed-bash",
+            "bash",
+            serde_json::json!({ "command": "false" }),
+        ));
+        h.event(Event::ToolExecutionEnd {
+            tool_call_id: "bdd-failed-bash".into(),
+            tool_name: "bash".into(),
+            result: serde_json::json!({ "content": [{ "type": "text", "text": "command failed" }] }),
+            is_error: true,
+        });
+        h.full_frame_raw()
+    });
+    world.tui_tool_rendered_raw = Some(raw);
+}
+
+#[then("the tool block uses the terminal default background")]
+fn then_tool_block_uses_terminal_default_background(world: &mut TuiWorld) {
+    let violations = explicit_background_sgr(raw_tool_frame(world));
+    assert!(
+        violations.is_empty(),
+        "explicit backgrounds: {violations:?}"
+    );
+}
+
+#[then("the tool block has a visible boundary")]
+fn then_tool_block_has_visible_boundary(world: &mut TuiWorld) {
+    let plain = strip_ansi(raw_tool_frame(world));
+    assert!(
+        plain
+            .lines()
+            .any(|line| line.contains("│ ✓ $ printf theme"))
+    );
+}
+
+#[then("the tool block shows an error symbol and status text")]
+fn then_tool_block_shows_error_symbol_and_status_text(world: &mut TuiWorld) {
+    let plain = strip_ansi(raw_tool_frame(world));
+    assert!(
+        plain.contains("✗ $ false"),
+        "error symbol missing: {plain:?}"
+    );
+    assert!(
+        plain.contains("command failed"),
+        "error text missing: {plain:?}"
+    );
+}
+
+fn raw_tool_frame(world: &TuiWorld) -> &str {
+    world
+        .tui_tool_rendered_raw
+        .as_deref()
+        .expect("tool rendering captured by the When step")
+}
+
+fn explicit_background_sgr(raw: &str) -> Vec<u16> {
+    raw.split("\u{1b}[")
+        .skip(1)
+        .filter_map(|segment| segment.split_once('m').map(|(params, _)| params))
+        .flat_map(|params| {
+            params
+                .replace(':', ";")
+                .split(';')
+                .filter_map(|part| part.parse().ok())
+                .collect::<Vec<u16>>()
+        })
+        .filter(|code| *code == 48 || (40..=47).contains(code) || (100..=107).contains(code))
+        .collect()
 }
 
 #[then("every tool rendering line should fit within the viewport")]

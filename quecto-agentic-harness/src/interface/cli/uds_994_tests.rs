@@ -369,6 +369,7 @@ async fn run_stub_turn_event_types_with_sink(
         session: &mut session,
         sink,
         message: Message::user("hello"),
+        system_prompt: "",
         cancel_rx,
         notification_rx: &mut notification_rx,
         subagent_registry: &subagent_registry,

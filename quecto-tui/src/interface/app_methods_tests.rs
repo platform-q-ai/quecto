@@ -386,3 +386,308 @@ fn composite_centered_splices_overlay_at_centered_origin() {
     assert_eq!(stripped[1], "..........");
     assert_eq!(stripped[4], "..........");
 }
+
+// ── resume transcript rendering ─────────────────────────────────────────
+
+async fn resume_harness() -> super::tui_harness::TuiHarness {
+    super::tui_harness::TuiHarness::new().await
+}
+
+fn resume_chat_text(app: &mut super::App) -> String {
+    app.master_session
+        .chat
+        .render(120)
+        .iter()
+        .map(|l| super::app_methods::strip_ansi(l))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[tokio::test]
+async fn successful_resume_requests_full_messages_before_stats() {
+    let mut h = resume_harness().await;
+    let data = serde_json::json!({"session": "chat-1"});
+    let a = h.app_mut();
+
+    a.handle_response(
+        Some("resume".into()),
+        "resume_session".into(),
+        true,
+        Some(data),
+        None,
+    );
+
+    let cmds = h.drain_commands().await;
+    assert_eq!(
+        cmds.len(),
+        3,
+        "expected get_messages, stats, and state resync: {cmds:?}"
+    );
+    assert!(
+        cmds[0].contains("\"type\":\"get_messages\"")
+            && cmds[0].contains("\"id\":\"resume-messages\"")
+            && !cmds[0].contains("\"count\""),
+        "resume should request the full restored transcript, not a tail: {cmds:?}"
+    );
+    assert!(
+        cmds[1].contains("\"type\":\"get_session_stats\""),
+        "resume should refresh stats after requesting messages: {cmds:?}"
+    );
+    assert!(
+        cmds[2].contains("\"type\":\"get_state\"") && cmds[2].contains("\"id\":\"resync\""),
+        "resume should resync session-scoped state after stats: {cmds:?}"
+    );
+}
+
+#[tokio::test]
+async fn successful_resume_with_one_message_response_displays_first_message() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+
+    a.handle_response(
+        Some("resume".into()),
+        "resume_session".into(),
+        true,
+        Some(serde_json::json!({"session": "chat-1"})),
+        None,
+    );
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({
+            "messages": [{"role": "user", "content": "first restored user prompt"}]
+        })),
+        None,
+    );
+
+    let text = resume_chat_text(a);
+    assert!(text.contains("first restored user prompt"), "{text}");
+    assert!(text.contains("Session resumed"), "{text}");
+}
+
+#[tokio::test]
+async fn successful_resume_restores_tool_calls_and_results_as_tool_cards() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({
+            "messages": [
+                {"role": "user", "content": "please run it"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [{
+                        "id": "call-1",
+                        "function": {
+                            "name": "bash",
+                            "arguments": r#"{"command":"printf restored"}"#
+                        }
+                    }]
+                },
+                {
+                    "role": "tool",
+                    "toolCallId": "call-1",
+                    "toolName": "bash",
+                    "content": "restored output",
+                    "isError": false
+                },
+                {"role": "assistant", "content": "done"}
+            ]
+        })),
+        None,
+    );
+
+    let text = resume_chat_text(a);
+    let user = text.find("please run it").expect("user message restored");
+    let tool = text
+        .find("$ printf restored")
+        .expect("tool call command restored as a tool card");
+    let result = text
+        .find("restored output")
+        .expect("tool result restored in the tool card");
+    let done = text
+        .find("done")
+        .expect("assistant text after tool restored");
+    assert!(
+        user < tool && tool < result && result < done,
+        "resume must preserve tool turn order:
+{text}"
+    );
+}
+
+#[tokio::test]
+async fn successful_resume_restores_pending_and_failed_tool_cards() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "call-1", "function": {"name": "bash", "arguments": r#"{"command":"missing-command"}"#}},
+                        {"id": "call-2", "function": {"name": "read", "arguments": r#"{"path":"pending.txt"}"#}}
+                    ]
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call-1",
+                    "tool_name": "bash",
+                    "content": "missing-command: not found",
+                    "is_error": true
+                }
+            ]
+        })),
+        None,
+    );
+
+    let text = resume_chat_text(a);
+    let failed = text
+        .find("$ missing-command")
+        .expect("failed tool command restored");
+    let failure_output = text
+        .find("missing-command: not found")
+        .expect("failed tool output restored");
+    let pending = text
+        .find("pending.txt")
+        .expect("pending tool call restored");
+    assert!(
+        failed < failure_output && failure_output < pending,
+        "resume must preserve multiple tool call order:
+{text}"
+    );
+    assert!(
+        text.contains("✗"),
+        "failed resumed tool should render error artifact:
+{text}"
+    );
+    assert!(
+        text.contains("⠋"),
+        "unresolved resumed tool should render pending artifact:
+{text}"
+    );
+}
+
+#[tokio::test]
+async fn replace_chat_with_single_user_message_has_viewable_first_message() {
+    let mut h = resume_harness().await;
+    let data = serde_json::json!({
+        "messages": [
+            {"role": "user", "content": "first and only user message"}
+        ]
+    });
+    let a = h.app_mut();
+
+    a.replace_chat_with_messages(&data);
+
+    let text = resume_chat_text(a);
+    assert!(text.contains("first and only user message"));
+    assert!(!text.contains("Session resumed"));
+}
+
+#[tokio::test]
+async fn replace_chat_with_no_displayable_messages_shows_resume_status() {
+    let mut h = resume_harness().await;
+    let data = serde_json::json!({"messages": []});
+    let a = h.app_mut();
+
+    a.replace_chat_with_messages(&data);
+
+    let text = resume_chat_text(a);
+    assert!(text.contains("Session resumed"));
+}
+
+#[tokio::test]
+async fn resume_empty_legacy_rewind_uses_rewind_status_once() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+    a.handle_response(
+        Some("rewind-refresh".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({"messages": []})),
+        None,
+    );
+    let text = resume_chat_text(a);
+    assert!(text.contains("Conversation rewound"), "{text}");
+    assert!(!text.contains("Session resumed"), "{text}");
+    assert_eq!(text.matches("Conversation rewound").count(), 1, "{text}");
+}
+
+#[tokio::test]
+async fn resumed_spawn_tool_call_is_suppressed_like_live_spawn() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({"messages": [
+            {"role":"assistant","content":"","toolCalls":[{"id":"spawn-1","function":{"name":"spawn","arguments":r#"{"task":"secret"}"#}}]},
+            {"role":"tool","toolCallId":"spawn-1","toolName":"spawn","content":"spawned"}
+        ]})),
+        None,
+    );
+    let text = resume_chat_text(a);
+    assert!(!text.contains("spawn"), "{text}");
+    assert!(!text.contains("secret"), "{text}");
+    assert!(!text.contains("spawned"), "{text}");
+}
+
+#[tokio::test]
+async fn resumed_tool_name_strips_terminal_control_sequences() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({"messages": [
+            {"role":"assistant","content":"","toolCalls":[{"id":"evil-1","function":{"name":"evil\u{1b}]8;;https://exfil\u{7}name","arguments":"{}"}}]}
+        ]})),
+        None,
+    );
+    let raw = a.master_session.chat.render(120).join("\n");
+    let text = resume_chat_text(a);
+    assert!(text.contains("evilname"), "{text}");
+    assert!(!raw.contains("\u{1b}]8"), "{raw:?}");
+}
+
+#[tokio::test]
+async fn resumed_duplicate_tool_ids_attach_results_chronologically() {
+    let mut h = resume_harness().await;
+    let a = h.app_mut();
+    a.handle_response(
+        Some("resume-messages".into()),
+        "get_messages".into(),
+        true,
+        Some(serde_json::json!({"messages": [
+            {"role":"assistant","content":"","toolCalls":[
+                {"id":"dup","function":{"name":"bash","arguments":r#"{"command":"first"}"#}},
+                {"id":"dup","function":{"name":"bash","arguments":r#"{"command":"second"}"#}}
+            ]},
+            {"role":"tool","toolCallId":"dup","toolName":"bash","content":"first result"},
+            {"role":"tool","toolCallId":"dup","toolName":"bash","content":"second result"}
+        ]})),
+        None,
+    );
+    let text = resume_chat_text(a);
+    let first = text.find("$ first").unwrap();
+    let first_result = text.find("first result").unwrap();
+    let second = text.find("$ second").unwrap();
+    let second_result = text.find("second result").unwrap();
+    assert!(
+        first < first_result && first_result < second && second < second_result,
+        "{text}"
+    );
+}

@@ -676,14 +676,20 @@ fn then_tui_validates_resumed_messages_before_replacing_chat(_world: &mut Quecto
 
     let methods = std::fs::read_to_string("../quecto-tui/src/interface/app_methods.rs")
         .expect("read TUI app methods source");
-    let body = rust_fn_body(&methods, "replace_chat_with_messages")
+    let wrapper = rust_fn_body(&methods, "replace_chat_with_messages")
         .expect("expected replace_chat_with_messages in app_methods.rs");
+    let body = if wrapper.contains("replace_chat_with_messages_with_empty_status") {
+        rust_fn_body(&methods, "replace_chat_with_messages_with_empty_status")
+            .expect("expected delegated resume replacement helper in app_methods.rs")
+    } else {
+        wrapper
+    };
     let parse_pos = body
         .find("session_payloads::parse_resumed_messages")
-        .expect("replace_chat_with_messages should call the application-layer parser");
+        .expect("resume replacement should call the application-layer parser");
     let clear_pos = body
         .find("self.master_session.chat.clear()")
-        .expect("replace_chat_with_messages should still clear chat after valid resume data");
+        .expect("resume replacement should still clear chat after valid resume data");
     assert!(
         parse_pos < clear_pos
             && body.contains("Err(error)")

@@ -92,6 +92,11 @@ fn markdown_mixed_content(world: &mut TuiWorld) {
     );
 }
 
+#[given(regex = r#"^markdown content with a code fence containing "([^"]*)"$"#)]
+fn markdown_content_with_code_fence(world: &mut TuiWorld, code: String) {
+    world.tui_table_cell = Some(format!("```rust\n{code}\n```\n"));
+}
+
 #[given("markdown content with a table containing a long cell value")]
 fn markdown_table_with_long_cell_value(world: &mut TuiWorld) {
     world.tui_table_cell = Some(
@@ -250,6 +255,57 @@ fn no_source_osc_sequences_in_markdown(world: &mut TuiWorld) {
         !raw.contains("\u{1b}]") && !raw.contains("\x1b]"),
         "markdown output should not include source OSC controls: {raw:?}"
     );
+}
+
+#[then("the code block body should use the terminal default foreground and background")]
+fn code_block_body_uses_terminal_default_theme(world: &mut TuiWorld) {
+    let expected = expected_code_body(world);
+    let body_line = rendered_code_body_line(world, &expected);
+    let violations = code_body_active_sgr_violations(body_line, &expected);
+
+    assert!(
+        violations.is_empty(),
+        "code block body must use terminal defaults, but found {violations}: {body_line:?}"
+    );
+}
+
+fn expected_code_body(world: &TuiWorld) -> String {
+    world
+        .tui_table_cell
+        .as_deref()
+        .expect("markdown content set")
+        .lines()
+        .find(|line| !line.starts_with("```") && !line.is_empty())
+        .expect("code body present")
+        .to_string()
+}
+
+fn rendered_code_body_line<'a>(world: &'a TuiWorld, expected: &str) -> &'a str {
+    let raw = raw(world);
+    rendered(world)
+        .iter()
+        .find(|line| line.contains(expected))
+        .map(String::as_str)
+        .unwrap_or_else(|| panic!("code block body should render, got: {raw:?}"))
+}
+
+fn code_body_active_sgr_violations(body_line: &str, expected: &str) -> String {
+    let code_start = body_line
+        .find(expected)
+        .unwrap_or_else(|| panic!("code body should be present: {body_line:?}"));
+    let prefix = &body_line[..code_start];
+    let active_prefix = prefix.rsplit("\u{1b}[0m").next().unwrap_or(prefix);
+    let code_end = code_start + expected.len();
+    let mut violations = Vec::new();
+
+    if active_prefix.contains('\u{1b}') {
+        violations.push("active SGR before code text");
+    }
+    if body_line[code_start..code_end].contains('\u{1b}') {
+        violations.push("SGR inside code text");
+    }
+
+    violations.join(", ")
 }
 
 #[then("every markdown output line should fit within the viewport")]

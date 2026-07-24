@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use crate::domain::message::Message;
+use crate::domain::message::{Message, Role};
 use crate::domain::session::ContextSpillStore;
 
 use super::protocol::{AgentEvent, SessionState};
@@ -11,24 +11,31 @@ use super::uds_session::{
     messages_page_json,
 };
 
+pub(super) fn is_injected_system_prompt(message: &Message, prompt: &str) -> bool {
+    !prompt.is_empty()
+        && message.role == Role::System
+        && !message.is_manifest
+        && message.content == prompt
+}
+
+pub(super) fn user_visible_messages(messages: &[Message], system_prompt: &str) -> Vec<Message> {
+    messages
+        .iter()
+        .filter(|m| !is_injected_system_prompt(m, system_prompt))
+        .cloned()
+        .collect()
+}
+
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 
-/// Memory budgets for the id-addressable ledger. Quecto sessions run for weeks,
-/// so the ledger must NOT grow without bound. Eviction (oldest-first) triggers
-/// on WHICHEVER cap is hit: a content-byte budget for large-payload messages,
-/// AND an entry-count cap so a flood of tiny/empty/tool-metadata messages — each
-/// of which adds little content but a real per-entry cost (two id-string copies
-/// for the map key + order deque, plus the cloned Message/ToolCall structs) —
-/// cannot accumulate unbounded. A ref whose full copy has been evicted resolves
-/// best-effort (get_message returns "not found", or a collapsed stub if the
-/// message is still live); end-of-turn refs point at recent messages that
-/// clients resolve promptly, so eviction is invisible in practice (#1060 review
-/// r4, finding 2 — unbounded ledger).
+/// Bounded id-addressable ledger budgets. Eviction is oldest-first and triggers
+/// on either content bytes or entry count so long-running sessions and floods of
+/// tiny messages cannot grow memory unbounded (#1060 review r4).
 const LEDGER_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const LEDGER_MAX_ENTRIES: usize = 8192;
 
-/// Fixed per-entry overhead folded into the byte budget so a zero/tiny-content
-/// message still consumes budget: it covers the id `String` stored twice (map
+/// Fixed per-entry overhead so a zero/tiny-content message still consumes
+/// budget: it covers the id `String` stored twice (map
 /// key + order deque, ~2×UUID) plus the owned Message/ToolCall struct footprint.
 const LEDGER_ENTRY_OVERHEAD: usize = 256;
 
@@ -49,8 +56,7 @@ impl LedgerAdvance {
     }
 }
 
-/// Approximate owned in-memory size of a ledger entry, for byte-budgeting —
-/// content + tool payloads + the fixed per-entry overhead above.
+/// Approximate owned in-memory size of a ledger entry for byte-budgeting.
 fn message_bytes(m: &Message) -> usize {
     LEDGER_ENTRY_OVERHEAD
         + m.content.len()
@@ -62,17 +68,8 @@ fn message_bytes(m: &Message) -> usize {
         + m.tool_name.as_ref().map_or(0, |s| s.len())
 }
 
-/// The busy-path conversation snapshot: the live (post-prune) conversation for
-/// `get_messages` inspection, PLUS a BYTE-BOUNDED id→message ledger.
-///
-/// #1060 review 1a: end-of-turn `messageRefs` are the ids of the run's
-/// `appended_messages` — full copies the context ladder never demotes. The live
-/// conversation, however, can drop or collapse-in-place those messages to fit
-/// the LLM budget, so a bare `get_message` against it can return "not found" or
-/// a stub for a ref that was just emitted. The ledger keeps full copies so a ref
-/// stays resolvable across pruning — but capped by [`LEDGER_MAX_BYTES`] AND
-/// [`LEDGER_MAX_ENTRIES`], oldest-first, so it cannot grow unbounded over a
-/// weeks-long session.
+/// Busy-path conversation snapshot: pruned live messages plus a bounded
+/// id→message ledger for resolving recent end-of-turn refs after pruning.
 #[derive(Default)]
 pub(crate) struct ConversationSnapshotData {
     /// Live conversation as last published (may be pruned/collapsed).
@@ -501,7 +498,8 @@ pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
 pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
     let mut snap = ctx.conversation_snapshot.write().await;
     snap.set_spill_store(ctx.agent.spill_store().cloned(), ctx.session_key.clone());
-    let advance = snap.publish(ctx.messages);
+    let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
+    let advance = snap.publish(&visible_messages);
     drop(snap);
     if advance.changed
         && let Some(tx) = ctx.broadcast_tx.as_ref()
@@ -527,8 +525,9 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
             value
         })
     });
+    let visible_message_count = user_visible_messages(ctx.messages, ctx.system_prompt).len();
     let state = ctx.session.state_snapshot(
-        ctx.messages.len(),
+        visible_message_count,
         workflow,
         ctx.agent.max_context_tokens(),
         ctx.agent.effort().map(|l| l.as_str().to_string()),
@@ -538,9 +537,10 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
 }
 
 pub(super) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
+    let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
     let stats = compute_session_stats_with_usage(
         ctx.session_key,
-        ctx.messages,
+        &visible_messages,
         ctx.session.usage_snapshot(),
         ctx.session.context_tokens(),
         ctx.agent.max_context_tokens(),

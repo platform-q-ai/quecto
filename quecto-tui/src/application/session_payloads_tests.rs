@@ -87,6 +87,127 @@ fn parse_resumed_messages_keeps_only_displayable_chat_messages() {
 }
 
 #[test]
+fn parse_resumed_messages_preserves_tool_calls_and_results() {
+    let messages = parse_resumed_messages(&json!({
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "",
+                "id": "a-tools",
+                "toolCalls": [
+                    {
+                        "id": "call-1",
+                        "function": {
+                            "name": "bash",
+                            "arguments": r#"{"command":"printf restored"}"#
+                        }
+                    }
+                ]
+            },
+            {
+                "role": "tool",
+                "toolCallId": "call-1",
+                "toolName": "bash",
+                "content": "restored output",
+                "isError": false
+            },
+            {"role": "assistant", "content": "after tool"}
+        ]
+    }))
+    .expect("valid messages array should parse");
+
+    assert_eq!(
+        messages,
+        vec![
+            ResumedChatMessage::ToolCall {
+                tool_call_id: "call-1".to_string(),
+                tool_name: "bash".to_string(),
+                args: r#"{"command":"printf restored"}"#.to_string(),
+            },
+            ResumedChatMessage::ToolResult {
+                tool_call_id: "call-1".to_string(),
+                tool_name: Some("bash".to_string()),
+                content: "restored output".to_string(),
+                is_error: false,
+            },
+            ResumedChatMessage::Assistant {
+                text: "after tool".to_string(),
+                id: None,
+                stub: false,
+            },
+        ]
+    );
+}
+
+#[test]
+fn parse_resumed_messages_preserves_multiple_pending_error_and_snake_case_tools() {
+    let messages = parse_resumed_messages(&json!({
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call-1", "function": {"name": "bash", "arguments": r#"{"command":"first"}"#}},
+                    {"id": "call-2", "function": {"name": "read", "arguments": r#"{"path":"second.txt"}"#}}
+                ]
+            },
+            {"role": "tool", "tool_call_id": "call-1", "tool_name": "bash", "content": "boom", "is_error": true}
+        ]
+    }))
+    .expect("valid messages array should parse");
+
+    assert_eq!(
+        messages,
+        vec![
+            ResumedChatMessage::ToolCall {
+                tool_call_id: "call-1".to_string(),
+                tool_name: "bash".to_string(),
+                args: r#"{"command":"first"}"#.to_string(),
+            },
+            ResumedChatMessage::ToolCall {
+                tool_call_id: "call-2".to_string(),
+                tool_name: "read".to_string(),
+                args: r#"{"path":"second.txt"}"#.to_string(),
+            },
+            ResumedChatMessage::ToolResult {
+                tool_call_id: "call-1".to_string(),
+                tool_name: Some("bash".to_string()),
+                content: "boom".to_string(),
+                is_error: true,
+            },
+        ]
+    );
+}
+
+#[test]
+fn parse_resumed_messages_keeps_assistant_text_before_tool_calls() {
+    let messages = parse_resumed_messages(&json!({
+        "messages": [{
+            "role": "assistant",
+            "content": "I will inspect it",
+            "toolCalls": [{"id": "call-1", "function": {"name": "read", "arguments": r#"{"path":"src/lib.rs"}"#}}]
+        }]
+    }))
+    .expect("valid messages array should parse");
+
+    assert_eq!(
+        messages,
+        vec![
+            ResumedChatMessage::Assistant {
+                text: "I will inspect it".to_string(),
+                id: None,
+                stub: false,
+            },
+            ResumedChatMessage::ToolCall {
+                tool_call_id: "call-1".to_string(),
+                tool_name: "read".to_string(),
+                args: r#"{"path":"src/lib.rs"}"#.to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
 fn parse_resumed_messages_rejects_missing_messages() {
     assert_eq!(
         parse_resumed_messages(&json!({})),

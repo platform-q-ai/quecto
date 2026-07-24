@@ -125,6 +125,7 @@ pub struct TuiWorld {
     pub tui_table_cell: Option<String>,
     pub tui_table_viewport_width: Option<usize>,
     pub tui_tool_viewport_width: Option<usize>,
+    pub tui_tool_rendered_raw: Option<String>,
     // --- TUI stdin buffer cap BDD ---
     pub tui_stdin_buffer: Option<DebugStdinBuffer>,
     pub tui_stdin_last_feed_ok: Option<bool>,

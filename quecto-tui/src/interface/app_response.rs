@@ -90,19 +90,27 @@ impl App {
                     } else if matches!(
                         id.as_deref(),
                         Some("resume-messages") | Some("rewind-refresh")
-                    ) && Self::is_history_page_payload(&data)
-                    {
+                    ) {
                         // Resume/rewind swapped or truncated the server-side
-                        // conversation: replace the transcript AND the paging
-                        // cursors, which refer to the old conversation (#1061
-                        // review — a stale cursor after a rewind would loop on
-                        // "history cursor not found" forever).
+                        // conversation: replace the transcript. Newer servers
+                        // include paged-history cursors; legacy payloads do not,
+                        // but must still clear any live transcript and show the
+                        // status marker (#1050/#1061).
                         let status = if id.as_deref() == Some("rewind-refresh") {
                             "Conversation rewound"
                         } else {
                             "Session resumed"
                         };
-                        self.replace_master_chat_with_history_page(&data, status);
+                        if Self::is_history_page_payload(&data) {
+                            self.replace_master_chat_with_history_page(&data, status);
+                        } else {
+                            self.clear_message_recovery();
+                            if self.replace_chat_with_messages_with_empty_status(&data, status) {
+                                self.master_session.chat.add_entry(ChatEntry::Status {
+                                    text: status.to_string(),
+                                });
+                            }
+                        }
                     } else if own_page {
                         // This client's own older page extends the loaded prefix.
                         Self::reconcile_master_backfill_history(

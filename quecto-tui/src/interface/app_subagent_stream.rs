@@ -536,27 +536,14 @@ impl App {
         data: &serde_json::Value,
         extend_prefix: bool,
     ) {
-        use crate::application::session_payloads::{self, ResumedChatMessage};
+        use crate::application::session_payloads;
         if session.history_backfilled {
             return;
         }
         let Ok(messages) = session_payloads::parse_resumed_messages(data) else {
             return;
         };
-        let history: Vec<ChatEntry> = messages
-            .into_iter()
-            .map(|message| {
-                // Sub-agent transcript text is untrusted; strip terminal control
-                // sequences before rendering so a child cannot inject ANSI/OSC/
-                // bidi escapes into the operator's terminal (#828 security).
-                let (text, id, stub, is_user) = match message {
-                    ResumedChatMessage::User { text, id, stub } => (text, id, stub, true),
-                    ResumedChatMessage::Assistant { text, id, stub } => (text, id, stub, false),
-                };
-                let text = crate::interface::ansi::sanitize_control_keep_newlines(&text);
-                Self::history_entry(text, id, stub, is_user)
-            })
-            .collect();
+        let history: Vec<ChatEntry> = Self::resumed_chat_entries(messages);
         let before = data
             .get("before")
             .and_then(|v| v.as_str())
