@@ -37,6 +37,10 @@ static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
             description: "Show session info".into(),
         },
         SlashCommand {
+            name: "refresh-tui".into(),
+            description: "Refresh the TUI view".into(),
+        },
+        SlashCommand {
             name: "resume".into(),
             description: "Resume a persisted CLI session".into(),
         },

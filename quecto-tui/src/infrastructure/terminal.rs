@@ -122,8 +122,18 @@ impl Terminal {
     /// Re-query terminal dimensions (call after SIGWINCH).
     pub fn refresh_size(&mut self) {
         let (w, h) = get_terminal_size();
-        self.width = w;
-        self.height = h;
+        self.set_size(w, h);
+    }
+
+    /// Override the cached terminal dimensions.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(crate) fn set_size_for_tests(&mut self, width: usize, height: usize) {
+        self.set_size(width, height);
+    }
+
+    fn set_size(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
     }
 
     /// Hide the cursor.

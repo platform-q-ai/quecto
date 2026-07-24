@@ -53,8 +53,7 @@ async fn headless_app(width: usize, height: usize) -> (App, mpsc::Receiver<Strin
     events::spawn_command_reader(listener, cmd_tx);
     let client = Client::connect(&socket_path).await.unwrap();
     let mut term = Terminal::new();
-    term.width = width;
-    term.height = height;
+    term.set_size_for_tests(width, height);
     (App::new(term, client), cmd_rx)
 }
 
