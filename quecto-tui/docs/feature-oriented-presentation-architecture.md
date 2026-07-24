@@ -31,6 +31,7 @@ The current crate still uses `application/`, `domain/`, `infrastructure/`, and `
 | `infrastructure/client*.rs` | UDS client and wire protocol boundary | `protocol` |
 | `infrastructure/process.rs`, `terminal.rs`, `signals.rs`, `render.rs` | runtime/terminal adapters | `shell` runtime adapters or explicit infrastructure seams under `shell` |
 | `infrastructure/workspace_files.rs` | workspace filesystem/Git adapter | `workspace` boundary adapter |
+| `application/model_payloads.rs` | typed mapper for `list_models` wire payloads (#1220) | `protocol` mapping feeding `models` |
 | `application/session_payloads.rs` | typed parsing foothold for session payloads | `protocol` mapping feeding `sessions` |
 | `domain/` | placeholder for invariant-bearing shared values | only keep values that encode real invariants |
 
@@ -79,6 +80,80 @@ Observable surfaces and required parity:
 | Executable guardrails | Architecture tests and BDD steps continue to execute, and the new feature-oriented guardrail is additive rather than weakening existing interim compatibility checks. | Existing checks still cover the full compatibility layer set and root file placement; the new check covers the full capability list plus protocol and pure-policy boundary rules. | Not applicable; test/runtime cost is outside shipped TUI behavior. |
 
 Approved parity contract: all readiness-gate items are resolved; no `__UNRESOLVED__` markers remain.
+
+## Parity contract for protocol-boundary slice (#1220)
+
+Readiness gate for #1220:
+
+- Zero behavior change mandate: passed. #1220 states “Existing behavior and command ordering remain unchanged”, and the parent epic forbids user-visible behavior changes.
+- Touched observable surfaces: enumerated below. The slice moves `list_models` payload interpretation from `interface/app_models.rs` into an application-layer mapper, documents the mapper convention, and adds two decrease-only guard ratchets. No command is added, removed, or reordered.
+- Existing harnesses: passed. `app_models_tests.rs` pins the current model-list parsing behavior, `session_payloads_tests.rs` pins the existing mapper style, and `tests/architecture.rs` runs in the fast pre-commit guard suite.
+- Behavioral/refactoring split: passed. Every acceptance criterion is structural (mapper convention, mapper tests, ratchets, inventory) or explicitly parity-only.
+- Performance warning: accepted. The replaced parsing code is a single-pass `filter_map` over the `models` array allocating one `Vec<ModelEntry>` plus per-entry sanitized `String`s. Consequence if unrecorded: allocation/complexity regressions would be undetectable; the mapper therefore keeps the same single pass and the same allocation count.
+
+Observable surfaces and required parity:
+
+| Surface | Required identical behavior | Boundary cases | Performance characteristics |
+|---|---|---|---|
+| `list_models` response handling | Model entries are derived from `models[]`; `model` wins over `id`; empty/non-string ids are skipped; provider is explicit value, else slash prefix, else `Model`; `auth` is sanitized and dropped when empty; control characters are stripped from id/provider/auth; `is_current` starts `false`. | Empty array → no entries; missing `models` key → no entries; `models` not an array → no entries; one entry; many mixed entries; id without slash; explicit provider overriding slash inference. | One pass over the array, one output `Vec`, no extra clones beyond existing sanitized strings. |
+| Model selector opening | `open_pending` still clears exactly once, the selector still opens after a payload arrives, and a `None` payload still opens the selector with cached entries. | Payload absent; payload present with zero entries; payload present with entries. | Unchanged; no additional cloning of the cached entry list. |
+| Command ordering | `ListModels`, `SetModel`, and sub-agent routing emit the same commands in the same order. | Master session vs focused sub-agent; unavailable sub-agent path. | Unchanged. |
+| Guard suite | The pre-commit fast guard suite still runs `tests/architecture.rs`, and the two new ratchets fail on increase and pass on decrease. | Count equal to seed; count below seed; count above seed. | Not applicable; guard-time only. |
+
+Approved parity contract: all readiness-gate items are resolved; no `__UNRESOLVED__` markers remain.
+
+## Characterization mutation log for protocol-boundary slice (#1220)
+
+Every mutation was applied to production parsing/dispatch code in `interface/app_models.rs`, verified to fail the named characterization test, then reverted from a pristine baseline copy.
+
+| Mutation | Observed failure |
+|---|---|
+| M1: prefer `id` over `model` for the entry id | `model_field_wins_over_id_field` FAILED |
+| M2: drop `sanitize_control` on the model id | `control_characters_are_stripped_from_rendered_fields` FAILED |
+| M3: remove the empty-id skip | `empty_model_id_entry_is_skipped_but_siblings_render` FAILED |
+| M4: remove the empty-auth `filter` | `empty_auth_string_yields_no_auth_value` FAILED |
+| M5: ignore the explicit `provider` field | `explicit_provider_overrides_slash_inference` FAILED |
+| M6: reverse parsed entry order | `renders_model_field_entries_in_payload_order` FAILED |
+| M7: change the slashless provider default to `Unknown` | `provider_defaults_to_model_label_without_slash` FAILED |
+| M8: never clear `open_pending` | `pending_open_flag_clears_exactly_once` FAILED |
+| M9: clear cached entries on an absent payload | `absent_payload_opens_selector_and_keeps_cached_entries` FAILED |
+| M10: open the selector for unsolicited lists | `delivery_without_pending_open_updates_cache_without_opening` FAILED |
+| M11: substitute a fallback entry when `models` is missing/non-array | `missing_models_key_yields_no_entries`, `models_not_an_array_yields_no_entries` FAILED |
+| M12: remove the `id` fallback | `falls_back_to_id_when_model_field_absent` FAILED |
+| M13: coerce non-string ids instead of skipping | `non_string_model_id_entry_is_skipped` FAILED |
+| M14: delete the slash-prefix provider inference branch | `provider_is_inferred_from_slash_prefix` FAILED |
+| M15: parse entries with `is_current: true` | `provider_is_inferred_from_slash_prefix` FAILED |
+| M16: drop the `open_pending` re-entrancy guard in `open_model_selector` | `second_open_while_pending_emits_no_duplicate_list_models` FAILED |
+| M17: never emit the `ListModels` command on open | `open_model_selector_emits_exactly_one_list_models` FAILED |
+| M18: send a fixed wrong model id in `SetModel` | `selector_selection_emits_set_model_command` FAILED |
+| M19: remove the empty-id skip (sibling-identity assertion) | `empty_model_id_entry_is_skipped_but_siblings_render` FAILED |
+
+Hollow assertions found and fixed by mutation testing:
+
+- `empty_auth_string_yields_no_auth_value` originally compared rendered frames, which are identical for empty vs absent auth; M4 survived. Rewritten to assert the parsed `auth` value, after which M4 fails.
+- `provider_defaults_to_model_label_without_slash` originally matched `"Model"` in the frame, which also matches the selector title `Select Model`; M7 survived. Rewritten to assert the parsed `provider` value, after which M7 fails.
+
+Hollow assertions found by the pre-refactor falsifiability/coverage finders and fixed before the freeze:
+
+- `provider_is_inferred_from_slash_prefix` matched `"anthropic"` in the frame, but the row label IS the id, so M14 survived. Rewritten to assert the parsed `provider`, `id`, and `is_current`; M14 and M15 now fail.
+- `empty_model_id_entry_is_skipped_but_siblings_render` used `contains("valid/model") || contains("model")`; the `||` arm matched the empty-state text `No matching models`, making it a tautology. Narrowed and given an entry-identity assertion; M19 now fails.
+- `absent_payload_opens_selector_and_keeps_cached_entries` had a latent `|| contains("entry")` arm; narrowed to `cached/entry`.
+- `control_characters_are_stripped_from_rendered_fields` asserted `contains("model")`, also satisfied by `No matching models`; narrowed to the full sanitized id `provider/model`.
+- `non_string_model_id_entry_is_skipped` asserted only the entry count; given a surviving-entry identity assertion.
+
+Coverage gaps closed before the freeze (command-emission surface, previously pinned only by existence):
+
+- `open_model_selector_emits_exactly_one_list_models` (M17)
+- `second_open_while_pending_emits_no_duplicate_list_models` (M16)
+- `selector_selection_emits_set_model_command` (M18)
+
+Mutation residue check: `git diff quecto-tui/src/interface/app_models.rs` shows only the added characterization test-module declaration; the suite is GREEN at 20 passed.
+
+Freeze manifest (characterization suite is READ-ONLY from here until the parity step):
+
+| File | `git hash-object` |
+|---|---|
+| `quecto-tui/src/interface/app_models_protocol_characterization_tests.rs` | `d37d0ad0f0f19fb40bba8f14e6029a285be4d219` |
 
 ## Characterization mutation log for architecture-boundary slice
 
@@ -174,6 +249,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | Current production file | Target owner |
 |---|---|
 | `application/mod.rs` | remove after compatibility shims are unnecessary |
+| `application/model_payloads.rs` | `protocol` mapper feeding `models` |
 | `application/session_payloads.rs` | `protocol` mapper feeding `sessions` |
 | `domain/mod.rs` | remove vestigial placeholder; recreate only for invariant-bearing shared values if needed |
 | `infrastructure/child_watch.rs` | `shell` runtime supervision |
@@ -278,3 +354,130 @@ This issue is the characterization-readiness slice for the later code-moving iss
 - No generic history abstraction that erases master-history versus child-ledger differences.
 - Do not resurrect deleted child backfill/reconcile paths.
 - Do not move runtime or rendering concerns merely to reduce `App` line count.
+
+## Protocol boundary and typed mapper convention (#1220)
+
+Harness-facing features must not interpret raw `serde_json::Value` shapes in
+controllers or views. Payload interpretation lives in **application-layer
+mappers**; the interface converts a typed DTO into its own view model at a thin
+seam. This introduces no global command/event enum mirroring UDS, and no
+gateway or port per command.
+
+### The convention
+
+Every mapper in `application/` obeys four rules (stated canonically in the
+module docs of `application/model_payloads.rs`):
+
+1. **Input is raw wire JSON, output is a typed application value.** Feature
+   controllers and views consume the typed value and never re-read the JSON.
+2. **Total, never failing on shape.** Malformed, legacy, and unknown payloads
+   map to an empty/defaulted result, unless the distinction is itself
+   user-visible (as with `session_payloads::ResumeMessagesError`).
+3. **The application layer owns no interface types.** Mappers must not name
+   `interface::` types. Where a presentation concern is genuinely needed —
+   control-character sanitization, owned by `interface/ansi.rs` — it is
+   *injected* by the caller rather than imported, keeping the layer rule intact
+   while all derivation rules stay in the mapper.
+4. **Parity quirks live in the mapper, documented.** Legacy field fallbacks and
+   sanitization rules preserved for zero-behaviour-change parity sit next to the
+   canonical rules, never re-implemented at a consuming call site.
+
+### Reference production flow
+
+`list_models` is the first flow migrated to the convention:
+
+- `application/model_payloads.rs` — `parse_model_list` → `Vec<ModelListEntry>`,
+  owning the id/provider/auth derivation and the drop rules for absent,
+  non-string, and sanitize-to-empty identifiers.
+- `interface/app_models.rs::parse_model_entries` — the seam: maps the DTO to the
+  selector's `ModelEntry`, adding only the interface-owned `is_current: false`.
+
+Mapper fixtures in `application/model_payloads_tests.rs` cover valid, legacy
+(`id` vs `model`), and malformed (missing key, non-array, non-object entries,
+non-string ids, control characters) payloads. Observable behaviour and command
+ordering are pinned end-to-end by the frozen characterization suite.
+
+### Ratchets
+
+Two decrease-only guards live in `quecto-agentic-harness/tests/architecture.rs`
+and therefore run in the fast pre-commit guard suite (targets are enumerated
+dynamically, so they cannot be silently dropped):
+
+- `tui_raw_json_parsing_sites_do_not_grow` — seed `173`.
+- `tui_wire_dto_imports_do_not_grow` — seed `2`.
+
+Both scan production interface modules only (`_tests.rs` and `tui_harness*` are
+excluded, since tests legitimately construct wire payloads). Seeds may be
+lowered as sites migrate; they may never be raised. The allowlist
+(`TUI_PROTOCOL_SEAM_ALLOWLIST`) is narrow and issue-linked: currently only
+`interface/app_response.rs`, which *is* the protocol seam that routes raw
+responses to mappers.
+
+### Raw-JSON burn-down inventory
+
+Seeded at 173 sites. The failure message of the ratchet prints this inventory in
+burn-down order, so it stays accurate without manual upkeep:
+
+| Module | Sites |
+|---|---|
+| `interface/components/workflow_bar.rs` | 40 |
+| `interface/app_events.rs` | 23 |
+| `interface/app_message_recovery.rs` | 22 |
+| `interface/app_subagent_stream.rs` | 21 |
+| `interface/components/chat_render.rs` | 17 |
+| `interface/range_accumulator.rs` | 10 |
+| `interface/app_paged_history.rs` | 7 |
+| `interface/components/footer.rs` | 6 |
+| `interface/ledger_sync.rs` | 6 |
+| `interface/app_rewind.rs` | 5 |
+| `interface/app_subagents.rs` | 3 |
+| `interface/app_effort.rs` | 2 |
+| `interface/cli.rs` | 2 |
+| `interface/components/editor.rs` | 2 |
+| `interface/components/effort_selector.rs` | 2 |
+| `interface/components/model_selector.rs` | 2 |
+| `interface/app_subagent_panel.rs` | 1 |
+| `interface/components/chat.rs` | 1 |
+| `interface/components/files_autocomplete.rs` | 1 |
+
+Wire-DTO import inventory (seed 2): `interface/app.rs`, `interface/feed_state.rs`.
+
+### Deletion ledger
+
+| Deleted | Invariant it enforced | Where re-established |
+|---|---|---|
+| Inline `models` array extraction in `parse_model_entries` | missing/non-array `models` yields no entries | `model_payloads::parse_model_list` early return |
+| Inline `model`-over-`id` fallback | legacy payload identifier parity | `parse_model_list_entry`, documented as legacy parity |
+| Inline `id.is_empty()` skip | blank rows never render | `parse_model_list_entry` skip, pinned by `identifier_empty_after_sanitization_is_dropped` |
+| Inline provider `or_else` slash inference + `"Model"` default | provider grouping label | `parse_model_list_entry`, pinned by mapper tests and M14 |
+| Inline auth sanitize + `filter(!is_empty)` | empty auth renders no label | `parse_model_list_entry`, pinned by `empty_auth_is_dropped` |
+| `is_current: false` literal | freshly parsed entries are never marked current | retained at the interface seam (interface-owned view concern), pinned by M15 |
+
+No tests were deleted. `app_models_tests.rs` retains its fast pure-function
+coverage against the unchanged `parse_model_entries` signature.
+
+Consolidation completeness: `parse_model_list` is the only `list_models` payload
+interpreter in the crate — `grep` for `"models"` in production interface code
+returns no other hand-rolled parser. The remaining raw-JSON sites in the
+inventory above parse *different* payloads and are recorded for burn-down rather
+than forced through this mapper.
+
+### Parity evidence (#1220)
+
+| Class | Surface | Evidence | Verdict |
+|---|---|---|---|
+| Behavioural | frozen characterization suite | `git hash-object` of `app_models_protocol_characterization_tests.rs` is `d37d0ad0…` before AND after the refactor — byte-identical, zero test edits; 20/20 pass | PASS |
+| Behavioural | whole TUI crate | `cargo test -p quecto-tui --lib` → 1576 passed, 0 failed | PASS |
+| Behavioural | pre-existing `app_models_tests.rs` unit suite | unchanged signature `parse_model_entries(&Value) -> Vec<ModelEntry>`; 46 `app_models` tests pass unmodified | PASS |
+| Behavioural | architecture guards | `cargo test -p quecto-agentic-harness --test architecture` → 37 passed | PASS |
+| Visual | model selector overlay | frame-level assertions in the frozen suite (provider/auth/id rendering, sanitized output, cached-entry rendering) pass unchanged | PASS |
+| Command ordering | `list_models` / `set_model` | `open_model_selector_emits_exactly_one_list_models`, `second_open_while_pending_emits_no_duplicate_list_models`, `selector_selection_emits_set_model_command` all GREEN; `open_model_selector`/`send_set_model` bodies untouched by the refactor | PASS |
+| Performance | payload parsing | Old code: one `filter_map` pass over `models`, one output `Vec`, `sanitize_control` allocating per field. New code: identical single `filter_map` pass, one output `Vec`, same per-field sanitization. The seam adds one `into_iter().map()` that moves `String` fields into `ModelEntry` — no clones, no second parse. Parsing runs once per `list_models` response, not per keystroke or per frame. | PASS (no regression) |
+| Performance | dispatch | `sanitize` is passed as `&dyn Fn`, adding one indirect call per field on a response-rate path (a few dozen calls per selector open). Chosen over a generic parameter to keep the mapper object-safe and non-monomorphized; cost is immeasurable at this call rate. | PASS (accepted, documented) |
+| Quantitative | `app_models.rs` | 33 lines deleted, 18 added → net −15 lines at the interface call site; raw-JSON parsing sites in that file drop to 0 | RECORDED |
+| Quantitative | ratchet seeds | raw-JSON sites `173`, wire-DTO imports `2` — both measured, not estimated | RECORDED |
+
+Mutation re-verification after the refactor confirms the pins still bind to the
+relocated logic: M14 (drop slash inference), M15 (`is_current: true`), M16 (drop
+pending guard), M17 (never emit `ListModels`), M18 (wrong `set_model` id), and
+M19 (drop empty-id skip) each fail their named test, with no residue.

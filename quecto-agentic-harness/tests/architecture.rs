@@ -892,3 +892,128 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
         "socket_announcement must include the PROTOCOL_ANNOUNCE_PREFIX + PROTOCOL_VERSION token"
     );
 }
+
+// ── #1220 protocol-boundary ratchets ────────────────────────────────
+//
+// Two decrease-only ratchets guard the raw-JSON burn-down. Both scan ONLY
+// production interface (feature/view) modules — `_tests.rs` files and the
+// TUI harness are excluded, since tests legitimately construct wire payloads.
+// Seeds may be lowered as sites migrate to application-layer mappers; they may
+// never be raised. Allowlist entries must be narrow and issue-linked.
+
+/// Seed: production raw `serde_json` parsing sites in TUI feature/view modules.
+/// Lower this as call sites migrate behind mappers. Never raise it.
+const TUI_RAW_JSON_SITE_SEED: usize = 173;
+
+/// Seed: production feature/view imports of `infrastructure::client` wire DTOs.
+/// Lower this as call sites migrate behind mappers. Never raise it.
+const TUI_WIRE_DTO_IMPORT_SEED: usize = 2;
+
+/// Narrow, issue-linked allowlist of approved protocol seams.
+/// Each entry is a path suffix plus the issue that approved it.
+const TUI_PROTOCOL_SEAM_ALLOWLIST: &[(&str, &str)] = &[
+    // The response dispatcher IS the protocol seam: it receives raw responses
+    // and routes them to mappers. #1220.
+    ("interface/app_response.rs", "#1220"),
+];
+
+fn tui_production_interface_files() -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    collect_tui_production_interface_files(Path::new(TUI_INTERFACE), &mut out);
+    out.sort();
+    out
+}
+
+fn collect_tui_production_interface_files(dir: &Path, out: &mut Vec<(String, String)>) {
+    if !dir.exists() {
+        return;
+    }
+    for entry in fs::read_dir(dir).expect("read quecto-tui interface dir") {
+        let entry = entry.expect("dir entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_tui_production_interface_files(&path, out);
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".rs") || name.ends_with("_tests.rs") || name.starts_with("tui_harness")
+        {
+            continue;
+        }
+        let rel = path
+            .to_string_lossy()
+            .replace("../quecto-tui/src/", "")
+            .replace('\\', "/");
+        if TUI_PROTOCOL_SEAM_ALLOWLIST
+            .iter()
+            .any(|(suffix, _)| rel.ends_with(suffix))
+        {
+            continue;
+        }
+        out.push((rel, fs::read_to_string(&path).expect("read tui source")));
+    }
+}
+
+/// Raw JSON parsing = reaching into a `serde_json::Value` by field/shape.
+fn raw_json_site_count(content: &str) -> usize {
+    content
+        .lines()
+        .filter(|line| {
+            let t = line.trim();
+            !t.starts_with("//")
+                && (t.contains(".get(\"")
+                    || t.contains("as_array()")
+                    || t.contains("as_str()")
+                    || t.contains("as_u64()")
+                    || t.contains("as_bool()")
+                    || t.contains(".pointer(\""))
+        })
+        .count()
+}
+
+#[test]
+fn tui_raw_json_parsing_sites_do_not_grow() {
+    let files = tui_production_interface_files();
+    let mut per_file: Vec<(String, usize)> = files
+        .iter()
+        .map(|(rel, content)| (rel.clone(), raw_json_site_count(content)))
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    per_file.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    let total: usize = per_file.iter().map(|(_, c)| c).sum();
+
+    assert!(
+        total <= TUI_RAW_JSON_SITE_SEED,
+        "raw serde_json parsing in TUI feature/view modules must not grow: found {total}, \
+         seed {TUI_RAW_JSON_SITE_SEED}. Move payload interpretation into an \
+         application-layer mapper (see quecto-tui/src/application/model_payloads.rs, #1220). \
+         Inventory (burn-down order): {per_file:?}"
+    );
+}
+
+#[test]
+fn tui_wire_dto_imports_do_not_grow() {
+    let files = tui_production_interface_files();
+    let mut per_file: Vec<(String, usize)> = files
+        .iter()
+        .map(|(rel, content)| {
+            let count = content
+                .lines()
+                .filter(|line| {
+                    let t = line.trim();
+                    t.starts_with("use ") && t.contains("infrastructure::client")
+                })
+                .count();
+            (rel.clone(), count)
+        })
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    per_file.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    let total: usize = per_file.iter().map(|(_, c)| c).sum();
+
+    assert!(
+        total <= TUI_WIRE_DTO_IMPORT_SEED,
+        "TUI feature/view imports of infrastructure::client wire DTOs must not grow: \
+         found {total}, seed {TUI_WIRE_DTO_IMPORT_SEED} (#1220). Inventory: {per_file:?}"
+    );
+}

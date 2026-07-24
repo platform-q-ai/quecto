@@ -1,0 +1,95 @@
+//! Typed application values for TUI model-registry wire payloads.
+//!
+//! # Mapper convention (#1220)
+//!
+//! This module is an instance of the TUI protocol-boundary mapper convention.
+//! Every mapper in `application/` obeys the same four rules:
+//!
+//! 1. **Input is raw wire JSON, output is a typed application value.** A mapper
+//!    takes `&serde_json::Value` (the shape the infrastructure client receives
+//!    from UDS) and returns a plain data type owned by the application layer.
+//!    Feature controllers and views consume the typed value and never re-read
+//!    the JSON.
+//! 2. **Total, never failing on shape.** Malformed, legacy, and unknown payloads
+//!    map to an empty/defaulted result rather than a panic or an error the UI
+//!    must handle, unless the distinction is itself user-visible (see
+//!    `session_payloads::ResumeMessagesError`).
+//! 3. **The application layer owns no interface types.** Mappers must not name
+//!    `interface::` types, so the returned value is a neutral DTO that the
+//!    interface converts into its own view model at the seam.
+//! 4. **Parity quirks live here, documented.** Legacy field fallbacks and
+//!    sanitization rules preserved for zero-behaviour-change parity belong
+//!    inside the mapper next to the canonical rules, never re-implemented at a
+//!    consuming call site.
+
+/// A model advertised by the harness in a `list_models` response.
+///
+/// Field derivation is the canonical, parity-preserving contract:
+/// - `id`: `model` wins over the legacy `id` field; control characters are
+///   stripped; entries whose id is absent, non-string, or empty after
+///   sanitization are dropped entirely.
+/// - `provider`: an explicit `provider` field wins; otherwise the slash prefix
+///   of the id is inferred; otherwise the literal label `Model`.
+/// - `auth`: sanitized, and dropped when empty so the view renders no label
+///   rather than an empty one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelListEntry {
+    pub id: String,
+    pub provider: String,
+    pub auth: Option<String>,
+}
+
+/// Map a `list_models` response payload into typed model entries.
+///
+/// A missing `models` key, a non-array `models` value, and an empty array all
+/// map to no entries. Order is preserved. Single pass, one output `Vec`.
+///
+/// `sanitize` is injected by the caller because control-character stripping is
+/// a presentation concern owned by the interface layer, which the application
+/// layer must not depend on (rule 3). All *derivation* rules — including the
+/// empty-after-sanitization skip — stay here (rule 4).
+pub fn parse_model_list(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> Vec<ModelListEntry> {
+    let Some(models) = data.get("models").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    models
+        .iter()
+        .filter_map(|model| parse_model_list_entry(model, sanitize))
+        .collect()
+}
+
+fn parse_model_list_entry(
+    model: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> Option<ModelListEntry> {
+    // Legacy parity: older harness payloads carried the identifier as `id`,
+    // current ones as `model`. `model` wins when both are present.
+    let raw_model = model
+        .get("model")
+        .or_else(|| model.get("id"))
+        .and_then(|v| v.as_str())?;
+    let id = sanitize(raw_model);
+    if id.is_empty() {
+        return None;
+    }
+    let provider = sanitize(
+        model
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .or_else(|| id.split_once('/').map(|(provider, _)| provider))
+            .unwrap_or("Model"),
+    );
+    let auth = model
+        .get("auth")
+        .and_then(|v| v.as_str())
+        .map(sanitize)
+        .filter(|s| !s.is_empty());
+    Some(ModelListEntry { id, provider, auth })
+}
+
+#[cfg(test)]
+#[path = "model_payloads_tests.rs"]
+mod tests;
