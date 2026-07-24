@@ -70,7 +70,7 @@ fn event_line_len(raw_lines: &[String], ty: &str) -> Option<usize> {
 
 fn issue_1094_body() -> String {
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-    (0..EVENT_LINE_CAP_BYTES + 1024)
+    (0..EVENT_LINE_CAP_BYTES + 1)
         .map(|idx| ALPHABET[idx % ALPHABET.len()] as char)
         .collect()
 }
