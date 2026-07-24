@@ -4,8 +4,88 @@ use quecto_tui::interface::component::Component;
 use quecto_tui::interface::components::chat::{Chat, ChatEntry};
 
 const TUI_ROOT: &str = "../quecto-tui/src";
+const TUI_FEATURE_ARCH_DOC: &str =
+    "../quecto-tui/docs/feature-oriented-presentation-architecture.md";
+const TUI_SUPERSEDED_ARCH_DOC: &str = "../quecto-tui/docs/clean-architecture-target-model.md";
+const TUI_README: &str = "../quecto-tui/README.md";
 const TUI_SCROLLBACK_WIDTH: usize = 80;
 const TUI_SCROLLBACK_HEIGHT: usize = 10;
+
+#[given("the quecto-tui architecture documents are present")]
+fn given_tui_architecture_documents_are_present(_world: &mut QuectoWorld) {
+    for path in [TUI_FEATURE_ARCH_DOC, TUI_SUPERSEDED_ARCH_DOC, TUI_README] {
+        assert!(
+            Path::new(path).is_file(),
+            "expected quecto-tui architecture-related document at {path}"
+        );
+    }
+}
+
+#[then(
+    "the quecto-tui feature-oriented architecture document should list each target harness-facing capability module"
+)]
+fn then_tui_feature_architecture_document_lists_capabilities(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string(TUI_FEATURE_ARCH_DOC).expect("read TUI architecture doc");
+    for capability in [
+        "shell",
+        "protocol",
+        "conversation",
+        "sessions",
+        "agents",
+        "workflow",
+        "inference",
+        "workspace",
+        "components",
+    ] {
+        let target_bullet = format!("- `{capability}`:");
+        assert!(
+            content.contains(&target_bullet),
+            "TUI architecture doc must list capability module with target bullet {target_bullet}"
+        );
+    }
+}
+
+#[then(
+    "the quecto-tui feature-oriented architecture document should document protocol and pure-policy boundaries"
+)]
+fn then_tui_feature_architecture_document_documents_boundaries(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string(TUI_FEATURE_ARCH_DOC).expect("read TUI architecture doc");
+    for required in [
+        "Raw UDS framing",
+        "raw JSON interpretation",
+        "DTO-to-feature mapping",
+        "Pure policy modules must not depend on terminal/widget types",
+        "Do not introduce a second global command/event hierarchy",
+    ] {
+        assert!(
+            content.contains(required),
+            "TUI architecture doc must document boundary rule: {required}"
+        );
+    }
+}
+
+#[then("the old quecto-tui Clean Architecture target model should be superseded")]
+fn then_tui_old_clean_architecture_model_superseded(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string(TUI_SUPERSEDED_ARCH_DOC)
+        .expect("read superseded TUI architecture doc");
+    assert!(
+        content.contains("SUPERSEDED")
+            && content.contains("feature-oriented-presentation-architecture.md")
+            && content.contains("Do not use this document as an"),
+        "old TUI Clean Architecture target model must clearly point to the current architecture doc"
+    );
+}
+
+#[then("the quecto-tui README should point to the feature-oriented architecture document")]
+fn then_tui_readme_points_to_feature_architecture_document(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string(TUI_README).expect("read TUI README");
+    assert!(
+        content.contains("feature-oriented presentation adapter")
+            && content.contains("docs/feature-oriented-presentation-architecture.md")
+            && content.contains("superseded historical context"),
+        "TUI README must advertise the current feature-oriented architecture document"
+    );
+}
 
 #[then(expr = "the quecto-tui source tree should contain layer {string}")]
 fn then_tui_source_tree_contains_layer(_world: &mut QuectoWorld, layer: String) {
