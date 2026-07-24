@@ -125,10 +125,10 @@ No shared helper was introduced, so consolidation completeness is not applicable
 | TUI public crate shape during migration | Compatibility modules and thin entrypoint remain available. | `cargo test -p quecto-agentic-harness --test architecture` passed, including existing TUI layer/root-file checks. | PASS |
 | Architecture documentation | README points to current feature-oriented doc; old Clean Architecture target is superseded; all target capability modules and boundary rules are documented. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_oriented_architecture_is_documented` passed; `QUECTO_TAG=issue-1149 cargo test -p quecto-agentic-harness --features test-support --test bdd` passed. | PASS |
 | Executable guardrails | New feature-oriented guardrail is additive and existing interim compatibility checks still run. | Full architecture integration test passed; BDD target compiled with `cargo test -p quecto-agentic-harness --features test-support --test bdd --no-run`. | PASS |
-| Frozen characterization suite | Frozen files were not edited after the freeze point. | `git hash-object` values still match the freeze manifest: `architecture.rs` `70f2d8b3635574da3a5f42406ac6726a072deb3b`; `tui_architecture_steps.rs` `6b1b263cc161f552f856cfeb681150d8b3d2e757`; `tui_clean_architecture.feature` `b331f192c2be90bc567932f82efab696c0637b44`. | PASS |
+| Frozen characterization suite | #1219 intentionally extends the architecture guardrail, so `architecture.rs` is not claimed frozen for this slice; the unchanged BDD feature and step files remain the #1149 characterization baseline. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_oriented_architecture_is_documented` passed, including the exact production-file/map comparison added for #1219. | PASS |
 | Visual parity | No render frames or visual surfaces are touched. | No files under `quecto-tui/src` changed; this slice only changes docs, tests, Cargo metadata, and lockfile. | PASS |
 | Performance parity | No specialized runtime/rendering code is replaced, so no allocation, cache, single-pass, or complexity characteristic changes. | No production code changed. Targeted clippy passed: `cargo clippy -p quecto-agentic-harness --test architecture -- -D warnings` and `cargo clippy -p quecto-tui --all-targets -- -D warnings`. | PASS |
-| Quantitative criteria | The issue asks for a net LOC decrease over the broader refactor epic; this slice deliberately adds architecture contract documentation and guardrails. | `git diff --shortstat HEAD~1..HEAD`: 8 files changed, 300 insertions(+), 15 deletions(-). Recorded as a review-time epic metric, not a test assertion. | PASS for slice / epic metric pending later code-moving slices |
+| Quantitative criteria | The issue asks for a net LOC decrease over the broader refactor epic; this slice deliberately adds architecture contract documentation and guardrails. | PR #1228 review-time shortstat after finder fixes: 8 files changed, 179 insertions(+), 9 deletions(-). Recorded as a review-time epic metric, not a test assertion. | PASS for slice / epic metric pending later code-moving slices |
 
 Additional clean checks for this parity pass:
 
@@ -140,6 +140,122 @@ Additional clean checks for this parity pass:
 - `cargo test -p quecto-agentic-harness --test architecture`
 - `cargo test -p quecto-agentic-harness --features test-support --test bdd --no-run`
 - `cargo check -p quecto-tui`
+
+## Capability characterization and migration map
+
+This issue is the characterization-readiness slice for the later code-moving issues. It does not move production files; it records the owner each current production file should converge toward and the coverage gaps that must be closed before that owner moves code.
+
+### Characterization coverage by capability
+
+| Capability | Existing coverage signals | Gaps to close before moving affected code |
+|---|---|---|
+| `shell` | TUI event-loop, disconnect, terminal restore, idle-efficiency, stdin, CLI, and headless harness tests. | Before thinning `App`, add characterization around top-level routing ownership, task/channel lifetimes, and cross-feature coordination paths that currently live implicitly in `App`. |
+| `protocol` | UDS client unit tests, client defence tests, sync/legacy coverage, paged-history protocol coverage, and BDD UDS-client defence scenarios. | #1220 must pin typed mapper behaviour for every raw JSON shape before controllers/views stop interpreting it ad hoc. |
+| `conversation` | Chat/session unit tests, paged-history tests, resumed-history/recovery tests, rewind/response tests, streaming stability BDD, chat render/cache BDD. | Before #1221 moves state, pin request correlation, pagination invalidation, retry, transcript reconstruction, stub recall, and turn recovery as pure policy where invariants are client-owned. |
+| `sessions` | Chat session tests, new/reset context BDD, cold-start and foundation BDD, session payload parsing tests. | Add focused coverage for resume/new/clear/stats projections once #1220 mapper types exist. |
+| `agents` | Subagent feed/panel/state/stream/roster authority tests, ledger sync tests, subagent parity/read-only/first-layout BDD. | Before #1222 extraction, pin source-scoped roster authority, lifecycle retention, focus preservation, child feed epoch/revision transitions, and ledger sync conflict handling. |
+| `workflow` | Workflow bar unit tests, workflow sticky tests, workflow box width tests, workflow-state harness coverage. | Add projection/control characterization for workflow automation toggles and stale workflow-state suppression before moving controls out of `App`. |
+| `inference` | Model selector, effort selector, model focus, effort tests. | Add mapper-backed coverage for model discovery/fallback and effort changes once #1220 provides typed feature mapping. |
+| `workspace` | Git tests, workspace file tests, autocomplete/file mention BDD and unit tests. | Before moving workspace coordination, pin Git context refresh, ignored-file handling, file preview boundaries, and autocomplete source precedence. |
+| `components` | Widget unit tests plus render/cache/list/markdown/table/spacing BDD coverage. | Before relocating `interface/components/` to top-level `components/`, run the existing render characterization and add missing edge cases for any widget whose public module path changes. |
+
+### Dependency rules for migration
+
+- `protocol` owns raw UDS framing, deserialization, raw JSON interpretation, and DTO-to-feature mapping.
+- Feature modules own presentation state and coordination for their capability; they may depend on typed protocol results and reusable `components`.
+- `shell` owns terminal/runtime resources, Tokio task/channel supervision, top-level event routing, and cross-feature composition.
+- `workspace` owns filesystem/Git adapters used by presentation flows.
+- Pure policy extracted from a feature must not depend on terminal/widget types, Tokio handles/channels, concrete clients, filesystem/process APIs, or raw JSON.
+- Simple presentation flows must not grow mandatory domain/application/effect/port layers; introduce those seams only for a demonstrated invariant, state machine, or dependency inversion need.
+- During migration keep one source of truth for each state cluster; avoid dual writes between `App` and a new module.
+
+### Production file target-owner map
+
+| Current production file | Target owner |
+|---|---|
+| `application/mod.rs` | remove after compatibility shims are unnecessary |
+| `application/session_payloads.rs` | `protocol` mapper feeding `sessions` |
+| `domain/mod.rs` | remove vestigial placeholder; recreate only for invariant-bearing shared values if needed |
+| `infrastructure/child_watch.rs` | `shell` runtime supervision |
+| `infrastructure/client.rs` | `protocol` |
+| `infrastructure/mod.rs` | remove after adapter modules move |
+| `infrastructure/process.rs` | `shell` runtime adapter |
+| `infrastructure/render.rs` | `shell` terminal/render runtime adapter |
+| `infrastructure/signals.rs` | `shell` runtime adapter |
+| `infrastructure/terminal.rs` | `shell` terminal adapter |
+| `infrastructure/warn_capture.rs` | `shell` diagnostics/runtime adapter |
+| `infrastructure/workspace_files.rs` | `workspace` |
+| `interface/app.rs` | `shell` composition root plus state delegated to features |
+| `interface/app_commands.rs` | `shell` top-level command routing |
+| `interface/app_disconnect.rs` | `shell` runtime/disconnect coordination |
+| `interface/app_effort.rs` | `inference` |
+| `interface/app_event_loop.rs` | `shell` event loop |
+| `interface/app_events.rs` | `shell` top-level event routing |
+| `interface/app_events_test_support.rs` | `shell` test support |
+| `interface/app_git.rs` | `workspace` |
+| `interface/app_idle_efficiency.rs` | `shell` event-loop policy |
+| `interface/app_ledger_sync.rs` | `agents` |
+| `interface/app_message_recovery.rs` | `conversation` |
+| `interface/app_methods.rs` | `shell` composition methods until split by feature |
+| `interface/app_models.rs` | `inference` |
+| `interface/app_paged_history.rs` | `conversation` |
+| `interface/app_response.rs` | `conversation` |
+| `interface/app_resumed_history.rs` | `conversation` |
+| `interface/app_rewind.rs` | `conversation` |
+| `interface/app_selection.rs` | `shell` focus/routing until delegated to feature views |
+| `interface/app_stdin.rs` | `conversation` input coordination with `shell` stdin adapter |
+| `interface/app_subagent_feed.rs` | `agents` |
+| `interface/app_subagent_panel.rs` | `agents` |
+| `interface/app_subagent_state.rs` | `agents` |
+| `interface/app_subagent_stream.rs` | `agents` |
+| `interface/app_subagents.rs` | `agents` |
+| `interface/app_submit.rs` | `conversation` |
+| `interface/ansi.rs` | `components` rendering primitive |
+| `interface/cli.rs` | `shell` CLI entry |
+| `interface/component.rs` | `components` shared traits/primitives |
+| `interface/components/autocomplete.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/chat.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/chat_render.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/chat_stub.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/editor.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/effort_selector.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/files_autocomplete.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/footer.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/list_navigator.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/list_rows.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/markdown.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/mod.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/model_selector.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/notification.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/select_list.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/spinner.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/suggestion_list.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/components/workflow_bar.rs` | `components` (relocate physically to top-level `components/`) |
+| `interface/feed_state.rs` | `agents` pure/presentation state |
+| `interface/fuzzy.rs` | `components` helper used by overlays/autocomplete |
+| `interface/keys.rs` | `shell` input mapping primitive |
+| `interface/kitty.rs` | `shell` terminal integration |
+| `interface/ledger_sync.rs` | `agents` pure/presentation state |
+| `interface/mod.rs` | remove/split into `shell`, features, and `components` |
+| `interface/overlay.rs` | `components` overlay primitive |
+| `interface/range_accumulator.rs` | `components` rendering helper |
+| `interface/select_overlay.rs` | `components` overlay primitive |
+| `interface/stdin_buffer.rs` | `shell` stdin adapter/policy |
+| `interface/theme.rs` | `components` styling primitive |
+| `interface/tui_harness.rs` | `shell` test harness support |
+| `interface/tui_harness_disconnect.rs` | `shell` test harness support |
+| `interface/tui_harness_events.rs` | `shell` test harness support |
+| `interface/tui_harness_probes.rs` | `shell` test harness support |
+| `interface/utils.rs` | split by caller; keep shared UI helpers in `components` |
+| `lib.rs` | `shell` crate composition/export root |
+| `main.rs` | `shell` thin binary entrypoint |
+
+### Inter-issue sequencing
+
+1. #1220 establishes protocol mapper conventions and typed feature inputs.
+2. #1221 (`conversation`) and #1222 (`agents`) depend on #1220 and may proceed in parallel after it lands.
+3. #1223 moves lower-risk sessions, workflow, inference, and workspace presentation flows after the mapper convention is available.
+4. #1224 lands last: thin `App`, remove vestigial compatibility modules such as `domain/`, relocate `components`, and enforce final architecture checks.
 
 ## Migration sequence
 
