@@ -97,6 +97,8 @@ fn registry_missing_file_returns_builtin_models() {
 
     assert!(registry.find("anthropic-api", "claude-fable-5").is_some());
     assert!(registry.find("anthropic-oauth", "claude-fable-5").is_some());
+    assert!(registry.find("anthropic-api", "claude-opus-5").is_some());
+    assert!(registry.find("anthropic-oauth", "claude-opus-5").is_some());
     assert_eq!(
         registry
             .find("openai-api", "gpt-5.5-mini")

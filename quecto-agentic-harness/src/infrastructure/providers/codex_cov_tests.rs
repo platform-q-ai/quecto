@@ -6,6 +6,7 @@
 //! mpsc channel.
 
 use super::*;
+use crate::domain::message::StopReason;
 use crate::domain::tool::ToolDefinition;
 
 fn req<'a>(
@@ -75,7 +76,7 @@ async fn handler_done_marker_sends_done_event() {
 }
 
 #[tokio::test]
-async fn handler_ignores_non_data_and_malformed_then_eof_done() {
+async fn handler_ignores_non_data_and_malformed_then_eof_error() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
     let mut handler = CodexSseHandler::new();
 
@@ -91,7 +92,7 @@ async fn handler_ignores_non_data_and_malformed_then_eof_done() {
 
     handler.on_eof(&tx).await;
     match rx.recv().await.unwrap() {
-        StreamEvent::Done(resp) => assert!(resp.content.is_none()),
+        StreamEvent::Error(e) => assert!(e.contains("ended without completion"), "{e}"),
         other => panic!("unexpected: {other:?}"),
     }
 }
@@ -157,6 +158,35 @@ fn accumulator_item_added_non_function_call_is_skipped() {
         "item": { "type": "reasoning" },
     }));
     assert!(acc.into_response().tool_calls.is_empty());
+}
+
+#[test]
+fn accumulator_refusal_events_surface_text_and_refusal_stop_reason() {
+    // Documented Responses refusal events must not yield a silent empty turn.
+    let mut acc = SseAccumulator::default();
+    acc.handle_event(&serde_json::json!({
+        "type": "response.refusal.delta", "delta": "I can't "
+    }));
+    acc.handle_event(&serde_json::json!({
+        "type": "response.refusal.delta", "delta": "help with that."
+    }));
+    acc.handle_event(&serde_json::json!({
+        "type": "response.refusal.done", "refusal": "I can't help with that."
+    }));
+    let resp = acc.into_response();
+    assert_eq!(resp.content.as_deref(), Some("I can't help with that."));
+    assert_eq!(resp.stop_reason, Some(StopReason::Refusal));
+}
+
+#[test]
+fn accumulator_refusal_done_alone_populates_content() {
+    let mut acc = SseAccumulator::default();
+    acc.handle_event(&serde_json::json!({
+        "type": "response.refusal.done", "refusal": "Declined."
+    }));
+    let resp = acc.into_response();
+    assert_eq!(resp.content.as_deref(), Some("Declined."));
+    assert_eq!(resp.stop_reason, Some(StopReason::Refusal));
 }
 
 #[test]
@@ -335,7 +365,7 @@ async fn handler_output_text_delta_missing_field_emits_no_text() {
     assert!(rx.try_recv().is_err(), "no TextDelta should be emitted");
     handler.on_eof(&tx).await;
     match rx.recv().await.unwrap() {
-        StreamEvent::Done(resp) => assert!(resp.content.is_none()),
+        StreamEvent::Error(e) => assert!(e.contains("ended without completion"), "{e}"),
         other => panic!("unexpected: {other:?}"),
     }
 }
@@ -424,4 +454,58 @@ async fn chat_stream_incremental_emits_request_failed_on_unreachable() {
 fn provider_name_is_codex() {
     let p = CodexProvider::new("k".into(), "acct".into(), None);
     assert_eq!(p.name(), "codex");
+}
+
+#[tokio::test]
+async fn handler_response_incomplete_emits_error_instead_of_empty_done() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut handler = CodexSseHandler::new();
+    let out = handler
+        .process_line(
+            r#"data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#,
+            &tx,
+        )
+        .await;
+    assert!(matches!(out, SseLineOutcome::Done));
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(e) => assert!(e.contains("max_output_tokens"), "{e}"),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_sse_response_failed_returns_error_instead_of_empty_success() {
+    let err = CodexProvider::parse_sse_response(
+        r#"data: {"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","message":"boom"}}}"#,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("server_error"), "{err}");
+    assert!(err.to_string().contains("boom"), "{err}");
+}
+
+#[test]
+fn parse_sse_response_empty_or_malformed_stream_returns_error() {
+    let err = CodexProvider::parse_sse_response(": keepalive\ndata: {not json\n").unwrap_err();
+    assert!(
+        err.to_string().contains("ended without completion"),
+        "{err}"
+    );
+}
+
+#[test]
+fn parse_sse_response_completed_empty_stream_is_preserved_for_loop_guard() {
+    let resp = CodexProvider::parse_sse_response(
+        r#"data: {"type":"response.completed","response":{"status":"completed"}}"#,
+    )
+    .unwrap();
+    assert!(resp.content.is_none());
+    assert!(resp.tool_calls.is_empty());
+    assert_eq!(resp.stop_reason, Some(StopReason::EndTurn));
+}
+
+#[test]
+fn build_request_body_includes_max_output_tokens() {
+    let messages = vec![Message::system("Sys"), Message::user("U")];
+    let body = CodexProvider::build_request_body(&req(&messages, &[], "gpt-5.2", None));
+    assert_eq!(body["max_output_tokens"], 1024);
 }

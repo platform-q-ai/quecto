@@ -389,12 +389,15 @@ async fn handler_message_stop_returns_done() {
 }
 
 #[tokio::test]
-async fn handler_on_eof_emits_done() {
+async fn handler_on_empty_eof_emits_error() {
     let (tx, mut rx) = channel();
     let mut handler = AnthropicSseHandler::new(None);
     handler.on_eof(&tx).await;
     let events = drain(&mut rx);
-    assert!(matches!(events.first(), Some(StreamEvent::Done(_))));
+    match events.first() {
+        Some(StreamEvent::Error(e)) => assert!(e.contains("ended without completion"), "{e}"),
+        other => panic!("unexpected: {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -442,4 +445,59 @@ async fn anthropic_sse_handler_test_accessors_cover_new_and_into_response() {
     assert!(matches!(rx.try_recv(), Ok(StreamEvent::TextDelta(text)) if text == "hi"));
     let resp = handler.into_response();
     assert_eq!(resp.content.as_deref(), Some("hi"));
+}
+
+#[tokio::test]
+async fn handler_error_event_emits_error_instead_of_empty_done() {
+    let (tx, mut rx) = channel();
+    let mut handler = AnthropicSseHandler::new(None);
+    let _ = handler.process_line("event: error", &tx).await;
+    let outcome = handler
+        .process_line(
+            r#"data: {"error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+            &tx,
+        )
+        .await;
+    assert!(matches!(outcome, SseLineOutcome::Done));
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(e) => assert!(e.contains("overloaded_error"), "{e}"),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_sse_response_error_event_returns_error() {
+    let err = AnthropicProvider::parse_sse_response(
+        "event: error\ndata: {\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n",
+        None,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("overloaded_error"), "{err}");
+}
+
+#[test]
+fn parse_sse_response_empty_or_truncated_stream_returns_error() {
+    // No message_stop and no observable output → provider error, not Ok(empty).
+    let err =
+        AnthropicProvider::parse_sse_response(": keepalive\ndata: {not json\n", None).unwrap_err();
+    assert!(
+        err.to_string().contains("ended without completion"),
+        "{err}"
+    );
+}
+
+#[test]
+fn parse_sse_response_empty_max_tokens_stop_preserves_stop_reason() {
+    // Terminal message_stop with no content: parse succeeds (loop guard surfaces
+    // the empty turn) and the max_tokens stop reason is preserved.
+    let sse = "event: message_delta\n\
+               data: {\"delta\":{\"stop_reason\":\"max_tokens\"}}\n\
+               event: message_stop\n\
+               data: {}\n";
+    let resp = AnthropicProvider::parse_sse_response(sse, None).unwrap();
+    assert!(resp.content.is_none());
+    assert_eq!(
+        resp.stop_reason,
+        Some(crate::domain::message::StopReason::MaxTokens)
+    );
 }
