@@ -1,3 +1,6 @@
+use crate::application::agent_loop_stream::{
+    StreamProviderError, TurnEnd, is_empty_streamed_response,
+};
 use crate::application::agent_usage::UsageTotals;
 use crate::application::context_pruning;
 use crate::domain::agent::{
@@ -124,19 +127,6 @@ impl std::fmt::Debug for AgentLoopImpl {
             .field("max_tool_iterations", &self.max_tool_iterations)
             .finish()
     }
-}
-struct StreamProviderError {
-    error: DomainError,
-    emitted_event: bool,
-}
-
-/// End-of-loop bookkeeping for the final text response (avoids the clippy
-/// argument-count limit on `finalize_text_response`).
-struct TurnEnd {
-    iterations: u32,
-    usage: UsageTotals,
-    pre_response_context_tokens: usize,
-    current_turn: u32,
 }
 impl AgentLoopImpl {
     pub fn new(config: AgentLoopConfig) -> Self {
@@ -419,7 +409,17 @@ impl AgentLoopImpl {
                     emitted_event = true;
                     self.notify(|| AgentProgressEvent::Token(t));
                 }
-                StreamEvent::Done(response) => return Ok(response),
+                StreamEvent::Done(response) => {
+                    if is_empty_streamed_response(&response) {
+                        return Err(StreamProviderError {
+                            error: DomainError::Provider(
+                                "HTTP 503: stream completed without assistant output".to_string(),
+                            ),
+                            emitted_event,
+                        });
+                    }
+                    return Ok(response);
+                }
                 StreamEvent::Error(e) => {
                     return Err(StreamProviderError {
                         error: DomainError::Provider(e),

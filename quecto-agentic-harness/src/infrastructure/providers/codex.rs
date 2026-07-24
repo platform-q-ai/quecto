@@ -7,13 +7,16 @@
 // - API keys use the standard `api.openai.com/v1/responses` endpoint with
 //   plain `Authorization: Bearer` auth and none of the OAuth-only headers.
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role, ToolCall, UsageInfo};
+use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+
+#[path = "codex_sse_state.rs"]
+mod codex_sse_state;
+use codex_sse_state::SseAccumulator;
 
 /// Default Codex backend base URL for ChatGPT OAuth tokens.
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
@@ -259,6 +262,7 @@ impl CodexProvider {
                 "summary": "auto",
             },
             "include": ["reasoning.encrypted_content"],
+            "max_output_tokens": request.max_tokens,
         });
 
         // #1066: transmit a configured effort, clamped onto OpenAI's
@@ -381,11 +385,44 @@ impl CodexProvider {
                 break;
             }
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+                if let Some(error) = Self::format_stream_failure(&event) {
+                    return Err(DomainError::Provider(error));
+                }
                 acc.handle_event(&event);
             }
         }
 
         Ok(acc.into_response())
+    }
+
+    fn format_stream_failure(event: &serde_json::Value) -> Option<String> {
+        match event["type"].as_str()? {
+            "response.failed" | "response.incomplete" | "error" => {
+                let mut parts = vec![format!(
+                    "Responses stream {}",
+                    event["type"].as_str().unwrap()
+                )];
+                if let Some(status) = event["response"]["status"].as_str() {
+                    parts.push(format!("status={status}"));
+                }
+                if let Some(reason) = event["response"]["incomplete_details"]["reason"].as_str() {
+                    parts.push(format!("reason={reason}"));
+                }
+                let error = if event["type"].as_str() == Some("error") {
+                    &event["error"]
+                } else {
+                    &event["response"]["error"]
+                };
+                if let Some(kind) = error["type"].as_str() {
+                    parts.push(format!("type={kind}"));
+                }
+                if let Some(message) = error["message"].as_str() {
+                    parts.push(message.to_string());
+                }
+                Some(parts.join(": "))
+            }
+            _ => None,
+        }
     }
 
     /// Sanitize a session key for use as `prompt_cache_key`.
@@ -477,15 +514,6 @@ impl CodexProvider {
 /// `HashMap<usize, usize>` mapping `output_index → tool_calls index` so
 /// that `response.function_call_arguments.delta` events are routed to the
 /// correct tool call regardless of intervening non-tool output items.
-#[derive(Default)]
-struct SseAccumulator {
-    content: String,
-    tool_calls: Vec<ToolCall>,
-    /// Maps SSE `output_index` to the index in `tool_calls`.
-    output_index_to_tool: HashMap<usize, usize>,
-    usage: Option<UsageInfo>,
-}
-
 impl SseAccumulator {
     fn handle_event(&mut self, event: &serde_json::Value) {
         match event["type"].as_str() {
@@ -510,6 +538,9 @@ impl SseAccumulator {
                     self.usage = resp["usage"]
                         .as_object()
                         .map(crate::infrastructure::providers::usage::parse_codex_usage);
+                    if let Some(status) = resp["status"].as_str() {
+                        self.stop_reason = Some(Self::parse_response_status(status));
+                    }
                 }
             }
             _ => {}
@@ -528,20 +559,6 @@ impl SseAccumulator {
                     arguments: String::new(),
                 });
             }
-        }
-    }
-
-    fn into_response(self) -> LlmResponse {
-        LlmResponse {
-            content: if self.content.is_empty() {
-                None
-            } else {
-                Some(self.content)
-            },
-            tool_calls: self.tool_calls,
-            usage: self.usage,
-            stop_reason: None,
-            thinking_blocks: vec![],
         }
     }
 }
@@ -629,12 +646,14 @@ use super::sse_common::{SseHandler, SseLineOutcome};
 /// SSE line handler for the Codex Responses API.
 struct CodexSseHandler {
     acc: SseAccumulator,
+    saw_terminal: bool,
 }
 
 impl CodexSseHandler {
     fn new() -> Self {
         Self {
             acc: SseAccumulator::default(),
+            saw_terminal: false,
         }
     }
 
@@ -653,10 +672,16 @@ impl SseHandler for CodexSseHandler {
             return SseLineOutcome::Continue;
         };
         if data == "[DONE]" {
+            self.saw_terminal = true;
             let _ = tx.send(StreamEvent::Done(self.take_response())).await;
             return SseLineOutcome::Done;
         }
         if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+            if let Some(error) = CodexProvider::format_stream_failure(&event) {
+                self.saw_terminal = true;
+                let _ = tx.send(StreamEvent::Error(error)).await;
+                return SseLineOutcome::Done;
+            }
             if event["type"].as_str() == Some("response.output_text.delta") {
                 if let Some(delta) = event["delta"].as_str() {
                     let _ = tx.send(StreamEvent::TextDelta(delta.to_string())).await;
@@ -664,6 +689,7 @@ impl SseHandler for CodexSseHandler {
             }
             self.acc.handle_event(&event);
             if event["type"].as_str() == Some("response.completed") {
+                self.saw_terminal = true;
                 let _ = tx.send(StreamEvent::Done(self.take_response())).await;
                 return SseLineOutcome::Done;
             }
@@ -672,6 +698,14 @@ impl SseHandler for CodexSseHandler {
     }
 
     async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+        if !self.saw_terminal && !self.acc.has_observable_output() {
+            let _ = tx
+                .send(StreamEvent::Error(
+                    "Responses stream ended without completion".to_string(),
+                ))
+                .await;
+            return;
+        }
         let _ = tx.send(StreamEvent::Done(self.take_response())).await;
     }
 }

@@ -75,7 +75,7 @@ async fn handler_done_marker_sends_done_event() {
 }
 
 #[tokio::test]
-async fn handler_ignores_non_data_and_malformed_then_eof_done() {
+async fn handler_ignores_non_data_and_malformed_then_eof_error() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
     let mut handler = CodexSseHandler::new();
 
@@ -91,7 +91,7 @@ async fn handler_ignores_non_data_and_malformed_then_eof_done() {
 
     handler.on_eof(&tx).await;
     match rx.recv().await.unwrap() {
-        StreamEvent::Done(resp) => assert!(resp.content.is_none()),
+        StreamEvent::Error(e) => assert!(e.contains("ended without completion"), "{e}"),
         other => panic!("unexpected: {other:?}"),
     }
 }
@@ -335,7 +335,7 @@ async fn handler_output_text_delta_missing_field_emits_no_text() {
     assert!(rx.try_recv().is_err(), "no TextDelta should be emitted");
     handler.on_eof(&tx).await;
     match rx.recv().await.unwrap() {
-        StreamEvent::Done(resp) => assert!(resp.content.is_none()),
+        StreamEvent::Error(e) => assert!(e.contains("ended without completion"), "{e}"),
         other => panic!("unexpected: {other:?}"),
     }
 }
@@ -424,4 +424,38 @@ async fn chat_stream_incremental_emits_request_failed_on_unreachable() {
 fn provider_name_is_codex() {
     let p = CodexProvider::new("k".into(), "acct".into(), None);
     assert_eq!(p.name(), "codex");
+}
+
+#[tokio::test]
+async fn handler_response_incomplete_emits_error_instead_of_empty_done() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut handler = CodexSseHandler::new();
+    let out = handler
+        .process_line(
+            r#"data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#,
+            &tx,
+        )
+        .await;
+    assert!(matches!(out, SseLineOutcome::Done));
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(e) => assert!(e.contains("max_output_tokens"), "{e}"),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_sse_response_failed_returns_error_instead_of_empty_success() {
+    let err = CodexProvider::parse_sse_response(
+        r#"data: {"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","message":"boom"}}}"#,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("server_error"), "{err}");
+    assert!(err.to_string().contains("boom"), "{err}");
+}
+
+#[test]
+fn build_request_body_includes_max_output_tokens() {
+    let messages = vec![Message::system("Sys"), Message::user("U")];
+    let body = CodexProvider::build_request_body(&req(&messages, &[], "gpt-5.2", None));
+    assert_eq!(body["max_output_tokens"], 1024);
 }

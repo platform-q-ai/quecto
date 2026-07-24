@@ -225,3 +225,44 @@ async fn provider_context_limit_errors_are_actionable() {
     assert!(err.contains("reducing prompt history"), "{err}");
     assert!(err.contains("max output tokens"), "{err}");
 }
+
+#[tokio::test]
+async fn retries_empty_streaming_done_before_success() {
+    let provider = Arc::new(MockStreamingProvider::new(vec![
+        vec![crate::domain::provider::StreamEvent::Done(LlmResponse {
+            content: None,
+            tool_calls: vec![],
+            usage: None,
+            stop_reason: None,
+            thinking_blocks: vec![],
+        })],
+        vec![crate::domain::provider::StreamEvent::Done(text_response(
+            "stream recovered",
+        ))],
+    ]));
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: provider.clone(),
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "empty-stream-done-retry-test".into(),
+        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: true,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    })
+    .with_max_tool_iterations(1);
+
+    let mut messages = vec![Message::user("hello")];
+    let result = agent.process(&mut messages).await.unwrap();
+
+    assert_eq!(result.response, "stream recovered");
+    assert_eq!(provider.request_count(), 2);
+}

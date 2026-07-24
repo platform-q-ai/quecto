@@ -186,6 +186,15 @@ impl SseAccumulator {
         }
     }
 
+    pub(super) fn has_observable_output(&self) -> bool {
+        !self.content.is_empty()
+            || !self.tool_calls.is_empty()
+            || !self.thinking_blocks.is_empty()
+            || self.in_tool_input
+            || self.in_thinking
+            || self.in_redacted_thinking
+    }
+
     /// Consume `self` and return the assembled [`LlmResponse`].
     pub(super) fn into_response(self) -> LlmResponse {
         let content = if self.content.is_empty() {
@@ -340,6 +349,9 @@ impl AnthropicProvider {
                 "content_block_stop" => acc.handle_block_stop(),
                 "message_delta" => acc.handle_message_delta(&chunk),
                 "message_stop" => break,
+                "error" => {
+                    return Err(DomainError::Provider(format_anthropic_stream_error(&chunk)));
+                }
                 _ => {}
             }
         }
@@ -397,6 +409,7 @@ use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 pub(crate) struct AnthropicSseHandler {
     current_event: String,
     acc: SseAccumulator,
+    saw_terminal: bool,
 }
 
 impl AnthropicSseHandler {
@@ -407,6 +420,7 @@ impl AnthropicSseHandler {
                 Some(defs) => SseAccumulator::with_tool_defs(defs),
                 None => SseAccumulator::default(),
             },
+            saw_terminal: false,
         }
     }
 
@@ -432,6 +446,7 @@ impl SseHandler for AnthropicSseHandler {
         } else if let Some(data) = line.strip_prefix("data: ") {
             let chunk_val: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
             if dispatch_sse_event(&self.current_event, &chunk_val, &mut self.acc, tx).await {
+                self.saw_terminal = true;
                 return SseLineOutcome::Done;
             }
         }
@@ -439,6 +454,14 @@ impl SseHandler for AnthropicSseHandler {
     }
 
     async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+        if !self.saw_terminal && !self.acc.has_observable_output() {
+            let _ = tx
+                .send(StreamEvent::Error(
+                    "Anthropic stream ended without completion".to_string(),
+                ))
+                .await;
+            return;
+        }
         let _ = tx
             .send(StreamEvent::Done(
                 std::mem::take(&mut self.acc).into_response(),
@@ -447,9 +470,18 @@ impl SseHandler for AnthropicSseHandler {
     }
 }
 
+fn format_anthropic_stream_error(chunk: &serde_json::Value) -> String {
+    let error = &chunk["error"];
+    let kind = error["type"].as_str().unwrap_or("error");
+    let message = error["message"]
+        .as_str()
+        .unwrap_or("Anthropic stream error");
+    format!("Anthropic stream error: type={kind}: {message}")
+}
+
 /// Dispatch one parsed SSE event to the accumulator and channel.
 ///
-/// Returns `true` when `message_stop` is received.
+/// Returns `true` when a terminal event is received.
 async fn dispatch_sse_event(
     event_type: &str,
     chunk: &serde_json::Value,
@@ -476,6 +508,12 @@ async fn dispatch_sse_event(
         "message_stop" => {
             let _ = tx
                 .send(StreamEvent::Done(std::mem::take(acc).into_response()))
+                .await;
+            return true;
+        }
+        "error" => {
+            let _ = tx
+                .send(StreamEvent::Error(format_anthropic_stream_error(chunk)))
                 .await;
             return true;
         }
