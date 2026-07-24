@@ -41,6 +41,11 @@ impl App {
                     self.send_session_stats();
                     return;
                 }
+                "/refresh-tui" => {
+                    self.terminal.refresh_size();
+                    self.render_full();
+                    return;
+                }
                 "/workflow" => {
                     self.show_workflow_status();
                     return;

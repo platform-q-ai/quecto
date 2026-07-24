@@ -692,6 +692,9 @@ mod app_paged_history_review_tests;
 #[path = "app_paged_history_tests.rs"]
 mod app_paged_history_tests;
 #[cfg(test)]
+#[path = "app_refresh_tui_tests.rs"]
+mod app_refresh_tui_tests;
+#[cfg(test)]
 #[path = "app_rewind_response_tests.rs"]
 mod app_rewind_response_tests;
 #[cfg(test)]

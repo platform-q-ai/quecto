@@ -294,6 +294,7 @@ fn builtin_commands_have_stable_order_and_names() {
             "hotkeys",
             "new",
             "session",
+            "refresh-tui",
             "resume",
             "model",
             "effort",
