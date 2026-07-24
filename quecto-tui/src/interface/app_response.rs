@@ -170,6 +170,12 @@ impl App {
                 self.notify("History cleared · workflow retained", NotifyLevel::Info);
             }
             "get_subagents" if success => self.handle_get_subagents(data),
+            "delete_all_subagents" if success => {
+                self.notify("Deleted all subagents", NotifyLevel::Success)
+            }
+            "delete_all_subagents" => {
+                self.notify_response_error("Could not delete subagents", error)
+            }
             "agent_error" => self.handle_agent_error(error),
             _ => {}
         }

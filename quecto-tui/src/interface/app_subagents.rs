@@ -85,6 +85,23 @@ fn is_descendant_of(
 const OPTIMISTIC_SUBAGENT_GRACE: Duration = Duration::from_secs(30);
 
 impl App {
+    pub(super) fn delete_all_subagents(&mut self) {
+        if !self.send_command(Command::DeleteAllSubagents {
+            id: Some("delete-all-subagents".into()),
+        }) {
+            return;
+        }
+        self.subagents.tracked.clear();
+        self.subagents.sessions.clear();
+        self.subagents.session_order.clear();
+        self.subagents.feeds.clear();
+        self.subagents.active_agent_id = None;
+        self.subagents.awaited_agent_id = None;
+        self.subagents.panel_nav =
+            crate::interface::components::list_navigator::ListNavigator::new();
+        self.notify("Deleting all subagents", NotifyLevel::Info);
+    }
+
     /// Update a session's OWN footer (context-window / cost / model) from a
     /// forwarded sub-agent event, mirroring the master footer path (#805):
     /// `get_state` carries the model and window, `turn_end` the live context

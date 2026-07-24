@@ -105,6 +105,9 @@ pub(super) fn query_response_data(
             let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
             Some(serde_json::json!({ "subagents": list }))
         }
+        AgentCommand::DeleteAllSubagents { .. } => {
+            Some(super::uds_delete_all_subagents::response_data(ctx))
+        }
         // #1060: on-demand single-message lookup by stable id (busy-path safe).
         // Miss returns None so dispatch_fieldless_command emits a structured error.
         AgentCommand::GetMessage {

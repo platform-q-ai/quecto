@@ -189,13 +189,9 @@ pub enum AgentCommand {
     },
     /// Rewind conversation history to a selected user-message boundary.
     ///
-    /// Prefer `messageId` (a stable message ref). With paged history (#1061) a
-    /// client holds only a bounded window, so a page-local array position is NOT
-    /// a valid index into the full server conversation — sending one as
-    /// `messageIndex` truncates the wrong turn (destructive). `messageIndex` is
-    /// retained for one-window-older clients (#1059) and honoured only while the
-    /// conversation fits in one history page (unambiguous); beyond that it is
-    /// rejected with an error rather than misapplied.
+    /// Prefer `messageId`. `messageIndex` is retained for one-window-older
+    /// clients (#1059) and honoured only while the conversation fits in one
+    /// history page; beyond that it is rejected as ambiguous.
     RewindTo {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -222,9 +218,11 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
-    /// Fetch a single message by stable id for on-demand recovery (#1060 / ADR-0008 part 2).
-    ///
-    /// Works while the agent is busy (busy-path inspect, same as get_messages).
+    /// Terminate and remove every tracked sub-agent.
+    DeleteAllSubagents {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
     GetMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -292,6 +290,7 @@ impl AgentCommand {
             Self::RewindTo { id, .. } => id.as_deref(),
             Self::SetWorkflowAutomation { id, .. } => id.as_deref(),
             Self::GetSubagents { id } => id.as_deref(),
+            Self::DeleteAllSubagents { id } => id.as_deref(),
             Self::GetMessage { id, .. } => id.as_deref(),
         }
     }
@@ -324,6 +323,7 @@ impl AgentCommand {
             Self::RewindTo { .. } => "rewind_to",
             Self::SetWorkflowAutomation { .. } => "set_workflow_automation",
             Self::GetSubagents { .. } => "get_subagents",
+            Self::DeleteAllSubagents { .. } => "delete_all_subagents",
             Self::GetMessage { .. } => "get_message",
         }
     }

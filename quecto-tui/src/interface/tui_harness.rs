@@ -328,7 +328,7 @@ impl TuiHarness {
         cmd: crate::infrastructure::client::Command,
     ) -> String {
         self.app.client = Client::disconnected_for_tests();
-        self.app.send_command(cmd);
+        let _ = self.app.send_command(cmd);
         let failure = self
             .app
             .command_send_failure_rx

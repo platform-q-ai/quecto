@@ -13,6 +13,7 @@ mod uds_busy_sync;
 mod uds_busy_sync_tests;
 pub mod uds_cancel;
 mod uds_control_forward;
+mod uds_delete_all_subagents;
 mod uds_ext_protocol;
 mod uds_extensions;
 mod uds_lifecycle;

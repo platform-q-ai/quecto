@@ -145,6 +145,11 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Terminate and remove every tracked sub-agent.
+    DeleteAllSubagents {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
     /// Pull committed ledger messages after `sinceRev` for `epoch` (#1194 PR2).
     Sync {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -398,6 +403,7 @@ impl Command {
             Self::ClearHistory { .. } => "clear_history",
             Self::RewindTo { .. } => "rewind_to",
             Self::GetSubagents { .. } => "get_subagents",
+            Self::DeleteAllSubagents { .. } => "delete_all_subagents",
             Self::Sync { .. } => "sync",
         }
     }

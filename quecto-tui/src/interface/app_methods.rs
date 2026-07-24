@@ -647,7 +647,7 @@ impl App {
 
     // ── Command sending ───────────────────────────────────────────────
 
-    pub(super) fn send_command(&mut self, cmd: Command) {
+    pub(super) fn send_command(&mut self, cmd: Command) -> bool {
         // Enqueue synchronously, in call order, onto the client's FIFO writer
         // channel. A previous `tokio::spawn` per command let detached tasks
         // race to enqueue, so recovery/reset bursts could reach the agent
@@ -659,7 +659,9 @@ impl App {
                 command: cmd,
                 error: e.to_string(),
             });
+            return false;
         }
+        true
     }
 
     pub(super) fn handle_command_send_failure(&mut self, failure: CommandSendFailure) {
