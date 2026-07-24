@@ -352,6 +352,12 @@ fn tui_feature_oriented_architecture_is_documented() {
         "Pure policy modules must not depend on terminal/widget types",
         "Do not introduce a second global command/event hierarchy",
         "Interim compatibility map",
+        "Capability characterization and migration map",
+        "Production file target-owner map",
+        "`interface/components/autocomplete.rs` | `components` (relocate physically to top-level `components/`)",
+        "`interface/components/workflow_bar.rs` | `components` (relocate physically to top-level `components/`)",
+        "remove vestigial placeholder",
+        "#1221 (`conversation`) and #1222 (`agents`) depend on #1220",
     ] {
         assert!(
             feature_doc.contains(required),
