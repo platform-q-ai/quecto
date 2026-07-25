@@ -660,8 +660,12 @@ async fn a_trimmed_page_advertising_more_history_stays_open_to_later_snapshots()
         true,
         serde_json::json!({
             "messages": [{"id": "m8", "role": "user", "content": "trimmed newest"}],
+            // `trimmed` ALONE must keep the backfill open. Setting
+            // `hasMoreBefore` too would give the latch a second sufficient
+            // condition, and the test would survive removal of the `trimmed`
+            // guard it is named for.
             "trimmed": true,
-            "hasMoreBefore": true,
+            "hasMoreBefore": false,
             "before": "m8",
         }),
     );

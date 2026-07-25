@@ -684,7 +684,7 @@ modulo visibility, and the two recovery predicates are provably equivalent given
 the callers' `refs.is_empty()` pre-check.
 
 What did NOT hold was the safety net's coverage. Four mutations were confirmed
-invisible to all 1627 tests, and all four are now killed:
+invisible to the ENTIRE `quecto-tui` lib suite (1627 tests at that commit; 1639 at head), and all four are now killed:
 
 | Severity | Gap | Mutation that survived | Now killed by |
 |---|---|---|---|
@@ -695,9 +695,9 @@ invisible to all 1627 tests, and all four are now killed:
 
 One claimed gap was REFUTED on verification: flipping `hasMoreContent`'s
 `unwrap_or(false)` to `true` already fails 9 tests, so that default is covered.
-One proposed test also encoded a wrong assumption — a continuation resuming
-exactly at `contentLength` is `InvalidProgress`, not a valid boundary case — and
-was corrected to pin real behaviour rather than the assumption.
+One proposed test also encoded a wrong assumption about the
+`next_offset == contentLength` boundary. (The correction made at the time was
+ITSELF wrong — see rounds 2 and 3 below; the boundary is a valid continuation.)
 
 Two documentation claims were found overstated and are corrected above: the
 pre-existing-test-tree row (four files changed in two classes, not "exactly
@@ -716,7 +716,7 @@ wrong. Both were reproduced locally before acting.
 
 | Severity | Finding | Resolution |
 |---|---|---|
-| HIGH | The `reconcile` matrix was closed to 6/8, not 8/8. Both `extend_prefix=true` × `partial_prefix_len=None` corners were still untested, and they are production-reachable: an empty or filtered snapshot leaves `partial=None, has_more=true`, and the next own older page lands there. `unwrap_or(0)` → `unwrap_or(1)` in the extend arm left all 1636 tests green while producing the SAME user-visible bug the round-1 HIGH was about. | Added `an_own_older_page_with_no_recorded_prefix_counts_only_its_own_length` and `..._that_closes_the_backfill`. The mutation now fails. Matrix is 8/8. |
+| HIGH | The `reconcile` matrix was closed to 6/8, not 8/8. Both `extend_prefix=true` × `partial_prefix_len=None` corners were still untested, and they are production-reachable: an empty or filtered snapshot leaves `partial=None, has_more=true`, and the next own older page lands there. `unwrap_or(0)` → `unwrap_or(1)` in the extend arm left the whole lib suite green (1636 tests at that commit) while producing the SAME user-visible bug the round-1 HIGH was about. | Added `an_own_older_page_with_no_recorded_prefix_counts_only_its_own_length` and `..._that_closes_the_backfill`. The mutation now fails. Matrix is 8/8. |
 | HIGH | `a_next_offset_exactly_at_the_advertised_end_is_invalid_progress` passed for the WRONG reason. Its fixture double-counted its own seed (`acc("abc", 0)` plus a 3-byte page against a 3-byte total = 6 accumulated bytes), so it died on the overshoot conjunct and never reached the boundary it was named for. Probing the real boundary returns `Ok(Continue { next_offset: 3 })` — the original expectation was correct, and the author had bent the test to match the implementation rather than investigating. | Test corrected to assert `Ok(Continue)` and renamed `..._is_a_valid_continuation`, with the fixture mistake recorded in its doc comment. A separate `accumulating_beyond_the_advertised_length_is_still_invalid_progress` was added for the overshoot case. NOTE: as first written that test was itself broken in the same way — see round 3 below. Tightening the guard to `>=` now fails. |
 | MED | The corrected pre-existing-test-tree row was STILL wrong: five files changed, not four. `architecture.rs` — a lowered never-raise ratchet seed — is a third, load-bearing class. | Row corrected to three classes, with a note that it has now understated its own scope twice. |
 | MED | The "remeasured by `wc -l`" LOC row still carried an unmeasured 81-line figure (actual: 74). | Remeasured and shown as arithmetic. |
@@ -756,8 +756,8 @@ Guard-isolation sweep at head, each mutation applied in isolation:
 |---|---|
 | `unwrap_or(0)` → `unwrap_or(1)` in the extend arm | `an_own_older_page_with_no_recorded_prefix_counts_only_its_own_length` |
 | `ReplacePrefix` arm returns `partial_len + page_len` | `a_partial_snapshot_over_a_partial_prefix_replaces_it_without_double_counting` |
-| drop the `trimmed` conjunct from the latch | `a_trimmed_or_incomplete_page_leaves_the_backfill_open` |
-| drop the `has_more_before` conjunct from the latch | 4 tests, incl. `a_later_snapshot_replaces_the_whole_loaded_prefix` |
+| drop the `trimmed` conjunct from the latch | 3 tests: `a_trimmed_or_incomplete_page_leaves_the_backfill_open`, `trimmed_busy_connect_snapshot_then_full_attach_backfill_restores_older_history`, `a_trimmed_page_advertising_more_history_stays_open_to_later_snapshots` |
+| drop the `has_more_before` conjunct from the latch | 11 tests, incl. `a_later_snapshot_replaces_the_whole_loaded_prefix` and `older_history_page_prepends_without_gap_or_duplicate` |
 | delete the overshoot conjunct | `accumulating_beyond_the_advertised_length_is_still_invalid_progress` AND `accumulating_past_the_advertised_length_is_invalid_progress` |
 | `next_offset <= response_offset` → `false` | 1 test (isolated) |
 | `next_offset > content_len` → `false` | 1 test (isolated) |
@@ -770,3 +770,33 @@ verified `TUI_RAW_JSON_SITE_SEED = 120` is exact — the `<=` comparison means a
 green test alone proves nothing, so it lowered the seed to 119 and confirmed the
 assertion reports `found 120`. For the first time in three rounds every
 documented number checks out.
+
+### Round 4: the discipline applied only where it was already looking
+
+Round 4 swept EVERY negative-asserting test in the slice with the round-3
+guard-removal rule, including the characterization suite that no earlier round
+had checked this way. Verdict: round 3 did not break the streak — it made it
+four.
+
+| Severity | Finding | Resolution |
+|---|---|---|
+| HIGH | `a_trimmed_page_advertising_more_history_stays_open_to_later_snapshots` survived removal of the `facts.trimmed` guard it is named for. Its fixture set BOTH `trimmed: true` and `hasMoreBefore: true`, so the second sufficient condition held the latch open and the test stayed green. It died only under an unconditional latch. | Fixture changed to `trimmed: true, hasMoreBefore: false`, so only `trimmed` can keep the backfill open. Verified: dropping the `trimmed` conjunct now fails this test. |
+| MED | The guard-isolation table — created in round 3 as the durable remedy — was wrong in 2 of its 7 rows, both understating coverage: `trimmed` listed 1 killer (actual 3), `has_more_before` listed 4 (actual 11). | Both rows remeasured against the real failure sets. |
+| MED | A round-1 sentence still asserted the `next_offset == contentLength` boundary is `InvalidProgress`, contradicting round 2's correction and the shipped code. | Corrected, and annotated to record that the round-1 "correction" was itself wrong. |
+| LOW | Absolute suite counts (1627, 1636) were unverifiable at head. | Rewritten to name the commit they were measured at and the count at head (1639). |
+
+Round 4 also confirmed the three pure-policy files are genuinely clean: all 24
+isolated guard-removal mutations across `range_accumulator_tests.rs`,
+`history_paging_tests.rs` and `turn_recovery_tests.rs` killed their named test
+and no other. The corrected overshoot fixture is right this time, its sibling is
+not redundant, `TUI_RAW_JSON_SITE_SEED = 120` is exact, and every LOC figure
+reproduces by `wc -l`.
+
+**What four rounds actually demonstrated.** The recurring failure was never the
+extraction — every round independently confirmed it introduces no behavioural
+regression. It was that each round adopted a correct rule and then applied it
+only to the files already in front of it. Round 3 wrote the guard-removal rule
+and left the same defect live one directory away, and encoded two wrong counts
+in the very table meant to prevent that. A rule is not a remedy until it is
+applied exhaustively to every test the claim covers, and the artefact recording
+it is itself measured rather than asserted.
