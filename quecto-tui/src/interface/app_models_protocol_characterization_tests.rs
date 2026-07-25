@@ -411,3 +411,24 @@ async fn selector_selection_emits_set_model_command() {
         "selecting an entry must emit set_model for that id, got:\n{cmds:?}"
     );
 }
+
+/// Closes the composition gap flagged in review on #1235: the mapper fixtures
+/// inject a deliberately weaker sanitizer stand-in, so ANSI escape sequences and
+/// Trojan-Source bidi controls were pinned only at the `ansi.rs` unit seam and
+/// never carried through the mapper into a rendered frame. This runs the real
+/// `sanitize_control` end-to-end.
+#[tokio::test]
+async fn ansi_and_bidi_controls_are_stripped_through_the_mapper() {
+    let text = rendered_for(serde_json::json!({
+        "models": [ { "model": "prov\u{202E}ider/mo\u{1b}[31mdel" } ]
+    }))
+    .await;
+    assert!(
+        text.contains("provider/model"),
+        "the ANSI sequence and bidi control must be stripped end-to-end, got:\n{text}"
+    );
+    assert!(
+        !text.contains('\u{202E}') && !text.contains('\u{1b}') && !text.contains("[31m"),
+        "no bidi control, ESC byte, or escape-sequence remnant may reach the frame, got:\n{text}"
+    );
+}

@@ -7,6 +7,17 @@
 use super::*;
 
 /// Stand-in for the interface sanitizer: strips ASCII control characters.
+///
+/// DELIBERATELY WEAKER than the production `interface::ansi::sanitize_control`,
+/// which is ANSI-segment aware (`"\u{1b}[31mred"` -> `"red"`, not `"[31mred"`)
+/// and also strips Trojan-Source bidi controls (`"\u{202E}"` -> `""`). The
+/// application layer may not name `interface::` types (rule 3), so these
+/// fixtures pin the mapper's *contract* — "whatever the sanitizer returns, an
+/// id that comes back empty is dropped rather than rendered blank" — and not
+/// the sanitizer's semantics. Those are pinned at their own seam by
+/// `interface/ansi_tests.rs`, and end-to-end through the real wiring by the
+/// frozen characterization suite. Do not read a passing test here as evidence
+/// about ANSI or bidi handling in production.
 fn sanitize(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }

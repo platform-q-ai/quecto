@@ -895,31 +895,42 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
 
 // ── #1220 protocol-boundary ratchets ────────────────────────────────
 //
-// Two decrease-only ratchets guard the raw-JSON burn-down. Both scan ONLY
-// production interface (feature/view) modules — `_tests.rs` files and the
-// TUI harness are excluded, since tests legitimately construct wire payloads.
-// Seeds may be lowered as sites migrate to application-layer mappers; they may
-// never be raised. Allowlist entries must be narrow and issue-linked.
+// Two decrease-only ratchets guard the raw-JSON burn-down. Seeds may be lowered
+// as sites migrate to application-layer mappers; they may never be raised.
+//
+// Exclusion is content-based, not filename-based: a file is treated as test
+// code only if it carries `cfg(test)` or test attributes, so `*_test_support.rs`
+// fixtures cannot inflate the production seed, while feature-gated PRODUCTION
+// modules (`tui_harness*.rs`, gated by the `test-harness` *feature*, not
+// `cfg(test)`) are now correctly measured rather than silently exempt.
+//
+// Allowlisting is per-ratchet, so an exemption is never broader than its
+// stated rationale.
 
 /// Seed: production raw `serde_json` parsing sites in TUI feature/view modules.
 /// Lower this as call sites migrate behind mappers. Never raise it.
-const TUI_RAW_JSON_SITE_SEED: usize = 173;
+const TUI_RAW_JSON_SITE_SEED: usize = 130;
 
-/// Seed: production feature/view imports of `infrastructure::client` wire DTOs.
+/// Seed: production feature/view *usages* of `infrastructure::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
-const TUI_WIRE_DTO_IMPORT_SEED: usize = 2;
+const TUI_WIRE_DTO_USAGE_SEED: usize = 124;
 
-/// Narrow, issue-linked allowlist of approved protocol seams.
-/// Each entry is a path suffix plus the issue that approved it.
-const TUI_PROTOCOL_SEAM_ALLOWLIST: &[(&str, &str)] = &[
-    // The response dispatcher IS the protocol seam: it receives raw responses
-    // and routes them to mappers. #1220.
-    ("interface/app_response.rs", "#1220"),
-];
+/// Narrow, issue-linked allowlist for the RAW-JSON ratchet only.
+///
+/// The response dispatcher IS the protocol seam: it receives raw responses and
+/// routes them to mappers, so raw JSON access there is by construction. It is
+/// deliberately NOT exempt from the wire-DTO ratchet.
+const TUI_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("interface/app_response.rs", "#1220")];
 
-fn tui_production_interface_files() -> Vec<(String, String)> {
+/// Narrow, issue-linked allowlist for the WIRE-DTO ratchet only. Empty: no file
+/// currently has an approved reason to accumulate wire-DTO usage unmeasured.
+const TUI_WIRE_DTO_ALLOWLIST: &[(&str, &str)] = &[];
+
+/// Production (non-`cfg(test)`) TUI interface sources, minus `allowlist`.
+fn tui_production_interface_files(allowlist: &[(&str, &str)]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     collect_tui_production_interface_files(Path::new(TUI_INTERFACE), &mut out);
+    out.retain(|(rel, _)| !allowlist.iter().any(|(suffix, _)| rel.ends_with(suffix)));
     out.sort();
     out
 }
@@ -936,52 +947,104 @@ fn collect_tui_production_interface_files(dir: &Path, out: &mut Vec<(String, Str
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.ends_with(".rs") || name.ends_with("_tests.rs") || name.starts_with("tui_harness")
-        {
+        if !name.ends_with(".rs") {
+            continue;
+        }
+        let content = fs::read_to_string(&path).expect("read tui source");
+        // cfg(test)-based, not name-based: only genuine test modules are exempt.
+        if is_test_module(&content) {
             continue;
         }
         let rel = path
             .to_string_lossy()
             .replace("../quecto-tui/src/", "")
             .replace('\\', "/");
-        if TUI_PROTOCOL_SEAM_ALLOWLIST
-            .iter()
-            .any(|(suffix, _)| rel.ends_with(suffix))
-        {
-            continue;
-        }
-        out.push((rel, fs::read_to_string(&path).expect("read tui source")));
+        out.push((rel, content));
     }
 }
 
-/// Raw JSON parsing = reaching into a `serde_json::Value` by field/shape.
+/// True when the file is test code: either compiled only under `cfg(test)`, or
+/// a test module body (sibling `#[path]` files carry the test attributes while
+/// the `#[cfg(test)]` gate sits on the parent's `mod` declaration).
+fn is_test_module(content: &str) -> bool {
+    content.lines().any(|line| {
+        let t = line.trim();
+        // NOTE: a bare `#[cfg(test)]` is NOT enough — production modules carry
+        // one on their trailing `mod tests;` declaration. Only a whole-file
+        // gate or an actual test body counts.
+        t == "#![cfg(test)]"
+            || t == "#[test]"
+            || t.starts_with("#[tokio::test")
+            || t.starts_with("#[rstest")
+    })
+}
+
+/// Raw JSON parsing = reaching into a `serde_json::Value` by field or shape.
+///
+/// Accessors like `as_str()` exist on plain `String` too, so a bare accessor is
+/// only counted when the line also shows a key lookup (`.get("…")`/`.pointer("…")`)
+/// or an `and_then` chain, which is how `serde_json` access actually reads. This
+/// keeps `args[i].as_str()` and `m.id.as_str()` out of the inventory.
 fn raw_json_site_count(content: &str) -> usize {
     content
         .lines()
         .filter(|line| {
             let t = line.trim();
-            !t.starts_with("//")
-                && (t.contains(".get(\"")
-                    || t.contains("as_array()")
-                    || t.contains("as_str()")
-                    || t.contains("as_u64()")
-                    || t.contains("as_bool()")
-                    || t.contains(".pointer(\""))
+            if t.starts_with("//") || t.starts_with("///") {
+                return false;
+            }
+            let keys = t.contains(".get(\"") || t.contains(".pointer(\"");
+            let accessor = t.contains("as_array()")
+                || t.contains("as_object()")
+                || t.contains("as_str()")
+                || t.contains("as_u64()")
+                || t.contains("as_i64()")
+                || t.contains("as_bool()");
+            // A JSON accessor counts only alongside a key lookup or a chain
+            // combinator, which is how serde_json access actually reads.
+            keys || (accessor && t.contains("and_then"))
         })
         .count()
 }
 
-#[test]
-fn tui_raw_json_parsing_sites_do_not_grow() {
-    let files = tui_production_interface_files();
+/// Uses of wire DTOs, not merely `use` lines: `use super::*` re-exports and
+/// fully-qualified paths would otherwise make the import count meaningless.
+fn wire_dto_usage_count(content: &str) -> usize {
+    content
+        .lines()
+        .filter(|line| {
+            let t = line.trim();
+            if t.starts_with("//") || t.starts_with("///") {
+                return false;
+            }
+            t.contains("Command::") || t.contains("Event::") || t.contains("infrastructure::client")
+        })
+        .count()
+}
+
+fn tui_ratchet_inventory(
+    allowlist: &[(&str, &str)],
+    count: fn(&str) -> usize,
+) -> (usize, Vec<(String, usize)>) {
+    let files = tui_production_interface_files(allowlist);
+    assert!(
+        !files.is_empty(),
+        "the TUI interface scan root {TUI_INTERFACE} yielded no production files; \
+         a path rename must not silently disable the #1220 ratchets"
+    );
     let mut per_file: Vec<(String, usize)> = files
         .iter()
-        .map(|(rel, content)| (rel.clone(), raw_json_site_count(content)))
-        .filter(|(_, count)| *count > 0)
+        .map(|(rel, content)| (rel.clone(), count(content)))
+        .filter(|(_, n)| *n > 0)
         .collect();
-    per_file.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-    let total: usize = per_file.iter().map(|(_, c)| c).sum();
+    per_file.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    let total = per_file.iter().map(|(_, n)| n).sum();
+    (total, per_file)
+}
 
+#[test]
+fn tui_raw_json_parsing_sites_do_not_grow() {
+    let (total, per_file) = tui_ratchet_inventory(TUI_RAW_JSON_ALLOWLIST, raw_json_site_count);
     assert!(
         total <= TUI_RAW_JSON_SITE_SEED,
         "raw serde_json parsing in TUI feature/view modules must not grow: found {total}, \
@@ -992,28 +1055,13 @@ fn tui_raw_json_parsing_sites_do_not_grow() {
 }
 
 #[test]
-fn tui_wire_dto_imports_do_not_grow() {
-    let files = tui_production_interface_files();
-    let mut per_file: Vec<(String, usize)> = files
-        .iter()
-        .map(|(rel, content)| {
-            let count = content
-                .lines()
-                .filter(|line| {
-                    let t = line.trim();
-                    t.starts_with("use ") && t.contains("infrastructure::client")
-                })
-                .count();
-            (rel.clone(), count)
-        })
-        .filter(|(_, count)| *count > 0)
-        .collect();
-    per_file.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-    let total: usize = per_file.iter().map(|(_, c)| c).sum();
-
+fn tui_wire_dto_usage_does_not_grow() {
+    let (total, per_file) = tui_ratchet_inventory(TUI_WIRE_DTO_ALLOWLIST, wire_dto_usage_count);
     assert!(
-        total <= TUI_WIRE_DTO_IMPORT_SEED,
-        "TUI feature/view imports of infrastructure::client wire DTOs must not grow: \
-         found {total}, seed {TUI_WIRE_DTO_IMPORT_SEED} (#1220). Inventory: {per_file:?}"
+        total <= TUI_WIRE_DTO_USAGE_SEED,
+        "TUI feature/view usage of infrastructure::client wire DTOs must not grow: \
+         found {total}, seed {TUI_WIRE_DTO_USAGE_SEED} (#1220). Counting usages, not \
+         `use` lines, so `use super::*` and fully-qualified paths are visible. \
+         Inventory (burn-down order): {per_file:?}"
     );
 }

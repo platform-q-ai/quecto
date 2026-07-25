@@ -403,44 +403,60 @@ Two decrease-only guards live in `quecto-agentic-harness/tests/architecture.rs`
 and therefore run in the fast pre-commit guard suite (targets are enumerated
 dynamically, so they cannot be silently dropped):
 
-- `tui_raw_json_parsing_sites_do_not_grow` — seed `173`.
-- `tui_wire_dto_imports_do_not_grow` — seed `2`.
+- `tui_raw_json_parsing_sites_do_not_grow` — seed `130`.
+- `tui_wire_dto_usage_does_not_grow` — seed `124`.
 
-Both scan production interface modules only (`_tests.rs` and `tui_harness*` are
-excluded, since tests legitimately construct wire payloads). Seeds may be
-lowered as sites migrate; they may never be raised. The allowlist
-(`TUI_PROTOCOL_SEAM_ALLOWLIST`) is narrow and issue-linked: currently only
-`interface/app_response.rs`, which *is* the protocol seam that routes raw
-responses to mappers.
+Both were hardened after review on #1235, which proved the first drafts did not
+measure what they claimed:
+
+- **Usage, not imports.** The wire-DTO guard originally counted
+  `use ... infrastructure::client` lines and saw only 2, because `interface/app.rs`
+  imports the DTOs and siblings reach them through `use super::*`. A probe module
+  constructing `Command::Prompt` via the glob compiled and left the guard green.
+  It now counts `Command::`/`Event::`/`infrastructure::client` *usages*, so globs
+  and fully-qualified paths are visible; the same probe now fails it.
+- **JSON-aware counting.** `as_str()` also exists on `String`, so the raw-JSON
+  count included `match args[i].as_str()` and `m.id.as_str()` and listed modules
+  that parse no wire payload at all. An accessor is now counted only alongside a
+  key lookup (`.get("…")`/`.pointer("…")`) or an `and_then` chain, and the
+  inventory below contains only genuine payload parsers.
+- **`cfg(test)`-based exclusion.** Exclusion was by filename (`*_tests.rs`,
+  `tui_harness*`), which exempted `tui_harness*.rs` — real production modules
+  gated by the `test-harness` *feature*, not `cfg(test)` — while leaving
+  `*_test_support.rs` fixtures counted as production. Files are now classified by
+  content (whole-file `#![cfg(test)]` or an actual test body); a bare
+  `#[cfg(test)]` does not count, since production modules carry one on their
+  trailing `mod tests;`.
+- **Per-ratchet allowlists.** `interface/app_response.rs` is exempt from the
+  raw-JSON ratchet only — it *is* the dispatcher that routes raw responses to
+  mappers — and is now measured by the wire-DTO ratchet. The wire-DTO allowlist
+  is empty.
+- **No vacuous pass.** Both ratchets assert the scan yielded a non-empty file
+  list, so renaming the scan root fails them instead of silently disabling them.
+
+Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-Seeded at 173 sites. The failure message of the ratchet prints this inventory in
+Seeded at 130 sites. The ratchet's failure message reprints this inventory in
 burn-down order, so it stays accurate without manual upkeep:
 
 | Module | Sites |
 |---|---|
-| `interface/components/workflow_bar.rs` | 40 |
-| `interface/app_events.rs` | 23 |
-| `interface/app_message_recovery.rs` | 22 |
-| `interface/app_subagent_stream.rs` | 21 |
+| `interface/components/workflow_bar.rs` | 38 |
+| `interface/app_events.rs` | 20 |
+| `interface/app_subagent_stream.rs` | 19 |
 | `interface/components/chat_render.rs` | 17 |
 | `interface/range_accumulator.rs` | 10 |
-| `interface/app_paged_history.rs` | 7 |
-| `interface/components/footer.rs` | 6 |
+| `interface/app_paged_history.rs` | 6 |
 | `interface/ledger_sync.rs` | 6 |
 | `interface/app_rewind.rs` | 5 |
+| `interface/components/footer.rs` | 4 |
 | `interface/app_subagents.rs` | 3 |
 | `interface/app_effort.rs` | 2 |
-| `interface/cli.rs` | 2 |
-| `interface/components/editor.rs` | 2 |
-| `interface/components/effort_selector.rs` | 2 |
-| `interface/components/model_selector.rs` | 2 |
-| `interface/app_subagent_panel.rs` | 1 |
-| `interface/components/chat.rs` | 1 |
-| `interface/components/files_autocomplete.rs` | 1 |
 
-Wire-DTO import inventory (seed 2): `interface/app.rs`, `interface/feed_state.rs`.
+Wire-DTO usage is seeded at 124, led by `app_subagent_stream.rs`,
+`app_subagents.rs`, `app_submit.rs`, and `tui_harness_events.rs`.
 
 ### Deletion ledger
 
@@ -481,3 +497,23 @@ Mutation re-verification after the refactor confirms the pins still bind to the
 relocated logic: M14 (drop slash inference), M15 (`is_current: true`), M16 (drop
 pending guard), M17 (never emit `ListModels`), M18 (wrong `set_model` id), and
 M19 (drop empty-id skip) each fail their named test, with no residue.
+
+### Review response (#1235)
+
+| Finding | Disposition |
+|---|---|
+| Wire-DTO ratchet counted `use` lines, evadable via `use super::*` (proven by a compiling probe) | FIXED — counts usages; the probe now fails the guard |
+| Raw-JSON predicate type-blind, inventory listed non-JSON modules | FIXED — accessors require a key lookup or `and_then`; seed 173 → 130, inventory now only real parsers |
+| Ratchets pass vacuously if the scan root is renamed | FIXED — both assert a non-empty file list; verified by renaming the root |
+| Filename-based exclusion exempted feature-gated production (`tui_harness*`) and counted `*_test_support.rs` | FIXED — content/`cfg(test)`-based classification |
+| Allowlist exemption broader than its rationale | FIXED — per-ratchet allowlists; `app_response.rs` now measured by the wire-DTO guard |
+| Mapper test double weaker than the real sanitizer (ANSI/bidi) | FIXED — documented on the double, plus `ansi_and_bidi_controls_are_stripped_through_the_mapper` running the real sanitizer end-to-end (killed by M20, an injected identity sanitizer) |
+| `quecto-tui/README.md` version stale at 0.70.13 | FIXED — now current |
+| "Three surviving hand-rolled model-payload parsers" in `app_response.rs`, `app_subagent_stream.rs`, `footer.rs` | **DECLINED** — those read a top-level scalar from a `set_model`/`get_state` response (`get("model") → as_str → sanitize`): no array, no `id` fallback, no empty-skip, no provider inference, no auth. They are not `list_models` interpreters. Folding them into the mapper would pull `sanitize_control` back into `application/`, violating rule 3. They remain recorded in the burn-down inventory. |
+
+The characterization suite was re-frozen after adding the ANSI/bidi test (an
+additive pin; no existing assertion was altered).
+
+| File | `git hash-object` |
+|---|---|
+| `quecto-tui/src/interface/app_models_protocol_characterization_tests.rs` | `e57d8c569df490354949ff259b450eb050e661d0` |
