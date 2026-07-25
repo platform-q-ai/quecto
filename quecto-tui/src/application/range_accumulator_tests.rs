@@ -184,3 +184,47 @@ fn a_multi_page_body_reassembles_in_order() {
         "a multi-page body must reassemble exactly and in order"
     );
 }
+
+/// `LengthMismatch` was only ever pinned SHORT (#1236 review). An over-long
+/// final page must be rejected too: relaxing the check to `>=` shipped a body
+/// carrying more bytes than the server advertised, and both callers treat an
+/// unflagged body as trustworthy user content.
+#[test]
+fn a_final_page_longer_than_advertised_is_a_length_mismatch() {
+    assert_eq!(
+        acc("", 0).apply(&json!({
+            "content": "abcdefghijkl",
+            "offset": 0,
+            "contentLength": 5,
+        })),
+        Err(RangeError::LengthMismatch),
+        "an over-long body must not be delivered as complete content"
+    );
+}
+
+#[test]
+fn a_non_string_content_field_is_missing_content() {
+    assert_eq!(
+        acc("", 0).apply(&json!({ "content": 42, "contentLength": 2 })),
+        Err(RangeError::MissingContent),
+        "a non-string content field must be rejected, not coerced"
+    );
+}
+
+/// A continuation that claims to resume exactly AT the advertised end has no
+/// bytes left to deliver, so it is rejected rather than accepted as a page that
+/// would loop forever waiting for content that cannot exist.
+#[test]
+fn a_next_offset_exactly_at_the_advertised_end_is_invalid_progress() {
+    assert_eq!(
+        acc("abc", 0).apply(&json!({
+            "content": "abc",
+            "offset": 0,
+            "contentLength": 3,
+            "hasMoreContent": true,
+            "nextOffset": 3,
+        })),
+        Err(RangeError::InvalidProgress),
+        "a continuation resuming at the advertised end can deliver nothing"
+    );
+}

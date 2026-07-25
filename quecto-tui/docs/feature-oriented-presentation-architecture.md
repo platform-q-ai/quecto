@@ -625,7 +625,7 @@ changes are the test-module declarations and the new harness probe.
 | Class | Surface | Evidence | Verdict |
 |---|---|---|---|
 | Behavioural | All ten contract surfaces | Whole workspace green after the extraction: 5052 tests, 192/192 BDD scenarios, 37/37 architecture tests, 31/31 contract tests. The 15 characterization tests and 11 `RangeAccumulator` tests written BEFORE the move passed unchanged after it. | PASS |
-| Behavioural | Pre-existing test tree | `git diff b0584166..HEAD` over pre-existing test files shows changes in exactly two: `app_paged_history_review_tests.rs` and `app_paged_history_tests.rs`. Every hunk is a mechanical field-path rename (`session.history_before_cursor` → `session.history.before_cursor`, and the `PendingHistoryPage` import path). ZERO assertions, fixtures, or test names changed. All other deltas are NEW test files. | PASS |
+| Behavioural | Pre-existing test tree | `git diff b0584166..HEAD` over pre-existing test files shows changes in **four**, in two distinct classes. (1) MECHANICAL: `app_paged_history_review_tests.rs` and `app_paged_history_tests.rs` — every hunk a field-path rename (`session.history_before_cursor` → `session.history.before_cursor`) plus the `PendingHistoryPage` import path; zero assertions, fixtures, or test names changed. (2) DELIBERATE BDD REWRITES: `tui_paged_history_steps.rs` and `tui_paged_history_1094_steps.rs` — two step bodies rewritten and four orphaned step definitions deleted, in response to review findings; these are behavioural test changes, NOT renames, and are itemised in the "Characterization review outcome" section below. An earlier version of this row said "exactly two" and "zero test names changed", which was true only of class (1) and is corrected here. | PASS (with class (2) disclosed) |
 | Behavioural | Adapted tests still load-bearing | Re-ran mutation evidence after adapting them: correlating by id prefix instead of exact match fails `page_response_with_prefix_matching_id_is_rejected`; removing the staleness window fails both `stale_in_flight_page_is_retried_after_age_window` and `late_twin_of_stale_retried_page_is_dropped`. | PASS |
 | Visual | Rendered frames | Every characterization and BDD assertion in this slice reads rendered frame text (`chat_text`, `active_chat_text`) or the app's own transcript entries. All pass unchanged, so no pinned frame differs. | PASS |
 | Performance | Older-page emission | Old code inlined the guards in `next_history_page_request`; new code calls `HistoryPaging::next_page_request`. Same work: one `format!` and one cursor clone per REQUEST. The path is still scroll-driven — the only callers are `Key::ScrollUp`/`Key::PageUp` in `app_event_loop.rs` — so nothing was moved into the render loop. | PASS |
@@ -634,7 +634,7 @@ changes are the test-module declarations and the new harness probe.
 | Performance | Recovery trigger | `TurnOutcome` borrows `refs` and `assistant_text` (`&'a [String]`, `&'a str`) — it is a view, not a copy, so the per-turn heuristic allocates nothing. Previously the same fields were read directly off `App`. | PASS |
 | Performance | Batch completion | `is_complete()` is the same `len == len` comparison. `ordered_by_refs` is a lazy iterator that now BACKS the ref-ordered walk `recovered_chat_entries` previously hand-rolled, so ordering has one implementation rather than two; the walk itself is unchanged (same skip on an absent ref, same single pass). Still one `replace_range` per batch, never incremental splices. | PASS |
 | Quantitative | Trigger-logic duplication | The force-recovery check (`open_tool_calls > 0`) existed at 2 call sites (master + sub-agent); it now exists at 1, inside the policy. Both paths route through `TurnOutcome::needs_recovery`. | PASS |
-| Quantitative | Production LOC | Conversation production code: 828 lines before (`app_paged_history` 316 + `app_message_recovery` 440 + `range_accumulator` 72) → 1035 after (259 + 416 + 76 + `history_paging` 187 + `turn_recovery` 97). Net +207. The issue sets no LOC target; the growth is doc comments explaining the invariants (why exact-match correlation, why an open tool call forces recovery) that were previously implicit. Interface files themselves shrank by 81 lines. | RECORDED |
+| Quantitative | Production LOC | Conversation production code: 828 lines before (`app_paged_history` 316 + `app_message_recovery` 440 + `range_accumulator` 72) → 1060 after, measured by `wc -l` at the current head (`app_paged_history` 259 + `app_message_recovery` 423 + `range_accumulator` 76 + `history_paging` 187 + `turn_recovery` 115). Net +232. (An earlier version of this row read 1035/+207; those figures predated the `forced_without_text` and `ordered_by_refs` review fixes and were no longer reproducible.) The issue sets no LOC target; the growth is doc comments explaining the invariants (why exact-match correlation, why an open tool call forces recovery) that were previously implicit. Interface files themselves shrank by 81 lines. | RECORDED |
 | Quantitative | Testability criterion | 23 new tests construct the policy with no terminal, concrete client, raw JSON, or Tokio runtime. `grep` for `serde_json|ratatui|tokio|crossterm|Client` across `src/domain/*.rs` production files returns nothing. | PASS |
 | Structural | `ChatEntry` stays a view projection | `grep -rn ChatEntry src/domain/ src/application/` returns nothing: policy vocabulary is `PageFacts`, `PrefixPlan`, `TurnOutcome`, `RecoveryBatch<T>`. | PASS |
 
@@ -667,3 +667,43 @@ confirmed the transport fan-out is real (`uds.rs:168` selects
 PRE-EXISTING and identical at the parent commit. Fixing it would be a
 behavioural change, which this zero-behaviour-change slice forbids. Filed as
 follow-up rather than smuggled in here.
+
+## Adversarial review round for conversation history/recovery slice (#1221)
+
+Three adversarial finders attacked the merged slice from distinct angles
+(correctness of the extracted state machines, integration seams and
+user-visible behaviour, and safety-net integrity). Every actionable finding was
+re-verified locally by applying the exact mutation the finder claimed survives,
+before any fix was written.
+
+Verdict across all three: **no behavioural regression introduced by the
+extraction.** Both the correctness and integration finders independently
+concluded the zero-behaviour-change claim holds; `reconcile` is a line-for-line
+transcription of the old inline arithmetic, `range_accumulator` is byte-identical
+modulo visibility, and the two recovery predicates are provably equivalent given
+the callers' `refs.is_empty()` pre-check.
+
+What did NOT hold was the safety net's coverage. Four mutations were confirmed
+invisible to all 1627 tests, and all four are now killed:
+
+| Severity | Gap | Mutation that survived | Now killed by |
+|---|---|---|---|
+| HIGH | `reconcile`'s prefix × latch matrix had two untested corners; the `ReplacePrefix` arm's prefix arithmetic was unpinned. | `(ReplacePrefix(partial_len), partial_len + facts.page_len)` — double-counts the prefix, so the NEXT snapshot's `replace_history_prefix` eats live transcript entries below the backfill. | `a_partial_snapshot_over_a_partial_prefix_replaces_it_without_double_counting` and `an_own_older_page_that_closes_the_backfill_clears_the_partial_prefix` |
+| MED | The empty-page early return was only ever exercised against a virgin struct, so "an empty page never latches the guard" was unproven for latched or partial state. | Clearing `backfilled`/`partial_prefix_len` before the `page_len == 0` return — an empty broadcast snapshot un-latches a completed backfill and re-triggers a full re-page. | `an_empty_page_does_not_disturb_an_already_latched_backfill` and `an_empty_page_does_not_disturb_an_in_progress_partial_prefix` |
+| MED | The in-flight dedupe's `pending.before == before` conjunct was never falsified: no test held a pending page for one cursor while requesting another. | Deleting the conjunct — once the cursor advances, the next page is suppressed for a full 30s retry window and scroll-back appears wedged. | `a_pending_request_for_a_different_cursor_does_not_suppress_a_new_one` and `no_id_correlates_when_nothing_is_in_flight` |
+| MED | `LengthMismatch` was pinned SHORT but never LONG, and a non-string `content` was unpinned. | `self.content.len() >= content_len` — an over-long body ships as `Complete`. Both callers treat an unflagged body as trustworthy user content. | `a_final_page_longer_than_advertised_is_a_length_mismatch` and `a_non_string_content_field_is_missing_content` |
+
+One claimed gap was REFUTED on verification: flipping `hasMoreContent`'s
+`unwrap_or(false)` to `true` already fails 9 tests, so that default is covered.
+One proposed test also encoded a wrong assumption — a continuation resuming
+exactly at `contentLength` is `InvalidProgress`, not a valid boundary case — and
+was corrected to pin real behaviour rather than the assumption.
+
+Two documentation claims were found overstated and are corrected above: the
+pre-existing-test-tree row (four files changed in two classes, not "exactly
+two", and the BDD rewrites are genuine behavioural test changes) and the
+production-LOC row (1060/+232 measured at head, not the pre-review 1035/+207).
+
+Remaining findings were all confirmed **pre-existing at `b0584166`** and
+behavioural to fix, so they are filed as follow-ups rather than changed inside
+this zero-behaviour-change slice.

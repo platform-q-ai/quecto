@@ -242,3 +242,107 @@ fn the_page_sequence_wraps_instead_of_overflowing() {
         "the sequence must wrap, not panic"
     );
 }
+
+/// The `extend_prefix` × latch matrix had two unreachable-by-test corners
+/// (#1236 review). Both are reachable from `app_subagent_stream`, and a
+/// plausible refactoring mutation in either was invisible to the whole suite.
+#[test]
+fn an_own_older_page_that_closes_the_backfill_clears_the_partial_prefix() {
+    let mut p = HistoryPaging::default();
+    p.reconcile(&facts(3, true, false, false));
+    assert_eq!(p.partial_prefix_len, Some(3));
+
+    // The final older page: no more history, not trimmed.
+    assert_eq!(
+        p.reconcile(&facts(2, false, false, true)),
+        Some(PrefixPlan::Prepend),
+        "an own older page still prepends"
+    );
+    assert!(p.backfilled, "closing the backfill must latch the guard");
+    assert_eq!(
+        p.partial_prefix_len, None,
+        "a closed backfill must not leave a partial prefix behind"
+    );
+}
+
+#[test]
+fn a_partial_snapshot_over_a_partial_prefix_replaces_it_without_double_counting() {
+    let mut p = HistoryPaging::default();
+    p.reconcile(&facts(3, true, false, false));
+    p.reconcile(&facts(2, true, false, true));
+    assert_eq!(p.partial_prefix_len, Some(5));
+
+    // A fresh but still-incomplete snapshot replaces the whole loaded prefix.
+    assert_eq!(
+        p.reconcile(&facts(4, true, false, false)),
+        Some(PrefixPlan::ReplacePrefix(5)),
+        "a snapshot must replace every previously loaded page"
+    );
+    assert_eq!(
+        p.partial_prefix_len,
+        Some(4),
+        "the new prefix is the SNAPSHOT's length; adding it to the replaced \
+         length would double-count and make the next replace eat live entries"
+    );
+    assert!(!p.backfilled);
+}
+
+/// An empty page must not disturb a latch that a previous page established.
+/// Previously this was only ever proven against a virgin struct.
+#[test]
+fn an_empty_page_does_not_disturb_an_already_latched_backfill() {
+    let mut p = HistoryPaging::default();
+    p.reconcile(&facts(3, false, false, false));
+    assert!(p.backfilled);
+
+    assert_eq!(p.reconcile(&facts(0, false, false, false)), None);
+
+    assert!(
+        p.backfilled,
+        "an empty broadcast snapshot must not un-latch a completed backfill \
+         and re-trigger a full re-page"
+    );
+    assert_eq!(p.partial_prefix_len, None);
+}
+
+#[test]
+fn an_empty_page_does_not_disturb_an_in_progress_partial_prefix() {
+    let mut p = HistoryPaging::default();
+    p.reconcile(&facts(3, true, false, false));
+    assert_eq!(p.partial_prefix_len, Some(3));
+
+    assert_eq!(p.reconcile(&facts(0, true, false, false)), None);
+
+    assert_eq!(
+        p.partial_prefix_len,
+        Some(3),
+        "an empty page must not discard the loaded prefix count"
+    );
+    assert!(!p.backfilled);
+}
+
+/// The dedupe is per-CURSOR, not merely "something is in flight".
+#[test]
+fn a_pending_request_for_a_different_cursor_does_not_suppress_a_new_one() {
+    let mut p = paging(Some("m9"), true);
+    let start = Instant::now();
+    let first = request(&mut p, true, start).expect("first request");
+    assert_eq!(first.before, "m9");
+
+    // The cursor advances after the page lands; a new page must issue at once.
+    p.before_cursor = Some("m4".into());
+    let second = request(&mut p, true, start)
+        .expect("a different cursor must not be suppressed by the in-flight page");
+    assert_eq!(second.before, "m4");
+    assert!(
+        !p.is_pending_page(Some(&first.request_id)),
+        "the superseded request must no longer correlate"
+    );
+}
+
+#[test]
+fn no_id_correlates_when_nothing_is_in_flight() {
+    let p = paging(Some("m5"), true);
+    assert!(!p.is_pending_page(Some("history-page-anything-1")));
+    assert!(!p.is_pending_page(None));
+}
