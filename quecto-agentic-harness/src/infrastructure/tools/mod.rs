@@ -10,6 +10,7 @@ pub mod recall;
 pub mod registry;
 pub mod rust_ast_graph;
 mod rust_ast_graph_hits;
+mod rust_ast_graph_parse;
 mod rust_ast_graph_text;
 pub mod spawn;
 mod spawn_binary;

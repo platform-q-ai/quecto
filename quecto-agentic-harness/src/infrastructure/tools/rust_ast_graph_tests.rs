@@ -5,6 +5,11 @@ use serde_json::Value;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+#[cfg(unix)]
+fn symlink_dir(src: &std::path::Path, dst: &std::path::Path) {
+    std::os::unix::fs::symlink(src, dst).unwrap();
+}
+
 fn tool_with_workspace() -> (RustAstGraphTool, TempDir) {
     let tmp = TempDir::new().unwrap();
     std::fs::create_dir_all(tmp.path().join("src/nested")).unwrap();
@@ -86,6 +91,46 @@ async fn find_symbol_reports_ambiguity() {
 }
 
 #[tokio::test]
+async fn find_symbol_qualified_path_matches_segments_not_suffixes() {
+    let (tool, tmp) = tool_with_workspace();
+    std::fs::write(
+        tmp.path().join("src/data.rs"),
+        "pub struct Data;\npub struct MetaData;\n",
+    )
+    .unwrap();
+
+    let v = call(
+        &tool,
+        r#"{"action":"find_symbol","symbol":"Data","limit":10}"#,
+    )
+    .await;
+    assert_eq!(v["ambiguous"], false);
+    let matches = v["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0]["name"], "Data");
+}
+
+#[tokio::test]
+async fn public_item_after_blank_line_reports_item_line_and_signature() {
+    let (tool, tmp) = tool_with_workspace();
+    std::fs::write(
+        tmp.path().join("src/blank.rs"),
+        "\n\npub fn after_blank() {}\n",
+    )
+    .unwrap();
+
+    let v = call(
+        &tool,
+        r#"{"action":"find_symbol","symbol":"after_blank","limit":10}"#,
+    )
+    .await;
+    let symbol = &v["matches"].as_array().unwrap()[0];
+    assert_eq!(symbol["location"]["line"], 3);
+    assert_eq!(symbol["signature"], "pub fn after_blank() {}");
+    assert_eq!(symbol["visibility"], "pub");
+}
+
+#[tokio::test]
 async fn references_ignore_comments_and_strings_by_default() {
     let (tool, _tmp) = tool_with_workspace();
     let v = call(
@@ -117,6 +162,34 @@ async fn bounded_output_and_query_work() {
 }
 
 #[tokio::test]
+async fn depth_and_include_bodies_controls_are_exercised() {
+    let (tool, _tmp) = tool_with_workspace();
+    let shallow = call(
+        &tool,
+        r#"{"action":"neighbors","symbol":"App","depth":0,"limit":20}"#,
+    )
+    .await;
+    assert_eq!(shallow["depth"], 0);
+    assert!(
+        shallow["syntactic_call_sites"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let with_bodies = call(
+        &tool,
+        r#"{"action":"query","query":"functions","include_bodies":true,"limit":5}"#,
+    )
+    .await;
+    assert!(with_bodies.to_string().contains("std::ptr::read"));
+
+    let def = tool.definition();
+    assert!(def.parameters_schema.contains("depth"));
+    assert!(def.parameters_schema.contains("include_bodies"));
+}
+
+#[tokio::test]
 async fn neighbors_include_impls_imports_and_calls() {
     let (tool, _tmp) = tool_with_workspace();
     let v = call(&tool, r#"{"action":"neighbors","symbol":"App","limit":20}"#).await;
@@ -143,6 +216,21 @@ async fn calls_action_finds_syntactic_call_candidates() {
     let v = call(&tool, r#"{"action":"calls","symbol":"helper","limit":10}"#).await;
     assert!(v["calls_only"].as_bool().unwrap());
     assert!(v.to_string().contains("syntactic call candidate"));
+}
+
+#[tokio::test]
+async fn malformed_rust_returns_partial_diagnostic() {
+    let (tool, tmp) = tool_with_workspace();
+    std::fs::write(tmp.path().join("src/broken.rs"), "pub fn broken( {\n").unwrap();
+
+    let v = call(
+        &tool,
+        r#"{"action":"find_symbol","symbol":"broken","limit":10}"#,
+    )
+    .await;
+    assert!(v["matches"].as_array().unwrap().len() <= 1);
+    assert!(v.to_string().contains("partial parse diagnostic"));
+    assert!(v.to_string().contains("broken.rs"));
 }
 
 #[tokio::test]
@@ -263,6 +351,16 @@ async fn symlinked_rs_files_outside_sandbox_are_skipped() {
     .await;
     assert!(v["matches"].as_array().unwrap().is_empty());
     assert!(v.to_string().contains("outside sandbox"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinked_directory_cycles_are_skipped() {
+    let (tool, tmp) = tool_with_workspace();
+    symlink_dir(tmp.path(), &tmp.path().join("src/loop"));
+
+    let v = call(&tool, r#"{"action":"overview","limit":10}"#).await;
+    assert!(v.to_string().contains("already-visited directory"));
 }
 
 #[tokio::test]

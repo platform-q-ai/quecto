@@ -6,16 +6,12 @@ use std::sync::Arc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use super::rust_ast_graph_hits::{RefHit, UseHit, hit_for};
+use super::rust_ast_graph_parse::build_graph;
+use super::rust_ast_graph_text::{line_col, to_json, workspace_crates};
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::path_utils::resolve_to_cwd;
-
-use super::rust_ast_graph_hits::{RefHit, UseHit, hit_for};
-use super::rust_ast_graph_text::{
-    line_col, line_end, mask_comments_and_strings, module_path, rel_path, snippet, to_json,
-    workspace_crates,
-};
 
 #[derive(Debug)]
 pub struct RustAstGraphTool {
@@ -43,6 +39,8 @@ impl Tool for RustAstGraphTool {
     "query":{"type":"string","enum":["async_functions","unsafe_blocks","trait_impls","public_api","functions"],"description":"Structural query for action=query"},
     "raw_text":{"type":"boolean","description":"Include comments and string literals for reference-like matching (default false)"},
     "limit":{"type":"integer","minimum":1,"maximum":200,"description":"Maximum result count (default 50)"},
+    "depth":{"type":"integer","minimum":0,"maximum":5,"description":"Traversal depth for neighbors (default 1)"},
+    "include_bodies":{"type":"boolean","description":"Include declaration bodies where available (default false)"},
     "snippet_lines":{"type":"integer","minimum":0,"maximum":20,"description":"Context lines per result (default 3)"}
   },
   "required":["action"]
@@ -65,7 +63,13 @@ impl Tool for RustAstGraphTool {
                 }
             };
             let limit = args.limit.unwrap_or(50).clamp(1, 200);
-            let snippet_lines = args.snippet_lines.unwrap_or(3).clamp(0, 20);
+            let depth = args.depth.unwrap_or(1).clamp(0, 5);
+            let include_bodies = args.include_bodies.unwrap_or(false);
+            let snippet_lines = if include_bodies {
+                args.snippet_lines.unwrap_or(20).clamp(0, 20)
+            } else {
+                args.snippet_lines.unwrap_or(3).clamp(0, 20)
+            };
             let scope = match resolve_scope(&self.workspace, &self.sandbox, args.path.as_deref()) {
                 Ok(p) => p,
                 Err(e) => return Ok(error(e)),
@@ -86,7 +90,7 @@ impl Tool for RustAstGraphTool {
                     let Some(sym) = args.symbol.as_deref() else {
                         return Ok(error("missing required field 'symbol' for neighbors"));
                     };
-                    graph.neighbors(sym, limit)
+                    graph.neighbors(sym, limit, depth)
                 }
                 "references" => {
                     let Some(sym) = args.symbol.as_deref() else {
@@ -142,7 +146,21 @@ struct Args {
     query: Option<String>,
     raw_text: Option<bool>,
     limit: Option<usize>,
+    depth: Option<usize>,
+    include_bodies: Option<bool>,
     snippet_lines: Option<usize>,
+}
+
+fn resolve_scope(
+    workspace: &Path,
+    sandbox: &Sandbox,
+    raw: Option<&str>,
+) -> Result<PathBuf, String> {
+    let raw = raw.unwrap_or(".");
+    let path = crate::infrastructure::tools::path_utils::resolve_to_cwd(raw, workspace);
+    sandbox
+        .validate_path(&path.to_string_lossy())
+        .map_err(|e| e.to_string())
 }
 
 fn error(content: impl Into<String>) -> ToolResult {
@@ -153,290 +171,73 @@ fn error(content: impl Into<String>) -> ToolResult {
     }
 }
 
-fn resolve_scope(
-    workspace: &Path,
-    sandbox: &Sandbox,
-    raw: Option<&str>,
-) -> Result<PathBuf, String> {
-    let raw = raw.unwrap_or(".");
-    let path = resolve_to_cwd(raw, workspace);
-    sandbox
-        .validate_path(&path.to_string_lossy())
-        .map_err(|e| e.to_string())
-}
-
 #[derive(Default)]
-struct Graph {
-    workspace: PathBuf,
-    files: Vec<RustFile>,
-    symbols: Vec<Symbol>,
-    diagnostics: Vec<Diagnostic>,
+pub(super) struct Graph {
+    pub(super) workspace: PathBuf,
+    pub(super) files: Vec<RustFile>,
+    pub(super) symbols: Vec<Symbol>,
+    pub(super) diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Clone)]
 pub(super) struct RustFile {
     pub(super) rel: String,
     pub(super) text: String,
-    masked: String,
-    module: String,
+    pub(super) masked: String,
+    pub(super) module: String,
 }
 
 #[derive(Clone, Serialize)]
-struct Symbol {
-    id: String,
-    name: String,
-    qualified_path: String,
-    kind: String,
-    visibility: String,
-    signature: String,
-    location: Location,
-    snippet: String,
-    module: String,
+pub(super) struct Symbol {
+    pub(super) id: String,
+    pub(super) name: String,
+    pub(super) qualified_path: String,
+    pub(super) kind: String,
+    pub(super) visibility: String,
+    pub(super) signature: String,
+    pub(super) location: Location,
+    pub(super) snippet: String,
+    pub(super) module: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    trait_name: Option<String>,
+    pub(super) trait_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    for_type: Option<String>,
+    pub(super) for_type: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
-struct Location {
-    file: String,
-    line: usize,
-    column: usize,
-    byte_start: usize,
-    byte_end: usize,
+pub(super) struct Location {
+    pub(super) file: String,
+    pub(super) line: usize,
+    pub(super) column: usize,
+    pub(super) byte_start: usize,
+    pub(super) byte_end: usize,
 }
 #[derive(Serialize)]
-struct Diagnostic {
-    file: String,
-    message: String,
+pub(super) struct Diagnostic {
+    pub(super) file: String,
+    pub(super) message: String,
 }
 
-const MAX_RUST_FILES: usize = 2_000;
-const MAX_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
-const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
-
-fn build_graph(
-    scope: &Path,
-    workspace: &Path,
-    sandbox: &Sandbox,
-    snippet_lines: usize,
-) -> Result<Graph, String> {
-    let mut graph = Graph {
-        workspace: workspace.to_path_buf(),
-        ..Graph::default()
-    };
-    let mut files = Vec::new();
-    collect_rs(scope, sandbox, &mut files, &mut graph.diagnostics)?;
-    files.sort();
-    let mut total_bytes = 0u64;
-    for abs in files {
-        let rel = rel_path(&abs, workspace);
-        let Ok(validated) = sandbox.validate_path(&abs.to_string_lossy()) else {
-            graph.diagnostics.push(Diagnostic {
-                file: rel,
-                message: "skipped path outside sandbox".into(),
-            });
-            continue;
-        };
-        let size = std::fs::metadata(&validated).map(|m| m.len()).unwrap_or(0);
-        if size > MAX_FILE_BYTES || total_bytes.saturating_add(size) > MAX_TOTAL_BYTES {
-            graph.diagnostics.push(Diagnostic {
-                file: rel,
-                message: "skipped by rust_ast_graph size limit".into(),
-            });
-            continue;
-        }
-        total_bytes += size;
-        match std::fs::read_to_string(&validated) {
-            Ok(text) => {
-                let masked = mask_comments_and_strings(&text);
-                let module = module_path(&abs, workspace);
-                let rf = RustFile {
-                    rel: rel.clone(),
-                    text,
-                    masked,
-                    module,
-                };
-                let mut symbols = parse_symbols(&rf, snippet_lines);
-                graph.symbols.append(&mut symbols);
-                graph.files.push(rf);
-            }
-            Err(e) => graph.diagnostics.push(Diagnostic {
-                file: rel,
-                message: format!("failed to read file: {e}"),
-            }),
-        }
-    }
-    Ok(graph)
+pub(super) fn symbol_matches(symbol: &Symbol, needle: &str) -> bool {
+    symbol.id == needle
+        || symbol.name == needle
+        || qualified_path_segment_matches(&symbol.qualified_path, needle)
 }
 
-fn collect_rs(
-    path: &Path,
-    sandbox: &Sandbox,
-    out: &mut Vec<PathBuf>,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<(), String> {
-    sandbox
-        .validate_path(&path.to_string_lossy())
-        .map_err(|e| e.to_string())?;
-    if path.is_file() {
-        if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-            push_candidate(path, sandbox, out, diagnostics);
-        }
-        return Ok(());
-    }
-    let entries =
-        std::fs::read_dir(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-    for entry in entries.flatten() {
-        let p = entry.path();
-        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if name == ".git" || name == "target" || name == ".quecto" {
-            continue;
-        }
-        if p.is_dir() {
-            collect_rs(&p, sandbox, out, diagnostics)?;
-        } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
-            push_candidate(&p, sandbox, out, diagnostics);
-        }
-        if out.len() >= MAX_RUST_FILES {
-            diagnostics.push(Diagnostic {
-                file: rel_path(path, path),
-                message: format!("stopped after MAX_RUST_FILES={MAX_RUST_FILES}"),
-            });
-            break;
-        }
-    }
-    Ok(())
+pub(super) fn qualified_path_segment_matches(qualified_path: &str, needle: &str) -> bool {
+    qualified_path == needle || qualified_path.ends_with(&format!("::{needle}"))
 }
 
-fn push_candidate(
-    path: &Path,
-    sandbox: &Sandbox,
-    out: &mut Vec<PathBuf>,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    match sandbox.validate_path(&path.to_string_lossy()) {
-        Ok(validated) => out.push(validated),
-        Err(e) => diagnostics.push(Diagnostic {
-            file: path.to_string_lossy().into_owned(),
-            message: format!("skipped path outside sandbox: {e}"),
-        }),
-    }
-}
-
-fn parse_symbols(file: &RustFile, snippet_lines: usize) -> Vec<Symbol> {
-    let item_re = Regex::new(r"(?m)^\s*((?:pub(?:\([^)]*\))?\s+)?)((?:async\s+)?(?:unsafe\s+)?)\b(fn|struct|enum|trait|type|const|static|mod)\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
-    let impl_re =
-        Regex::new(r"(?m)^\s*(unsafe\s+)?impl(?:\s*<[^>{;]*>)?\s+([^\n{;]+?)\s*\{").unwrap();
-    let mut syms = Vec::new();
-    for cap in item_re.captures_iter(&file.masked) {
-        let m = cap.get(0).unwrap();
-        let name = cap[4].to_string();
-        let kind = cap[3].to_string();
-        let visibility = if cap
-            .get(1)
-            .map(|m| !m.as_str().trim().is_empty())
-            .unwrap_or(false)
-        {
-            cap[1].trim().to_string()
-        } else {
-            "private".into()
-        };
-        syms.push(make_symbol(SymbolParts {
-            file,
-            name: &name,
-            kind: &kind,
-            visibility: &visibility,
-            start: m.start(),
-            end: m.end(),
-            trait_name: None,
-            for_type: None,
-            snippet_lines,
-        }));
-    }
-    for cap in impl_re.captures_iter(&file.masked) {
-        let m = cap.get(0).unwrap();
-        let target = cap[2].trim();
-        let (trait_name, for_type, name) = if let Some((tr, ty)) = split_impl_target(target) {
-            (
-                Some(tr.to_string()),
-                Some(ty.to_string()),
-                format!("impl {tr} for {ty}"),
-            )
-        } else {
-            (None, Some(target.to_string()), format!("impl {target}"))
-        };
-        syms.push(make_symbol(SymbolParts {
-            file,
-            name: &name,
-            kind: "impl",
-            visibility: "inherent/syntactic",
-            start: m.start(),
-            end: m.end(),
-            trait_name,
-            for_type,
-            snippet_lines,
-        }));
-    }
-    syms
-}
-
-fn split_impl_target(target: &str) -> Option<(&str, &str)> {
-    let parts: Vec<&str> = target.split(" for ").collect();
-    if parts.len() == 2 {
-        Some((parts[0].trim(), parts[1].trim()))
-    } else {
-        None
-    }
-}
-
-struct SymbolParts<'a> {
-    file: &'a RustFile,
-    name: &'a str,
-    kind: &'a str,
-    visibility: &'a str,
-    start: usize,
-    end: usize,
-    trait_name: Option<String>,
-    for_type: Option<String>,
-    snippet_lines: usize,
-}
-
-fn make_symbol(parts: SymbolParts<'_>) -> Symbol {
-    let file = parts.file;
-    let (line, col) = line_col(&file.text, parts.start);
-    let qp = if file.module.is_empty() || file.module == "crate" {
-        parts.name.to_string()
-    } else {
-        format!("{}::{}", file.module, parts.name)
-    };
-    let id = format!(
-        "{}:{}:{}:{}:{}",
-        file.rel, parts.start, parts.end, parts.kind, parts.name
-    );
-    let signature = file.text[parts.start..line_end(&file.text, parts.start)]
-        .trim()
-        .to_string();
-    Symbol {
-        id,
-        name: parts.name.to_string(),
-        qualified_path: qp,
-        kind: parts.kind.to_string(),
-        visibility: parts.visibility.to_string(),
-        signature,
-        location: Location {
-            file: file.rel.clone(),
-            line,
-            column: col,
-            byte_start: parts.start,
-            byte_end: parts.end,
-        },
-        snippet: snippet(&file.text, line, parts.snippet_lines),
-        module: file.module.clone(),
-        trait_name: parts.trait_name,
-        for_type: parts.for_type,
-    }
+pub(super) struct SymbolParts<'a> {
+    pub(super) file: &'a RustFile,
+    pub(super) name: &'a str,
+    pub(super) kind: &'a str,
+    pub(super) visibility: &'a str,
+    pub(super) start: usize,
+    pub(super) end: usize,
+    pub(super) trait_name: Option<String>,
+    pub(super) for_type: Option<String>,
+    pub(super) snippet_lines: usize,
 }
 
 impl Graph {
@@ -481,7 +282,7 @@ impl Graph {
         let mut matches: Vec<&Symbol> = self
             .symbols
             .iter()
-            .filter(|s| s.id == needle || s.name == needle || s.qualified_path.ends_with(needle))
+            .filter(|s| symbol_matches(s, needle))
             .collect();
         matches.sort_by_key(|s| (&s.qualified_path, &s.location.file, s.location.line));
         let ambiguous = matches.len() > 1;
@@ -503,7 +304,7 @@ impl Graph {
         let matches = if exact.is_empty() {
             self.symbols
                 .iter()
-                .filter(|s| s.qualified_path.ends_with(needle))
+                .filter(|s| qualified_path_segment_matches(&s.qualified_path, needle))
                 .collect()
         } else {
             exact
@@ -516,12 +317,13 @@ impl Graph {
             )),
         }
     }
-    fn neighbors(&self, needle: &str, limit: usize) -> Result<String, String> {
+    fn neighbors(&self, needle: &str, limit: usize, depth: usize) -> Result<String, String> {
         #[derive(Serialize)]
         struct Neighbors<'a> {
             derived_from: &'static str,
             target: &'a Symbol,
             containing_module: &'a str,
+            depth: usize,
             child_declarations: Vec<&'a Symbol>,
             imports_uses: Vec<UseHit>,
             implementations: Vec<&'a Symbol>,
@@ -530,14 +332,17 @@ impl Graph {
             diagnostics: &'a [Diagnostic],
         }
         let target = self.select_symbol(needle)?;
-        let child_declarations = self
-            .symbols
-            .iter()
-            .filter(|s| {
-                s.module == target.name || s.module.ends_with(&format!("::{}", target.name))
-            })
-            .take(limit)
-            .collect();
+        let child_declarations = if depth == 0 {
+            Vec::new()
+        } else {
+            self.symbols
+                .iter()
+                .filter(|s| {
+                    s.module == target.name || s.module.ends_with(&format!("::{}", target.name))
+                })
+                .take(limit)
+                .collect()
+        };
         let imports_uses = self.uses_in_module(&target.module, limit);
         let implementations: Vec<&Symbol> = self
             .symbols
@@ -552,11 +357,16 @@ impl Graph {
             .take(limit)
             .collect();
         let trait_relationships = implementations.clone();
-        let syntactic_call_sites = self.reference_hits(&target.name, false, limit.min(25), 2, true);
+        let syntactic_call_sites = if depth == 0 {
+            Vec::new()
+        } else {
+            self.reference_hits(&target.name, false, limit.min(25), 2, true)
+        };
         Ok(to_json(&Neighbors {
             derived_from: "Rust syntax/text (not compiler name/type resolution)",
             target,
             containing_module: &target.module,
+            depth,
             child_declarations,
             imports_uses,
             implementations,

@@ -152,7 +152,11 @@ fn raw_string_end(bytes: &[u8], i: usize) -> Option<usize> {
     let hashes = j - hashes_start;
     j += 1;
     while j < bytes.len() {
-        if bytes[j] == b'"' && bytes.get(j + 1..j + 1 + hashes) == Some(&vec![b'#'; hashes][..]) {
+        if bytes[j] == b'"'
+            && bytes
+                .get(j + 1..j + 1 + hashes)
+                .is_some_and(|suffix| suffix.iter().all(|b| *b == b'#'))
+        {
             return Some(j + 1 + hashes);
         }
         j += 1;
