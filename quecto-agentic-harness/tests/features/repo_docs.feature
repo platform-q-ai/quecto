@@ -35,6 +35,22 @@ Feature: Repository documentation
     Then the obsolete planning documents should be absent
 
   @docs
+  Scenario: Harness architecture map covers Phase 0 hardening surfaces
+    When I read the repository file "docs/harness-architecture-map.md"
+    Then the harness architecture map should cover the Phase 0 hardening surfaces
+    And the harness architecture map should record baseline hardening checks
+
+  @docs
+  Scenario: Protocol capability matrix lists baseline UDS capabilities
+    When I read the repository file "docs/protocol-capability-matrix.md"
+    Then the protocol capability matrix should include the baseline UDS capabilities
+
+  @docs
+  Scenario: Phase 0 hardening docs are discoverable from protocol and ADR docs
+    When I inspect the Phase 0 hardening documentation links
+    Then the Phase 0 hardening documentation links should resolve
+
+  @docs
   Scenario: Workflow docs keep pure-move refactors reviewable
     When I read the repository file "README.md"
     Then the workflow docs should describe pure-move refactors as separate PRs before or after motivating behavior
