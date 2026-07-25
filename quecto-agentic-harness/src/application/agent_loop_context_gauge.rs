@@ -49,6 +49,3 @@ impl ContextGaugeCalibration {
     }
 }
 
-#[cfg(test)]
-#[path = "agent_loop_context_gauge_tests.rs"]
-mod tests;

@@ -13,6 +13,32 @@ Feature: Context pruning via sliding window and tool-call collapse
   Background:
     Given a configured agent with context pruning enabled
 
+  # --- Phase 1: context subsystem boundary ---
+
+  @phase-1-hardening
+  Scenario: Recent turns remain in provider context when older turns exceed the budget
+    Given max_context_tokens is set to 10
+    And recent-turn pinning is set to 2 turns
+    And messages from turns 1 through 4 each exceeding the budget
+    When the next provider context is prepared
+    Then messages from the most recent 2 turns remain in context
+    And messages from older turns are dropped
+
+  @phase-1-hardening
+  Scenario: Removing obsolete spill guidance refreshes the next provider context
+    Given max_context_tokens is set to 1000
+    And recent-turn pinning is set to 0 turns
+    And no spill entries exist
+    And a pinned manifest message in the conversation
+    When the next provider context is prepared
+    Then no manifest [message] exists in context
+
+  @phase-1-hardening
+  Scenario: Provider-reported context usage remains stable when local estimates change
+    Given provider truth reports 1000 context tokens at local estimate 100
+    When the local context estimate changes to 80 tokens
+    Then the user-facing context gauge reports 980 tokens
+
   # --- Tool-result collapse triggers on tool-call count (#1017) ---
 
   Scenario: Tool outputs collapse after the configured number of tool calls

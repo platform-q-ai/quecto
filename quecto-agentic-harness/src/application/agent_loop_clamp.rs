@@ -26,6 +26,8 @@ impl AgentLoopImpl {
         self.model = model;
         self.model_max_tokens = model_max_tokens;
         self.model_context_window = model_context_window;
+        self.context_manager
+            .set_model_context_window(model_context_window);
     }
 
     /// Builder variant: set the per-model output cap at construction time.
@@ -47,7 +49,7 @@ impl AgentLoopImpl {
     /// this through `AgentLoopConfig::pin_recent_turns` at construction.
     #[cfg(test)]
     pub fn with_pin_recent_turns(mut self, pin_recent_turns: u32) -> Self {
-        self.pin_recent_turns = pin_recent_turns;
+        self.context_manager.set_pin_recent_turns(pin_recent_turns);
         self
     }
 
@@ -56,7 +58,8 @@ impl AgentLoopImpl {
     /// `AgentLoopConfig::context_collapse_after_messages` at construction.
     #[cfg(test)]
     pub fn with_context_collapse_after_messages(mut self, max_messages: u32) -> Self {
-        self.context_collapse_after_messages = max_messages;
+        self.context_manager
+            .set_context_collapse_after_messages(max_messages);
         self
     }
 
@@ -66,6 +69,7 @@ impl AgentLoopImpl {
     #[cfg(test)]
     pub fn with_model_context_window(mut self, window: Option<usize>) -> Self {
         self.model_context_window = window;
+        self.context_manager.set_model_context_window(window);
         self
     }
 
@@ -80,9 +84,6 @@ impl AgentLoopImpl {
     /// when no smaller model window is known, the percentage is a pruning-budget
     /// proximity indicator rather than a full-window percentage.
     pub fn effective_max_context_tokens(&self) -> usize {
-        match self.model_context_window {
-            Some(window) => self.max_context_tokens.min(window),
-            None => self.max_context_tokens,
-        }
+        self.context_manager.effective_max_context_tokens()
     }
 }
