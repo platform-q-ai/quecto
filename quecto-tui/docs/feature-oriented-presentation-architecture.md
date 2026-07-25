@@ -617,3 +617,23 @@ dead steps were deleted rather than the scenario revived.
 
 Net: 1602 unit tests and 192 BDD scenarios green; the only production-source
 changes are the test-module declarations and the new harness probe.
+
+## Parity evidence for conversation history/recovery slice (#1221)
+
+`cargo fmt --all --check` clean; `cargo clippy -p quecto-tui --all-targets -D warnings` clean.
+
+| Class | Surface | Evidence | Verdict |
+|---|---|---|---|
+| Behavioural | All ten contract surfaces | Whole workspace green after the extraction: 5052 tests, 192/192 BDD scenarios, 37/37 architecture tests, 31/31 contract tests. The 15 characterization tests and 11 `RangeAccumulator` tests written BEFORE the move passed unchanged after it. | PASS |
+| Behavioural | Pre-existing test tree | `git diff b0584166..HEAD` over pre-existing test files shows changes in exactly two: `app_paged_history_review_tests.rs` and `app_paged_history_tests.rs`. Every hunk is a mechanical field-path rename (`session.history_before_cursor` → `session.history.before_cursor`, and the `PendingHistoryPage` import path). ZERO assertions, fixtures, or test names changed. All other deltas are NEW test files. | PASS |
+| Behavioural | Adapted tests still load-bearing | Re-ran mutation evidence after adapting them: correlating by id prefix instead of exact match fails `page_response_with_prefix_matching_id_is_rejected`; removing the staleness window fails both `stale_in_flight_page_is_retried_after_age_window` and `late_twin_of_stale_retried_page_is_dropped`. | PASS |
+| Visual | Rendered frames | Every characterization and BDD assertion in this slice reads rendered frame text (`chat_text`, `active_chat_text`) or the app's own transcript entries. All pass unchanged, so no pinned frame differs. | PASS |
+| Performance | Older-page emission | Old code inlined the guards in `next_history_page_request`; new code calls `HistoryPaging::next_page_request`. Same work: one `format!` and one cursor clone per REQUEST. The path is still scroll-driven — the only callers are `Key::ScrollUp`/`Key::PageUp` in `app_event_loop.rs` — so nothing was moved into the render loop. | PASS |
+| Performance | Page correlation | Was an `Option<&str>` equality; still an `Option<&str>` equality inside `is_pending_page`. No allocation, no map lookup added. | PASS |
+| Performance | Backfill reconcile | Still one `Vec<ChatEntry>` per payload and one prepend/replace pass. The policy returns a `PrefixPlan` enum (a `Copy`, allocation-free value) and the interface performs the single chat mutation; previously-loaded entries are still never recomputed. | PASS |
+| Performance | Recovery trigger | `TurnOutcome` borrows `refs` and `assistant_text` (`&'a [String]`, `&'a str`) — it is a view, not a copy, so the per-turn heuristic allocates nothing. Previously the same fields were read directly off `App`. | PASS |
+| Performance | Batch completion | `is_complete()` is the same `len == len` comparison; `ordered_responses()` is a lazy iterator over existing refs, replacing an equivalent walk. Still one `replace_range` per batch, never incremental splices. | PASS |
+| Quantitative | Trigger-logic duplication | The force-recovery check (`open_tool_calls > 0`) existed at 2 call sites (master + sub-agent); it now exists at 1, inside the policy. Both paths route through `TurnOutcome::needs_recovery`. | PASS |
+| Quantitative | Production LOC | Conversation production code: 828 lines before (`app_paged_history` 316 + `app_message_recovery` 440 + `range_accumulator` 72) → 1035 after (259 + 416 + 76 + `history_paging` 187 + `turn_recovery` 97). Net +207. The issue sets no LOC target; the growth is doc comments explaining the invariants (why exact-match correlation, why an open tool call forces recovery) that were previously implicit. Interface files themselves shrank by 81 lines. | RECORDED |
+| Quantitative | Testability criterion | 23 new tests construct the policy with no terminal, concrete client, raw JSON, or Tokio runtime. `grep` for `serde_json|ratatui|tokio|crossterm|Client` across `src/domain/*.rs` production files returns nothing. | PASS |
+| Structural | `ChatEntry` stays a view projection | `grep -rn ChatEntry src/domain/ src/application/` returns nothing: policy vocabulary is `PageFacts`, `PrefixPlan`, `TurnOutcome`, `RecoveryBatch<T>`. | PASS |
