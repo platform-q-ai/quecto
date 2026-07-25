@@ -211,20 +211,46 @@ fn a_non_string_content_field_is_missing_content() {
     );
 }
 
-/// A continuation that claims to resume exactly AT the advertised end has no
-/// bytes left to deliver, so it is rejected rather than accepted as a page that
-/// would loop forever waiting for content that cannot exist.
+/// A continuation resuming exactly AT the advertised end is VALID: the server
+/// has delivered every byte it promised but has not yet said so. The accumulator
+/// must carry the assembled prefix forward and let the final page (which
+/// reports `hasMoreContent: false`) complete it.
+///
+/// This is the true boundary. An earlier version of this test asserted
+/// `InvalidProgress`, but its fixture double-counted its own seed
+/// (`acc("abc", 0)` plus a 3-byte page against a 3-byte total), so it died on
+/// the OVERSHOOT conjunct and never exercised the boundary it was named for.
 #[test]
-fn a_next_offset_exactly_at_the_advertised_end_is_invalid_progress() {
+fn a_next_offset_exactly_at_the_advertised_end_is_a_valid_continuation() {
     assert_eq!(
-        acc("abc", 0).apply(&json!({
+        acc("", 0).apply(&json!({
             "content": "abc",
             "offset": 0,
             "contentLength": 3,
             "hasMoreContent": true,
             "nextOffset": 3,
         })),
+        Ok(RangeUpdate::Continue {
+            content: "abc".into(),
+            next_offset: 3,
+        }),
+        "a continuation at the advertised end must carry the prefix forward, \
+         not be rejected as overshoot"
+    );
+}
+
+/// Separately: accumulating MORE than advertised is still an overshoot.
+#[test]
+fn accumulating_beyond_the_advertised_length_is_still_invalid_progress() {
+    assert_eq!(
+        acc("abc", 3).apply(&json!({
+            "content": "def",
+            "offset": 3,
+            "contentLength": 3,
+            "hasMoreContent": true,
+            "nextOffset": 3,
+        })),
         Err(RangeError::InvalidProgress),
-        "a continuation resuming at the advertised end can deliver nothing"
+        "six accumulated bytes against a three-byte total must be rejected"
     );
 }

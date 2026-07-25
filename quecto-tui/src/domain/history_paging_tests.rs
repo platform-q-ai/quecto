@@ -346,3 +346,47 @@ fn no_id_correlates_when_nothing_is_in_flight() {
     assert!(!p.is_pending_page(Some("history-page-anything-1")));
     assert!(!p.is_pending_page(None));
 }
+
+/// The final two corners of the `extend_prefix` × `partial_prefix_len` ×
+/// latch matrix (#1236 round 2): an own older page arriving when NO partial
+/// prefix is recorded. Reachable in production — an empty or fully filtered
+/// snapshot leaves `partial_prefix_len = None` with `has_more_before = true`,
+/// and the next own older page lands here.
+#[test]
+fn an_own_older_page_with_no_recorded_prefix_counts_only_its_own_length() {
+    let mut p = HistoryPaging::default();
+    // An empty snapshot publishes cursors but records no prefix.
+    assert_eq!(p.reconcile(&facts(0, true, false, false)), None);
+    assert_eq!(p.partial_prefix_len, None);
+
+    assert_eq!(
+        p.reconcile(&facts(4, true, false, true)),
+        Some(PrefixPlan::Prepend),
+        "an own older page prepends"
+    );
+    assert_eq!(
+        p.partial_prefix_len,
+        Some(4),
+        "with no prefix recorded the count is the page length alone; any \
+         non-zero base would over-count and make the next snapshot's \
+         ReplacePrefix eat live transcript entries below the backfill"
+    );
+    assert!(!p.backfilled);
+}
+
+#[test]
+fn an_own_older_page_with_no_recorded_prefix_that_closes_the_backfill() {
+    let mut p = HistoryPaging::default();
+    assert_eq!(p.reconcile(&facts(0, true, false, false)), None);
+    assert_eq!(p.partial_prefix_len, None);
+
+    assert_eq!(
+        p.reconcile(&facts(4, false, false, true)),
+        Some(PrefixPlan::Prepend)
+    );
+    assert!(p.backfilled, "closing the backfill must latch the guard");
+    assert_eq!(
+        p.partial_prefix_len, None,
+        "a closed backfill leaves no partial prefix"
+    );
+}
