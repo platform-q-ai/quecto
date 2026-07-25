@@ -248,7 +248,12 @@ impl CodexProvider {
     }
 
     /// Build the full request body.
-    fn build_request_body(request: &ChatRequest<'_>) -> serde_json::Value {
+    ///
+    /// `max_output_tokens` is a standard Responses API parameter that the
+    /// ChatGPT Codex backend rejects outright with HTTP 400 `{"detail":
+    /// "Unsupported parameter: max_output_tokens"}` (#1233 regression), so
+    /// it is emitted only on the API-key path.
+    fn build_request_body(request: &ChatRequest<'_>, auth: &ResponsesAuth) -> serde_json::Value {
         let (instructions, input) = Self::build_input(request.messages);
 
         let mut body = serde_json::json!({
@@ -262,8 +267,11 @@ impl CodexProvider {
                 "summary": "auto",
             },
             "include": ["reasoning.encrypted_content"],
-            "max_output_tokens": request.max_tokens,
         });
+
+        if matches!(auth, ResponsesAuth::ApiKey) {
+            body["max_output_tokens"] = serde_json::json!(request.max_tokens);
+        }
 
         // #1066: transmit a configured effort, clamped onto OpenAI's
         // documented scale; when none is configured, omit the field so
@@ -460,18 +468,6 @@ impl CodexProvider {
         format!("{prefix}:{hash:08x}")
     }
 
-    /// Public accessor for `build_request_body` (for BDD/integration tests).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn build_request_body_public(request: &ChatRequest<'_>) -> serde_json::Value {
-        Self::build_request_body(request)
-    }
-
-    /// Public accessor for `build_input` (for BDD/integration tests).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn build_input_public(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
-        Self::build_input(messages)
-    }
-
     /// Consume SSE body incrementally, emitting `StreamEvent`s per delta.
     async fn pump_codex_sse(
         &self,
@@ -603,7 +599,7 @@ impl LlmProvider for CodexProvider {
             return Box::pin(async move { Err(err) });
         }
 
-        let body = Self::build_request_body(&request);
+        let body = Self::build_request_body(&request, &self.auth);
         let url = self.responses_url();
 
         Box::pin(async move {
@@ -655,7 +651,7 @@ impl LlmProvider for CodexProvider {
                 rx
             });
         }
-        let body = Self::build_request_body(&request);
+        let body = Self::build_request_body(&request, &self.auth);
         let url = self.responses_url();
         let provider = self.clone();
         Box::pin(async move {
@@ -736,6 +732,10 @@ impl SseHandler for CodexSseHandler {
         let _ = tx.send(StreamEvent::Done(self.take_response())).await;
     }
 }
+
+#[cfg(any(test, feature = "test-support"))]
+#[path = "codex_test_support.rs"]
+mod test_support;
 
 #[cfg(test)]
 #[path = "codex_tests.rs"]

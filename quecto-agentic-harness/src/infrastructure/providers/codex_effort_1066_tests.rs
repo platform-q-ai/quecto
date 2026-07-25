@@ -24,7 +24,7 @@ fn test_build_request_body_omits_effort_when_unconfigured_1066() {
         cancel_flag: None,
         effort: None,
     };
-    let body = CodexProvider::build_request_body(&request);
+    let body = CodexProvider::build_request_body_public_oauth(&request);
     assert!(
         body["reasoning"].get("effort").is_none(),
         "unconfigured effort must be omitted so the server default applies (#1066), got {:?}",
@@ -55,7 +55,7 @@ fn test_build_request_body_transmits_openai_documented_efforts_1066() {
             cancel_flag: None,
             effort: Some(effort),
         };
-        let body = CodexProvider::build_request_body(&request);
+        let body = CodexProvider::build_request_body_public_oauth(&request);
         assert_eq!(
             body["reasoning"]["effort"], *level,
             "configured effort '{level}' must be transmitted verbatim (#1066)"
@@ -83,7 +83,7 @@ fn test_build_request_body_clamps_max_effort_to_xhigh_1066() {
         cancel_flag: None,
         effort: Some(EffortLevel::Max),
     };
-    let body = CodexProvider::build_request_body(&request);
+    let body = CodexProvider::build_request_body_public_oauth(&request);
     assert_eq!(
         body["reasoning"]["effort"], "xhigh",
         "effort 'max' is outside OpenAI's documented scale and must clamp to 'xhigh' (#1066)"
@@ -111,7 +111,7 @@ fn test_build_request_body_omits_verbosity_when_unconfigured_1066() {
         cancel_flag: None,
         effort: None,
     };
-    let body = CodexProvider::build_request_body(&request);
+    let body = CodexProvider::build_request_body_public_oauth(&request);
     assert!(
         body.get("text").is_none(),
         "unconfigured effort must omit text.verbosity so the server default applies (#1066), got {:?}",

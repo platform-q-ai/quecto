@@ -2,39 +2,21 @@ use super::*;
 use crate::interface::components::model_selector::ModelEntry;
 
 pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
-    let Some(models) = data.get("models").and_then(|v| v.as_array()) else {
-        return Vec::new();
-    };
-    models
-        .iter()
-        .filter_map(|m| {
-            let raw_model = m
-                .get("model")
-                .or_else(|| m.get("id"))
-                .and_then(|v| v.as_str())?;
-            let id = crate::interface::ansi::sanitize_control(raw_model);
-            if id.is_empty() {
-                return None;
-            }
-            let provider: String = crate::interface::ansi::sanitize_control(
-                m.get("provider")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| id.split_once('/').map(|(provider, _)| provider))
-                    .unwrap_or("Model"),
-            );
-            let auth = m
-                .get("auth")
-                .and_then(|v| v.as_str())
-                .map(crate::interface::ansi::sanitize_control)
-                .filter(|s| !s.is_empty());
-            Some(ModelEntry {
-                id,
-                provider,
-                auth,
-                is_current: false,
-            })
-        })
-        .collect()
+    // Protocol boundary (#1220): raw payload interpretation lives in the
+    // application-layer mapper; this seam only adapts the typed DTO into the
+    // interface's own view model.
+    crate::application::model_payloads::parse_model_list(
+        data,
+        &crate::interface::ansi::sanitize_control,
+    )
+    .into_iter()
+    .map(|entry| ModelEntry {
+        id: entry.id,
+        provider: entry.provider,
+        auth: entry.auth,
+        is_current: false,
+    })
+    .collect()
 }
 
 impl App {
@@ -133,6 +115,9 @@ impl App {
 #[cfg(test)]
 #[path = "app_model_focus_1085_tests.rs"]
 mod app_model_focus_1085_tests;
+#[cfg(test)]
+#[path = "app_models_protocol_characterization_tests.rs"]
+mod app_models_protocol_characterization_tests;
 #[cfg(test)]
 #[path = "app_models_tests.rs"]
 mod tests;

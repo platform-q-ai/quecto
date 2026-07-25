@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.96.4"
+version = "0.96.6"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -69,7 +69,7 @@ filetime = "0.2"
 serial_test = "3"
 # `test-harness` exposes quecto-tui's headless render harness so the `bdd`
 # target can drive the real TUI render/key path without a TTY (#805).
-quecto-tui = { version = "0.70.14", path = "../quecto-tui", features = ["test-harness"] }
+quecto-tui = { version = "0.70.16", path = "../quecto-tui", features = ["test-harness"] }
 
 [[test]]
 name = "bdd"
