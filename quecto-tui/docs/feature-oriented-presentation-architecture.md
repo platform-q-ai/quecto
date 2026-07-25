@@ -800,11 +800,14 @@ round 4 had again stopped one function short.
 
 **The remedy is now executable, not prose.** `scripts/check-guard-manifest.sh`
 enumerates the guards in the history paging, turn recovery, and range assembly
-policy files; deleting each listed guard must fail at least one test. The
-pre-push gate runs the manifest, so a green push proves it did not drift silently. Running it immediately found a **ninth** unpinned guard that
-five rounds of manual review had missed — `reconcile`'s keep-open arm never
-observably unlatched `backfilled`, because no test fed a partial page to an
-already-latched backfill. Fixed by
+policy files; deleting each listed guard must fail at least one test. Because the
+manifest performs many full lib-test mutations, the pre-push gate exposes it as
+an opt-in lane (`QUECTO_RUN_GUARD_MANIFEST=1`) rather than running it on every
+push; that opt-in lane has its own cache key, so a cached default push cannot
+silently skip an explicitly requested manifest run. Running it immediately found
+a **ninth** unpinned guard that five rounds of manual review had missed —
+`reconcile`'s keep-open arm never observably unlatched `backfilled`, because no
+test fed a partial page to an already-latched backfill. Fixed by
 `a_partial_page_unlatches_a_previously_completed_backfill`.
 
 Writing the manifest also exposed two bugs in the manifest itself, both of the

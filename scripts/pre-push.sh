@@ -27,10 +27,11 @@ SCRIPT_HASH="$(sha256sum "$ROOT/scripts/pre-push.sh" | awk '{print $1}')"
 # Default lane runs the zero-cost mocked e2e suite — no provider key is probed
 # and no .env is sourced before the deterministic wave, so a key in .env can
 # NEVER auto-trigger paid provider calls. The live @manual-real-llm suite runs only on
-# explicit opt-in. Fold that opt-in into the cache key so a cached mock-only pass
-# doesn't suppress a later opted-in real-LLM run for the same SHA.
+# explicit opt-in. Fold opt-in lanes into the cache key so a cached default pass
+# doesn't suppress a later opted-in run for the same SHA.
 REAL_LLM_LANE="${QUECTO_RUN_REAL_LLM:-0}"
-CACHE_FILE="$ROOT/.git/pre-push.passed.${HEAD_SHA}.${SCRIPT_HASH}.real${REAL_LLM_LANE}"
+GUARD_MANIFEST_LANE="${QUECTO_RUN_GUARD_MANIFEST:-0}"
+CACHE_FILE="$ROOT/.git/pre-push.passed.${HEAD_SHA}.${SCRIPT_HASH}.real${REAL_LLM_LANE}.guard${GUARD_MANIFEST_LANE}"
 LOG_FILE="$ROOT/.git/pre-push.last.log"
 
 if [[ "$FORCE_RUN" != "1" && -f "$CACHE_FILE" ]]; then
