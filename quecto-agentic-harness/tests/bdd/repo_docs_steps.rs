@@ -1,25 +1,6 @@
 use crate::{QuectoWorld, common};
 use cucumber::{then, when};
-use std::path::{Path, PathBuf};
-
-const PHASE_0_DOCS: &[&str] = &[
-    "docs/prd-harness-architecture-hardening.md",
-    "docs/architecture-design-records/README.md",
-    "docs/uds-protocol.md",
-    "docs/harness-architecture-map.md",
-    "docs/protocol-capability-matrix.md",
-];
-
-const PHASE_0_ADRS: &[&str] = &[
-    "docs/architecture-design-records/adr-0012-explicit-agent-turn-state-machine.md",
-    "docs/architecture-design-records/adr-0013-uds-command-family-router.md",
-    "docs/architecture-design-records/adr-0014-context-management-is-a-first-class-application-subsystem.md",
-    "docs/architecture-design-records/adr-0015-subagent-lifecycle-state-machine.md",
-    "docs/architecture-design-records/adr-0016-typed-identifiers-for-protocol-and-session-boundaries.md",
-    "docs/architecture-design-records/adr-0017-protocol-evolution-matrix.md",
-    "docs/architecture-design-records/adr-0018-contributor-change-cookbooks.md",
-    "docs/architecture-design-records/adr-0019-role-segregated-domain-ports.md",
-];
+use std::path::Path;
 
 const OBSOLETE_PLANNING_DOCS: &[&str] = &[
     "docs/quecto-mcp-prd.md",
@@ -89,43 +70,11 @@ fn then_workflow_docs_describe_pure_move_refactors(world: &mut QuectoWorld) {
 #[when("I inspect the Phase 0 hardening documentation links")]
 fn when_inspect_phase_0_hardening_documentation_links(world: &mut QuectoWorld) {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut checked = Vec::new();
-    let mut missing = Vec::new();
+    let report = common::repo_docs::check_phase_0_hardening_links(repo);
 
-    for path in PHASE_0_DOCS.iter().chain(PHASE_0_ADRS.iter()) {
-        let full_path = repo.join(path);
-        if !full_path.exists() {
-            missing.push(format!("missing document: {path}"));
-            continue;
-        }
-        checked.push((*path).to_string());
-    }
-
-    for path in PHASE_0_DOCS {
-        let full_path = repo.join(path);
-        let Ok(content) = std::fs::read_to_string(&full_path) else {
-            missing.push(format!("unreadable document: {path}"));
-            continue;
-        };
-        let Some(parent) = full_path.parent() else {
-            missing.push(format!("document has no parent: {path}"));
-            continue;
-        };
-        for target in markdown_link_targets(&content) {
-            if is_external_or_anchor(&target) {
-                continue;
-            }
-            let resolved = normalize_link_target(parent, &target);
-            checked.push(format!("{path} -> {target}"));
-            if !resolved.exists() {
-                missing.push(format!("{path} -> {target}"));
-            }
-        }
-    }
-
-    world.stdout = checked.join("\n");
-    world.stderr = missing.join("\n");
-    world.exit_code = if missing.is_empty() { 0 } else { 1 };
+    world.stdout = report.checked.join("\n");
+    world.stderr = report.missing.join("\n");
+    world.exit_code = if report.is_clean() { 0 } else { 1 };
 }
 
 #[then("the harness architecture map should cover the Phase 0 hardening surfaces")]
@@ -195,36 +144,4 @@ fn then_phase_0_hardening_documentation_links_resolve(world: &mut QuectoWorld) {
         "ADR index should link the protocol matrix; checked:\n{}",
         world.stdout
     );
-}
-
-fn markdown_link_targets(content: &str) -> Vec<String> {
-    let mut targets = Vec::new();
-    for candidate in content.split("](").skip(1) {
-        if let Some(target) = candidate.split(')').next() {
-            targets.push(target.split('#').next().unwrap_or(target).to_string());
-        }
-    }
-    targets
-}
-
-fn is_external_or_anchor(target: &str) -> bool {
-    target.is_empty()
-        || target.starts_with('#')
-        || target.starts_with("http://")
-        || target.starts_with("https://")
-        || target.starts_with("mailto:")
-}
-
-fn normalize_link_target(parent: &Path, target: &str) -> PathBuf {
-    let mut path = PathBuf::from(parent);
-    for component in Path::new(target).components() {
-        match component {
-            std::path::Component::ParentDir => {
-                path.pop();
-            }
-            std::path::Component::CurDir => {}
-            other => path.push(other.as_os_str()),
-        }
-    }
-    path
 }

@@ -75,9 +75,10 @@ See also the [UDS protocol reference](uds-protocol.md) and
 
 ## Subagent lifecycle
 
-**Primary code:** `src/infrastructure/tools/subagent.rs`,
-`subagent_registry.rs`, `subagent_monitor.rs`, `subagent_monitor_events.rs`,
-`subagent_monitor_merge.rs`, `subagent_await_result.rs`, and `agent_cmd.rs`.
+**Primary code:** `src/infrastructure/tools/spawn.rs`,
+`spawn_binary.rs`, `subagent_registry.rs`, `subagent_monitor.rs`,
+`subagent_monitor_stall.rs`, `subagent_monitor_merge.rs`,
+`subagent_await_result.rs`, and `agent_cmd.rs`.
 
 Subagents are spawned harness processes supervised by the parent. The parent
 tracks process launch, socket connection/readiness, forwarded child events,

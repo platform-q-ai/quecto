@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod repo_docs;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

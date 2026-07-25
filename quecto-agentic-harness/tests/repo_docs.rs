@@ -1,26 +1,8 @@
 mod common;
 
 use common::read_repo_file;
-use std::path::{Path, PathBuf};
-
-const PHASE_0_DOCS: &[&str] = &[
-    "docs/prd-harness-architecture-hardening.md",
-    "docs/architecture-design-records/README.md",
-    "docs/uds-protocol.md",
-    "docs/harness-architecture-map.md",
-    "docs/protocol-capability-matrix.md",
-];
-
-const PHASE_0_ADRS: &[&str] = &[
-    "docs/architecture-design-records/adr-0012-explicit-agent-turn-state-machine.md",
-    "docs/architecture-design-records/adr-0013-uds-command-family-router.md",
-    "docs/architecture-design-records/adr-0014-context-management-is-a-first-class-application-subsystem.md",
-    "docs/architecture-design-records/adr-0015-subagent-lifecycle-state-machine.md",
-    "docs/architecture-design-records/adr-0016-typed-identifiers-for-protocol-and-session-boundaries.md",
-    "docs/architecture-design-records/adr-0017-protocol-evolution-matrix.md",
-    "docs/architecture-design-records/adr-0018-contributor-change-cookbooks.md",
-    "docs/architecture-design-records/adr-0019-role-segregated-domain-ports.md",
-];
+use common::repo_docs::{PHASE_0_ADRS, check_phase_0_hardening_links};
+use std::path::Path;
 
 #[test]
 fn readme_release_metadata_matches_workspace_package() {
@@ -519,79 +501,25 @@ fn adr_0008_documents_the_ndjson_deprecation_window_and_end_condition() {
 
 fn assert_phase_0_links_resolve() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut missing = Vec::new();
-    let mut checked = Vec::new();
-
-    for path in PHASE_0_DOCS.iter().chain(PHASE_0_ADRS.iter()) {
-        let full_path = repo.join(path);
-        if !full_path.exists() {
-            missing.push(format!("missing document: {path}"));
-        }
-    }
-
-    for path in PHASE_0_DOCS {
-        let content = read_repo_file(path);
-        let full_path = repo.join(path);
-        let parent = full_path
-            .parent()
-            .expect("phase-0 doc path should have a parent directory");
-        for target in markdown_link_targets(&content) {
-            if is_external_or_anchor(&target) {
-                continue;
-            }
-            checked.push(format!("{path} -> {target}"));
-            let resolved = normalize_link_target(parent, &target);
-            if !resolved.exists() {
-                missing.push(format!("{path} -> {target}"));
-            }
-        }
-    }
+    let report = check_phase_0_hardening_links(repo);
 
     assert!(
-        checked
+        report
+            .checked
             .iter()
             .any(|link| link == "docs/uds-protocol.md -> protocol-capability-matrix.md"),
-        "UDS protocol docs should link the protocol matrix; checked: {checked:?}"
+        "UDS protocol docs should link the protocol matrix; checked: {:?}",
+        report.checked
     );
     assert!(
-        checked.iter().any(|link| link
+        report.checked.iter().any(|link| link
             == "docs/architecture-design-records/README.md -> ../protocol-capability-matrix.md"),
-        "ADR index should link the protocol matrix; checked: {checked:?}"
+        "ADR index should link the protocol matrix; checked: {:?}",
+        report.checked
     );
     assert!(
-        missing.is_empty(),
-        "Phase 0 documentation links should resolve; missing: {missing:?}"
+        report.is_clean(),
+        "Phase 0 documentation links should resolve; missing: {:?}",
+        report.missing
     );
-}
-
-fn markdown_link_targets(content: &str) -> Vec<String> {
-    let mut targets = Vec::new();
-    for candidate in content.split("](").skip(1) {
-        if let Some(target) = candidate.split(')').next() {
-            targets.push(target.split('#').next().unwrap_or(target).to_string());
-        }
-    }
-    targets
-}
-
-fn is_external_or_anchor(target: &str) -> bool {
-    target.is_empty()
-        || target.starts_with('#')
-        || target.starts_with("http://")
-        || target.starts_with("https://")
-        || target.starts_with("mailto:")
-}
-
-fn normalize_link_target(parent: &Path, target: &str) -> PathBuf {
-    let mut path = PathBuf::from(parent);
-    for component in Path::new(target).components() {
-        match component {
-            std::path::Component::ParentDir => {
-                path.pop();
-            }
-            std::path::Component::CurDir => {}
-            other => path.push(other.as_os_str()),
-        }
-    }
-    path
 }
