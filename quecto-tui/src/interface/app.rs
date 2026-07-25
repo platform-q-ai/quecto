@@ -3,10 +3,13 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::infrastructure::client::{Client, Command, Event, SubagentWorkflow};
+use crate::infrastructure::client::{Client, Command, Event};
 use crate::infrastructure::render::DiffRenderer;
 use crate::infrastructure::terminal::Terminal;
 use crate::infrastructure::workspace_files::list_workspace_files;
+use crate::interface::agents::focus::{Focus, MAX_RETAINED_SESSIONS, SUBAGENT_PANEL_WIDTH};
+use crate::interface::agents::ui::FeedState;
+use crate::interface::agents::ui::{SessionView, SubagentUi};
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResult};
 use crate::interface::components::chat::{Chat, ChatEntry};
@@ -21,7 +24,6 @@ use crate::interface::components::notification::{Notification, NotificationStack
 use crate::interface::components::select_list::{SelectItem, SelectList};
 use crate::interface::components::spinner::Spinner;
 use crate::interface::components::workflow_bar;
-use crate::interface::feed_state::FeedState;
 use crate::interface::keys::{self, Key};
 use crate::interface::kitty::KittyProtocol;
 use app_selection::TextSelection;
@@ -150,134 +152,6 @@ pub(crate) struct ModelRegistry {
     /// A selector open is deferred until the fresh list arrives (ADR-0002).
     open_pending: bool,
 }
-
-/// Sub-agent / multi-session UI state, grouped by owner (#997); the former
-/// `App` fields, moved verbatim.
-pub(crate) struct SubagentUi {
-    /// Client-side subagent state for immediate bar updates (#525).
-    /// Updated from tool events (spawn/agent_cmd) and server pushes.
-    /// Entries track expiry timestamps for auto-removal (#540).
-    tracked: std::collections::BTreeMap<String, TrackedSubagent>,
-    /// Animation frame for the subagent spinner, advanced on each spinner tick.
-    frame: usize,
-    /// The sub-agent the parent is currently blocked on via `agent_cmd await`,
-    /// if any. Rendered as a per-row "awaiting" indicator instead of a shared
-    /// spinner line.
-    awaited_agent_id: Option<String>,
-    /// Per-sub-agent session views, keyed by agent id (#800). The master is not
-    /// in this map — it is the top-level `self.master_session.chat`/`self.master_session.workflow_bar`/etc. and
-    /// is `active_agent_id == None`. Sessions are retained after a sub-agent exits
-    /// so its last session stays viewable, bounded by `MAX_RETAINED_SESSIONS`.
-    sessions: std::collections::BTreeMap<String, SessionView>,
-    /// Insertion order of session ids, for bounded retention eviction (#800).
-    session_order: Vec<String>,
-    /// The agent whose session is shown in the main body. `None` = master.
-    active_agent_id: Option<String>,
-    /// Left-panel selection cursor over the flattened (master + tree) rows.
-    panel_nav: crate::interface::components::list_navigator::ListNavigator,
-    /// Fan-in for events from the active sub-agent's direct connection (#800).
-    /// Each item is `(agent_id, event)`; routed into that agent's session.
-    event_tx: mpsc::Sender<(String, Event)>,
-    event_rx: mpsc::Receiver<(String, Event)>,
-    /// Per-subagent synced feed state keyed by agent id.
-    feeds: std::collections::BTreeMap<String, FeedState>,
-    /// Which pane has keyboard focus: the editor or the side panel (#802).
-    focus: Focus,
-}
-
-impl SubagentUi {
-    /// How many tracked child agents are currently in an active status.
-    pub(crate) fn tracked_active_count(&self) -> usize {
-        self.tracked
-            .values()
-            .filter(|t| subagent_status_is_active(&t.info.status))
-            .count()
-    }
-
-    /// The workflow snapshot tracked for `id`, if any.
-    pub(crate) fn tracked_workflow(&self, id: &str) -> Option<&SubagentWorkflow> {
-        self.tracked.get(id).and_then(|t| t.info.workflow.as_ref())
-    }
-
-    fn new() -> Self {
-        let (event_tx, event_rx) = mpsc::channel(256);
-        Self {
-            tracked: std::collections::BTreeMap::new(),
-            frame: 0,
-            awaited_agent_id: None,
-            sessions: std::collections::BTreeMap::new(),
-            session_order: Vec::new(),
-            active_agent_id: None,
-            panel_nav: crate::interface::components::list_navigator::ListNavigator::new(),
-            event_tx,
-            event_rx,
-            feeds: std::collections::BTreeMap::new(),
-            focus: Focus::Input,
-        }
-    }
-}
-
-/// Per-session state for the multi-session UI (#800/#802/#828).
-pub(crate) struct SessionView {
-    chat: Chat,
-    workflow_bar: workflow_bar::WorkflowBarState,
-    /// Whether the child is mid-turn — drives a per-session working indicator.
-    running: bool,
-    /// This session's OWN status footer (context-window / cost / model gauges, #805).
-    footer: Footer,
-    /// Grandchild completion notes buffered while mid-turn; flushed at idle (#816).
-    deferred_subagent_notes: std::collections::VecDeque<String>,
-    /// History cursors, older-page correlation and the partial-vs-complete
-    /// backfill latch (#828/#1050/#1061), owned by a pure policy (#1221).
-    history: crate::domain::history_paging::HistoryPaging,
-    /// Until this session's own stream reports run-state, `active_subagent_running`
-    /// trusts the tracked status not `running` (#834).
-    observed_run_state: bool,
-    /// Chat entry index at which this child's active turn began.
-    active_turn_start: usize,
-    tools_this_turn: usize,
-    /// Child tool starts not yet ended; forces recovery on a dropped end (review 3).
-    open_tool_calls: usize,
-}
-
-impl SessionView {
-    fn new(git_branch: Option<String>) -> Self {
-        let mut footer = Footer::new();
-        footer.set_git_branch(git_branch);
-        Self::with_footer(footer)
-    }
-
-    /// Build a session around a pre-configured footer — used for both sub-agent
-    /// and master (#828) sessions, so all are constructed identically.
-    fn with_footer(footer: Footer) -> Self {
-        Self {
-            chat: Chat::new(),
-            workflow_bar: workflow_bar::WorkflowBarState::default(),
-            running: false,
-            footer,
-            deferred_subagent_notes: std::collections::VecDeque::new(),
-            history: crate::domain::history_paging::HistoryPaging::default(),
-            observed_run_state: false,
-            active_turn_start: 0,
-            tools_this_turn: 0,
-            open_tool_calls: 0,
-        }
-    }
-}
-
-/// Which pane currently has keyboard focus (#802). The editor (`Input`) is the
-/// default; `Tab` toggles to the side `Panel` when sub-agents are listed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Focus {
-    Input,
-    Panel,
-}
-
-/// Width of the persistent left sub-agent panel (#800); room for names + a bar.
-const SUBAGENT_PANEL_WIDTH: usize = 30;
-
-/// Maximum retained sub-agent sessions before the oldest non-active is evicted.
-const MAX_RETAINED_SESSIONS: usize = 16;
 
 struct CommandSendFailure {
     command: Command,
@@ -430,14 +304,14 @@ mod app_selection;
 mod app_subagent_feed;
 #[path = "app_subagent_panel.rs"]
 mod app_subagent_panel;
-#[path = "app_subagent_state.rs"]
-mod app_subagent_state;
 #[path = "app_submit.rs"]
 mod app_submit;
-use app_subagent_state::{
-    TrackedSubagent, gc_exited_subagents, next_exited_subagent_gc_deadline,
-    subagent_status_is_active,
+use crate::interface::agents::roster::{
+    gc_exited_subagents, next_exited_subagent_gc_deadline, subagent_status_is_active,
 };
+type TrackedSubagent = crate::interface::agents::roster::TrackedSubagent<
+    crate::infrastructure::client::SubagentInfoEvent,
+>;
 #[path = "app_subagent_stream.rs"]
 mod app_subagent_stream;
 #[path = "app_subagents.rs"]
@@ -626,7 +500,6 @@ fn is_subagent_tool(tool_name: &str) -> bool {
     tool_name == "spawn" || tool_name == "agent_cmd"
 }
 
-const STATUS_EXITED: &str = "exited";
 const EXITED_SUBAGENT_GRACE: Duration = Duration::from_secs(5);
 
 fn sanitize_workflow_status_text(text: &str, max_chars: usize) -> String {
@@ -637,6 +510,9 @@ fn sanitize_agent_id(id: &str) -> String {
     crate::interface::ansi::sanitize_control(id)
 }
 
+#[cfg(test)]
+#[path = "app_agents_characterization_tests.rs"]
+mod app_agents_characterization_tests;
 #[cfg(test)]
 #[path = "app_attach_backfill_tests.rs"]
 mod app_attach_backfill_tests;

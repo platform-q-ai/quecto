@@ -6,7 +6,7 @@ impl App {
         if self.subagents.feeds.contains_key(id) {
             return;
         }
-        self.open_subagent_feed(id, crate::interface::feed_state::FeedAuthority::WarmSync);
+        self.open_subagent_feed(id, crate::interface::agents::feed::FeedAuthority::WarmSync);
     }
 
     /// Open a direct UDS connection to `id`'s own socket and fan its live stream
@@ -14,7 +14,7 @@ impl App {
     fn open_subagent_feed(
         &mut self,
         id: &str,
-        authority: crate::interface::feed_state::FeedAuthority,
+        authority: crate::interface::agents::feed::FeedAuthority,
     ) {
         if self.subagents.feeds.contains_key(id) {
             return;
@@ -64,17 +64,10 @@ impl App {
         let handle = tokio::spawn(connect_task.with_subscriber(connect_dispatch));
         self.subagents.feeds.insert(
             id.to_string(),
-            FeedState {
-                cmd_tx,
-                handle,
-                epoch: 0,
-                rev: 0,
-                last_fresh_at: None,
-                supports_sync: false,
-                pending_rev: None,
-                transcript: crate::interface::ledger_sync::LedgerTranscript::default(),
-                authority,
-            },
+            FeedState::from_parts(
+                crate::interface::agents::ui::FeedRuntime { cmd_tx, handle },
+                crate::interface::agents::feed::FeedSyncState::new(authority),
+            ),
         );
     }
 }

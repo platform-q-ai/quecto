@@ -27,57 +27,6 @@ pub(crate) fn usable_socket_path(path: Option<&str>) -> bool {
     })
 }
 
-fn has_incoming_root_ancestor(
-    id: &str,
-    incoming: &std::collections::BTreeMap<String, crate::infrastructure::client::SubagentInfoEvent>,
-    map: &std::collections::BTreeMap<String, TrackedSubagent>,
-) -> bool {
-    let mut current = map
-        .get(id)
-        .and_then(|entry| entry.info.parent_id.as_deref());
-    let mut guard = 0usize;
-    while let Some(parent) = current {
-        if incoming
-            .get(parent)
-            .is_some_and(|entry| entry.parent_id.is_none())
-        {
-            return true;
-        }
-        guard += 1;
-        if guard > map.len() {
-            return false;
-        }
-        current = map
-            .get(parent)
-            .and_then(|entry| entry.info.parent_id.as_deref());
-    }
-    false
-}
-
-fn is_descendant_of(
-    id: &str,
-    ancestor: &str,
-    map: &std::collections::BTreeMap<String, TrackedSubagent>,
-) -> bool {
-    let mut current = map
-        .get(id)
-        .and_then(|entry| entry.info.parent_id.as_deref());
-    let mut guard = 0usize;
-    while let Some(parent) = current {
-        if parent == ancestor {
-            return true;
-        }
-        guard += 1;
-        if guard > map.len() {
-            return false;
-        }
-        current = map
-            .get(parent)
-            .and_then(|entry| entry.info.parent_id.as_deref());
-    }
-    false
-}
-
 /// Grace window during which an unconfirmed optimistic subagent entry (created
 /// from the spawn ToolStart, before the kernel registers the child) survives a
 /// snapshot that omits it. Generous enough to bridge slow socket readiness, yet
@@ -160,115 +109,16 @@ impl App {
             }
             candidates.insert(sanitize_agent_id(&s.agent_id), s);
         }
-        let mut incoming = std::collections::BTreeMap::new();
-        if let Some(source) = source_agent_id.as_deref() {
-            // Accept the source's existing subtree plus descendants introduced in
-            // this same snapshot. Existing IDs outside that subtree remain owned
-            // by their current authority and cannot be hijacked or cycled.
-            loop {
-                let before = incoming.len();
-                candidates.retain(|id, s| {
-                    let existing_owned = !self.subagents.tracked.contains_key(id)
-                        || is_descendant_of(id, source, &self.subagents.tracked);
-                    let parent_owned = s.parent_id.as_deref() == Some(source)
-                        || s.parent_id.as_deref().is_some_and(|parent| {
-                            incoming.contains_key(parent)
-                                || is_descendant_of(parent, source, &self.subagents.tracked)
-                        });
-                    if id != source && existing_owned && parent_owned {
-                        incoming.insert(id.clone(), s.clone());
-                        false
-                    } else {
-                        true
-                    }
-                });
-                if incoming.len() == before {
-                    break;
-                }
-            }
-        } else {
-            incoming = candidates;
-        }
 
-        let mut new_map = self.subagents.tracked.clone();
-        match source_agent_id.as_deref() {
-            None => {
-                new_map.retain(|id, _entry| {
-                    incoming.contains_key(id)
-                        || has_incoming_root_ancestor(id, &incoming, &self.subagents.tracked)
-                });
-            }
-            Some(source) => {
-                new_map.retain(|id, _entry| {
-                    incoming.contains_key(id)
-                        || !is_descendant_of(id, source, &self.subagents.tracked)
-                });
-            }
-        }
+        crate::interface::agents::roster::apply_roster_snapshot(
+            &mut self.subagents.tracked,
+            source_agent_id.as_deref(),
+            candidates,
+            tokio::time::Instant::now(),
+            EXITED_SUBAGENT_GRACE,
+            OPTIMISTIC_SUBAGENT_GRACE,
+        );
 
-        for (id, s) in incoming {
-            if let Some(mut existing) = new_map.remove(&id) {
-                existing.optimistic = false;
-                if source_agent_id.is_some() || existing.roster_source.is_none() {
-                    existing.update_info(s);
-                }
-                if source_agent_id.is_some() {
-                    existing.roster_source = source_agent_id.clone();
-                }
-                new_map.insert(id, existing);
-            } else if let Some(mut existing) = self.subagents.tracked.get(&id).cloned() {
-                existing.optimistic = false;
-                if source_agent_id.is_some() || existing.roster_source.is_none() {
-                    existing.update_info(s);
-                }
-                if source_agent_id.is_some() {
-                    existing.roster_source = source_agent_id.clone();
-                }
-                new_map.insert(id, existing);
-            } else {
-                let mut entry = TrackedSubagent::new(s);
-                entry.roster_source = source_agent_id.clone();
-                new_map.insert(id, entry);
-            }
-        }
-
-        let leftover = std::mem::take(&mut self.subagents.tracked);
-        let mut pending: Vec<String> = new_map
-            .values()
-            .filter_map(|t| t.info.parent_id.clone())
-            .collect();
-        while let Some(pid) = pending.pop() {
-            if new_map.contains_key(&pid) {
-                continue;
-            }
-            if let Some(entry) = leftover.get(&pid) {
-                if let Some(grandparent) = entry.info.parent_id.clone() {
-                    pending.push(grandparent);
-                }
-                new_map.insert(pid, entry.clone());
-            }
-        }
-
-        let now = tokio::time::Instant::now();
-        for (id, entry) in leftover {
-            if new_map.contains_key(&id)
-                || source_agent_id
-                    .as_deref()
-                    .is_some_and(|source| is_descendant_of(&id, source, &new_map))
-            {
-                continue;
-            }
-            if let Some(exited_at) = entry.exited_at {
-                if now.saturating_duration_since(exited_at) < EXITED_SUBAGENT_GRACE {
-                    new_map.entry(id).or_insert(entry);
-                }
-            } else if entry.optimistic
-                && now.saturating_duration_since(entry.started_at) < OPTIMISTIC_SUBAGENT_GRACE
-            {
-                new_map.entry(id).or_insert(entry);
-            }
-        }
-        self.subagents.tracked = new_map;
         let warm_ids = self
             .subagents
             .tracked

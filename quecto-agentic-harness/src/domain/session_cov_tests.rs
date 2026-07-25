@@ -122,3 +122,66 @@ async fn in_memory_spill_store_trait_surface_recalls_and_clears() {
             .is_none()
     );
 }
+
+#[derive(Default)]
+struct DefaultDeltaStore {
+    saved: Mutex<Vec<Session>>,
+}
+
+impl SessionStore for DefaultDeltaStore {
+    fn load(
+        &self,
+        _key: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Session>, DomainError>> + Send + '_>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn save(
+        &self,
+        session: &Session,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        let session = session.clone();
+        Box::pin(async move {
+            self.saved.lock().unwrap().push(session);
+            Ok(())
+        })
+    }
+
+    fn exists(
+        &self,
+        _key: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + '_>> {
+        Box::pin(async { Ok(false) })
+    }
+
+    fn list(
+        &self,
+        _key_prefix: Option<&str>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+}
+
+#[tokio::test]
+async fn default_session_store_delta_methods_delegate_to_save() {
+    let store = DefaultDeltaStore::default();
+    let messages = vec![Message::user("hello")];
+
+    store
+        .save_delta("chat-a", &messages, 999, None)
+        .await
+        .expect("default save_delta succeeds");
+    store
+        .save_clean_delta("chat-b", &messages, 1, None)
+        .await
+        .expect("default save_clean_delta succeeds");
+
+    let saved = store.saved.lock().unwrap();
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[0].key, "chat-a");
+    assert_eq!(saved[1].key, "chat-b");
+    assert_eq!(saved[0].messages.len(), 1);
+    assert_eq!(saved[1].messages.len(), 1);
+    assert_eq!(saved[0].messages[0].content, "hello");
+    assert_eq!(saved[1].messages[0].content, "hello");
+}

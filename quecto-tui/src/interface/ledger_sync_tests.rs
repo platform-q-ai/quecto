@@ -1,15 +1,25 @@
 use super::*;
+use crate::application::agent_ledger_payloads::{SyncCapability, SyncDelta};
 use serde_json::json;
+
+fn message(value: serde_json::Value) -> crate::application::agent_ledger_payloads::LedgerMessage {
+    serde_json::from_value(value).unwrap()
+}
 
 fn delta(messages: Vec<serde_json::Value>, resync: bool) -> SyncDelta {
     SyncDelta {
         epoch: 1,
         rev: 9,
-        messages,
+        messages: messages.into_iter().map(message).collect(),
         next_rev: None,
         caught_up: true,
         resync,
     }
+}
+
+fn supports_sync(value: &serde_json::Value) -> bool {
+    serde_json::from_value::<SyncCapability>(value.clone())
+        .is_ok_and(|capability| capability.supports_sync())
 }
 
 #[test]
@@ -22,7 +32,7 @@ fn repeated_sync_delta_does_not_duplicate_messages() {
     assert_eq!(t.apply_sync_delta(&d).len(), 1);
     let entries = t.apply_sync_delta(&d);
     assert_eq!(entries.len(), 1);
-    assert!(matches!(&entries[0], ChatEntry::User { text } if text == "hello"));
+    assert!(matches!(&entries[0], LedgerEntry::User { text } if text == "hello"));
 }
 
 #[test]
@@ -33,11 +43,9 @@ fn synced_tool_calls_and_results_render_as_tool_cards() {
             json!({"id":"t1","role":"tool","toolCallId":"tc1","toolName":"bash","content":"hi\n","isError":false}),
         ], false));
     assert!(
-        matches!(&entries[0], ChatEntry::ToolExecution { tool_call_id, tool_name, result: Some(result), is_error, .. } if tool_call_id == "tc1" && tool_name == "bash" && result == "hi\n" && !is_error)
+        matches!(&entries[0], LedgerEntry::ToolExecution { tool_call_id, tool_name, result: Some(result), is_error, .. } if tool_call_id == "tc1" && tool_name == "bash" && result == "hi\n" && !is_error)
     );
-    assert!(
-        matches!(&entries[1], ChatEntry::Assistant { text, streaming: false } if text == "done")
-    );
+    assert!(matches!(&entries[1], LedgerEntry::Assistant { text } if text == "done"));
 }
 
 #[test]
@@ -52,7 +60,7 @@ fn resync_clears_stale_transcript() {
         true,
     ));
     assert_eq!(entries.len(), 1);
-    assert!(matches!(&entries[0], ChatEntry::User { text } if text == "new"));
+    assert!(matches!(&entries[0], LedgerEntry::User { text } if text == "new"));
 }
 
 #[test]
@@ -66,7 +74,7 @@ fn continuation_upserts_stub_by_id() {
         vec![json!({"id":"m1","role":"assistant","content":"complete"})],
         false,
     ));
-    assert!(matches!(&entries[0], ChatEntry::Assistant { text, .. } if text == "complete"));
+    assert!(matches!(&entries[0], LedgerEntry::Assistant { text } if text == "complete"));
 }
 
 #[test]

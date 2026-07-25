@@ -30,9 +30,9 @@ impl App {
     }
 
     pub(super) fn route_sync_response(&mut self, agent_id: &str, data: &serde_json::Value) {
-        let Ok(delta) =
-            serde_json::from_value::<crate::interface::ledger_sync::SyncDelta>(data.clone())
-        else {
+        let Ok(delta) = serde_json::from_value::<
+            crate::application::agent_ledger_payloads::SyncDelta,
+        >(data.clone()) else {
             return;
         };
         if let Some(feed) = self.subagents.feeds.get_mut(agent_id) {
@@ -56,11 +56,13 @@ impl App {
                     since_rev: next_rev,
                 });
             }
-            feed.authority = crate::interface::feed_state::FeedAuthority::SyncedAuthoritative;
+            feed.authority = crate::interface::agents::feed::FeedAuthority::SyncedAuthoritative;
             if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
                 session.chat.clear();
                 for entry in entries {
-                    session.chat.add_entry(entry);
+                    session.chat.add_entry(
+                        crate::interface::agents::ui::ledger_entry_to_chat_entry(entry),
+                    );
                 }
             }
         }
@@ -68,7 +70,10 @@ impl App {
 
     pub(super) fn note_sync_capability(&mut self, agent_id: &str, data: &serde_json::Value) {
         if let Some(feed) = self.subagents.feeds.get_mut(agent_id) {
-            feed.supports_sync = crate::interface::ledger_sync::supports_sync(data);
+            feed.supports_sync = serde_json::from_value::<
+                crate::application::agent_ledger_payloads::SyncCapability,
+            >(data.clone())
+            .is_ok_and(|capability| capability.supports_sync());
             if feed.supports_sync {
                 if let Some(target_rev) = feed.pending_rev {
                     Self::request_sync(feed, feed.epoch, target_rev);
