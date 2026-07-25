@@ -33,7 +33,7 @@ The current crate still uses `application/`, `domain/`, `infrastructure/`, and `
 | `infrastructure/workspace_files.rs` | workspace filesystem/Git adapter | `workspace` boundary adapter |
 | `application/model_payloads.rs` | typed mapper for `list_models` wire payloads (#1220) | `protocol` mapping feeding `models` |
 | `application/session_payloads.rs` | typed parsing foothold for session payloads | `protocol` mapping feeding `sessions` |
-| `domain/` | placeholder for invariant-bearing shared values | only keep values that encode real invariants |
+| `domain/` | conversation history/recovery invariants (#1221) | only keep values that encode real invariants |
 
 Each migration PR should preserve one source of truth for every moved state cluster and avoid long-lived dual writes.
 
@@ -250,8 +250,11 @@ This issue is the characterization-readiness slice for the later code-moving iss
 |---|---|
 | `application/mod.rs` | remove after compatibility shims are unnecessary |
 | `application/model_payloads.rs` | `protocol` mapper feeding `models` |
+| `application/range_accumulator.rs` | `protocol` chunked range assembly feeding `conversation` (#1221) |
 | `application/session_payloads.rs` | `protocol` mapper feeding `sessions` |
+| `domain/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221) |
 | `domain/mod.rs` | remove vestigial placeholder; recreate only for invariant-bearing shared values if needed |
+| `domain/turn_recovery.rs` | `conversation` end-of-turn recovery trigger and batch atomicity (#1221) |
 | `infrastructure/child_watch.rs` | `shell` runtime supervision |
 | `infrastructure/client.rs` | `protocol` |
 | `infrastructure/mod.rs` | remove after adapter modules move |
@@ -314,7 +317,6 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `interface/ledger_sync.rs` | `agents` pure/presentation state |
 | `interface/mod.rs` | remove/split into `shell`, features, and `components` |
 | `interface/overlay.rs` | `components` overlay primitive |
-| `interface/range_accumulator.rs` | `components` rendering helper |
 | `interface/select_overlay.rs` | `components` overlay primitive |
 | `interface/stdin_buffer.rs` | `shell` stdin adapter/policy |
 | `interface/theme.rs` | `components` styling primitive |
@@ -517,3 +519,101 @@ additive pin; no existing assertion was altered).
 | File | `git hash-object` |
 |---|---|
 | `quecto-tui/src/interface/app_models_protocol_characterization_tests.rs` | `e57d8c569df490354949ff259b450eb050e661d0` |
+
+## Parity contract for conversation history/recovery slice (#1221)
+
+Readiness gate for #1221:
+
+- Zero behaviour change mandate: **passed**. Every acceptance criterion is structural (testability without terminal/client/JSON/Tokio, `ChatEntry` stays a view projection, `App` delegates, existing tests stay green), and the "Preserve" section enumerates behaviours that must be identical. The parent epic (#1149) forbids user-visible behaviour changes.
+- Touched observable surfaces: enumerable — master attach backfill, older-page pagination/correlation/retry, resume/rewind transcript replacement, lifecycle invalidation, stub recall (#1061), ref-based end-of-turn recovery (#1060), and chunked range assembly. No command is added, removed, or reordered.
+- Existing harnesses: **passed**. `app_paged_history_tests.rs` (638 lines), `app_paged_history_review_tests.rs` (317), `app_attach_backfill_tests.rs` (417), `app_events_1060_tests.rs`, `app_events_1060_child_tests.rs`, `app_rewind_response_tests.rs`, `app_resumed_history`-covering tests, plus the `TuiHarness` headless harness and BDD features pin the current behaviour without a real terminal.
+- Behavioural/refactoring split: **passed**. No acceptance criterion changes rendered output or the wire.
+- Performance warning: **accepted**. Recorded per surface below. Consequence if unrecorded: allocation/complexity regressions would be undetectable.
+
+Observable surfaces and required parity:
+
+| Surface | Required identical behaviour | Boundary cases | Performance characteristics |
+|---|---|---|---|
+| Older-page request emission (`next_history_page_request`) | A `get_messages{before}` is emitted only when: no sub-agent is focused, `history_has_more_before` is true, the chat is scrolled to the oldest loaded entry, and a `history_before_cursor` exists. Request id is `history-page-{uuid_like}-{seq}`, `seq` incremented with wrapping add before use. Same-cursor in-flight requests are deduped unless older than 30s (`PENDING_HISTORY_PAGE_RETRY`), in which case a fresh request replaces the pending entry. | No cursor → no request; `has_more_before=false` → no request; not at oldest → no request; sub-agent focused → no request; pending same cursor fresh (<30s) → suppressed; pending same cursor stale (≥30s) → re-issued; `seq` at `u64::MAX` wraps. | One `format!` per request, one clone of the cursor; no per-frame allocation — the request path is scroll-driven, not render-driven. |
+| Page correlation (`is_pending_history_page`) | Only an EXACT `request_id` match is accepted; `None` ids never match; ids with a matching prefix but different suffix are rejected; foreign/broadcast `history-page-*` responses are dropped without mutating chat; a page in flight across a resume is dropped. | `id=None`; exact match; prefix-only match; foreign `history-page-…`; id-less broadcast snapshot (goes to the attach-backfill reconcile path). | Single `Option<&str>` comparison, no allocation. |
+| Backfill reconcile (`reconcile_master_backfill_history`) | Returns immediately when `history_backfilled`; unparseable payload is ignored; cursors (`history_before_cursor`, `history_has_more_before`) and `history_pending_page=None` are set BEFORE the empty-history early return; an empty/filtered history never latches `history_backfilled`; `extend_prefix=true` prepends and grows `partial_backfill_len` by the page length; `extend_prefix=false` with an existing `partial_backfill_len` replaces the whole loaded prefix; otherwise prepends; `trimmed || has_more_before` keeps `partial_backfill_len=Some(loaded_prefix)` and `history_backfilled=false`, else clears the prefix and latches `history_backfilled=true`. | Zero messages; one; many; `trimmed=true` with `has_more_before=false` and vice versa; missing `before`/`hasMoreBefore` keys; repeated snapshot after a partial page (no duplicate newest slice, no interior gap). | One `Vec<ChatEntry>` per payload, one prepend/replace pass; no recompute of already-loaded entries. |
+| Lifecycle invalidation (`clear_message_recovery`) | Clears recovery batches, pending recoveries, pending stub recalls, and failed stub recalls, AND resets `history_pending_page`, `history_before_cursor`, `history_has_more_before`, `partial_backfill_len`, `history_backfilled` on the master session. Called on resume, rewind ack, clear_history, and legacy replacement. | Empty state (idempotent); state populated in every map. | Map `clear()` only; capacity retained. |
+| Zero-fetch / replacement paths | `is_history_page_payload` requires a `messages` array AND (`hasMoreBefore` bool OR a `before` key); paged payloads go through `replace_master_chat_with_history_page` (clear chat, reset backfill flags, reconcile cursors, then append the `Status` line); legacy payloads keep the wholesale-replacement path with the same status text (`Session resumed` / `Conversation rewound`). | `messages` present without either cursor key → legacy; `hasMoreBefore` present but non-bool with `before` absent → legacy; `before: null` present → paged. | Predicate is two key lookups, no parse. |
+| Stub recall (#1061) | Visible stub ids are fetched at most once each while in flight (deduped by `(agent_id, message_id)`), skipped when in `failed_stub_recalls`; request id `stub-recall-{uuid_like}`; sub-agent stubs are fetched through the MASTER connection carrying the child's agent id; failure, absent data, `id` mismatch, unknown session, or role mismatch marks the pair failed (no retry per scroll); multi-page bodies continue via `RangeAccumulator` with `offset`/`limit=GET_MESSAGE_PAGE_BYTES`; the assembled body is control-sanitized ONCE after reassembly; a failed `recall_stub` marks the pair failed. | Zero visible stubs; one; many; already-pending; already-failed; role mismatch; missing session; single-page vs multi-page body; sanitization of a control sequence split across pages. | One request per stub, `GET_MESSAGE_PAGE_BYTES = PROTOCOL_LINE_CAP_BYTES/4` per page; content accumulated in a single `String` via `push_str` (no per-page re-concat); sanitize runs once. |
+| Ref-based turn recovery (#1060) | Trigger rule unchanged: empty/ellipsis assistant text, or `assistant_text.len() < expected_content_len`, or `refs.len() != tools_this_turn*2+1`; `open_tool_calls > 0` FORCES recovery regardless; empty refs never trigger; refs already in flight are skipped (no double-fetch); a batch spans `[active_turn_start.min(entry_count), entry_count)`; the range is replaced ATOMICALLY only once all refs have responded; failure/absent data/`id` mismatch/range error abandons the whole batch (chat untouched); a batch whose target session vanished is dropped. | Zero refs; one ref; refs count exactly `2n+1` vs off by one; `expected_content_len` absent vs greater vs equal; open tool call with otherwise-satisfied heuristics; late response after batch removal. | One `HashMap` of responses per batch, one `Vec<ChatEntry>` built at completion, exactly one `replace_range` (no incremental splices). |
+| Transcript assembly (`recovered_chat_entries` / `resumed_chat_entries`) | Ordering, suppressed-tool-call handling, tool-result attachment to the matching pending call (first `result: None` match), standalone tool results, unknown roles ignored, empty user content skipped, control sanitization on resumed text/args/tool names, and stub-vs-plain entry selection (`history_entry`: stub only when demoted AND id present) all identical. | Empty refs/messages; suppressed call plus its result; result without a call; duplicate call ids; missing `role`/`content` keys; `toolCalls` vs `tool_calls`, `toolCallId` vs `tool_call_id`, `isError` vs `is_error`. | Single pass over refs/messages with an index map; entries pushed once, results patched in place. |
+| Range assembly (`RangeAccumulator`) | Offset mismatch, missing content, missing `nextOffset`, non-progressing/overshooting offsets, and length mismatch all error exactly as today. | `offset` absent (defaults 0); `contentLength` absent (defaults to accumulated len); `nextOffset == offset`; `nextOffset > contentLength`; accumulated length over/under `contentLength`. | Amortized `push_str` into one buffer. |
+| Command ordering / FIFO | The same commands are emitted in the same order for attach, scroll-back, stub recall, resume, rewind open/apply/refresh, and recovery. Failed enqueues still roll back the matching pending page or stub recall (`rollback_failed_history_command`). | Rollback for a `GetMessages` id that is not the pending page (no-op); rollback for an unknown `GetMessage` id (no-op). | Unchanged. |
+
+Structural goals recorded as REVIEW-TIME checks only (never test assertions): a cohesive conversation module owns the above policy; `ChatEntry` remains a view projection, not policy vocabulary; `App` delegates rather than implements; policy is constructible without a terminal, concrete client, raw JSON, or Tokio runtime.
+
+Approved parity contract: readiness gate passed, all boundary cases verified against the current code, no `__UNRESOLVED__` markers remain.
+
+## Characterization mutation log for conversation history/recovery slice (#1221)
+
+Each mutation was applied to production code, verified to fail the named
+characterization test, then restored from a pristine baseline copy.
+
+| Mutation | Observed failure |
+|---|---|
+| M1: drop the `history_has_more_before` guard on page emission | `scroll_back_emits_no_page_request_when_no_older_history_is_advertised` FAILED |
+| M2: default a missing `before` cursor to `""` instead of bailing | `scroll_back_emits_no_page_request_without_a_cursor` FAILED |
+| M3: correlate pages by id PREFIX instead of exact match | `page_response_with_prefix_matching_id_is_rejected` FAILED |
+| M4: publish paging cursors AFTER the empty-history early return | `empty_backfill_page_still_publishes_its_paging_cursor` FAILED |
+| M5: widen `is_history_page_payload` to accept any `messages` array | SURVIVED — the predicate is not the observable; replaced by M5b |
+| M5b: route legacy resume payloads through prepend/reconcile instead of replacement | `legacy_resume_payload_without_paging_metadata_replaces_transcript` FAILED |
+| M6: accept a stub-recall body whose `id` disagrees with the request | `stub_recall_rejects_mismatched_body_id_and_does_not_retry` FAILED |
+| M7: ignore `contentLength` in the recovery trigger heuristic | `truncated_assistant_body_triggers_recovery_via_advertised_content_length` FAILED |
+| M8: apply a recovery batch before all refs have responded | `partially_answered_recovery_batch_does_not_mutate_the_transcript` FAILED |
+| M9: make `rollback_failed_history_command` a no-op for `GetMessages` | `failed_page_enqueue_rolls_back_the_pending_request` FAILED |
+| M10: roll back the pending page for ANY `GetMessages` id | `rollback_of_an_unrelated_page_id_is_a_no_op` FAILED |
+
+Residue check after the log: `git diff` shows only the characterization-test
+module declaration and this document; no production code changes.
+
+## Characterization review outcome (#1221)
+
+Three independent read-only finders reviewed the safety net: falsifiability,
+contract coverage, and Gherkin/BDD discipline.
+
+Falsifiability (0 HIGH, 4 MED): no hollow assertions, no banned patterns, and the
+mutation log — including M5's `SURVIVED` verdict — was independently confirmed
+honest. All four MED findings fixed: rollback tests now drive the real
+`handle_command_send_failure` entry point rather than the rollback helper alone,
+and positive/negative controls were added for the no-retry, batch-atomicity and
+`contentLength` assertions so none can pass vacuously.
+
+Coverage — two HIGH gaps found and closed:
+
+- `RangeAccumulator` had NO direct tests; all five `RangeError` variants were
+  unpinned even though both callers map `Err(_)` onto a terminal outcome
+  (stub marked failed / batch abandoned), so a misclassification silently drops
+  user content. Added `range_accumulator_tests.rs` (11 tests) covering every
+  variant, both documented defaults, and in-order multi-page reassembly.
+- The multi-page `Continue` arm in `app_message_recovery` — duplicated paging
+  logic — was never exercised. Added
+  `oversized_recovery_ref_pages_and_reassembles_before_replacing_the_turn`.
+
+MED gaps also closed: control-sequence sanitization across a split recall page
+boundary, in-flight stub-recall dedupe, and the trimmed-plus-more-history latch.
+
+BDD (2 HIGH, both genuine and fixed):
+
+- Two oversized-recall `Then` steps compared two TEST-LOCAL fixtures to each
+  other (`recalled_full` vs `stub_full`), asserting nothing about the app. A
+  `RangeAccumulator` mutation that corrupted every reassembled body passed them.
+  They now observe the app's real transcript via a new `master_assistant_texts`
+  harness probe (the rendered frame is width-wrapped, so an oversized body
+  cannot be substring-matched against it), and the mutation now fails them.
+- "the operator resumes the session in the TUI" performed no resume: it injected
+  a hand-written `resume-messages` id, leaving resume request emission and
+  correlation unexercised. It now acknowledges a `resume_session` and replies
+  using the id the APP emitted; deleting the production request now fails it.
+
+Also removed four orphaned step definitions for sub-agent paging. Restoring their
+scenario proved sub-agent paging was deliberately REMOVED in #1210
+(`next_history_page_request` returns `None` when a sub-agent is focused), so the
+dead steps were deleted rather than the scenario revived.
+
+Net: 1602 unit tests and 192 BDD scenarios green; the only production-source
+changes are the test-module declarations and the new harness probe.

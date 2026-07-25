@@ -2,7 +2,6 @@
 //! `app_paged_history_tests.rs` to keep that file within the source
 //! line-count gate.
 
-use super::app_paged_history::{PENDING_HISTORY_PAGE_RETRY, PendingHistoryPage};
 use super::app_paged_history_tests::{
     chat_text, drained_get_messages_commands, harness, page, prime_active_viewport, respond,
     widen_active_viewport,
@@ -10,14 +9,15 @@ use super::app_paged_history_tests::{
 use super::app_response::ATTACH_BACKFILL_ID;
 use super::tui_harness::TuiHarness;
 use super::*;
+use crate::domain::history_paging::{PENDING_HISTORY_PAGE_RETRY, PendingHistoryPage};
 
 #[tokio::test]
 async fn independent_clients_do_not_reuse_history_page_correlation_ids() {
     let (mut first, mut second) = (harness().await, harness().await);
     for h in [&mut first, &mut second] {
         let session = &mut h.app_mut().master_session;
-        session.history_has_more_before = true;
-        session.history_before_cursor = Some("cursor".into());
+        session.history.has_more_before = true;
+        session.history.before_cursor = Some("cursor".into());
         session.chat.set_viewport_height(1);
     }
     let id = |h: &mut TuiHarness| h.app_mut().next_history_page_request().unwrap().0;
@@ -33,9 +33,9 @@ async fn stale_in_flight_page_is_retried_after_age_window() {
     let mut h = harness().await;
     {
         let session = &mut h.app_mut().master_session;
-        session.history_has_more_before = true;
-        session.history_before_cursor = Some("cursor".into());
-        session.history_pending_page = Some(PendingHistoryPage {
+        session.history.has_more_before = true;
+        session.history.before_cursor = Some("cursor".into());
+        session.history.pending_page = Some(PendingHistoryPage {
             request_id: "history-page-lost".into(),
             before: "cursor".into(),
             requested_at: std::time::Instant::now()
@@ -79,7 +79,8 @@ async fn late_twin_of_stale_retried_page_is_dropped() {
     // Age the in-flight request past the retry window, then retry the cursor.
     h.app_mut()
         .master_session
-        .history_pending_page
+        .history
+        .pending_page
         .as_mut()
         .expect("request is in flight")
         .requested_at = std::time::Instant::now()

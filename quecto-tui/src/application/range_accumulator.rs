@@ -70,3 +70,7 @@ impl RangeAccumulator {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "range_accumulator_tests.rs"]
+mod range_accumulator_tests;

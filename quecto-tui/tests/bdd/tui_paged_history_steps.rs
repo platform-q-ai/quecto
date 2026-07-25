@@ -8,13 +8,8 @@
 
 use super::*;
 use quecto_tui::infrastructure::client::Event;
-use quecto_tui::interface::app::tui_harness::{
-    TuiHarness, spawn_start, spawn_subagent_socket_with_commands, subagent_with_socket,
-    subagents_changed,
-};
+use quecto_tui::interface::app::tui_harness::TuiHarness;
 use quecto_tui::interface::keys::Key;
-
-const CHILD: &str = "worker";
 
 /// Per-scenario paged-history fixture stored on the World.
 #[derive(Debug, Default)]
@@ -25,10 +20,8 @@ pub struct PagedHistoryState {
     /// Whether a scroll-back step observed an older-history request.
     pub(super) requested_older: bool,
     /// Commands decoded by the active child's real Unix socket.
-    pub(super) child_commands: Option<tokio::sync::mpsc::Receiver<String>>,
     pub(super) stub_id: Option<String>,
     pub(super) stub_full: Option<String>,
-    pub(super) recalled_full: Option<String>,
     pub(super) expected_send_failures: usize,
     pub(super) observed_send_failures: usize,
     pub(super) stale_page_request_id: Option<String>,
@@ -112,12 +105,6 @@ pub(super) fn get_messages_response(id: &str, data: serde_json::Value) -> Event 
         data: Some(data),
         error: None,
     }
-}
-
-/// Newest cursor after the initial page (the id of the first message the initial
-/// page omitted), or `None` if the whole history fit in one page.
-fn newest_cursor(messages: &[(String, String)], page_size: usize) -> Option<String> {
-    (messages.len() > page_size).then(|| messages[messages.len() - page_size].0.clone())
 }
 
 /// Latest older-page request as (correlation id, before cursor). The reply must
@@ -204,37 +191,6 @@ fn given_attached_one_over(world: &mut TuiWorld) {
 #[given("a resumable session with enough history to require backfill")]
 fn given_resumable_enough_history(world: &mut TuiWorld) {
     given_running_session_with_history(world);
-}
-
-#[given("the TUI is viewing a sub-agent with enough history to require backfill")]
-fn given_viewing_subagent(world: &mut TuiWorld) {
-    init_harness(world);
-    world.tui_paged = PagedHistoryState {
-        messages: build_messages(7),
-        page_size: 3,
-        ..Default::default()
-    };
-    let (socket, child_commands) = drive(world, |h| {
-        h.event(Event::AgentStart);
-        h.event(spawn_start(CHILD));
-        let (socket, commands) = spawn_subagent_socket_with_commands(CHILD);
-        h.event(subagents_changed(vec![subagent_with_socket(
-            CHILD,
-            "running",
-            Some(("active", 0, 3)),
-            Some(socket.clone()),
-        )]));
-        h.select(Some(CHILD));
-        (socket, commands)
-    });
-    assert!(socket.exists(), "recording child socket should be bound");
-    world.tui_paged.child_commands = Some(child_commands);
-    // Newest child page, with older history advertised.
-    let page = page_json(&world.tui_paged.messages, world.tui_paged.page_size, None);
-    drive(world, |h| {
-        h.route(CHILD, get_messages_response("child-backfill", page));
-    });
-    world.tui_viewed_agent = Some(CHILD.into());
 }
 
 #[given("the TUI is attached to a session containing a stubbed long message")]
@@ -342,72 +298,32 @@ fn when_scroll_top_newest(world: &mut TuiWorld) {
     scroll_master_to_beginning(world);
 }
 
-#[when("the operator scrolls back until the beginning of that history is reached")]
-fn when_scroll_child_until_beginning(world: &mut TuiWorld) {
-    let messages = world.tui_paged.messages.clone();
-    let page_size = world.tui_paged.page_size;
-    let mut cursor = newest_cursor(&messages, page_size);
-    while let Some(current) = cursor {
-        // Drive the production key/routing path, then require the real child
-        // socket to observe the exact request before returning a page.
-        drive(world, |h| {
-            h.press(Key::PageUp);
-        });
-        let mut commands = world
-            .tui_paged
-            .child_commands
-            .take()
-            .expect("recording child command receiver");
-        let handle = world
-            .tui_parity_rt
-            .as_ref()
-            .expect("harness runtime")
-            .handle()
-            .clone();
-        let expected = current.clone();
-        let command = handle.block_on(async {
-            tokio::time::timeout(std::time::Duration::from_secs(2), async {
-                loop {
-                    let line = commands.recv().await.expect("child command socket closed");
-                    let value: serde_json::Value =
-                        serde_json::from_str(&line).expect("child command is JSON");
-                    if value.get("type").and_then(|v| v.as_str()) == Some("get_messages")
-                        && value.get("before").and_then(|v| v.as_str()) == Some(expected.as_str())
-                    {
-                        break value;
-                    }
-                }
-            })
-            .await
-            .expect("TUI did not route the expected history page request to the child socket")
-        });
-        world.tui_paged.child_commands = Some(commands);
-        let request_id = command
-            .get("id")
-            .and_then(|v| v.as_str())
-            .expect("child history request carries a correlation id")
-            .to_string();
-        assert!(
-            request_id.starts_with("history-page-"),
-            "unexpected child history request id: {request_id}"
-        );
-
-        let page = page_json(&messages, page_size, Some(&current));
-        drive(world, |h| {
-            h.route(CHILD, get_messages_response(&request_id, page));
-        });
-        world.tui_paged.requested_older = true;
-        let end = messages.iter().position(|(id, _)| *id == current).unwrap();
-        let start = end.saturating_sub(page_size);
-        cursor = (start > 0).then(|| messages[start].0.clone());
-    }
-}
-
 #[when("the operator resumes the session in the TUI")]
 fn when_resume(world: &mut TuiWorld) {
+    // Drive the REAL resume path: acknowledge a resume_session so the app
+    // itself emits the transcript request, then answer that request using the
+    // id the app chose. Hard-coding the id here would leave resume request
+    // emission and correlation unexercised.
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some("resume".into()),
+            command: "resume_session".into(),
+            success: true,
+            data: Some(serde_json::json!({ "session": "resumed-session" })),
+            error: None,
+        });
+    });
+    let request_id = drain(world)
+        .iter()
+        .find_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            (value.get("type").and_then(|v| v.as_str()) == Some("get_messages"))
+                .then(|| value.get("id")?.as_str().map(str::to_owned))?
+        })
+        .expect("resume must request the restored transcript");
     let page = page_json(&world.tui_paged.messages, world.tui_paged.page_size, None);
     drive(world, |h| {
-        h.event(get_messages_response("resume-messages", page));
+        h.event(get_messages_response(&request_id, page));
     });
 }
 
@@ -551,7 +467,6 @@ fn when_request_stub_full(world: &mut TuiWorld) {
             request_id = next["id"].as_str().unwrap().to_string();
         }
         assert!(pages >= 3, "oversized fixture must exercise multiple pages");
-        world.tui_paged.recalled_full = Some(full);
         return;
     }
     drive(world, |h| {
@@ -596,7 +511,6 @@ fn then_older_availability_known(world: &mut TuiWorld) {
 }
 
 #[then("the chat should reveal the first session message")]
-#[then("the sub-agent chat should reveal the first sub-agent message")]
 fn then_reveals_first(world: &mut TuiWorld) {
     let first = world.tui_paged.messages.first().unwrap().1.clone();
     let frame = active_chat_text(world);
@@ -607,7 +521,6 @@ fn then_reveals_first(world: &mut TuiWorld) {
 }
 
 #[then("the revealed history should contain each session message exactly once")]
-#[then("the revealed sub-agent history should contain each sub-agent message exactly once")]
 #[then("the chat should continue to show every session message")]
 fn then_each_once(world: &mut TuiWorld) {
     let messages = world.tui_paged.messages.clone();
@@ -622,7 +535,6 @@ fn then_each_once(world: &mut TuiWorld) {
 }
 
 #[then("the revealed history should contain no interior gap")]
-#[then("the revealed sub-agent history should contain no interior gap")]
 fn then_no_gap(world: &mut TuiWorld) {
     let messages = world.tui_paged.messages.clone();
     let frame = active_chat_text(world);
@@ -717,19 +629,27 @@ fn then_old_cursor_not_requested(world: &mut TuiWorld) {
 #[then("the recalled content should replace the history entry with the complete oversized body")]
 fn then_stub_replaced(world: &mut TuiWorld) {
     let full = world.tui_paged.stub_full.clone().unwrap();
-    let frame = active_chat_text(world);
     if full.len() > quecto_line_io::PROTOCOL_LINE_CAP_BYTES {
-        assert_eq!(
-            world.tui_paged.recalled_full.as_deref(),
-            Some(full.as_str()),
-            "all oversized pages must be reassembled exactly"
+        // Observe the body the APP reassembled, not a test-local fixture: the
+        // rendered frame is width-wrapped, so an oversized body cannot be
+        // substring-matched against it.
+        let texts = drive(world, |h| h.master_assistant_texts());
+        assert!(
+            texts.iter().any(|text| text == &full),
+            "all oversized pages must be reassembled exactly into the transcript; \
+             got {} assistant entries with lengths {:?} (expected one of length {})",
+            texts.len(),
+            texts.iter().map(String::len).collect::<Vec<_>>(),
+            full.len()
         );
     } else {
+        let frame = active_chat_text(world);
         assert!(
             frame.contains(&full),
             "recalled content must replace the stub:\n{frame}"
         );
     }
+    let frame = active_chat_text(world);
     assert!(
         !frame.contains("recall available"),
         "the stub body must be gone after recall:\n{frame}"

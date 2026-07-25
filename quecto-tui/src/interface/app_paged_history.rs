@@ -12,65 +12,29 @@ pub(crate) struct StubRecall {
 
 pub(super) const GET_MESSAGE_PAGE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 4;
 
-/// This session's in-flight older-page request (#1061 review). Responses are
-/// applied only when their id matches `request_id` EXACTLY: `get_messages`
-/// responses are broadcast to every connected client, so a prefix match would
-/// let another client's page (at a different paging depth) — or our own page
-/// still in flight across a resume — prepend history at the wrong depth,
-/// silently creating an interior gap.
-#[derive(Debug, Clone)]
-pub(crate) struct PendingHistoryPage {
-    pub(super) request_id: String,
-    pub(super) before: String,
-    /// When the request was issued. Failure/no-data responses and enqueue
-    /// failures clear the pending entry, but a response that is simply never
-    /// delivered (peer died after accepting, line lost) has no such signal —
-    /// without an age bound the same-cursor dedupe would wedge paging for this
-    /// session until the next lifecycle reset (#1061 review follow-up).
-    pub(super) requested_at: std::time::Instant,
-}
-
-impl PendingHistoryPage {
-    /// Whether this in-flight request is old enough to presume lost and retry.
-    pub(super) fn is_stale(&self) -> bool {
-        self.requested_at.elapsed() >= PENDING_HISTORY_PAGE_RETRY
-    }
-}
-
-/// Age after which an unanswered older-page request may be re-issued. Generous
-/// against the ~10s inspector forward timeout so a slow-but-alive reply still
-/// wins the race and its late twin is dropped by the exact-id correlation.
-pub(super) const PENDING_HISTORY_PAGE_RETRY: std::time::Duration =
-    std::time::Duration::from_secs(30);
-
+// Correlation and retry for in-flight older-page requests live in
+// `domain::history_paging`. Responses are applied only when their id matches
+// EXACTLY: `get_messages` responses are broadcast to every connected client, so
+// a prefix match would let another client's page (at a different paging depth)
+// — or our own page still in flight across a resume — prepend history at the
+// wrong depth, silently creating an interior gap.
 impl SessionView {
     /// Whether `id` correlates to this session's own in-flight older-page request.
     pub(super) fn is_pending_history_page(&self, id: Option<&str>) -> bool {
-        id.is_some()
-            && id
-                == self
-                    .history_pending_page
-                    .as_ref()
-                    .map(|p| p.request_id.as_str())
+        self.history.is_pending_page(id)
     }
 
     /// Unblock retry after a failed/no-data older-page response (#1061 review).
     pub(super) fn clear_pending_history_page(&mut self) {
-        self.history_pending_page = None;
+        self.history.clear_pending_page();
     }
 }
 
 impl App {
     pub(super) fn rollback_failed_history_command(&mut self, command: &Command) {
         match command {
-            Command::GetMessages { id: Some(id), .. }
-                if self
-                    .master_session
-                    .history_pending_page
-                    .as_ref()
-                    .is_some_and(|pending| pending.request_id == *id) =>
-            {
-                self.master_session.clear_pending_history_page();
+            Command::GetMessages { id: Some(id), .. } => {
+                self.master_session.history.rollback_pending_page(id);
             }
             Command::GetMessage { id: Some(id), .. } => {
                 self.pending_stub_recall.remove(id);
@@ -94,37 +58,18 @@ impl App {
             return None;
         }
         let session = self.active_session_mut();
-        if !session.history_has_more_before || !session.chat.is_at_oldest_loaded_history() {
-            return None;
-        }
-        let before = session.history_before_cursor.clone()?;
-        // Dedupe an in-flight request for the same cursor — unless it has aged
-        // past the retry window (lost response), in which case a fresh request
-        // replaces it and the stale twin no longer correlates.
-        if session
-            .history_pending_page
-            .as_ref()
-            .is_some_and(|p| p.before == before && !p.is_stale())
-        {
-            return None;
-        }
-        session.history_page_seq = session.history_page_seq.wrapping_add(1);
-        // `get_messages` responses are broadcast to every connected client, so
-        // a per-session sequence alone (`history-page-1`) is not sufficient:
-        // two clients paging at different depths could accept each other's
-        // response. Include a process-unique token while retaining the sequence
-        // suffix for readable diagnostics.
-        let request_id = format!(
-            "history-page-{}-{}",
-            super::app_events::uuid_like(),
-            session.history_page_seq
-        );
-        session.history_pending_page = Some(PendingHistoryPage {
-            request_id: request_id.clone(),
-            before: before.clone(),
-            requested_at: std::time::Instant::now(),
-        });
-        Some((request_id, before))
+        let at_oldest = session.chat.is_at_oldest_loaded_history();
+        let request = session.history.next_page_request(
+            at_oldest,
+            std::time::Instant::now(),
+            // `get_messages` responses are broadcast to every connected client,
+            // so a per-session sequence alone (`history-page-1`) is not
+            // sufficient: two clients paging at different depths could accept
+            // each other's response. Include a process-unique token while
+            // retaining the sequence suffix for readable diagnostics.
+            |seq| format!("history-page-{}-{}", super::app_events::uuid_like(), seq),
+        )?;
+        Some((request.request_id, request.before))
     }
 
     /// Auto-recall (#1061): request full content for any demoted history stub
@@ -216,10 +161,13 @@ impl App {
             self.failed_stub_recalls.insert(recall_key);
             return true;
         }
-        let update = super::range_accumulator::RangeAccumulator::new(recall.content, recall.offset)
-            .apply(data);
+        let update = crate::application::range_accumulator::RangeAccumulator::new(
+            recall.content,
+            recall.offset,
+        )
+        .apply(data);
         let accumulated = match update {
-            Ok(super::range_accumulator::RangeUpdate::Continue {
+            Ok(crate::application::range_accumulator::RangeUpdate::Continue {
                 content,
                 next_offset,
             }) => {
@@ -243,7 +191,7 @@ impl App {
                 });
                 return true;
             }
-            Ok(super::range_accumulator::RangeUpdate::Complete(content)) => content,
+            Ok(crate::application::range_accumulator::RangeUpdate::Complete(content)) => content,
             Err(_) => {
                 self.failed_stub_recalls.insert(recall_key);
                 return true;
@@ -275,11 +223,7 @@ impl App {
         // with the message refs so a late page from the prior conversation
         // cannot prepend into the replacement transcript, and the new
         // conversation cannot request the prior cursor.
-        self.master_session.history_pending_page = None;
-        self.master_session.history_before_cursor = None;
-        self.master_session.history_has_more_before = false;
-        self.master_session.partial_backfill_len = None;
-        self.master_session.history_backfilled = false;
+        self.master_session.history.reset();
     }
 
     /// Whether a `get_messages` payload carries paged-history metadata. #1061
@@ -305,8 +249,7 @@ impl App {
         status: &str,
     ) {
         self.master_session.chat.clear();
-        self.master_session.history_backfilled = false;
-        self.master_session.partial_backfill_len = None;
+        self.master_session.history.reopen_backfill();
         // The cursors themselves are reconciled from `data` below.
         Self::reconcile_master_backfill_history(&mut self.master_session, data, false);
         self.master_session.chat.add_entry(ChatEntry::Status {

@@ -153,8 +153,8 @@ async fn subagent_older_history_request_is_disabled_after_legacy_backfill_remova
     h.app_mut().select_agent(Some("worker"));
     {
         let session = h.app_mut().active_session_mut();
-        session.history_has_more_before = true;
-        session.history_before_cursor = Some("child-cursor".into());
+        session.history.has_more_before = true;
+        session.history.before_cursor = Some("child-cursor".into());
         session.chat.add_entry(ChatEntry::User {
             text: "child".into(),
         });
