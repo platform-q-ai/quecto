@@ -909,7 +909,7 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
 
 /// Seed: production raw `serde_json` parsing sites in TUI feature/view modules.
 /// Lower this as call sites migrate behind mappers. Never raise it.
-const TUI_RAW_JSON_SITE_SEED: usize = 130;
+const TUI_RAW_JSON_SITE_SEED: usize = 120;
 
 /// Seed: production feature/view *usages* of `infrastructure::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.

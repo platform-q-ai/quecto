@@ -591,9 +591,17 @@ async fn a_control_sequence_split_across_recall_pages_is_sanitized_after_reassem
         .iter()
         .find(|text| text.contains("RED"))
         .expect("the recalled body must reach the transcript");
+    // Assert the PAYLOAD, not just the absence of an ESC byte: a per-page
+    // sanitizer would consume page one's dangling `ESC[` via the
+    // unterminated-CSI branch, leaving no ESC but a visible literal `31m`.
     assert!(
         !recalled.contains('\u{1b}'),
         "the rejoined escape must be sanitized after reassembly, got {recalled:?}"
+    );
+    assert!(
+        recalled.ends_with("RED") && !recalled.contains("31m"),
+        "sanitizing per page would leave the escape's tail as literal text; \
+         the sequence must be neutralised as a whole, got {recalled:?}"
     );
 }
 

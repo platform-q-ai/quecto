@@ -23,6 +23,16 @@ pub struct TurnOutcome<'a> {
 }
 
 impl TurnOutcome<'_> {
+    /// Whether recovery is forced WITHOUT inspecting the rendered text.
+    ///
+    /// An unmatched tool call means the stream was cut mid-turn, so the text
+    /// cannot be trusted however plausible it looks — and therefore need not be
+    /// materialised at all. Callers use this to avoid cloning a large assistant
+    /// body for a decision that does not read it.
+    pub fn forced_without_text(refs: &[String], open_tool_calls: usize) -> bool {
+        !refs.is_empty() && open_tool_calls > 0
+    }
+
     /// Whether this turn must be rebuilt from its refs.
     ///
     /// An unmatched tool call FORCES recovery: the stream was cut mid-turn, so
@@ -49,6 +59,20 @@ impl TurnOutcome<'_> {
         let expected_refs = self.tools_this_turn.saturating_mul(2).saturating_add(1);
         self.refs.len() != expected_refs
     }
+}
+
+/// Walk `responses` in `refs` order — the order messages were streamed in,
+/// which is NOT the order they arrive in. Refs without a response are skipped;
+/// callers that must not tolerate gaps gate on completeness first.
+///
+/// This is the single ordered-walk primitive: both end-of-turn recovery and
+/// ledger sync project an ordered id list plus an id-keyed payload map into a
+/// transcript, so the ordering rule lives here rather than in each caller.
+pub fn ordered_by_refs<'a, T>(
+    refs: &'a [String],
+    responses: &'a HashMap<String, T>,
+) -> impl Iterator<Item = &'a T> {
+    refs.iter().filter_map(|r| responses.get(r))
 }
 
 /// A turn awaiting rebuild: every ref must respond before the chat range is
@@ -88,7 +112,7 @@ impl<T> RecoveryBatch<T> {
     /// Responses in REF order — the order the turn was streamed in, which is
     /// not the arrival order.
     pub fn ordered_responses(&self) -> impl Iterator<Item = &T> {
-        self.refs.iter().filter_map(|r| self.responses.get(r))
+        ordered_by_refs(&self.refs, &self.responses)
     }
 }
 

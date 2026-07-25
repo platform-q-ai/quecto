@@ -139,3 +139,25 @@ fn responses_are_read_back_in_ref_order_not_arrival_order() {
         "the turn must be rebuilt in stream order, not response-arrival order"
     );
 }
+
+#[test]
+fn the_text_free_fast_path_never_disagrees_with_the_full_policy() {
+    // `forced_without_text` lets callers skip materialising a large assistant
+    // body. It must only ever say "forced" when the full policy agrees, or the
+    // optimisation would change behaviour.
+    for ref_count in 0..3 {
+        for open_tool_calls in 0..3 {
+            let r = refs(ref_count);
+            let mut o = outcome(&r, "a complete body", 0);
+            o.open_tool_calls = open_tool_calls;
+            // Make the non-forced signals all say "complete".
+            o.tools_this_turn = ref_count.saturating_sub(1) / 2;
+            let forced = TurnOutcome::forced_without_text(&r, open_tool_calls);
+            assert!(
+                !forced || o.needs_recovery(),
+                "fast path forced recovery where the policy would not \
+                 (refs={ref_count}, open_tool_calls={open_tool_calls})"
+            );
+        }
+    }
+}

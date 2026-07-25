@@ -440,7 +440,7 @@ Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-Seeded at 130 sites. The ratchet's failure message reprints this inventory in
+Seeded at 120 sites (lowered from 130 in #1221 when `range_accumulator.rs` and its 10 sites moved to `application/`, out of this ratchet's `interface/` scan root — the sites did not disappear, they left the measured surface). The ratchet's failure message reprints this inventory in
 burn-down order, so it stays accurate without manual upkeep:
 
 | Module | Sites |
@@ -449,7 +449,7 @@ burn-down order, so it stays accurate without manual upkeep:
 | `interface/app_events.rs` | 20 |
 | `interface/app_subagent_stream.rs` | 19 |
 | `interface/components/chat_render.rs` | 17 |
-| `interface/range_accumulator.rs` | 10 |
+
 | `interface/app_paged_history.rs` | 6 |
 | `interface/ledger_sync.rs` | 6 |
 | `interface/app_rewind.rs` | 5 |
@@ -632,8 +632,38 @@ changes are the test-module declarations and the new harness probe.
 | Performance | Page correlation | Was an `Option<&str>` equality; still an `Option<&str>` equality inside `is_pending_page`. No allocation, no map lookup added. | PASS |
 | Performance | Backfill reconcile | Still one `Vec<ChatEntry>` per payload and one prepend/replace pass. The policy returns a `PrefixPlan` enum (a `Copy`, allocation-free value) and the interface performs the single chat mutation; previously-loaded entries are still never recomputed. | PASS |
 | Performance | Recovery trigger | `TurnOutcome` borrows `refs` and `assistant_text` (`&'a [String]`, `&'a str`) — it is a view, not a copy, so the per-turn heuristic allocates nothing. Previously the same fields were read directly off `App`. | PASS |
-| Performance | Batch completion | `is_complete()` is the same `len == len` comparison; `ordered_responses()` is a lazy iterator over existing refs, replacing an equivalent walk. Still one `replace_range` per batch, never incremental splices. | PASS |
+| Performance | Batch completion | `is_complete()` is the same `len == len` comparison. `ordered_by_refs` is a lazy iterator that now BACKS the ref-ordered walk `recovered_chat_entries` previously hand-rolled, so ordering has one implementation rather than two; the walk itself is unchanged (same skip on an absent ref, same single pass). Still one `replace_range` per batch, never incremental splices. | PASS |
 | Quantitative | Trigger-logic duplication | The force-recovery check (`open_tool_calls > 0`) existed at 2 call sites (master + sub-agent); it now exists at 1, inside the policy. Both paths route through `TurnOutcome::needs_recovery`. | PASS |
 | Quantitative | Production LOC | Conversation production code: 828 lines before (`app_paged_history` 316 + `app_message_recovery` 440 + `range_accumulator` 72) → 1035 after (259 + 416 + 76 + `history_paging` 187 + `turn_recovery` 97). Net +207. The issue sets no LOC target; the growth is doc comments explaining the invariants (why exact-match correlation, why an open tool call forces recovery) that were previously implicit. Interface files themselves shrank by 81 lines. | RECORDED |
 | Quantitative | Testability criterion | 23 new tests construct the policy with no terminal, concrete client, raw JSON, or Tokio runtime. `grep` for `serde_json|ratatui|tokio|crossterm|Client` across `src/domain/*.rs` production files returns nothing. | PASS |
 | Structural | `ChatEntry` stays a view projection | `grep -rn ChatEntry src/domain/ src/application/` returns nothing: policy vocabulary is `PageFacts`, `PrefixPlan`, `TurnOutcome`, `RecoveryBatch<T>`. | PASS |
+
+## Review-round fixes for conversation history/recovery slice (#1221)
+
+Seven narrow finders reviewed the PR in parallel; every consequential finding
+was then dispatched to an adversarial verifier prompted to REFUTE it. Two were
+refuted and correctly not acted on: `HistoryPaging`'s `pub` fields (zero
+production writers — production uses methods exclusively, and `App.history` is
+private, so no external consumer can reach a live instance) and
+`is_complete()`'s count-vs-per-ref comparison (byte-identical to the
+pre-refactor check, and unreachable since `messageRefs` carries unique ids).
+
+Five findings survived and are fixed:
+
+| Severity | Finding | Fix | Mutation evidence |
+|---|---|---|---|
+| HIGH | Moving `range_accumulator.rs` out of `interface/` dropped its 10 raw-JSON sites out of `tui_raw_json_parsing_sites_do_not_grow`'s scan root (measured 130 → 120) while the seed stayed 130, silently allowing 10 new interface-layer sites. | Lowered `TUI_RAW_JSON_SITE_SEED` to 120. | Adding 10 raw `serde_json` sites to `interface/app_effort.rs` PASSED before the fix and FAILS after it. |
+| HIGH | `a_control_sequence_split_across_recall_pages_is_sanitized_after_reassembly` was a deletion detector, not a policy detector: a per-page sanitizer consumes the dangling `ESC[` via the unterminated-CSI branch, leaving no ESC byte, so the sole assertion passed on the policy it documented. | Assert the payload too (`ends_with("RED") && !contains("31m")`). | Sanitizing per page now FAILS the test (it passed before); deleting the post-reassembly sanitize still FAILS. Both mutations caught. |
+| MED | `ordered_responses()` had zero production consumers; `recovered_chat_entries` hand-rolled the same ref-ordered walk, so the ordering invariant was pinned on code that never ships. | Extracted `ordered_by_refs` as the single ordered-walk primitive and routed `recovered_chat_entries` through it. Ordering now has one implementation. | Sorting ids instead of walking ref order FAILS `recovered_chat_entries_handles_suppressed_calls_errors_and_unknown_roles` — a test exercising the PRODUCTION walk. |
+| MED | The parity-evidence row claimed `ordered_responses()` replaced "an equivalent walk"; it replaced nothing. | Row corrected to state what actually changed. Also fixed two stale doc lines from the move ("Seeded at 130", the old `interface/` path). | n/a (documentation). |
+| LOW | The refactor lost a `&&` short-circuit: `latest_assistant_text()` (which clones the whole assistant body) became unconditional at the master site. Only the master site regressed — the sub-agent site was already unconditional. | Added `TurnOutcome::forced_without_text`, so the text is materialised lazily and the force rule stays INSIDE the policy rather than being re-duplicated at the call site. | Dropping the empty-refs guard from the fast path FAILS `the_text_free_fast_path_never_disagrees_with_the_full_policy`. |
+
+One finding was raised as HIGH and declined as out of scope: `app_response.rs`
+correlates resume/rewind responses by FIXED literal ids (`resume-messages`,
+`rewind-refresh`), which are broadcast to every connected client, so a second
+TUI can have its transcript replaced by a resume it never issued. The verifier
+confirmed the transport fan-out is real (`uds.rs:168` selects
+`EventSink::Broadcast` in multi-client mode) — but also confirmed it is
+PRE-EXISTING and identical at the parent commit. Fixing it would be a
+behavioural change, which this zero-behaviour-change slice forbids. Filed as
+follow-up rather than smuggled in here.

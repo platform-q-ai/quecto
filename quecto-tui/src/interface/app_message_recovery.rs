@@ -30,16 +30,24 @@ impl App {
         if refs.is_empty() {
             return;
         }
-        let assistant_text = self.latest_assistant_text();
-        if !(crate::domain::turn_recovery::TurnOutcome {
-            refs,
-            assistant_text: &assistant_text,
-            tools_this_turn: self.tools_this_turn,
-            open_tool_calls: self.open_tool_calls,
-            expected_content_len,
-        })
-        .needs_recovery()
-        {
+        // Fetch the rendered text lazily: the policy can force recovery without
+        // reading it, and `latest_assistant_text` clones the whole assistant
+        // body — which can be megabytes for an inlined command dump.
+        use crate::domain::turn_recovery::TurnOutcome;
+        let open_tool_calls = self.open_tool_calls;
+        let tools_this_turn = self.tools_this_turn;
+        let needs_recovery = TurnOutcome::forced_without_text(refs, open_tool_calls) || {
+            let assistant_text = self.latest_assistant_text();
+            TurnOutcome {
+                refs,
+                assistant_text: &assistant_text,
+                tools_this_turn,
+                open_tool_calls,
+                expected_content_len,
+            }
+            .needs_recovery()
+        };
+        if !needs_recovery {
             return;
         }
         if refs.iter().any(|message_id| {
@@ -218,10 +226,9 @@ pub(crate) fn recovered_chat_entries(
     let mut entries = Vec::new();
     let mut tools = std::collections::HashMap::<String, usize>::new();
     let mut suppressed_calls = std::collections::HashSet::<String>::new();
-    for message_id in refs {
-        let Some(data) = responses.get(message_id) else {
-            continue;
-        };
+    // Ordering is the domain's rule, not this function's: walk in ref order,
+    // never arrival order.
+    for data in crate::domain::turn_recovery::ordered_by_refs(refs, responses) {
         let role = data.get("role").and_then(|v| v.as_str()).unwrap_or("");
         let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("");
         match role {
