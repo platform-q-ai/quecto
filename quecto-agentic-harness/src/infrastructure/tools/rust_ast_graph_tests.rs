@@ -177,12 +177,28 @@ async fn depth_and_include_bodies_controls_are_exercised() {
             .is_empty()
     );
 
+    let without_bodies = call(&tool, r#"{"action":"query","query":"functions","limit":5}"#).await;
+    assert!(
+        !without_bodies["results"][0]["snippet"]
+            .as_str()
+            .unwrap()
+            .contains("std::ptr::read")
+    );
+
     let with_bodies = call(
         &tool,
         r#"{"action":"query","query":"functions","include_bodies":true,"limit":5}"#,
     )
     .await;
     assert!(with_bodies.to_string().contains("std::ptr::read"));
+
+    let no_snippet = call(
+        &tool,
+        r#"{"action":"query","query":"unsafe_blocks","snippet_lines":0,"limit":1}"#,
+    )
+    .await;
+    let snippet = no_snippet["results"][0]["snippet"].as_str().unwrap();
+    assert!(snippet.is_empty());
 
     let def = tool.definition();
     assert!(def.parameters_schema.contains("depth"));
@@ -239,6 +255,15 @@ async fn missing_fields_and_unknown_action_are_tool_errors() {
     let missing = tool.execute(r#"{"action":"find_symbol"}"#).await.unwrap();
     assert!(missing.is_error);
     assert!(missing.content.contains("missing required field"));
+    assert!(!missing.content.contains("partial parse diagnostic"));
+
+    let missing_query = tool.execute(r#"{"action":"query"}"#).await.unwrap();
+    assert!(missing_query.is_error);
+    assert!(
+        missing_query
+            .content
+            .contains("missing required field 'query'")
+    );
 
     let unknown = tool.execute(r#"{"action":"wat"}"#).await.unwrap();
     assert!(unknown.is_error);
@@ -351,6 +376,24 @@ async fn symlinked_rs_files_outside_sandbox_are_skipped() {
     .await;
     assert!(v["matches"].as_array().unwrap().is_empty());
     assert!(v.to_string().contains("outside sandbox"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinked_directories_outside_sandbox_are_skipped() {
+    let (tool, tmp) = tool_with_workspace();
+    let outside = TempDir::new().unwrap();
+    std::fs::write(
+        outside.path().join("secret.rs"),
+        "pub fn leaked_dir_secret() {}
+",
+    )
+    .unwrap();
+    symlink_dir(outside.path(), &tmp.path().join("src/external"));
+
+    let v = call(&tool, r#"{"action":"overview","limit":10}"#).await;
+    assert!(v.to_string().contains("skipped directory"));
+    assert!(!v.to_string().contains("leaked_dir_secret"));
 }
 
 #[cfg(unix)]

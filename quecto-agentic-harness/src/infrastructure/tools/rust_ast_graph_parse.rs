@@ -13,6 +13,24 @@ use super::rust_ast_graph_text::{
 const MAX_RUST_FILES: usize = 2_000;
 const MAX_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_VISITED_DIRS: usize = 5_000;
+const MAX_SCANNED_ENTRIES: usize = 50_000;
+
+#[derive(Default)]
+struct TraversalBudget {
+    visited_dirs: usize,
+    scanned_entries: usize,
+    exhausted: bool,
+}
+
+struct CollectContext<'a> {
+    workspace: &'a Path,
+    sandbox: &'a Sandbox,
+    out: &'a mut Vec<PathBuf>,
+    diagnostics: &'a mut Vec<Diagnostic>,
+    visited_dirs: &'a mut HashSet<PathBuf>,
+    budget: &'a mut TraversalBudget,
+}
 
 pub(super) fn build_graph(
     scope: &Path,
@@ -26,13 +44,16 @@ pub(super) fn build_graph(
     };
     let mut files = Vec::new();
     let mut visited_dirs = HashSet::new();
-    collect_rs(
-        scope,
+    let mut budget = TraversalBudget::default();
+    let mut ctx = CollectContext {
+        workspace,
         sandbox,
-        &mut files,
-        &mut graph.diagnostics,
-        &mut visited_dirs,
-    )?;
+        out: &mut files,
+        diagnostics: &mut graph.diagnostics,
+        visited_dirs: &mut visited_dirs,
+        budget: &mut budget,
+    };
+    collect_rs(scope, &mut ctx)?;
     files.sort();
     let mut total_bytes = 0u64;
     for abs in files {
@@ -110,19 +131,14 @@ fn delimiter_diagnostic(masked: &str) -> Option<String> {
     })
 }
 
-fn collect_rs(
-    path: &Path,
-    sandbox: &Sandbox,
-    out: &mut Vec<PathBuf>,
-    diagnostics: &mut Vec<Diagnostic>,
-    visited_dirs: &mut HashSet<PathBuf>,
-) -> Result<(), String> {
-    let validated = sandbox
+fn collect_rs(path: &Path, ctx: &mut CollectContext<'_>) -> Result<(), String> {
+    let validated = ctx
+        .sandbox
         .validate_path(&path.to_string_lossy())
         .map_err(|e| e.to_string())?;
     if validated.is_file() {
         if validated.extension().and_then(|e| e.to_str()) == Some("rs") {
-            push_candidate(&validated, sandbox, out, diagnostics);
+            push_candidate(&validated, ctx.sandbox, ctx.out, ctx.diagnostics);
         }
         return Ok(());
     }
@@ -135,28 +151,55 @@ fn collect_rs(
     let canonical = validated
         .canonicalize()
         .map_err(|e| format!("failed to resolve {}: {e}", validated.display()))?;
-    if !visited_dirs.insert(canonical) {
-        diagnostics.push(Diagnostic {
-            file: rel_path(&validated, &validated),
+    if !ctx.visited_dirs.insert(canonical) {
+        ctx.diagnostics.push(Diagnostic {
+            file: rel_path(&validated, ctx.workspace),
             message: "skipped already-visited directory to avoid symlink cycle".into(),
         });
+        return Ok(());
+    }
+    ctx.budget.visited_dirs += 1;
+    if ctx.budget.visited_dirs > MAX_VISITED_DIRS {
+        if !ctx.budget.exhausted {
+            ctx.diagnostics.push(Diagnostic {
+                file: rel_path(&validated, ctx.workspace),
+                message: format!("stopped after MAX_VISITED_DIRS={MAX_VISITED_DIRS}"),
+            });
+            ctx.budget.exhausted = true;
+        }
         return Ok(());
     }
     let entries = std::fs::read_dir(&validated)
         .map_err(|e| format!("failed to read {}: {e}", validated.display()))?;
     for entry in entries.flatten() {
+        if ctx.budget.scanned_entries >= MAX_SCANNED_ENTRIES {
+            if !ctx.budget.exhausted {
+                ctx.diagnostics.push(Diagnostic {
+                    file: rel_path(&validated, ctx.workspace),
+                    message: format!("stopped after MAX_SCANNED_ENTRIES={MAX_SCANNED_ENTRIES}"),
+                });
+                ctx.budget.exhausted = true;
+            }
+            break;
+        }
+        ctx.budget.scanned_entries += 1;
         let p = entry.path();
         let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if name == ".git" || name == "target" || name == ".quecto" {
+        if is_skipped_dir(name) {
             continue;
         }
         if p.is_dir() {
-            collect_rs(&p, sandbox, out, diagnostics, visited_dirs)?;
+            if let Err(e) = collect_rs(&p, ctx) {
+                ctx.diagnostics.push(Diagnostic {
+                    file: rel_path(&p, ctx.workspace),
+                    message: format!("skipped directory: {e}"),
+                });
+            }
         } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
-            push_candidate(&p, sandbox, out, diagnostics);
+            push_candidate(&p, ctx.sandbox, ctx.out, ctx.diagnostics);
         }
-        if out.len() >= MAX_RUST_FILES {
-            diagnostics.push(Diagnostic {
+        if ctx.out.len() >= MAX_RUST_FILES {
+            ctx.diagnostics.push(Diagnostic {
                 file: rel_path(&validated, &validated),
                 message: format!("stopped after MAX_RUST_FILES={MAX_RUST_FILES}"),
             });
@@ -164,6 +207,21 @@ fn collect_rs(
         }
     }
     Ok(())
+}
+
+fn is_skipped_dir(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | "target"
+            | ".quecto"
+            | "node_modules"
+            | "vendor"
+            | "dist"
+            | "build"
+            | ".next"
+            | ".cache"
+    )
 }
 
 fn push_candidate(

@@ -62,6 +62,9 @@ impl Tool for RustAstGraphTool {
                     )));
                 }
             };
+            if let Err(e) = validate_action_args(&args) {
+                return Ok(error(e));
+            }
             let limit = args.limit.unwrap_or(50).clamp(1, 200);
             let depth = args.depth.unwrap_or(1).clamp(0, 5);
             let include_bodies = args.include_bodies.unwrap_or(false);
@@ -120,7 +123,7 @@ impl Tool for RustAstGraphTool {
                     let Some(q) = args.query.as_deref() else {
                         return Ok(error("missing required field 'query' for query action"));
                     };
-                    graph.query(q, limit, snippet_lines)
+                    graph.query(q, limit, snippet_lines, include_bodies)
                 }
                 other => Err(format!(
                     "unsupported action '{other}'. Expected overview, find_symbol, neighbors, references, calls, or query"
@@ -149,6 +152,33 @@ struct Args {
     depth: Option<usize>,
     include_bodies: Option<bool>,
     snippet_lines: Option<usize>,
+}
+
+fn validate_action_args(args: &Args) -> Result<(), String> {
+    match args.action.as_str() {
+        "overview" => Ok(()),
+        "find_symbol" if args.symbol.is_none() => {
+            Err("missing required field 'symbol' for find_symbol".into())
+        }
+        "find_symbol" => Ok(()),
+        "neighbors" if args.symbol.is_none() => {
+            Err("missing required field 'symbol' for neighbors".into())
+        }
+        "neighbors" => Ok(()),
+        "references" if args.symbol.is_none() => {
+            Err("missing required field 'symbol' for references".into())
+        }
+        "references" => Ok(()),
+        "calls" if args.symbol.is_none() => Err("missing required field 'symbol' for calls".into()),
+        "calls" => Ok(()),
+        "query" if args.query.is_none() => {
+            Err("missing required field 'query' for query action".into())
+        }
+        "query" => Ok(()),
+        other => Err(format!(
+            "unsupported action '{other}'. Expected overview, find_symbol, neighbors, references, calls, or query"
+        )),
+    }
 }
 
 fn resolve_scope(
@@ -238,6 +268,14 @@ pub(super) struct SymbolParts<'a> {
     pub(super) trait_name: Option<String>,
     pub(super) for_type: Option<String>,
     pub(super) snippet_lines: usize,
+}
+
+fn symbol_for_response(symbol: &Symbol, snippet_lines: usize, include_bodies: bool) -> Symbol {
+    let mut out = symbol.clone();
+    if !include_bodies || snippet_lines == 0 {
+        out.snippet.clear();
+    }
+    out
 }
 
 impl Graph {
@@ -406,7 +444,13 @@ impl Graph {
             diagnostics: &self.diagnostics,
         })
     }
-    fn query(&self, q: &str, limit: usize, snippet_lines: usize) -> Result<String, String> {
+    fn query(
+        &self,
+        q: &str,
+        limit: usize,
+        snippet_lines: usize,
+        include_bodies: bool,
+    ) -> Result<String, String> {
         #[derive(Serialize)]
         struct Resp<'a> {
             derived_from: &'static str,
@@ -423,7 +467,10 @@ impl Graph {
                     .filter(|s| s.kind == "fn" && s.signature.contains("async fn"))
                     .take(limit)
                 {
-                    results.push(serde_json::to_value(s).unwrap());
+                    results.push(
+                        serde_json::to_value(symbol_for_response(s, snippet_lines, include_bodies))
+                            .unwrap(),
+                    );
                 }
             }
             "trait_impls" => {
@@ -433,7 +480,10 @@ impl Graph {
                     .filter(|s| s.kind == "impl" && s.trait_name.is_some())
                     .take(limit)
                 {
-                    results.push(serde_json::to_value(s).unwrap());
+                    results.push(
+                        serde_json::to_value(symbol_for_response(s, snippet_lines, include_bodies))
+                            .unwrap(),
+                    );
                 }
             }
             "public_api" => {
@@ -443,12 +493,18 @@ impl Graph {
                     .filter(|s| s.visibility.starts_with("pub"))
                     .take(limit)
                 {
-                    results.push(serde_json::to_value(s).unwrap());
+                    results.push(
+                        serde_json::to_value(symbol_for_response(s, snippet_lines, include_bodies))
+                            .unwrap(),
+                    );
                 }
             }
             "functions" => {
                 for s in self.symbols.iter().filter(|s| s.kind == "fn").take(limit) {
-                    results.push(serde_json::to_value(s).unwrap());
+                    results.push(
+                        serde_json::to_value(symbol_for_response(s, snippet_lines, include_bodies))
+                            .unwrap(),
+                    );
                 }
             }
             "unsafe_blocks" => return Ok(self.unsafe_blocks(limit, snippet_lines)),
