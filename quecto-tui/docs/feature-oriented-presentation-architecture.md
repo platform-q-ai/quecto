@@ -800,3 +800,37 @@ and left the same defect live one directory away, and encoded two wrong counts
 in the very table meant to prevent that. A rule is not a remedy until it is
 applied exhaustively to every test the claim covers, and the artefact recording
 it is itself measured rather than asserted.
+
+### Round 5: the prose remedy replaced with an executable one
+
+Round 5 swept 44 negative-asserting tests and inverted 7 positive ones across
+all five test files, running 55 isolated single-guard mutations. It found that
+round 4 had again stopped one function short.
+
+| Severity | Finding | Resolution |
+|---|---|---|
+| HIGH | `HistoryPaging::reset` and `reopen_backfill` had NEVER been mutated by any round. Three of their guards were pinned only by vacuous assertions: the fixtures left each field already in its post-condition state before the method ran. Deleting `reset`'s `backfilled = false` or `reopen_backfill`'s `partial_prefix_len = None` killed ZERO tests workspace-wide. Production impact: a resume/rewind/clear leaves the latch set and every future attach-backfill is suppressed; a stale prefix length feeds the next `ReplacePrefix` and deletes live transcript entries — the round-1 HIGH's exact bug class. | Both tests rewritten so every cleared field is non-default beforehand, plus `reset_clears_a_latched_guard_that_has_no_partial_prefix`. All seven lifecycle guards now die when removed. |
+| HIGH | The round-4 doc claim "all 24 isolated guard-removal mutations killed their named test and no other" was unfalsifiable — it enumerated no mutation, and "and no other" was contradicted by the guard-isolation table two paragraphs above it. | Claim deleted and replaced by `scripts/check-guard-manifest.sh`. |
+
+**The remedy is now executable, not prose.** `scripts/check-guard-manifest.sh`
+enumerates every guard in the two policy files; deleting each line must fail at
+least one test. Running it immediately found a **ninth** unpinned guard that
+five rounds of manual review had missed — `reconcile`'s keep-open arm never
+observably unlatched `backfilled`, because no test fed a partial page to an
+already-latched backfill. Fixed by
+`a_partial_page_unlatches_a_previously_completed_backfill`.
+
+Writing the manifest also exposed two bugs in the manifest itself, both of the
+same family the reviews kept finding: it reported a compile failure as a
+surviving guard (a `sed` line-deletion inside a multi-line boolean does not
+parse), and it matched cargo's `error: test failed` summary — which appears on
+every legitimate kill — as a build failure. Both now distinguished explicitly,
+with a `check_replace` form for multi-line guards.
+
+**Conclusion after five rounds.** Every round independently confirmed the
+extraction introduces no behavioural regression; all findings were in the
+safety net and the documentation, never in the shipped refactor. The recurring
+failure was that each round applied a correct rule to exactly the files the
+previous round's findings pointed at. The scoping was the defect, not the
+rigour — which is why the remedy had to become a checked-in enumeration that
+cannot silently omit a function. An unlisted guard is now an unverified guard.

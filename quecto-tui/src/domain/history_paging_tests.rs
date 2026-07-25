@@ -191,19 +191,42 @@ fn a_later_snapshot_replaces_the_whole_loaded_prefix() {
     assert!(p.backfilled);
 }
 
+/// Every field `reset` clears must be NON-DEFAULT before it runs, or the
+/// assertions are vacuous: an earlier version seeded state whose `reconcile`
+/// had already nulled `pending_page` and never latched `backfilled`, so
+/// deleting either line from `reset` killed no test at all.
 #[test]
 fn reset_drops_every_cursor_and_the_in_flight_page() {
-    let mut p = paging(Some("m5"), true);
-    request(&mut p, true, Instant::now());
-    p.reconcile(&facts(3, true, false, false));
+    let mut p = HistoryPaging::default();
+    // Latch the backfill and record a prefix (a COMPLETE page), then take a
+    // partial page so a cursor and an in-flight request also exist.
+    p.reconcile(&facts(3, false, false, false));
+    assert!(p.backfilled, "arrange: the guard must be latched");
+    p.reconcile(&facts(2, true, false, true));
+    assert_eq!(
+        p.partial_prefix_len,
+        Some(2),
+        "arrange: a prefix is recorded"
+    );
+    let issued = request(&mut p, true, Instant::now()).expect("arrange: a page is in flight");
+    assert!(p.is_pending_page(Some(&issued.request_id)));
+    p.backfilled = true;
 
     p.reset();
 
-    assert_eq!(p.pending_page, None);
+    assert_eq!(p.pending_page, None, "an in-flight page must be forgotten");
+    assert!(
+        !p.is_pending_page(Some(&issued.request_id)),
+        "its response must no longer correlate"
+    );
     assert_eq!(p.before_cursor, None);
     assert!(!p.has_more_before);
     assert_eq!(p.partial_prefix_len, None);
-    assert!(!p.backfilled);
+    assert!(
+        !p.backfilled,
+        "a latched guard must be cleared, or the swapped conversation never \
+         backfills again"
+    );
     // The sequence deliberately survives: it keeps correlation ids unique
     // across a lifecycle reset, so a page still in flight from BEFORE the reset
     // can never correlate with one issued after it.
@@ -213,20 +236,49 @@ fn reset_drops_every_cursor_and_the_in_flight_page() {
     );
 }
 
+/// `reset` must clear the latch even when no partial prefix is present — the
+/// two fields are independent and were previously only ever cleared together.
+#[test]
+fn reset_clears_a_latched_guard_that_has_no_partial_prefix() {
+    let mut p = HistoryPaging::default();
+    p.reconcile(&facts(3, false, false, false));
+    assert!(p.backfilled && p.partial_prefix_len.is_none(), "arrange");
+
+    p.reset();
+
+    assert!(!p.backfilled, "the latch must be cleared on its own");
+}
+
+/// `reopen_backfill` must clear a NON-EMPTY partial prefix. Latching via a
+/// complete page leaves `partial_prefix_len` already `None`, which made the
+/// old assertion vacuous — deleting the line killed no test.
 #[test]
 fn reopen_backfill_keeps_cursors_but_unlatches_the_guard() {
     let mut p = HistoryPaging::default();
-    p.reconcile(&facts(3, false, false, false));
-    assert!(p.backfilled);
+    p.reconcile(&facts(3, true, false, false));
+    assert_eq!(
+        p.partial_prefix_len,
+        Some(3),
+        "arrange: a prefix is recorded"
+    );
+    p.backfilled = true;
 
     p.reopen_backfill();
 
     assert!(!p.backfilled);
-    assert_eq!(p.partial_prefix_len, None);
+    assert_eq!(
+        p.partial_prefix_len, None,
+        "a stale prefix length would feed the next ReplacePrefix and delete \
+         live transcript entries below the backfill"
+    );
     assert_eq!(
         p.before_cursor.as_deref(),
         Some("cursor"),
         "a wholesale replacement keeps the cursors its payload published"
+    );
+    assert!(
+        p.has_more_before,
+        "and keeps the advertised-more flag, so paging stays reachable"
     );
 }
 
@@ -389,4 +441,30 @@ fn an_own_older_page_with_no_recorded_prefix_that_closes_the_backfill() {
         p.partial_prefix_len, None,
         "a closed backfill leaves no partial prefix"
     );
+}
+
+/// A latched backfill receiving a partial page must be UN-latched. This is the
+/// only path on which `reconcile`'s keep-open arm can observably change
+/// `backfilled`, so without it that assignment is unpinned: deleting it kept
+/// the whole suite green.
+///
+/// Reachable in production: an attach completes the backfill, the session is
+/// re-attached, and the fresh snapshot is trimmed or advertises more history.
+#[test]
+fn a_partial_page_unlatches_a_previously_completed_backfill() {
+    let mut p = HistoryPaging::default();
+    p.reconcile(&facts(3, false, false, false));
+    assert!(p.backfilled, "arrange: a complete page latched the guard");
+
+    assert_eq!(
+        p.reconcile(&facts(2, true, false, false)),
+        Some(PrefixPlan::Prepend)
+    );
+
+    assert!(
+        !p.backfilled,
+        "a page advertising more history must reopen the backfill, or every \
+         later attach snapshot is suppressed and the older history is stranded"
+    );
+    assert_eq!(p.partial_prefix_len, Some(2));
 }
