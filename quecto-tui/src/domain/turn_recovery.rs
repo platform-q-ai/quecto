@@ -108,12 +108,6 @@ impl<T> RecoveryBatch<T> {
     pub fn is_complete(&self) -> bool {
         self.responses.len() == self.refs.len()
     }
-
-    /// Responses in REF order — the order the turn was streamed in, which is
-    /// not the arrival order.
-    pub fn ordered_responses(&self) -> impl Iterator<Item = &T> {
-        ordered_by_refs(&self.refs, &self.responses)
-    }
 }
 
 #[cfg(test)]

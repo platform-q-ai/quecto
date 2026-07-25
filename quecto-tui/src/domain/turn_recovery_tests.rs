@@ -128,15 +128,38 @@ fn a_batch_is_incomplete_until_every_ref_responds() {
 
 #[test]
 fn responses_are_read_back_in_ref_order_not_arrival_order() {
-    let mut batch = RecoveryBatch::new(refs(3), 0, 3, None);
-    batch.responses.insert("ref-2".into(), "third");
-    batch.responses.insert("ref-0".into(), "first");
-    batch.responses.insert("ref-1".into(), "second");
+    // `ordered_by_refs` is the primitive `recovered_chat_entries` walks with,
+    // so this pins the ordering rule on the code that actually ships.
+    let refs = refs(3);
+    let mut responses = HashMap::new();
+    responses.insert("ref-2".to_string(), "third");
+    responses.insert("ref-0".to_string(), "first");
+    responses.insert("ref-1".to_string(), "second");
 
     assert_eq!(
-        batch.ordered_responses().copied().collect::<Vec<_>>(),
+        ordered_by_refs(&refs, &responses)
+            .copied()
+            .collect::<Vec<_>>(),
         ["first", "second", "third"],
         "the turn must be rebuilt in stream order, not response-arrival order"
+    );
+}
+
+#[test]
+fn an_unanswered_ref_is_skipped_rather_than_stalling_the_walk() {
+    // Callers that must not tolerate gaps gate on `is_complete()` first; the
+    // walk itself simply skips, so a late response cannot shift later entries.
+    let refs = refs(3);
+    let mut responses = HashMap::new();
+    responses.insert("ref-0".to_string(), "first");
+    responses.insert("ref-2".to_string(), "third");
+
+    assert_eq!(
+        ordered_by_refs(&refs, &responses)
+            .copied()
+            .collect::<Vec<_>>(),
+        ["first", "third"],
+        "an absent ref must be skipped in place, preserving the order of the rest"
     );
 }
 
