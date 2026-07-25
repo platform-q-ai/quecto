@@ -1,6 +1,26 @@
 mod common;
 
 use common::read_repo_file;
+use std::path::{Path, PathBuf};
+
+const PHASE_0_DOCS: &[&str] = &[
+    "docs/prd-harness-architecture-hardening.md",
+    "docs/architecture-design-records/README.md",
+    "docs/uds-protocol.md",
+    "docs/harness-architecture-map.md",
+    "docs/protocol-capability-matrix.md",
+];
+
+const PHASE_0_ADRS: &[&str] = &[
+    "docs/architecture-design-records/adr-0012-explicit-agent-turn-state-machine.md",
+    "docs/architecture-design-records/adr-0013-uds-command-family-router.md",
+    "docs/architecture-design-records/adr-0014-context-management-is-a-first-class-application-subsystem.md",
+    "docs/architecture-design-records/adr-0015-subagent-lifecycle-state-machine.md",
+    "docs/architecture-design-records/adr-0016-typed-identifiers-for-protocol-and-session-boundaries.md",
+    "docs/architecture-design-records/adr-0017-protocol-evolution-matrix.md",
+    "docs/architecture-design-records/adr-0018-contributor-change-cookbooks.md",
+    "docs/architecture-design-records/adr-0019-role-segregated-domain-ports.md",
+];
 
 #[test]
 fn readme_release_metadata_matches_workspace_package() {
@@ -70,6 +90,77 @@ fn readme_uds_protocol_lists_current_commands_and_events() {
         !readme.contains("AgentCommand` enum (15 variants"),
         "README command count is stale; AgentCommand has get_subagents too"
     );
+}
+
+#[test]
+fn architecture_hardening_phase_0_docs_are_linked() {
+    let prd = read_repo_file("docs/prd-harness-architecture-hardening.md");
+    let adr_index = read_repo_file("docs/architecture-design-records/README.md");
+    let uds = read_repo_file("docs/uds-protocol.md");
+    let matrix = read_repo_file("docs/protocol-capability-matrix.md");
+    let map = read_repo_file("docs/harness-architecture-map.md");
+
+    assert!(
+        prd.contains("Phase 0")
+            && prd.contains("protocol matrix")
+            && prd.contains("architecture map"),
+        "hardening PRD should describe the Phase 0 documentation baseline"
+    );
+    for path in PHASE_0_ADRS {
+        let adr = read_repo_file(path);
+        let id = path
+            .split("adr-")
+            .nth(1)
+            .and_then(|rest| rest.get(..4))
+            .expect("phase-0 ADR path should include a numeric id");
+        assert!(
+            adr_index.contains(&format!("[{id}]"))
+                && adr_index.contains(path.rsplit('/').next().unwrap()),
+            "ADR index should link ADR-{id} at {path}"
+        );
+        assert!(adr.contains("**Status:**"), "{path} should be a real ADR");
+    }
+    assert!(
+        adr_index.contains("../protocol-capability-matrix.md"),
+        "ADR index should link the protocol capability matrix"
+    );
+    assert!(
+        uds.contains("protocol-capability-matrix.md"),
+        "UDS protocol docs should link the protocol capability matrix"
+    );
+    for heading in [
+        "## Turn execution",
+        "## Context management",
+        "## UDS dispatch",
+        "## Subagent lifecycle",
+        "## Persistence and session recovery",
+    ] {
+        assert!(map.contains(heading), "architecture map missing {heading}");
+    }
+    for baseline in [
+        "## Baseline subsystem checks",
+        "## Baseline longest files",
+        "cargo test -p quecto-agentic-harness --test repo_docs",
+        "tests/bdd/uds_steps.rs",
+    ] {
+        assert!(
+            map.contains(baseline),
+            "architecture map missing {baseline}"
+        );
+    }
+    for capability in [
+        "Length-prefixed JSON frames",
+        "Bounded `agent_end` / `turn_end` message references",
+        "`get_messages` newest bounded page",
+        "Child-targeted history forwarding",
+    ] {
+        assert!(
+            matrix.contains(capability),
+            "protocol capability matrix missing {capability}"
+        );
+    }
+
+    assert_phase_0_links_resolve();
 }
 
 #[test]
@@ -424,4 +515,83 @@ fn adr_0008_documents_the_ndjson_deprecation_window_and_end_condition() {
         adr.contains("quecto-agent-protocol: 2"),
         "ADR-0008 must document the protocol-version announcement line"
     );
+}
+
+fn assert_phase_0_links_resolve() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut missing = Vec::new();
+    let mut checked = Vec::new();
+
+    for path in PHASE_0_DOCS.iter().chain(PHASE_0_ADRS.iter()) {
+        let full_path = repo.join(path);
+        if !full_path.exists() {
+            missing.push(format!("missing document: {path}"));
+        }
+    }
+
+    for path in PHASE_0_DOCS {
+        let content = read_repo_file(path);
+        let full_path = repo.join(path);
+        let parent = full_path
+            .parent()
+            .expect("phase-0 doc path should have a parent directory");
+        for target in markdown_link_targets(&content) {
+            if is_external_or_anchor(&target) {
+                continue;
+            }
+            checked.push(format!("{path} -> {target}"));
+            let resolved = normalize_link_target(parent, &target);
+            if !resolved.exists() {
+                missing.push(format!("{path} -> {target}"));
+            }
+        }
+    }
+
+    assert!(
+        checked
+            .iter()
+            .any(|link| link == "docs/uds-protocol.md -> protocol-capability-matrix.md"),
+        "UDS protocol docs should link the protocol matrix; checked: {checked:?}"
+    );
+    assert!(
+        checked.iter().any(|link| link
+            == "docs/architecture-design-records/README.md -> ../protocol-capability-matrix.md"),
+        "ADR index should link the protocol matrix; checked: {checked:?}"
+    );
+    assert!(
+        missing.is_empty(),
+        "Phase 0 documentation links should resolve; missing: {missing:?}"
+    );
+}
+
+fn markdown_link_targets(content: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    for candidate in content.split("](").skip(1) {
+        if let Some(target) = candidate.split(')').next() {
+            targets.push(target.split('#').next().unwrap_or(target).to_string());
+        }
+    }
+    targets
+}
+
+fn is_external_or_anchor(target: &str) -> bool {
+    target.is_empty()
+        || target.starts_with('#')
+        || target.starts_with("http://")
+        || target.starts_with("https://")
+        || target.starts_with("mailto:")
+}
+
+fn normalize_link_target(parent: &Path, target: &str) -> PathBuf {
+    let mut path = PathBuf::from(parent);
+    for component in Path::new(target).components() {
+        match component {
+            std::path::Component::ParentDir => {
+                path.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => path.push(other.as_os_str()),
+        }
+    }
+    path
 }
