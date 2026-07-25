@@ -240,17 +240,23 @@ fn a_next_offset_exactly_at_the_advertised_end_is_a_valid_continuation() {
 }
 
 /// Separately: accumulating MORE than advertised is still an overshoot.
+///
+/// The fixture must satisfy every OTHER conjunct so that only the overshoot
+/// check can reject it — `next_offset` must exceed `response_offset` and must
+/// not exceed `content_len`. An earlier version used `offset: 3, nextOffset: 3`,
+/// which tripped `next_offset <= response_offset` first and so never reached
+/// the guard it was named for: deleting the overshoot conjunct left it green.
 #[test]
 fn accumulating_beyond_the_advertised_length_is_still_invalid_progress() {
     assert_eq!(
-        acc("abc", 3).apply(&json!({
-            "content": "def",
-            "offset": 3,
-            "contentLength": 3,
+        acc("abcdef", 6).apply(&json!({
+            "content": "gh",
+            "offset": 6,
+            "contentLength": 7,
             "hasMoreContent": true,
-            "nextOffset": 3,
+            "nextOffset": 7,
         })),
         Err(RangeError::InvalidProgress),
-        "six accumulated bytes against a three-byte total must be rejected"
+        "eight accumulated bytes against a seven-byte total must be rejected"
     );
 }

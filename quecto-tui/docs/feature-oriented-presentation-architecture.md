@@ -717,7 +717,7 @@ wrong. Both were reproduced locally before acting.
 | Severity | Finding | Resolution |
 |---|---|---|
 | HIGH | The `reconcile` matrix was closed to 6/8, not 8/8. Both `extend_prefix=true` × `partial_prefix_len=None` corners were still untested, and they are production-reachable: an empty or filtered snapshot leaves `partial=None, has_more=true`, and the next own older page lands there. `unwrap_or(0)` → `unwrap_or(1)` in the extend arm left all 1636 tests green while producing the SAME user-visible bug the round-1 HIGH was about. | Added `an_own_older_page_with_no_recorded_prefix_counts_only_its_own_length` and `..._that_closes_the_backfill`. The mutation now fails. Matrix is 8/8. |
-| HIGH | `a_next_offset_exactly_at_the_advertised_end_is_invalid_progress` passed for the WRONG reason. Its fixture double-counted its own seed (`acc("abc", 0)` plus a 3-byte page against a 3-byte total = 6 accumulated bytes), so it died on the overshoot conjunct and never reached the boundary it was named for. Probing the real boundary returns `Ok(Continue { next_offset: 3 })` — the original expectation was correct, and the author had bent the test to match the implementation rather than investigating. | Test corrected to assert `Ok(Continue)` and renamed `..._is_a_valid_continuation`, with the fixture mistake recorded in its doc comment. A separate `accumulating_beyond_the_advertised_length_is_still_invalid_progress` now covers the overshoot case the broken fixture was accidentally testing. Tightening the guard to `>=` now fails. |
+| HIGH | `a_next_offset_exactly_at_the_advertised_end_is_invalid_progress` passed for the WRONG reason. Its fixture double-counted its own seed (`acc("abc", 0)` plus a 3-byte page against a 3-byte total = 6 accumulated bytes), so it died on the overshoot conjunct and never reached the boundary it was named for. Probing the real boundary returns `Ok(Continue { next_offset: 3 })` — the original expectation was correct, and the author had bent the test to match the implementation rather than investigating. | Test corrected to assert `Ok(Continue)` and renamed `..._is_a_valid_continuation`, with the fixture mistake recorded in its doc comment. A separate `accumulating_beyond_the_advertised_length_is_still_invalid_progress` was added for the overshoot case. NOTE: as first written that test was itself broken in the same way — see round 3 below. Tightening the guard to `>=` now fails. |
 | MED | The corrected pre-existing-test-tree row was STILL wrong: five files changed, not four. `architecture.rs` — a lowered never-raise ratchet seed — is a third, load-bearing class. | Row corrected to three classes, with a note that it has now understated its own scope twice. |
 | MED | The "remeasured by `wc -l`" LOC row still carried an unmeasured 81-line figure (actual: 74). | Remeasured and shown as arithmetic. |
 
@@ -729,3 +729,44 @@ true boundary — which would have shown the original expectation was right.
 Both round-2 HIGHs were mistakes in the round-1 FIX, not in the extraction
 itself. Every adversarial angle continues to agree that the extraction
 introduces no behavioural regression.
+
+### Round 3: the same defect class, reproduced by the fix for it
+
+Round 3 attacked the round-2 fix and found that it had reproduced the exact
+defect it was written to eliminate.
+
+| Severity | Finding | Resolution |
+|---|---|---|
+| HIGH | `accumulating_beyond_the_advertised_length_is_still_invalid_progress` never reached the overshoot guard. Its fixture used `offset: 3, nextOffset: 3` — carried over from the boundary case it was split away from — so `next_offset <= response_offset` (3 ≤ 3) short-circuited first. Deleting `\|\| self.content.len() > content_len` left the test named for overshoot GREEN; only the older `accumulating_past_the_advertised_length_is_invalid_progress` caught it. | Fixture changed to `acc("abcdef", 6)` + a 2-byte page against a 7-byte total, which satisfies every other conjunct so only overshoot can reject it. Verified: deleting the overshoot conjunct now fails BOTH overshoot tests. |
+| HIGH | The round-2 table claimed the new test "covers the overshoot case the broken fixture was accidentally testing". False in both directions: the deleted fixture genuinely did pin overshoot, and the replacement did not. The change REMOVED a working pin while documenting that it added one. | Claim corrected. A reviewer trimming the older test as redundant would have dropped overshoot coverage to zero. |
+| MED | Docs asserted a redundancy that did not exist, presenting a single point of failure as doubly covered. | Corrected; the guard-isolation table below now records which tests actually kill which mutation. |
+
+**Discipline adopted, and the reason it was needed.** Three consecutive rounds
+produced the same class of error: a negative test that passes for a reason
+other than the one it is named for. The rule that catches all of them —
+including round 2's HIGH and round 3's own first proposed fix, which merely
+shifted the death to a third conjunct — is:
+
+> Every negative test must be verified to FAIL when the specific guard it names
+> is removed. Passing is not evidence; dying for the right reason is.
+
+Guard-isolation sweep at head, each mutation applied in isolation:
+
+| Mutation | Tests that die |
+|---|---|
+| `unwrap_or(0)` → `unwrap_or(1)` in the extend arm | `an_own_older_page_with_no_recorded_prefix_counts_only_its_own_length` |
+| `ReplacePrefix` arm returns `partial_len + page_len` | `a_partial_snapshot_over_a_partial_prefix_replaces_it_without_double_counting` |
+| drop the `trimmed` conjunct from the latch | `a_trimmed_or_incomplete_page_leaves_the_backfill_open` |
+| drop the `has_more_before` conjunct from the latch | 4 tests, incl. `a_later_snapshot_replaces_the_whole_loaded_prefix` |
+| delete the overshoot conjunct | `accumulating_beyond_the_advertised_length_is_still_invalid_progress` AND `accumulating_past_the_advertised_length_is_invalid_progress` |
+| `next_offset <= response_offset` → `false` | 1 test (isolated) |
+| `next_offset > content_len` → `false` | 1 test (isolated) |
+
+Round 3 also independently re-derived the boundary assertion rather than
+reading it off the implementation, and confirmed `Ok(Continue { next_offset: 3 })`
+is correct on its own merits: the state cannot loop, because
+`next_offset <= response_offset` terminates it on the very next hop. It further
+verified `TUI_RAW_JSON_SITE_SEED = 120` is exact — the `<=` comparison means a
+green test alone proves nothing, so it lowered the seed to 119 and confirmed the
+assertion reports `found 120`. For the first time in three rounds every
+documented number checks out.
