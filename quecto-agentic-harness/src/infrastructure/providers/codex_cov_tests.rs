@@ -238,8 +238,12 @@ fn build_request_body_includes_tools_array_and_cache_key() {
         description: "Read a file".into(),
         parameters_schema: r#"{"type":"object"}"#.into(),
     }];
-    let body =
-        CodexProvider::build_request_body(&req(&messages, &tools, "gpt-5.2", Some("uds:agent-1")));
+    let body = CodexProvider::build_request_body_public_oauth(&req(
+        &messages,
+        &tools,
+        "gpt-5.2",
+        Some("uds:agent-1"),
+    ));
     let tool_arr = body["tools"].as_array().expect("tools present");
     assert_eq!(tool_arr.len(), 1);
     assert_eq!(tool_arr[0]["name"], "read");
@@ -310,7 +314,8 @@ fn parse_sse_response_skips_non_data_lines() {
 fn public_accessors_delegate_to_private_builders() {
     let messages = vec![Message::system("Sys"), Message::user("U")];
     let tools: Vec<ToolDefinition> = vec![];
-    let body = CodexProvider::build_request_body_public(&req(&messages, &tools, "gpt-5.2", None));
+    let body =
+        CodexProvider::build_request_body_public_oauth(&req(&messages, &tools, "gpt-5.2", None));
     assert_eq!(body["model"], "gpt-5.2");
 
     let (inst, input) = CodexProvider::build_input_public(&messages);
@@ -503,9 +508,63 @@ fn parse_sse_response_completed_empty_stream_is_preserved_for_loop_guard() {
     assert_eq!(resp.stop_reason, Some(StopReason::EndTurn));
 }
 
+// --- #1236: `max_output_tokens` is rejected by the ChatGPT Codex backend ---
+//
+// #1233 added `max_output_tokens` to every Codex request body. The ChatGPT
+// Codex backend rejects it with HTTP 400
+// `{"detail":"Unsupported parameter: max_output_tokens"}`, which broke all
+// OAuth-authenticated OpenAI models. The standard Responses API (API-key
+// auth) does accept it, so the field is auth-conditional, not removed.
+
 #[test]
-fn build_request_body_includes_max_output_tokens() {
+fn build_request_body_omits_max_output_tokens_on_chatgpt_oauth_backend_1236() {
     let messages = vec![Message::system("Sys"), Message::user("U")];
-    let body = CodexProvider::build_request_body(&req(&messages, &[], "gpt-5.2", None));
-    assert_eq!(body["max_output_tokens"], 1024);
+    let body =
+        CodexProvider::build_request_body_public_oauth(&req(&messages, &[], "gpt-5.2", None));
+    assert!(
+        body.get("max_output_tokens").is_none(),
+        "the ChatGPT Codex backend rejects max_output_tokens with HTTP 400 \
+         'Unsupported parameter'; it must not be sent on the OAuth path. body={body}"
+    );
+}
+
+#[test]
+fn build_request_body_sends_max_output_tokens_on_api_key_backend_1236() {
+    let messages = vec![Message::system("Sys"), Message::user("U")];
+    let body =
+        CodexProvider::build_request_body_public_api_key(&req(&messages, &[], "gpt-5.2", None));
+    assert_eq!(
+        body["max_output_tokens"], 1024,
+        "the standard OpenAI Responses API accepts max_output_tokens; \
+         dropping it there would silently uncap generation length"
+    );
+}
+
+/// The two backends must differ in exactly one field. This pins the blast
+/// radius of the #1236 fix: a future change that drops another parameter on
+/// the OAuth path (or adds one only there) fails here rather than in prod.
+#[test]
+fn oauth_and_api_key_bodies_differ_only_by_max_output_tokens_1236() {
+    let messages = vec![Message::system("Sys"), Message::user("U")];
+    let mut oauth =
+        CodexProvider::build_request_body_public_oauth(&req(&messages, &[], "gpt-5.2", None));
+    let mut api_key =
+        CodexProvider::build_request_body_public_api_key(&req(&messages, &[], "gpt-5.2", None));
+
+    assert_ne!(oauth, api_key, "the max_output_tokens split must be real");
+
+    oauth
+        .as_object_mut()
+        .expect("oauth body is an object")
+        .remove("max_output_tokens");
+    api_key
+        .as_object_mut()
+        .expect("api key body is an object")
+        .remove("max_output_tokens");
+
+    assert_eq!(
+        oauth, api_key,
+        "max_output_tokens is the ONLY field that may differ between the \
+         ChatGPT Codex backend and the standard Responses API"
+    );
 }

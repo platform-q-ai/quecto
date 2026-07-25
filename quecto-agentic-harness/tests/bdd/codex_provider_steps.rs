@@ -134,9 +134,10 @@ fn given_codex_request_body_with_tools(world: &mut QuectoWorld, model: String) {
         cancel_flag: None,
         effort: None,
     };
-    let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
-        &request,
-    );
+    let body =
+        quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public_oauth(
+            &request,
+        );
     world
         .env_overrides
         .insert("_codex_body".to_string(), body.to_string());
@@ -196,9 +197,10 @@ fn when_provider_builds_responses_request(world: &mut QuectoWorld) {
         cancel_flag: None,
         effort,
     };
-    let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
-        &request,
-    );
+    let body =
+        quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public_oauth(
+            &request,
+        );
     world
         .env_overrides
         .insert("_codex_body".to_string(), body.to_string());
@@ -224,9 +226,10 @@ fn given_codex_request_body_with_session_id(
         cancel_flag: None,
         effort: None,
     };
-    let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
-        &request,
-    );
+    let body =
+        quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public_oauth(
+            &request,
+        );
     world
         .env_overrides
         .insert("_codex_body".to_string(), body.to_string());
@@ -248,9 +251,10 @@ fn given_codex_request_body_without_session_id(world: &mut QuectoWorld, model: S
         cancel_flag: None,
         effort: None,
     };
-    let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
-        &request,
-    );
+    let body =
+        quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public_oauth(
+            &request,
+        );
     world
         .env_overrides
         .insert("_codex_body".to_string(), body.to_string());

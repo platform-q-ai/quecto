@@ -76,7 +76,7 @@ fn test_build_request_body() {
         cancel_flag: None,
         effort: None,
     };
-    let body = CodexProvider::build_request_body(&request);
+    let body = CodexProvider::build_request_body_public_oauth(&request);
     assert_eq!(body["model"], "gpt-5.4");
     assert_eq!(body["instructions"], "Be concise.");
     assert_eq!(body["store"], false);
@@ -102,7 +102,7 @@ fn test_build_request_body_uses_effort_level() {
         cancel_flag: None,
         effort: Some(EffortLevel::High),
     };
-    let body = CodexProvider::build_request_body(&request);
+    let body = CodexProvider::build_request_body_public_oauth(&request);
     assert_eq!(body["reasoning"]["effort"], "high");
     assert_eq!(body["text"]["verbosity"], "high");
 }
@@ -123,7 +123,7 @@ fn test_build_request_body_includes_prompt_cache_key_when_session_id_set() {
         cancel_flag: None,
         effort: None,
     };
-    let body = CodexProvider::build_request_body(&request);
+    let body = CodexProvider::build_request_body_public_oauth(&request);
     let key = body["prompt_cache_key"]
         .as_str()
         .expect("prompt_cache_key should be present");
@@ -157,7 +157,7 @@ fn test_build_request_body_omits_prompt_cache_key_when_no_session_id() {
         cancel_flag: None,
         effort: None,
     };
-    let body = CodexProvider::build_request_body(&request);
+    let body = CodexProvider::build_request_body_public_oauth(&request);
     assert!(
         body.get("prompt_cache_key").is_none(),
         "expected prompt_cache_key to be absent, got: {:?}",
@@ -232,7 +232,7 @@ fn test_build_request_body_responses_api_fields() {
         cancel_flag: None,
         effort: None,
     };
-    let body = CodexProvider::build_request_body(&request);
+    let body = CodexProvider::build_request_body_public_oauth(&request);
     assert_eq!(body["tool_choice"], "auto");
     assert_eq!(body["parallel_tool_calls"], true);
     // #1066: no configured effort → `reasoning.effort` and `text.verbosity`
