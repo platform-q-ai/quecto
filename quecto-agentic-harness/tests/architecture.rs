@@ -907,43 +907,53 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
 // Allowlisting is per-ratchet, so an exemption is never broader than its
 // stated rationale.
 
-/// Seed: production raw `serde_json` parsing sites in TUI feature/view modules.
-/// Lower this as call sites migrate behind mappers. Never raise it.
-const TUI_RAW_JSON_SITE_SEED: usize = 120;
+/// Seed: production raw `serde_json` parsing sites still resident in TUI
+/// `interface/` feature/view modules. Lower this as interface call sites migrate
+/// behind mappers. Never raise it.
+const TUI_INTERFACE_RAW_JSON_SITE_SEED: usize = 120;
+
+/// Seed: production raw `serde_json` parsing sites in TUI `application/`
+/// modules. These sites are an allowed but temporary protocol-mapping foothold;
+/// lower this as they migrate behind typed mappers. Never raise it.
+const TUI_APPLICATION_RAW_JSON_SITE_SEED: usize = 69;
 
 /// Seed: production feature/view *usages* of `infrastructure::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
 const TUI_WIRE_DTO_USAGE_SEED: usize = 124;
 
-/// Narrow, issue-linked allowlist for the RAW-JSON ratchet only.
+/// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
 /// The response dispatcher IS the protocol seam: it receives raw responses and
 /// routes them to mappers, so raw JSON access there is by construction. It is
 /// deliberately NOT exempt from the wire-DTO ratchet.
-const TUI_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("interface/app_response.rs", "#1220")];
+const TUI_INTERFACE_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("interface/app_response.rs", "#1220")];
+
+/// Narrow, issue-linked allowlist for the APPLICATION RAW-JSON ratchet only.
+/// Empty: application raw JSON remains measured even when temporarily permitted.
+const TUI_APPLICATION_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[];
 
 /// Narrow, issue-linked allowlist for the WIRE-DTO ratchet only. Empty: no file
 /// currently has an approved reason to accumulate wire-DTO usage unmeasured.
 const TUI_WIRE_DTO_ALLOWLIST: &[(&str, &str)] = &[];
 
-/// Production (non-`cfg(test)`) TUI interface sources, minus `allowlist`.
-fn tui_production_interface_files(allowlist: &[(&str, &str)]) -> Vec<(String, String)> {
+/// Production (non-`cfg(test)`) TUI layer sources, minus `allowlist`.
+fn tui_production_layer_files(root: &str, allowlist: &[(&str, &str)]) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    collect_tui_production_interface_files(Path::new(TUI_INTERFACE), &mut out);
+    collect_tui_production_layer_files(Path::new(root), &mut out);
     out.retain(|(rel, _)| !allowlist.iter().any(|(suffix, _)| rel.ends_with(suffix)));
     out.sort();
     out
 }
 
-fn collect_tui_production_interface_files(dir: &Path, out: &mut Vec<(String, String)>) {
+fn collect_tui_production_layer_files(dir: &Path, out: &mut Vec<(String, String)>) {
     if !dir.exists() {
         return;
     }
-    for entry in fs::read_dir(dir).expect("read quecto-tui interface dir") {
+    for entry in fs::read_dir(dir).expect("read quecto-tui layer dir") {
         let entry = entry.expect("dir entry");
         let path = entry.path();
         if path.is_dir() {
-            collect_tui_production_interface_files(&path, out);
+            collect_tui_production_layer_files(&path, out);
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -1023,13 +1033,14 @@ fn wire_dto_usage_count(content: &str) -> usize {
 }
 
 fn tui_ratchet_inventory(
+    root: &str,
     allowlist: &[(&str, &str)],
     count: fn(&str) -> usize,
 ) -> (usize, Vec<(String, usize)>) {
-    let files = tui_production_interface_files(allowlist);
+    let files = tui_production_layer_files(root, allowlist);
     assert!(
         !files.is_empty(),
-        "the TUI interface scan root {TUI_INTERFACE} yielded no production files; \
+        "the TUI scan root {root} yielded no production files; \
          a path rename must not silently disable the #1220 ratchets"
     );
     let mut per_file: Vec<(String, usize)> = files
@@ -1043,20 +1054,42 @@ fn tui_ratchet_inventory(
 }
 
 #[test]
-fn tui_raw_json_parsing_sites_do_not_grow() {
-    let (total, per_file) = tui_ratchet_inventory(TUI_RAW_JSON_ALLOWLIST, raw_json_site_count);
+fn tui_interface_raw_json_parsing_sites_do_not_grow() {
+    let (total, per_file) = tui_ratchet_inventory(
+        TUI_INTERFACE,
+        TUI_INTERFACE_RAW_JSON_ALLOWLIST,
+        raw_json_site_count,
+    );
     assert!(
-        total <= TUI_RAW_JSON_SITE_SEED,
-        "raw serde_json parsing in TUI feature/view modules must not grow: found {total}, \
-         seed {TUI_RAW_JSON_SITE_SEED}. Move payload interpretation into an \
-         application-layer mapper (see quecto-tui/src/application/model_payloads.rs, #1220). \
-         Inventory (burn-down order): {per_file:?}"
+        total <= TUI_INTERFACE_RAW_JSON_SITE_SEED,
+        "raw serde_json parsing in TUI interface feature/view modules must not grow: \
+         found {total}, seed {TUI_INTERFACE_RAW_JSON_SITE_SEED}. Move payload \
+         interpretation into an application-layer mapper (see \
+         quecto-tui/src/application/model_payloads.rs, #1220). Inventory \
+         (burn-down order): {per_file:?}"
+    );
+}
+
+#[test]
+fn tui_application_raw_json_parsing_sites_do_not_grow() {
+    let (total, per_file) = tui_ratchet_inventory(
+        TUI_APPLICATION,
+        TUI_APPLICATION_RAW_JSON_ALLOWLIST,
+        raw_json_site_count,
+    );
+    assert!(
+        total <= TUI_APPLICATION_RAW_JSON_SITE_SEED,
+        "raw serde_json parsing in TUI application protocol mappers must not grow: \
+         found {total}, seed {TUI_APPLICATION_RAW_JSON_SITE_SEED}. Convert ad-hoc \
+         parsing into typed application mappers and lower this seed. Inventory \
+         (burn-down order): {per_file:?}"
     );
 }
 
 #[test]
 fn tui_wire_dto_usage_does_not_grow() {
-    let (total, per_file) = tui_ratchet_inventory(TUI_WIRE_DTO_ALLOWLIST, wire_dto_usage_count);
+    let (total, per_file) =
+        tui_ratchet_inventory(TUI_INTERFACE, TUI_WIRE_DTO_ALLOWLIST, wire_dto_usage_count);
     assert!(
         total <= TUI_WIRE_DTO_USAGE_SEED,
         "TUI feature/view usage of infrastructure::client wire DTOs must not grow: \

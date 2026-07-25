@@ -405,7 +405,8 @@ Two decrease-only guards live in `quecto-agentic-harness/tests/architecture.rs`
 and therefore run in the fast pre-commit guard suite (targets are enumerated
 dynamically, so they cannot be silently dropped):
 
-- `tui_raw_json_parsing_sites_do_not_grow` — seed `130`.
+- `tui_interface_raw_json_parsing_sites_do_not_grow` — interface seed `120`.
+- `tui_application_raw_json_parsing_sites_do_not_grow` — application seed `69`.
 - `tui_wire_dto_usage_does_not_grow` — seed `124`.
 
 Both were hardened after review on #1235, which proved the first drafts did not
@@ -440,22 +441,7 @@ Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-Seeded at 120 sites (lowered from 130 in #1221 when `range_accumulator.rs` and its 10 sites moved to `application/`, out of this ratchet's `interface/` scan root — the sites did not disappear, they left the measured surface). The ratchet's failure message reprints this inventory in
-burn-down order, so it stays accurate without manual upkeep:
-
-| Module | Sites |
-|---|---|
-| `interface/components/workflow_bar.rs` | 38 |
-| `interface/app_events.rs` | 20 |
-| `interface/app_subagent_stream.rs` | 19 |
-| `interface/components/chat_render.rs` | 17 |
-
-| `interface/app_paged_history.rs` | 6 |
-| `interface/ledger_sync.rs` | 6 |
-| `interface/app_rewind.rs` | 5 |
-| `interface/components/footer.rs` | 4 |
-| `interface/app_subagents.rs` | 3 |
-| `interface/app_effort.rs` | 2 |
+The interface raw-JSON ratchet is seeded at 120 sites (lowered from 130 in #1221 when `range_accumulator.rs` and its 10 sites moved to `application/`). The application raw-JSON ratchet is seeded separately at 69 sites, so the moved wire parsing remains measured instead of disappearing from the burn-down surface. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
 
 Wire-DTO usage is seeded at 124, led by `app_subagent_stream.rs`,
 `app_subagents.rs`, `app_submit.rs`, and `tui_harness_events.rs`.
@@ -625,7 +611,7 @@ changes are the test-module declarations and the new harness probe.
 | Class | Surface | Evidence | Verdict |
 |---|---|---|---|
 | Behavioural | All ten contract surfaces | Whole workspace green after the extraction: 5052 tests, 192/192 BDD scenarios, 37/37 architecture tests, 31/31 contract tests. The 15 characterization tests and 11 `RangeAccumulator` tests written BEFORE the move passed unchanged after it. | PASS |
-| Behavioural | Pre-existing test tree | `git diff b0584166..HEAD` over pre-existing test files shows changes in **five**, in three distinct classes. (1) MECHANICAL: `app_paged_history_review_tests.rs` and `app_paged_history_tests.rs` — every hunk a field-path rename (`session.history_before_cursor` → `session.history.before_cursor`) plus the `PendingHistoryPage` import path; zero assertions, fixtures, or test names changed. (2) DELIBERATE BDD REWRITES: `tui_paged_history_steps.rs` and `tui_paged_history_1094_steps.rs` — two step bodies rewritten and four orphaned step definitions deleted in response to review findings; these are behavioural test changes, NOT renames. (3) LOAD-BEARING GATE CHANGE: `quecto-agentic-harness/tests/architecture.rs` — `TUI_RAW_JSON_SITE_SEED` lowered 130 → 120, a ratchet whose own doc comment says "Never raise it". This row has now been corrected twice: it first claimed "exactly two" files and "zero test names changed" (true only of class 1), then "four" (omitting class 3). Recorded here because a scope claim that keeps understating itself is worse than no claim. | PASS (all three classes disclosed) |
+| Behavioural | Pre-existing test tree | `git diff b0584166..HEAD` over pre-existing test files shows changes in **five**, in three distinct classes. (1) MECHANICAL: `app_paged_history_review_tests.rs` and `app_paged_history_tests.rs` — every hunk a field-path rename (`session.history_before_cursor` → `session.history.before_cursor`) plus the `PendingHistoryPage` import path; zero assertions, fixtures, or test names changed. (2) DELIBERATE BDD REWRITES: `tui_paged_history_steps.rs` and `tui_paged_history_1094_steps.rs` — two step bodies rewritten and four orphaned step definitions deleted in response to review findings; these are behavioural test changes, NOT renames. (3) LOAD-BEARING GATE CHANGE: `quecto-agentic-harness/tests/architecture.rs` — `TUI_INTERFACE_RAW_JSON_SITE_SEED` lowered 130 → 120, a ratchet whose own doc comment says "Never raise it". This row has now been corrected twice: it first claimed "exactly two" files and "zero test names changed" (true only of class 1), then "four" (omitting class 3). Recorded here because a scope claim that keeps understating itself is worse than no claim. | PASS (all three classes disclosed) |
 | Behavioural | Adapted tests still load-bearing | Re-ran mutation evidence after adapting them: correlating by id prefix instead of exact match fails `page_response_with_prefix_matching_id_is_rejected`; removing the staleness window fails both `stale_in_flight_page_is_retried_after_age_window` and `late_twin_of_stale_retried_page_is_dropped`. | PASS |
 | Visual | Rendered frames | Every characterization and BDD assertion in this slice reads rendered frame text (`chat_text`, `active_chat_text`) or the app's own transcript entries. All pass unchanged, so no pinned frame differs. | PASS |
 | Performance | Older-page emission | Old code inlined the guards in `next_history_page_request`; new code calls `HistoryPaging::next_page_request`. Same work: one `format!` and one cursor clone per REQUEST. The path is still scroll-driven — the only callers are `Key::ScrollUp`/`Key::PageUp` in `app_event_loop.rs` — so nothing was moved into the render loop. | PASS |
@@ -652,7 +638,7 @@ Five findings survived and are fixed:
 
 | Severity | Finding | Fix | Mutation evidence |
 |---|---|---|---|
-| HIGH | Moving `range_accumulator.rs` out of `interface/` dropped its 10 raw-JSON sites out of `tui_raw_json_parsing_sites_do_not_grow`'s scan root (measured 130 → 120) while the seed stayed 130, silently allowing 10 new interface-layer sites. | Lowered `TUI_RAW_JSON_SITE_SEED` to 120. | Adding 10 raw `serde_json` sites to `interface/app_effort.rs` PASSED before the fix and FAILS after it. |
+| HIGH | Moving `range_accumulator.rs` out of `interface/` dropped its 10 raw-JSON sites out of `tui_raw_json_parsing_sites_do_not_grow`'s scan root (measured 130 → 120) while the seed stayed 130, silently allowing 10 new interface-layer sites. | Lowered the interface raw-JSON seed to 120, then added a separate application raw-JSON seed at 69 so the moved parser remains measured. | Adding 10 raw `serde_json` sites to `interface/app_effort.rs` PASSED before the fix and FAILS after it. |
 | HIGH | `a_control_sequence_split_across_recall_pages_is_sanitized_after_reassembly` was a deletion detector, not a policy detector: a per-page sanitizer consumes the dangling `ESC[` via the unterminated-CSI branch, leaving no ESC byte, so the sole assertion passed on the policy it documented. | Assert the payload too (`ends_with("RED") && !contains("31m")`). | Sanitizing per page now FAILS the test (it passed before); deleting the post-reassembly sanitize still FAILS. Both mutations caught. |
 | MED | `ordered_responses()` had zero production consumers; `recovered_chat_entries` hand-rolled the same ref-ordered walk, so the ordering invariant was pinned on code that never ships. | Extracted `ordered_by_refs` as the single ordered-walk primitive and routed `recovered_chat_entries` through it. `ordered_responses()` was then DELETED — the conformance sweep caught that it was still dead after the reroute, since production calls the free function, not the method. Ordering now has one implementation. | Sorting ids instead of walking ref order FAILS `recovered_chat_entries_handles_suppressed_calls_errors_and_unknown_roles` — a test exercising the PRODUCTION walk. |
 | MED | The parity-evidence row claimed `ordered_responses()` replaced "an equivalent walk"; it replaced nothing. | Row corrected to state what actually changed. Also fixed two stale doc lines from the move ("Seeded at 130", the old `interface/` path). | n/a (documentation). |
@@ -766,7 +752,7 @@ Round 3 also independently re-derived the boundary assertion rather than
 reading it off the implementation, and confirmed `Ok(Continue { next_offset: 3 })`
 is correct on its own merits: the state cannot loop, because
 `next_offset <= response_offset` terminates it on the very next hop. It further
-verified `TUI_RAW_JSON_SITE_SEED = 120` is exact — the `<=` comparison means a
+verified the interface raw-JSON seed `120` is exact — the `<=` comparison means a
 green test alone proves nothing, so it lowered the seed to 119 and confirmed the
 assertion reports `found 120`. For the first time in three rounds every
 documented number checks out.
@@ -789,7 +775,7 @@ Round 4 also confirmed the three pure-policy files are genuinely clean: all 24
 isolated guard-removal mutations across `range_accumulator_tests.rs`,
 `history_paging_tests.rs` and `turn_recovery_tests.rs` killed their named test
 and no other. The corrected overshoot fixture is right this time, its sibling is
-not redundant, `TUI_RAW_JSON_SITE_SEED = 120` is exact, and every LOC figure
+not redundant, the interface raw-JSON seed `120` is exact, and every LOC figure
 reproduces by `wc -l`.
 
 **What four rounds actually demonstrated.** The recurring failure was never the
@@ -813,8 +799,9 @@ round 4 had again stopped one function short.
 | HIGH | The round-4 doc claim "all 24 isolated guard-removal mutations killed their named test and no other" was unfalsifiable — it enumerated no mutation, and "and no other" was contradicted by the guard-isolation table two paragraphs above it. | Claim deleted and replaced by `scripts/check-guard-manifest.sh`. |
 
 **The remedy is now executable, not prose.** `scripts/check-guard-manifest.sh`
-enumerates every guard in the two policy files; deleting each line must fail at
-least one test. Running it immediately found a **ninth** unpinned guard that
+enumerates the guards in the history paging, turn recovery, and range assembly
+policy files; deleting each listed guard must fail at least one test. The
+pre-push gate runs the manifest, so a green push proves it did not drift silently. Running it immediately found a **ninth** unpinned guard that
 five rounds of manual review had missed — `reconcile`'s keep-open arm never
 observably unlatched `backfilled`, because no test fed a partial page to an
 already-latched backfill. Fixed by

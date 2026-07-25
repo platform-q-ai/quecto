@@ -53,19 +53,22 @@ step() {
 
 # --- Pre-commit checks (belt-and-suspenders) ---
 
-step "1/11" "Quality gate"
+step "1/12" "Quality gate"
 "$ROOT/scripts/check-quality.sh"
 
-step "2/11" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
+step "2/12" "Guard-removal manifest (history/recovery policies)"
+"$ROOT/scripts/check-guard-manifest.sh"
+
+step "3/12" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
 "$ROOT/scripts/check-bdd-quality.sh"
 
-step "3/11" "BDD status-tag gate (every scenario is @done / @wip / @pending)"
+step "4/12" "BDD status-tag gate (every scenario is @done / @wip / @pending)"
 "$ROOT/scripts/check-bdd-tags.sh"
 
-step "4/11" "cargo fmt --check"
+step "5/12" "cargo fmt --check"
 cargo fmt --all -- --check
 
-step "5/11" "cargo clippy (strict, workspace)"
+step "6/12" "cargo clippy (strict, workspace)"
 cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
@@ -77,7 +80,7 @@ API_COV_THRESHOLD="${QUECTO_API_COV_THRESHOLD:-95}"
 HARNESS_BDD_COV_THRESHOLD="${QUECTO_HARNESS_BDD_COV_THRESHOLD:-72}"
 TUI_BDD_COV_THRESHOLD="${QUECTO_TUI_BDD_COV_THRESHOLD:-62}"
 
-step "6/11" "Parallel test wave: unit + every integration target + coverage-enabled non-real BDD shards"
+step "7/12" "Parallel test wave: unit + every integration target + coverage-enabled non-real BDD shards"
 
 # Enumerate EVERY top-level integration test target dynamically rather than a
 # hand-maintained allowlist. A static `--test architecture --test contracts ...`
@@ -153,7 +156,7 @@ if [[ "$FAIL" -ne 0 ]]; then
     exit 1
 fi
 
-step "7/11" "Code coverage (cargo llvm-cov, function coverage; harness ${HARNESS_LIB_COV_THRESHOLD}%, TUI ${TUI_LIB_COV_THRESHOLD}%, API ${API_COV_THRESHOLD}%)"
+step "8/12" "Code coverage (cargo llvm-cov, function coverage; harness ${HARNESS_LIB_COV_THRESHOLD}%, TUI ${TUI_LIB_COV_THRESHOLD}%, API ${API_COV_THRESHOLD}%)"
 
 # Resolve llvm tools — cargo-llvm-cov needs these when llvm-tools-preview
 # isn't installed via rustup (e.g. system Rust on Arch Linux).
@@ -199,7 +202,7 @@ if [[ "$COV_FAIL" -ne 0 ]]; then
     exit 1
 fi
 
-step "8/11" "cargo machete (unused dependencies)"
+step "9/12" "cargo machete (unused dependencies)"
 if command -v cargo-machete &>/dev/null; then
     cargo machete
 else
@@ -207,7 +210,7 @@ else
     echo "  Install with: cargo install cargo-machete --locked"
 fi
 
-step "9/11" "cargo deny check (licenses, advisories, bans)"
+step "10/12" "cargo deny check (licenses, advisories, bans)"
 if command -v cargo-deny &>/dev/null; then
     cargo deny check
 else
@@ -215,7 +218,7 @@ else
     echo "  Install with: cargo install cargo-deny --locked"
 fi
 
-step "10/11" "Mocked end-to-end tests (@mock-llm, zero-cost, default)"
+step "11/12" "Mocked end-to-end tests (@mock-llm, zero-cost, default)"
 
 # Default e2e lane: deterministic WireMock-backed copy of the @real-llm
 # behaviours. Makes ZERO paid provider calls and needs no API key — .env is
@@ -256,7 +259,7 @@ else
     echo "  Live @manual-real-llm suite skipped (opt in with QUECTO_RUN_REAL_LLM=1)."
 fi
 
-step "11/11" "Pre-push summary"
+step "12/12" "Pre-push summary"
 echo "All local push gates passed."
 echo "BDD shards: ${BDD_SHARDS}; TUI BDD shards: ${TUI_BDD_SHARDS}; timeout per shard: ${E2E_TIMEOUT}"
 echo "Lib function coverage thresholds: harness ${HARNESS_LIB_COV_THRESHOLD}%; TUI ${TUI_LIB_COV_THRESHOLD}%; API ${API_COV_THRESHOLD}%"

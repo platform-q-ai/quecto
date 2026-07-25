@@ -32,17 +32,21 @@ set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 HP=quecto-tui/src/domain/history_paging.rs
+TR=quecto-tui/src/domain/turn_recovery.rs
 RA=quecto-tui/src/application/range_accumulator.rs
 
 HP_BAK=$(mktemp)
+TR_BAK=$(mktemp)
 RA_BAK=$(mktemp)
 cp "$HP" "$HP_BAK"
+cp "$TR" "$TR_BAK"
 cp "$RA" "$RA_BAK"
 
 restore() {
   cp "$HP_BAK" "$HP"
+  cp "$TR_BAK" "$TR"
   cp "$RA_BAK" "$RA"
-  rm -f "$HP_BAK" "$RA_BAK"
+  rm -f "$HP_BAK" "$TR_BAK" "$RA_BAK"
 }
 trap restore EXIT INT TERM
 
@@ -129,6 +133,47 @@ check "$HP" "$HP_BAK" "self.backfilled = false;"         2 "reopen_backfill: unl
 check "$HP" "$HP_BAK" "self.partial_prefix_len = None;"  2 "reopen_backfill: drops the stale prefix"
 check "$HP" "$HP_BAK" "self.backfilled = false;"         3 "reconcile keep-open arm: unlatches"
 check "$HP" "$HP_BAK" "self.partial_prefix_len = None;"  3 "reconcile latch arm: clears the prefix"
+
+echo "== domain/turn_recovery.rs =="
+check_replace "$TR" "$TR_BAK" \
+  "!refs.is_empty() && open_tool_calls > 0" \
+  "open_tool_calls > 0" \
+  "forced_without_text: empty refs cannot force recovery"
+check_replace "$TR" "$TR_BAK" \
+  "!refs.is_empty() && open_tool_calls > 0" \
+  "!refs.is_empty()" \
+  "forced_without_text: open tool calls force recovery"
+check_replace "$TR" "$TR_BAK" \
+  "        if self.refs.is_empty() {
+            return false;
+        }
+" \
+  "" \
+  "needs_recovery: empty refs do not recover"
+check_replace "$TR" "$TR_BAK" \
+  "        if self.open_tool_calls > 0 {
+            return true;
+        }
+" \
+  "" \
+  "needs_recovery: open tool calls force recovery"
+check_replace "$TR" "$TR_BAK" \
+  "if trimmed.is_empty() || trimmed == \"…\" || trimmed == \"...\" {" \
+  "if false {" \
+  "needs_recovery: placeholder text recovers"
+check "$TR" "$TR_BAK" "&& (self.assistant_text.len() as u64) < expected" 1 "needs_recovery: truncated content recovers"
+check_replace "$TR" "$TR_BAK" \
+  "self.refs.len() != expected_refs" \
+  "false" \
+  "needs_recovery: ref-count mismatch recovers"
+check_replace "$TR" "$TR_BAK" \
+  "refs.iter().filter_map(|r| responses.get(r))" \
+  "responses.values()" \
+  "ordered_by_refs: walks refs order"
+check_replace "$TR" "$TR_BAK" \
+  "self.responses.len() == self.refs.len()" \
+  "self.responses.len() != self.refs.len()" \
+  "recovery batch: complete only when every ref responded"
 
 echo "== application/range_accumulator.rs =="
 check_replace "$RA" "$RA_BAK" \
