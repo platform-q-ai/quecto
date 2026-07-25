@@ -5,4 +5,5 @@
 //! interface code.
 
 pub mod model_payloads;
+pub mod range_accumulator;
 pub mod session_payloads;

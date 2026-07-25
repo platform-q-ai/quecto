@@ -227,14 +227,9 @@ pub(crate) struct SessionView {
     footer: Footer,
     /// Grandchild completion notes buffered while mid-turn; flushed at idle (#816).
     deferred_subagent_notes: std::collections::VecDeque<String>,
-    /// Whether a complete (untrimmed) history backfill was applied (#828),
-    /// guarding re-delivery. Trimmed busy-connect snapshots do not set it (#1050).
-    history_backfilled: bool,
-    partial_backfill_len: Option<usize>,
-    history_before_cursor: Option<String>,
-    history_has_more_before: bool,
-    history_page_seq: u64,
-    history_pending_page: Option<app_paged_history::PendingHistoryPage>,
+    /// History cursors, older-page correlation and the partial-vs-complete
+    /// backfill latch (#828/#1050/#1061), owned by a pure policy (#1221).
+    history: crate::domain::history_paging::HistoryPaging,
     /// Until this session's own stream reports run-state, `active_subagent_running`
     /// trusts the tracked status not `running` (#834).
     observed_run_state: bool,
@@ -261,12 +256,7 @@ impl SessionView {
             running: false,
             footer,
             deferred_subagent_notes: std::collections::VecDeque::new(),
-            history_backfilled: false,
-            partial_backfill_len: None,
-            history_before_cursor: None,
-            history_has_more_before: false,
-            history_page_seq: 0,
-            history_pending_page: None,
+            history: crate::domain::history_paging::HistoryPaging::default(),
             observed_run_state: false,
             active_turn_start: 0,
             tools_this_turn: 0,
@@ -444,8 +434,6 @@ mod app_subagent_panel;
 mod app_subagent_state;
 #[path = "app_submit.rs"]
 mod app_submit;
-#[path = "range_accumulator.rs"]
-mod range_accumulator;
 use app_subagent_state::{
     TrackedSubagent, gc_exited_subagents, next_exited_subagent_gc_deadline,
     subagent_status_is_active,
@@ -655,6 +643,9 @@ mod app_attach_backfill_tests;
 #[cfg(test)]
 #[path = "app_clipboard_tests.rs"]
 mod app_clipboard_tests;
+#[cfg(test)]
+#[path = "app_conversation_characterization_tests.rs"]
+mod app_conversation_characterization_tests;
 #[cfg(test)]
 #[path = "app_cov_tests.rs"]
 mod app_cov_tests;

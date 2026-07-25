@@ -9,14 +9,11 @@ pub(crate) struct PendingMessageRecovery {
     pub(crate) offset: usize,
 }
 
-#[derive(Debug)]
-pub(crate) struct MessageRecoveryBatch {
-    pub(crate) refs: Vec<String>,
-    pub(crate) responses: std::collections::HashMap<String, serde_json::Value>,
-    pub(crate) target_start: usize,
-    pub(crate) target_end: usize,
-    pub(crate) agent_id: Option<String>,
-}
+/// A turn awaiting rebuild from its refs. The atomicity invariant lives in
+/// `domain::turn_recovery`; this alias binds it to the raw response payloads
+/// the interface layer buffers.
+pub(crate) type MessageRecoveryBatch =
+    crate::domain::turn_recovery::RecoveryBatch<serde_json::Value>;
 
 impl App {
     /// Both `turn_end` and `agent_end` may carry the same refs; skip message ids
@@ -33,15 +30,24 @@ impl App {
         if refs.is_empty() {
             return;
         }
-        let force = self.open_tool_calls > 0;
-        if !force
-            && !self.needs_message_recovery_for(
+        // Fetch the rendered text lazily: the policy can force recovery without
+        // reading it, and `latest_assistant_text` clones the whole assistant
+        // body — which can be megabytes for an inlined command dump.
+        use crate::domain::turn_recovery::TurnOutcome;
+        let open_tool_calls = self.open_tool_calls;
+        let tools_this_turn = self.tools_this_turn;
+        let needs_recovery = TurnOutcome::forced_without_text(refs, open_tool_calls) || {
+            let assistant_text = self.latest_assistant_text();
+            TurnOutcome {
                 refs,
-                &self.latest_assistant_text(),
-                self.tools_this_turn,
+                assistant_text: &assistant_text,
+                tools_this_turn,
+                open_tool_calls,
                 expected_content_len,
-            )
-        {
+            }
+            .needs_recovery()
+        };
+        if !needs_recovery {
             return;
         }
         if refs.iter().any(|message_id| {
@@ -55,13 +61,12 @@ impl App {
         let target_end = self.master_session.chat.entry_count();
         self.message_recovery_batches.insert(
             batch_id.clone(),
-            MessageRecoveryBatch {
-                refs: refs.to_vec(),
-                responses: std::collections::HashMap::new(),
-                target_start: self.active_turn_start.min(target_end),
+            MessageRecoveryBatch::new(
+                refs.to_vec(),
+                self.active_turn_start.min(target_end),
                 target_end,
-                agent_id: None,
-            },
+                None,
+            ),
         );
         for message_id in refs {
             if self
@@ -91,29 +96,6 @@ impl App {
                 limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
             });
         }
-    }
-
-    pub(super) fn needs_message_recovery_for(
-        &self,
-        refs: &[String],
-        assistant_text: &str,
-        tools_this_turn: usize,
-        expected_content_len: Option<u64>,
-    ) -> bool {
-        if refs.is_empty() {
-            return false;
-        }
-        let trimmed = assistant_text.trim();
-        if trimmed.is_empty() || trimmed == "…" || trimmed == "..." {
-            return true;
-        }
-        if let Some(expected) = expected_content_len
-            && (assistant_text.len() as u64) < expected
-        {
-            return true;
-        }
-        let expected_refs = tools_this_turn.saturating_mul(2).saturating_add(1);
-        refs.len() != expected_refs
     }
 
     fn latest_assistant_text(&self) -> String {
@@ -156,11 +138,13 @@ impl App {
             self.abandon_recovery_batch(&pending.batch_id);
             return;
         }
-        let update =
-            super::range_accumulator::RangeAccumulator::new(pending.content, pending.offset)
-                .apply(&data);
+        let update = crate::application::range_accumulator::RangeAccumulator::new(
+            pending.content,
+            pending.offset,
+        )
+        .apply(&data);
         let accumulated = match update {
-            Ok(super::range_accumulator::RangeUpdate::Continue {
+            Ok(crate::application::range_accumulator::RangeUpdate::Continue {
                 content,
                 next_offset,
             }) => {
@@ -188,7 +172,7 @@ impl App {
                 });
                 return;
             }
-            Ok(super::range_accumulator::RangeUpdate::Complete(content)) => content,
+            Ok(crate::application::range_accumulator::RangeUpdate::Complete(content)) => content,
             Err(_) => {
                 self.abandon_recovery_batch(&pending.batch_id);
                 return;
@@ -201,7 +185,7 @@ impl App {
             return;
         };
         batch.responses.insert(pending.message_id, data);
-        if batch.responses.len() != batch.refs.len() {
+        if !batch.is_complete() {
             return;
         }
         let batch = self
@@ -242,10 +226,9 @@ pub(crate) fn recovered_chat_entries(
     let mut entries = Vec::new();
     let mut tools = std::collections::HashMap::<String, usize>::new();
     let mut suppressed_calls = std::collections::HashSet::<String>::new();
-    for message_id in refs {
-        let Some(data) = responses.get(message_id) else {
-            continue;
-        };
+    // Ordering is the domain's rule, not this function's: walk in ref order,
+    // never arrival order.
+    for data in crate::domain::turn_recovery::ordered_by_refs(refs, responses) {
         let role = data.get("role").and_then(|v| v.as_str()).unwrap_or("");
         let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("");
         match role {

@@ -112,4 +112,22 @@ impl TuiHarness {
             })
             .collect()
     }
+
+    /// Master chat assistant entry bodies in transcript order (#1221 BDD).
+    /// Lets oversized-recall scenarios observe the body the APP reassembled,
+    /// instead of comparing two test-local fixtures to each other. The
+    /// rendered frame is width-wrapped, so a multi-kilobyte recalled body
+    /// cannot be substring-matched against a frame.
+    pub fn master_assistant_texts(&self) -> Vec<String> {
+        self.app
+            .master_session
+            .chat
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                ChatEntry::Assistant { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
 }

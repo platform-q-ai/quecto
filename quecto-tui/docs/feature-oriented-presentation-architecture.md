@@ -33,7 +33,7 @@ The current crate still uses `application/`, `domain/`, `infrastructure/`, and `
 | `infrastructure/workspace_files.rs` | workspace filesystem/Git adapter | `workspace` boundary adapter |
 | `application/model_payloads.rs` | typed mapper for `list_models` wire payloads (#1220) | `protocol` mapping feeding `models` |
 | `application/session_payloads.rs` | typed parsing foothold for session payloads | `protocol` mapping feeding `sessions` |
-| `domain/` | placeholder for invariant-bearing shared values | only keep values that encode real invariants |
+| `domain/` | conversation history/recovery invariants (#1221) | only keep values that encode real invariants |
 
 Each migration PR should preserve one source of truth for every moved state cluster and avoid long-lived dual writes.
 
@@ -250,8 +250,11 @@ This issue is the characterization-readiness slice for the later code-moving iss
 |---|---|
 | `application/mod.rs` | remove after compatibility shims are unnecessary |
 | `application/model_payloads.rs` | `protocol` mapper feeding `models` |
+| `application/range_accumulator.rs` | `protocol` chunked range assembly feeding `conversation` (#1221) |
 | `application/session_payloads.rs` | `protocol` mapper feeding `sessions` |
+| `domain/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221) |
 | `domain/mod.rs` | remove vestigial placeholder; recreate only for invariant-bearing shared values if needed |
+| `domain/turn_recovery.rs` | `conversation` end-of-turn recovery trigger and batch atomicity (#1221) |
 | `infrastructure/child_watch.rs` | `shell` runtime supervision |
 | `infrastructure/client.rs` | `protocol` |
 | `infrastructure/mod.rs` | remove after adapter modules move |
@@ -314,7 +317,6 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `interface/ledger_sync.rs` | `agents` pure/presentation state |
 | `interface/mod.rs` | remove/split into `shell`, features, and `components` |
 | `interface/overlay.rs` | `components` overlay primitive |
-| `interface/range_accumulator.rs` | `components` rendering helper |
 | `interface/select_overlay.rs` | `components` overlay primitive |
 | `interface/stdin_buffer.rs` | `shell` stdin adapter/policy |
 | `interface/theme.rs` | `components` styling primitive |
@@ -403,7 +405,8 @@ Two decrease-only guards live in `quecto-agentic-harness/tests/architecture.rs`
 and therefore run in the fast pre-commit guard suite (targets are enumerated
 dynamically, so they cannot be silently dropped):
 
-- `tui_raw_json_parsing_sites_do_not_grow` — seed `130`.
+- `tui_interface_raw_json_parsing_sites_do_not_grow` — interface seed `120`.
+- `tui_application_raw_json_parsing_sites_do_not_grow` — application seed `69`.
 - `tui_wire_dto_usage_does_not_grow` — seed `124`.
 
 Both were hardened after review on #1235, which proved the first drafts did not
@@ -438,22 +441,7 @@ Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-Seeded at 130 sites. The ratchet's failure message reprints this inventory in
-burn-down order, so it stays accurate without manual upkeep:
-
-| Module | Sites |
-|---|---|
-| `interface/components/workflow_bar.rs` | 38 |
-| `interface/app_events.rs` | 20 |
-| `interface/app_subagent_stream.rs` | 19 |
-| `interface/components/chat_render.rs` | 17 |
-| `interface/range_accumulator.rs` | 10 |
-| `interface/app_paged_history.rs` | 6 |
-| `interface/ledger_sync.rs` | 6 |
-| `interface/app_rewind.rs` | 5 |
-| `interface/components/footer.rs` | 4 |
-| `interface/app_subagents.rs` | 3 |
-| `interface/app_effort.rs` | 2 |
+The interface raw-JSON ratchet is seeded at 120 sites (lowered from 130 in #1221 when `range_accumulator.rs` and its 10 sites moved to `application/`). The application raw-JSON ratchet is seeded separately at 69 sites, so the moved wire parsing remains measured instead of disappearing from the burn-down surface. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
 
 Wire-DTO usage is seeded at 124, led by `app_subagent_stream.rs`,
 `app_subagents.rs`, `app_submit.rs`, and `tui_harness_events.rs`.
@@ -517,3 +505,322 @@ additive pin; no existing assertion was altered).
 | File | `git hash-object` |
 |---|---|
 | `quecto-tui/src/interface/app_models_protocol_characterization_tests.rs` | `e57d8c569df490354949ff259b450eb050e661d0` |
+
+## Parity contract for conversation history/recovery slice (#1221)
+
+Readiness gate for #1221:
+
+- Zero behaviour change mandate: **passed**. Every acceptance criterion is structural (testability without terminal/client/JSON/Tokio, `ChatEntry` stays a view projection, `App` delegates, existing tests stay green), and the "Preserve" section enumerates behaviours that must be identical. The parent epic (#1149) forbids user-visible behaviour changes.
+- Touched observable surfaces: enumerable — master attach backfill, older-page pagination/correlation/retry, resume/rewind transcript replacement, lifecycle invalidation, stub recall (#1061), ref-based end-of-turn recovery (#1060), and chunked range assembly. No command is added, removed, or reordered.
+- Existing harnesses: **passed**. `app_paged_history_tests.rs` (638 lines), `app_paged_history_review_tests.rs` (317), `app_attach_backfill_tests.rs` (417), `app_events_1060_tests.rs`, `app_events_1060_child_tests.rs`, `app_rewind_response_tests.rs`, `app_resumed_history`-covering tests, plus the `TuiHarness` headless harness and BDD features pin the current behaviour without a real terminal.
+- Behavioural/refactoring split: **passed**. No acceptance criterion changes rendered output or the wire.
+- Performance warning: **accepted**. Recorded per surface below. Consequence if unrecorded: allocation/complexity regressions would be undetectable.
+
+Observable surfaces and required parity:
+
+| Surface | Required identical behaviour | Boundary cases | Performance characteristics |
+|---|---|---|---|
+| Older-page request emission (`next_history_page_request`) | A `get_messages{before}` is emitted only when: no sub-agent is focused, `history_has_more_before` is true, the chat is scrolled to the oldest loaded entry, and a `history_before_cursor` exists. Request id is `history-page-{uuid_like}-{seq}`, `seq` incremented with wrapping add before use. Same-cursor in-flight requests are deduped unless older than 30s (`PENDING_HISTORY_PAGE_RETRY`), in which case a fresh request replaces the pending entry. | No cursor → no request; `has_more_before=false` → no request; not at oldest → no request; sub-agent focused → no request; pending same cursor fresh (<30s) → suppressed; pending same cursor stale (≥30s) → re-issued; `seq` at `u64::MAX` wraps. | One `format!` per request, one clone of the cursor; no per-frame allocation — the request path is scroll-driven, not render-driven. |
+| Page correlation (`is_pending_history_page`) | Only an EXACT `request_id` match is accepted; `None` ids never match; ids with a matching prefix but different suffix are rejected; foreign/broadcast `history-page-*` responses are dropped without mutating chat; a page in flight across a resume is dropped. | `id=None`; exact match; prefix-only match; foreign `history-page-…`; id-less broadcast snapshot (goes to the attach-backfill reconcile path). | Single `Option<&str>` comparison, no allocation. |
+| Backfill reconcile (`reconcile_master_backfill_history`) | Returns immediately when `history_backfilled`; unparseable payload is ignored; cursors (`history_before_cursor`, `history_has_more_before`) and `history_pending_page=None` are set BEFORE the empty-history early return; an empty/filtered history never latches `history_backfilled`; `extend_prefix=true` prepends and grows `partial_backfill_len` by the page length; `extend_prefix=false` with an existing `partial_backfill_len` replaces the whole loaded prefix; otherwise prepends; `trimmed || has_more_before` keeps `partial_backfill_len=Some(loaded_prefix)` and `history_backfilled=false`, else clears the prefix and latches `history_backfilled=true`. | Zero messages; one; many; `trimmed=true` with `has_more_before=false` and vice versa; missing `before`/`hasMoreBefore` keys; repeated snapshot after a partial page (no duplicate newest slice, no interior gap). | One `Vec<ChatEntry>` per payload, one prepend/replace pass; no recompute of already-loaded entries. |
+| Lifecycle invalidation (`clear_message_recovery`) | Clears recovery batches, pending recoveries, pending stub recalls, and failed stub recalls, AND resets `history_pending_page`, `history_before_cursor`, `history_has_more_before`, `partial_backfill_len`, `history_backfilled` on the master session. Called on resume, rewind ack, clear_history, and legacy replacement. | Empty state (idempotent); state populated in every map. | Map `clear()` only; capacity retained. |
+| Zero-fetch / replacement paths | `is_history_page_payload` requires a `messages` array AND (`hasMoreBefore` bool OR a `before` key); paged payloads go through `replace_master_chat_with_history_page` (clear chat, reset backfill flags, reconcile cursors, then append the `Status` line); legacy payloads keep the wholesale-replacement path with the same status text (`Session resumed` / `Conversation rewound`). | `messages` present without either cursor key → legacy; `hasMoreBefore` present but non-bool with `before` absent → legacy; `before: null` present → paged. | Predicate is two key lookups, no parse. |
+| Stub recall (#1061) | Visible stub ids are fetched at most once each while in flight (deduped by `(agent_id, message_id)`), skipped when in `failed_stub_recalls`; request id `stub-recall-{uuid_like}`; sub-agent stubs are fetched through the MASTER connection carrying the child's agent id; failure, absent data, `id` mismatch, unknown session, or role mismatch marks the pair failed (no retry per scroll); multi-page bodies continue via `RangeAccumulator` with `offset`/`limit=GET_MESSAGE_PAGE_BYTES`; the assembled body is control-sanitized ONCE after reassembly; a failed `recall_stub` marks the pair failed. | Zero visible stubs; one; many; already-pending; already-failed; role mismatch; missing session; single-page vs multi-page body; sanitization of a control sequence split across pages. | One request per stub, `GET_MESSAGE_PAGE_BYTES = PROTOCOL_LINE_CAP_BYTES/4` per page; content accumulated in a single `String` via `push_str` (no per-page re-concat); sanitize runs once. |
+| Ref-based turn recovery (#1060) | Trigger rule unchanged: empty/ellipsis assistant text, or `assistant_text.len() < expected_content_len`, or `refs.len() != tools_this_turn*2+1`; `open_tool_calls > 0` FORCES recovery regardless; empty refs never trigger; refs already in flight are skipped (no double-fetch); a batch spans `[active_turn_start.min(entry_count), entry_count)`; the range is replaced ATOMICALLY only once all refs have responded; failure/absent data/`id` mismatch/range error abandons the whole batch (chat untouched); a batch whose target session vanished is dropped. | Zero refs; one ref; refs count exactly `2n+1` vs off by one; `expected_content_len` absent vs greater vs equal; open tool call with otherwise-satisfied heuristics; late response after batch removal. | One `HashMap` of responses per batch, one `Vec<ChatEntry>` built at completion, exactly one `replace_range` (no incremental splices). |
+| Transcript assembly (`recovered_chat_entries` / `resumed_chat_entries`) | Ordering, suppressed-tool-call handling, tool-result attachment to the matching pending call (first `result: None` match), standalone tool results, unknown roles ignored, empty user content skipped, control sanitization on resumed text/args/tool names, and stub-vs-plain entry selection (`history_entry`: stub only when demoted AND id present) all identical. | Empty refs/messages; suppressed call plus its result; result without a call; duplicate call ids; missing `role`/`content` keys; `toolCalls` vs `tool_calls`, `toolCallId` vs `tool_call_id`, `isError` vs `is_error`. | Single pass over refs/messages with an index map; entries pushed once, results patched in place. |
+| Range assembly (`RangeAccumulator`) | Offset mismatch, missing content, missing `nextOffset`, non-progressing/overshooting offsets, and length mismatch all error exactly as today. | `offset` absent (defaults 0); `contentLength` absent (defaults to accumulated len); `nextOffset == offset`; `nextOffset > contentLength`; accumulated length over/under `contentLength`. | Amortized `push_str` into one buffer. |
+| Command ordering / FIFO | The same commands are emitted in the same order for attach, scroll-back, stub recall, resume, rewind open/apply/refresh, and recovery. Failed enqueues still roll back the matching pending page or stub recall (`rollback_failed_history_command`). | Rollback for a `GetMessages` id that is not the pending page (no-op); rollback for an unknown `GetMessage` id (no-op). | Unchanged. |
+
+Structural goals recorded as REVIEW-TIME checks only (never test assertions): a cohesive conversation module owns the above policy; `ChatEntry` remains a view projection, not policy vocabulary; `App` delegates rather than implements; policy is constructible without a terminal, concrete client, raw JSON, or Tokio runtime.
+
+Approved parity contract: readiness gate passed, all boundary cases verified against the current code, no `__UNRESOLVED__` markers remain.
+
+## Characterization mutation log for conversation history/recovery slice (#1221)
+
+Each mutation was applied to production code, verified to fail the named
+characterization test, then restored from a pristine baseline copy.
+
+| Mutation | Observed failure |
+|---|---|
+| M1: drop the `history_has_more_before` guard on page emission | `scroll_back_emits_no_page_request_when_no_older_history_is_advertised` FAILED |
+| M2: default a missing `before` cursor to `""` instead of bailing | `scroll_back_emits_no_page_request_without_a_cursor` FAILED |
+| M3: correlate pages by id PREFIX instead of exact match | `page_response_with_prefix_matching_id_is_rejected` FAILED |
+| M4: publish paging cursors AFTER the empty-history early return | `empty_backfill_page_still_publishes_its_paging_cursor` FAILED |
+| M5: widen `is_history_page_payload` to accept any `messages` array | SURVIVED — the predicate is not the observable; replaced by M5b |
+| M5b: route legacy resume payloads through prepend/reconcile instead of replacement | `legacy_resume_payload_without_paging_metadata_replaces_transcript` FAILED |
+| M6: accept a stub-recall body whose `id` disagrees with the request | `stub_recall_rejects_mismatched_body_id_and_does_not_retry` FAILED |
+| M7: ignore `contentLength` in the recovery trigger heuristic | `truncated_assistant_body_triggers_recovery_via_advertised_content_length` FAILED |
+| M8: apply a recovery batch before all refs have responded | `partially_answered_recovery_batch_does_not_mutate_the_transcript` FAILED |
+| M9: make `rollback_failed_history_command` a no-op for `GetMessages` | `failed_page_enqueue_rolls_back_the_pending_request` FAILED |
+| M10: roll back the pending page for ANY `GetMessages` id | `rollback_of_an_unrelated_page_id_is_a_no_op` FAILED |
+
+Residue check after the log: `git diff` shows only the characterization-test
+module declaration and this document; no production code changes.
+
+## Characterization review outcome (#1221)
+
+Three independent read-only finders reviewed the safety net: falsifiability,
+contract coverage, and Gherkin/BDD discipline.
+
+Falsifiability (0 HIGH, 4 MED): no hollow assertions, no banned patterns, and the
+mutation log — including M5's `SURVIVED` verdict — was independently confirmed
+honest. All four MED findings fixed: rollback tests now drive the real
+`handle_command_send_failure` entry point rather than the rollback helper alone,
+and positive/negative controls were added for the no-retry, batch-atomicity and
+`contentLength` assertions so none can pass vacuously.
+
+Coverage — two HIGH gaps found and closed:
+
+- `RangeAccumulator` had NO direct tests; all five `RangeError` variants were
+  unpinned even though both callers map `Err(_)` onto a terminal outcome
+  (stub marked failed / batch abandoned), so a misclassification silently drops
+  user content. Added `range_accumulator_tests.rs` (11 tests) covering every
+  variant, both documented defaults, and in-order multi-page reassembly.
+- The multi-page `Continue` arm in `app_message_recovery` — duplicated paging
+  logic — was never exercised. Added
+  `oversized_recovery_ref_pages_and_reassembles_before_replacing_the_turn`.
+
+MED gaps also closed: control-sequence sanitization across a split recall page
+boundary, in-flight stub-recall dedupe, and the trimmed-plus-more-history latch.
+
+BDD (2 HIGH, both genuine and fixed):
+
+- Two oversized-recall `Then` steps compared two TEST-LOCAL fixtures to each
+  other (`recalled_full` vs `stub_full`), asserting nothing about the app. A
+  `RangeAccumulator` mutation that corrupted every reassembled body passed them.
+  They now observe the app's real transcript via a new `master_assistant_texts`
+  harness probe (the rendered frame is width-wrapped, so an oversized body
+  cannot be substring-matched against it), and the mutation now fails them.
+- "the operator resumes the session in the TUI" performed no resume: it injected
+  a hand-written `resume-messages` id, leaving resume request emission and
+  correlation unexercised. It now acknowledges a `resume_session` and replies
+  using the id the APP emitted; deleting the production request now fails it.
+
+Also removed four orphaned step definitions for sub-agent paging. Restoring their
+scenario proved sub-agent paging was deliberately REMOVED in #1210
+(`next_history_page_request` returns `None` when a sub-agent is focused), so the
+dead steps were deleted rather than the scenario revived.
+
+Net: 1602 unit tests and 192 BDD scenarios green; the only production-source
+changes are the test-module declarations and the new harness probe.
+
+## Parity evidence for conversation history/recovery slice (#1221)
+
+`cargo fmt --all --check` clean; `cargo clippy -p quecto-tui --all-targets -D warnings` clean.
+
+| Class | Surface | Evidence | Verdict |
+|---|---|---|---|
+| Behavioural | All ten contract surfaces | Whole workspace green after the extraction: 5052 tests, 192/192 BDD scenarios, 37/37 architecture tests, 31/31 contract tests. The 15 characterization tests and 11 `RangeAccumulator` tests written BEFORE the move passed unchanged after it. | PASS |
+| Behavioural | Pre-existing test tree | `git diff b0584166..HEAD` over pre-existing test files shows changes in **five**, in three distinct classes. (1) MECHANICAL: `app_paged_history_review_tests.rs` and `app_paged_history_tests.rs` — every hunk a field-path rename (`session.history_before_cursor` → `session.history.before_cursor`) plus the `PendingHistoryPage` import path; zero assertions, fixtures, or test names changed. (2) DELIBERATE BDD REWRITES: `tui_paged_history_steps.rs` and `tui_paged_history_1094_steps.rs` — two step bodies rewritten and four orphaned step definitions deleted in response to review findings; these are behavioural test changes, NOT renames. (3) LOAD-BEARING GATE CHANGE: `quecto-agentic-harness/tests/architecture.rs` — `TUI_INTERFACE_RAW_JSON_SITE_SEED` lowered 130 → 120, a ratchet whose own doc comment says "Never raise it". This row has now been corrected twice: it first claimed "exactly two" files and "zero test names changed" (true only of class 1), then "four" (omitting class 3). Recorded here because a scope claim that keeps understating itself is worse than no claim. | PASS (all three classes disclosed) |
+| Behavioural | Adapted tests still load-bearing | Re-ran mutation evidence after adapting them: correlating by id prefix instead of exact match fails `page_response_with_prefix_matching_id_is_rejected`; removing the staleness window fails both `stale_in_flight_page_is_retried_after_age_window` and `late_twin_of_stale_retried_page_is_dropped`. | PASS |
+| Visual | Rendered frames | Every characterization and BDD assertion in this slice reads rendered frame text (`chat_text`, `active_chat_text`) or the app's own transcript entries. All pass unchanged, so no pinned frame differs. | PASS |
+| Performance | Older-page emission | Old code inlined the guards in `next_history_page_request`; new code calls `HistoryPaging::next_page_request`. Same work: one `format!` and one cursor clone per REQUEST. The path is still scroll-driven — the only callers are `Key::ScrollUp`/`Key::PageUp` in `app_event_loop.rs` — so nothing was moved into the render loop. | PASS |
+| Performance | Page correlation | Was an `Option<&str>` equality; still an `Option<&str>` equality inside `is_pending_page`. No allocation, no map lookup added. | PASS |
+| Performance | Backfill reconcile | Still one `Vec<ChatEntry>` per payload and one prepend/replace pass. The policy returns a `PrefixPlan` enum (a `Copy`, allocation-free value) and the interface performs the single chat mutation; previously-loaded entries are still never recomputed. | PASS |
+| Performance | Recovery trigger | `TurnOutcome` borrows `refs` and `assistant_text` (`&'a [String]`, `&'a str`) — it is a view, not a copy, so the per-turn heuristic allocates nothing. Previously the same fields were read directly off `App`. | PASS |
+| Performance | Batch completion | `is_complete()` is the same `len == len` comparison. `ordered_by_refs` is a lazy iterator that now BACKS the ref-ordered walk `recovered_chat_entries` previously hand-rolled, so ordering has one implementation rather than two; the walk itself is unchanged (same skip on an absent ref, same single pass). Still one `replace_range` per batch, never incremental splices. | PASS |
+| Quantitative | Trigger-logic duplication | The force-recovery check (`open_tool_calls > 0`) existed at 2 call sites (master + sub-agent); it now exists at 1, inside the policy. Both paths route through `TurnOutcome::needs_recovery`. | PASS |
+| Quantitative | Production LOC | Conversation production code: 828 lines before (`app_paged_history` 316 + `app_message_recovery` 440 + `range_accumulator` 72) → 1060 after, measured by `wc -l` at the current head (`app_paged_history` 259 + `app_message_recovery` 423 + `range_accumulator` 76 + `history_paging` 187 + `turn_recovery` 115). Net +232. (An earlier version of this row read 1035/+207; those figures predated the `forced_without_text` and `ordered_by_refs` review fixes and were no longer reproducible.) The issue sets no LOC target; the growth is doc comments explaining the invariants (why exact-match correlation, why an open tool call forces recovery) that were previously implicit. Interface files themselves shrank by 74 lines (316+440 = 756 → 259+423 = 682), remeasured at head; the earlier "81" was never re-measured after the review fixes. | RECORDED |
+| Quantitative | Testability criterion | 23 new tests construct the policy with no terminal, concrete client, raw JSON, or Tokio runtime. `grep` for `serde_json|ratatui|tokio|crossterm|Client` across `src/domain/*.rs` production files returns nothing. | PASS |
+| Structural | `ChatEntry` stays a view projection | `grep -rn ChatEntry src/domain/ src/application/` returns nothing: policy vocabulary is `PageFacts`, `PrefixPlan`, `TurnOutcome`, `RecoveryBatch<T>`. | PASS |
+
+## Review-round fixes for conversation history/recovery slice (#1221)
+
+Seven narrow finders reviewed the PR in parallel; every consequential finding
+was then dispatched to an adversarial verifier prompted to REFUTE it. Two were
+refuted and correctly not acted on: `HistoryPaging`'s `pub` fields (zero
+production writers — production uses methods exclusively, and `App.history` is
+private, so no external consumer can reach a live instance) and
+`is_complete()`'s count-vs-per-ref comparison (byte-identical to the
+pre-refactor check, and unreachable since `messageRefs` carries unique ids).
+
+Five findings survived and are fixed:
+
+| Severity | Finding | Fix | Mutation evidence |
+|---|---|---|---|
+| HIGH | Moving `range_accumulator.rs` out of `interface/` dropped its 10 raw-JSON sites out of `tui_raw_json_parsing_sites_do_not_grow`'s scan root (measured 130 → 120) while the seed stayed 130, silently allowing 10 new interface-layer sites. | Lowered the interface raw-JSON seed to 120, then added a separate application raw-JSON seed at 69 so the moved parser remains measured. | Adding 10 raw `serde_json` sites to `interface/app_effort.rs` PASSED before the fix and FAILS after it. |
+| HIGH | `a_control_sequence_split_across_recall_pages_is_sanitized_after_reassembly` was a deletion detector, not a policy detector: a per-page sanitizer consumes the dangling `ESC[` via the unterminated-CSI branch, leaving no ESC byte, so the sole assertion passed on the policy it documented. | Assert the payload too (`ends_with("RED") && !contains("31m")`). | Sanitizing per page now FAILS the test (it passed before); deleting the post-reassembly sanitize still FAILS. Both mutations caught. |
+| MED | `ordered_responses()` had zero production consumers; `recovered_chat_entries` hand-rolled the same ref-ordered walk, so the ordering invariant was pinned on code that never ships. | Extracted `ordered_by_refs` as the single ordered-walk primitive and routed `recovered_chat_entries` through it. `ordered_responses()` was then DELETED — the conformance sweep caught that it was still dead after the reroute, since production calls the free function, not the method. Ordering now has one implementation. | Sorting ids instead of walking ref order FAILS `recovered_chat_entries_handles_suppressed_calls_errors_and_unknown_roles` — a test exercising the PRODUCTION walk. |
+| MED | The parity-evidence row claimed `ordered_responses()` replaced "an equivalent walk"; it replaced nothing. | Row corrected to state what actually changed. Also fixed two stale doc lines from the move ("Seeded at 130", the old `interface/` path). | n/a (documentation). |
+| LOW | The refactor lost a `&&` short-circuit: `latest_assistant_text()` (which clones the whole assistant body) became unconditional at the master site. Only the master site regressed — the sub-agent site was already unconditional. | Added `TurnOutcome::forced_without_text`, so the text is materialised lazily and the force rule stays INSIDE the policy rather than being re-duplicated at the call site. | Dropping the empty-refs guard from the fast path FAILS `the_text_free_fast_path_never_disagrees_with_the_full_policy`. |
+
+One finding was raised as HIGH and declined as out of scope: `app_response.rs`
+correlates resume/rewind responses by FIXED literal ids (`resume-messages`,
+`rewind-refresh`), which are broadcast to every connected client, so a second
+TUI can have its transcript replaced by a resume it never issued. The verifier
+confirmed the transport fan-out is real (`uds.rs:168` selects
+`EventSink::Broadcast` in multi-client mode) — but also confirmed it is
+PRE-EXISTING and identical at the parent commit. Fixing it would be a
+behavioural change, which this zero-behaviour-change slice forbids. Filed as
+follow-up rather than smuggled in here.
+
+## Adversarial review round for conversation history/recovery slice (#1221)
+
+Three adversarial finders attacked the merged slice from distinct angles
+(correctness of the extracted state machines, integration seams and
+user-visible behaviour, and safety-net integrity). Every actionable finding was
+re-verified locally by applying the exact mutation the finder claimed survives,
+before any fix was written.
+
+Verdict across all three: **no behavioural regression introduced by the
+extraction.** Both the correctness and integration finders independently
+concluded the zero-behaviour-change claim holds; `reconcile` is a line-for-line
+transcription of the old inline arithmetic, `range_accumulator` is byte-identical
+modulo visibility, and the two recovery predicates are provably equivalent given
+the callers' `refs.is_empty()` pre-check.
+
+What did NOT hold was the safety net's coverage. Four mutations were confirmed
+invisible to the ENTIRE `quecto-tui` lib suite (1627 tests at that commit; 1639 at head), and all four are now killed:
+
+| Severity | Gap | Mutation that survived | Now killed by |
+|---|---|---|---|
+| HIGH | `reconcile`'s prefix × latch matrix had two untested corners; the `ReplacePrefix` arm's prefix arithmetic was unpinned. | `(ReplacePrefix(partial_len), partial_len + facts.page_len)` — double-counts the prefix, so the NEXT snapshot's `replace_history_prefix` eats live transcript entries below the backfill. | `a_partial_snapshot_over_a_partial_prefix_replaces_it_without_double_counting` and `an_own_older_page_that_closes_the_backfill_clears_the_partial_prefix` |
+| MED | The empty-page early return was only ever exercised against a virgin struct, so "an empty page never latches the guard" was unproven for latched or partial state. | Clearing `backfilled`/`partial_prefix_len` before the `page_len == 0` return — an empty broadcast snapshot un-latches a completed backfill and re-triggers a full re-page. | `an_empty_page_does_not_disturb_an_already_latched_backfill` and `an_empty_page_does_not_disturb_an_in_progress_partial_prefix` |
+| MED | The in-flight dedupe's `pending.before == before` conjunct was never falsified: no test held a pending page for one cursor while requesting another. | Deleting the conjunct — once the cursor advances, the next page is suppressed for a full 30s retry window and scroll-back appears wedged. | `a_pending_request_for_a_different_cursor_does_not_suppress_a_new_one` and `no_id_correlates_when_nothing_is_in_flight` |
+| MED | `LengthMismatch` was pinned SHORT but never LONG, and a non-string `content` was unpinned. | `self.content.len() >= content_len` — an over-long body ships as `Complete`. Both callers treat an unflagged body as trustworthy user content. | `a_final_page_longer_than_advertised_is_a_length_mismatch` and `a_non_string_content_field_is_missing_content` |
+
+One claimed gap was REFUTED on verification: flipping `hasMoreContent`'s
+`unwrap_or(false)` to `true` already fails 9 tests, so that default is covered.
+One proposed test also encoded a wrong assumption about the
+`next_offset == contentLength` boundary. (The correction made at the time was
+ITSELF wrong — see rounds 2 and 3 below; the boundary is a valid continuation.)
+
+Two documentation claims were found overstated and are corrected above: the
+pre-existing-test-tree row (four files changed in two classes, not "exactly
+two", and the BDD rewrites are genuine behavioural test changes) and the
+production-LOC row (1060/+232 measured at head, not the pre-review 1035/+207).
+
+Remaining findings were all confirmed **pre-existing at `b0584166`** and
+behavioural to fix, so they are filed as follow-ups rather than changed inside
+this zero-behaviour-change slice.
+
+### Round 2: attacking the round-1 fix
+
+The round-1 fix commit was itself put through an adversarial review. It found
+that two of the four gaps were not actually closed, and that one "fix" was
+wrong. Both were reproduced locally before acting.
+
+| Severity | Finding | Resolution |
+|---|---|---|
+| HIGH | The `reconcile` matrix was closed to 6/8, not 8/8. Both `extend_prefix=true` × `partial_prefix_len=None` corners were still untested, and they are production-reachable: an empty or filtered snapshot leaves `partial=None, has_more=true`, and the next own older page lands there. `unwrap_or(0)` → `unwrap_or(1)` in the extend arm left the whole lib suite green (1636 tests at that commit) while producing the SAME user-visible bug the round-1 HIGH was about. | Added `an_own_older_page_with_no_recorded_prefix_counts_only_its_own_length` and `..._that_closes_the_backfill`. The mutation now fails. Matrix is 8/8. |
+| HIGH | `a_next_offset_exactly_at_the_advertised_end_is_invalid_progress` passed for the WRONG reason. Its fixture double-counted its own seed (`acc("abc", 0)` plus a 3-byte page against a 3-byte total = 6 accumulated bytes), so it died on the overshoot conjunct and never reached the boundary it was named for. Probing the real boundary returns `Ok(Continue { next_offset: 3 })` — the original expectation was correct, and the author had bent the test to match the implementation rather than investigating. | Test corrected to assert `Ok(Continue)` and renamed `..._is_a_valid_continuation`, with the fixture mistake recorded in its doc comment. A separate `accumulating_beyond_the_advertised_length_is_still_invalid_progress` was added for the overshoot case. NOTE: as first written that test was itself broken in the same way — see round 3 below. Tightening the guard to `>=` now fails. |
+| MED | The corrected pre-existing-test-tree row was STILL wrong: five files changed, not four. `architecture.rs` — a lowered never-raise ratchet seed — is a third, load-bearing class. | Row corrected to three classes, with a note that it has now understated its own scope twice. |
+| MED | The "remeasured by `wc -l`" LOC row still carried an unmeasured 81-line figure (actual: 74). | Remeasured and shown as arithmetic. |
+
+The lesson recorded for the next slice: **bending a failing test's expectation
+to match the implementation is not a fix.** When the round-1 boundary test
+failed, the correct response was to probe what the code actually does at the
+true boundary — which would have shown the original expectation was right.
+
+Both round-2 HIGHs were mistakes in the round-1 FIX, not in the extraction
+itself. Every adversarial angle continues to agree that the extraction
+introduces no behavioural regression.
+
+### Round 3: the same defect class, reproduced by the fix for it
+
+Round 3 attacked the round-2 fix and found that it had reproduced the exact
+defect it was written to eliminate.
+
+| Severity | Finding | Resolution |
+|---|---|---|
+| HIGH | `accumulating_beyond_the_advertised_length_is_still_invalid_progress` never reached the overshoot guard. Its fixture used `offset: 3, nextOffset: 3` — carried over from the boundary case it was split away from — so `next_offset <= response_offset` (3 ≤ 3) short-circuited first. Deleting `\|\| self.content.len() > content_len` left the test named for overshoot GREEN; only the older `accumulating_past_the_advertised_length_is_invalid_progress` caught it. | Fixture changed to `acc("abcdef", 6)` + a 2-byte page against a 7-byte total, which satisfies every other conjunct so only overshoot can reject it. Verified: deleting the overshoot conjunct now fails BOTH overshoot tests. |
+| HIGH | The round-2 table claimed the new test "covers the overshoot case the broken fixture was accidentally testing". False in both directions: the deleted fixture genuinely did pin overshoot, and the replacement did not. The change REMOVED a working pin while documenting that it added one. | Claim corrected. A reviewer trimming the older test as redundant would have dropped overshoot coverage to zero. |
+| MED | Docs asserted a redundancy that did not exist, presenting a single point of failure as doubly covered. | Corrected; the guard-isolation table below now records which tests actually kill which mutation. |
+
+**Discipline adopted, and the reason it was needed.** Three consecutive rounds
+produced the same class of error: a negative test that passes for a reason
+other than the one it is named for. The rule that catches all of them —
+including round 2's HIGH and round 3's own first proposed fix, which merely
+shifted the death to a third conjunct — is:
+
+> Every negative test must be verified to FAIL when the specific guard it names
+> is removed. Passing is not evidence; dying for the right reason is.
+
+Guard-isolation sweep at head, each mutation applied in isolation:
+
+| Mutation | Tests that die |
+|---|---|
+| `unwrap_or(0)` → `unwrap_or(1)` in the extend arm | `an_own_older_page_with_no_recorded_prefix_counts_only_its_own_length` |
+| `ReplacePrefix` arm returns `partial_len + page_len` | `a_partial_snapshot_over_a_partial_prefix_replaces_it_without_double_counting` |
+| drop the `trimmed` conjunct from the latch | 3 tests: `a_trimmed_or_incomplete_page_leaves_the_backfill_open`, `trimmed_busy_connect_snapshot_then_full_attach_backfill_restores_older_history`, `a_trimmed_page_advertising_more_history_stays_open_to_later_snapshots` |
+| drop the `has_more_before` conjunct from the latch | 11 tests, incl. `a_later_snapshot_replaces_the_whole_loaded_prefix` and `older_history_page_prepends_without_gap_or_duplicate` |
+| delete the overshoot conjunct | `accumulating_beyond_the_advertised_length_is_still_invalid_progress` AND `accumulating_past_the_advertised_length_is_invalid_progress` |
+| `next_offset <= response_offset` → `false` | 1 test (isolated) |
+| `next_offset > content_len` → `false` | 1 test (isolated) |
+
+Round 3 also independently re-derived the boundary assertion rather than
+reading it off the implementation, and confirmed `Ok(Continue { next_offset: 3 })`
+is correct on its own merits: the state cannot loop, because
+`next_offset <= response_offset` terminates it on the very next hop. It further
+verified the interface raw-JSON seed `120` is exact — the `<=` comparison means a
+green test alone proves nothing, so it lowered the seed to 119 and confirmed the
+assertion reports `found 120`. For the first time in three rounds every
+documented number checks out.
+
+### Round 4: the discipline applied only where it was already looking
+
+Round 4 swept EVERY negative-asserting test in the slice with the round-3
+guard-removal rule, including the characterization suite that no earlier round
+had checked this way. Verdict: round 3 did not break the streak — it made it
+four.
+
+| Severity | Finding | Resolution |
+|---|---|---|
+| HIGH | `a_trimmed_page_advertising_more_history_stays_open_to_later_snapshots` survived removal of the `facts.trimmed` guard it is named for. Its fixture set BOTH `trimmed: true` and `hasMoreBefore: true`, so the second sufficient condition held the latch open and the test stayed green. It died only under an unconditional latch. | Fixture changed to `trimmed: true, hasMoreBefore: false`, so only `trimmed` can keep the backfill open. Verified: dropping the `trimmed` conjunct now fails this test. |
+| MED | The guard-isolation table — created in round 3 as the durable remedy — was wrong in 2 of its 7 rows, both understating coverage: `trimmed` listed 1 killer (actual 3), `has_more_before` listed 4 (actual 11). | Both rows remeasured against the real failure sets. |
+| MED | A round-1 sentence still asserted the `next_offset == contentLength` boundary is `InvalidProgress`, contradicting round 2's correction and the shipped code. | Corrected, and annotated to record that the round-1 "correction" was itself wrong. |
+| LOW | Absolute suite counts (1627, 1636) were unverifiable at head. | Rewritten to name the commit they were measured at and the count at head (1639). |
+
+Round 4 also confirmed the three pure-policy files are genuinely clean: all 24
+isolated guard-removal mutations across `range_accumulator_tests.rs`,
+`history_paging_tests.rs` and `turn_recovery_tests.rs` killed their named test
+and no other. The corrected overshoot fixture is right this time, its sibling is
+not redundant, the interface raw-JSON seed `120` is exact, and every LOC figure
+reproduces by `wc -l`.
+
+**What four rounds actually demonstrated.** The recurring failure was never the
+extraction — every round independently confirmed it introduces no behavioural
+regression. It was that each round adopted a correct rule and then applied it
+only to the files already in front of it. Round 3 wrote the guard-removal rule
+and left the same defect live one directory away, and encoded two wrong counts
+in the very table meant to prevent that. A rule is not a remedy until it is
+applied exhaustively to every test the claim covers, and the artefact recording
+it is itself measured rather than asserted.
+
+### Round 5: the prose remedy replaced with an executable one
+
+Round 5 swept 44 negative-asserting tests and inverted 7 positive ones across
+all five test files, running 55 isolated single-guard mutations. It found that
+round 4 had again stopped one function short.
+
+| Severity | Finding | Resolution |
+|---|---|---|
+| HIGH | `HistoryPaging::reset` and `reopen_backfill` had NEVER been mutated by any round. Three of their guards were pinned only by vacuous assertions: the fixtures left each field already in its post-condition state before the method ran. Deleting `reset`'s `backfilled = false` or `reopen_backfill`'s `partial_prefix_len = None` killed ZERO tests workspace-wide. Production impact: a resume/rewind/clear leaves the latch set and every future attach-backfill is suppressed; a stale prefix length feeds the next `ReplacePrefix` and deletes live transcript entries — the round-1 HIGH's exact bug class. | Both tests rewritten so every cleared field is non-default beforehand, plus `reset_clears_a_latched_guard_that_has_no_partial_prefix`. All seven lifecycle guards now die when removed. |
+| HIGH | The round-4 doc claim "all 24 isolated guard-removal mutations killed their named test and no other" was unfalsifiable — it enumerated no mutation, and "and no other" was contradicted by the guard-isolation table two paragraphs above it. | Claim deleted and replaced by `scripts/check-guard-manifest.sh`. |
+
+**The remedy is now executable, not prose.** `scripts/check-guard-manifest.sh`
+enumerates the guards in the history paging, turn recovery, and range assembly
+policy files; deleting each listed guard must fail at least one test. Because the
+manifest performs many full lib-test mutations, the pre-push gate exposes it as
+an opt-in lane (`QUECTO_RUN_GUARD_MANIFEST=1`) rather than running it on every
+push; that opt-in lane has its own cache key, so a cached default push cannot
+silently skip an explicitly requested manifest run. Running it immediately found
+a **ninth** unpinned guard that five rounds of manual review had missed —
+`reconcile`'s keep-open arm never observably unlatched `backfilled`, because no
+test fed a partial page to an already-latched backfill. Fixed by
+`a_partial_page_unlatches_a_previously_completed_backfill`.
+
+Writing the manifest also exposed two bugs in the manifest itself, both of the
+same family the reviews kept finding: it reported a compile failure as a
+surviving guard (a `sed` line-deletion inside a multi-line boolean does not
+parse), and it matched cargo's `error: test failed` summary — which appears on
+every legitimate kill — as a build failure. Both now distinguished explicitly,
+with a `check_replace` form for multi-line guards.
+
+**Conclusion after five rounds.** Every round independently confirmed the
+extraction introduces no behavioural regression; all findings were in the
+safety net and the documentation, never in the shipped refactor. The recurring
+failure was that each round applied a correct rule to exactly the files the
+previous round's findings pointed at. The scoping was the defect, not the
+rigour — which is why the remedy had to become a checked-in enumeration that
+cannot silently omit a function. An unlisted guard is now an unverified guard.

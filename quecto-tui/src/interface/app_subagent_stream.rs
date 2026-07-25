@@ -395,11 +395,16 @@ impl App {
         // Per-turn tool count, not session-lifetime `tool_entry_count()`, which
         // over-counts on later turns and forces false-positive recovery (F2).
         let tools = session.tools_this_turn;
-        // A dropped child tool-end leaves a result unresolved; force recovery
-        // even when cardinality looks complete (#1060 review 3).
-        let force = session.open_tool_calls > 0;
-        if !force
-            && !self.needs_message_recovery_for(refs, &assistant_text, tools, expected_content_len)
+        // A dropped child tool-end leaves a result unresolved; the policy forces
+        // recovery even when cardinality looks complete (#1060 review 3).
+        if !(crate::domain::turn_recovery::TurnOutcome {
+            refs,
+            assistant_text: &assistant_text,
+            tools_this_turn: tools,
+            open_tool_calls: session.open_tool_calls,
+            expected_content_len,
+        })
+        .needs_recovery()
         {
             return;
         }
@@ -420,13 +425,12 @@ impl App {
         let target_end = session.chat.entry_count();
         self.message_recovery_batches.insert(
             batch_id.clone(),
-            MessageRecoveryBatch {
-                refs: refs.to_vec(),
-                responses: std::collections::HashMap::new(),
-                target_start: session.active_turn_start.min(target_end),
+            MessageRecoveryBatch::new(
+                refs.to_vec(),
+                session.active_turn_start.min(target_end),
                 target_end,
-                agent_id: Some(agent_id.to_string()),
-            },
+                Some(agent_id.to_string()),
+            ),
         );
         for message_id in refs {
             let req_id = format!("msg-recovery-{}", super::app_events::uuid_like());
@@ -537,58 +541,40 @@ impl App {
         extend_prefix: bool,
     ) {
         use crate::application::session_payloads;
-        if session.history_backfilled {
+        use crate::domain::history_paging::{PageFacts, PrefixPlan};
+        if session.history.backfilled {
             return;
         }
         let Ok(messages) = session_payloads::parse_resumed_messages(data) else {
             return;
         };
         let history: Vec<ChatEntry> = Self::resumed_chat_entries(messages);
-        let before = data
-            .get("before")
-            .and_then(|v| v.as_str())
-            .map(ToOwned::to_owned);
-        let has_more_before = data
-            .get("hasMoreBefore")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        session.history_pending_page = None;
-        session.history_before_cursor = before;
-        session.history_has_more_before = has_more_before;
-        // Only mark the backfill applied once it actually carried content: an
-        // empty/filtered payload must not latch the guard and permanently
-        // suppress a later populated backfill (reconnect / response racing ahead
-        // of persistence) (#828 review).
-        if history.is_empty() {
-            return;
-        }
-        let history_len = history.len();
-        let trimmed = data
-            .get("trimmed")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        // `partial_backfill_len` tracks the TOTAL loaded backfill prefix, so a
-        // later snapshot replaces every previously loaded page — never just the
-        // most recent one (duplicated newest slice + interior gap).
-        let loaded_prefix = if extend_prefix {
-            // This session's own older page grows the loaded prefix.
-            session.chat.prepend_history(history);
-            session.partial_backfill_len.unwrap_or(0) + history_len
-        } else if let Some(partial_len) = session.partial_backfill_len {
-            // A prior partial snapshot / paged prefix already contributed:
-            // replace it all; paging restarts from the cursors set above.
-            session.chat.replace_history_prefix(partial_len, history);
-            history_len
-        } else {
-            session.chat.prepend_history(history);
-            history_len
+        let facts = PageFacts {
+            before: data
+                .get("before")
+                .and_then(|v| v.as_str())
+                .map(ToOwned::to_owned),
+            has_more_before: data
+                .get("hasMoreBefore")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            trimmed: data
+                .get("trimmed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            page_len: history.len(),
+            extend_prefix,
         };
-        if trimmed || has_more_before {
-            session.partial_backfill_len = Some(loaded_prefix);
-            session.history_backfilled = false;
-        } else {
-            session.partial_backfill_len = None;
-            session.history_backfilled = true;
+        // The policy publishes cursors before reporting an empty page, so an
+        // empty/filtered payload leaves paging reachable without latching the
+        // backfill guard and permanently suppressing a later populated backfill
+        // (reconnect / response racing ahead of persistence) (#828 review).
+        match session.history.reconcile(&facts) {
+            None => {}
+            Some(PrefixPlan::Prepend) => session.chat.prepend_history(history),
+            Some(PrefixPlan::ReplacePrefix(len)) => {
+                session.chat.replace_history_prefix(len, history)
+            }
         }
     }
 

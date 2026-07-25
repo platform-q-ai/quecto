@@ -40,9 +40,19 @@ fn given_attached_oversized_stub(world: &mut TuiWorld) {
 
 #[then("the TUI should retrieve the oversized history message without disconnecting")]
 fn then_oversized_retrieve_without_disconnect(world: &mut TuiWorld) {
-    assert_eq!(
-        world.tui_paged.recalled_full, world.tui_paged.stub_full,
-        "all bounded pages must be delivered and reassembled exactly"
+    // Observe the APP's reassembled transcript body, not a test-local fixture.
+    let full = world
+        .tui_paged
+        .stub_full
+        .clone()
+        .expect("oversized fixture");
+    let texts = drive(world, |h| h.master_assistant_texts());
+    assert!(
+        texts.iter().any(|text| text == &full),
+        "all bounded pages must be delivered and reassembled exactly; \
+         got assistant entry lengths {:?} (expected one of length {})",
+        texts.iter().map(String::len).collect::<Vec<_>>(),
+        full.len()
     );
     let frame = active_chat_text(world);
     assert!(
