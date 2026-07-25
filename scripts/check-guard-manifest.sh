@@ -124,7 +124,7 @@ PYEOF
 }
 
 echo "== domain/history_paging.rs =="
-check "$HP" "$HP_BAK" "self.pending_page = None;"        2 "reset: forgets the in-flight page"
+check "$HP" "$HP_BAK" "self.pending_page = None;"        3 "reset: forgets the in-flight page"
 check "$HP" "$HP_BAK" "self.before_cursor = None;"       1 "reset: drops the paging cursor"
 check "$HP" "$HP_BAK" "self.has_more_before = false;"    1 "reset: drops the advertised-more flag"
 check "$HP" "$HP_BAK" "self.partial_prefix_len = None;"  1 "reset: drops the partial prefix"

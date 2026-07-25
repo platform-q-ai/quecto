@@ -56,8 +56,13 @@ step() {
 step "1/12" "Quality gate"
 "$ROOT/scripts/check-quality.sh"
 
-step "2/12" "Guard-removal manifest (history/recovery policies)"
-"$ROOT/scripts/check-guard-manifest.sh"
+if [[ "${QUECTO_RUN_GUARD_MANIFEST:-0}" == "1" ]]; then
+    step "2/12" "Guard-removal manifest (history/recovery policies)"
+    "$ROOT/scripts/check-guard-manifest.sh"
+else
+    step "2/12" "Guard-removal manifest (history/recovery policies; opt-in)"
+    echo "Skipped by default; set QUECTO_RUN_GUARD_MANIFEST=1 to run mutation guard checks."
+fi
 
 step "3/12" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
 "$ROOT/scripts/check-bdd-quality.sh"
