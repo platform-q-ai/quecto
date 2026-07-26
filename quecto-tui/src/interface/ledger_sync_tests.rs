@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::agent_ledger_payloads::{SyncCapability, SyncDelta};
+use crate::application::agent_ledger_payloads::{SyncDelta, supports_sync};
 use serde_json::json;
 
 fn message(value: serde_json::Value) -> crate::application::agent_ledger_payloads::LedgerMessage {
@@ -15,11 +15,6 @@ fn delta(messages: Vec<serde_json::Value>, resync: bool) -> SyncDelta {
         caught_up: true,
         resync,
     }
-}
-
-fn supports_sync(value: &serde_json::Value) -> bool {
-    serde_json::from_value::<SyncCapability>(value.clone())
-        .is_ok_and(|capability| capability.supports_sync())
 }
 
 #[test]
@@ -85,6 +80,10 @@ fn capability_parsing_accepts_top_level_or_nested_sync_one() {
     assert!(!supports_sync(&json!({"sync":0})));
     assert!(!supports_sync(&json!({"sync":"1"})));
     assert!(!supports_sync(&json!({"capabilities":{"sync":0}})));
+    assert!(
+        supports_sync(&json!({"sync":1,"capabilities":[]})),
+        "top-level sync support must survive unrelated malformed capabilities data"
+    );
 }
 
 #[test]

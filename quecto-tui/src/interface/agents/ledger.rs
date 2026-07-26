@@ -1,4 +1,5 @@
 use crate::application::agent_ledger_payloads::{LedgerMessage, SyncDelta};
+use crate::domain::turn_recovery::ordered_by_refs;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,12 +48,9 @@ fn ledger_entries(refs: &[String], responses: &HashMap<String, LedgerMessage>) -
     let mut entries = Vec::new();
     let mut tools = HashMap::<String, usize>::new();
     let mut suppressed_calls = std::collections::HashSet::<String>::new();
-    // Ordering is the ledger's rule: walk in stable ref/order vector, never map
-    // iteration order.
-    for id in refs {
-        let Some(message) = responses.get(id) else {
-            continue;
-        };
+    // Ordering is the domain's rule, not this function's: walk in ref order,
+    // never arrival/map order.
+    for message in ordered_by_refs(refs, responses) {
         let content = message.content();
         match message.role() {
             "user" if !content.is_empty() => {

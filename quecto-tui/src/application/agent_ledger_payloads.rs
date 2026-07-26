@@ -3,7 +3,7 @@
 //! The infrastructure client receives raw JSON from UDS, but the agents
 //! presentation policy stores typed ledger messages and capability snapshots.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +53,19 @@ impl LedgerMessage {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedToolArgs(serde_json::Value);
+
+impl ParsedToolArgs {
+    pub fn into_value(self) -> serde_json::Value {
+        self.0
+    }
+}
+
+pub fn parse_tool_args(args: &str) -> Option<ParsedToolArgs> {
+    serde_json::from_str(args).ok().map(ParsedToolArgs)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LedgerToolCall {
@@ -95,6 +108,7 @@ pub struct LedgerFunctionCall {
 #[serde(rename_all = "camelCase")]
 pub struct SyncCapability {
     pub sync: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_capability_set")]
     pub capabilities: Option<CapabilitySet>,
 }
 
@@ -104,7 +118,8 @@ impl SyncCapability {
             || self
                 .capabilities
                 .as_ref()
-                .and_then(|capabilities| capabilities.sync)
+                .unwrap_or(&CapabilitySet::NONE)
+                .sync
                 .unwrap_or(0)
                 >= 1
     }
@@ -114,6 +129,22 @@ impl SyncCapability {
 #[serde(rename_all = "camelCase")]
 pub struct CapabilitySet {
     pub sync: Option<u64>,
+}
+
+impl CapabilitySet {
+    const NONE: Self = Self { sync: None };
+}
+
+pub fn supports_sync(value: &serde_json::Value) -> bool {
+    serde_json::from_value::<SyncCapability>(value.clone())
+        .is_ok_and(|capability| capability.supports_sync())
+}
+
+fn deserialize_capability_set<'de, D>(deserializer: D) -> Result<Option<CapabilitySet>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<CapabilitySet>::deserialize(deserializer).unwrap_or(None))
 }
 
 fn deserialize_optional_json_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>

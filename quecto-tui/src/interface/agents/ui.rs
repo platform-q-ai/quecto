@@ -72,7 +72,8 @@ pub(crate) fn ledger_entry_to_chat_entry(
         } => ChatEntry::ToolExecution {
             tool_call_id,
             tool_name,
-            parsed_args: serde_json::from_str(&args).ok(),
+            parsed_args: crate::application::agent_ledger_payloads::parse_tool_args(&args)
+                .map(|args| args.into_value()),
             args,
             result,
             is_error,
