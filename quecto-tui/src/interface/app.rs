@@ -14,12 +14,9 @@ use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResult};
 use crate::interface::components::chat::{Chat, ChatEntry};
 use crate::interface::components::editor::Editor;
-use crate::interface::components::effort_selector::{EffortSelector, EffortSelectorResult};
-use crate::interface::components::files_autocomplete::FilesAutocomplete;
+use crate::interface::components::effort_selector::EffortSelectorResult;
 use crate::interface::components::footer::Footer;
-use crate::interface::components::model_selector::{
-    ModelEntry, ModelSelector, ModelSelectorResult,
-};
+use crate::interface::components::model_selector::ModelSelectorResult;
 use crate::interface::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::interface::components::select_list::{SelectItem, SelectList};
 use crate::interface::components::spinner::Spinner;
@@ -107,79 +104,6 @@ pub struct App {
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
     /// When the TUI session started — drives the Master row's uptime timer (#820).
     started_at: tokio::time::Instant,
-}
-
-/// Rewind flow state, grouped by owner (#997).
-#[derive(Default)]
-pub(crate) struct RewindFlow {
-    /// Rewind selector shown after idle double-Escape lists prior user turns.
-    selector: Option<SelectList>,
-    /// Last idle bare Escape used to detect double-Escape for rewind.
-    last_idle_escape: Option<tokio::time::Instant>,
-    /// Locally-issued get_messages id for opening the rewind selector.
-    pending_open_id: Option<String>,
-    /// Locally-issued rewind_to id awaiting acknowledgement.
-    pending_apply_id: Option<String>,
-    /// Monotonic client-local sequence for rewind correlation ids.
-    request_seq: u64,
-}
-
-#[derive(Default)]
-struct SessionsFlow {
-    /// Session resume selector shown after `/resume` lists persisted sessions.
-    resume_selector: Option<SelectList>,
-    /// Session stats fallback to learn real context window for current session/model.
-    context_stats_requested: bool,
-}
-
-#[derive(Default)]
-struct WorkflowFlow {
-    /// Mirror of core workflow auto-continue state, toggled through UDS.
-    auto_continue: bool,
-    /// Mirror of core workflow completion-nudge state, toggled through UDS.
-    completion_nudge: bool,
-}
-
-#[derive(Default)]
-struct InferenceFlow {
-    current_model: Option<String>,
-    /// The model selector component (created on demand, pushed onto overlay stack).
-    model_selector: Option<ModelSelector>,
-    model_registry: ModelRegistry,
-    /// The effort selector overlay (#1067), opened by bare `/effort`.
-    effort_selector: Option<EffortSelector>,
-    /// Active effort level (`None` = default), for selector marker + footer (#1067).
-    current_effort: Option<String>,
-    /// Effort vocabulary for the active provider, reported by the agent in
-    /// `get_state` (`effortLevels`) — never re-derived locally (#1067).
-    effort_levels: Vec<String>,
-}
-
-/// Model registry owned by the selector flow (#997).
-#[derive(Default)]
-pub(crate) struct ModelRegistry {
-    /// Models parsed from the last `list_models` response (may be empty).
-    entries: Vec<ModelEntry>,
-    /// A selector open is deferred until the fresh list arrives (ADR-0002).
-    open_pending: bool,
-}
-
-struct WorkspaceFlow {
-    files_autocomplete: FilesAutocomplete,
-    /// Last observed git branch shown in the footer.
-    git_branch: Option<String>,
-    /// Repository root used for git branch polling.
-    git_repo: Option<PathBuf>,
-}
-
-impl WorkspaceFlow {
-    fn new(git_branch: Option<String>, git_repo: Option<PathBuf>) -> Self {
-        Self {
-            files_autocomplete: FilesAutocomplete::new(8),
-            git_branch,
-            git_repo,
-        }
-    }
 }
 
 struct CommandSendFailure {
@@ -297,6 +221,21 @@ mod app_event_loop;
 mod app_events;
 #[path = "app_git.rs"]
 mod app_git;
+#[path = "app_inference.rs"]
+mod app_inference;
+#[path = "app_rewind_state.rs"]
+mod app_rewind_state;
+#[path = "app_sessions.rs"]
+mod app_sessions;
+#[path = "app_workflow.rs"]
+mod app_workflow;
+#[path = "app_workspace.rs"]
+mod app_workspace;
+use app_inference::InferenceFlow;
+use app_rewind_state::RewindFlow;
+use app_sessions::SessionsFlow;
+use app_workflow::WorkflowFlow;
+use app_workspace::WorkspaceFlow;
 #[path = "app_stdin.rs"]
 mod app_stdin;
 pub const GIT_BRANCH_POLL_INTERVAL: std::time::Duration = app_git::GIT_BRANCH_POLL_INTERVAL;

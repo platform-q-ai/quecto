@@ -14,6 +14,8 @@
 
 use super::*;
 
+use crate::interface::components::effort_selector::EffortSelector;
+
 impl App {
     /// Handle `/effort` (bare → selector) and `/effort <level>` (direct set).
     pub(super) fn handle_effort_command(&mut self, arg: &str) {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::interface::components::model_selector::ModelEntry;
+use crate::interface::components::model_selector::{ModelEntry, ModelSelector};
 
 pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
     // Protocol boundary (#1220): raw payload interpretation lives in the
