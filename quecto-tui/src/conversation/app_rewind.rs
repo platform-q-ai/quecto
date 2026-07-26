@@ -1,6 +1,7 @@
 use super::*;
 use crate::components::select_list::route_overlay_key;
 use crate::interface::select_overlay::DOUBLE_ESC_WINDOW;
+use crate::protocol::session_payloads::{self, ResumedChatMessage};
 
 pub(super) fn rewind_preview(content: &str) -> String {
     let sanitized = strip_ansi_for_selection(content);
@@ -42,29 +43,25 @@ impl App {
     /// against misapplying page-local positions to the full conversation.
     /// Paging inside the selector is a possible follow-up.
     pub(super) fn open_rewind_selector(&mut self, data: &serde_json::Value) {
-        let Some(messages) = data.get("messages").and_then(|v| v.as_array()) else {
+        let Ok(messages) = session_payloads::parse_resumed_messages(data) else {
             self.notify("No conversation history to rewind", NotifyLevel::Info);
             return;
         };
 
         let mut items = Vec::new();
         for message in messages.iter().rev() {
-            if message.get("role").and_then(|v| v.as_str()) != Some("user") {
+            let ResumedChatMessage::User {
+                text, id: Some(id), ..
+            } = message
+            else {
                 continue;
-            }
+            };
             // Target rewind by the message's STABLE id, not its page-local array
             // position: paged history (#1061) delivers only a bounded window, so an
             // array index here is not a valid index into the full server
             // conversation and could truncate the wrong turn (destructive). Messages
             // without an id (older harness) are not selectable rewind targets.
-            let Some(id) = message.get("id").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            let content = message
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let preview = rewind_preview(content);
+            let preview = rewind_preview(text);
             let turn_no = items.len() + 1;
             let label = if turn_no == 1 {
                 format!("Previous turn: {preview}")
@@ -72,7 +69,7 @@ impl App {
                 format!("{turn_no} turns ago: {preview}")
             };
             items.push(SelectItem {
-                value: id.to_string(),
+                value: id.clone(),
                 label,
                 description: None,
             });

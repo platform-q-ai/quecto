@@ -9,7 +9,7 @@ use super::app_paged_history_tests::{
 use super::app_response::ATTACH_BACKFILL_ID;
 use super::tui_harness::TuiHarness;
 use super::*;
-use crate::domain::history_paging::{PENDING_HISTORY_PAGE_RETRY, PendingHistoryPage};
+use crate::conversation::history_paging::{PENDING_HISTORY_PAGE_RETRY, PendingHistoryPage};
 
 #[tokio::test]
 async fn independent_clients_do_not_reuse_history_page_correlation_ids() {

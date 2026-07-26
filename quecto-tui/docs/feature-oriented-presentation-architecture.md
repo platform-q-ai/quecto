@@ -22,18 +22,19 @@ These are presentation modules aligned with harness capabilities. They must rema
 
 ## Interim compatibility map
 
-The current crate still uses `domain/`, `infrastructure/`, and `interface/` directories as interim compatibility buckets alongside landed feature modules (`components/`, `shell/`, `protocol/`). During migration, treat the remaining CA folders as compatibility buckets, not as the final target model. `application/` was deleted in #1257 Phase 2 when mappers moved into `protocol/`.
+The current crate still uses `infrastructure/` and `interface/` directories as interim compatibility buckets alongside landed feature modules (`components/`, `shell/`, `protocol/`, `conversation/`). During migration, treat the remaining CA folders as compatibility buckets, not as the final target model. `application/` was deleted in #1257 Phase 2 when mappers moved into `protocol/`; the vestigial TUI `domain/` bucket was deleted in #1257 Phase 3 when conversation history/recovery policy moved to `conversation/`.
 
 | Current location | Interim role | Target direction |
 |---|---|---|
-| `interface/app*.rs` | shell plus feature controllers still co-located in `App` | split by `shell`, `conversation`, `sessions`, `agents`, `workflow`, `inference`, and `workspace` |
+| `interface/app*.rs` | shell plus not-yet-moved feature controllers still co-located in `App` | split by `shell`, `sessions`, `agents`, `workflow`, `inference`, and `workspace`; conversation-owned slices already mount from `conversation/` |
 | `interface/components/*` | widgets and render helpers (relocated to top-level `components/`, #1257 Phase 1) | `components` |
 | `protocol/client*.rs` | UDS client and wire protocol boundary (relocated, #1257 Phase 2) | `protocol` |
 | `shell/{process,terminal,signals,render,child_watch,warn_capture}.rs` | runtime/terminal adapters (relocated, #1257 Phase 1) | `shell` |
 | `infrastructure/workspace_files.rs` | workspace filesystem/Git adapter | `workspace` boundary adapter |
 | `protocol/model_payloads.rs` | typed mapper for `list_models` wire payloads (#1220; relocated, #1257 Phase 2) | `protocol` mapping feeding `models` |
 | `protocol/session_payloads.rs` | typed parsing foothold for session payloads (relocated, #1257 Phase 2) | `protocol` mapping feeding `sessions` |
-| `domain/` | conversation history/recovery invariants (#1221) | only keep values that encode real invariants |
+| `conversation/` | master history, paging, recovery, rewind state/flow and conversation-owned app slices (#1221/#1257 Phase 3) | `conversation` |
+| `domain/` | deleted in #1257 Phase 3 | do not recreate for TUI; pure invariant policy now lives under the owning feature |
 
 Each migration PR should preserve one source of truth for every moved state cluster and avoid long-lived dual writes.
 
@@ -75,9 +76,9 @@ Observable surfaces and required parity:
 | Surface | Required identical behavior | Boundary cases | Performance characteristics |
 |---|---|---|---|
 | TUI runtime behavior | No runtime behavior changes except the intentional patch-version string update required by repository release policy: no command ordering, protocol handling, event routing, terminal handling, render output other than version text, or widget behavior changes. | Not applicable to this docs/guardrail slice; no runtime call sites are changed. | Not applicable; no specialized runtime code is replaced. |
-| TUI public crate shape during migration | Current compatibility modules remain available: `domain`, `infrastructure`, and `interface`, plus landed feature modules `components`, `shell`, and `protocol`; `main.rs` remains a thin entrypoint. | Empty/one/many module cases are not relevant because the compatibility set is exact and already pinned by existing architecture tests. | Not applicable; module exports are compile-time structure. |
+| TUI public crate shape during migration | Current compatibility modules remain available: `infrastructure` and `interface`, plus landed feature modules `components`, `shell`, `protocol`, and `conversation`; the vestigial TUI `domain` module is intentionally absent after #1257 Phase 3, and `main.rs` remains a thin entrypoint. | Empty/one/many module cases are not relevant because the compatibility set is exact and already pinned by existing architecture tests. | Not applicable; module exports are compile-time structure. |
 | Architecture documentation | The current architecture direction is discoverable from the TUI README; the superseded Clean Architecture target model clearly points to the feature-oriented architecture document; the new document lists all target harness-facing capability modules. | Full target set must be present: shell, protocol, conversation, sessions, agents, workflow, inference, workspace, components. | Not applicable; documentation-only surface. |
-| Executable guardrails | Architecture tests and BDD steps continue to execute, and the new feature-oriented guardrail is additive rather than weakening existing interim compatibility checks. | Existing checks still cover the full compatibility layer set and root file placement; the new check covers the full capability list plus protocol and pure-policy boundary rules. | Not applicable; test/runtime cost is outside shipped TUI behavior. |
+| Executable guardrails | Architecture tests and BDD steps continue to execute, and the new feature-oriented guardrail is additive rather than weakening existing interim compatibility checks. | Existing checks cover the Phase 3 module set, intentional deletion of `domain/`, root file placement, and the full capability list plus protocol and pure-policy boundary rules. | Not applicable; test/runtime cost is outside shipped TUI behavior. |
 
 Approved parity contract: all readiness-gate items are resolved; no `__UNRESOLVED__` markers remain.
 
@@ -254,9 +255,14 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/session_payloads.rs` | `protocol` mapper feeding `sessions` (relocated, #1257 Phase 2) |
 | `protocol/client.rs` | `protocol` UDS client and wire DTOs (relocated, #1257 Phase 2) |
 | `protocol/mod.rs` | `protocol` module root (added, #1257 Phase 2) |
-| `domain/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221) |
-| `domain/mod.rs` | remove vestigial placeholder; recreate only for invariant-bearing shared values if needed |
-| `domain/turn_recovery.rs` | `conversation` end-of-turn recovery trigger and batch atomicity (#1221) |
+| `conversation/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221; relocated, #1257 Phase 3) |
+| `conversation/turn_recovery.rs` | `conversation` end-of-turn recovery trigger and batch atomicity (#1221; relocated, #1257 Phase 3) |
+| `conversation/app_paged_history.rs` | `conversation` master-history pagination/stub recall flow (relocated, #1257 Phase 3) |
+| `conversation/app_resumed_history.rs` | `conversation` resumed transcript projection (relocated, #1257 Phase 3) |
+| `conversation/app_message_recovery.rs` | `conversation` message-ref recovery flow (relocated, #1257 Phase 3) |
+| `conversation/app_rewind.rs` | `conversation` rewind flow owner (relocated, #1257 Phase 3) |
+| `conversation/app_rewind_state.rs` | `conversation` rewind state owner (relocated, #1257 Phase 3) |
+| `conversation/mod.rs` | `conversation` module root (#1257 Phase 3) |
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `infrastructure/mod.rs` | remaining adapters until workspace move (Phase 5) |
 | `shell/process.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
@@ -276,14 +282,9 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `interface/app_idle_efficiency.rs` | `shell` event-loop policy |
 | `interface/app_inference.rs` | `inference` flow owner |
 | `interface/app_ledger_sync.rs` | `agents` |
-| `interface/app_message_recovery.rs` | `conversation` |
 | `interface/app_methods.rs` | `shell` composition methods until split by feature |
 | `interface/app_models.rs` | `inference` |
-| `interface/app_paged_history.rs` | `conversation` |
 | `interface/app_response.rs` | `conversation` |
-| `interface/app_resumed_history.rs` | `conversation` |
-| `interface/app_rewind.rs` | `conversation` |
-| `interface/app_rewind_state.rs` | `conversation` rewind flow owner |
 | `interface/app_selection.rs` | `shell` focus/routing until delegated to feature views |
 | `interface/app_sessions.rs` | `sessions` flow owner |
 | `interface/app_stdin.rs` | `conversation` input coordination with `shell` stdin adapter |
@@ -429,7 +430,7 @@ Characterization review/freeze manifest for #1224:
 
 Deletion ledger for #1224 App thinning:
 
-- Deleted inline `RewindFlow`/fields from `app.rs`: rewind selector, double-Escape timestamp, request ids, and request sequence invariants are re-established unchanged in `interface/app_rewind_state.rs` and accessed through the existing `rewind` owner.
+- Deleted inline `RewindFlow`/fields from `app.rs`: rewind selector, double-Escape timestamp, request ids, and request sequence invariants are re-established unchanged in `conversation/app_rewind_state.rs` and accessed through the existing `rewind` owner.
 - Deleted inline `SessionsFlow`: resume selector and context-stats request latch invariants are re-established unchanged in `interface/app_sessions.rs`.
 - Deleted inline `WorkflowFlow`: auto-continue and completion-nudge mirror invariants are re-established unchanged in `interface/app_workflow.rs`.
 - Deleted inline `InferenceFlow`/`ModelRegistry`: current model, selector overlays, registry cache, pending-open latch, current effort, and effort vocabulary invariants are re-established unchanged in `interface/app_inference.rs`.
@@ -531,7 +532,7 @@ Two decrease-only guards live in `quecto-agentic-harness/tests/architecture.rs`
 and therefore run in the fast pre-commit guard suite (targets are enumerated
 dynamically, so they cannot be silently dropped):
 
-- `tui_interface_raw_json_parsing_sites_do_not_grow` — interface seed `120`.
+- `tui_interface_raw_json_parsing_sites_do_not_grow` — feature/view raw-JSON ceiling `120`, exact Phase 3 total `109`, scan roots include `conversation/`.
 - `tui_protocol_raw_json_parsing_sites_do_not_grow` — protocol mapper seed `69` (#1257 Phase 2 re-pointed from `application/`).
 - `tui_wire_dto_usage_does_not_grow` — seed `124`.
 
@@ -567,7 +568,7 @@ Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-The interface raw-JSON ratchet is seeded at 120 sites (lowered from 130 in #1221 when `range_accumulator.rs` and its 10 sites moved to `application/`). The protocol raw-JSON ratchet is seeded separately at 69 sites (#1257 Phase 2 re-pointed the scan root from deleted `application/` to `protocol/`, with `protocol/client.rs` allowlisted as the wire seam), so the moved wire parsing remains measured instead of disappearing from the burn-down surface. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
+The feature/view raw-JSON ratchet scans `interface/`, `components/`, `shell/`, and landed `conversation/`. Its never-raise ceiling remains 120, and its exact relocation/conversion total is 109 after #1257 Phase 3 moved conversation ownership and converted the rewind selector to the typed `session_payloads` mapper. The protocol raw-JSON ratchet is seeded separately at 69 sites (#1257 Phase 2 re-pointed the scan root from deleted `application/` to `protocol/`, with `protocol/client.rs` allowlisted as the wire seam), so moved wire parsing remains measured instead of disappearing from the burn-down surface. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
 
 Wire-DTO usage is seeded at 124, led by `app_subagent_stream.rs`,
 `app_subagents.rs`, `app_submit.rs`, and `tui_harness_events.rs`.
@@ -747,8 +748,8 @@ changes are the test-module declarations and the new harness probe.
 | Performance | Batch completion | `is_complete()` is the same `len == len` comparison. `ordered_by_refs` is a lazy iterator that now BACKS the ref-ordered walk `recovered_chat_entries` previously hand-rolled, so ordering has one implementation rather than two; the walk itself is unchanged (same skip on an absent ref, same single pass). Still one `replace_range` per batch, never incremental splices. | PASS |
 | Quantitative | Trigger-logic duplication | The force-recovery check (`open_tool_calls > 0`) existed at 2 call sites (master + sub-agent); it now exists at 1, inside the policy. Both paths route through `TurnOutcome::needs_recovery`. | PASS |
 | Quantitative | Production LOC | Conversation production code: 828 lines before (`app_paged_history` 316 + `app_message_recovery` 440 + `range_accumulator` 72) → 1060 after, measured by `wc -l` at the current head (`app_paged_history` 259 + `app_message_recovery` 423 + `range_accumulator` 76 + `history_paging` 187 + `turn_recovery` 115). Net +232. (An earlier version of this row read 1035/+207; those figures predated the `forced_without_text` and `ordered_by_refs` review fixes and were no longer reproducible.) The issue sets no LOC target; the growth is doc comments explaining the invariants (why exact-match correlation, why an open tool call forces recovery) that were previously implicit. Interface files themselves shrank by 74 lines (316+440 = 756 → 259+423 = 682), remeasured at head; the earlier "81" was never re-measured after the review fixes. | RECORDED |
-| Quantitative | Testability criterion | 23 new tests construct the policy with no terminal, concrete client, raw JSON, or Tokio runtime. `grep` for `serde_json|ratatui|tokio|crossterm|Client` across `src/domain/*.rs` production files returns nothing. | PASS |
-| Structural | `ChatEntry` stays a view projection | `grep -rn ChatEntry src/domain/ src/protocol/` returns nothing for conversation policy vocabulary: policy vocabulary is `PageFacts`, `PrefixPlan`, `TurnOutcome`, `RecoveryBatch<T>`. | PASS |
+| Quantitative | Testability criterion | 23 new tests construct the policy with no terminal, concrete client, raw JSON, or Tokio runtime. After #1257 Phase 3 those policy files live in `conversation/history_paging.rs` and `conversation/turn_recovery.rs`; they remain free of `serde_json|ratatui|tokio|crossterm|Client` production dependencies. | PASS |
+| Structural | `ChatEntry` stays a view projection | `grep -rn ChatEntry src/conversation/history_paging.rs src/conversation/turn_recovery.rs src/protocol/` returns nothing for conversation policy vocabulary: policy vocabulary is `PageFacts`, `PrefixPlan`, `TurnOutcome`, `RecoveryBatch<T>`. | PASS |
 
 ## Review-round fixes for conversation history/recovery slice (#1221)
 
@@ -897,7 +898,7 @@ four.
 | MED | A round-1 sentence still asserted the `next_offset == contentLength` boundary is `InvalidProgress`, contradicting round 2's correction and the shipped code. | Corrected, and annotated to record that the round-1 "correction" was itself wrong. |
 | LOW | Absolute suite counts (1627, 1636) were unverifiable at head. | Rewritten to name the commit they were measured at and the count at head (1639). |
 
-Round 4 also confirmed the three pure-policy files are genuinely clean: all 24
+Round 4 also confirmed the pure-policy files are genuinely clean (now owned by `conversation/` or `protocol/`): all 24
 isolated guard-removal mutations across `range_accumulator_tests.rs`,
 `history_paging_tests.rs` and `turn_recovery_tests.rs` killed their named test
 and no other. The corrected overshoot fixture is right this time, its sibling is

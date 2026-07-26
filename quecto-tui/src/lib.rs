@@ -2,7 +2,7 @@
 #![deny(unused_imports)]
 
 pub mod components;
-pub mod domain;
+pub mod conversation;
 pub mod infrastructure;
 pub mod interface;
 pub mod protocol;

@@ -311,7 +311,7 @@ fn to_snake_case(name: &str) -> String {
 }
 
 const TUI_SRC: &str = "../quecto-tui/src";
-const TUI_DOMAIN: &str = "../quecto-tui/src/domain";
+const TUI_CONVERSATION: &str = "../quecto-tui/src/conversation";
 const TUI_PROTOCOL: &str = "../quecto-tui/src/protocol";
 const TUI_INFRASTRUCTURE: &str = "../quecto-tui/src/infrastructure";
 const TUI_INTERFACE: &str = "../quecto-tui/src/interface";
@@ -319,11 +319,11 @@ const TUI_COMPONENTS: &str = "../quecto-tui/src/components";
 const TUI_SHELL: &str = "../quecto-tui/src/shell";
 const TUI_ALLOWED_ROOT_RS: &[&str] = &["lib.rs", "main.rs"];
 /// #1257 phased migration: the exact set of top-level modules `lib.rs` may
-/// expose, updated per phase as feature modules land (Phase 2: `protocol`;
-/// `application` deleted).
+/// expose, updated per phase as feature modules land (Phase 3: `conversation`;
+/// `application` and vestigial TUI `domain` deleted).
 const TUI_LIB_RS_MODULES: &[&str] = &[
     "components",
-    "domain",
+    "conversation",
     "infrastructure",
     "interface",
     "protocol",
@@ -332,7 +332,7 @@ const TUI_LIB_RS_MODULES: &[&str] = &[
 /// #1257 phased migration: top-level directories production files may live in
 /// (legacy layers plus the feature modules landed so far).
 const TUI_TOP_LEVEL_MODULES: &[&str] = &[
-    "domain",
+    "conversation",
     "infrastructure",
     "interface",
     "components",
@@ -379,7 +379,9 @@ fn tui_feature_oriented_architecture_is_documented() {
         "Production file target-owner map",
         "`components/autocomplete.rs` | `components` (relocated, #1257 Phase 1)",
         "`components/workflow_bar.rs` | `components` (relocated, #1257 Phase 1)",
-        "remove vestigial placeholder",
+        "`conversation/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221; relocated, #1257 Phase 3)",
+        "`conversation/app_rewind.rs` | `conversation` rewind flow owner (relocated, #1257 Phase 3)",
+        "`domain/` | deleted in #1257 Phase 3",
         "#1221 (`conversation`) and #1222 (`agents`) depend on #1220",
     ] {
         assert!(
@@ -469,8 +471,8 @@ fn collect_tui_production_rs_paths(dir: &Path, files: &mut BTreeSet<String>) {
 #[test]
 fn tui_architecture_layers_exist() {
     assert!(
-        Path::new(TUI_DOMAIN).exists(),
-        "quecto-tui/src/domain/ must exist"
+        Path::new(TUI_CONVERSATION).exists(),
+        "quecto-tui/src/conversation/ must exist after #1257 Phase 3"
     );
     assert!(
         Path::new(TUI_PROTOCOL).exists(),
@@ -488,25 +490,9 @@ fn tui_architecture_layers_exist() {
         !Path::new("../quecto-tui/src/application").exists(),
         "quecto-tui/src/application/ must be deleted after #1257 Phase 2"
     );
-}
-
-#[test]
-fn tui_domain_has_no_outer_layer_imports() {
-    assert_no_imports(
-        "quecto-tui domain",
-        Path::new(TUI_DOMAIN),
-        &[
-            "crate::application",
-            "crate::infrastructure",
-            "crate::interface",
-            "crate::protocol",
-            "crate::components",
-            "crate::shell",
-            "super::application",
-            "super::infrastructure",
-            "super::interface",
-            "super::protocol",
-        ],
+    assert!(
+        !Path::new("../quecto-tui/src/domain").exists(),
+        "quecto-tui/src/domain/ must be deleted after #1257 Phase 3"
     );
 }
 
@@ -559,7 +545,11 @@ fn tui_inner_layers_have_no_runtime_io_calls() {
         "dirs::",
         ".exists(",
     ];
-    assert_no_imports("quecto-tui domain", Path::new(TUI_DOMAIN), &runtime_io);
+    assert_no_imports(
+        "quecto-tui conversation",
+        Path::new(TUI_CONVERSATION),
+        &runtime_io,
+    );
 }
 
 #[test]
@@ -629,7 +619,7 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
 #[test]
 fn tui_public_ports_have_contract_tests() {
     let mut files = Vec::new();
-    collect_rs_files(Path::new(TUI_DOMAIN), &mut files);
+    collect_rs_files(Path::new(TUI_CONVERSATION), &mut files);
     collect_rs_files(Path::new(TUI_PROTOCOL), &mut files);
 
     let mut ports = BTreeSet::new();
@@ -657,7 +647,7 @@ fn tui_public_ports_have_contract_tests() {
 
     assert!(
         missing.is_empty(),
-        "public quecto-tui domain/application ports must have contract coverage in tests/contracts.rs with a tui_ prefix or an explicit allowlist entry; missing: {missing:?}"
+        "public quecto-tui conversation/protocol ports must have contract coverage in tests/contracts.rs with a tui_ prefix or an explicit allowlist entry; missing: {missing:?}"
     );
 }
 
@@ -952,16 +942,19 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
 // stated rationale.
 
 /// Seed: production raw `serde_json` parsing sites still resident in TUI
-/// `interface/` feature/view modules. Lower this as interface call sites migrate
+/// feature/view modules. Lower this as call sites migrate
 /// behind mappers. Never raise it.
 const TUI_INTERFACE_RAW_JSON_SITE_SEED: usize = 120;
-/// Measured immediately before #1257 Phase 1; relocation must not burn down sites.
-const TUI_PHASE_1_INTERFACE_RAW_JSON_TOTAL: usize = 114;
+/// Measured after #1257 Phase 3 relocation plus the genuine rewind-selector
+/// conversion to a typed protocol mapper; future relocations must not burn down
+/// sites by moving scan roots.
+const TUI_PHASE_3_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 109;
 
 /// #1257: feature/view ratchet scan roots follow the code as modules relocate,
-/// so a move alone can never lower a measured count (Phase 1: `interface/`
-/// plus `components/` and `shell/`).
-const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[TUI_INTERFACE, TUI_COMPONENTS, TUI_SHELL];
+/// so a move alone can never lower a measured count (Phase 3: `interface/`,
+/// `components/`, `shell/`, plus landed `conversation/`).
+const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] =
+    &[TUI_INTERFACE, TUI_COMPONENTS, TUI_SHELL, TUI_CONVERSATION];
 
 /// Seed: production raw `serde_json` parsing sites in TUI `protocol/` mappers.
 /// These sites are an allowed but temporary protocol-mapping foothold; lower
@@ -1126,12 +1119,12 @@ fn tui_interface_raw_json_parsing_sites_do_not_grow() {
         raw_json_site_count,
     );
     assert_eq!(
-        total, TUI_PHASE_1_INTERFACE_RAW_JSON_TOTAL,
-        "#1257 Phase 1 relocation must preserve the raw serde_json site total: \
-         found {total}, seed {TUI_INTERFACE_RAW_JSON_SITE_SEED}. Move payload \
-         interpretation into a protocol-layer mapper (see \
-         quecto-tui/src/protocol/model_payloads.rs, #1220). Inventory \
-         (burn-down order): {per_file:?}"
+        total, TUI_PHASE_3_FEATURE_VIEW_RAW_JSON_TOTAL,
+        "#1257 Phase 3 relocation must preserve moved feature/view raw serde_json \
+         sites except genuine protocol-mapper conversions: found {total}, seed \
+         {TUI_INTERFACE_RAW_JSON_SITE_SEED}. Move payload interpretation into a \
+         protocol-layer mapper (see quecto-tui/src/protocol/model_payloads.rs, \
+         #1220). Inventory (burn-down order): {per_file:?}"
     );
 }
 

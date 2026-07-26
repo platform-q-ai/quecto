@@ -13,7 +13,7 @@ pub(crate) struct StubRecall {
 pub(super) const GET_MESSAGE_PAGE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 4;
 
 // Correlation and retry for in-flight older-page requests live in
-// `domain::history_paging`. Responses are applied only when their id matches
+// `conversation::history_paging`. Responses are applied only when their id matches
 // EXACTLY: `get_messages` responses are broadcast to every connected client, so
 // a prefix match would let another client's page (at a different paging depth)
 // — or our own page still in flight across a resume — prepend history at the

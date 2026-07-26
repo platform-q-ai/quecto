@@ -411,7 +411,7 @@ impl App {
         let tools = session.tools_this_turn;
         // A dropped child tool-end leaves a result unresolved; the policy forces
         // recovery even when cardinality looks complete (#1060 review 3).
-        if !(crate::domain::turn_recovery::TurnOutcome {
+        if !(crate::conversation::turn_recovery::TurnOutcome {
             refs,
             assistant_text: &assistant_text,
             tools_this_turn: tools,
@@ -554,7 +554,7 @@ impl App {
         data: &serde_json::Value,
         extend_prefix: bool,
     ) {
-        use crate::domain::history_paging::{PageFacts, PrefixPlan};
+        use crate::conversation::history_paging::{PageFacts, PrefixPlan};
         use crate::protocol::session_payloads;
         if session.history.backfilled {
             return;

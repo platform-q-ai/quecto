@@ -10,10 +10,10 @@ pub(crate) struct PendingMessageRecovery {
 }
 
 /// A turn awaiting rebuild from its refs. The atomicity invariant lives in
-/// `domain::turn_recovery`; this alias binds it to the raw response payloads
+/// `conversation::turn_recovery`; this alias binds it to the raw response payloads
 /// the interface layer buffers.
 pub(crate) type MessageRecoveryBatch =
-    crate::domain::turn_recovery::RecoveryBatch<serde_json::Value>;
+    crate::conversation::turn_recovery::RecoveryBatch<serde_json::Value>;
 
 impl App {
     /// Both `turn_end` and `agent_end` may carry the same refs; skip message ids
@@ -33,7 +33,7 @@ impl App {
         // Fetch the rendered text lazily: the policy can force recovery without
         // reading it, and `latest_assistant_text` clones the whole assistant
         // body — which can be megabytes for an inlined command dump.
-        use crate::domain::turn_recovery::TurnOutcome;
+        use crate::conversation::turn_recovery::TurnOutcome;
         let open_tool_calls = self.open_tool_calls;
         let tools_this_turn = self.tools_this_turn;
         let needs_recovery = TurnOutcome::forced_without_text(refs, open_tool_calls) || {
@@ -226,7 +226,7 @@ pub(crate) fn recovered_chat_entries(
     let mut suppressed_calls = std::collections::HashSet::<String>::new();
     // Ordering is the domain's rule, not this function's: walk in ref order,
     // never arrival order.
-    for data in crate::domain::turn_recovery::ordered_by_refs(refs, responses) {
+    for data in crate::conversation::turn_recovery::ordered_by_refs(refs, responses) {
         let role = data.get("role").and_then(|v| v.as_str()).unwrap_or("");
         let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("");
         match role {

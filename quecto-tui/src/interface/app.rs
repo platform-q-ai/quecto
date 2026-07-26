@@ -223,7 +223,7 @@ mod app_events;
 mod app_git;
 #[path = "app_inference.rs"]
 mod app_inference;
-#[path = "app_rewind_state.rs"]
+#[path = "../conversation/app_rewind_state.rs"]
 mod app_rewind_state;
 #[path = "app_sessions.rs"]
 mod app_sessions;
@@ -243,19 +243,19 @@ pub const GIT_BRANCH_POLL_INTERVAL: std::time::Duration = app_git::GIT_BRANCH_PO
 mod app_idle_efficiency;
 #[path = "app_ledger_sync.rs"]
 mod app_ledger_sync;
-#[path = "app_message_recovery.rs"]
+#[path = "../conversation/app_message_recovery.rs"]
 pub(crate) mod app_message_recovery;
 #[path = "app_methods.rs"]
 mod app_methods;
 #[path = "app_models.rs"]
 mod app_models;
-#[path = "app_paged_history.rs"]
+#[path = "../conversation/app_paged_history.rs"]
 mod app_paged_history;
 #[path = "app_response.rs"]
 mod app_response;
-#[path = "app_resumed_history.rs"]
+#[path = "../conversation/app_resumed_history.rs"]
 mod app_resumed_history;
-#[path = "app_rewind.rs"]
+#[path = "../conversation/app_rewind.rs"]
 mod app_rewind;
 #[path = "app_selection.rs"]
 mod app_selection;
@@ -514,16 +514,16 @@ mod app_input_paste_tests;
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;
 #[cfg(test)]
-#[path = "app_paged_history_review_tests.rs"]
+#[path = "../conversation/app_paged_history_review_tests.rs"]
 mod app_paged_history_review_tests;
 #[cfg(test)]
-#[path = "app_paged_history_tests.rs"]
+#[path = "../conversation/app_paged_history_tests.rs"]
 mod app_paged_history_tests;
 #[cfg(test)]
 #[path = "app_refresh_tui_tests.rs"]
 mod app_refresh_tui_tests;
 #[cfg(test)]
-#[path = "app_rewind_response_tests.rs"]
+#[path = "../conversation/app_rewind_response_tests.rs"]
 mod app_rewind_response_tests;
 #[cfg(test)]
 #[path = "app_selection_tests.rs"]

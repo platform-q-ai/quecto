@@ -102,37 +102,27 @@ fn then_tui_source_tree_contains_layer(_world: &mut QuectoWorld, layer: String) 
     );
 }
 
-#[then("the quecto-tui domain source should not contain runtime I/O patterns")]
-fn then_tui_domain_no_runtime_io(_world: &mut QuectoWorld) {
-    assert!(Path::new(TUI_ROOT).join("domain").is_dir());
+#[then(expr = "the quecto-tui source tree should not contain layer {string}")]
+fn then_tui_source_tree_does_not_contain_layer(_world: &mut QuectoWorld, layer: String) {
+    let path = Path::new(TUI_ROOT).join(&layer);
+    assert!(
+        !path.exists(),
+        "quecto-tui layer directory must not exist after its migration phase: {}",
+        path.display()
+    );
+}
+
+#[then("the quecto-tui conversation source should not contain runtime I/O patterns")]
+fn then_tui_conversation_no_runtime_io(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("conversation").is_dir());
     assert_no_tui_patterns(
-        "domain",
+        "conversation",
         &[
             "std::fs::",
             "tokio::fs::",
             "std::env::",
             "dirs::",
             ".exists(",
-        ],
-    );
-}
-
-#[then("the quecto-tui domain source should not import outer layers")]
-fn then_tui_domain_no_outer_layers(_world: &mut QuectoWorld) {
-    assert!(Path::new(TUI_ROOT).join("domain").is_dir());
-    assert_no_tui_patterns(
-        "domain",
-        &[
-            "crate::application",
-            "crate::infrastructure",
-            "crate::interface",
-            "crate::protocol",
-            "crate::components",
-            "crate::shell",
-            "super::application",
-            "super::infrastructure",
-            "super::interface",
-            "super::protocol",
         ],
     );
 }
@@ -212,7 +202,7 @@ fn then_every_tui_production_file_is_layered(_world: &mut QuectoWorld) {
     let misplaced = misplaced_tui_production_files();
     assert!(
         misplaced.is_empty(),
-        "quecto-tui production Rust files must live under domain/, infrastructure/, interface/, components/, shell/, or protocol/; misplaced: {misplaced:?}"
+        "quecto-tui production Rust files must live under conversation/, infrastructure/, interface/, components/, shell/, or protocol/; misplaced: {misplaced:?}"
     );
 }
 
@@ -230,13 +220,13 @@ fn then_tui_library_root_exposes_only_layers(_world: &mut QuectoWorld) {
         public_modules,
         [
             "components",
-            "domain",
+            "conversation",
             "infrastructure",
             "interface",
             "protocol",
             "shell"
         ],
-        "../quecto-tui/src/lib.rs should expose exactly the per-phase module set (#1257 Phase 2)"
+        "../quecto-tui/src/lib.rs should expose exactly the per-phase module set (#1257 Phase 3)"
     );
     assert!(
         !content.contains("#[path ="),
@@ -254,17 +244,18 @@ fn then_tui_binary_root_delegates_to_shell(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the architecture test target should enforce quecto-tui Clean Architecture layers")]
+#[then("the architecture test target should enforce quecto-tui Phase 3 top-level modules")]
 fn then_architecture_test_enforces_tui_layers(_world: &mut QuectoWorld) {
     let content =
         std::fs::read_to_string("tests/architecture.rs").expect("read architecture tests");
     assert!(
         content.contains("fn tui_architecture_layers_exist")
-            && content.contains("fn tui_domain_has_no_outer_layer_imports")
+            && content.contains("TUI_CONVERSATION")
+            && content.contains("!Path::new(\"../quecto-tui/src/domain\").exists()")
             && content.contains("fn tui_protocol_has_no_feature_or_shell_imports")
             && content.contains("fn tui_infrastructure_has_no_application_or_interface_imports")
             && content.contains("fn tui_runtime_adapters_live_in_shell"),
-        "tests/architecture.rs must enforce quecto-tui layer existence and dependency direction"
+        "tests/architecture.rs must enforce quecto-tui Phase 3 module existence/removal and dependency direction"
     );
 }
 
@@ -274,7 +265,7 @@ fn then_architecture_test_enforces_tui_runtime_io(_world: &mut QuectoWorld) {
         std::fs::read_to_string("tests/architecture.rs").expect("read architecture tests");
     assert!(
         content.contains("fn tui_inner_layers_have_no_runtime_io_calls")
-            && content.contains("quecto-tui domain"),
+            && content.contains("quecto-tui conversation"),
         "tests/architecture.rs must enforce runtime I/O boundaries for quecto-tui inner layers"
     );
 }
@@ -320,7 +311,7 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
         let top = rel.split('/').next().unwrap_or_default();
         let in_layer = matches!(
             top,
-            "domain" | "infrastructure" | "interface" | "components" | "shell" | "protocol"
+            "conversation" | "infrastructure" | "interface" | "components" | "shell" | "protocol"
         );
         let allowed_root = !rel.contains('/') && matches!(rel.as_str(), "lib.rs" | "main.rs");
         if !in_layer && !allowed_root {

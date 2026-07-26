@@ -1,10 +1,10 @@
 @done @tui
 Feature: TUI feature-oriented architecture and executable BDD enforcement
   The quecto-tui crate is a feature-oriented presentation adapter for the
-  harness. Its current Clean Architecture layer checks are interim compatibility
-  guardrails while production source migrates toward harness-facing capability
-  modules, and the BDD suite executes TUI standards instead of only keeping them
-  as pending documentation.
+  harness. Its remaining compatibility-bucket checks are interim guardrails
+  while production source migrates toward harness-facing capability modules, and
+  the BDD suite executes TUI standards instead of only keeping them as pending
+  documentation.
 
   @issue-1149
   Scenario: quecto-tui documents feature-oriented presentation boundaries
@@ -14,18 +14,18 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
     And the old quecto-tui Clean Architecture target model should be superseded
     And the quecto-tui README should point to the feature-oriented architecture document
 
-  Scenario: quecto-tui retains interim compatibility layers during migration
-    Then the quecto-tui source tree should contain layer "domain"
+  Scenario: quecto-tui exposes Phase 3 top-level modules during migration
+    Then the quecto-tui source tree should contain layer "conversation"
     And the quecto-tui source tree should contain layer "protocol"
     And the quecto-tui source tree should contain layer "infrastructure"
     And the quecto-tui source tree should contain layer "interface"
+    And the quecto-tui source tree should not contain layer "domain"
 
-  Scenario: quecto-tui domain layer remains free of runtime I/O
-    Then the quecto-tui domain source should not contain runtime I/O patterns
+  Scenario: quecto-tui conversation source remains free of runtime I/O
+    Then the quecto-tui conversation source should not contain runtime I/O patterns
 
   Scenario: quecto-tui layer dependencies point inward
-    Then the quecto-tui domain source should not import outer layers
-    And the quecto-tui infrastructure source should not import application or interface layers
+    Then the quecto-tui infrastructure source should not import application or interface layers
     And the quecto-tui protocol source should not import feature or shell modules
     And the quecto-tui shell should own runtime adapters
 
@@ -37,7 +37,7 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
     And the quecto-tui binary root should delegate to the shell module
 
   Scenario: quecto-tui architecture is enforced by the same architecture test target as quecto
-    Then the architecture test target should enforce quecto-tui Clean Architecture layers
+    Then the architecture test target should enforce quecto-tui Phase 3 top-level modules
     And the architecture test target should enforce quecto-tui runtime I/O boundaries
     And the architecture test target should enforce quecto-tui root file placement
 
