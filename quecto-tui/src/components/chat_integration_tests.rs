@@ -27,7 +27,7 @@ fn render_plain(chat: &mut Chat, width: usize) -> String {
 }
 
 fn extract_result_text(result: &serde_json::Value) -> String {
-    crate::infrastructure::client::extract_result_text(result)
+    crate::protocol::client::extract_result_text(result)
 }
 
 /// Check that bg-colored lines (lines containing the bg ANSI code)

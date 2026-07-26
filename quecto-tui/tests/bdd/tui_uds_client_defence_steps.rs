@@ -5,7 +5,7 @@
 //! event frame.
 
 use super::*;
-use quecto_tui::infrastructure::client::{Client, Event, MAX_LINE_BYTES};
+use quecto_tui::protocol::client::{Client, Event, MAX_LINE_BYTES};
 use quecto_tui::shell::warn_capture::{install_warn_capture, oversized_warn_count};
 
 use tokio::io::AsyncWriteExt;

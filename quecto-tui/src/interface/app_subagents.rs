@@ -55,7 +55,7 @@ impl App {
     /// `get_state` carries the model and window, `turn_end` the live context
     /// usage, and `get_session_stats` the cumulative cost (plus usage fallback).
     pub(super) fn update_session_footer(session: &mut SessionView, ev: &Event) {
-        use crate::application::session_payloads;
+        use crate::protocol::session_payloads;
         match ev {
             Event::Response {
                 command,
@@ -90,7 +90,7 @@ impl App {
 
     pub(super) fn update_subagent_bar(
         &mut self,
-        subagents: Vec<crate::infrastructure::client::SubagentInfoEvent>,
+        subagents: Vec<crate::protocol::client::SubagentInfoEvent>,
     ) {
         self.update_subagent_bar_from_source(None, subagents);
     }
@@ -98,7 +98,7 @@ impl App {
     pub(super) fn update_subagent_bar_from_source(
         &mut self,
         source_agent_id: Option<&str>,
-        subagents: Vec<crate::infrastructure::client::SubagentInfoEvent>,
+        subagents: Vec<crate::protocol::client::SubagentInfoEvent>,
     ) {
         let source_agent_id = source_agent_id.map(sanitize_agent_id);
         let mut candidates = std::collections::BTreeMap::new();

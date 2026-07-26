@@ -230,7 +230,7 @@ impl App {
         if tracked.get(&sanitized).is_some_and(|e| !e.optimistic) {
             return;
         }
-        let mut tracked = TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
+        let mut tracked = TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
             agent_id: sanitized.clone(),
             status: "starting".to_string(),
             last_tool: None,
@@ -255,7 +255,7 @@ impl App {
         result: serde_json::Value,
         is_error: bool,
     ) {
-        let result_text = crate::infrastructure::client::extract_result_text(&result);
+        let result_text = crate::protocol::client::extract_result_text(&result);
         self.open_tool_calls = self.open_tool_calls.saturating_sub(1);
         self.master_session
             .chat

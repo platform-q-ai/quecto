@@ -21,7 +21,7 @@ use super::keys::Key;
 use crate::components::chat::ChatEntry;
 use crate::components::notification::NotifyLevel;
 use crate::components::spinner::Spinner;
-use crate::infrastructure::client::{Client, Event};
+use crate::protocol::client::{Client, Event};
 use crate::shell::terminal::Terminal;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
@@ -325,7 +325,7 @@ impl TuiHarness {
     /// resulting error-notification text.
     pub async fn send_command_expecting_failure(
         &mut self,
-        cmd: crate::infrastructure::client::Command,
+        cmd: crate::protocol::client::Command,
     ) -> String {
         self.app.client = Client::disconnected_for_tests();
         let _ = self.app.send_command(cmd);

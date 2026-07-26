@@ -1,20 +1,20 @@
-//! Typed application values for TUI model-registry wire payloads.
+//! Typed protocol values for TUI model-registry wire payloads.
 //!
 //! # Mapper convention (#1220)
 //!
 //! This module is an instance of the TUI protocol-boundary mapper convention.
-//! Every mapper in `application/` obeys the same four rules:
+//! Every mapper in `protocol/` obeys the same four rules:
 //!
-//! 1. **Input is raw wire JSON, output is a typed application value.** A mapper
+//! 1. **Input is raw wire JSON, output is a typed protocol value.** A mapper
 //!    takes `&serde_json::Value` (the shape the infrastructure client receives
-//!    from UDS) and returns a plain data type owned by the application layer.
+//!    from UDS) and returns a plain data type owned by the protocol layer.
 //!    Feature controllers and views consume the typed value and never re-read
 //!    the JSON.
 //! 2. **Total, never failing on shape.** Malformed, legacy, and unknown payloads
 //!    map to an empty/defaulted result rather than a panic or an error the UI
 //!    must handle, unless the distinction is itself user-visible (see
 //!    `session_payloads::ResumeMessagesError`).
-//! 3. **The application layer owns no interface types.** Mappers must not name
+//! 3. **The protocol layer owns no interface types.** Mappers must not name
 //!    `interface::` types, so the returned value is a neutral DTO that the
 //!    interface converts into its own view model at the seam.
 //! 4. **Parity quirks live here, documented.** Legacy field fallbacks and
@@ -45,7 +45,7 @@ pub struct ModelListEntry {
 /// map to no entries. Order is preserved. Single pass, one output `Vec`.
 ///
 /// `sanitize` is injected by the caller because control-character stripping is
-/// a presentation concern owned by the interface layer, which the application
+/// a presentation concern owned by the interface layer, which the protocol
 /// layer must not depend on (rule 3). All *derivation* rules — including the
 /// empty-after-sanitization skip — stay here (rule 4).
 pub fn parse_model_list(

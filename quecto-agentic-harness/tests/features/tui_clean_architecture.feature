@@ -16,18 +16,17 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
 
   Scenario: quecto-tui retains interim compatibility layers during migration
     Then the quecto-tui source tree should contain layer "domain"
-    And the quecto-tui source tree should contain layer "application"
+    And the quecto-tui source tree should contain layer "protocol"
     And the quecto-tui source tree should contain layer "infrastructure"
     And the quecto-tui source tree should contain layer "interface"
 
-  Scenario: quecto-tui inner layers remain free of runtime I/O
+  Scenario: quecto-tui domain layer remains free of runtime I/O
     Then the quecto-tui domain source should not contain runtime I/O patterns
-    And the quecto-tui application source should not contain runtime I/O patterns
 
   Scenario: quecto-tui layer dependencies point inward
     Then the quecto-tui domain source should not import outer layers
-    And the quecto-tui application source should not import infrastructure or interface layers
     And the quecto-tui infrastructure source should not import application or interface layers
+    And the quecto-tui protocol source should not import feature or shell modules
     And the quecto-tui shell should own runtime adapters
 
   Scenario: quecto-tui production files live inside approved top-level modules
@@ -49,9 +48,9 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
 
   @issue-741
   Scenario: TUI session payload parsing lives outside the App interface
-    Then the TUI application layer should parse session stats payloads into typed values
-    And the TUI application layer should validate resumed chat payloads into typed messages
-    And the TUI App methods should delegate session payload parsing to the application layer
+    Then the TUI protocol layer should parse session stats payloads into typed values
+    And the TUI protocol layer should validate resumed chat payloads into typed messages
+    And the TUI App methods should delegate session payload parsing to the protocol layer
 
   @issue-739
   Scenario: TUI keeps current chat when resumed messages are malformed

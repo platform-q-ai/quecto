@@ -5,7 +5,7 @@ pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
     // Protocol boundary (#1220): raw payload interpretation lives in the
     // application-layer mapper; this seam only adapts the typed DTO into the
     // interface's own view model.
-    crate::application::model_payloads::parse_model_list(
+    crate::protocol::model_payloads::parse_model_list(
         data,
         &crate::interface::ansi::sanitize_control,
     )

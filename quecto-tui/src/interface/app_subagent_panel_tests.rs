@@ -7,8 +7,8 @@ mod note_coalesce;
 
 use super::tui_harness::*;
 use crate::components::chat::ChatEntry;
-use crate::infrastructure::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::interface::ansi::strip_ansi;
+use crate::protocol::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::shell::keys::Key;
 
 /// A `SubagentInfoEvent` with an explicit parent (for tree tests) and socket.

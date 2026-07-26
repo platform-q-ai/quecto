@@ -203,9 +203,9 @@ async fn run_tui(flags: CliFlags) -> i32 {
     let speaks_frames = should_speak_frames(announced_protocol);
     let connect = async {
         if speaks_frames {
-            crate::infrastructure::client::Client::connect(&socket).await
+            crate::protocol::client::Client::connect(&socket).await
         } else {
-            crate::infrastructure::client::Client::connect_legacy(&socket).await
+            crate::protocol::client::Client::connect_legacy(&socket).await
         }
     };
     let client = match connect.await {

@@ -1,8 +1,8 @@
-//! Typed application values for TUI session-related wire payloads.
+//! Typed protocol values for TUI session-related wire payloads.
 //!
 //! The infrastructure client still receives raw JSON from the UDS protocol, but
 //! interface code should not hand-parse those protocol shapes in render/app
-//! paths. These mappers keep that translation in the application layer.
+//! paths. These mappers keep that translation in the protocol layer.
 
 /// Parsed session statistics used by chat status lines and footer indicators.
 #[derive(Debug, Clone, PartialEq)]

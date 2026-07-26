@@ -301,7 +301,7 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
     let mut app = test_app().await;
     // Register a child subagent.
     app.handle_event(Event::SubagentStateChanged {
-        subagents: vec![crate::infrastructure::client::SubagentInfoEvent {
+        subagents: vec![crate::protocol::client::SubagentInfoEvent {
             agent_id: "child".into(),
             status: "running".into(),
             last_tool: None,
@@ -405,7 +405,7 @@ async fn named_connected_agent_own_workflow_updates_bar() {
 #[tokio::test]
 async fn handles_subagent_workflow_and_error_events() {
     let mut app = test_app().await;
-    let info = crate::infrastructure::client::SubagentInfoEvent {
+    let info = crate::protocol::client::SubagentInfoEvent {
         agent_id: "a1".into(),
         status: "running".into(),
         last_tool: Some("read".into()),

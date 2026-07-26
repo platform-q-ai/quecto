@@ -10,8 +10,8 @@
 //! The other foundation scenarios remain `@pending` and are untouched.
 
 use super::*;
-use quecto_tui::infrastructure::client::Command;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
+use quecto_tui::protocol::client::Command;
 use quecto_tui::shell::render::DiffRenderer;
 use std::io::{self, Write};
 

@@ -1,5 +1,5 @@
 use super::tui_harness::*;
-use crate::infrastructure::client::Event;
+use crate::protocol::client::Event;
 
 #[tokio::test]
 async fn read_only_subagent_shows_observer_marker_without_shifting_rows() {

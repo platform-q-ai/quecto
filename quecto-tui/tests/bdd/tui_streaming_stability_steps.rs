@@ -4,9 +4,9 @@ use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
 use quecto_tui::components::chat::Chat;
 use quecto_tui::components::component::Component;
-use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
 use quecto_tui::interface::utils::visible_width;
+use quecto_tui::protocol::client::Event;
 use quecto_tui::shell::keys::Key;
 use quecto_tui::shell::render::DiffRenderer;
 

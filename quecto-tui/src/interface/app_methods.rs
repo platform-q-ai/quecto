@@ -1,11 +1,11 @@
 use super::app_selection::{SelectionAnchor, apply_selection_highlight, display_col_to_char_idx};
 use super::*;
-use crate::application::session_payloads;
 use crate::components::select_list::route_overlay_key;
 use crate::interface::select_overlay::{
     build_resume_selector_overlay, build_rewind_selector_overlay, build_select_overlay,
 };
 use crate::interface::theme;
+use crate::protocol::session_payloads;
 
 /// Format a Unix timestamp as `YYYY-MM-DD HH:MM` in **local** time, falling
 /// back to UTC if the platform's local-time conversion is unavailable.

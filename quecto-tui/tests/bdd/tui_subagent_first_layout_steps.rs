@@ -6,10 +6,10 @@
 //! the bottom stack), not internal mechanics.
 
 use super::*;
-use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::ansi::strip_ansi;
 use quecto_tui::interface::app::tui_harness::{TuiHarness, subagent, subagents_changed};
 use quecto_tui::interface::utils::visible_width;
+use quecto_tui::protocol::client::Event;
 
 /// Build a sub-agent-first harness optionally tracking sub-agent `a1` whose own
 /// workflow (issue #820) has been routed into its session.

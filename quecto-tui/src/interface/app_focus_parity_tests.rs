@@ -10,7 +10,7 @@
 use super::app_methods::strip_ansi;
 use super::keys::Key;
 use super::tui_harness::*;
-use crate::infrastructure::client::Event;
+use crate::protocol::client::Event;
 
 /// Build a harness with N tracked sub-agents (panel visible) named a1..aN.
 async fn harness_with_subagents(n: usize) -> TuiHarness {

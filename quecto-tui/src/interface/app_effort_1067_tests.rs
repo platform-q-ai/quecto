@@ -4,7 +4,7 @@
 
 use super::tui_harness::TuiHarness;
 use crate::components::footer::Footer;
-use crate::infrastructure::client::Event;
+use crate::protocol::client::Event;
 
 async fn harness() -> TuiHarness {
     TuiHarness::new().await

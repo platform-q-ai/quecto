@@ -136,13 +136,13 @@ impl App {
             self.abandon_recovery_batch(&pending.batch_id);
             return;
         }
-        let update = crate::application::range_accumulator::RangeAccumulator::new(
+        let update = crate::protocol::range_accumulator::RangeAccumulator::new(
             pending.content,
             pending.offset,
         )
         .apply(&data);
         let accumulated = match update {
-            Ok(crate::application::range_accumulator::RangeUpdate::Continue {
+            Ok(crate::protocol::range_accumulator::RangeUpdate::Continue {
                 content,
                 next_offset,
             }) => {
@@ -170,7 +170,7 @@ impl App {
                 });
                 return;
             }
-            Ok(crate::application::range_accumulator::RangeUpdate::Complete(content)) => content,
+            Ok(crate::protocol::range_accumulator::RangeUpdate::Complete(content)) => content,
             Err(_) => {
                 self.abandon_recovery_batch(&pending.batch_id);
                 return;

@@ -10,9 +10,9 @@
 //! overflowing.
 
 use super::tui_harness::*;
-use crate::infrastructure::client::Event;
 use crate::interface::ansi::strip_ansi;
 use crate::interface::utils::visible_width;
+use crate::protocol::client::Event;
 
 fn workflow_event() -> Event {
     Event::WorkflowState {

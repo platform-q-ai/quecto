@@ -142,10 +142,7 @@ impl Footer {
     /// Single source of truth for the stats→footer mapping shared by the master
     /// footer path and per-session sub-agent footers (#805) — keeps the cost
     /// gate (`cost > 0`) from drifting between the two.
-    pub fn apply_session_stats(
-        &mut self,
-        stats: &crate::application::session_payloads::SessionStats,
-    ) {
+    pub fn apply_session_stats(&mut self, stats: &crate::protocol::session_payloads::SessionStats) {
         if let Some((used, window)) = stats.context_usage {
             self.update_context_usage(used, window);
         }

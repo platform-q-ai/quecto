@@ -3,7 +3,7 @@
 use super::app_methods;
 use super::app_selection::SelectionAnchor;
 use crate::components::component::Component;
-use crate::infrastructure::client::Client;
+use crate::protocol::client::Client;
 use crate::shell::terminal::Terminal;
 use tokio::io::AsyncReadExt;
 

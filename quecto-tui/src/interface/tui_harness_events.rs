@@ -3,7 +3,7 @@
 //! that file within the repo's per-file line budget (#805).
 
 use super::SEQ;
-use crate::infrastructure::client::{Event, SubagentInfoEvent, SubagentWorkflow};
+use crate::protocol::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use std::sync::atomic::Ordering;
 use tokio::io::BufReader;
 use tokio::sync::mpsc;

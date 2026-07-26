@@ -11,8 +11,8 @@ pub(super) async fn harness() -> TuiHarness {
     TuiHarness::new().await
 }
 
-pub(super) fn info(id: &str, status: &str) -> crate::infrastructure::client::SubagentInfoEvent {
-    crate::infrastructure::client::SubagentInfoEvent {
+pub(super) fn info(id: &str, status: &str) -> crate::protocol::client::SubagentInfoEvent {
+    crate::protocol::client::SubagentInfoEvent {
         agent_id: id.to_string(),
         status: status.to_string(),
         last_tool: None,
@@ -31,8 +31,8 @@ fn info_with_workflow(
     mode: &str,
     done: u32,
     total: u32,
-) -> crate::infrastructure::client::SubagentInfoEvent {
-    crate::infrastructure::client::SubagentInfoEvent {
+) -> crate::protocol::client::SubagentInfoEvent {
+    crate::protocol::client::SubagentInfoEvent {
         agent_id: id.to_string(),
         status: status.to_string(),
         last_tool: None,
@@ -40,7 +40,7 @@ fn info_with_workflow(
         pid: 0,
         socket_path: None,
         parent_id: None,
-        workflow: Some(crate::infrastructure::client::SubagentWorkflow {
+        workflow: Some(crate::protocol::client::SubagentWorkflow {
             mode: mode.to_string(),
             steps_completed: done,
             steps_total: total,
@@ -306,7 +306,7 @@ pub(super) fn info_with_parent(
     id: &str,
     status: &str,
     parent: &str,
-) -> crate::infrastructure::client::SubagentInfoEvent {
+) -> crate::protocol::client::SubagentInfoEvent {
     let mut i = info(id, status);
     i.parent_id = Some(parent.to_string());
     i
@@ -317,7 +317,7 @@ pub(super) fn info_with_parent_and_socket(
     status: &str,
     parent: &str,
     socket: Option<&str>,
-) -> crate::infrastructure::client::SubagentInfoEvent {
+) -> crate::protocol::client::SubagentInfoEvent {
     let mut i = info_with_parent(id, status, parent);
     i.socket_path = socket.map(str::to_string);
     i
@@ -448,7 +448,7 @@ async fn state_changed_dropping_all_clears_footer_count() {
 
 async fn two_running() -> TuiHarness {
     let mut h = TuiHarness::new().await;
-    h.event(crate::infrastructure::client::Event::AgentStart);
+    h.event(crate::protocol::client::Event::AgentStart);
     h.event(super::tui_harness::subagents_changed(vec![
         super::tui_harness::subagent("worker", "running", Some(("active", 1, 3))),
         super::tui_harness::subagent("other", "running", Some(("active", 2, 3))),
@@ -704,7 +704,7 @@ async fn subagent_state_changed_does_not_make_synced_feed_authoritative() {
 
     a.route_subagent_event(
         "a",
-        crate::infrastructure::client::Event::SubagentStateChanged {
+        crate::protocol::client::Event::SubagentStateChanged {
             subagents: vec![info_with_parent("a1", "running", "a")],
         },
     );

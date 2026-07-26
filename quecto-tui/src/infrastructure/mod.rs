@@ -1,8 +1,7 @@
 //! TUI infrastructure layer.
 //!
-//! This layer contains concrete adapters such as terminal, process, signal, and
-//! UDS implementations. It may depend inward on domain and application code, but
-//! not on the interface composition root.
+//! Remaining concrete adapters not yet relocated under a feature module.
+//! The UDS client moved to `protocol/` in #1257 Phase 2; workspace file
+//! enumeration moves to `workspace/` in Phase 5.
 
-pub mod client;
 pub mod workspace_files;

@@ -6,8 +6,8 @@
 //! no green-panel background bleed.
 
 use super::tui_harness::*;
-use crate::infrastructure::client::Event;
 use crate::interface::theme::BG_SUCCESS;
+use crate::protocol::client::Event;
 use crate::shell::render::DiffRenderer;
 use std::sync::{Arc, Mutex};
 

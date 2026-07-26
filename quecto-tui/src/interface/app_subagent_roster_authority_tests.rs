@@ -46,7 +46,7 @@ async fn direct_child_metadata_survives_later_master_snapshot() {
 }
 
 use super::tui_harness::*;
-use crate::infrastructure::client::Event;
+use crate::protocol::client::Event;
 
 #[tokio::test]
 async fn recursive_discovery_registers_grandchild_and_opens_warm_feed() {

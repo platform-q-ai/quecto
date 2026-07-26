@@ -1,6 +1,6 @@
 use super::app_events_test_support::test_app;
 use super::*;
-use crate::infrastructure::client::SubagentInfoEvent;
+use crate::protocol::client::SubagentInfoEvent;
 
 fn tracked_child() -> SubagentInfoEvent {
     SubagentInfoEvent {

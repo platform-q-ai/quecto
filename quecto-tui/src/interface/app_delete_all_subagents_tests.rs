@@ -1,5 +1,5 @@
 use super::tui_harness::TuiHarness;
-use crate::infrastructure::client::{Event, SubagentInfoEvent};
+use crate::protocol::client::{Event, SubagentInfoEvent};
 
 async fn harness() -> TuiHarness {
     TuiHarness::new().await
