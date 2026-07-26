@@ -60,6 +60,32 @@ async fn workflow_status_box_removal_keeps_workflow_viewport_at_max_height() {
 }
 
 #[tokio::test]
+async fn chat_tail_sits_directly_above_input_bar() {
+    let mut h = TuiHarness::sized(100, 30).await;
+    h.add_user_message("NO_GAP_TAIL");
+
+    let frame = strip_ansi(&h.full_frame());
+    let lines: Vec<&str> = frame.lines().collect();
+    let tail = lines
+        .iter()
+        .position(|line| line.contains("NO_GAP_TAIL"))
+        .unwrap_or_else(|| panic!("chat tail should render:\n{frame}"));
+    let input = lines
+        .iter()
+        .enumerate()
+        .skip(tail + 1)
+        .find(|(_, line)| line.contains(" > ") && line.contains('─'))
+        .map(|(idx, _)| idx)
+        .unwrap_or_else(|| panic!("input bar should render below chat:\n{frame}"));
+
+    assert_eq!(
+        input,
+        tail + 1,
+        "chat tail must sit directly above the input bar without reserved blank gap:\n{frame}"
+    );
+}
+
+#[tokio::test]
 async fn workflow_title_respects_minimum_width_boundary() {
     let mut too_narrow = TuiHarness::sized(3, 30).await;
     assert!(

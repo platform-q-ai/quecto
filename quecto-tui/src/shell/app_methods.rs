@@ -317,11 +317,8 @@ impl App {
     pub(super) fn compose_bottom(&mut self, width: usize) -> Vec<String> {
         let mut bottom = Vec::new();
 
-        // Sub-agent-first layout (#820): the sub-agent bar and the workflow bar
-        // no longer live in the bottom stack — the always-on left panel and the
-        // boxed main-pane workflow bar carry that information now. Only the
-        // spinner / "N working" indicator, autocompletes, editor, notifications
-        // and footer remain below the chat.
+        // Sub-agent/workflow bars moved out of the bottom stack; only activity,
+        // autocompletes, editor, notifications and footer remain below chat.
 
         // Spinner sits above autocomplete (#534). While
         // sub-agents are tracked, RESERVE its line (spinner when active, blank
@@ -444,13 +441,12 @@ impl App {
         // is omitted so the conversation viewport keeps the reclaimed height.
         let main_box_width = width;
         let main_pane_workflow = self.render_main_pane_workflow(width, main_box_width, now);
-        let workflow_height = main_pane_workflow.len();
         lines.extend(main_pane_workflow);
 
-        // Chat — render into available space above the bottom section.
-        // Reserve MIN_CHAT_GAP lines for spacing between chat and editor (#480).
-        const MIN_CHAT_GAP: usize = 3;
-        let chat_height = height.saturating_sub(bottom_height + workflow_height + 2 + MIN_CHAT_GAP);
+        // Chat uses all space above bottom; top-pad short transcripts so the
+        // latest output sits directly above the input bar.
+        let top_chrome_height = lines.len();
+        let chat_height = height.saturating_sub(bottom_height + top_chrome_height);
         let chat = self.active_chat_mut();
         chat.set_viewport_height(chat_height);
         let mut chat_lines = chat.render(width);
@@ -460,12 +456,14 @@ impl App {
             let start = chat_lines.len() - chat_height;
             chat_lines = chat_lines[start..].to_vec();
         }
+        while chat_lines.len() < chat_height {
+            chat_lines.insert(0, String::new());
+        }
         lines.extend(chat_lines);
 
-        // Pad between chat and bottom to push bottom to the screen bottom.
         let available = height.saturating_sub(bottom_height);
         while lines.len() < available {
-            lines.push(String::new());
+            lines.insert(top_chrome_height, String::new());
         }
 
         // ── Append bottom section ───────────────────────────────────

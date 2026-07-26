@@ -584,13 +584,19 @@ async fn selection_extraction_works_after_drag_render() {
     // Simulate press+drag keeping the selection live, then a frame renders.
     a.selection = Some(TextSelection {
         start: SelectionAnchor { col: 0, row: 0 },
-        end: SelectionAnchor { col: 80, row: 30 },
+        end: SelectionAnchor {
+            col: 80,
+            row: a.terminal.height as u16,
+        },
     });
     let _ = a.compose_frame();
     // The extraction buffer captured during the live drag must let a copy
     // recover visible text even though the optimization skips idle frames.
     let start = SelectionAnchor { col: 0, row: 0 };
-    let end = SelectionAnchor { col: 80, row: 30 };
+    let end = SelectionAnchor {
+        col: 80,
+        row: a.terminal.height as u16,
+    };
     let text = a.extract_selection(&start, &end);
     assert!(
         text.contains("hello world"),
