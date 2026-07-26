@@ -1,4 +1,5 @@
 use super::tui_harness::TuiHarness;
+use crate::interface::component::Component;
 
 async fn harness() -> TuiHarness {
     TuiHarness::new().await
@@ -31,6 +32,33 @@ async fn files_autocomplete_lazy_load_request_is_spawned_once_and_applied() {
     );
     a.refresh_files_autocomplete_from_editor();
     assert!(!a.workspace.files_autocomplete.take_load_request());
+}
+
+#[tokio::test]
+async fn app_workspace_file_autocomplete_uses_production_visible_capacity() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.editor.set_text("open @file");
+    a.refresh_files_autocomplete_from_editor();
+    assert!(a.workspace.files_autocomplete.take_load_request());
+
+    a.workspace.files_autocomplete.apply_loaded_files(
+        (0..20)
+            .map(|i| format!("file-{i:02}.rs"))
+            .collect::<Vec<_>>(),
+    );
+    a.refresh_files_autocomplete_from_editor();
+
+    let rendered = a.workspace.files_autocomplete.render(80);
+    let rows = rendered.join("\n");
+    assert_eq!(
+        rendered.len(),
+        9,
+        "8 visible file rows plus overflow indicator"
+    );
+    assert!(rows.contains("file-00.rs"));
+    assert!(rows.contains("file-07.rs"));
+    assert!(rows.contains("(1/20)"));
 }
 
 #[tokio::test]

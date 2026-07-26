@@ -274,6 +274,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `interface/app_events_test_support.rs` | `shell` test support |
 | `interface/app_git.rs` | `workspace` |
 | `interface/app_idle_efficiency.rs` | `shell` event-loop policy |
+| `interface/app_inference.rs` | `inference` flow owner |
 | `interface/app_ledger_sync.rs` | `agents` |
 | `interface/app_message_recovery.rs` | `conversation` |
 | `interface/app_methods.rs` | `shell` composition methods until split by feature |
@@ -282,7 +283,9 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `interface/app_response.rs` | `conversation` |
 | `interface/app_resumed_history.rs` | `conversation` |
 | `interface/app_rewind.rs` | `conversation` |
+| `interface/app_rewind_state.rs` | `conversation` rewind flow owner |
 | `interface/app_selection.rs` | `shell` focus/routing until delegated to feature views |
+| `interface/app_sessions.rs` | `sessions` flow owner |
 | `interface/app_stdin.rs` | `conversation` input coordination with `shell` stdin adapter |
 | `interface/app_subagent_feed.rs` | `agents` |
 | `interface/agents/feed.rs` | `agents` pure feed sync state (#1222) |
@@ -295,6 +298,8 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `interface/app_subagent_stream.rs` | `agents` |
 | `interface/app_subagents.rs` | `agents` |
 | `interface/app_submit.rs` | `conversation` |
+| `interface/app_workflow.rs` | `workflow` flow owner |
+| `interface/app_workspace.rs` | `workspace` flow owner |
 | `interface/ansi.rs` | `components` rendering primitive |
 | `interface/cli.rs` | `shell` CLI entry |
 | `interface/component.rs` | `components` shared traits/primitives |
@@ -390,6 +395,63 @@ Parity evidence recorded during #1222 implementation:
 | Architecture policy | Raw JSON and wire DTO parsing sites do not grow; pure agents policy has no Tokio handles/channels, terminal/widget types, or concrete client; runtime feed ownership remains separated. | `cargo test -p quecto-agentic-harness --test architecture tui_interface_raw_json_parsing_sites_do_not_grow -- --exact` and `cargo test -p quecto-agentic-harness --test architecture tui_wire_dto_usage_does_not_grow -- --exact` passed. `grep` over `interface/agents/{feed,roster,ledger,focus}.rs` found no channels, task handles, concrete client, terminal/widget types, or `serde_json`; only `tokio::time::Instant` remains in roster lifecycle timestamps. Caveat on the ratchets: both counters are heuristic — the raw-JSON counter matches literal `.get("`/`.pointer("` and accessor+`and_then` lines, so `serde_json::from_str`/`from_value` and dynamic `value.get(key)` in `application/agent_ledger_payloads.rs` are not counted; the wire-DTO counter matches `Command::`/`Event::`/`infrastructure::client` lines, so unqualified DTO uses after a single grouped import are not counted. They confirm no growth in the shapes they measure, not the absence of raw JSON parsing. Runtime `cmd_tx`/task handle live in `interface/agents/ui.rs::FeedRuntime`, separate from `FeedSyncState`, but are re-flattened into `FeedState` (see the structural-check caveat above). | PASS |
 | Performance parity (source inspection only; no enforcing check) | Replaced specialized code keeps the same asymptotic passes and allocation boundaries. | Roster snapshot merge still builds one `BTreeMap` of candidates/incoming/new map and one parent carry-over queue in `apply_roster_snapshot`; no render-loop work or background task moved into policy. Ledger transcript still uses one `HashMap` plus one ordered `Vec` and applies deltas in O(messages). Retention still evicts through the existing session-order vector and active-id skip. Warm feeds remain bounded by `MAX_RETAINED_SESSIONS`. | PASS |
 | Quantitative / formatting / lint | File-size cap and strict local checks remain green. | Largest new agents file is `interface/agents/roster.rs` at 294 lines; `app.rs` dropped from 741 to 617 lines. Overall changed-file line count is +884 (1437 insertions, 553 deletions) including 310 lines of new characterization tests, 203 lines of typed ledger DTOs, and the parity/deletion documentation below. `cargo fmt --check` and `cargo clippy -p quecto-tui --lib -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines` passed. | PASS |
+
+### Parity contract for final App composition slice (#1224)
+
+Readiness gate for #1224:
+
+- Zero behavior change mandate: passed. #1224 is explicitly a final refactor and architecture-guardrail issue; acceptance criteria are structural/parity-only.
+- Touched observable surfaces: App construction, model/effort selector state, resume selector state, workflow automation mirror state, rewind selector/request correlation state, workspace Git/file-autocomplete state, and architecture guard execution. This slice does not change commands, rendering semantics, UDS payloads, FIFO command sending, terminal ownership, or feature policy.
+- Existing harnesses: passed. The touched flows are covered by TUI unit tests for model/effort/session/workflow/rewind/workspace paths plus architecture tests.
+- Behavioral/refactoring split: passed. No new command, protocol, render, or user-visible behavior is requested.
+- Performance warning: accepted. The moved state owners wrap existing fields without replacing specialized algorithms. Consequence if not recorded: construction/allocation regressions in selectors or file autocomplete setup would be undetectable. The extracted owners must keep identical constructors and lazy overlay creation.
+
+Observable surfaces and required parity:
+
+| Surface | Required identical behavior | Boundary cases | Performance characteristics |
+|---|---|---|---|
+| App construction | App still constructs the same terminal/client/render shell plus the same feature flow state defaults. | Fresh app; default model/effort/session/workflow/rewind state; workspace with and without current Git branch. | Same eager construction of editor/autocomplete/workspace file autocomplete and same lazy selector construction. |
+| Inference selector state | Current model/effort, model registry cache, pending model open flag, and effort level vocabulary keep the same update and fallback behavior. | Empty/non-empty registry; pending open; focused child vs master; direct effort vs selector. | Same cached Vec and optional overlay fields; no background task or extra protocol command. |
+| Sessions/workflow/rewind flow state | Resume selector, context-stats request latch, workflow auto-continue/completion-nudge mirrors, and rewind request correlation remain single-source state. | Empty/one/many sessions; stale/late rewind responses; toggles true/false. | Same optional selector fields and scalar latches; no duplicate global event hierarchy. |
+| Workspace flow state | Git branch footer updates and file autocomplete loading/rendering behave unchanged. | No repo; branch unchanged/changed; autocomplete active/inactive; empty/loaded file list. | Same one FilesAutocomplete with capacity 8 and same asynchronous load trigger. |
+| Architecture guardrail | Existing architecture ratchets continue to enforce dependency direction, raw JSON parsing limits, DTO usage limits, public-port contract coverage, and documented TUI module ownership. | App composition ownership is verified by code review/conformance inspection instead of source-text assertions. | Guard-time only. |
+
+Approved parity contract: all readiness-gate items are resolved; no `__UNRESOLVED__` markers remain.
+
+Characterization review/freeze manifest for #1224:
+
+- Review finders: falsifiability — source-text App owner guard was later declined/removed during conformance; coverage — accepted and fixed missing production file-autocomplete capacity pin; Gherkin — no findings (no BDD changed).
+- Mutation log after fixes: changing `FilesAutocomplete::new(8)` to `new(7)` fails `app_workspace_file_autocomplete_uses_production_visible_capacity`; prior source-text App owner guard mutations were superseded by conformance-step inspection and the guard was removed because source-text assertions are disallowed for final conformance.
+- Frozen characterization files:
+  - `quecto-tui/src/interface/app_event_loop_cov_tests.rs` — `9455924255371edce177ebbfa1351c295d50947a`
+  - Rationale for logged edit: `quecto-agentic-harness/tests/architecture.rs` was unfrozen during conformance to remove the source-text App owner guard; source-text tests are explicitly disallowed by the final conformance gate.
+
+Deletion ledger for #1224 App thinning:
+
+- Deleted inline `RewindFlow`/fields from `app.rs`: rewind selector, double-Escape timestamp, request ids, and request sequence invariants are re-established unchanged in `interface/app_rewind_state.rs` and accessed through the existing `rewind` owner.
+- Deleted inline `SessionsFlow`: resume selector and context-stats request latch invariants are re-established unchanged in `interface/app_sessions.rs`.
+- Deleted inline `WorkflowFlow`: auto-continue and completion-nudge mirror invariants are re-established unchanged in `interface/app_workflow.rs`.
+- Deleted inline `InferenceFlow`/`ModelRegistry`: current model, selector overlays, registry cache, pending-open latch, current effort, and effort vocabulary invariants are re-established unchanged in `interface/app_inference.rs`.
+- Deleted inline `WorkspaceFlow`: file autocomplete capacity 8, Git branch footer state, and Git repo polling root invariants are re-established unchanged in `interface/app_workspace.rs`; production capacity is pinned by `app_workspace_file_autocomplete_uses_production_visible_capacity`.
+- One source-text architecture test (`tui_app_state_is_composed_from_feature_flow_owners`) was deleted during conformance because final conformance bans source-text assertions; frozen behavioural characterization tests were not edited after freeze.
+- Consolidation completeness: no shared helper was introduced or canonicalized in this slice; moved state owners only.
+
+Parity evidence for #1224:
+
+| Surface | Behaviour/performance/quantity checked | Evidence | Verdict |
+|---|---|---|---|
+| Formatting and lint | Touched TUI lib and architecture test compile cleanly under strict warnings. | `cargo fmt --check`; `cargo clippy -p quecto-tui --lib --all-targets -- -D warnings`; `cargo clippy -p quecto-agentic-harness --test architecture -- -D warnings`. | PASS |
+| Frozen characterization suite | Frozen tests are green; one logged edit removed the source-text App owner guard during conformance. | `app_event_loop_cov_tests.rs` hash still matches `9455924255371edce177ebbfa1351c295d50947a`; `architecture.rs` source-text guard was removed with rationale because final conformance bans source-text assertions. | PASS |
+| Pre-existing targeted behaviour | Touched crates' targeted suites remain green. | `cargo test -p quecto-agentic-harness --test architecture`; `cargo test -p quecto-tui --lib` (1652 passed). | PASS |
+| App construction | Same fields and constructor expressions are preserved; only owner type definitions moved. | `App::new` still creates `Autocomplete::new(..., 8)`, `WorkspaceFlow::new(git_branch, git_repo)`, and default inference/session/workflow/rewind owners; final conformance verifies this by code inspection rather than a source-text architecture guard. | PASS |
+| Inference/session/workflow/rewind/workspace state | Each migrated state has one source of truth in code inspection. | `App` contains owner fields for workspace/inference/sessions/workflow/rewind/subagents; extracted modules preserve original fields/derives. This is verified by conformance inspection rather than a source-text test. | PASS |
+| Visual parity | No rendering code or pinned frame fixtures changed; owner movement leaves render call sites unchanged. | `cargo test -p quecto-tui --lib` includes pinned list/autocomplete/model/select/workflow/footer/chat render tests; all pass. | PASS |
+| Performance parity | No shared replacement or extra pass introduced; hot-path structures keep same lazy/eager construction. | `WorkspaceFlow::new` still constructs one `FilesAutocomplete::new(8)`; model/effort/resume/rewind selectors remain `Option` lazy overlays; no new background task, clone loop, allocation cache, or protocol command was added. | PASS |
+| Quantitative | `App` thinned and file cap respected. | `app.rs` is 579 lines; extracted owner modules plus app total 658 lines; production touched Rust diff is 20 added/79 deleted (net -59), TUI interface Rust net -31. | PASS |
+
+Review concern disposition for #1224:
+
+- Accepted during conformance: the source-text App owner guard was not an acceptable final conformance mechanism. It was removed rather than generalized. App composition is verified by code inspection in the conformance step; behavior remains pinned by existing TUI suites and the workspace capacity characterization test.
 
 ### Inter-issue sequencing
 
