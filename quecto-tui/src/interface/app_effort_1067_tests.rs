@@ -3,8 +3,8 @@
 //! footer's effort display.
 
 use super::tui_harness::TuiHarness;
+use crate::components::footer::Footer;
 use crate::infrastructure::client::Event;
-use crate::interface::components::footer::Footer;
 
 async fn harness() -> TuiHarness {
     TuiHarness::new().await
@@ -54,7 +54,7 @@ fn builtin_commands_include_effort() {
 fn footer_apply_get_state_shows_effort_level() {
     let mut f = Footer::new();
     f.apply_get_state(&serde_json::json!({ "model": "openai-api/gpt-5.5", "effort": "high" }));
-    let lines = crate::interface::component::Component::render(&mut f, 120).join("\n");
+    let lines = crate::components::component::Component::render(&mut f, 120).join("\n");
     let stripped = super::app_methods::strip_ansi(&lines);
     assert!(
         stripped.contains("effort: high"),
@@ -66,7 +66,7 @@ fn footer_apply_get_state_shows_effort_level() {
 fn footer_shows_default_effort_when_never_set() {
     let mut f = Footer::new();
     f.apply_get_state(&serde_json::json!({ "model": "openai-api/gpt-5.5" }));
-    let lines = crate::interface::component::Component::render(&mut f, 120).join("\n");
+    let lines = crate::components::component::Component::render(&mut f, 120).join("\n");
     let stripped = super::app_methods::strip_ansi(&lines);
     assert!(
         stripped.contains("effort: default"),
@@ -82,7 +82,7 @@ fn footer_shows_default_effort_for_explicit_null() {
     f.apply_get_state(
         &serde_json::json!({ "model": "openai-api/gpt-5.5", "effort": serde_json::Value::Null }),
     );
-    let lines = crate::interface::component::Component::render(&mut f, 120).join("\n");
+    let lines = crate::components::component::Component::render(&mut f, 120).join("\n");
     let stripped = super::app_methods::strip_ansi(&lines);
     assert!(
         stripped.contains("effort: default"),

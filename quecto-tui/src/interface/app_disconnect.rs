@@ -15,7 +15,7 @@ const CHILD_EXIT_DETAIL_WINDOW: Duration = Duration::from_millis(500);
 impl App {
     /// Attach the exit-diagnosis watch for a TUI-owned agent child (#1047),
     /// so a later disconnect can report WHY the agent went away.
-    pub fn set_child_exit_watch(&mut self, watch: crate::infrastructure::child_watch::ChildWatch) {
+    pub fn set_child_exit_watch(&mut self, watch: crate::shell::child_watch::ChildWatch) {
         self.child_exit_watch = Some(watch);
     }
 

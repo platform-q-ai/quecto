@@ -1,4 +1,4 @@
-use crate::interface::components::select_list::SelectList;
+use crate::components::select_list::SelectList;
 
 #[derive(Default)]
 pub(super) struct SessionsFlow {

@@ -1,6 +1,6 @@
 use super::tui_harness::TuiHarness;
 use super::*;
-use crate::interface::components::workflow_bar;
+use crate::components::workflow_bar;
 
 async fn harness() -> TuiHarness {
     TuiHarness::new().await

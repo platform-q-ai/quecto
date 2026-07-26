@@ -3,26 +3,26 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::components::autocomplete::{Autocomplete, AutocompleteResult};
+use crate::components::chat::{Chat, ChatEntry};
+use crate::components::component::Component;
+use crate::components::editor::Editor;
+use crate::components::effort_selector::EffortSelectorResult;
+use crate::components::footer::Footer;
+use crate::components::model_selector::ModelSelectorResult;
+use crate::components::notification::{Notification, NotificationStack, NotifyLevel};
+use crate::components::select_list::{SelectItem, SelectList};
+use crate::components::spinner::Spinner;
+use crate::components::workflow_bar;
 use crate::infrastructure::client::{Client, Command, Event};
-use crate::infrastructure::render::DiffRenderer;
-use crate::infrastructure::terminal::Terminal;
 use crate::infrastructure::workspace_files::list_workspace_files;
 use crate::interface::agents::focus::{Focus, MAX_RETAINED_SESSIONS, SUBAGENT_PANEL_WIDTH};
 use crate::interface::agents::ui::FeedState;
 use crate::interface::agents::ui::{SessionView, SubagentUi};
-use crate::interface::component::Component;
-use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResult};
-use crate::interface::components::chat::{Chat, ChatEntry};
-use crate::interface::components::editor::Editor;
-use crate::interface::components::effort_selector::EffortSelectorResult;
-use crate::interface::components::footer::Footer;
-use crate::interface::components::model_selector::ModelSelectorResult;
-use crate::interface::components::notification::{Notification, NotificationStack, NotifyLevel};
-use crate::interface::components::select_list::{SelectItem, SelectList};
-use crate::interface::components::spinner::Spinner;
-use crate::interface::components::workflow_bar;
-use crate::interface::keys::{self, Key};
 use crate::interface::kitty::KittyProtocol;
+use crate::shell::keys::{self, Key};
+use crate::shell::render::DiffRenderer;
+use crate::shell::terminal::Terminal;
 use app_selection::TextSelection;
 use tokio::sync::mpsc;
 
@@ -64,8 +64,8 @@ pub struct App {
     /// sub-agent context to diagnose the failure. Stays `true` on disconnect.
     agent_ever_connected: bool,
     /// Exit-diagnosis watch for the TUI-owned agent child (#1047), published by
-    /// [`crate::infrastructure::child_watch`]. `None` for external sockets.
-    child_exit_watch: Option<crate::infrastructure::child_watch::ChildWatch>,
+    /// [`crate::shell::child_watch`]. `None` for external sockets.
+    child_exit_watch: Option<crate::shell::child_watch::ChildWatch>,
     /// Oversized-event drops already surfaced as a notification, so each is
     /// reported exactly once (#1047).
     surfaced_oversized_drops: u64,

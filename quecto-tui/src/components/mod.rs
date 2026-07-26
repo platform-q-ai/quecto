@@ -1,9 +1,11 @@
 pub mod autocomplete;
 pub mod chat;
+pub mod component;
 pub mod editor;
 pub mod effort_selector;
 pub mod files_autocomplete;
 pub mod footer;
+pub mod fuzzy;
 pub mod list_navigator;
 pub mod list_rows;
 pub mod markdown;

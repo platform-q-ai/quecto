@@ -1,7 +1,7 @@
 use super::*;
+use quecto_tui::components::chat::{Chat, ChatEntry};
+use quecto_tui::components::component::Component;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
-use quecto_tui::interface::component::Component;
-use quecto_tui::interface::components::chat::{Chat, ChatEntry};
 
 const TUI_ROOT: &str = "../quecto-tui/src";
 const TUI_FEATURE_ARCH_DOC: &str =
@@ -176,18 +176,28 @@ fn then_tui_infrastructure_no_application_or_interface(_world: &mut QuectoWorld)
     );
 }
 
-#[then("the quecto-tui infrastructure layer should own runtime adapters")]
-fn then_tui_infrastructure_owns_runtime_adapters(_world: &mut QuectoWorld) {
-    for adapter in ["client", "process", "render", "signals", "terminal"] {
+#[then("the quecto-tui shell should own runtime adapters")]
+fn then_tui_shell_owns_runtime_adapters(_world: &mut QuectoWorld) {
+    // #1257 Phase 1: runtime adapters moved to `shell/`; the UDS client stays
+    // in infrastructure until Phase 2 moves it to `protocol/`.
+    for (owner, adapter) in [
+        ("infrastructure", "client"),
+        ("shell", "process"),
+        ("shell", "render"),
+        ("shell", "signals"),
+        ("shell", "terminal"),
+        ("shell", "child_watch"),
+        ("shell", "warn_capture"),
+    ] {
         let infrastructure_path = Path::new(TUI_ROOT)
-            .join("infrastructure")
+            .join(owner)
             .join(format!("{adapter}.rs"));
         let interface_path = Path::new(TUI_ROOT)
             .join("interface")
             .join(format!("{adapter}.rs"));
         assert!(
             infrastructure_path.is_file(),
-            "runtime adapter must live in infrastructure: {}",
+            "runtime adapter must live in its owning module: {}",
             infrastructure_path.display()
         );
         assert!(
@@ -203,7 +213,7 @@ fn then_every_tui_production_file_is_layered(_world: &mut QuectoWorld) {
     let misplaced = misplaced_tui_production_files();
     assert!(
         misplaced.is_empty(),
-        "quecto-tui production Rust files must live under domain/, application/, infrastructure/, or interface/; misplaced: {misplaced:?}"
+        "quecto-tui production Rust files must live under domain/, application/, infrastructure/, interface/, components/, or shell/; misplaced: {misplaced:?}"
     );
 }
 
@@ -219,8 +229,15 @@ fn then_tui_library_root_exposes_only_layers(_world: &mut QuectoWorld) {
         .collect();
     assert_eq!(
         public_modules,
-        ["application", "domain", "infrastructure", "interface"],
-        "../quecto-tui/src/lib.rs should match the main crate shape and expose only architecture layers"
+        [
+            "application",
+            "components",
+            "domain",
+            "infrastructure",
+            "interface",
+            "shell"
+        ],
+        "../quecto-tui/src/lib.rs should expose exactly the per-phase module set (#1257 Phase 1)"
     );
     assert!(
         !content.contains("#[path ="),
@@ -233,8 +250,8 @@ fn then_tui_binary_root_delegates_to_interface(_world: &mut QuectoWorld) {
     let content =
         std::fs::read_to_string("../quecto-tui/src/main.rs").expect("read quecto-tui main.rs");
     assert!(
-        content.contains("quecto_tui::interface::cli") && content.lines().count() <= 10,
-        "../quecto-tui/src/main.rs should be a thin binary entrypoint delegating to interface::cli"
+        content.contains("quecto_tui::shell::cli") && content.lines().count() <= 10,
+        "../quecto-tui/src/main.rs should be a thin binary entrypoint delegating to shell::cli"
     );
 }
 
@@ -247,7 +264,7 @@ fn then_architecture_test_enforces_tui_layers(_world: &mut QuectoWorld) {
             && content.contains("fn tui_domain_has_no_outer_layer_imports")
             && content.contains("fn tui_application_has_no_infrastructure_or_interface_imports")
             && content.contains("fn tui_infrastructure_has_no_application_or_interface_imports")
-            && content.contains("fn tui_runtime_adapters_live_in_infrastructure"),
+            && content.contains("fn tui_runtime_adapters_live_in_shell"),
         "tests/architecture.rs must enforce quecto-tui layer existence and dependency direction"
     );
 }
@@ -305,7 +322,7 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
         let top = rel.split('/').next().unwrap_or_default();
         let in_layer = matches!(
             top,
-            "domain" | "application" | "infrastructure" | "interface"
+            "domain" | "application" | "infrastructure" | "interface" | "components" | "shell"
         );
         let allowed_root = !rel.contains('/') && matches!(rel.as_str(), "lib.rs" | "main.rs");
         if !in_layer && !allowed_root {
@@ -489,7 +506,7 @@ fn then_tui_does_not_render_workflow_header_bar(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui workflow widget should render as plain text matching the Quecto workflow")]
 fn then_tui_workflow_widget_matches_quecto_plain_text(_world: &mut QuectoWorld) {
-    let bar = std::fs::read_to_string("../quecto-tui/src/interface/components/workflow_bar.rs")
+    let bar = std::fs::read_to_string("../quecto-tui/src/components/workflow_bar.rs")
         .expect("read workflow bar source");
     // The render composition lives in app_methods.rs, not app.rs.
     let app = std::fs::read_to_string("../quecto-tui/src/interface/app_methods.rs")
@@ -515,7 +532,7 @@ fn then_tui_workflow_widget_matches_quecto_plain_text(_world: &mut QuectoWorld) 
 
 #[then("the quecto-tui workflow widget should show workflow hotkey hints with toggle state")]
 fn then_tui_workflow_widget_shows_hotkey_hints_with_toggle_state(_world: &mut QuectoWorld) {
-    let bar = std::fs::read_to_string("../quecto-tui/src/interface/components/workflow_bar.rs")
+    let bar = std::fs::read_to_string("../quecto-tui/src/components/workflow_bar.rs")
         .expect("read workflow bar source");
     assert!(
         bar.contains("Ctrl+Shift+A")
@@ -528,7 +545,7 @@ fn then_tui_workflow_widget_shows_hotkey_hints_with_toggle_state(_world: &mut Qu
 
 #[then("quecto-tui should not expose the Ctrl+Shift+W workflow overlay")]
 fn then_tui_does_not_expose_ctrl_shift_w_workflow_overlay(_world: &mut QuectoWorld) {
-    let bar = std::fs::read_to_string("../quecto-tui/src/interface/components/workflow_bar.rs")
+    let bar = std::fs::read_to_string("../quecto-tui/src/components/workflow_bar.rs")
         .expect("read workflow bar source");
     let app =
         std::fs::read_to_string("../quecto-tui/src/interface/app.rs").expect("read app source");
@@ -611,7 +628,7 @@ fn then_tui_keeps_splice_line_helpers(_world: &mut QuectoWorld) {
 
 #[then("quecto-tui should not retain the legacy workflow_bar render function")]
 fn then_tui_drops_legacy_workflow_bar_render(_world: &mut QuectoWorld) {
-    let bar = std::fs::read_to_string("../quecto-tui/src/interface/components/workflow_bar.rs")
+    let bar = std::fs::read_to_string("../quecto-tui/src/components/workflow_bar.rs")
         .expect("read workflow bar source");
     for needle in [
         "pub fn render(",
@@ -631,9 +648,8 @@ fn then_tui_drops_legacy_workflow_bar_render(_world: &mut QuectoWorld) {
 fn then_tui_drops_legacy_workflow_bar_render_tests(_world: &mut QuectoWorld) {
     // The legacy `render` + helpers only survived `#![deny(dead_code)]` because
     // workflow_bar_tests.rs called them; those tests must be deleted too.
-    let tests =
-        std::fs::read_to_string("../quecto-tui/src/interface/components/workflow_bar_tests.rs")
-            .expect("read workflow bar tests source");
+    let tests = std::fs::read_to_string("../quecto-tui/src/components/workflow_bar_tests.rs")
+        .expect("read workflow bar tests source");
     for needle in [
         "render(&state",
         "render_stage_status_line",
@@ -650,7 +666,7 @@ fn then_tui_drops_legacy_workflow_bar_render_tests(_world: &mut QuectoWorld) {
 
 #[then("quecto-tui should keep the live workflow_bar render_widget path")]
 fn then_tui_keeps_workflow_bar_render_widget(_world: &mut QuectoWorld) {
-    let bar = std::fs::read_to_string("../quecto-tui/src/interface/components/workflow_bar.rs")
+    let bar = std::fs::read_to_string("../quecto-tui/src/components/workflow_bar.rs")
         .expect("read workflow bar source");
     for needle in ["pub fn render_widget", "pub fn parse_workflow_event"] {
         assert!(
@@ -669,7 +685,7 @@ fn then_tui_keeps_workflow_bar_render_widget(_world: &mut QuectoWorld) {
 // a hardcoded literal so the step tracks the source of truth.
 
 fn render_footer(streaming: bool) -> Vec<String> {
-    use quecto_tui::interface::components::footer::Footer;
+    use quecto_tui::components::footer::Footer;
     let mut footer = Footer::new();
     footer.set_model("claude-sonnet-4-6");
     footer.set_streaming(streaming);
@@ -826,7 +842,6 @@ fn rust_fn_body(content: &str, name: &str) -> Option<String> {
 #[then("the TUI components layer should expose a shared ListNavigator")]
 fn then_tui_components_expose_list_navigator(_world: &mut QuectoWorld) {
     let nav_path = Path::new(TUI_ROOT)
-        .join("interface")
         .join("components")
         .join("list_navigator.rs");
     assert!(
@@ -854,10 +869,7 @@ fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
     // a single home for all four components without re-implementing
     // window/wraparound logic (#997 moved model_selector onto SuggestionList).
     let read = |file: &str| {
-        let path = Path::new(TUI_ROOT)
-            .join("interface")
-            .join("components")
-            .join(file);
+        let path = Path::new(TUI_ROOT).join("components").join(file);
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
     };
 
@@ -909,7 +921,6 @@ fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
 fn then_list_navigator_owns_wraparound_and_window_behavior(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string(
         Path::new(TUI_ROOT)
-            .join("interface")
             .join("components")
             .join("list_navigator.rs"),
     )
@@ -990,7 +1001,7 @@ fn then_footer_update_appears_once(_world: &mut QuectoWorld) {
         body.contains("apply_session_stats"),
         "update_footer_stats should delegate to Footer::apply_session_stats"
     );
-    let footer = tui_read("interface/components/footer.rs");
+    let footer = tui_read("components/footer.rs");
     assert_eq!(
         count_occurrences(&footer, "pub fn apply_session_stats("),
         1,
@@ -1001,7 +1012,6 @@ fn then_footer_update_appears_once(_world: &mut QuectoWorld) {
 #[then("the quecto-tui components layer should expose a shared SuggestionList")]
 fn then_components_expose_suggestion_list(_world: &mut QuectoWorld) {
     let path = Path::new(TUI_ROOT)
-        .join("interface")
         .join("components")
         .join("suggestion_list.rs");
     assert!(
@@ -1018,14 +1028,14 @@ fn then_components_expose_suggestion_list(_world: &mut QuectoWorld) {
 
 #[then("SuggestionList should own suggestions_match and set_suggestions")]
 fn then_suggestion_list_owns_helpers(_world: &mut QuectoWorld) {
-    let content = tui_read("interface/components/suggestion_list.rs");
+    let content = tui_read("components/suggestion_list.rs");
     assert!(
         content.contains("fn suggestions_match") && content.contains("fn set_suggestions"),
         "SuggestionList should own suggestions_match and set_suggestions"
     );
     // The byte-identical copies must not remain in both component files.
-    let autocomplete = tui_read("interface/components/autocomplete.rs");
-    let files_autocomplete = tui_read("interface/components/files_autocomplete.rs");
+    let autocomplete = tui_read("components/autocomplete.rs");
+    let files_autocomplete = tui_read("components/files_autocomplete.rs");
     assert!(
         !autocomplete.contains("fn suggestions_match")
             && !files_autocomplete.contains("fn suggestions_match"),
@@ -1036,7 +1046,7 @@ fn then_suggestion_list_owns_helpers(_world: &mut QuectoWorld) {
 #[then("slash autocomplete and files autocomplete should use SuggestionList")]
 fn then_autocompletes_use_suggestion_list(_world: &mut QuectoWorld) {
     for file in ["autocomplete.rs", "files_autocomplete.rs"] {
-        let content = tui_read(&format!("interface/components/{file}"));
+        let content = tui_read(&format!("components/{file}"));
         assert!(
             content.contains("SuggestionList"),
             "{file} should delegate to the shared SuggestionList component"
@@ -1046,7 +1056,7 @@ fn then_autocompletes_use_suggestion_list(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui chat_render should expose push_preview and push_header helpers")]
 fn then_chat_render_has_helpers(_world: &mut QuectoWorld) {
-    let content = tui_read("interface/components/chat_render.rs");
+    let content = tui_read("components/chat_render.rs");
     assert!(
         content.contains("fn push_preview") && content.contains("fn push_header"),
         "chat_render.rs should extract shared push_preview / push_header helpers"
@@ -1055,7 +1065,7 @@ fn then_chat_render_has_helpers(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui chat tool renderers should build previews and headers through the helpers")]
 fn then_chat_renderers_use_helpers(_world: &mut QuectoWorld) {
-    let content = tui_read("interface/components/chat_render.rs");
+    let content = tui_read("components/chat_render.rs");
     assert!(
         count_occurrences(&content, "push_preview(") >= 4,
         "the repeated preview idiom should route through push_preview across the tool renderers"
@@ -1070,7 +1080,7 @@ fn then_chat_renderers_use_helpers(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui workflow_bar should expose exactly one phase-to-label map")]
 fn then_workflow_bar_single_phase_map(_world: &mut QuectoWorld) {
-    let content = tui_read("interface/components/workflow_bar.rs");
+    let content = tui_read("components/workflow_bar.rs");
     let map_defs = count_occurrences(&content, "fn phase_display")
         + count_occurrences(&content, "fn phase_name");
     assert_eq!(
@@ -1081,7 +1091,7 @@ fn then_workflow_bar_single_phase_map(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui workflow_bar should not keep the phase_label_for_widget forwarder")]
 fn then_workflow_bar_no_forwarder(_world: &mut QuectoWorld) {
-    let content = tui_read("interface/components/workflow_bar.rs");
+    let content = tui_read("components/workflow_bar.rs");
     assert!(
         !content.contains("fn phase_label_for_widget"),
         "the trivial phase_label_for_widget forwarder should be removed"
@@ -1107,7 +1117,7 @@ fn then_client_serialize_once(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui markdown renderer should extract table and code-block flush handlers")]
 fn then_markdown_extracts_handlers(_world: &mut QuectoWorld) {
-    let content = tui_read("interface/components/markdown.rs");
+    let content = tui_read("components/markdown.rs");
     assert!(
         content.contains("fn flush_table") && content.contains("fn flush_code_block"),
         "render_markdown should extract per-block flush handlers (table / code-block)"

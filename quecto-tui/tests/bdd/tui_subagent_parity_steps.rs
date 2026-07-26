@@ -12,7 +12,7 @@ use quecto_tui::interface::app::tui_harness::{
     self, TuiHarness, spawn_start, spawn_subagent_socket, spawn_subagent_socket_with_commands,
     subagent_with_socket, subagents_changed,
 };
-use quecto_tui::interface::keys::Key;
+use quecto_tui::shell::keys::Key;
 
 // ── Harness construction / driving helpers ──────────────────────────────────
 

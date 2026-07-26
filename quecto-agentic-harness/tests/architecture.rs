@@ -315,7 +315,30 @@ const TUI_DOMAIN: &str = "../quecto-tui/src/domain";
 const TUI_APPLICATION: &str = "../quecto-tui/src/application";
 const TUI_INFRASTRUCTURE: &str = "../quecto-tui/src/infrastructure";
 const TUI_INTERFACE: &str = "../quecto-tui/src/interface";
+const TUI_COMPONENTS: &str = "../quecto-tui/src/components";
+const TUI_SHELL: &str = "../quecto-tui/src/shell";
 const TUI_ALLOWED_ROOT_RS: &[&str] = &["lib.rs", "main.rs"];
+/// #1257 phased migration: the exact set of top-level modules `lib.rs` may
+/// expose, updated per phase as feature modules land (Phase 1: `components`,
+/// `shell`).
+const TUI_LIB_RS_MODULES: &[&str] = &[
+    "application",
+    "components",
+    "domain",
+    "infrastructure",
+    "interface",
+    "shell",
+];
+/// #1257 phased migration: top-level directories production files may live in
+/// (legacy layers plus the feature modules landed so far).
+const TUI_TOP_LEVEL_MODULES: &[&str] = &[
+    "domain",
+    "application",
+    "infrastructure",
+    "interface",
+    "components",
+    "shell",
+];
 const TUI_FEATURE_ARCH_DOC: &str =
     "../quecto-tui/docs/feature-oriented-presentation-architecture.md";
 const TUI_SUPERSEDED_ARCH_DOC: &str = "../quecto-tui/docs/clean-architecture-target-model.md";
@@ -354,8 +377,8 @@ fn tui_feature_oriented_architecture_is_documented() {
         "Interim compatibility map",
         "Capability characterization and migration map",
         "Production file target-owner map",
-        "`interface/components/autocomplete.rs` | `components` (relocate physically to top-level `components/`)",
-        "`interface/components/workflow_bar.rs` | `components` (relocate physically to top-level `components/`)",
+        "`components/autocomplete.rs` | `components` (relocated, #1257 Phase 1)",
+        "`components/workflow_bar.rs` | `components` (relocated, #1257 Phase 1)",
         "remove vestigial placeholder",
         "#1221 (`conversation`) and #1222 (`agents`) depend on #1220",
     ] {
@@ -525,13 +548,24 @@ fn tui_inner_layers_have_no_runtime_io_calls() {
 }
 
 #[test]
-fn tui_runtime_adapters_live_in_infrastructure() {
-    for adapter in ["client", "process", "render", "signals", "terminal"] {
-        let infrastructure_path = format!("{TUI_INFRASTRUCTURE}/{adapter}.rs");
+fn tui_runtime_adapters_live_in_shell() {
+    // #1257 Phase 1: the UDS client stays in infrastructure until Phase 2
+    // moves it to `protocol/`; the terminal/runtime adapters now live in
+    // `shell/`.
+    for (root, adapter) in [
+        (TUI_INFRASTRUCTURE, "client"),
+        (TUI_SHELL, "process"),
+        (TUI_SHELL, "render"),
+        (TUI_SHELL, "signals"),
+        (TUI_SHELL, "terminal"),
+        (TUI_SHELL, "child_watch"),
+        (TUI_SHELL, "warn_capture"),
+    ] {
+        let adapter_path = format!("{root}/{adapter}.rs");
         let interface_path = format!("{TUI_INTERFACE}/{adapter}.rs");
         assert!(
-            Path::new(&infrastructure_path).is_file(),
-            "TUI runtime adapter must live in infrastructure: {infrastructure_path}"
+            Path::new(&adapter_path).is_file(),
+            "TUI runtime adapter must live in its owning module: {adapter_path}"
         );
         assert!(
             !Path::new(&interface_path).exists(),
@@ -546,7 +580,7 @@ fn tui_production_files_live_inside_architecture_layers() {
     collect_misplaced_tui_rs_files(Path::new(TUI_SRC), &mut misplaced);
     assert!(
         misplaced.is_empty(),
-        "quecto-tui production Rust files must live under domain/, application/, infrastructure/, or interface/; misplaced: {misplaced:?}"
+        "quecto-tui production Rust files must live under a recognised top-level module ({TUI_TOP_LEVEL_MODULES:?}); misplaced: {misplaced:?}"
     );
 }
 
@@ -570,10 +604,7 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
             .to_string_lossy()
             .replace('\\', "/");
         let top = rel.split('/').next().unwrap_or_default();
-        let in_layer = matches!(
-            top,
-            "domain" | "application" | "infrastructure" | "interface"
-        );
+        let in_layer = TUI_TOP_LEVEL_MODULES.contains(&top);
         let allowed_root = !rel.contains('/') && TUI_ALLOWED_ROOT_RS.contains(&rel.as_str());
         if !in_layer && !allowed_root {
             misplaced.push(rel);
@@ -626,9 +657,8 @@ fn tui_lib_rs_exposes_only_architecture_layers() {
         .map(|rest| rest.trim_end_matches(';'))
         .collect();
     assert_eq!(
-        public_modules,
-        ["application", "domain", "infrastructure", "interface"],
-        "quecto-tui/src/lib.rs must expose only Clean Architecture layer modules"
+        public_modules, TUI_LIB_RS_MODULES,
+        "quecto-tui/src/lib.rs must expose exactly the per-phase module set (#1257)"
     );
     assert!(
         !content.contains("#[path ="),
@@ -640,8 +670,8 @@ fn tui_lib_rs_exposes_only_architecture_layers() {
 fn tui_main_rs_is_thin_interface_entrypoint() {
     let content = fs::read_to_string("../quecto-tui/src/main.rs").expect("read quecto-tui main.rs");
     assert!(
-        content.contains("quecto_tui::interface::cli") && content.lines().count() <= 10,
-        "quecto-tui/src/main.rs must stay thin and delegate to quecto_tui::interface::cli"
+        content.contains("quecto_tui::shell::cli") && content.lines().count() <= 10,
+        "quecto-tui/src/main.rs must stay thin and delegate to quecto_tui::shell::cli"
     );
 }
 
@@ -911,6 +941,13 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
 /// `interface/` feature/view modules. Lower this as interface call sites migrate
 /// behind mappers. Never raise it.
 const TUI_INTERFACE_RAW_JSON_SITE_SEED: usize = 120;
+/// Measured immediately before #1257 Phase 1; relocation must not burn down sites.
+const TUI_PHASE_1_INTERFACE_RAW_JSON_TOTAL: usize = 114;
+
+/// #1257: feature/view ratchet scan roots follow the code as modules relocate,
+/// so a move alone can never lower a measured count (Phase 1: `interface/`
+/// plus `components/` and `shell/`).
+const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[TUI_INTERFACE, TUI_COMPONENTS, TUI_SHELL];
 
 /// Seed: production raw `serde_json` parsing sites in TUI `application/`
 /// modules. These sites are an allowed but temporary protocol-mapping foothold;
@@ -920,6 +957,8 @@ const TUI_APPLICATION_RAW_JSON_SITE_SEED: usize = 69;
 /// Seed: production feature/view *usages* of `infrastructure::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
 const TUI_WIRE_DTO_USAGE_SEED: usize = 124;
+/// Measured immediately before #1257 Phase 1; relocation must not burn down usages.
+const TUI_PHASE_1_WIRE_DTO_USAGE_TOTAL: usize = 121;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
@@ -1033,16 +1072,20 @@ fn wire_dto_usage_count(content: &str) -> usize {
 }
 
 fn tui_ratchet_inventory(
-    root: &str,
+    roots: &[&str],
     allowlist: &[(&str, &str)],
     count: fn(&str) -> usize,
 ) -> (usize, Vec<(String, usize)>) {
-    let files = tui_production_layer_files(root, allowlist);
-    assert!(
-        !files.is_empty(),
-        "the TUI scan root {root} yielded no production files; \
-         a path rename must not silently disable the #1220 ratchets"
-    );
+    let mut files = Vec::new();
+    for root in roots {
+        let root_files = tui_production_layer_files(root, allowlist);
+        assert!(
+            !root_files.is_empty(),
+            "the TUI scan root {root} yielded no production files; \
+             a path rename must not silently disable the #1220 ratchets"
+        );
+        files.extend(root_files);
+    }
     let mut per_file: Vec<(String, usize)> = files
         .iter()
         .map(|(rel, content)| (rel.clone(), count(content)))
@@ -1056,13 +1099,13 @@ fn tui_ratchet_inventory(
 #[test]
 fn tui_interface_raw_json_parsing_sites_do_not_grow() {
     let (total, per_file) = tui_ratchet_inventory(
-        TUI_INTERFACE,
+        TUI_FEATURE_VIEW_RATCHET_ROOTS,
         TUI_INTERFACE_RAW_JSON_ALLOWLIST,
         raw_json_site_count,
     );
-    assert!(
-        total <= TUI_INTERFACE_RAW_JSON_SITE_SEED,
-        "raw serde_json parsing in TUI interface feature/view modules must not grow: \
+    assert_eq!(
+        total, TUI_PHASE_1_INTERFACE_RAW_JSON_TOTAL,
+        "#1257 Phase 1 relocation must preserve the raw serde_json site total: \
          found {total}, seed {TUI_INTERFACE_RAW_JSON_SITE_SEED}. Move payload \
          interpretation into an application-layer mapper (see \
          quecto-tui/src/application/model_payloads.rs, #1220). Inventory \
@@ -1073,7 +1116,7 @@ fn tui_interface_raw_json_parsing_sites_do_not_grow() {
 #[test]
 fn tui_application_raw_json_parsing_sites_do_not_grow() {
     let (total, per_file) = tui_ratchet_inventory(
-        TUI_APPLICATION,
+        &[TUI_APPLICATION],
         TUI_APPLICATION_RAW_JSON_ALLOWLIST,
         raw_json_site_count,
     );
@@ -1088,11 +1131,14 @@ fn tui_application_raw_json_parsing_sites_do_not_grow() {
 
 #[test]
 fn tui_wire_dto_usage_does_not_grow() {
-    let (total, per_file) =
-        tui_ratchet_inventory(TUI_INTERFACE, TUI_WIRE_DTO_ALLOWLIST, wire_dto_usage_count);
-    assert!(
-        total <= TUI_WIRE_DTO_USAGE_SEED,
-        "TUI feature/view usage of infrastructure::client wire DTOs must not grow: \
+    let (total, per_file) = tui_ratchet_inventory(
+        TUI_FEATURE_VIEW_RATCHET_ROOTS,
+        TUI_WIRE_DTO_ALLOWLIST,
+        wire_dto_usage_count,
+    );
+    assert_eq!(
+        total, TUI_PHASE_1_WIRE_DTO_USAGE_TOTAL,
+        "#1257 Phase 1 relocation must preserve TUI feature/view wire-DTO usage: \
          found {total}, seed {TUI_WIRE_DTO_USAGE_SEED} (#1220). Counting usages, not \
          `use` lines, so `use super::*` and fully-qualified paths are visible. \
          Inventory (burn-down order): {per_file:?}"

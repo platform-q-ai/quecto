@@ -402,9 +402,7 @@ impl App {
             .iter()
             .rev()
             .find_map(|e| match e {
-                crate::interface::components::chat::ChatEntry::Assistant { text, .. } => {
-                    Some(text.clone())
-                }
+                crate::components::chat::ChatEntry::Assistant { text, .. } => Some(text.clone()),
                 _ => None,
             })
             .unwrap_or_default();

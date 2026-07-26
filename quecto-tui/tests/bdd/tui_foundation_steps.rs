@@ -11,8 +11,8 @@
 
 use super::*;
 use quecto_tui::infrastructure::client::Command;
-use quecto_tui::infrastructure::render::DiffRenderer;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
+use quecto_tui::shell::render::DiffRenderer;
 use std::io::{self, Write};
 
 /// A writer whose every write/flush fails — models a broken terminal fd.

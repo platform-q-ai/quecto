@@ -10,8 +10,8 @@ use cucumber::{given, then, when};
 use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::ansi::strip_ansi;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
-use quecto_tui::interface::keys::Key;
 use quecto_tui::interface::utils::visible_width;
+use quecto_tui::shell::keys::Key;
 
 async fn build_fresh_harness() -> TuiHarness {
     TuiHarness::new().await

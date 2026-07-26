@@ -5,21 +5,21 @@
 //! model's provider; the currently active level is marked. Selecting a level
 //! sends a `set_effort` command to the agent.
 
-use crate::interface::component::Component;
-use crate::interface::components::autocomplete::Suggestion;
-use crate::interface::components::list_rows::{DescriptionMode, ListRow};
-use crate::interface::components::suggestion_list::SuggestionList;
-use crate::interface::fuzzy::fuzzy_filter;
-use crate::interface::keys::Key;
+use crate::components::autocomplete::Suggestion;
+use crate::components::component::Component;
+use crate::components::fuzzy::fuzzy_filter;
+use crate::components::list_rows::{DescriptionMode, ListRow};
+use crate::components::suggestion_list::SuggestionList;
 use crate::interface::theme;
 use crate::interface::utils::truncate_to_width;
+use crate::shell::keys::Key;
 
 /// Maximum query length to prevent unbounded growth.
 const MAX_QUERY_LEN: usize = 16;
 
 /// Result of the effort selector interaction — the shared list-interaction
 /// result (`Selected` / `Dismissed` / `Pending`).
-pub use crate::interface::components::autocomplete::AutocompleteResult as EffortSelectorResult;
+pub use crate::components::autocomplete::AutocompleteResult as EffortSelectorResult;
 
 /// Scrollable effort selector with fuzzy search.
 pub struct EffortSelector {

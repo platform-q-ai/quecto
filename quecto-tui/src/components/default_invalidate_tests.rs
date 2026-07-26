@@ -8,8 +8,8 @@ use super::markdown::Markdown;
 use super::model_selector::ModelSelector;
 use super::notification::{Notification, NotificationStack, NotifyLevel};
 use super::select_list::{SelectItem, SelectList};
-use crate::interface::component::Component;
-use crate::interface::keys::Key;
+use crate::components::component::Component;
+use crate::shell::keys::Key;
 
 #[test]
 fn component_defaults_construct_and_render_smoke() {

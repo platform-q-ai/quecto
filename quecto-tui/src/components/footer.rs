@@ -1,6 +1,6 @@
 //! Footer component — status bar showing model, context, git branch.
 
-use crate::interface::component::Component;
+use crate::components::component::Component;
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width};
 

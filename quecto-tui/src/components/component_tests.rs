@@ -1,5 +1,5 @@
 use super::*;
-use crate::interface::keys::Key;
+use crate::shell::keys::Key;
 
 struct DefaultOnly;
 

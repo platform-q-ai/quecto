@@ -7,7 +7,7 @@
 use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
 use quecto_tui::interface::app::tui_harness::TuiHarness;
-use quecto_tui::interface::keys::Key;
+use quecto_tui::shell::keys::Key;
 
 fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {

@@ -30,7 +30,7 @@ const DIVIDER: char = '│';
 
 // ─── Mouse selection BDD steps (#528) ────────────────────────────────────────
 //
-// The TUI mouse handling is tested via unit tests in quecto-tui/src/interface/keys.rs.
+// The TUI mouse handling is tested via unit tests in quecto-tui/src/shell/keys.rs.
 // These BDD steps verify the protocol-level SGR mouse parsing and the
 // base64 encoding used for OSC 52 clipboard writes.
 
@@ -78,7 +78,7 @@ fn when_sequence_parsed(world: &mut TuiWorld) {
     // Parse the SGR sequence by simulating what the TUI key parser does.
     // We can't import quecto-tui directly in BDD tests, so we verify
     // the protocol format is correct and matches our expectations.
-    // The actual parsing is tested by unit tests in quecto-tui/src/interface/keys.rs.
+    // The actual parsing is tested by unit tests in quecto-tui/src/shell/keys.rs.
     world.stderr = world.stdout.clone();
 }
 

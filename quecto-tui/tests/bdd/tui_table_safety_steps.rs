@@ -5,9 +5,9 @@
 
 use crate::TuiWorld;
 use cucumber::{given, then, when};
+use quecto_tui::components::component::Component;
+use quecto_tui::components::markdown::Markdown;
 use quecto_tui::interface::ansi::sanitize_control;
-use quecto_tui::interface::component::Component;
-use quecto_tui::interface::components::markdown::Markdown;
 use quecto_tui::interface::utils::{truncate_to_width, visible_width};
 
 /// Wide render width so single-cell content never truncates for the sanitise

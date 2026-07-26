@@ -5,11 +5,11 @@ use std::time::{Duration, Instant};
 
 use crate::TuiWorld;
 use cucumber::{given, then, when};
+use quecto_tui::components::autocomplete::AutocompleteResult;
+use quecto_tui::components::component::Component;
+use quecto_tui::components::files_autocomplete::FilesAutocomplete;
 use quecto_tui::infrastructure::workspace_files::MAX_WORKSPACE_FILES;
-use quecto_tui::interface::component::Component;
-use quecto_tui::interface::components::autocomplete::AutocompleteResult;
-use quecto_tui::interface::components::files_autocomplete::FilesAutocomplete;
-use quecto_tui::interface::keys::Key;
+use quecto_tui::shell::keys::Key;
 
 #[given(regex = r#"^a workspace with files "([^"]*)"$"#)]
 fn a_workspace_with_files(world: &mut TuiWorld, csv: String) {

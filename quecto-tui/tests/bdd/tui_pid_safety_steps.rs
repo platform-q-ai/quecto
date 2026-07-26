@@ -1,14 +1,14 @@
 //! Steps for `tui_pid_safety.feature`.
 //!
 //! Exercises the REAL checked PID conversion used by the TUI's process-group
-//! cleanup: `quecto_tui::infrastructure::process::checked_pid`. Production
+//! cleanup: `quecto_tui::shell::process::checked_pid`. Production
 //! signals a process group with `libc::kill(-pid, sig)`, so the group target is
 //! the *negated* checked pid — we assert that relationship rather than sending a
 //! real signal. `kill_process_group` is `pub(crate)` and cannot be called from
 //! this external crate; the live SIGTERM→grace→SIGKILL sequence is `@pending`.
 
 use super::*;
-use quecto_tui::infrastructure::process::checked_pid;
+use quecto_tui::shell::process::checked_pid;
 
 // ── Background ────────────────────────────────────────────────────────────
 

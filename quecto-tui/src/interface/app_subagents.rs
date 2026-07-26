@@ -46,8 +46,7 @@ impl App {
         self.subagents.feeds.clear();
         self.subagents.active_agent_id = None;
         self.subagents.awaited_agent_id = None;
-        self.subagents.panel_nav =
-            crate::interface::components::list_navigator::ListNavigator::new();
+        self.subagents.panel_nav = crate::components::list_navigator::ListNavigator::new();
         self.notify("Deleting all subagents", NotifyLevel::Info);
     }
 

@@ -4,14 +4,14 @@
 //! models with fuzzy filtering. The currently active model is marked.
 //! Selecting a model sends a `set_model` command to the agent.
 
-use crate::interface::component::Component;
-use crate::interface::components::autocomplete::Suggestion;
-use crate::interface::components::list_rows::{DescriptionMode, ListRow};
-use crate::interface::components::suggestion_list::SuggestionList;
-use crate::interface::fuzzy::fuzzy_filter;
-use crate::interface::keys::Key;
+use crate::components::autocomplete::Suggestion;
+use crate::components::component::Component;
+use crate::components::fuzzy::fuzzy_filter;
+use crate::components::list_rows::{DescriptionMode, ListRow};
+use crate::components::suggestion_list::SuggestionList;
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width};
+use crate::shell::keys::Key;
 
 /// Well-known fallback models, used when the caller doesn't supply a model
 /// list: every Anthropic/OpenAI model is offered through both its `api` and
@@ -81,7 +81,7 @@ pub struct ModelEntry {
 /// Result of the model selector interaction — the shared list-interaction
 /// result (`Selected` / `Dismissed` / `Pending`), re-exported under this
 /// surface's historical name.
-pub use crate::interface::components::autocomplete::AutocompleteResult as ModelSelectorResult;
+pub use crate::components::autocomplete::AutocompleteResult as ModelSelectorResult;
 
 /// Scrollable model selector with fuzzy search.
 pub struct ModelSelector {

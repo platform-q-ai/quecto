@@ -1,7 +1,7 @@
 //! #997 grouped-state probes: drive real App paths, observe the owner groups.
 
 use super::TuiHarness;
-use crate::interface::components::chat::ChatEntry;
+use crate::components::chat::ChatEntry;
 
 impl TuiHarness {
     /// Full active-session chat transcript (test-harness). Pins to the bottom
@@ -9,7 +9,7 @@ impl TuiHarness {
     /// scenarios assert whole-history content (order / exact-once / gaps)
     /// independent of the current scroll offset.
     pub fn active_chat_text(&mut self, width: usize) -> String {
-        use crate::interface::component::Component as _;
+        use crate::components::component::Component as _;
         let chat = self.app.active_chat_mut();
         chat.scroll_down(usize::MAX);
         chat.render(width)
@@ -79,14 +79,14 @@ impl TuiHarness {
             .inference
             .effort_selector
             .as_ref()
-            .map(crate::interface::components::effort_selector::EffortSelector::visible_levels)
+            .map(crate::components::effort_selector::EffortSelector::visible_levels)
     }
 
     /// ANSI-stripped master session footer text (#1085). Lets focus-parity
     /// scenarios assert the master's retained model/effort without switching
     /// away from the focused child (which would hide the child's footer).
     pub fn master_footer_text(&mut self) -> String {
-        use crate::interface::component::Component;
+        use crate::components::component::Component;
         let rendered = self.app.master_session.footer.render(200).join("\n");
         crate::interface::ansi::strip_ansi(&rendered)
     }

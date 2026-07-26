@@ -1,4 +1,4 @@
-use crate::interface::components::select_list::SelectList;
+use crate::components::select_list::SelectList;
 
 /// Rewind flow state, grouped by owner (#997).
 #[derive(Default)]

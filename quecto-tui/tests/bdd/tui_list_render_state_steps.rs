@@ -12,12 +12,12 @@ use std::time::{Duration, Instant};
 
 use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
+use quecto_tui::components::autocomplete::AutocompleteResult;
+use quecto_tui::components::component::Component;
+use quecto_tui::components::files_autocomplete::FilesAutocomplete;
+use quecto_tui::components::model_selector::ModelSelector;
 use quecto_tui::interface::app::tui_harness::{TuiHarness, subagent, subagents_changed};
-use quecto_tui::interface::component::Component;
-use quecto_tui::interface::components::autocomplete::AutocompleteResult;
-use quecto_tui::interface::components::files_autocomplete::FilesAutocomplete;
-use quecto_tui::interface::components::model_selector::ModelSelector;
-use quecto_tui::interface::keys::Key;
+use quecto_tui::shell::keys::Key;
 
 const ACCENT: &str = "\x1b[36m";
 const DIM: &str = "\x1b[2m";
@@ -174,7 +174,7 @@ fn files_placeholder_not_accepted(world: &mut TuiWorld) {
 // ── Model selector characterization (world-held real component) ─────────────
 
 fn marker_fixture() -> ModelSelector {
-    use quecto_tui::interface::components::model_selector::ModelEntry;
+    use quecto_tui::components::model_selector::ModelEntry;
     let models = vec![
         ModelEntry {
             id: "a-model".to_string(),

@@ -1,7 +1,7 @@
 use super::app_selection::{SelectionAnchor, apply_selection_highlight, display_col_to_char_idx};
 use super::*;
 use crate::application::session_payloads;
-use crate::interface::components::select_list::route_overlay_key;
+use crate::components::select_list::route_overlay_key;
 use crate::interface::select_overlay::{
     build_resume_selector_overlay, build_rewind_selector_overlay, build_select_overlay,
 };

@@ -3,7 +3,7 @@
 
 use std::sync::LazyLock;
 
-use crate::interface::components::autocomplete::SlashCommand;
+use crate::components::autocomplete::SlashCommand;
 
 /// Built-in slash commands.
 static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {

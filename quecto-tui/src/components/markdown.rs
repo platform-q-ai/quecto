@@ -6,7 +6,7 @@
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
-use crate::interface::component::Component;
+use crate::components::component::Component;
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width, wrap_text};
 

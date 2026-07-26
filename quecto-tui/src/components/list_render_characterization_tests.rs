@@ -9,15 +9,13 @@
 
 use std::time::{Duration, Instant};
 
-use crate::interface::component::Component;
-use crate::interface::components::autocomplete::{Autocomplete, SlashCommand};
-use crate::interface::components::files_autocomplete::FilesAutocomplete;
-use crate::interface::components::model_selector::{
-    ModelEntry, ModelSelector, ModelSelectorResult,
-};
-use crate::interface::components::select_list::{SelectItem, SelectList};
-use crate::interface::keys::Key;
+use crate::components::autocomplete::{Autocomplete, SlashCommand};
+use crate::components::component::Component;
+use crate::components::files_autocomplete::FilesAutocomplete;
+use crate::components::model_selector::{ModelEntry, ModelSelector, ModelSelectorResult};
+use crate::components::select_list::{SelectItem, SelectList};
 use crate::interface::utils::visible_width;
+use crate::shell::keys::Key;
 
 const ACCENT: &str = "\x1b[36m";
 const DIM: &str = "\x1b[2m";

@@ -1,5 +1,5 @@
 use super::{Chat, ChatEntry};
-use crate::interface::component::Component;
+use crate::components::component::Component;
 
 fn stub(id: &str) -> ChatEntry {
     ChatEntry::Stub {

@@ -7,8 +7,8 @@
 
 use super::tui_harness::*;
 use crate::infrastructure::client::Event;
-use crate::infrastructure::render::DiffRenderer;
 use crate::interface::theme::BG_SUCCESS;
+use crate::shell::render::DiffRenderer;
 use std::sync::{Arc, Mutex};
 
 // ── #884: differential renderer desync at full height ──────────────────

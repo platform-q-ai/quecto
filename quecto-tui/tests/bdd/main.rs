@@ -40,14 +40,14 @@ impl std::ops::DerefMut for DebugStdinBuffer {
     }
 }
 
-pub struct DebugEditor(pub quecto_tui::interface::components::editor::Editor);
+pub struct DebugEditor(pub quecto_tui::components::editor::Editor);
 impl std::fmt::Debug for DebugEditor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("<Editor>")
     }
 }
 impl std::ops::Deref for DebugEditor {
-    type Target = quecto_tui::interface::components::editor::Editor;
+    type Target = quecto_tui::components::editor::Editor;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -60,7 +60,7 @@ impl std::ops::DerefMut for DebugEditor {
 
 // Opaque Debug wrapper for the #997 list-render BDD: the component is not
 // `Debug`, so wrap it for the derived-`Debug` `TuiWorld`.
-pub struct DebugModelSelector(pub quecto_tui::interface::components::model_selector::ModelSelector);
+pub struct DebugModelSelector(pub quecto_tui::components::model_selector::ModelSelector);
 impl std::fmt::Debug for DebugModelSelector {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("<ModelSelector>")
@@ -74,7 +74,7 @@ pub struct TuiWorld {
     /// Temp dirs kept alive for scenarios that need real filesystem state.
     pub _extra_temp_dirs: Vec<TempDir>,
     /// TUI scrollback BDD: chat view under test.
-    pub tui_chat: Option<quecto_tui::interface::components::chat::Chat>,
+    pub tui_chat: Option<quecto_tui::components::chat::Chat>,
     /// TUI shared-list-render BDD (#997): model selector under test.
     pub tui_list_model_selector: Option<DebugModelSelector>,
     /// TUI shared-list-render BDD (#997): lines from the last explicit render.
@@ -84,7 +84,7 @@ pub struct TuiWorld {
     pub tui_model_open_was_pending: bool,
     /// TUI @files BDD: file-mention autocomplete under test.
     pub tui_files_autocomplete:
-        Option<quecto_tui::interface::components::files_autocomplete::FilesAutocomplete>,
+        Option<quecto_tui::components::files_autocomplete::FilesAutocomplete>,
     /// TUI @files BDD: last consumed background-load request.
     pub tui_files_load_requested: bool,
     /// TUI @files BDD (#979): suggestion counts captured while filtering

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::interface::components::files_autocomplete::FilesAutocomplete;
+use crate::components::files_autocomplete::FilesAutocomplete;
 
 pub(super) struct WorkspaceFlow {
     pub(super) files_autocomplete: FilesAutocomplete,
