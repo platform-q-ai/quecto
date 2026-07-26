@@ -69,10 +69,10 @@ pub fn parse_tool_args(args: &str) -> Option<ParsedToolArgs> {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LedgerToolCall {
-    pub id: Option<String>,
-    pub name: Option<String>,
+    id: Option<String>,
+    name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_json_string")]
-    pub arguments: Option<String>,
+    arguments: Option<String>,
     function: Option<LedgerFunctionCall>,
 }
 
@@ -99,9 +99,9 @@ impl LedgerToolCall {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LedgerFunctionCall {
-    pub name: Option<String>,
+    name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_json_string")]
-    pub arguments: Option<String>,
+    arguments: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -128,7 +128,7 @@ impl SyncCapability {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CapabilitySet {
-    pub sync: Option<u64>,
+    sync: Option<u64>,
 }
 
 impl CapabilitySet {
