@@ -940,7 +940,7 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
 // ── #1220 protocol-boundary ratchets ────────────────────────────────
 //
 // Two decrease-only ratchets guard the raw-JSON burn-down. Seeds may be lowered
-// as sites migrate to application-layer mappers; they may never be raised.
+// as sites migrate to protocol-layer mappers; they may never be raised.
 //
 // Exclusion is content-based, not filename-based: a file is treated as test
 // code only if it carries `cfg(test)` or test attributes, so `*_test_support.rs`
@@ -1129,7 +1129,7 @@ fn tui_interface_raw_json_parsing_sites_do_not_grow() {
         total, TUI_PHASE_1_INTERFACE_RAW_JSON_TOTAL,
         "#1257 Phase 1 relocation must preserve the raw serde_json site total: \
          found {total}, seed {TUI_INTERFACE_RAW_JSON_SITE_SEED}. Move payload \
-         interpretation into an application-layer mapper (see \
+         interpretation into a protocol-layer mapper (see \
          quecto-tui/src/protocol/model_payloads.rs, #1220). Inventory \
          (burn-down order): {per_file:?}"
     );

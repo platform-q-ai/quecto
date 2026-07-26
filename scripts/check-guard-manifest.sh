@@ -33,7 +33,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 HP=quecto-tui/src/domain/history_paging.rs
 TR=quecto-tui/src/domain/turn_recovery.rs
-RA=quecto-tui/src/application/range_accumulator.rs
+RA=quecto-tui/src/protocol/range_accumulator.rs
 
 HP_BAK=$(mktemp)
 TR_BAK=$(mktemp)
@@ -175,7 +175,7 @@ check_replace "$TR" "$TR_BAK" \
   "self.responses.len() != self.refs.len()" \
   "recovery batch: complete only when every ref responded"
 
-echo "== application/range_accumulator.rs =="
+echo "== protocol/range_accumulator.rs =="
 check_replace "$RA" "$RA_BAK" \
   "if next_offset <= response_offset
                 || next_offset > content_len" \
