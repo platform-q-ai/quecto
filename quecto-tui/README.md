@@ -164,7 +164,7 @@ alias for `/help`.
 ## Notes
 
 - The library crate exposes only Clean Architecture layer modules
-  (`application`, `domain`, `infrastructure`, `interface`). Internal TUI modules
+  (`application`, `components`, `domain`, `infrastructure`, `interface`, `shell`). Internal TUI modules
   are reached through those layers, e.g. `quecto_tui::infrastructure::client` or
   `quecto_tui::interface::app`; root-level `quecto_tui::client`-style shims are
   intentionally not part of the public API.

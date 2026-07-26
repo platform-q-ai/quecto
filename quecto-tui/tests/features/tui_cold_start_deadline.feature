@@ -6,7 +6,7 @@ Feature: TUI cold-binary first-launch readiness (#808)
 
   # The 30s deadline value and the timeout-message composition through
   # `format_agent_startup_failure` are pinned by behavioural unit tests in
-  # quecto-tui/src/interface/cli.rs. The run-tui.sh pre-warm and README docs are
+  # quecto-tui/src/shell/cli.rs. The run-tui.sh pre-warm and README docs are
   # file-content guarantees verified by tests/repo_docs.rs, not TUI behaviour.
 
   Scenario: Timeout message names the cold-start cause and warm remedy

@@ -232,7 +232,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `workflow` | Workflow bar unit tests, workflow sticky tests, workflow box width tests, workflow-state harness coverage. | Add projection/control characterization for workflow automation toggles and stale workflow-state suppression before moving controls out of `App`. |
 | `inference` | Model selector, effort selector, model focus, effort tests. | Add mapper-backed coverage for model discovery/fallback and effort changes once #1220 provides typed feature mapping. |
 | `workspace` | Git tests, workspace file tests, autocomplete/file mention BDD and unit tests. | Before moving workspace coordination, pin Git context refresh, ignored-file handling, file preview boundaries, and autocomplete source precedence. |
-| `components` | Widget unit tests plus render/cache/list/markdown/table/spacing BDD coverage. | Before relocating `interface/components/` to top-level `components/`, run the existing render characterization and add missing edge cases for any widget whose public module path changes. |
+| `components` | Widget unit tests plus render/cache/list/markdown/table/spacing BDD coverage. | Before changing top-level `components/`, run the existing render characterization and add missing edge cases for any widget whose public module path changes. |
 
 ### Dependency rules for migration
 

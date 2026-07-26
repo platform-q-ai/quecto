@@ -208,7 +208,7 @@ fn then_tui_shell_owns_runtime_adapters(_world: &mut QuectoWorld) {
     }
 }
 
-#[then("every quecto-tui production Rust file should be under a Clean Architecture layer")]
+#[then("every quecto-tui production Rust file should be under an approved top-level module")]
 fn then_every_tui_production_file_is_layered(_world: &mut QuectoWorld) {
     let misplaced = misplaced_tui_production_files();
     assert!(
@@ -217,7 +217,7 @@ fn then_every_tui_production_file_is_layered(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the quecto-tui library root should expose only Clean Architecture layers")]
+#[then("the quecto-tui library root should expose only approved top-level modules")]
 fn then_tui_library_root_exposes_only_layers(_world: &mut QuectoWorld) {
     let content =
         std::fs::read_to_string("../quecto-tui/src/lib.rs").expect("read quecto-tui lib.rs");

@@ -3,7 +3,7 @@ Feature: Mouse text selection and clipboard copy (#528)
   I want to click and drag to select text and copy it to the clipboard
   So that I can easily copy output from the interface
 
-  # TUI mouse selection is tested via unit tests in quecto-tui/src/interface/keys.rs
+  # TUI mouse selection is tested via unit tests in quecto-tui/src/shell/keys.rs
   # (mouse event parsing) and quecto-tui/src/interface/app.rs (base64, ANSI stripping).
   # These BDD scenarios verify the SGR mouse protocol parsing.
 

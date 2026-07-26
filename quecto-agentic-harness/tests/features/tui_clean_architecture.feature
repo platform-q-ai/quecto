@@ -30,11 +30,11 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
     And the quecto-tui infrastructure source should not import application or interface layers
     And the quecto-tui shell should own runtime adapters
 
-  Scenario: quecto-tui production files live inside Clean Architecture layers
-    Then every quecto-tui production Rust file should be under a Clean Architecture layer
+  Scenario: quecto-tui production files live inside approved top-level modules
+    Then every quecto-tui production Rust file should be under an approved top-level module
 
   Scenario: quecto-tui crate roots stay as thin composition entrypoints
-    Then the quecto-tui library root should expose only Clean Architecture layers
+    Then the quecto-tui library root should expose only approved top-level modules
     And the quecto-tui binary root should delegate to the interface layer
 
   Scenario: quecto-tui architecture is enforced by the same architecture test target as quecto
