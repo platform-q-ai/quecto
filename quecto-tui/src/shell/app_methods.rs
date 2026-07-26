@@ -320,34 +320,33 @@ impl App {
         // Sub-agent/workflow bars moved out of the bottom stack; only activity,
         // autocompletes, editor, notifications and footer remain below chat.
 
-        // Spinner sits above autocomplete (#534). While
-        // sub-agents are tracked, RESERVE its line (spinner when active, blank
-        // when idle): workflow children fire notifications that make the parent
-        // do many short runs, each creating/dropping the spinner — a toggling
-        // 0↔1 line would reflow the chat on every run (the panel-size 6↔7 /
-        // 11↔12 judder). A reserved slot keeps the below-chat height stable.
+        // Spinner sits above autocomplete (#534). When a working/tool-command
+        // indicator is visible, give it a small top spacer so the in-progress
+        // text has a stable container and does not sit hard against the chat.
+        // Do NOT reserve that spacer while idle: an idle-only blank leaves a
+        // chunk of dead space above the input and below the conversation.
         if self.subagents.active_agent_id.is_none() && self.spinner.is_some() {
             // Master is active and mid-turn: show its richer tool spinner (tool
             // name + elapsed), the only master-local render telemetry layered on
             // top of the shared per-session `running` flag (#828).
             if let Some(spinner) = &mut self.spinner {
+                bottom.push(String::new());
                 bottom.extend(spinner.render(width));
             }
         } else if self.active_subagent_running() {
             // The active session is mid-turn (a sub-agent processing queued
             // follow-up work, or the master before its spinner exists); show the
             // working indicator so it never looks dead.
+            bottom.push(String::new());
             bottom.push(subagent_activity_line(1, self.subagents.frame));
         } else if !self.subagents.tracked.is_empty() {
-            // Parent is idle but sub-agents are tracked. Keep the reserved slot
-            // meaningful: if any child is still working, show an animated
-            // "N working" indicator (so activity stays visible while the parent
-            // waits); otherwise a blank keeps the height stable.
+            // Parent is idle but sub-agents are tracked. Show an animated
+            // "N working" indicator only while a child is active; otherwise do
+            // not spend a blank row above the input.
             let active = self.subagents.tracked_active_count();
             if active > 0 {
-                bottom.push(subagent_activity_line(active, self.subagents.frame));
-            } else {
                 bottom.push(String::new());
+                bottom.push(subagent_activity_line(active, self.subagents.frame));
             }
         }
 
