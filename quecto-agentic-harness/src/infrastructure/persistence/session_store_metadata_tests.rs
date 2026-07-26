@@ -52,7 +52,8 @@ async fn test_exists() {
 
     assert!(!store.exists("telegram:12345").await.unwrap());
 
-    let session = Session::new("telegram:12345");
+    let mut session = Session::new("telegram:12345");
+    session.messages.push(make_message(Role::User, "hello"));
     store.save(&session).await.unwrap();
 
     assert!(store.exists("telegram:12345").await.unwrap());
@@ -373,7 +374,7 @@ async fn test_workflow_run_unknown_template_persists_raw_fields() {
 
     let session = Session {
         key: "test:wf_compat".to_string(),
-        messages: vec![],
+        messages: vec![make_message(Role::User, "hello")],
         workflow_run: Some(WorkflowRunPersisted {
             template_id: Some("deleted_template".to_string()),
             done: vec![true, false],

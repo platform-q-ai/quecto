@@ -4,14 +4,13 @@ Feature: Session Management
   I want my conversations to be persistent
   So that the agent remembers context across messages
 
-  Scenario: New session is created for a new chat
+  Scenario: Empty new chats are not saved
     Given a [session] workspace
     And no [session] exists for key "telegram:12345"
     When the [session] store creates a session for key "telegram:12345"
-    Then a [session] should exist for key "telegram:12345"
+    Then no [session] should exist for key "telegram:12345"
     When the [session] store loads session "telegram:12345"
-    Then the [session] should be found
-    And the conversation history should contain 0 messages
+    Then the [session] should not be found
 
   Scenario: Existing session is resumed
     Given a [session] workspace

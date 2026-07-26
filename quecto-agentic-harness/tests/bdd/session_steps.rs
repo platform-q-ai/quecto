@@ -295,6 +295,16 @@ fn then_session_exists(world: &mut QuectoWorld, key: String) {
     assert!(exists, "session '{}' should exist", key);
 }
 
+#[then(expr = "no session should exist for key {string}")]
+fn then_session_does_not_exist(world: &mut QuectoWorld, key: String) {
+    let store = world.session_store.as_ref().expect("session store not set");
+    let exists = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(store.exists(&key))
+        .unwrap();
+    assert!(!exists, "session '{key}' should not exist");
+}
+
 #[then("the session should be found")]
 fn then_session_found(world: &mut QuectoWorld) {
     let loaded = world
@@ -302,6 +312,15 @@ fn then_session_found(world: &mut QuectoWorld) {
         .as_ref()
         .expect("no load was performed");
     assert!(loaded.is_some(), "expected session to be found");
+}
+
+#[then("the session should not be found")]
+fn then_session_not_found(world: &mut QuectoWorld) {
+    let loaded = world
+        .loaded_session
+        .as_ref()
+        .expect("no load was performed");
+    assert!(loaded.is_none(), "expected session not to be found");
 }
 
 #[then(expr = "the session {string} should reload with {int} messages")]
