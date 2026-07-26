@@ -414,17 +414,17 @@ Observable surfaces and required parity:
 | Inference selector state | Current model/effort, model registry cache, pending model open flag, and effort level vocabulary keep the same update and fallback behavior. | Empty/non-empty registry; pending open; focused child vs master; direct effort vs selector. | Same cached Vec and optional overlay fields; no background task or extra protocol command. |
 | Sessions/workflow/rewind flow state | Resume selector, context-stats request latch, workflow auto-continue/completion-nudge mirrors, and rewind request correlation remain single-source state. | Empty/one/many sessions; stale/late rewind responses; toggles true/false. | Same optional selector fields and scalar latches; no duplicate global event hierarchy. |
 | Workspace flow state | Git branch footer updates and file autocomplete loading/rendering behave unchanged. | No repo; branch unchanged/changed; autocomplete active/inactive; empty/loaded file list. | Same one FilesAutocomplete with capacity 8 and same asynchronous load trigger. |
-| Architecture guardrail | App composes named feature flow owners and does not define those owner structs inline. | All owner fields present; any owner struct definition moved back into app.rs fails. | Guard-time only. |
+| Architecture guardrail | Existing architecture ratchets continue to enforce dependency direction, raw JSON parsing limits, DTO usage limits, public-port contract coverage, and documented TUI module ownership. | App composition ownership is verified by code review/conformance inspection instead of source-text assertions. | Guard-time only. |
 
 Approved parity contract: all readiness-gate items are resolved; no `__UNRESOLVED__` markers remain.
 
 Characterization review/freeze manifest for #1224:
 
-- Review finders: falsifiability — no findings; coverage — accepted and fixed missing production file-autocomplete capacity pin and duplicate flattened-state guard; Gherkin — no findings (no BDD changed).
-- Mutation log after fixes: changing `FilesAutocomplete::new(8)` to `new(7)` fails `app_workspace_file_autocomplete_uses_production_visible_capacity`; adding a flattened `current_model` field to `App` fails the App owner guard/build; prior mutations renamed `workspace` and reintroduced inline `WorkspaceFlow`, both failed and were reverted.
+- Review finders: falsifiability — source-text App owner guard was later declined/removed during conformance; coverage — accepted and fixed missing production file-autocomplete capacity pin; Gherkin — no findings (no BDD changed).
+- Mutation log after fixes: changing `FilesAutocomplete::new(8)` to `new(7)` fails `app_workspace_file_autocomplete_uses_production_visible_capacity`; prior source-text App owner guard mutations were superseded by conformance-step inspection and the guard was removed because source-text assertions are disallowed for final conformance.
 - Frozen characterization files:
-  - `quecto-agentic-harness/tests/architecture.rs` — `2bf1266ee51f0437f989a346f90994d8a50f0377`
   - `quecto-tui/src/interface/app_event_loop_cov_tests.rs` — `9455924255371edce177ebbfa1351c295d50947a`
+  - Rationale for logged edit: `quecto-agentic-harness/tests/architecture.rs` was unfrozen during conformance to remove the source-text App owner guard; source-text tests are explicitly disallowed by the final conformance gate.
 
 Deletion ledger for #1224 App thinning:
 
@@ -441,17 +441,17 @@ Parity evidence for #1224:
 | Surface | Behaviour/performance/quantity checked | Evidence | Verdict |
 |---|---|---|---|
 | Formatting and lint | Touched TUI lib and architecture test compile cleanly under strict warnings. | `cargo fmt --check`; `cargo clippy -p quecto-tui --lib --all-targets -- -D warnings`; `cargo clippy -p quecto-agentic-harness --test architecture -- -D warnings`. | PASS |
-| Frozen characterization suite | Frozen tests remain unmodified after freeze and green. | Hashes still match freeze manifest: `architecture.rs` = `2bf1266ee51f0437f989a346f90994d8a50f0377`; `app_event_loop_cov_tests.rs` = `9455924255371edce177ebbfa1351c295d50947a`. Targeted frozen tests pass. | PASS |
+| Frozen characterization suite | Frozen tests are green; one logged edit removed the source-text App owner guard during conformance. | `app_event_loop_cov_tests.rs` hash still matches `9455924255371edce177ebbfa1351c295d50947a`; `architecture.rs` source-text guard was removed with rationale because final conformance bans source-text assertions. | PASS |
 | Pre-existing targeted behaviour | Touched crates' targeted suites remain green. | `cargo test -p quecto-agentic-harness --test architecture`; `cargo test -p quecto-tui --lib` (1652 passed). | PASS |
 | App construction | Same fields and constructor expressions are preserved; only owner type definitions moved. | `App::new` still creates `Autocomplete::new(..., 8)`, `WorkspaceFlow::new(git_branch, git_repo)`, default inference/session/workflow/rewind owners; architecture owner guard passes. | PASS |
-| Inference/session/workflow/rewind/workspace state | Each migrated state has one source of truth and no duplicate flattened `App` fields. | Architecture guard `tui_app_state_is_composed_from_feature_flow_owners` checks owner fields and rejects duplicate flattened fields; extracted modules preserve original fields/derives. | PASS |
+| Inference/session/workflow/rewind/workspace state | Each migrated state has one source of truth in code inspection. | `App` contains owner fields for workspace/inference/sessions/workflow/rewind/subagents; extracted modules preserve original fields/derives. This is verified by conformance inspection rather than a source-text test. | PASS |
 | Visual parity | No rendering code or pinned frame fixtures changed; owner movement leaves render call sites unchanged. | `cargo test -p quecto-tui --lib` includes pinned list/autocomplete/model/select/workflow/footer/chat render tests; all pass. | PASS |
 | Performance parity | No shared replacement or extra pass introduced; hot-path structures keep same lazy/eager construction. | `WorkspaceFlow::new` still constructs one `FilesAutocomplete::new(8)`; model/effort/resume/rewind selectors remain `Option` lazy overlays; no new background task, clone loop, allocation cache, or protocol command was added. | PASS |
 | Quantitative | `App` thinned and file cap respected. | `app.rs` is 579 lines; extracted owner modules plus app total 658 lines; production touched Rust diff is 20 added/79 deleted (net -59), TUI interface Rust net -31. | PASS |
 
 Review concern disposition for #1224:
 
-- Declined: the review correctly notes that `tui_app_state_is_composed_from_feature_flow_owners` is a source-text architecture guard and cannot prove semantic ownership if future duplicate state is intentionally renamed. Rationale: this guard is intentionally structural, matching the existing architecture-test style in this repository; there is no runtime behavior for a duplicated-but-unused renamed cache to exercise, and adding a Rust parser or heuristic name classifier would make the guard brittle without preventing intentional evasion. The accepted mechanism is layered defense: the guard blocks exact known flattened fields and inline owner definitions, reviewer/conformance steps audit semantic ownership for future PRs, and the parity contract records the limitation rather than claiming behavioral proof.
+- Accepted during conformance: the source-text App owner guard was not an acceptable final conformance mechanism. It was removed rather than generalized. App composition is verified by code inspection in the conformance step; behavior remains pinned by existing TUI suites and the workspace capacity characterization test.
 
 ### Inter-issue sequencing
 

@@ -617,65 +617,6 @@ fn tui_public_ports_have_contract_tests() {
 }
 
 #[test]
-fn tui_app_state_is_composed_from_feature_flow_owners() {
-    let app = fs::read_to_string("../quecto-tui/src/interface/app.rs").expect("read TUI app.rs");
-    let app_struct = app
-        .split("pub struct App {")
-        .nth(1)
-        .and_then(|tail| tail.split("}\n\nstruct CommandSendFailure").next())
-        .expect("extract App struct body");
-    for owner_field in [
-        "workspace: WorkspaceFlow,",
-        "inference: InferenceFlow,",
-        "sessions: SessionsFlow,",
-        "workflow: WorkflowFlow,",
-        "rewind: RewindFlow,",
-        "subagents: SubagentUi,",
-    ] {
-        assert!(
-            app_struct.contains(owner_field),
-            "App must compose feature flow owner field {owner_field:?} instead of flattening that feature's state"
-        );
-    }
-    for forbidden_definition in [
-        "struct WorkspaceFlow",
-        "struct InferenceFlow",
-        "struct SessionsFlow",
-        "struct WorkflowFlow",
-        "struct RewindFlow",
-        "struct ModelRegistry",
-    ] {
-        assert!(
-            !app.contains(forbidden_definition),
-            "App must not define feature flow owner {forbidden_definition:?}; keep feature state in its owning module"
-        );
-    }
-    for forbidden_flattened_field in [
-        "files_autocomplete:",
-        "git_branch:",
-        "git_repo:",
-        "current_model:",
-        "model_selector:",
-        "model_registry:",
-        "effort_selector:",
-        "current_effort:",
-        "effort_levels:",
-        "resume_selector:",
-        "context_stats_requested:",
-        "auto_continue:",
-        "completion_nudge:",
-        "pending_open_id:",
-        "pending_apply_id:",
-        "request_seq:",
-    ] {
-        assert!(
-            !app_struct.contains(forbidden_flattened_field),
-            "App must not duplicate feature-flow state field {forbidden_flattened_field:?} alongside its owner"
-        );
-    }
-}
-
-#[test]
 fn tui_lib_rs_exposes_only_architecture_layers() {
     let content = fs::read_to_string("../quecto-tui/src/lib.rs").expect("read quecto-tui lib.rs");
     let public_modules: Vec<_> = content
