@@ -245,8 +245,8 @@ fn then_tui_library_root_exposes_only_layers(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the quecto-tui binary root should delegate to the interface layer")]
-fn then_tui_binary_root_delegates_to_interface(_world: &mut QuectoWorld) {
+#[then("the quecto-tui binary root should delegate to the shell module")]
+fn then_tui_binary_root_delegates_to_shell(_world: &mut QuectoWorld) {
     let content =
         std::fs::read_to_string("../quecto-tui/src/main.rs").expect("read quecto-tui main.rs");
     assert!(

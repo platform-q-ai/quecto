@@ -163,11 +163,12 @@ alias for `/help`.
 
 ## Notes
 
-- The library crate exposes only Clean Architecture layer modules
-  (`application`, `components`, `domain`, `infrastructure`, `interface`, `shell`). Internal TUI modules
-  are reached through those layers, e.g. `quecto_tui::infrastructure::client` or
-  `quecto_tui::interface::app`; root-level `quecto_tui::client`-style shims are
-  intentionally not part of the public API.
+- During the feature-oriented migration, the library crate exposes the
+  top-level `components` and `shell` modules alongside the temporary
+  compatibility layers `application`, `domain`, `infrastructure`, and
+  `interface`. Internal TUI modules are reached through these owners, e.g.
+  `quecto_tui::shell::cli` or `quecto_tui::interface::app`; root-level
+  `quecto_tui::client`-style shims are intentionally not part of the public API.
 - Auto-discovered socket paths are validated and must be real Unix sockets under
   canonical `/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`, or `$HOME` roots.
 - On exit, `quecto-tui` terminates the spawned agent process group so child

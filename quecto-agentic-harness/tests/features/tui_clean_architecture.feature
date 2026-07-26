@@ -35,7 +35,7 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
 
   Scenario: quecto-tui crate roots stay as thin composition entrypoints
     Then the quecto-tui library root should expose only approved top-level modules
-    And the quecto-tui binary root should delegate to the interface layer
+    And the quecto-tui binary root should delegate to the shell module
 
   Scenario: quecto-tui architecture is enforced by the same architecture test target as quecto
     Then the architecture test target should enforce quecto-tui Clean Architecture layers
