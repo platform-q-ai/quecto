@@ -276,7 +276,7 @@ async fn active_child_removed_by_its_source_feed_falls_back_to_master_only() {
 }
 
 #[tokio::test]
-async fn authoritative_ledger_projection_suppresses_legacy_live_child_tokens() {
+async fn unfocused_authoritative_ledger_projection_suppresses_legacy_live_child_tokens() {
     let mut h = super::tui_harness::TuiHarness::new().await;
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
@@ -305,6 +305,136 @@ async fn authoritative_ledger_projection_suppresses_legacy_live_child_tokens() {
     let entries = app.subagents.sessions["worker"].chat.entries();
     assert!(
         matches!(entries, [ChatEntry::Assistant { text, streaming: false }] if text == "from ledger"),
-        "once sync is authoritative, legacy live tokens must not duplicate the ledger transcript: {entries:?}"
+        "once sync is authoritative for an unfocused child, legacy live tokens must not duplicate the ledger transcript: {entries:?}"
+    );
+}
+
+#[tokio::test]
+async fn focused_authoritative_ledger_projection_suppresses_stale_live_child_tokens() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (mut feed, _rx) = feed_with_rx();
+    feed.supports_sync = true;
+    app.subagents.feeds.insert("worker".into(), feed);
+    app.update_subagent_bar(vec![subagent("worker", "running")]);
+    app.select_agent(Some("worker"));
+    app.ensure_session("worker");
+    app.route_sync_response(
+        "worker",
+        &json!({
+            "epoch": 1,
+            "rev": 1,
+            "messages": [{"id":"a1","role":"assistant","content":"from ledger"}],
+            "nextRev": null,
+            "caughtUp": true,
+            "resync": false
+        }),
+    );
+
+    app.route_subagent_event(
+        "worker",
+        Event::Token {
+            token: "legacy duplicate".into(),
+        },
+    );
+
+    let entries = app.subagents.sessions["worker"].chat.entries();
+    assert!(
+        matches!(entries, [ChatEntry::Assistant { text, streaming: false }] if text == "from ledger"),
+        "focused authoritative ledger projection must suppress stale live tokens after caught-up sync: {entries:?}"
+    );
+}
+
+#[tokio::test]
+async fn focused_authoritative_child_turn_end_finalizes_after_focus_switch() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (mut feed, _rx) = feed_with_rx();
+    feed.supports_sync = true;
+    app.subagents.feeds.insert("worker".into(), feed);
+    app.update_subagent_bar(vec![subagent("worker", "running")]);
+    app.select_agent(Some("worker"));
+    app.ensure_session("worker");
+    app.route_sync_response(
+        "worker",
+        &json!({
+            "epoch": 1,
+            "rev": 1,
+            "messages": [{"id":"u1","role":"user","content":"initial task"}],
+            "nextRev": null,
+            "caughtUp": true,
+            "resync": false
+        }),
+    );
+    app.route_subagent_event("worker", Event::TurnStart);
+    app.route_subagent_event(
+        "worker",
+        Event::Token {
+            token: "live work".into(),
+        },
+    );
+
+    app.select_agent(None);
+    app.route_subagent_event("worker", Event::TurnEnd { message: json!({}) });
+
+    let entries = app.subagents.sessions["worker"].chat.entries();
+    assert!(
+        matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: live, streaming: false }] if text == "initial task" && live == "live work"),
+        "turn end must finalize existing focused live output even if focus moved away before ledger reconciliation: {entries:?}"
+    );
+}
+
+#[tokio::test]
+async fn focused_authoritative_child_renders_live_tokens_until_ledger_reconciles() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (mut feed, _rx) = feed_with_rx();
+    feed.supports_sync = true;
+    app.subagents.feeds.insert("worker".into(), feed);
+    app.update_subagent_bar(vec![subagent("worker", "running")]);
+    app.select_agent(Some("worker"));
+    app.ensure_session("worker");
+    app.route_sync_response(
+        "worker",
+        &json!({
+            "epoch": 1,
+            "rev": 1,
+            "messages": [{"id":"u1","role":"user","content":"initial task"}],
+            "nextRev": null,
+            "caughtUp": true,
+            "resync": false
+        }),
+    );
+
+    app.route_subagent_event("worker", Event::TurnStart);
+    app.route_subagent_event(
+        "worker",
+        Event::Token {
+            token: "live work".into(),
+        },
+    );
+
+    let entries = app.subagents.sessions["worker"].chat.entries();
+    assert!(
+        matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: live, streaming: true }] if text == "initial task" && live == "live work"),
+        "focused busy child must render live output before turn commit: {entries:?}"
+    );
+
+    app.route_sync_response(
+        "worker",
+        &json!({
+            "epoch": 1,
+            "rev": 2,
+            "messages": [{"id":"a1","role":"assistant","content":"committed work"}],
+            "nextRev": null,
+            "caughtUp": true,
+            "resync": false
+        }),
+    );
+
+    let entries = app.subagents.sessions["worker"].chat.entries();
+    assert!(
+        matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: committed, streaming: false }] if text == "initial task" && committed == "committed work"),
+        "ledger reconciliation must replace the focused live projection without duplication: {entries:?}"
     );
 }

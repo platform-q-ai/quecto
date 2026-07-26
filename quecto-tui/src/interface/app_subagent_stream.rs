@@ -218,9 +218,11 @@ impl App {
         }
         self.ensure_session(agent_id);
         let synced_authoritative = self.is_synced_authoritative_feed(agent_id);
+        let focused_live = self.subagents.active_agent_id.as_deref() == Some(agent_id);
         let Some(session) = self.subagents.sessions.get_mut(agent_id) else {
             return;
         };
+        let was_running = session.running;
         match &ev {
             Event::AgentStart | Event::TurnStart => {
                 if !session.running {
@@ -266,8 +268,14 @@ impl App {
             &ev,
             Event::Response { command, .. } if command == "get_messages"
         );
-        if Self::apply_subagent_chat_event_or_skip(session, &ev, synced_authoritative, early_return)
-        {
+        if Self::apply_subagent_chat_event_or_skip(
+            session,
+            &ev,
+            synced_authoritative,
+            focused_live,
+            was_running,
+            early_return,
+        ) {
             return;
         }
         if flush_notes {
@@ -310,9 +318,17 @@ impl App {
         session: &mut SessionView,
         ev: &Event,
         synced: bool,
+        focused_live: bool,
+        was_running: bool,
         early: bool,
     ) -> bool {
-        if synced {
+        if synced && !focused_live {
+            if was_running && !session.running {
+                session.chat.finalize_assistant();
+            }
+            return early;
+        }
+        if synced && focused_live && !was_running {
             return early;
         }
         Self::apply_subagent_chat_event(session, ev);
