@@ -702,6 +702,33 @@ fn when_choose_rewind_target(world: &mut TuiWorld) {
 
 #[when("the rewind apply response succeeds")]
 fn when_rewind_apply_succeeds(world: &mut TuiWorld) {
+    let load = command_of_type(&world.tui_last_commands, "get_message").unwrap_or_else(|| {
+        panic!(
+            "expected stored get_message command, got {:?}",
+            world.tui_last_commands
+        )
+    });
+    let load_id =
+        json_field(load, "id").unwrap_or_else(|| panic!("get_message should carry an id: {load}"));
+    let message_id = json_field(load, "messageId")
+        .unwrap_or_else(|| panic!("get_message should carry a messageId: {load}"));
+    drive(world, |h| {
+        h.event(Event::Response {
+            id: Some(load_id),
+            command: "get_message".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "id": message_id,
+                "role": "user",
+                "content": "most recent prompt"
+            })),
+            error: None,
+        });
+    });
+    let mut commands = world.tui_last_commands.clone();
+    commands.extend(drain_commands(world));
+    world.tui_last_commands = commands;
+
     let rewind = command_of_type(&world.tui_last_commands, "rewind_to").unwrap_or_else(|| {
         panic!(
             "expected stored rewind_to command, got {:?}",
@@ -811,25 +838,25 @@ fn then_notification_includes(world: &mut TuiWorld, expected: String) {
     );
 }
 
-#[then("a rewind command is sent for the most recent user turn")]
-fn then_rewind_command_sent(world: &mut TuiWorld) {
-    let rewind = command_of_type(&world.tui_last_commands, "rewind_to").unwrap_or_else(|| {
+#[then("the selected rewind message is requested for the most recent user turn")]
+fn then_rewind_message_requested(world: &mut TuiWorld) {
+    let request = command_of_type(&world.tui_last_commands, "get_message").unwrap_or_else(|| {
         panic!(
-            "expected rewind_to command, got {:?}",
+            "expected get_message command, got {:?}",
             world.tui_last_commands
         )
     });
-    let value: serde_json::Value = serde_json::from_str(rewind).expect("rewind command json");
+    let value: serde_json::Value = serde_json::from_str(request).expect("get_message command json");
     // #1061: rewind targets the message's STABLE id, not a page-local index. The
     // most recent user turn ("most recent prompt") is id "u2".
     assert_eq!(
         value.get("messageId").and_then(|v| v.as_str()),
         Some("u2"),
-        "the default selected target should be the most recent user turn: {rewind}"
+        "the default selected target should be the most recent user turn: {request}"
     );
     assert!(
         value.get("messageIndex").is_none(),
-        "rewind must not send a page-local index: {rewind}"
+        "rewind must not send a page-local index: {request}"
     );
 }
 
