@@ -117,21 +117,6 @@ fn then_tui_domain_no_runtime_io(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the quecto-tui application source should not contain runtime I/O patterns")]
-fn then_tui_application_no_runtime_io(_world: &mut QuectoWorld) {
-    assert!(Path::new(TUI_ROOT).join("application").is_dir());
-    assert_no_tui_patterns(
-        "application",
-        &[
-            "std::fs::",
-            "tokio::fs::",
-            "std::env::",
-            "dirs::",
-            ".exists(",
-        ],
-    );
-}
-
 #[then("the quecto-tui domain source should not import outer layers")]
 fn then_tui_domain_no_outer_layers(_world: &mut QuectoWorld) {
     assert!(Path::new(TUI_ROOT).join("domain").is_dir());
@@ -141,23 +126,13 @@ fn then_tui_domain_no_outer_layers(_world: &mut QuectoWorld) {
             "crate::application",
             "crate::infrastructure",
             "crate::interface",
+            "crate::protocol",
+            "crate::components",
+            "crate::shell",
             "super::application",
             "super::infrastructure",
             "super::interface",
-        ],
-    );
-}
-
-#[then("the quecto-tui application source should not import infrastructure or interface layers")]
-fn then_tui_application_imports_only_inward(_world: &mut QuectoWorld) {
-    assert!(Path::new(TUI_ROOT).join("application").is_dir());
-    assert_no_tui_patterns(
-        "application",
-        &[
-            "crate::infrastructure",
-            "crate::interface",
-            "super::infrastructure",
-            "super::interface",
+            "super::protocol",
         ],
     );
 }
@@ -170,7 +145,31 @@ fn then_tui_infrastructure_no_application_or_interface(_world: &mut QuectoWorld)
         &[
             "crate::application",
             "crate::interface",
+            "crate::protocol",
             "super::application",
+            "super::interface",
+            "super::protocol",
+        ],
+    );
+}
+
+#[then("the quecto-tui protocol source should not import feature or shell modules")]
+fn then_tui_protocol_no_feature_or_shell(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("protocol").is_dir());
+    assert_no_tui_patterns(
+        "protocol",
+        &[
+            "crate::components",
+            "crate::shell",
+            "crate::interface",
+            "crate::conversation",
+            "crate::sessions",
+            "crate::agents",
+            "crate::workflow",
+            "crate::inference",
+            "crate::workspace",
+            "super::components",
+            "super::shell",
             "super::interface",
         ],
     );
@@ -178,10 +177,10 @@ fn then_tui_infrastructure_no_application_or_interface(_world: &mut QuectoWorld)
 
 #[then("the quecto-tui shell should own runtime adapters")]
 fn then_tui_shell_owns_runtime_adapters(_world: &mut QuectoWorld) {
-    // #1257 Phase 1: runtime adapters moved to `shell/`; the UDS client stays
-    // in infrastructure until Phase 2 moves it to `protocol/`.
+    // #1257 Phase 2: UDS client lives in `protocol/`; terminal/runtime adapters
+    // live in `shell/`.
     for (owner, adapter) in [
-        ("infrastructure", "client"),
+        ("protocol", "client"),
         ("shell", "process"),
         ("shell", "render"),
         ("shell", "signals"),
@@ -189,16 +188,16 @@ fn then_tui_shell_owns_runtime_adapters(_world: &mut QuectoWorld) {
         ("shell", "child_watch"),
         ("shell", "warn_capture"),
     ] {
-        let infrastructure_path = Path::new(TUI_ROOT)
+        let owner_path = Path::new(TUI_ROOT)
             .join(owner)
             .join(format!("{adapter}.rs"));
         let interface_path = Path::new(TUI_ROOT)
             .join("interface")
             .join(format!("{adapter}.rs"));
         assert!(
-            infrastructure_path.is_file(),
+            owner_path.is_file(),
             "runtime adapter must live in its owning module: {}",
-            infrastructure_path.display()
+            owner_path.display()
         );
         assert!(
             !interface_path.exists(),
@@ -213,7 +212,7 @@ fn then_every_tui_production_file_is_layered(_world: &mut QuectoWorld) {
     let misplaced = misplaced_tui_production_files();
     assert!(
         misplaced.is_empty(),
-        "quecto-tui production Rust files must live under domain/, application/, infrastructure/, interface/, components/, or shell/; misplaced: {misplaced:?}"
+        "quecto-tui production Rust files must live under domain/, infrastructure/, interface/, components/, shell/, or protocol/; misplaced: {misplaced:?}"
     );
 }
 
@@ -230,14 +229,14 @@ fn then_tui_library_root_exposes_only_layers(_world: &mut QuectoWorld) {
     assert_eq!(
         public_modules,
         [
-            "application",
             "components",
             "domain",
             "infrastructure",
             "interface",
+            "protocol",
             "shell"
         ],
-        "../quecto-tui/src/lib.rs should expose exactly the per-phase module set (#1257 Phase 1)"
+        "../quecto-tui/src/lib.rs should expose exactly the per-phase module set (#1257 Phase 2)"
     );
     assert!(
         !content.contains("#[path ="),
@@ -262,7 +261,7 @@ fn then_architecture_test_enforces_tui_layers(_world: &mut QuectoWorld) {
     assert!(
         content.contains("fn tui_architecture_layers_exist")
             && content.contains("fn tui_domain_has_no_outer_layer_imports")
-            && content.contains("fn tui_application_has_no_infrastructure_or_interface_imports")
+            && content.contains("fn tui_protocol_has_no_feature_or_shell_imports")
             && content.contains("fn tui_infrastructure_has_no_application_or_interface_imports")
             && content.contains("fn tui_runtime_adapters_live_in_shell"),
         "tests/architecture.rs must enforce quecto-tui layer existence and dependency direction"
@@ -275,8 +274,7 @@ fn then_architecture_test_enforces_tui_runtime_io(_world: &mut QuectoWorld) {
         std::fs::read_to_string("tests/architecture.rs").expect("read architecture tests");
     assert!(
         content.contains("fn tui_inner_layers_have_no_runtime_io_calls")
-            && content.contains("quecto-tui domain")
-            && content.contains("quecto-tui application"),
+            && content.contains("quecto-tui domain"),
         "tests/architecture.rs must enforce runtime I/O boundaries for quecto-tui inner layers"
     );
 }
@@ -322,7 +320,7 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
         let top = rel.split('/').next().unwrap_or_default();
         let in_layer = matches!(
             top,
-            "domain" | "application" | "infrastructure" | "interface" | "components" | "shell"
+            "domain" | "infrastructure" | "interface" | "components" | "shell" | "protocol"
         );
         let allowed_root = !rel.contains('/') && matches!(rel.as_str(), "lib.rs" | "main.rs");
         if !in_layer && !allowed_root {
@@ -734,21 +732,21 @@ fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the TUI application layer should parse session stats payloads into typed values")]
-fn then_tui_application_parses_session_stats(_world: &mut QuectoWorld) {
-    let content = std::fs::read_to_string("../quecto-tui/src/application/session_payloads.rs")
+#[then("the TUI protocol layer should parse session stats payloads into typed values")]
+fn then_tui_protocol_parses_session_stats(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("../quecto-tui/src/protocol/session_payloads.rs")
         .expect("read TUI session payload parser");
     assert!(
         content.contains("pub struct SessionStats")
             && content.contains("pub fn parse_session_stats")
             && content.contains("context_usage"),
-        "session stats JSON parsing should live in an application-layer typed value"
+        "session stats JSON parsing should live in a protocol-layer typed value"
     );
 }
 
-#[then("the TUI application layer should validate resumed chat payloads into typed messages")]
-fn then_tui_application_validates_resumed_chat(_world: &mut QuectoWorld) {
-    let content = std::fs::read_to_string("../quecto-tui/src/application/session_payloads.rs")
+#[then("the TUI protocol layer should validate resumed chat payloads into typed messages")]
+fn then_tui_protocol_validates_resumed_chat(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("../quecto-tui/src/protocol/session_payloads.rs")
         .expect("read TUI session payload parser");
     assert!(
         content.contains("pub enum ResumedChatMessage")
@@ -756,13 +754,13 @@ fn then_tui_application_validates_resumed_chat(_world: &mut QuectoWorld) {
             && content.contains("pub fn parse_resumed_messages")
             && content.contains("Result<Vec<ResumedChatMessage>, ResumeMessagesError>")
             && content.contains("pub fn parse_resume_sessions"),
-        "resumed chat/session-list JSON validation should live in application-layer typed values"
+        "resumed chat/session-list JSON validation should live in protocol-layer typed values"
     );
 }
 
 #[then("the TUI should validate resumed messages before replacing chat history")]
 fn then_tui_validates_resumed_messages_before_replacing_chat(_world: &mut QuectoWorld) {
-    let parser = std::fs::read_to_string("../quecto-tui/src/application/session_payloads.rs")
+    let parser = std::fs::read_to_string("../quecto-tui/src/protocol/session_payloads.rs")
         .expect("read TUI session payload parser");
     assert!(
         parser.contains("ResumeMessagesError::MissingMessages")
@@ -782,7 +780,7 @@ fn then_tui_validates_resumed_messages_before_replacing_chat(_world: &mut Quecto
     };
     let parse_pos = body
         .find("session_payloads::parse_resumed_messages")
-        .expect("resume replacement should call the application-layer parser");
+        .expect("resume replacement should call the protocol-layer parser");
     let clear_pos = body
         .find("self.master_session.chat.clear()")
         .expect("resume replacement should still clear chat after valid resume data");
@@ -794,7 +792,7 @@ fn then_tui_validates_resumed_messages_before_replacing_chat(_world: &mut Quecto
     );
 }
 
-#[then("the TUI App methods should delegate session payload parsing to the application layer")]
+#[then("the TUI App methods should delegate session payload parsing to the protocol layer")]
 fn then_tui_app_methods_delegate_session_payload_parsing(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("../quecto-tui/src/interface/app_methods.rs")
         .expect("read TUI app methods source");
@@ -802,7 +800,7 @@ fn then_tui_app_methods_delegate_session_payload_parsing(_world: &mut QuectoWorl
         content.contains("session_payloads::parse_session_stats")
             && content.contains("session_payloads::parse_resume_sessions")
             && content.contains("session_payloads::parse_resumed_messages"),
-        "App session methods should call application-layer parsers instead of hand-parsing raw JSON"
+        "App session methods should call protocol-layer parsers instead of hand-parsing raw JSON"
     );
     for fn_name in [
         "update_footer_stats",
@@ -1100,7 +1098,7 @@ fn then_workflow_bar_no_forwarder(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui client serialize-and-newline rule should appear once")]
 fn then_client_serialize_once(_world: &mut QuectoWorld) {
-    let content = tui_read("infrastructure/client.rs");
+    let content = tui_read("protocol/client.rs");
     // Counting a single shared helper definition is more robust than pinning the
     // literal `json.push('\n')` keystrokes: both senders must route through it.
     assert_eq!(

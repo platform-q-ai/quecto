@@ -22,17 +22,17 @@ These are presentation modules aligned with harness capabilities. They must rema
 
 ## Interim compatibility map
 
-The current crate still uses `application/`, `domain/`, `infrastructure/`, and `interface/` directories because existing architecture checks and callers depend on them. During migration, treat those directories as compatibility buckets, not as the final target model:
+The current crate still uses `domain/`, `infrastructure/`, and `interface/` directories as interim compatibility buckets alongside landed feature modules (`components/`, `shell/`, `protocol/`). During migration, treat the remaining CA folders as compatibility buckets, not as the final target model. `application/` was deleted in #1257 Phase 2 when mappers moved into `protocol/`.
 
 | Current location | Interim role | Target direction |
 |---|---|---|
 | `interface/app*.rs` | shell plus feature controllers still co-located in `App` | split by `shell`, `conversation`, `sessions`, `agents`, `workflow`, `inference`, and `workspace` |
-| `interface/components/*` | widgets and render helpers | `components` |
-| `infrastructure/client*.rs` | UDS client and wire protocol boundary | `protocol` |
-| `infrastructure/process.rs`, `terminal.rs`, `signals.rs`, `render.rs` | runtime/terminal adapters | `shell` runtime adapters or explicit infrastructure seams under `shell` |
+| `interface/components/*` | widgets and render helpers (relocated to top-level `components/`, #1257 Phase 1) | `components` |
+| `protocol/client*.rs` | UDS client and wire protocol boundary (relocated, #1257 Phase 2) | `protocol` |
+| `shell/{process,terminal,signals,render,child_watch,warn_capture}.rs` | runtime/terminal adapters (relocated, #1257 Phase 1) | `shell` |
 | `infrastructure/workspace_files.rs` | workspace filesystem/Git adapter | `workspace` boundary adapter |
-| `application/model_payloads.rs` | typed mapper for `list_models` wire payloads (#1220) | `protocol` mapping feeding `models` |
-| `application/session_payloads.rs` | typed parsing foothold for session payloads | `protocol` mapping feeding `sessions` |
+| `protocol/model_payloads.rs` | typed mapper for `list_models` wire payloads (#1220; relocated, #1257 Phase 2) | `protocol` mapping feeding `models` |
+| `protocol/session_payloads.rs` | typed parsing foothold for session payloads (relocated, #1257 Phase 2) | `protocol` mapping feeding `sessions` |
 | `domain/` | conversation history/recovery invariants (#1221) | only keep values that encode real invariants |
 
 Each migration PR should preserve one source of truth for every moved state cluster and avoid long-lived dual writes.
@@ -75,7 +75,7 @@ Observable surfaces and required parity:
 | Surface | Required identical behavior | Boundary cases | Performance characteristics |
 |---|---|---|---|
 | TUI runtime behavior | No runtime behavior changes except the intentional patch-version string update required by repository release policy: no command ordering, protocol handling, event routing, terminal handling, render output other than version text, or widget behavior changes. | Not applicable to this docs/guardrail slice; no runtime call sites are changed. | Not applicable; no specialized runtime code is replaced. |
-| TUI public crate shape during migration | Current compatibility modules remain available: `application`, `domain`, `infrastructure`, and `interface`; `main.rs` remains a thin entrypoint. | Empty/one/many module cases are not relevant because the compatibility set is exact and already pinned by existing architecture tests. | Not applicable; module exports are compile-time structure. |
+| TUI public crate shape during migration | Current compatibility modules remain available: `domain`, `infrastructure`, and `interface`, plus landed feature modules `components`, `shell`, and `protocol`; `main.rs` remains a thin entrypoint. | Empty/one/many module cases are not relevant because the compatibility set is exact and already pinned by existing architecture tests. | Not applicable; module exports are compile-time structure. |
 | Architecture documentation | The current architecture direction is discoverable from the TUI README; the superseded Clean Architecture target model clearly points to the feature-oriented architecture document; the new document lists all target harness-facing capability modules. | Full target set must be present: shell, protocol, conversation, sessions, agents, workflow, inference, workspace, components. | Not applicable; documentation-only surface. |
 | Executable guardrails | Architecture tests and BDD steps continue to execute, and the new feature-oriented guardrail is additive rather than weakening existing interim compatibility checks. | Existing checks still cover the full compatibility layer set and root file placement; the new check covers the full capability list plus protocol and pure-policy boundary rules. | Not applicable; test/runtime cost is outside shipped TUI behavior. |
 
@@ -248,17 +248,17 @@ This issue is the characterization-readiness slice for the later code-moving iss
 
 | Current production file | Target owner |
 |---|---|
-| `application/agent_ledger_payloads.rs` | `protocol` mapper feeding `agents` ledger sync (#1222) |
-| `application/mod.rs` | remove after compatibility shims are unnecessary |
-| `application/model_payloads.rs` | `protocol` mapper feeding `models` |
-| `application/range_accumulator.rs` | `protocol` chunked range assembly feeding `conversation` (#1221) |
-| `application/session_payloads.rs` | `protocol` mapper feeding `sessions` |
+| `protocol/agent_ledger_payloads.rs` | `protocol` mapper feeding `agents` ledger sync (#1222; relocated, #1257 Phase 2) |
+| `protocol/model_payloads.rs` | `protocol` mapper feeding `models` (relocated, #1257 Phase 2) |
+| `protocol/range_accumulator.rs` | `protocol` chunked range assembly feeding `conversation` (#1221; relocated, #1257 Phase 2) |
+| `protocol/session_payloads.rs` | `protocol` mapper feeding `sessions` (relocated, #1257 Phase 2) |
+| `protocol/client.rs` | `protocol` UDS client and wire DTOs (relocated, #1257 Phase 2) |
+| `protocol/mod.rs` | `protocol` module root (added, #1257 Phase 2) |
 | `domain/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221) |
 | `domain/mod.rs` | remove vestigial placeholder; recreate only for invariant-bearing shared values if needed |
 | `domain/turn_recovery.rs` | `conversation` end-of-turn recovery trigger and batch atomicity (#1221) |
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
-| `infrastructure/client.rs` | `protocol` |
-| `infrastructure/mod.rs` | remove after adapter modules move |
+| `infrastructure/mod.rs` | remaining adapters until workspace move (Phase 5) |
 | `shell/process.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
 | `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
@@ -383,7 +383,7 @@ Deletion ledger for #1222 refactor:
 | `interface/app_subagent_state.rs` | Lifecycle status classification, elapsed timer freeze/resume, exited grace GC, optimistic marker retention, and workflow/parent stickiness. | `interface/agents/roster.rs` owns generic `TrackedSubagent`, `RosterInfo`, lifecycle updates, GC and deadline policy. Existing subagent tests plus new characterization tests pin the same lifecycle/retention edges. |
 | `interface/app_subagents.rs` hand-rolled source-scoped snapshot merge | Master snapshots own roots; direct feeds own only their source subtree; anti-hijack and recursive descendant acceptance; parent carry-over for surviving descendants. | `interface/agents/roster.rs::apply_roster_snapshot` owns the merge policy. `App::update_subagent_bar_from_source` sanitizes/socket-filters then delegates once. Pinned by `app_subagent_roster_authority_tests`, `app_subagents_tests`, and `active_child_removed_by_its_source_feed_falls_back_to_master_only`. |
 | `interface/feed_state.rs` flattened feed sync state | Warm feed is non-authoritative until sync delta; epoch/rev/freshness/capability/pending/transcript fields move together. | `interface/agents/feed.rs::FeedSyncState` owns pure feed synchronization state; `interface/agents/ui.rs::FeedState` separately wraps runtime `cmd_tx`/task handle. `app_subagent_feed.rs` constructs from `FeedRuntime` + `FeedSyncState`; pinned by ledger tests and warm-start characterization. |
-| `interface/ledger_sync.rs` raw JSON transcript state | Sync deltas upsert by message id, preserve first order slot, support resync clearing, project user/assistant/tool entries, and parse sync capability. | `application/agent_ledger_payloads.rs` provides typed DTOs; `interface/agents/ledger.rs` owns typed `LedgerTranscript` and pure `LedgerEntry` projection. `interface/agents/ui.rs` adapts `LedgerEntry` to `ChatEntry` at the presentation boundary. Pinned by `ledger_sync_tests` and duplicate-id characterization. |
+| `interface/ledger_sync.rs` raw JSON transcript state | Sync deltas upsert by message id, preserve first order slot, support resync clearing, project user/assistant/tool entries, and parse sync capability. | `protocol/agent_ledger_payloads.rs` provides typed DTOs; `interface/agents/ledger.rs` owns typed `LedgerTranscript` and pure `LedgerEntry` projection. `interface/agents/ui.rs` adapts `LedgerEntry` to `ChatEntry` at the presentation boundary. Pinned by `ledger_sync_tests` and duplicate-id characterization. |
 | Call sites that used old module paths | Same authority/path/type behavior, with no dual writes. | Mechanical path updates point to `interface::agents::{feed,ledger,ui,roster}`. Pre-existing tests were not semantically changed; only expected type/module paths were updated where the extracted owner moved. |
 
 Parity evidence recorded during #1222 implementation:
@@ -393,7 +393,7 @@ Parity evidence recorded during #1222 implementation:
 | Frozen characterization suite | Roster/source authority, warm-feed startup, retained feed/session cap, ledger no-op hints, caught-up sync, duplicate-id transcript upsert, active-child fallback, and authoritative ledger projection preserve behavior. | `cargo test -p quecto-tui --lib app_agents_characterization_tests` passed after refactor. Mutation evidence before freeze killed M1–M15. The ledger projection test needed a mechanical type adaptation from `ChatEntry` to pure `LedgerEntry` after extraction; follow-up mutations M16/M17 against `interface/agents/ledger.rs` both failed the adapted test. | PASS |
 | Existing targeted unit suites | Existing subagent, ledger, workflow-stickiness, panel/session, and roster-authority behavior remains unchanged. | Passed: `cargo test -p quecto-tui --lib` (1642 tests); explicit targeted runs of `app_ledger_sync_tests`, `ledger_sync_tests`, `app_subagent_roster_authority_tests`, `app_subagents_tests`, `app_subagent_panel_tests`, and `app_subagent_workflow_sticky_tests`. Existing tests changed only for mechanical module/type moves (`feed_state`/`ledger_sync` into `interface::agents::*`, plus typed `LedgerEntry` projection). | PASS |
 | Visual / rendered frames | Panel-first layout, read-only marker, and sub-agent session parity render identical user-visible surfaces. | `cd quecto-tui && QUECTO_TAG=tui cargo test --features test-harness --test bdd` passed 28 TUI features / 175 scenarios, including `tui_subagent_first_layout`, `tui_subagent_readonly_marker`, and `tui_subagent_session_parity`. | PASS |
-| Architecture policy | Raw JSON and wire DTO parsing sites do not grow; pure agents policy has no Tokio handles/channels, terminal/widget types, or concrete client; runtime feed ownership remains separated. | `cargo test -p quecto-agentic-harness --test architecture tui_interface_raw_json_parsing_sites_do_not_grow -- --exact` and `cargo test -p quecto-agentic-harness --test architecture tui_wire_dto_usage_does_not_grow -- --exact` passed. `grep` over `interface/agents/{feed,roster,ledger,focus}.rs` found no channels, task handles, concrete client, terminal/widget types, or `serde_json`; only `tokio::time::Instant` remains in roster lifecycle timestamps. Caveat on the ratchets: both counters are heuristic — the raw-JSON counter matches literal `.get("`/`.pointer("` and accessor+`and_then` lines, so `serde_json::from_str`/`from_value` and dynamic `value.get(key)` in `application/agent_ledger_payloads.rs` are not counted; the wire-DTO counter matches `Command::`/`Event::`/`infrastructure::client` lines, so unqualified DTO uses after a single grouped import are not counted. They confirm no growth in the shapes they measure, not the absence of raw JSON parsing. Runtime `cmd_tx`/task handle live in `interface/agents/ui.rs::FeedRuntime`, separate from `FeedSyncState`, but are re-flattened into `FeedState` (see the structural-check caveat above). | PASS |
+| Architecture policy | Raw JSON and wire DTO parsing sites do not grow; pure agents policy has no Tokio handles/channels, terminal/widget types, or concrete client; runtime feed ownership remains separated. | `cargo test -p quecto-agentic-harness --test architecture tui_interface_raw_json_parsing_sites_do_not_grow -- --exact` and `cargo test -p quecto-agentic-harness --test architecture tui_wire_dto_usage_does_not_grow -- --exact` passed. `grep` over `interface/agents/{feed,roster,ledger,focus}.rs` found no channels, task handles, concrete client, terminal/widget types, or `serde_json`; only `tokio::time::Instant` remains in roster lifecycle timestamps. Caveat on the ratchets: both counters are heuristic — the raw-JSON counter matches literal `.get("`/`.pointer("` and accessor+`and_then` lines, so `serde_json::from_str`/`from_value` and dynamic `value.get(key)` in `protocol/agent_ledger_payloads.rs` are not counted; the wire-DTO counter matches `Command::`/`Event::`/`infrastructure::client`/`protocol::client` lines, so unqualified DTO uses after a single grouped import are not counted. They confirm no growth in the shapes they measure, not the absence of raw JSON parsing. Runtime `cmd_tx`/task handle live in `interface/agents/ui.rs::FeedRuntime`, separate from `FeedSyncState`, but are re-flattened into `FeedState` (see the structural-check caveat above). | PASS |
 | Performance parity (source inspection only; no enforcing check) | Replaced specialized code keeps the same asymptotic passes and allocation boundaries. | Roster snapshot merge still builds one `BTreeMap` of candidates/incoming/new map and one parent carry-over queue in `apply_roster_snapshot`; no render-loop work or background task moved into policy. Ledger transcript still uses one `HashMap` plus one ordered `Vec` and applies deltas in O(messages). Retention still evicts through the existing session-order vector and active-id skip. Warm feeds remain bounded by `MAX_RETAINED_SESSIONS`. | PASS |
 | Quantitative / formatting / lint | File-size cap and strict local checks remain green. | Largest new agents file is `interface/agents/roster.rs` at 294 lines; `app.rs` dropped from 741 to 617 lines. Overall changed-file line count is +884 (1437 insertions, 553 deletions) including 310 lines of new characterization tests, 203 lines of typed ledger DTOs, and the parity/deletion documentation below. `cargo fmt --check` and `cargo clippy -p quecto-tui --lib -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines` passed. | PASS |
 
@@ -474,7 +474,7 @@ Review concern disposition for #1224:
 ## Non-goals
 
 - No big-bang rewrite or user-visible behavior changes.
-- No mandatory rich `domain/` or `application/` layer in `quecto-tui`.
+- No mandatory rich `domain/` or ceremonial `application/` layer in `quecto-tui`.
 - No broad domain vocabulary created in advance.
 - No global application event/effect enum mirroring UDS.
 - No port-per-command or async-trait framework.
@@ -486,22 +486,22 @@ Review concern disposition for #1224:
 ## Protocol boundary and typed mapper convention (#1220)
 
 Harness-facing features must not interpret raw `serde_json::Value` shapes in
-controllers or views. Payload interpretation lives in **application-layer
+controllers or views. Payload interpretation lives in **protocol-layer
 mappers**; the interface converts a typed DTO into its own view model at a thin
 seam. This introduces no global command/event enum mirroring UDS, and no
 gateway or port per command.
 
 ### The convention
 
-Every mapper in `application/` obeys four rules (stated canonically in the
-module docs of `application/model_payloads.rs`):
+Every mapper in `protocol/` obeys four rules (stated canonically in the
+module docs of `protocol/model_payloads.rs`):
 
-1. **Input is raw wire JSON, output is a typed application value.** Feature
+1. **Input is raw wire JSON, output is a typed protocol value.** Feature
    controllers and views consume the typed value and never re-read the JSON.
 2. **Total, never failing on shape.** Malformed, legacy, and unknown payloads
    map to an empty/defaulted result, unless the distinction is itself
    user-visible (as with `session_payloads::ResumeMessagesError`).
-3. **The application layer owns no interface types.** Mappers must not name
+3. **The protocol layer owns no interface types.** Mappers must not name
    `interface::` types. Where a presentation concern is genuinely needed —
    control-character sanitization, owned by `interface/ansi.rs` — it is
    *injected* by the caller rather than imported, keeping the layer rule intact
@@ -514,13 +514,13 @@ module docs of `application/model_payloads.rs`):
 
 `list_models` is the first flow migrated to the convention:
 
-- `application/model_payloads.rs` — `parse_model_list` → `Vec<ModelListEntry>`,
+- `protocol/model_payloads.rs` — `parse_model_list` → `Vec<ModelListEntry>`,
   owning the id/provider/auth derivation and the drop rules for absent,
   non-string, and sanitize-to-empty identifiers.
 - `interface/app_models.rs::parse_model_entries` — the seam: maps the DTO to the
   selector's `ModelEntry`, adding only the interface-owned `is_current: false`.
 
-Mapper fixtures in `application/model_payloads_tests.rs` cover valid, legacy
+Mapper fixtures in `protocol/model_payloads_tests.rs` cover valid, legacy
 (`id` vs `model`), and malformed (missing key, non-array, non-object entries,
 non-string ids, control characters) payloads. Observable behaviour and command
 ordering are pinned end-to-end by the frozen characterization suite.
@@ -532,7 +532,7 @@ and therefore run in the fast pre-commit guard suite (targets are enumerated
 dynamically, so they cannot be silently dropped):
 
 - `tui_interface_raw_json_parsing_sites_do_not_grow` — interface seed `120`.
-- `tui_application_raw_json_parsing_sites_do_not_grow` — application seed `69`.
+- `tui_protocol_raw_json_parsing_sites_do_not_grow` — protocol mapper seed `69` (#1257 Phase 2 re-pointed from `application/`).
 - `tui_wire_dto_usage_does_not_grow` — seed `124`.
 
 Both were hardened after review on #1235, which proved the first drafts did not
@@ -567,7 +567,7 @@ Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-The interface raw-JSON ratchet is seeded at 120 sites (lowered from 130 in #1221 when `range_accumulator.rs` and its 10 sites moved to `application/`). The application raw-JSON ratchet is seeded separately at 69 sites, so the moved wire parsing remains measured instead of disappearing from the burn-down surface. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
+The interface raw-JSON ratchet is seeded at 120 sites (lowered from 130 in #1221 when `range_accumulator.rs` and its 10 sites moved to `application/`). The protocol raw-JSON ratchet is seeded separately at 69 sites (#1257 Phase 2 re-pointed the scan root from deleted `application/` to `protocol/`, with `protocol/client.rs` allowlisted as the wire seam), so the moved wire parsing remains measured instead of disappearing from the burn-down surface. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
 
 Wire-DTO usage is seeded at 124, led by `app_subagent_stream.rs`,
 `app_subagents.rs`, `app_submit.rs`, and `tui_harness_events.rs`.
@@ -623,7 +623,7 @@ M19 (drop empty-id skip) each fail their named test, with no residue.
 | Allowlist exemption broader than its rationale | FIXED — per-ratchet allowlists; `app_response.rs` now measured by the wire-DTO guard |
 | Mapper test double weaker than the real sanitizer (ANSI/bidi) | FIXED — documented on the double, plus `ansi_and_bidi_controls_are_stripped_through_the_mapper` running the real sanitizer end-to-end (killed by M20, an injected identity sanitizer) |
 | `quecto-tui/README.md` version stale at 0.70.13 | FIXED — now current |
-| "Three surviving hand-rolled model-payload parsers" in `app_response.rs`, `app_subagent_stream.rs`, `footer.rs` | **DECLINED** — those read a top-level scalar from a `set_model`/`get_state` response (`get("model") → as_str → sanitize`): no array, no `id` fallback, no empty-skip, no provider inference, no auth. They are not `list_models` interpreters. Folding them into the mapper would pull `sanitize_control` back into `application/`, violating rule 3. They remain recorded in the burn-down inventory. |
+| "Three surviving hand-rolled model-payload parsers" in `app_response.rs`, `app_subagent_stream.rs`, `footer.rs` | **DECLINED** — those read a top-level scalar from a `set_model`/`get_state` response (`get("model") → as_str → sanitize`): no array, no `id` fallback, no empty-skip, no provider inference, no auth. They are not `list_models` interpreters. Folding them into the mapper would pull `sanitize_control` back into `protocol/`, violating rule 3. They remain recorded in the burn-down inventory. |
 
 The characterization suite was re-frozen after adding the ANSI/bidi test (an
 additive pin; no existing assertion was altered).
@@ -748,7 +748,7 @@ changes are the test-module declarations and the new harness probe.
 | Quantitative | Trigger-logic duplication | The force-recovery check (`open_tool_calls > 0`) existed at 2 call sites (master + sub-agent); it now exists at 1, inside the policy. Both paths route through `TurnOutcome::needs_recovery`. | PASS |
 | Quantitative | Production LOC | Conversation production code: 828 lines before (`app_paged_history` 316 + `app_message_recovery` 440 + `range_accumulator` 72) → 1060 after, measured by `wc -l` at the current head (`app_paged_history` 259 + `app_message_recovery` 423 + `range_accumulator` 76 + `history_paging` 187 + `turn_recovery` 115). Net +232. (An earlier version of this row read 1035/+207; those figures predated the `forced_without_text` and `ordered_by_refs` review fixes and were no longer reproducible.) The issue sets no LOC target; the growth is doc comments explaining the invariants (why exact-match correlation, why an open tool call forces recovery) that were previously implicit. Interface files themselves shrank by 74 lines (316+440 = 756 → 259+423 = 682), remeasured at head; the earlier "81" was never re-measured after the review fixes. | RECORDED |
 | Quantitative | Testability criterion | 23 new tests construct the policy with no terminal, concrete client, raw JSON, or Tokio runtime. `grep` for `serde_json|ratatui|tokio|crossterm|Client` across `src/domain/*.rs` production files returns nothing. | PASS |
-| Structural | `ChatEntry` stays a view projection | `grep -rn ChatEntry src/domain/ src/application/` returns nothing: policy vocabulary is `PageFacts`, `PrefixPlan`, `TurnOutcome`, `RecoveryBatch<T>`. | PASS |
+| Structural | `ChatEntry` stays a view projection | `grep -rn ChatEntry src/domain/ src/protocol/` returns nothing for conversation policy vocabulary: policy vocabulary is `PageFacts`, `PrefixPlan`, `TurnOutcome`, `RecoveryBatch<T>`. | PASS |
 
 ## Review-round fixes for conversation history/recovery slice (#1221)
 

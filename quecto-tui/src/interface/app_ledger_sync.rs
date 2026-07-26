@@ -30,9 +30,9 @@ impl App {
     }
 
     pub(super) fn route_sync_response(&mut self, agent_id: &str, data: &serde_json::Value) {
-        let Ok(delta) = serde_json::from_value::<
-            crate::application::agent_ledger_payloads::SyncDelta,
-        >(data.clone()) else {
+        let Ok(delta) = serde_json::from_value::<crate::protocol::agent_ledger_payloads::SyncDelta>(
+            data.clone(),
+        ) else {
             return;
         };
         if let Some(feed) = self.subagents.feeds.get_mut(agent_id) {
@@ -70,7 +70,7 @@ impl App {
 
     pub(super) fn note_sync_capability(&mut self, agent_id: &str, data: &serde_json::Value) {
         if let Some(feed) = self.subagents.feeds.get_mut(agent_id) {
-            feed.supports_sync = crate::application::agent_ledger_payloads::supports_sync(data);
+            feed.supports_sync = crate::protocol::agent_ledger_payloads::supports_sync(data);
             if feed.supports_sync {
                 if let Some(target_rev) = feed.pending_rev {
                     Self::request_sync(feed, feed.epoch, target_rev);

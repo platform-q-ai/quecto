@@ -16,8 +16,8 @@
 //! They drive not-yet-existing layout behaviour on purpose (TDD RED).
 
 use super::tui_harness::*;
-use crate::infrastructure::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::interface::ansi::strip_ansi;
+use crate::protocol::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 
 /// Panel-row status glyphs that the sub-agent-first design removes entirely.
 const GLYPHS: &[&str] = &["●", "✓", "✗", "○", "•"];

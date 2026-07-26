@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::session_payloads::ResumedChatMessage;
+use crate::protocol::session_payloads::ResumedChatMessage;
 
 impl App {
     pub(super) fn resumed_chat_entries(messages: Vec<ResumedChatMessage>) -> Vec<ChatEntry> {

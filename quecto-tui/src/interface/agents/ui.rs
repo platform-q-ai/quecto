@@ -2,10 +2,10 @@ use crate::components::chat::Chat;
 use crate::components::footer::Footer;
 use crate::components::list_navigator::ListNavigator;
 use crate::components::workflow_bar;
-use crate::infrastructure::client::{Command, Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::interface::agents::feed::{FeedAuthority, FeedSyncState};
 use crate::interface::agents::focus::Focus;
 use crate::interface::agents::roster::{RosterInfo, TrackedSubagent, subagent_status_is_active};
+use crate::protocol::client::{Command, Event, SubagentInfoEvent, SubagentWorkflow};
 use std::collections::{BTreeMap, VecDeque};
 use tokio::sync::mpsc;
 
@@ -78,7 +78,7 @@ pub(crate) fn ledger_entry_to_chat_entry(
         } => ChatEntry::ToolExecution {
             tool_call_id,
             tool_name,
-            parsed_args: crate::application::agent_ledger_payloads::parse_tool_args(&args),
+            parsed_args: crate::protocol::agent_ledger_payloads::parse_tool_args(&args),
             args,
             result,
             is_error,

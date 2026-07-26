@@ -372,7 +372,7 @@ impl App {
                 is_error,
                 ..
             } => {
-                let text = crate::infrastructure::client::extract_result_text(result);
+                let text = crate::protocol::client::extract_result_text(result);
                 chat.complete_tool(tool_call_id, &text, *is_error, None);
             }
             Event::Response { command, id, .. }
@@ -516,7 +516,7 @@ impl App {
         bar: &workflow_bar::WorkflowBarState,
     ) {
         if let Some(tracked) = self.subagents.tracked.get_mut(agent_id) {
-            tracked.info.workflow = Some(crate::infrastructure::client::SubagentWorkflow {
+            tracked.info.workflow = Some(crate::protocol::client::SubagentWorkflow {
                 mode: bar.mode.clone().unwrap_or_else(|| "active".to_string()),
                 steps_completed: bar.done,
                 steps_total: bar.total,
@@ -554,8 +554,8 @@ impl App {
         data: &serde_json::Value,
         extend_prefix: bool,
     ) {
-        use crate::application::session_payloads;
         use crate::domain::history_paging::{PageFacts, PrefixPlan};
+        use crate::protocol::session_payloads;
         if session.history.backfilled {
             return;
         }

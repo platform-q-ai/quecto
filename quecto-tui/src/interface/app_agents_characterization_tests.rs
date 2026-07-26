@@ -8,8 +8,8 @@ use super::*;
 use serde_json::json;
 use std::time::Duration;
 
-fn subagent(id: &str, status: &str) -> crate::infrastructure::client::SubagentInfoEvent {
-    crate::infrastructure::client::SubagentInfoEvent {
+fn subagent(id: &str, status: &str) -> crate::protocol::client::SubagentInfoEvent {
+    crate::protocol::client::SubagentInfoEvent {
         agent_id: id.to_string(),
         status: status.to_string(),
         last_tool: None,
@@ -22,7 +22,7 @@ fn subagent(id: &str, status: &str) -> crate::infrastructure::client::SubagentIn
     }
 }
 
-fn child(id: &str, status: &str, parent: &str) -> crate::infrastructure::client::SubagentInfoEvent {
+fn child(id: &str, status: &str, parent: &str) -> crate::protocol::client::SubagentInfoEvent {
     let mut info = subagent(id, status);
     info.parent_id = Some(parent.to_string());
     info
@@ -136,22 +136,19 @@ async fn retained_sessions_and_warm_feeds_evict_oldest_non_active_beyond_cap() {
 fn duplicate_ids_within_one_sync_delta_keep_first_position_and_latest_content() {
     let mut transcript = crate::interface::agents::ledger::LedgerTranscript::default();
 
-    let entries =
-        transcript.apply_sync_delta(&crate::application::agent_ledger_payloads::SyncDelta {
-            epoch: 1,
-            rev: 1,
-            messages: vec![
-                serde_json::from_value(json!({"id":"dup","role":"assistant","content":"old"}))
-                    .unwrap(),
-                serde_json::from_value(json!({"id":"other","role":"user","content":"between"}))
-                    .unwrap(),
-                serde_json::from_value(json!({"id":"dup","role":"assistant","content":"new"}))
-                    .unwrap(),
-            ],
-            next_rev: None,
-            caught_up: true,
-            resync: false,
-        });
+    let entries = transcript.apply_sync_delta(&crate::protocol::agent_ledger_payloads::SyncDelta {
+        epoch: 1,
+        rev: 1,
+        messages: vec![
+            serde_json::from_value(json!({"id":"dup","role":"assistant","content":"old"})).unwrap(),
+            serde_json::from_value(json!({"id":"other","role":"user","content":"between"}))
+                .unwrap(),
+            serde_json::from_value(json!({"id":"dup","role":"assistant","content":"new"})).unwrap(),
+        ],
+        next_rev: None,
+        caught_up: true,
+        resync: false,
+    });
 
     assert!(
         matches!(

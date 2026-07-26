@@ -1,7 +1,7 @@
 //! Unit tests for routing model changes to the focused sub-agent (#1085).
 
 use super::tui_harness::TuiHarness;
-use crate::infrastructure::client::Event;
+use crate::protocol::client::Event;
 
 async fn harness() -> TuiHarness {
     TuiHarness::new().await

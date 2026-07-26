@@ -7,8 +7,8 @@
 //! rendered transcript and the commands the client emits.
 
 use super::*;
-use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
+use quecto_tui::protocol::client::Event;
 use quecto_tui::shell::keys::Key;
 
 /// Per-scenario paged-history fixture stored on the World.

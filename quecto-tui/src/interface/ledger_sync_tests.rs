@@ -1,8 +1,8 @@
 use super::*;
-use crate::application::agent_ledger_payloads::{SyncDelta, supports_sync};
+use crate::protocol::agent_ledger_payloads::{SyncDelta, supports_sync};
 use serde_json::json;
 
-fn message(value: serde_json::Value) -> crate::application::agent_ledger_payloads::LedgerMessage {
+fn message(value: serde_json::Value) -> crate::protocol::agent_ledger_payloads::LedgerMessage {
     serde_json::from_value(value).unwrap()
 }
 

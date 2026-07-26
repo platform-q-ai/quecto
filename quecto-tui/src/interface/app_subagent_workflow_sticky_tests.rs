@@ -10,8 +10,8 @@
 //! (per-agent routing).
 
 use super::tui_harness::*;
-use crate::infrastructure::client::Event;
 use crate::interface::ansi::strip_ansi;
+use crate::protocol::client::Event;
 
 /// A `workflow_state` event for `agent` with `total` steps, `done` of them
 /// complete, no active issue and `mode == "active"` — i.e. a freshly selected

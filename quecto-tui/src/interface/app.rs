@@ -14,12 +14,12 @@ use crate::components::notification::{Notification, NotificationStack, NotifyLev
 use crate::components::select_list::{SelectItem, SelectList};
 use crate::components::spinner::Spinner;
 use crate::components::workflow_bar;
-use crate::infrastructure::client::{Client, Command, Event};
 use crate::infrastructure::workspace_files::list_workspace_files;
 use crate::interface::agents::focus::{Focus, MAX_RETAINED_SESSIONS, SUBAGENT_PANEL_WIDTH};
 use crate::interface::agents::ui::FeedState;
 use crate::interface::agents::ui::{SessionView, SubagentUi};
 use crate::interface::kitty::KittyProtocol;
+use crate::protocol::client::{Client, Command, Event};
 use crate::shell::keys::{self, Key};
 use crate::shell::render::DiffRenderer;
 use crate::shell::terminal::Terminal;
@@ -268,9 +268,8 @@ mod app_submit;
 use crate::interface::agents::roster::{
     gc_exited_subagents, next_exited_subagent_gc_deadline, subagent_status_is_active,
 };
-type TrackedSubagent = crate::interface::agents::roster::TrackedSubagent<
-    crate::infrastructure::client::SubagentInfoEvent,
->;
+type TrackedSubagent =
+    crate::interface::agents::roster::TrackedSubagent<crate::protocol::client::SubagentInfoEvent>;
 #[path = "app_subagent_stream.rs"]
 mod app_subagent_stream;
 #[path = "app_subagents.rs"]

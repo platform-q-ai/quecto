@@ -312,32 +312,32 @@ fn to_snake_case(name: &str) -> String {
 
 const TUI_SRC: &str = "../quecto-tui/src";
 const TUI_DOMAIN: &str = "../quecto-tui/src/domain";
-const TUI_APPLICATION: &str = "../quecto-tui/src/application";
+const TUI_PROTOCOL: &str = "../quecto-tui/src/protocol";
 const TUI_INFRASTRUCTURE: &str = "../quecto-tui/src/infrastructure";
 const TUI_INTERFACE: &str = "../quecto-tui/src/interface";
 const TUI_COMPONENTS: &str = "../quecto-tui/src/components";
 const TUI_SHELL: &str = "../quecto-tui/src/shell";
 const TUI_ALLOWED_ROOT_RS: &[&str] = &["lib.rs", "main.rs"];
 /// #1257 phased migration: the exact set of top-level modules `lib.rs` may
-/// expose, updated per phase as feature modules land (Phase 1: `components`,
-/// `shell`).
+/// expose, updated per phase as feature modules land (Phase 2: `protocol`;
+/// `application` deleted).
 const TUI_LIB_RS_MODULES: &[&str] = &[
-    "application",
     "components",
     "domain",
     "infrastructure",
     "interface",
+    "protocol",
     "shell",
 ];
 /// #1257 phased migration: top-level directories production files may live in
 /// (legacy layers plus the feature modules landed so far).
 const TUI_TOP_LEVEL_MODULES: &[&str] = &[
     "domain",
-    "application",
     "infrastructure",
     "interface",
     "components",
     "shell",
+    "protocol",
 ];
 const TUI_FEATURE_ARCH_DOC: &str =
     "../quecto-tui/docs/feature-oriented-presentation-architecture.md";
@@ -473,8 +473,8 @@ fn tui_architecture_layers_exist() {
         "quecto-tui/src/domain/ must exist"
     );
     assert!(
-        Path::new(TUI_APPLICATION).exists(),
-        "quecto-tui/src/application/ must exist"
+        Path::new(TUI_PROTOCOL).exists(),
+        "quecto-tui/src/protocol/ must exist"
     );
     assert!(
         Path::new(TUI_INFRASTRUCTURE).exists(),
@@ -483,6 +483,10 @@ fn tui_architecture_layers_exist() {
     assert!(
         Path::new(TUI_INTERFACE).exists(),
         "quecto-tui/src/interface/ must exist"
+    );
+    assert!(
+        !Path::new("../quecto-tui/src/application").exists(),
+        "quecto-tui/src/application/ must be deleted after #1257 Phase 2"
     );
 }
 
@@ -495,23 +499,13 @@ fn tui_domain_has_no_outer_layer_imports() {
             "crate::application",
             "crate::infrastructure",
             "crate::interface",
+            "crate::protocol",
+            "crate::components",
+            "crate::shell",
             "super::application",
             "super::infrastructure",
             "super::interface",
-        ],
-    );
-}
-
-#[test]
-fn tui_application_has_no_infrastructure_or_interface_imports() {
-    assert_no_imports(
-        "quecto-tui application",
-        Path::new(TUI_APPLICATION),
-        &[
-            "crate::infrastructure",
-            "crate::interface",
-            "super::infrastructure",
-            "super::interface",
+            "super::protocol",
         ],
     );
 }
@@ -524,7 +518,33 @@ fn tui_infrastructure_has_no_application_or_interface_imports() {
         &[
             "crate::application",
             "crate::interface",
+            "crate::protocol",
             "super::application",
+            "super::interface",
+            "super::protocol",
+        ],
+    );
+}
+
+#[test]
+fn tui_protocol_has_no_feature_or_shell_imports() {
+    // #1257 Phase 2: protocol owns the UDS client + mappers and must not
+    // depend outward on presentation modules.
+    assert_no_imports(
+        "quecto-tui protocol",
+        Path::new(TUI_PROTOCOL),
+        &[
+            "crate::components",
+            "crate::shell",
+            "crate::interface",
+            "crate::conversation",
+            "crate::sessions",
+            "crate::agents",
+            "crate::workflow",
+            "crate::inference",
+            "crate::workspace",
+            "super::components",
+            "super::shell",
             "super::interface",
         ],
     );
@@ -540,20 +560,14 @@ fn tui_inner_layers_have_no_runtime_io_calls() {
         ".exists(",
     ];
     assert_no_imports("quecto-tui domain", Path::new(TUI_DOMAIN), &runtime_io);
-    assert_no_imports(
-        "quecto-tui application",
-        Path::new(TUI_APPLICATION),
-        &runtime_io,
-    );
 }
 
 #[test]
 fn tui_runtime_adapters_live_in_shell() {
-    // #1257 Phase 1: the UDS client stays in infrastructure until Phase 2
-    // moves it to `protocol/`; the terminal/runtime adapters now live in
-    // `shell/`.
+    // #1257 Phase 2: the UDS client lives in `protocol/`; terminal/runtime
+    // adapters live in `shell/`.
     for (root, adapter) in [
-        (TUI_INFRASTRUCTURE, "client"),
+        (TUI_PROTOCOL, "client"),
         (TUI_SHELL, "process"),
         (TUI_SHELL, "render"),
         (TUI_SHELL, "signals"),
@@ -616,7 +630,7 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
 fn tui_public_ports_have_contract_tests() {
     let mut files = Vec::new();
     collect_rs_files(Path::new(TUI_DOMAIN), &mut files);
-    collect_rs_files(Path::new(TUI_APPLICATION), &mut files);
+    collect_rs_files(Path::new(TUI_PROTOCOL), &mut files);
 
     let mut ports = BTreeSet::new();
     for file_content in &files {
@@ -878,7 +892,7 @@ fn all_four_socket_consumers_read_via_the_shared_frame_reader() {
         // socket consumer too; it must not be stranded on legacy NDJSON reads
         // when the deprecation window closes (#1059 review, finding 5).
         "src/infrastructure/tools/subagent_registry.rs",
-        "../quecto-tui/src/infrastructure/client.rs",
+        "../quecto-tui/src/protocol/client.rs",
         "../quecto-api/src/infrastructure/uds/client.rs",
     ];
     for path in consumers {
@@ -926,7 +940,7 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
 // ── #1220 protocol-boundary ratchets ────────────────────────────────
 //
 // Two decrease-only ratchets guard the raw-JSON burn-down. Seeds may be lowered
-// as sites migrate to application-layer mappers; they may never be raised.
+// as sites migrate to protocol-layer mappers; they may never be raised.
 //
 // Exclusion is content-based, not filename-based: a file is treated as test
 // code only if it carries `cfg(test)` or test attributes, so `*_test_support.rs`
@@ -949,12 +963,16 @@ const TUI_PHASE_1_INTERFACE_RAW_JSON_TOTAL: usize = 114;
 /// plus `components/` and `shell/`).
 const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[TUI_INTERFACE, TUI_COMPONENTS, TUI_SHELL];
 
-/// Seed: production raw `serde_json` parsing sites in TUI `application/`
-/// modules. These sites are an allowed but temporary protocol-mapping foothold;
-/// lower this as they migrate behind typed mappers. Never raise it.
-const TUI_APPLICATION_RAW_JSON_SITE_SEED: usize = 69;
+/// Seed: production raw `serde_json` parsing sites in TUI `protocol/` mappers.
+/// These sites are an allowed but temporary protocol-mapping foothold; lower
+/// this as they migrate behind typed mappers. Never raise it.
+/// (#1257 Phase 2: scan root re-pointed from `application/` to `protocol/`.)
+const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 69;
+/// Measured immediately after #1257 Phase 2 relocation; relocation must not
+/// burn down mapper sites (client wire seam is allowlisted separately).
+const TUI_PHASE_2_PROTOCOL_RAW_JSON_TOTAL: usize = 69;
 
-/// Seed: production feature/view *usages* of `infrastructure::client` wire DTOs.
+/// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
 const TUI_WIRE_DTO_USAGE_SEED: usize = 124;
 /// Measured immediately before #1257 Phase 1; relocation must not burn down usages.
@@ -967,9 +985,10 @@ const TUI_PHASE_1_WIRE_DTO_USAGE_TOTAL: usize = 121;
 /// deliberately NOT exempt from the wire-DTO ratchet.
 const TUI_INTERFACE_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("interface/app_response.rs", "#1220")];
 
-/// Narrow, issue-linked allowlist for the APPLICATION RAW-JSON ratchet only.
-/// Empty: application raw JSON remains measured even when temporarily permitted.
-const TUI_APPLICATION_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[];
+/// Narrow, issue-linked allowlist for the PROTOCOL RAW-JSON ratchet only.
+/// The UDS client is the wire seam itself (frame/event field access); mapper
+/// sites remain measured. (#1257 Phase 2)
+const TUI_PROTOCOL_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("protocol/client.rs", "#1257")];
 
 /// Narrow, issue-linked allowlist for the WIRE-DTO ratchet only. Empty: no file
 /// currently has an approved reason to accumulate wire-DTO usage unmeasured.
@@ -1066,7 +1085,10 @@ fn wire_dto_usage_count(content: &str) -> usize {
             if t.starts_with("//") || t.starts_with("///") {
                 return false;
             }
-            t.contains("Command::") || t.contains("Event::") || t.contains("infrastructure::client")
+            t.contains("Command::")
+                || t.contains("Event::")
+                || t.contains("infrastructure::client")
+                || t.contains("protocol::client")
         })
         .count()
 }
@@ -1107,24 +1129,30 @@ fn tui_interface_raw_json_parsing_sites_do_not_grow() {
         total, TUI_PHASE_1_INTERFACE_RAW_JSON_TOTAL,
         "#1257 Phase 1 relocation must preserve the raw serde_json site total: \
          found {total}, seed {TUI_INTERFACE_RAW_JSON_SITE_SEED}. Move payload \
-         interpretation into an application-layer mapper (see \
-         quecto-tui/src/application/model_payloads.rs, #1220). Inventory \
+         interpretation into a protocol-layer mapper (see \
+         quecto-tui/src/protocol/model_payloads.rs, #1220). Inventory \
          (burn-down order): {per_file:?}"
     );
 }
 
 #[test]
-fn tui_application_raw_json_parsing_sites_do_not_grow() {
+fn tui_protocol_raw_json_parsing_sites_do_not_grow() {
     let (total, per_file) = tui_ratchet_inventory(
-        &[TUI_APPLICATION],
-        TUI_APPLICATION_RAW_JSON_ALLOWLIST,
+        &[TUI_PROTOCOL],
+        TUI_PROTOCOL_RAW_JSON_ALLOWLIST,
         raw_json_site_count,
     );
+    assert_eq!(
+        total, TUI_PHASE_2_PROTOCOL_RAW_JSON_TOTAL,
+        "#1257 Phase 2 relocation must preserve protocol mapper raw serde_json sites: \
+         found {total}, seed {TUI_PROTOCOL_RAW_JSON_SITE_SEED}. Convert ad-hoc \
+         parsing into typed protocol mappers and lower this seed. Inventory \
+         (burn-down order): {per_file:?}"
+    );
     assert!(
-        total <= TUI_APPLICATION_RAW_JSON_SITE_SEED,
-        "raw serde_json parsing in TUI application protocol mappers must not grow: \
-         found {total}, seed {TUI_APPLICATION_RAW_JSON_SITE_SEED}. Convert ad-hoc \
-         parsing into typed application mappers and lower this seed. Inventory \
+        total <= TUI_PROTOCOL_RAW_JSON_SITE_SEED,
+        "raw serde_json parsing in TUI protocol mappers must not grow: \
+         found {total}, seed {TUI_PROTOCOL_RAW_JSON_SITE_SEED}. Inventory \
          (burn-down order): {per_file:?}"
     );
 }

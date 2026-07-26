@@ -5,9 +5,9 @@
 //! the TUI render path (`app_subagent_stream.rs` defer/flush). Driven through
 //! the headless render harness so they pin what the operator actually sees.
 
-use crate::infrastructure::client::Event;
 use crate::interface::ansi::strip_ansi;
 use crate::interface::app::tui_harness::*;
+use crate::protocol::client::Event;
 
 /// Build a completion note message EXACTLY as the kernel's
 /// `SubagentNotification::Completed::to_message` does (subagent_registry), so the

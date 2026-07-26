@@ -5,7 +5,7 @@
 //! manual eyeballing of a live session required.
 
 use super::tui_harness::*;
-use crate::infrastructure::client::Event;
+use crate::protocol::client::Event;
 
 /// A batch of sub-agents spawning and running workflows must not produce a
 /// single-frame "flash" (height spike/dip) or a transient line in the below-chat
@@ -439,7 +439,7 @@ async fn event_line_invalid_json_panics_with_context() {
 // RED-phase: these assert the FIXED behaviour and currently FAIL.
 mod workflow_display_regression {
     use super::*;
-    use crate::infrastructure::client::{Event, SubagentInfoEvent, SubagentWorkflow};
+    use crate::protocol::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 
     fn info(
         id: &str,

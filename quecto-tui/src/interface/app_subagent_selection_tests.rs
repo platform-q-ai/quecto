@@ -3,7 +3,7 @@ use super::*;
 fn make_tracked(id: &str, status: &str) -> (String, super::TrackedSubagent) {
     (
         id.to_string(),
-        super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
+        super::TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
             agent_id: id.to_string(),
             status: status.to_string(),
             last_tool: None,
@@ -119,7 +119,7 @@ fn gc_reclaims_expired_once_batch_is_quiescent() {
 
 #[test]
 fn tracked_subagent_new_sets_exited_at_for_exited() {
-    let entry = super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
+    let entry = super::TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
         agent_id: "w1".into(),
         status: "exited".into(),
         last_tool: None,
@@ -135,7 +135,7 @@ fn tracked_subagent_new_sets_exited_at_for_exited() {
 
 #[test]
 fn tracked_subagent_new_no_exited_at_for_running() {
-    let entry = super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
+    let entry = super::TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
         agent_id: "w1".into(),
         status: "running".into(),
         last_tool: None,
@@ -151,7 +151,7 @@ fn tracked_subagent_new_no_exited_at_for_running() {
 
 #[test]
 fn tracked_subagent_update_sets_exited_at_on_transition() {
-    let mut entry = super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
+    let mut entry = super::TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
         agent_id: "w1".into(),
         status: "running".into(),
         last_tool: None,
@@ -164,7 +164,7 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
     });
     assert!(entry.exited_at.is_none());
 
-    entry.update_info(crate::infrastructure::client::SubagentInfoEvent {
+    entry.update_info(crate::protocol::client::SubagentInfoEvent {
         agent_id: "w1".into(),
         status: "exited".into(),
         last_tool: None,
@@ -180,7 +180,7 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
 
 #[test]
 fn tracked_subagent_update_clears_exited_at_on_revival() {
-    let mut entry = super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
+    let mut entry = super::TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
         agent_id: "w1".into(),
         status: "exited".into(),
         last_tool: None,
@@ -193,7 +193,7 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
     });
     assert!(entry.exited_at.is_some());
 
-    entry.update_info(crate::infrastructure::client::SubagentInfoEvent {
+    entry.update_info(crate::protocol::client::SubagentInfoEvent {
         agent_id: "w1".into(),
         status: "running".into(),
         last_tool: None,
@@ -209,7 +209,7 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
 
 #[test]
 fn tracked_subagent_update_clears_read_only_marker_on_authoritative_read_write_update() {
-    let mut entry = super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
+    let mut entry = super::TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
         agent_id: "w1".into(),
         status: "running".into(),
         last_tool: None,
@@ -221,7 +221,7 @@ fn tracked_subagent_update_clears_read_only_marker_on_authoritative_read_write_u
         read_only: true,
     });
 
-    entry.update_info(crate::infrastructure::client::SubagentInfoEvent {
+    entry.update_info(crate::protocol::client::SubagentInfoEvent {
         agent_id: "w1".into(),
         status: "running".into(),
         last_tool: None,
@@ -326,8 +326,8 @@ fn selection_range_same_row_normalizes() {
     assert_eq!((sr, sc, er, ec), (3, 2, 3, 10));
 }
 
-fn mk_info(id: &str, status: &str) -> crate::infrastructure::client::SubagentInfoEvent {
-    crate::infrastructure::client::SubagentInfoEvent {
+fn mk_info(id: &str, status: &str) -> crate::protocol::client::SubagentInfoEvent {
+    crate::protocol::client::SubagentInfoEvent {
         agent_id: id.to_string(),
         status: status.to_string(),
         last_tool: None,

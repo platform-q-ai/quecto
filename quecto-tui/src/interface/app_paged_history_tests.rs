@@ -138,7 +138,7 @@ async fn older_history_request_is_deduped_while_cursor_is_in_flight() {
 async fn subagent_older_history_request_is_disabled_after_legacy_backfill_removal() {
     let mut h = harness().await;
     h.event(Event::SubagentStateChanged {
-        subagents: vec![crate::infrastructure::client::SubagentInfoEvent {
+        subagents: vec![crate::protocol::client::SubagentInfoEvent {
             agent_id: "worker".into(),
             status: "idle".into(),
             last_tool: None,

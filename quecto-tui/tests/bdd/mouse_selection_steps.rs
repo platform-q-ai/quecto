@@ -1,6 +1,6 @@
 use super::*;
-use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
+use quecto_tui::protocol::client::Event;
 use std::io::{self, Write};
 
 struct BddClipboardWriter {

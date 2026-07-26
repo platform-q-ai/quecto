@@ -1,4 +1,4 @@
-//! Typed application values for direct sub-agent ledger synchronization payloads.
+//! Typed protocol values for direct sub-agent ledger synchronization payloads.
 //!
 //! The infrastructure client receives raw JSON from UDS, but the agents
 //! presentation policy stores typed ledger messages and capability snapshots.
