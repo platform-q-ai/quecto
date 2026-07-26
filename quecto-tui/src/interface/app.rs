@@ -125,7 +125,7 @@ pub(crate) struct RewindFlow {
 }
 
 #[derive(Default)]
-pub(crate) struct SessionsFlow {
+struct SessionsFlow {
     /// Session resume selector shown after `/resume` lists persisted sessions.
     resume_selector: Option<SelectList>,
     /// Session stats fallback to learn real context window for current session/model.
@@ -133,7 +133,7 @@ pub(crate) struct SessionsFlow {
 }
 
 #[derive(Default)]
-pub(crate) struct WorkflowFlow {
+struct WorkflowFlow {
     /// Mirror of core workflow auto-continue state, toggled through UDS.
     auto_continue: bool,
     /// Mirror of core workflow completion-nudge state, toggled through UDS.
@@ -141,7 +141,7 @@ pub(crate) struct WorkflowFlow {
 }
 
 #[derive(Default)]
-pub(crate) struct InferenceFlow {
+struct InferenceFlow {
     current_model: Option<String>,
     /// The model selector component (created on demand, pushed onto overlay stack).
     model_selector: Option<ModelSelector>,
@@ -164,7 +164,7 @@ pub(crate) struct ModelRegistry {
     open_pending: bool,
 }
 
-pub(crate) struct WorkspaceFlow {
+struct WorkspaceFlow {
     files_autocomplete: FilesAutocomplete,
     /// Last observed git branch shown in the footer.
     git_branch: Option<String>,
