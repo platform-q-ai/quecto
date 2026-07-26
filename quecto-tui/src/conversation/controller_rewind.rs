@@ -49,6 +49,7 @@ impl App {
         };
 
         let mut items = Vec::new();
+        let mut text_by_id = std::collections::HashMap::new();
         for message in messages.iter().rev() {
             let ResumedChatMessage::User {
                 text, id: Some(id), ..
@@ -73,21 +74,30 @@ impl App {
                 label,
                 description: None,
             });
+            text_by_id.insert(id.to_string(), text.to_string());
         }
 
         if items.is_empty() {
+            self.rewind.selector_text_by_id.clear();
             self.notify("No previous user turns to rewind", NotifyLevel::Info);
             return;
         }
+        self.rewind.selector_text_by_id = text_by_id;
         self.rewind.selector = Some(SelectList::new(items, 10));
     }
 
     pub(super) fn handle_rewind_selector_key(&mut self, key: &Key) {
         let Some(message_id) = route_overlay_key(&mut self.rewind.selector, key) else {
+            if self.rewind.selector.is_none() {
+                self.rewind.selector_text_by_id.clear();
+            }
             return;
         };
+        let message_text = self.rewind.selector_text_by_id.remove(&message_id);
+        self.rewind.selector_text_by_id.clear();
         let id = self.next_rewind_request_id("to");
         self.rewind.pending_apply_id = Some(id.clone());
+        self.rewind.pending_apply_text = message_text;
         self.send_command(Command::RewindTo {
             id: Some(id),
             message_id,

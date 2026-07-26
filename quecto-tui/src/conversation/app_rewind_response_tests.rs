@@ -186,6 +186,7 @@ async fn rewind_selector_enter_requests_rewind() {
     a.handle_rewind_selector_key(&Key::Enter);
     assert!(a.rewind.selector.is_none());
     assert!(a.rewind.pending_apply_id.is_some());
+    assert_eq!(a.rewind.pending_apply_text.as_deref(), Some("turn"));
 }
 
 #[tokio::test]
@@ -441,12 +442,27 @@ async fn response_rewind_to_success_clears_pending_and_notifies() {
 }
 
 #[tokio::test]
+async fn response_rewind_to_success_moves_selected_text_into_editor() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.editor.set_text("draft");
+    a.rewind.pending_apply_id = Some("rt".into());
+    a.rewind.pending_apply_text = Some("original prompt\nsecond line".into());
+    respond(a, Some("rt"), "rewind_to", true, None, None);
+    assert_eq!(a.editor.text(), "original prompt\nsecond line");
+    assert!(a.rewind.pending_apply_text.is_none());
+}
+
+#[tokio::test]
 async fn response_rewind_to_failure_clears_pending_and_notifies_error() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.rewind.pending_apply_id = Some("rt".into());
+    a.rewind.pending_apply_text = Some("keep out of editor".into());
     respond(a, Some("rt"), "rewind_to", false, None, Some("bad"));
     assert!(a.rewind.pending_apply_id.is_none());
+    assert!(a.rewind.pending_apply_text.is_none());
+    assert_eq!(a.editor.text(), "");
     assert!(!a.notifications.is_empty());
 }
 

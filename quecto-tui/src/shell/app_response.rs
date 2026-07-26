@@ -150,6 +150,11 @@ impl App {
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id && success => {
                 self.rewind.pending_apply_id = None;
+                if let Some(text) = self.rewind.pending_apply_text.take() {
+                    self.editor.set_text(&text);
+                    self.autocomplete.update(&self.editor.text());
+                    self.refresh_files_autocomplete_from_editor();
+                }
                 self.clear_message_recovery();
                 self.notify("Rewound conversation", NotifyLevel::Success);
                 self.send_command(Command::GetMessages {
@@ -159,6 +164,7 @@ impl App {
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id => {
                 self.rewind.pending_apply_id = None;
+                self.rewind.pending_apply_text = None;
                 self.notify_response_error("Rewind failed", error);
             }
             "rewind_to" => {}

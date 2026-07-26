@@ -724,6 +724,12 @@ fn when_rewind_apply_succeeds(world: &mut TuiWorld) {
     world.tui_last_commands = commands;
 }
 
+#[then(expr = "the editor contains {string}")]
+fn then_editor_contains(world: &mut TuiWorld, expected: String) {
+    let got = drive(world, |h| h.editor_text());
+    assert_eq!(got, expected, "editor should contain the rewound prompt");
+}
+
 #[when(expr = "I submit the master prompt {string}")]
 fn when_submit_master_prompt(world: &mut TuiWorld, prompt: String) {
     drive(world, |h| {
