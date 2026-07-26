@@ -3,7 +3,7 @@
 //! The infrastructure client receives raw JSON from UDS, but the agents
 //! presentation policy stores typed ledger messages and capability snapshots.
 
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,17 +53,10 @@ impl LedgerMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedToolArgs(serde_json::Value);
-
-impl ParsedToolArgs {
-    pub fn into_value(self) -> serde_json::Value {
-        self.0
-    }
-}
-
-pub fn parse_tool_args(args: &str) -> Option<ParsedToolArgs> {
-    serde_json::from_str(args).ok().map(ParsedToolArgs)
+/// Parse recorded tool-call arguments for presentation. Malformed arguments are
+/// simply not pre-parsed; the raw string is still rendered by the caller.
+pub fn parse_tool_args(args: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(args).ok()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -106,45 +99,32 @@ struct LedgerFunctionCall {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SyncCapability {
-    sync: Option<u64>,
-    #[serde(default, deserialize_with = "deserialize_capability_set")]
-    capabilities: Option<CapabilitySet>,
-}
-
-impl SyncCapability {
-    fn supports_sync(&self) -> bool {
-        self.sync.unwrap_or(0) >= 1
-            || self
-                .capabilities
-                .as_ref()
-                .unwrap_or(&CapabilitySet::NONE)
-                .sync
-                .unwrap_or(0)
-                >= 1
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct CapabilitySet {
     sync: Option<u64>,
 }
 
 impl CapabilitySet {
-    const NONE: Self = Self { sync: None };
+    fn supports_sync(&self) -> bool {
+        self.sync.unwrap_or(0) >= 1
+    }
 }
 
+/// Whether a child advertises ledger sync, accepting either the top-level
+/// `sync` field or a nested `capabilities.sync`.
+///
+/// Each field is read independently from the already-materialized payload, so a
+/// malformed `capabilities` value cannot mask a valid top-level `sync` and no
+/// deserializer error is swallowed mid-stream.
 pub fn supports_sync(value: &serde_json::Value) -> bool {
-    serde_json::from_value::<SyncCapability>(value.clone())
+    let field = |key: &str| {
+        value
+            .get(key)
+            .cloned()
+            .and_then(|field| serde_json::from_value::<CapabilitySet>(field).ok())
+    };
+    serde_json::from_value::<CapabilitySet>(value.clone())
         .is_ok_and(|capability| capability.supports_sync())
-}
-
-fn deserialize_capability_set<'de, D>(deserializer: D) -> Result<Option<CapabilitySet>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(Option::<CapabilitySet>::deserialize(deserializer).unwrap_or(None))
+        || field("capabilities").is_some_and(|capability| capability.supports_sync())
 }
 
 fn deserialize_optional_json_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>

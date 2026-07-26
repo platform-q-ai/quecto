@@ -65,12 +65,11 @@ fn ledger_entries(refs: &[String], responses: &HashMap<String, LedgerMessage>) -
                         continue;
                     }
                     let name = call.name().to_string();
-                    let args = call.arguments();
-                    let args_value = serde_json::from_str(&args).unwrap_or(serde_json::Value::Null);
-                    if super::suppress_tool_box(&name, &args_value) {
+                    if super::suppress_tool_box(&name) {
                         suppressed_calls.insert(id);
                         continue;
                     }
+                    let args = call.arguments();
                     tools.insert(id.clone(), entries.len());
                     entries.push(LedgerEntry::ToolExecution {
                         tool_call_id: id,

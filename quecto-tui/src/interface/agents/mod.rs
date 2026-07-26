@@ -9,7 +9,9 @@ pub(crate) mod ledger;
 pub(crate) mod roster;
 pub(crate) mod ui;
 
-pub(crate) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> bool {
+/// Whether a tool call renders without its own tool box. The decision depends
+/// only on the tool name, so pure policy callers never parse arguments.
+pub(crate) fn suppress_tool_box(tool_name: &str) -> bool {
     // #871: every model-issued `agent_cmd` invocation renders as a normal tool
     // call, including the control/destructive commands (`prompt`/`steer`/
     // `abort`/`kill`) that used to be hidden. Hiding them left the transcript

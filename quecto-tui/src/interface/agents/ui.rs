@@ -40,6 +40,12 @@ pub(crate) struct FeedRuntime {
 /// Direct-feed state as consumed by the legacy `App` slice. The flattened fields
 /// preserve existing call sites while construction flows through separated
 /// runtime and synchronization parts above.
+///
+/// This flattening is a deliberate staging step: the split into `FeedRuntime` +
+/// `FeedSyncState` is currently enforced only at construction, so new
+/// synchronization fields must be added to `FeedSyncState` (not directly here)
+/// until the remaining call sites are migrated to `feed.sync.*` under #1222's
+/// follow-up.
 pub(crate) struct FeedState {
     pub(crate) cmd_tx: mpsc::Sender<Command>,
     pub(crate) handle: tokio::task::JoinHandle<()>,
@@ -72,8 +78,7 @@ pub(crate) fn ledger_entry_to_chat_entry(
         } => ChatEntry::ToolExecution {
             tool_call_id,
             tool_name,
-            parsed_args: crate::application::agent_ledger_payloads::parse_tool_args(&args)
-                .map(|args| args.into_value()),
+            parsed_args: crate::application::agent_ledger_payloads::parse_tool_args(&args),
             args,
             result,
             is_error,

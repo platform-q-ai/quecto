@@ -1,4 +1,7 @@
 use crate::interface::agents::ledger::LedgerTranscript;
+// Feed freshness is wall-clock staleness measured against real elapsed time, so
+// it deliberately uses `std::time::Instant` rather than the pausable
+// `tokio::time::Instant` used by roster lifecycle timers.
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

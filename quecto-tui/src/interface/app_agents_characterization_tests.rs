@@ -185,6 +185,10 @@ async fn ledger_hint_at_current_revision_records_freshness_without_redundant_syn
     assert_eq!(feed.epoch, 7);
     assert_eq!(feed.rev, 11);
     assert_eq!(feed.pending_rev, None);
+    assert!(
+        feed.last_fresh_at.is_some(),
+        "even a no-op hint refreshes feed freshness"
+    );
     feed.authority = crate::interface::agents::feed::FeedAuthority::SyncedAuthoritative;
 
     app.select_agent(Some("worker"));

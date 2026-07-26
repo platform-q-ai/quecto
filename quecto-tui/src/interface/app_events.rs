@@ -395,8 +395,8 @@ fn spawn_args_are_read_only(args: &serde_json::Value) -> bool {
             })
 }
 
-pub(super) fn suppress_tool_box(tool_name: &str, args: &serde_json::Value) -> bool {
-    crate::interface::agents::suppress_tool_box(tool_name, args)
+pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> bool {
+    crate::interface::agents::suppress_tool_box(tool_name)
 }
 
 #[cfg(test)]

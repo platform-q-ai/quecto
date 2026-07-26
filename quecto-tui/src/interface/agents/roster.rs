@@ -57,7 +57,12 @@ pub(crate) fn next_exited_subagent_gc_deadline<I: RosterInfo>(
 
 impl<I: RosterInfo> TrackedSubagent<I> {
     pub(crate) fn new(info: I) -> Self {
-        let now = tokio::time::Instant::now();
+        Self::new_at(info, tokio::time::Instant::now())
+    }
+
+    /// Clock-injected constructor used by snapshot application so lifecycle
+    /// timestamps come from the caller's single `now` reading.
+    pub(crate) fn new_at(info: I, now: tokio::time::Instant) -> Self {
         let active = subagent_status_is_active(info.status());
         let exited_at = (info.status() == STATUS_EXITED).then_some(now);
         Self {
@@ -78,9 +83,14 @@ impl<I: RosterInfo> TrackedSubagent<I> {
 
     /// Update the info, freezing the timer when the agent stops being active and
     /// recording exited_at on transition to "exited".
-    pub(crate) fn update_info(&mut self, mut new_info: I) {
+    #[cfg(test)]
+    pub(crate) fn update_info(&mut self, new_info: I) {
+        self.update_info_at(new_info, tokio::time::Instant::now());
+    }
+
+    /// Clock-injected update used by snapshot application.
+    pub(crate) fn update_info_at(&mut self, mut new_info: I, now: tokio::time::Instant) {
         new_info.merge_sticky_fields(&self.info);
-        let now = tokio::time::Instant::now();
         if subagent_status_is_active(new_info.status()) {
             // Resumed work — let the timer run again.
             self.stopped_at = None;
@@ -182,7 +192,7 @@ pub(crate) fn apply_roster_snapshot<I: RosterInfo>(
         if let Some(mut existing) = new_map.remove(&id) {
             existing.optimistic = false;
             if source_agent_id.is_some() || existing.roster_source.is_none() {
-                existing.update_info(info);
+                existing.update_info_at(info, now);
             }
             if source_agent_id.is_some() {
                 existing.roster_source = source_agent_id.map(str::to_string);
@@ -191,14 +201,14 @@ pub(crate) fn apply_roster_snapshot<I: RosterInfo>(
         } else if let Some(mut existing) = tracked.get(&id).cloned() {
             existing.optimistic = false;
             if source_agent_id.is_some() || existing.roster_source.is_none() {
-                existing.update_info(info);
+                existing.update_info_at(info, now);
             }
             if source_agent_id.is_some() {
                 existing.roster_source = source_agent_id.map(str::to_string);
             }
             new_map.insert(id, existing);
         } else {
-            let mut entry = TrackedSubagent::new(info);
+            let mut entry = TrackedSubagent::new_at(info, now);
             entry.roster_source = source_agent_id.map(str::to_string);
             new_map.insert(id, entry);
         }
