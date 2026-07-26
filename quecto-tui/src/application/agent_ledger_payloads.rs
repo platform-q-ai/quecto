@@ -106,14 +106,14 @@ struct LedgerFunctionCall {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SyncCapability {
-    pub sync: Option<u64>,
+struct SyncCapability {
+    sync: Option<u64>,
     #[serde(default, deserialize_with = "deserialize_capability_set")]
     capabilities: Option<CapabilitySet>,
 }
 
 impl SyncCapability {
-    pub fn supports_sync(&self) -> bool {
+    fn supports_sync(&self) -> bool {
         self.sync.unwrap_or(0) >= 1
             || self
                 .capabilities
