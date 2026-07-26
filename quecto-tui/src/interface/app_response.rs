@@ -61,8 +61,8 @@ impl App {
             }
             "list_models" if success => self.handle_list_models(data),
             "list_models" => {
-                let was_pending = self.model_registry.open_pending;
-                self.model_registry.open_pending = false;
+                let was_pending = self.inference.model_registry.open_pending;
+                self.inference.model_registry.open_pending = false;
                 self.notify_response_error("Could not list models", error);
                 // Refresh failed but the user asked to open the selector: fall
                 // back to whatever models we already have cached.
@@ -193,7 +193,7 @@ impl App {
         {
             self.master_session.footer.set_model(&model);
             if self.subagents.active_agent_id.is_none() {
-                self.current_model = Some(model);
+                self.inference.current_model = Some(model);
             }
         }
         if self.subagents.active_agent_id.is_none() {
@@ -212,11 +212,11 @@ impl App {
         // overwrite a focused child's level/vocabulary/model.
         if let Some(model) = self.master_session.footer.apply_get_state(&data) {
             if self.subagents.active_agent_id.is_none() {
-                self.current_model = Some(model);
+                self.inference.current_model = Some(model);
             }
         }
         if self.subagents.active_agent_id.is_none() {
-            self.current_effort = data
+            self.inference.current_effort = data
                 .get("effort")
                 .and_then(|v| v.as_str())
                 .map(crate::interface::ansi::sanitize_control);
@@ -227,7 +227,7 @@ impl App {
                     .map(crate::interface::ansi::sanitize_control)
                     .collect();
                 if !levels.is_empty() {
-                    self.effort_levels = levels;
+                    self.inference.effort_levels = levels;
                 }
             }
         }
@@ -236,7 +236,7 @@ impl App {
             .and_then(|v| v.as_u64())
             .is_some()
         {
-            self.context_stats_requested = true;
+            self.sessions.context_stats_requested = true;
         }
         // Learn the connected agent's own id from its sessionKey ("cli:<name>").
         if let Some(key) = data.get("sessionKey").and_then(|v| v.as_str()) {
@@ -255,10 +255,10 @@ impl App {
     fn sync_workflow_automation(&mut self, data: &serde_json::Value) {
         let automation = data.get("automation").unwrap_or(data);
         if let Some(value) = automation.get("autoContinue").and_then(|v| v.as_bool()) {
-            self.workflow_auto_continue = value;
+            self.workflow.auto_continue = value;
         }
         if let Some(value) = automation.get("completionNudge").and_then(|v| v.as_bool()) {
-            self.workflow_completion_nudge = value;
+            self.workflow.completion_nudge = value;
         }
         self.mirror_automation_to_bar();
     }
@@ -268,20 +268,20 @@ impl App {
     /// state instead of the hard-coded `false` from `parse_workflow_event`
     /// (#897 AC2). Call after any (re)build of `master_session.workflow_bar`.
     pub(super) fn mirror_automation_to_bar(&mut self) {
-        self.master_session.workflow_bar.workflow_auto_continue = self.workflow_auto_continue;
-        self.master_session.workflow_bar.workflow_completion_nudge = self.workflow_completion_nudge;
+        self.master_session.workflow_bar.workflow_auto_continue = self.workflow.auto_continue;
+        self.master_session.workflow_bar.workflow_completion_nudge = self.workflow.completion_nudge;
     }
 
     fn handle_workflow_automation(&mut self, data: Option<serde_json::Value>) {
         if let Some(data) = data {
             self.sync_workflow_automation(&data);
         }
-        let auto = if self.workflow_auto_continue {
+        let auto = if self.workflow.auto_continue {
             "ON"
         } else {
             "OFF"
         };
-        let nudge = if self.workflow_completion_nudge {
+        let nudge = if self.workflow.completion_nudge {
             "ON"
         } else {
             "OFF"

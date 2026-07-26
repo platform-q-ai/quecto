@@ -262,7 +262,7 @@ impl TuiHarness {
 
     /// Override the repository root used by git branch refresh tests.
     pub fn set_git_repo(&mut self, repo: std::path::PathBuf) {
-        self.app.git_repo = Some(repo);
+        self.app.workspace.git_repo = Some(repo);
     }
 
     /// Drive the same branch refresh task used by the event-loop interval.
@@ -462,7 +462,7 @@ impl TuiHarness {
     /// Whether the model-selector overlay is currently open (e.g. after
     /// submitting `/model` with no argument).
     pub fn model_selector_open(&self) -> bool {
-        self.app.model_selector.is_some()
+        self.app.inference.model_selector.is_some()
     }
 
     /// Built-in slash command names from the production command registry.

@@ -55,7 +55,7 @@ pub struct App {
     master_session: SessionView,
     spinner: Option<Spinner>,
     autocomplete: Autocomplete,
-    files_autocomplete: FilesAutocomplete,
+    workspace: WorkspaceFlow,
     notifications: NotificationStack,
     kitty: KittyProtocol,
     agent_state: AgentRunState,
@@ -72,21 +72,11 @@ pub struct App {
     /// Oversized-event drops already surfaced as a notification, so each is
     /// reported exactly once (#1047).
     surfaced_oversized_drops: u64,
-    current_model: Option<String>,
+    inference: InferenceFlow,
     /// Connected agent's own id (get_state sessionKey), vs descendants' (#997).
     connected_agent_id: Option<String>,
-    /// The model selector component (created on demand, pushed onto overlay stack).
-    model_selector: Option<ModelSelector>,
-    model_registry: ModelRegistry,
-    /// The effort selector overlay (#1067), opened by bare `/effort`.
-    effort_selector: Option<EffortSelector>,
-    /// Active effort level (`None` = default), for selector marker + footer (#1067).
-    current_effort: Option<String>,
-    /// Effort vocabulary for the active provider, reported by the agent in
-    /// `get_state` (`effortLevels`) — never re-derived locally (#1067).
-    effort_levels: Vec<String>,
-    /// Session resume selector shown after `/resume` lists persisted sessions.
-    resume_selector: Option<SelectList>,
+    sessions: SessionsFlow,
+    workflow: WorkflowFlow,
     /// Rewind flow state (#997).
     rewind: RewindFlow,
     /// Sub-agent / multi-session UI state (#997).
@@ -101,18 +91,8 @@ pub struct App {
     pub(super) suppress_paint: bool,
     /// Active mouse text selection (#528).
     selection: Option<TextSelection>,
-    /// Mirror of core workflow auto-continue state, toggled through UDS.
-    workflow_auto_continue: bool,
-    /// Mirror of core workflow completion-nudge state, toggled through UDS.
-    workflow_completion_nudge: bool,
-    /// Last observed git branch shown in the footer.
-    git_branch: Option<String>,
-    /// Repository root used for git branch polling.
-    git_repo: Option<PathBuf>,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
-    /// Session stats fallback to learn real context window for current session/model.
-    context_stats_requested: bool,
     pending_message_recovery: HashMap<String, PendingMessageRecovery>,
     /// Recovery batches (client-local id → turn chat range) guarding late overwrites.
     message_recovery_batches: HashMap<String, MessageRecoveryBatch>,
@@ -144,6 +124,37 @@ pub(crate) struct RewindFlow {
     request_seq: u64,
 }
 
+#[derive(Default)]
+struct SessionsFlow {
+    /// Session resume selector shown after `/resume` lists persisted sessions.
+    resume_selector: Option<SelectList>,
+    /// Session stats fallback to learn real context window for current session/model.
+    context_stats_requested: bool,
+}
+
+#[derive(Default)]
+struct WorkflowFlow {
+    /// Mirror of core workflow auto-continue state, toggled through UDS.
+    auto_continue: bool,
+    /// Mirror of core workflow completion-nudge state, toggled through UDS.
+    completion_nudge: bool,
+}
+
+#[derive(Default)]
+struct InferenceFlow {
+    current_model: Option<String>,
+    /// The model selector component (created on demand, pushed onto overlay stack).
+    model_selector: Option<ModelSelector>,
+    model_registry: ModelRegistry,
+    /// The effort selector overlay (#1067), opened by bare `/effort`.
+    effort_selector: Option<EffortSelector>,
+    /// Active effort level (`None` = default), for selector marker + footer (#1067).
+    current_effort: Option<String>,
+    /// Effort vocabulary for the active provider, reported by the agent in
+    /// `get_state` (`effortLevels`) — never re-derived locally (#1067).
+    effort_levels: Vec<String>,
+}
+
 /// Model registry owned by the selector flow (#997).
 #[derive(Default)]
 pub(crate) struct ModelRegistry {
@@ -151,6 +162,24 @@ pub(crate) struct ModelRegistry {
     entries: Vec<ModelEntry>,
     /// A selector open is deferred until the fresh list arrives (ADR-0002).
     open_pending: bool,
+}
+
+struct WorkspaceFlow {
+    files_autocomplete: FilesAutocomplete,
+    /// Last observed git branch shown in the footer.
+    git_branch: Option<String>,
+    /// Repository root used for git branch polling.
+    git_repo: Option<PathBuf>,
+}
+
+impl WorkspaceFlow {
+    fn new(git_branch: Option<String>, git_repo: Option<PathBuf>) -> Self {
+        Self {
+            files_autocomplete: FilesAutocomplete::new(8),
+            git_branch,
+            git_repo,
+        }
+    }
 }
 
 struct CommandSendFailure {
@@ -174,7 +203,7 @@ impl App {
             master_session: SessionView::with_footer(footer),
             spinner: None,
             autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
-            files_autocomplete: FilesAutocomplete::new(8),
+            workspace: WorkspaceFlow::new(git_branch, git_repo),
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
             agent_state: AgentRunState::new(),
@@ -184,14 +213,10 @@ impl App {
             agent_ever_connected: true,
             child_exit_watch: None,
             surfaced_oversized_drops: 0,
-            current_model: None,
+            inference: InferenceFlow::default(),
             connected_agent_id: None,
-            model_selector: None,
-            effort_selector: None,
-            current_effort: None,
-            effort_levels: Vec::new(),
-            model_registry: ModelRegistry::default(),
-            resume_selector: None,
+            sessions: SessionsFlow::default(),
+            workflow: WorkflowFlow::default(),
             rewind: RewindFlow::default(),
             subagents: SubagentUi::new(),
             render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
@@ -200,12 +225,7 @@ impl App {
             #[cfg(any(test, feature = "test-harness"))]
             suppress_paint: false,
             selection: None,
-            workflow_auto_continue: false,
-            workflow_completion_nudge: false,
-            git_branch,
-            git_repo,
             last_rendered_lines: Vec::new(),
-            context_stats_requested: false,
             pending_message_recovery: HashMap::new(),
             message_recovery_batches: HashMap::new(),
             pending_stub_recall: HashMap::new(),
@@ -220,10 +240,10 @@ impl App {
     }
 
     pub(super) fn apply_git_branch(&mut self, branch: Option<String>) -> bool {
-        if branch == self.git_branch {
+        if branch == self.workspace.git_branch {
             return false;
         }
-        self.git_branch = branch.clone();
+        self.workspace.git_branch = branch.clone();
         self.master_session.footer.set_git_branch(branch);
         true
     }
@@ -236,7 +256,7 @@ impl App {
         if *in_flight {
             return;
         }
-        let Some(repo) = self.git_repo.clone() else {
+        let Some(repo) = self.workspace.git_repo.clone() else {
             return;
         };
         *in_flight = true;
@@ -263,7 +283,7 @@ impl App {
     fn refresh_files_autocomplete_from_editor(&mut self) {
         let line = self.editor.current_line().to_string();
         let col = self.editor.cursor_col();
-        self.files_autocomplete.update(&line, col);
+        self.workspace.files_autocomplete.update(&line, col);
     }
 }
 
@@ -594,6 +614,9 @@ mod app_subagents_tests;
 #[cfg(test)]
 #[path = "app_workflow_box_width_tests.rs"]
 mod app_workflow_box_width_tests;
+#[cfg(test)]
+#[path = "app_workflow_flow_tests.rs"]
+mod app_workflow_flow_tests;
 #[cfg(test)]
 #[path = "app_chat_session_tests.rs"]
 mod chat_session_tests;

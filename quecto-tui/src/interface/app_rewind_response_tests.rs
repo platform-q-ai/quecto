@@ -261,13 +261,13 @@ async fn response_get_state_populates_model_and_agent_id() {
     let a = h.app_mut();
     respond(a, None, "get_state", true, Some(data), None);
     assert_eq!(
-        a.current_model.as_deref(),
+        a.inference.current_model.as_deref(),
         Some("anthropic/claude-opus-4-5")
     );
     assert_eq!(a.connected_agent_id.as_deref(), Some("worker"));
-    assert!(a.workflow_auto_continue);
-    assert!(a.workflow_completion_nudge);
-    assert!(a.context_stats_requested);
+    assert!(a.workflow.auto_continue);
+    assert!(a.workflow.completion_nudge);
+    assert!(a.sessions.context_stats_requested);
 }
 
 #[tokio::test]
@@ -284,7 +284,7 @@ async fn response_get_state_no_data_is_noop() {
     let mut h = harness().await;
     let a = h.app_mut();
     respond(a, None, "get_state", true, None, None);
-    assert!(a.current_model.is_none());
+    assert!(a.inference.current_model.is_none());
 }
 
 #[tokio::test]
@@ -302,7 +302,7 @@ async fn response_set_workflow_automation_success_and_failure() {
     let a = h.app_mut();
     let data = serde_json::json!({"autoContinue": true, "completionNudge": false});
     respond(a, None, "set_workflow_automation", true, Some(data), None);
-    assert!(a.workflow_auto_continue);
+    assert!(a.workflow.auto_continue);
     assert!(!a.notifications.is_empty());
     respond(
         a,
@@ -329,7 +329,7 @@ async fn response_list_sessions_success_and_failure() {
     let a = h.app_mut();
     let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
     respond(a, None, "list_sessions", true, Some(data), None);
-    assert!(a.resume_selector.is_some());
+    assert!(a.sessions.resume_selector.is_some());
     respond(a, None, "list_sessions", false, None, Some("err"));
     assert!(!a.notifications.is_empty());
 }

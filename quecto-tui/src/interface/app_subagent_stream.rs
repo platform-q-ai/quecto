@@ -115,7 +115,7 @@ impl App {
                         session.footer.set_model(&model);
                     }
                     if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
-                        self.current_model = Some(model);
+                        self.inference.current_model = Some(model);
                     }
                 }
                 if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
@@ -167,9 +167,9 @@ impl App {
                         .and_then(|v| v.as_str())
                         .map(crate::interface::ansi::sanitize_control)
                     {
-                        self.current_model = Some(model);
+                        self.inference.current_model = Some(model);
                     }
-                    self.current_effort = data
+                    self.inference.current_effort = data
                         .get("effort")
                         .and_then(|v| v.as_str())
                         .map(crate::interface::ansi::sanitize_control);
@@ -180,7 +180,7 @@ impl App {
                             .map(crate::interface::ansi::sanitize_control)
                             .collect();
                         if !levels.is_empty() {
-                            self.effort_levels = levels;
+                            self.inference.effort_levels = levels;
                         }
                     }
                 }
@@ -196,7 +196,7 @@ impl App {
                         session.footer.set_effort(Some(level.clone()));
                     }
                     if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
-                        self.current_effort = Some(level.clone());
+                        self.inference.current_effort = Some(level.clone());
                         self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
                     }
                 }

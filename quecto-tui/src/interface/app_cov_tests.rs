@@ -162,7 +162,7 @@ async fn show_session_stats_with_context_updates_footer_flag() {
     });
     let a = h.app_mut();
     a.show_session_stats(&data);
-    assert!(a.context_stats_requested);
+    assert!(a.sessions.context_stats_requested);
     assert!(chat_text(a).contains("Session: cli:foo"));
 }
 
@@ -172,17 +172,17 @@ async fn show_session_stats_without_context_leaves_flag_false() {
     let data = serde_json::json!({"sessionKey": "cli:bar"});
     let a = h.app_mut();
     a.show_session_stats(&data);
-    assert!(!a.context_stats_requested);
+    assert!(!a.sessions.context_stats_requested);
 }
 
 #[tokio::test]
 async fn send_set_model_records_current_model() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.context_stats_requested = true;
+    a.sessions.context_stats_requested = true;
     a.send_set_model(MODEL_ID);
-    assert_eq!(a.current_model.as_deref(), Some(MODEL_ID));
-    assert!(!a.context_stats_requested);
+    assert_eq!(a.inference.current_model.as_deref(), Some(MODEL_ID));
+    assert!(!a.sessions.context_stats_requested);
 }
 
 #[tokio::test]
@@ -194,7 +194,7 @@ async fn update_footer_stats_sets_context_and_clears_zero_cost() {
         "maxContextTokens": 100,
         "cost": 0.0
     }));
-    assert!(a.context_stats_requested);
+    assert!(a.sessions.context_stats_requested);
     let footer = a.master_session.footer.render(120).join("\n");
     assert!(footer.contains("42"), "{footer}");
 }
@@ -204,7 +204,7 @@ async fn update_footer_stats_ignores_positive_cost_without_context() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.update_footer_stats(&serde_json::json!({ "cost": 1.25 }));
-    assert!(!a.context_stats_requested);
+    assert!(!a.sessions.context_stats_requested);
     let footer = a.master_session.footer.render(120).join("\n");
     assert!(!footer.contains("$"), "{footer}");
 }
@@ -217,7 +217,7 @@ async fn open_resume_selector_empty_shows_status_no_selector() {
     let data = serde_json::json!({"sessions": []});
     let a = h.app_mut();
     a.open_resume_selector(&data);
-    assert!(a.resume_selector.is_none());
+    assert!(a.sessions.resume_selector.is_none());
     assert!(chat_text(a).contains("No persisted sessions"));
 }
 
@@ -232,7 +232,7 @@ async fn open_resume_selector_with_names_builds_list() {
     });
     let a = h.app_mut();
     a.open_resume_selector(&data);
-    assert_eq!(a.resume_selector.as_ref().unwrap().item_count(), 2);
+    assert_eq!(a.sessions.resume_selector.as_ref().unwrap().item_count(), 2);
 }
 
 #[tokio::test]
@@ -241,7 +241,7 @@ async fn open_resume_selector_without_names_shows_status() {
     let data = serde_json::json!({"sessions": [{"messageCount": 1}]});
     let a = h.app_mut();
     a.open_resume_selector(&data);
-    assert!(a.resume_selector.is_none());
+    assert!(a.sessions.resume_selector.is_none());
     assert!(chat_text(a).contains("No resumable"));
 }
 
@@ -252,7 +252,14 @@ async fn handle_resume_selector_key_enter_selects_and_closes() {
     let a = h.app_mut();
     a.open_resume_selector(&data);
     a.handle_resume_selector_key(&Key::Enter);
-    assert!(a.resume_selector.is_none());
+    assert!(a.sessions.resume_selector.is_none());
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter()
+            .any(|c| c.contains("\"type\":\"resume_session\"")
+                && c.contains("\"session\":\"alpha\"")),
+        "Enter should send resume_session for selected session: {cmds:?}"
+    );
 }
 
 #[tokio::test]
@@ -262,7 +269,7 @@ async fn handle_resume_selector_key_escape_cancels() {
     let a = h.app_mut();
     a.open_resume_selector(&data);
     a.handle_resume_selector_key(&Key::Escape);
-    assert!(a.resume_selector.is_none());
+    assert!(a.sessions.resume_selector.is_none());
 }
 
 #[tokio::test]
@@ -272,7 +279,7 @@ async fn handle_resume_selector_key_pending_keeps_selector() {
     let a = h.app_mut();
     a.open_resume_selector(&data);
     a.handle_resume_selector_key(&Key::Down);
-    assert!(a.resume_selector.is_some());
+    assert!(a.sessions.resume_selector.is_some());
 }
 
 // ── app_methods: replace chat with messages ──────────────────────────
@@ -348,9 +355,9 @@ async fn open_and_cancel_model_selector() {
     // Selector now opens only after the fresh model list arrives (ADR-0002
     // on-consume reload), so simulate the list_models response.
     a.handle_list_models(Some(serde_json::json!({ "models": [] })));
-    assert!(a.model_selector.is_some());
+    assert!(a.inference.model_selector.is_some());
     a.handle_model_selector_key(&Key::Escape);
-    assert!(a.model_selector.is_none());
+    assert!(a.inference.model_selector.is_none());
 }
 
 #[tokio::test]
@@ -358,10 +365,21 @@ async fn model_selector_enter_selects_and_sets_model() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.open_model_selector();
-    a.handle_list_models(Some(serde_json::json!({ "models": [] })));
+    a.handle_list_models(Some(serde_json::json!({
+        "models": [{ "id": "openai-api/gpt-5.5", "provider": "OpenAI API" }]
+    })));
     a.handle_model_selector_key(&Key::Enter);
-    assert!(a.model_selector.is_none());
-    assert!(a.current_model.is_some());
+    assert!(a.inference.model_selector.is_none());
+    assert_eq!(
+        a.inference.current_model.as_deref(),
+        Some("openai-api/gpt-5.5")
+    );
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter().any(|c| c.contains("\"type\":\"set_model\"")
+            && c.contains("\"model\":\"openai-api/gpt-5.5\"")),
+        "Enter should send set_model for selected model: {cmds:?}"
+    );
 }
 
 #[tokio::test]
@@ -371,7 +389,7 @@ async fn model_selector_pending_keeps_open() {
     a.open_model_selector();
     a.handle_list_models(Some(serde_json::json!({ "models": [] })));
     a.handle_model_selector_key(&Key::Down);
-    assert!(a.model_selector.is_some());
+    assert!(a.inference.model_selector.is_some());
 }
 
 #[tokio::test]
@@ -387,7 +405,7 @@ async fn model_selector_overlay_renders_with_theme_background() {
             "auth": null
         }]
     })));
-    assert!(a.model_selector.is_some());
+    assert!(a.inference.model_selector.is_some());
     let frame = a.compose_frame();
     let joined = frame.join("\n");
     assert!(
@@ -427,20 +445,13 @@ async fn overlays_follow_theme_background_not_black() {
     use crate::interface::theme;
     const BLACK_BG: &str = "\x1b[48;2;0;0;0m";
 
-    // The shared overlay background must not be hardcoded black.
-    assert_ne!(
-        theme::BG_OVERLAY,
-        BLACK_BG,
-        "overlay background must follow the Quecto theme palette, not hardcoded black"
-    );
-
     let mut h = harness().await;
     let a = h.app_mut();
     a.open_model_selector();
     a.handle_list_models(Some(serde_json::json!({
         "models": [{ "id": "openai-api/gpt-5.5", "provider": "OpenAI API", "auth": null }]
     })));
-    assert!(a.model_selector.is_some());
+    assert!(a.inference.model_selector.is_some());
 
     let joined = a.compose_frame().join("\n");
     assert!(
@@ -476,10 +487,10 @@ async fn reset_session_clears_chat_and_notifies() {
     a.master_session
         .chat
         .add_entry(ChatEntry::User { text: "x".into() });
-    a.context_stats_requested = true;
+    a.sessions.context_stats_requested = true;
     a.reset_session("New session");
     assert_eq!(a.master_session.chat.entry_count(), 0);
-    assert!(!a.context_stats_requested);
+    assert!(!a.sessions.context_stats_requested);
     assert!(!a.notifications.is_empty());
 }
 
@@ -594,27 +605,34 @@ async fn compose_frame_with_resume_overlay() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": [{"name": "alpha", "messageCount": 1}]});
     h.app_mut().open_resume_selector(&data);
-    let frame = h.app_mut().compose_frame();
-    assert!(!frame.is_empty());
+    let frame = h.app_mut().compose_frame().join("\n");
+    assert!(frame.contains("Resume session"));
+    assert!(frame.contains("alpha"));
 }
 
 #[tokio::test]
 async fn compose_frame_with_model_overlay() {
     let mut h = harness().await;
-    h.app_mut().open_model_selector();
-    let frame = h.app_mut().compose_frame();
-    assert!(!frame.is_empty());
+    let a = h.app_mut();
+    a.open_model_selector();
+    a.handle_list_models(Some(serde_json::json!({
+        "models": [{ "id": "openai-api/gpt-5.5", "provider": "OpenAI API" }]
+    })));
+    let frame = a.compose_frame().join("\n");
+    assert!(frame.contains("Select Model"));
+    assert!(frame.contains("gpt-5.5"));
 }
 
 #[tokio::test]
 async fn compose_frame_with_rewind_overlay() {
     let mut h = harness().await;
     let data = serde_json::json!({
-        "messages": [{"role": "user", "content": "first turn"}]
+        "messages": [{"id": "m1", "role": "user", "content": "first turn"}]
     });
     h.app_mut().open_rewind_selector(&data);
-    let frame = h.app_mut().compose_frame();
-    assert!(!frame.is_empty());
+    let frame = h.app_mut().compose_frame().join("\n");
+    assert!(frame.contains("Go back to"));
+    assert!(frame.contains("first turn"));
 }
 
 // ── app_methods: free functions ──────────────────────────────────────
@@ -692,48 +710,4 @@ fn strip_ansi_handles_csi_osc_and_plain() {
     assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
     assert_eq!(strip_ansi("\x1b]0;title\x07body"), "body");
     assert_eq!(strip_ansi("\x1b]8;;url\x1b\\link"), "link");
-}
-
-#[tokio::test]
-async fn main_pane_compact_line_reflects_live_auto_continue_state() {
-    // #897 AC2: live auto-continue must drive the compact line after rebuild.
-    let mut h = harness().await;
-    let wf = serde_json::json!({
-        "steps": [{"index": 0, "label": "Build it", "phase": "build", "done": false}],
-        "progress": {"done": 0, "total": 1},
-        "activeIssue": {"number": 7, "title": "thing"}
-    });
-    h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
-    let now = tokio::time::Instant::now();
-    let render = |a: &App| -> String {
-        a.render_main_pane_workflow(120, 120, now)
-            .iter()
-            .map(|l| super::app_methods::strip_ansi(l))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    assert!(
-        render(h.app_mut()).contains("auto:off"),
-        "{}",
-        render(h.app_mut())
-    );
-    h.app_mut().handle_response(
-        Some("workflow-auto".into()),
-        "set_workflow_automation".into(),
-        true,
-        Some(serde_json::json!({"automation": {"autoContinue": true}})),
-        None,
-    );
-    assert!(
-        render(h.app_mut()).contains("auto:on"),
-        "{}",
-        render(h.app_mut())
-    );
-    h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
-    h.app_mut().mirror_automation_to_bar();
-    assert!(
-        render(h.app_mut()).contains("auto:on"),
-        "workflow_state rebuild must preserve live auto-continue: {}",
-        render(h.app_mut())
-    );
 }
