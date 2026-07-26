@@ -732,7 +732,7 @@ async fn main_pane_title_reflects_live_auto_continue_state() {
             .join("\n")
     };
     assert!(
-        render(h.app_mut()).contains("workflow"),
+        render(h.app_mut()).contains("auto:off"),
         "{}",
         render(h.app_mut())
     );
@@ -744,15 +744,15 @@ async fn main_pane_title_reflects_live_auto_continue_state() {
         None,
     );
     assert!(
-        render(h.app_mut()).contains("workflow"),
+        render(h.app_mut()).contains("auto:on"),
         "{}",
         render(h.app_mut())
     );
     h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
     h.app_mut().mirror_automation_to_bar();
     assert!(
-        render(h.app_mut()).contains("workflow"),
-        "workflow_state rebuild must preserve workflow title state: {}",
+        render(h.app_mut()).contains("auto:on"),
+        "workflow_state rebuild must preserve workflow title auto-continue state: {}",
         render(h.app_mut())
     );
 }

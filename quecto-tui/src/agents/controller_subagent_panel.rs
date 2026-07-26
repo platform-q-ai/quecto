@@ -590,11 +590,17 @@ impl App {
             theme::dim(&elapsed),
         );
         if let Some(n) = state.issue_number {
+            let auto = if state.workflow_auto_continue {
+                "auto:on"
+            } else {
+                "auto:off"
+            };
             title.push_str(&format!(
-                " {} {} {}",
+                " {} {} {} {}",
                 theme::dim("·"),
                 theme::accent(&theme::bold(&format!("#{n}"))),
                 theme::dim("workflow"),
+                theme::dim(auto),
             ));
         }
         title

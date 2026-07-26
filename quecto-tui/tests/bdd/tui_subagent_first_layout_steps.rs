@@ -6,8 +6,6 @@
 //! the bottom stack), not internal mechanics.
 
 use super::*;
-use quecto_tui::components::ansi::strip_ansi;
-use quecto_tui::components::utils::visible_width;
 use quecto_tui::protocol::client::Event;
 use quecto_tui::shell::app::tui_harness::{TuiHarness, subagent, subagents_changed};
 
@@ -28,7 +26,7 @@ async fn build(with_subagent: bool, subagent_id: &str) -> TuiHarness {
 }
 
 /// A workflow_state event for `agent` with a `green` current phase at 3/5 and an
-/// active issue (#820), so the compact bar has content to render.
+/// active issue (#820), so the compact title has workflow context to render.
 fn workflow_event(agent: &str) -> Event {
     Event::WorkflowState {
         agent_id: Some(agent.to_string()),
@@ -102,56 +100,27 @@ fn then_master_row(world: &mut TuiWorld) {
     );
 }
 
-#[then("the main pane shows a boxed workflow bar")]
-fn then_main_pane_boxed(world: &mut TuiWorld) {
+#[then(expr = "the main pane title shows compact workflow context for sub-agent {string}")]
+fn then_main_pane_title_shows_workflow_context(world: &mut TuiWorld, id: String) {
     let top = top(world);
     assert!(
-        (top.contains('┌') || top.contains('╭')) && top.contains("Step 4/5"),
-        "the main pane must show a boxed one-line workflow bar (current step n/total), got:\n{top}"
+        top.contains(&format!("{id} · running")) && top.contains("#820 workflow"),
+        "the main pane title must keep compact workflow context, got:\n{top}"
     );
 }
 
-#[then("the main pane shows a workflow status bar aligned to the tool/message content column")]
-fn then_main_pane_status_aligned(world: &mut TuiWorld) {
-    drive(world, |h| {
-        let frame = h.full_frame();
-        let rule = frame
-            .lines()
-            .find(|line| {
-                strip_ansi(line)
-                    .rsplit_once("│ ")
-                    .is_some_and(|(_, segment)| {
-                        !segment.is_empty() && segment.chars().all(|c| c == '─')
-                    })
-            })
-            .expect("workflow status rule should render");
-        let header = frame
-            .lines()
-            .find(|line| line.contains("quecto-tui"))
-            .expect("header should render with the main-pane divider");
-        let divider = header.find('│').expect("header should include divider");
-        let panel_w = visible_width(&header[..divider]);
-        // The workflow status bar must line up with the tool/message content
-        // column (one space after the divider), and its width must equal the
-        // body width — not consume the gutter. Use harness terminal width
-        // (independent source) instead of deriving from frame.
-        let terminal_w = h.terminal_width();
-        let expected = terminal_w - panel_w - 1 - 1; // panel + divider + gutter
-        let stripped_rule = strip_ansi(rule);
-        let rule_segment = stripped_rule
-            .split_once("│ ")
-            .map(|(_, segment)| segment)
-            .expect("workflow status rule should start after divider gutter");
-        assert_eq!(
-            visible_width(rule_segment),
-            expected,
-            "workflow status bar must equal the body/tool width (not consume the gutter), got:\n{frame}"
-        );
-        assert!(
-            stripped_rule.contains("│ ─"),
-            "workflow status bar must start one column after the divider (aligned to tool/message content column), got:\n{frame}"
-        );
-    });
+#[then("the main pane no longer shows the workflow status box")]
+fn then_main_pane_no_workflow_status_box(world: &mut TuiWorld) {
+    let top = top(world);
+    assert!(
+        !top.contains("Step 4/5")
+            && !top.lines().any(
+                |line| line.rsplit_once("│ ").is_some_and(
+                    |(_, segment)| !segment.is_empty() && segment.chars().all(|c| c == '─')
+                )
+            ),
+        "the main pane must omit the separate workflow status box, got:\n{top}"
+    );
 }
 
 #[then("the bottom stack no longer shows the workflow bar")]

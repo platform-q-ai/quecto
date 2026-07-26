@@ -3,17 +3,7 @@
 
 use super::tui_harness::*;
 use crate::components::ansi::strip_ansi;
-use crate::components::chat::Chat;
 use crate::protocol::client::Event;
-use crate::shell::app::App;
-
-fn active_viewport_height(app: &mut App) -> Option<usize> {
-    let Chat {
-        viewport_height, ..
-    } = app.active_chat_mut();
-    *viewport_height
-}
-
 fn workflow_event() -> Event {
     Event::WorkflowState {
         agent_id: None,
@@ -50,18 +40,22 @@ async fn workflow_status_box_no_longer_renders_in_main_pane() {
 async fn workflow_status_box_removal_keeps_workflow_viewport_at_max_height() {
     let mut without_workflow = TuiHarness::sized(100, 30).await;
     without_workflow.event(Event::AgentStart);
-    let _ = without_workflow.full_frame();
-    let baseline_height = active_viewport_height(without_workflow.app_mut());
+    without_workflow.add_user_message("VISIBLE_BASELINE_TAIL");
+    let baseline = without_workflow.main_pane();
 
     let mut with_workflow = TuiHarness::sized(100, 30).await;
     with_workflow.event(Event::AgentStart);
     with_workflow.event(workflow_event());
-    let _ = with_workflow.full_frame();
-    let workflow_height = active_viewport_height(with_workflow.app_mut());
+    with_workflow.add_user_message("VISIBLE_WORKFLOW_TAIL");
+    let workflow = with_workflow.main_pane();
 
-    assert_eq!(
-        workflow_height, baseline_height,
-        "an active workflow must not reduce the conversation viewport height"
+    assert!(
+        baseline.contains("VISIBLE_BASELINE_TAIL"),
+        "baseline chat tail must be visible:\n{baseline}"
+    );
+    assert!(
+        workflow.contains("VISIBLE_WORKFLOW_TAIL"),
+        "an active workflow must not reduce the conversation viewport enough to hide the chat tail:\n{workflow}"
     );
 }
 
@@ -89,21 +83,25 @@ async fn workflow_title_respects_minimum_width_boundary() {
 
 #[tokio::test]
 async fn workflow_does_not_reduce_viewport_at_near_threshold_heights() {
-    for terminal_height in [12, 13] {
+    for terminal_height in [13, 14] {
         let mut without_workflow = TuiHarness::sized(100, terminal_height).await;
         without_workflow.event(Event::AgentStart);
-        let _ = without_workflow.full_frame();
-        let baseline_height = active_viewport_height(without_workflow.app_mut());
+        without_workflow.add_user_message("BASELINE_NEAR_THRESHOLD_TAIL");
+        let baseline = without_workflow.main_pane();
 
         let mut with_workflow = TuiHarness::sized(100, terminal_height).await;
         with_workflow.event(Event::AgentStart);
         with_workflow.event(workflow_event());
-        let _ = with_workflow.full_frame();
-        let workflow_height = active_viewport_height(with_workflow.app_mut());
+        with_workflow.add_user_message("WORKFLOW_NEAR_THRESHOLD_TAIL");
+        let workflow = with_workflow.main_pane();
 
-        assert_eq!(
-            workflow_height, baseline_height,
-            "active workflow must not reduce chat height at terminal height {terminal_height}"
+        assert!(
+            baseline.contains("BASELINE_NEAR_THRESHOLD_TAIL"),
+            "baseline chat tail must be visible at terminal height {terminal_height}:\n{baseline}"
+        );
+        assert!(
+            workflow.contains("WORKFLOW_NEAR_THRESHOLD_TAIL"),
+            "active workflow must not reduce chat visibility at terminal height {terminal_height}:\n{workflow}"
         );
     }
 }

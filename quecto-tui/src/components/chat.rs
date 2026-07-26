@@ -89,7 +89,7 @@ pub struct Chat {
     /// Full line count from the most recent chat render, before viewport scrolling.
     last_render_line_count: usize,
     /// Available chat viewport height, when the parent layout knows it.
-    pub(crate) viewport_height: Option<usize>,
+    viewport_height: Option<usize>,
     /// Global tool expand state (toggled by Ctrl+O).
     pub tool_expanded: bool,
 }
