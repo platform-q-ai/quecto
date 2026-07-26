@@ -314,10 +314,10 @@ async fn selection_uses_left_accent_bar_one_line_tall() {
     );
 }
 
-// ── Main pane: full-width workflow status bar for the selected agent ─────────
+// ── Main pane: title without workflow status box for the selected agent ──────
 
 #[tokio::test]
-async fn main_pane_shows_workflow_status_bar_for_selected_agent() {
+async fn main_pane_omits_workflow_status_box_for_selected_agent() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![subagent(
@@ -331,27 +331,26 @@ async fn main_pane_shows_workflow_status_bar_for_selected_agent() {
     let top = top_region(&mut h);
     let stripped = strip_ansi(&top);
     assert!(
-        stripped.lines().any(|line| {
+        !stripped.lines().any(|line| {
             line.rsplit_once("│ ").is_some_and(|(_, segment)| {
                 !segment.is_empty() && segment.chars().all(|c| c == '─')
             })
         }),
-        "the relocated workflow status bar must render full-width rules in the main pane:\n{top}"
+        "the main pane must not render the old workflow status box rules:\n{top}"
     );
     assert!(
-        top.contains("Step 4/5"),
-        "the workflow status bar must show the current step n/total in the main pane:\n{top}"
+        !top.contains("Step 4/5") && !top.contains('░') && !top.contains('█'),
+        "the old boxed workflow progress line must be omitted so chat can use the space:\n{top}"
     );
     assert!(
         top.contains("#820"),
-        "the main-pane title line must show the selected agent's #issue:\n{top}"
+        "the compact title line still shows the selected agent's #issue:\n{top}"
     );
 }
 
 #[tokio::test]
 async fn main_pane_title_renders_when_agent_has_no_workflow() {
-    // #820 review (Finding 2): the title line must ALWAYS render for the selected
-    // agent; only the boxed workflow bar is conditional on a workflow.
+    // The title line must always render; only workflow details are optional.
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![subagent("worker", "running", None)]));
@@ -369,7 +368,7 @@ async fn main_pane_title_renders_when_agent_has_no_workflow() {
 }
 
 #[tokio::test]
-async fn boxed_workflow_bar_drops_pills_and_hints() {
+async fn main_pane_drops_workflow_pills_hints_and_box() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![subagent(
@@ -383,14 +382,15 @@ async fn boxed_workflow_bar_drops_pills_and_hints() {
     let top = top_region(&mut h);
     assert!(
         !top.contains("Ctrl+Shift+A") && !top.contains("nudge:"),
-        "the relocated workflow bar must DROP the hints line:\n{top}"
+        "the main pane must not spend space on workflow hints:\n{top}"
     );
-    // The pill markers `○`/`●` appear ONLY on the dropped phase-pills line (the
-    // panel rows carry no glyphs and the active caret is `▸`), so their absence
-    // proves the pills line is gone, not just the hints line.
     assert!(
         !top.contains('○') && !top.contains('●'),
-        "the boxed bar must DROP the phase-pills line:\n{top}"
+        "the main pane must not spend space on workflow phase pills:\n{top}"
+    );
+    assert!(
+        !top.contains('─') && !top.contains("Step 4/5"),
+        "the main pane must not render the old workflow status box:\n{top}"
     );
 }
 

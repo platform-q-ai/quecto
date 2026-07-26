@@ -1479,20 +1479,6 @@ fn then_every_tool_rendering_line_fits_viewport(world: &mut TuiWorld) {
     }
 }
 
-fn workflow_rule_lines(frame: &str) -> Vec<String> {
-    frame
-        .lines()
-        .filter(|line| {
-            strip_ansi(line)
-                .rsplit_once("│ ")
-                .is_some_and(|(_, segment)| {
-                    !segment.is_empty() && segment.chars().all(|c| c == '─')
-                })
-        })
-        .map(str::to_string)
-        .collect()
-}
-
 #[given(expr = "a fresh TUI app harness at width {int}")]
 fn given_fresh_harness_at_width(world: &mut TuiWorld, width: usize) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -1544,12 +1530,21 @@ fn when_workflow_state_reports_step(
     });
 }
 
-#[then(expr = "the workflow bar shows {string}")]
-fn then_workflow_bar_shows(world: &mut TuiWorld, expected: String) {
+#[then(expr = "the main pane workflow title shows {string}")]
+fn then_main_pane_workflow_title_shows(world: &mut TuiWorld, expected: String) {
     let pane = drive(world, |h| h.main_pane());
     assert!(
         pane.contains(&expected),
-        "workflow bar should show {expected:?} in main pane, got:\n{pane}"
+        "workflow title should show {expected:?} in main pane, got:\n{pane}"
+    );
+}
+
+#[then(expr = "the main pane omits workflow detail {string}")]
+fn then_main_pane_omits_workflow_detail(world: &mut TuiWorld, unexpected: String) {
+    let pane = drive(world, |h| h.main_pane());
+    assert!(
+        !pane.contains(&unexpected),
+        "workflow detail {unexpected:?} should not render in main pane, got:\n{pane}"
     );
 }
 
@@ -1562,35 +1557,17 @@ fn then_bottom_stack_hides_workflow_text(world: &mut TuiWorld, unexpected: Strin
     );
 }
 
-#[then("every workflow frame row fits the terminal width")]
-fn then_workflow_rows_fit_terminal_width(world: &mut TuiWorld) {
+#[then("every workflow title frame row fits the terminal width")]
+fn then_workflow_title_rows_fit_terminal_width(world: &mut TuiWorld) {
     let expected_width = drive(world, |h| h.terminal_width());
     let frame = drive(world, |h| h.full_frame());
-    let rows = workflow_rule_lines(&frame);
-    assert!(
-        !rows.is_empty(),
-        "workflow rule rows should render:\n{frame}"
-    );
-    for row in rows {
-        let width = visible_width(&row);
+    for row in frame.lines() {
+        let width = visible_width(row);
         assert!(
             width <= expected_width,
-            "workflow row width {width} should fit terminal width {expected_width}:\n{row}\nframe:\n{frame}"
+            "frame row width {width} should fit terminal width {expected_width}:\n{row}\nframe:\n{frame}"
         );
     }
-}
-
-#[then("the workflow bar preserves left padding after the divider")]
-fn then_workflow_bar_preserves_left_padding(world: &mut TuiWorld) {
-    let frame = drive(world, |h| h.full_frame());
-    let row = workflow_rule_lines(&frame)
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| panic!("workflow rule row should render:\n{frame}"));
-    assert!(
-        strip_ansi(&row).contains("│ ─"),
-        "workflow rule should start after the normal gutter/padding, got:\n{row}\nframe:\n{frame}"
-    );
 }
 
 // ── #1050: master history backfill on --socket attach ──────────────────

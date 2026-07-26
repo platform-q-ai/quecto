@@ -439,9 +439,9 @@ impl App {
             version
         )));
 
-        // Sub-agent-first main pane (#820): the selected agent's title line and
-        // boxed single-line workflow bar sit at the top of the body, above the
-        // chat (replacing the removed bottom workflow bar).
+        // Sub-agent-first main pane (#820): the selected agent's title line sits
+        // at the top of the body above the chat. The former boxed workflow bar
+        // is omitted so the conversation viewport keeps the reclaimed height.
         let main_box_width = width;
         let main_pane_workflow = self.render_main_pane_workflow(width, main_box_width, now);
         let workflow_height = main_pane_workflow.len();
