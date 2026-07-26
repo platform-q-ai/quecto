@@ -103,3 +103,92 @@ fn sync_response_can_request_a_follow_up_page() {
     assert!(!d.caught_up);
     assert!(!d.resync);
 }
+
+#[test]
+fn one_malformed_message_does_not_discard_the_whole_sync_delta() {
+    // The pre-typed implementation stored raw JSON and defaulted bad fields at
+    // projection time, so the delta still applied and the revision cursor still
+    // advanced. Strict per-message typing must not regress that.
+    let delta = serde_json::from_value::<SyncDelta>(json!({
+        "epoch": 7,
+        "rev": 12,
+        "messages": [
+            {"id": "bad", "role": "user", "content": 123},
+            {"id": 456, "role": "user", "content": "id is not a string"},
+            {"id": "badcalls", "role": "assistant", "content": "text",
+             "toolCalls": {"not": "an array"}},
+            {"id": "baderr", "role": "tool", "toolCallId": "tc9",
+             "toolName": "bash", "content": "out", "isError": "true"},
+            {"id": "ok", "role": "user", "content": "shown"}
+        ],
+        "nextRev": null,
+        "caughtUp": true,
+        "resync": false
+    }))
+    .expect("a malformed message must not fail the whole delta");
+    assert_eq!(delta.rev, 12);
+
+    let mut t = LedgerTranscript::default();
+    let entries = t.apply_sync_delta(&delta);
+
+    // Malformed text/id fields project as absent, exactly as the raw-JSON
+    // projection did; the valid messages still render.
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, LedgerEntry::User { text } if text == "shown")),
+        "the valid message must still render: {entries:?}"
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, LedgerEntry::Assistant { text } if text == "text")),
+        "a message with a malformed toolCalls field still renders its content: {entries:?}"
+    );
+    assert!(
+        entries.iter().any(
+            |e| matches!(e, LedgerEntry::ToolExecution { tool_call_id, is_error, .. }
+                if tool_call_id == "tc9" && !is_error)
+        ),
+        "a non-bool isError defaults to false rather than failing the delta: {entries:?}"
+    );
+}
+
+#[test]
+fn explicit_null_tool_arguments_render_as_null_not_empty_object() {
+    // Missing arguments and an explicit JSON null were distinct before the
+    // typed DTOs: only a missing field defaulted to "{}".
+    let mut t = LedgerTranscript::default();
+    let entries = t.apply_sync_delta(&delta(
+        vec![json!({"id":"a1","role":"assistant","content":"",
+                    "toolCalls":[{"id":"tc1","name":"bash","arguments":null}]})],
+        false,
+    ));
+    assert!(
+        matches!(&entries[0], LedgerEntry::ToolExecution { args, .. } if args == "null"),
+        "explicit null arguments must not collapse to the missing-field default: {entries:?}"
+    );
+
+    let mut t = LedgerTranscript::default();
+    let entries = t.apply_sync_delta(&delta(
+        vec![json!({"id":"a2","role":"assistant","content":"",
+                    "toolCalls":[{"id":"tc2","function":{"name":"bash","arguments":null}}]})],
+        false,
+    ));
+    assert!(
+        matches!(&entries[0], LedgerEntry::ToolExecution { args, tool_name, .. }
+            if args == "null" && tool_name == "bash"),
+        "nested function arguments follow the same rule: {entries:?}"
+    );
+
+    let mut t = LedgerTranscript::default();
+    let entries = t.apply_sync_delta(&delta(
+        vec![json!({"id":"a3","role":"assistant","content":"",
+                    "toolCalls":[{"id":"tc3","name":"bash"}]})],
+        false,
+    ));
+    assert!(
+        matches!(&entries[0], LedgerEntry::ToolExecution { args, .. } if args == "{}"),
+        "a missing arguments field still defaults to an empty object: {entries:?}"
+    );
+}

@@ -10,6 +10,10 @@ use serde::Deserialize;
 pub struct SyncDelta {
     pub epoch: u64,
     pub rev: u64,
+    // Messages decode leniently, per field and per message. The pre-typed
+    // implementation stored raw JSON and defaulted malformed fields at
+    // projection time, so a single malformed message must never discard an
+    // entire sync delta (which would silently stall the revision cursor).
     #[serde(default)]
     pub messages: Vec<LedgerMessage>,
     pub next_rev: Option<u64>,
@@ -19,82 +23,127 @@ pub struct SyncDelta {
     pub resync: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// A field that tolerates a wrong-typed value by reading as absent/default,
+/// mirroring how the previous raw-JSON projection ignored unusable fields.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Lenient<T>(T);
+
+impl<'de, T: Default + serde::de::DeserializeOwned> Deserialize<'de> for Lenient<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Ok(Self(serde_json::from_value(value).unwrap_or_default()))
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct LedgerMessage {
-    pub id: Option<String>,
-    pub role: Option<String>,
-    pub content: Option<String>,
-    #[serde(default, alias = "tool_calls")]
-    pub tool_calls: Vec<LedgerToolCall>,
-    #[serde(default, alias = "tool_call_id")]
-    pub tool_call_id: Option<String>,
-    #[serde(default, alias = "tool_name")]
-    pub tool_name: Option<String>,
-    #[serde(default, alias = "is_error")]
-    pub is_error: bool,
+    id: Lenient<Option<String>>,
+    role: Lenient<Option<String>>,
+    content: Lenient<Option<String>>,
+    #[serde(alias = "tool_calls")]
+    tool_calls: Lenient<Vec<LedgerToolCall>>,
+    #[serde(alias = "tool_call_id")]
+    tool_call_id: Lenient<Option<String>>,
+    #[serde(alias = "tool_name")]
+    tool_name: Lenient<Option<String>>,
+    #[serde(alias = "is_error")]
+    is_error: Lenient<bool>,
 }
 
 impl LedgerMessage {
+    pub fn id(&self) -> Option<&str> {
+        self.id.0.as_deref()
+    }
+
     pub fn role(&self) -> &str {
-        self.role.as_deref().unwrap_or("")
+        self.role.0.as_deref().unwrap_or("")
     }
 
     pub fn content(&self) -> &str {
-        self.content.as_deref().unwrap_or("")
+        self.content.0.as_deref().unwrap_or("")
+    }
+
+    pub fn tool_calls(&self) -> &[LedgerToolCall] {
+        &self.tool_calls.0
     }
 
     pub fn tool_call_id(&self) -> &str {
-        self.tool_call_id.as_deref().unwrap_or("")
+        self.tool_call_id.0.as_deref().unwrap_or("")
     }
 
     pub fn tool_name(&self) -> &str {
-        self.tool_name.as_deref().unwrap_or("tool")
+        self.tool_name.0.as_deref().unwrap_or("tool")
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.is_error.0
     }
 }
 
-/// Parse recorded tool-call arguments for presentation. Malformed arguments are
-/// simply not pre-parsed; the raw string is still rendered by the caller.
-pub fn parse_tool_args(args: &str) -> Option<serde_json::Value> {
-    serde_json::from_str(args).ok()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct LedgerToolCall {
-    id: Option<String>,
-    name: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_json_string")]
+    id: Lenient<Option<String>>,
+    name: Lenient<Option<String>>,
+    /// Raw argument text. An explicitly-null `arguments` is preserved as the
+    /// string `"null"` rather than collapsing to the missing-field default
+    /// `"{}"`, matching the pre-typed projection.
+    #[serde(deserialize_with = "deserialize_json_text")]
     arguments: Option<String>,
-    function: Option<LedgerFunctionCall>,
+    function: Lenient<Option<LedgerFunctionCall>>,
 }
 
 impl LedgerToolCall {
     pub fn id(&self) -> &str {
-        self.id.as_deref().unwrap_or("")
+        self.id.0.as_deref().unwrap_or("")
     }
 
     pub fn name(&self) -> &str {
         self.name
+            .0
             .as_deref()
-            .or_else(|| self.function.as_ref().and_then(|f| f.name.as_deref()))
+            .or_else(|| self.function.0.as_ref().and_then(|f| f.name.0.as_deref()))
             .unwrap_or("tool")
     }
 
     pub fn arguments(&self) -> String {
         self.arguments
             .clone()
-            .or_else(|| self.function.as_ref().and_then(|f| f.arguments.clone()))
+            .or_else(|| self.function.0.as_ref().and_then(|f| f.arguments.clone()))
             .unwrap_or_else(|| "{}".to_string())
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 struct LedgerFunctionCall {
-    name: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_json_string")]
+    name: Lenient<Option<String>>,
+    #[serde(deserialize_with = "deserialize_json_text")]
     arguments: Option<String>,
+}
+
+/// Read argument text from any JSON value: strings verbatim, everything else as
+/// its JSON encoding. Only invoked when the key is present, so an explicit
+/// `null` yields `Some("null")` while a missing key stays `None`.
+fn deserialize_json_text<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(Some(match value {
+        serde_json::Value::String(text) => text,
+        other => other.to_string(),
+    }))
+}
+
+/// Parse recorded tool-call arguments for presentation. Malformed arguments are
+/// simply not pre-parsed; the raw string is still rendered by the caller.
+pub fn parse_tool_args(args: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(args).ok()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -125,17 +174,4 @@ pub fn supports_sync(value: &serde_json::Value) -> bool {
     serde_json::from_value::<CapabilitySet>(value.clone())
         .is_ok_and(|capability| capability.supports_sync())
         || field("capabilities").is_some_and(|capability| capability.supports_sync())
-}
-
-fn deserialize_optional_json_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
-    Ok(value.map(|value| {
-        value
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_else(|| value.to_string())
-    }))
 }

@@ -32,7 +32,7 @@ impl LedgerTranscript {
             self.order.clear();
         }
         for message in &delta.messages {
-            if let Some(id) = message.id.as_deref().filter(|s| !s.is_empty()) {
+            if let Some(id) = message.id().filter(|s| !s.is_empty()) {
                 let id = id.to_string();
                 if !self.messages.contains_key(&id) {
                     self.order.push(id.clone());
@@ -59,7 +59,7 @@ fn ledger_entries(refs: &[String], responses: &HashMap<String, LedgerMessage>) -
                 });
             }
             "assistant" => {
-                for call in &message.tool_calls {
+                for call in message.tool_calls() {
                     let id = call.id().to_string();
                     if id.is_empty() {
                         continue;
@@ -99,7 +99,7 @@ fn ledger_entries(refs: &[String], responses: &HashMap<String, LedgerMessage>) -
                     }) = entries.get_mut(idx)
                 {
                     *result = Some(content.to_string());
-                    *err = message.is_error;
+                    *err = message.is_error();
                     continue;
                 }
                 if !call_id.is_empty() {
@@ -108,7 +108,7 @@ fn ledger_entries(refs: &[String], responses: &HashMap<String, LedgerMessage>) -
                         tool_name: name,
                         args: String::new(),
                         result: Some(content.to_string()),
-                        is_error: message.is_error,
+                        is_error: message.is_error(),
                     });
                 }
             }
