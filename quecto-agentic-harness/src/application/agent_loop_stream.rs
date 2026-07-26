@@ -28,3 +28,7 @@ pub(super) fn empty_stream_error_message(response: &LlmResponse) -> String {
         _ => "HTTP 503: stream completed without assistant output".to_string(),
     }
 }
+
+#[cfg(test)]
+#[path = "agent_loop_stream_tests.rs"]
+mod agent_loop_stream_tests;

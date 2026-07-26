@@ -248,6 +248,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 
 | Current production file | Target owner |
 |---|---|
+| `application/agent_ledger_payloads.rs` | `protocol` mapper feeding `agents` ledger sync (#1222) |
 | `application/mod.rs` | remove after compatibility shims are unnecessary |
 | `application/model_payloads.rs` | `protocol` mapper feeding `models` |
 | `application/range_accumulator.rs` | `protocol` chunked range assembly feeding `conversation` (#1221) |
@@ -284,8 +285,13 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `interface/app_selection.rs` | `shell` focus/routing until delegated to feature views |
 | `interface/app_stdin.rs` | `conversation` input coordination with `shell` stdin adapter |
 | `interface/app_subagent_feed.rs` | `agents` |
+| `interface/agents/feed.rs` | `agents` pure feed sync state (#1222) |
+| `interface/agents/focus.rs` | `agents` focus constants/state (#1222) |
+| `interface/agents/ledger.rs` | `agents` pure ledger transcript projection (#1222) |
+| `interface/agents/mod.rs` | `agents` module root (#1222) |
+| `interface/agents/roster.rs` | `agents` pure roster/lifecycle policy (#1222) |
+| `interface/agents/ui.rs` | `agents` concrete UI/runtime adapter state (#1222) |
 | `interface/app_subagent_panel.rs` | `agents` |
-| `interface/app_subagent_state.rs` | `agents` |
 | `interface/app_subagent_stream.rs` | `agents` |
 | `interface/app_subagents.rs` | `agents` |
 | `interface/app_submit.rs` | `conversation` |
@@ -310,11 +316,9 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `interface/components/spinner.rs` | `components` (relocate physically to top-level `components/`) |
 | `interface/components/suggestion_list.rs` | `components` (relocate physically to top-level `components/`) |
 | `interface/components/workflow_bar.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/feed_state.rs` | `agents` pure/presentation state |
 | `interface/fuzzy.rs` | `components` helper used by overlays/autocomplete |
 | `interface/keys.rs` | `shell` input mapping primitive |
 | `interface/kitty.rs` | `shell` terminal integration |
-| `interface/ledger_sync.rs` | `agents` pure/presentation state |
 | `interface/mod.rs` | remove/split into `shell`, features, and `components` |
 | `interface/overlay.rs` | `components` overlay primitive |
 | `interface/select_overlay.rs` | `components` overlay primitive |
@@ -327,6 +331,65 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `interface/utils.rs` | split by caller; keep shared UI helpers in `components` |
 | `lib.rs` | `shell` crate composition/export root |
 | `main.rs` | `shell` thin binary entrypoint |
+
+### Parity contract for agents presentation slice (#1222)
+
+Readiness gate for #1222:
+
+- Zero behavior change mandate: passed. #1222 is explicitly a “zero-behaviour-change refactor” and all acceptance criteria are structural/parity-only.
+- Touched observable surfaces: sub-agent roster/lifecycle tracking, source-scoped child roster authority, direct child feed lifecycle and caps, ledger sync epoch/revision/capability transitions, focused-session switching/fallback, retained-session/feed eviction, per-child workflow snapshot stickiness, and synchronized transcript projection. Panel cursor movement, glyphs, layout, elapsed formatting, concrete UDS clients, Tokio tasks, and channel supervision remain presentation/runtime concerns.
+- Existing harnesses: passed. The touched surfaces are covered by subagent roster/feed/selection/panel/workflow-sticky tests, ledger-sync tests, subagent parity/read-only/first-layout BDD, and headless TUI harness tests.
+- Behavioral/refactoring split: passed. The issue does not request a command, protocol, render, or user-visible behavior change.
+- Performance warning: accepted. The replaced specialized code is small BTreeMap/Vec policy over already-owned snapshots and one ledger transcript HashMap/order Vec. Consequence if not recorded: allocation/complexity regressions in roster merge, retained feed eviction, or transcript reconstruction would be undetectable. The extracted policy must keep the same map/vec passes and must not move runtime work into render.
+
+Observable surfaces and required parity:
+
+| Surface | Required identical behavior | Boundary cases | Performance characteristics |
+|---|---|---|---|
+| Warm sub-agent feed startup and authority | A socket-backed agent gets one warm direct feed with `get_state` then `sync(epoch=0,sinceRev=0)`; capability alone never makes it authoritative; only a valid sync delta promotes authority. | No socket/invalid socket; first feed vs existing feed; sync-capable vs legacy child; capability before/after pending revision. | One feed entry per retained agent up to cap; no reconnect when a feed exists; no render-loop work. |
+| Ledger sync state | Ledger hints update epoch/freshness; sync is requested only after capability is known; caught-up deltas clear pending revision; partial deltas continue from `nextRev`; stale epoch deltas without `resync` are ignored; `resync` replaces stale transcript. | Epoch match/mismatch; `resync=true/false`; caught-up vs not caught-up; empty/one/many messages; duplicate ids; stub upsert. | Same O(messages) transcript upsert using one id map plus one order vector; no extra command allocation beyond the existing sync command. |
+| Source-scoped roster authority | Master snapshots own roots; direct child feeds own only their source subtree; direct metadata survives later master polls; a child feed cannot hijack/reparent unrelated roots; descendants introduced in one event are accepted recursively. | Empty master snapshot; empty source snapshot; existing root hijack attempt; grandchild discovered with parent in same event; source subtree removal; unknown parent treated as root for display. | Same BTreeMap snapshot merge and ancestor carry-over; no background task or channel in the policy portion. |
+| Lifecycle, optimistic spawn, and retention | Running/starting count as active; timers freeze on idle/error/exited and resume on running; exited rows are retained during grace and while siblings are active; unconfirmed optimistic spawns survive omitting snapshots only within grace; confirmed omitted rows drop. | Empty/one/many agents; idle vs running vs exited; expired vs recent exit; active sibling vs quiescent batch; duplicate spawn ToolStart for confirmed id. | Same one-pass status scan for active siblings and retain pass for GC; no extra retained-session/feed capacity. |
+| Focus and active-target fallback | `Tab`/panel navigation moves highlight without switching until commit; selecting a child ensures/reuses its session and feed, seeds workflow from snapshot, and refreshes stale authoritative sync; if the active child disappears, focus falls back to master. | Master row; first/last rows; missing selected session; stale authoritative feed; warm unsynced feed; active child removed. | No new allocation on already-existing active-session render path; retained sessions and warm feeds remain bounded by the existing cap. |
+| Workflow snapshot stickiness | Per-subagent workflow snapshots remain sticky through workflowless polls and transient empty live events; real progress updates still advance; genuine end/reset clears. | Snapshot `0/N`; transient `0/0`; active issue without real progress; workflowless `get_subagents`; direct `get_state` snapshot. | Same snapshot copy into tracked entry/session only on accepted updates. |
+| Synchronized transcript projection | Once a feed is authoritative, legacy live child events no longer duplicate ledger-projected chat, while get-message recovery and deferred notes preserve the current visible transcript behavior. | Authoritative vs warm feed; `get_messages` early return; tool calls/results; user/assistant messages; suppressed tool boxes. | Ledger reconstruction remains one ordered projection over the transcript; no Tokio/runtime types in pure ledger state. |
+
+Review-time structural checks for #1222. These are reviewer-performed
+inspections, not executable guardrails: the architecture tests cited below
+enforce documentation inventory and heuristic parsing/DTO ratchets only, so
+none of the following are mechanically re-checked on later changes.
+
+- Pure agents policy modules contain no Tokio handles/channels, terminal/widget types, concrete client, or raw JSON.
+- Runtime feed ownership (task handle and command channel) is separated from feed synchronization state *at construction only*: `FeedState` still stores both flattened, and `App` mutates sync fields through it directly. Nothing prevents a new sync field being added straight to `FeedState`.
+- `App` delegates migrated roster/feed/ledger/focus behavior to the agents module without introducing dual writes.
+- No deleted child backfill/reconcile path is resurrected.
+- Existing subagent, ledger, parity, layout, and read-only tests remain green.
+
+Approved parity contract: all readiness-gate items are resolved; no `__UNRESOLVED__` markers remain.
+
+Deletion ledger for #1222 refactor:
+
+| Deleted/replaced site | Invariant enforced before | New owner / evidence |
+|---|---|---|
+| `interface/app.rs` inline `SubagentUi` owner state | Sub-agent tracked rows, sessions, feeds, focused pane, direct-event fan-in, and active target live in one owner group. | `interface/agents/ui.rs` owns `SubagentUi`, `SessionView`, concrete feed runtime state, and the runtime-to-chat adapter. Existing `tui_list_render_state` BDD plus `cargo test -p quecto-tui --lib app_subagent_panel_tests` keep the owner-group/session behavior pinned. |
+| `interface/app.rs` inline `SessionView` construction | Child/master sessions use identical footer/history/chat/deferred-note initialization. | `interface/agents/ui.rs::SessionView::{new,with_footer}` carries the initializer unchanged; pinned by `app_subagent_panel_tests`, `app_paged_history_tests`, and TUI sub-agent parity BDD. |
+| `interface/app.rs` inline `Focus` and panel/retention constants | `Tab` focus model, panel width, and retained-session cap stay stable. | `interface/agents/focus.rs` owns `Focus`, `SUBAGENT_PANEL_WIDTH`, and `MAX_RETAINED_SESSIONS`; pinned by focus parity tests, sub-agent layout BDD, and `retained_sessions_and_warm_feeds_evict_oldest_non_active_beyond_cap`. |
+| `interface/app_subagent_state.rs` | Lifecycle status classification, elapsed timer freeze/resume, exited grace GC, optimistic marker retention, and workflow/parent stickiness. | `interface/agents/roster.rs` owns generic `TrackedSubagent`, `RosterInfo`, lifecycle updates, GC and deadline policy. Existing subagent tests plus new characterization tests pin the same lifecycle/retention edges. |
+| `interface/app_subagents.rs` hand-rolled source-scoped snapshot merge | Master snapshots own roots; direct feeds own only their source subtree; anti-hijack and recursive descendant acceptance; parent carry-over for surviving descendants. | `interface/agents/roster.rs::apply_roster_snapshot` owns the merge policy. `App::update_subagent_bar_from_source` sanitizes/socket-filters then delegates once. Pinned by `app_subagent_roster_authority_tests`, `app_subagents_tests`, and `active_child_removed_by_its_source_feed_falls_back_to_master_only`. |
+| `interface/feed_state.rs` flattened feed sync state | Warm feed is non-authoritative until sync delta; epoch/rev/freshness/capability/pending/transcript fields move together. | `interface/agents/feed.rs::FeedSyncState` owns pure feed synchronization state; `interface/agents/ui.rs::FeedState` separately wraps runtime `cmd_tx`/task handle. `app_subagent_feed.rs` constructs from `FeedRuntime` + `FeedSyncState`; pinned by ledger tests and warm-start characterization. |
+| `interface/ledger_sync.rs` raw JSON transcript state | Sync deltas upsert by message id, preserve first order slot, support resync clearing, project user/assistant/tool entries, and parse sync capability. | `application/agent_ledger_payloads.rs` provides typed DTOs; `interface/agents/ledger.rs` owns typed `LedgerTranscript` and pure `LedgerEntry` projection. `interface/agents/ui.rs` adapts `LedgerEntry` to `ChatEntry` at the presentation boundary. Pinned by `ledger_sync_tests` and duplicate-id characterization. |
+| Call sites that used old module paths | Same authority/path/type behavior, with no dual writes. | Mechanical path updates point to `interface::agents::{feed,ledger,ui,roster}`. Pre-existing tests were not semantically changed; only expected type/module paths were updated where the extracted owner moved. |
+
+Parity evidence recorded during #1222 implementation:
+
+| Parity class / surface | Behaviour or claim | Evidence | Verdict |
+|---|---|---|---|
+| Frozen characterization suite | Roster/source authority, warm-feed startup, retained feed/session cap, ledger no-op hints, caught-up sync, duplicate-id transcript upsert, active-child fallback, and authoritative ledger projection preserve behavior. | `cargo test -p quecto-tui --lib app_agents_characterization_tests` passed after refactor. Mutation evidence before freeze killed M1–M15. The ledger projection test needed a mechanical type adaptation from `ChatEntry` to pure `LedgerEntry` after extraction; follow-up mutations M16/M17 against `interface/agents/ledger.rs` both failed the adapted test. | PASS |
+| Existing targeted unit suites | Existing subagent, ledger, workflow-stickiness, panel/session, and roster-authority behavior remains unchanged. | Passed: `cargo test -p quecto-tui --lib` (1642 tests); explicit targeted runs of `app_ledger_sync_tests`, `ledger_sync_tests`, `app_subagent_roster_authority_tests`, `app_subagents_tests`, `app_subagent_panel_tests`, and `app_subagent_workflow_sticky_tests`. Existing tests changed only for mechanical module/type moves (`feed_state`/`ledger_sync` into `interface::agents::*`, plus typed `LedgerEntry` projection). | PASS |
+| Visual / rendered frames | Panel-first layout, read-only marker, and sub-agent session parity render identical user-visible surfaces. | `cd quecto-tui && QUECTO_TAG=tui cargo test --features test-harness --test bdd` passed 28 TUI features / 175 scenarios, including `tui_subagent_first_layout`, `tui_subagent_readonly_marker`, and `tui_subagent_session_parity`. | PASS |
+| Architecture policy | Raw JSON and wire DTO parsing sites do not grow; pure agents policy has no Tokio handles/channels, terminal/widget types, or concrete client; runtime feed ownership remains separated. | `cargo test -p quecto-agentic-harness --test architecture tui_interface_raw_json_parsing_sites_do_not_grow -- --exact` and `cargo test -p quecto-agentic-harness --test architecture tui_wire_dto_usage_does_not_grow -- --exact` passed. `grep` over `interface/agents/{feed,roster,ledger,focus}.rs` found no channels, task handles, concrete client, terminal/widget types, or `serde_json`; only `tokio::time::Instant` remains in roster lifecycle timestamps. Caveat on the ratchets: both counters are heuristic — the raw-JSON counter matches literal `.get("`/`.pointer("` and accessor+`and_then` lines, so `serde_json::from_str`/`from_value` and dynamic `value.get(key)` in `application/agent_ledger_payloads.rs` are not counted; the wire-DTO counter matches `Command::`/`Event::`/`infrastructure::client` lines, so unqualified DTO uses after a single grouped import are not counted. They confirm no growth in the shapes they measure, not the absence of raw JSON parsing. Runtime `cmd_tx`/task handle live in `interface/agents/ui.rs::FeedRuntime`, separate from `FeedSyncState`, but are re-flattened into `FeedState` (see the structural-check caveat above). | PASS |
+| Performance parity (source inspection only; no enforcing check) | Replaced specialized code keeps the same asymptotic passes and allocation boundaries. | Roster snapshot merge still builds one `BTreeMap` of candidates/incoming/new map and one parent carry-over queue in `apply_roster_snapshot`; no render-loop work or background task moved into policy. Ledger transcript still uses one `HashMap` plus one ordered `Vec` and applies deltas in O(messages). Retention still evicts through the existing session-order vector and active-id skip. Warm feeds remain bounded by `MAX_RETAINED_SESSIONS`. | PASS |
+| Quantitative / formatting / lint | File-size cap and strict local checks remain green. | Largest new agents file is `interface/agents/roster.rs` at 294 lines; `app.rs` dropped from 741 to 617 lines. Overall changed-file line count is +884 (1437 insertions, 553 deletions) including 310 lines of new characterization tests, 203 lines of typed ledger DTOs, and the parity/deletion documentation below. `cargo fmt --check` and `cargo clippy -p quecto-tui --lib -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines` passed. | PASS |
 
 ### Inter-issue sequencing
 

@@ -4,6 +4,7 @@
 //! It must not perform runtime I/O and must not depend on infrastructure or
 //! interface code.
 
+pub mod agent_ledger_payloads;
 pub mod model_payloads;
 pub mod range_accumulator;
 pub mod session_payloads;

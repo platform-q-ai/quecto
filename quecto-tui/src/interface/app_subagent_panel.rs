@@ -217,7 +217,7 @@ impl App {
 
     fn refresh_synced_feed_for_focus(&mut self, id: &str) {
         let stale = self.subagents.feeds.get(id).is_some_and(|feed| {
-            feed.authority == crate::interface::feed_state::FeedAuthority::SyncedAuthoritative
+            feed.authority == crate::interface::agents::feed::FeedAuthority::SyncedAuthoritative
                 && feed
                     .last_fresh_at
                     .is_none_or(|fresh| fresh.elapsed().as_secs() > 0)
@@ -235,7 +235,7 @@ impl App {
 
     pub(super) fn is_synced_authoritative_feed(&self, id: &str) -> bool {
         self.subagents.feeds.get(id).is_some_and(|feed| {
-            feed.authority == crate::interface::feed_state::FeedAuthority::SyncedAuthoritative
+            feed.authority == crate::interface::agents::feed::FeedAuthority::SyncedAuthoritative
         })
     }
 
