@@ -1,5 +1,5 @@
 use super::*;
-use crate::infrastructure::warn_capture::{
+use crate::shell::warn_capture::{
     install_warn_capture, oversized_outbound_warn_count, oversized_warn_count,
 };
 use tokio::io::AsyncWriteExt;

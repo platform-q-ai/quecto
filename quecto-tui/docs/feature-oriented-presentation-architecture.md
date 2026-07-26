@@ -232,7 +232,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `workflow` | Workflow bar unit tests, workflow sticky tests, workflow box width tests, workflow-state harness coverage. | Add projection/control characterization for workflow automation toggles and stale workflow-state suppression before moving controls out of `App`. |
 | `inference` | Model selector, effort selector, model focus, effort tests. | Add mapper-backed coverage for model discovery/fallback and effort changes once #1220 provides typed feature mapping. |
 | `workspace` | Git tests, workspace file tests, autocomplete/file mention BDD and unit tests. | Before moving workspace coordination, pin Git context refresh, ignored-file handling, file preview boundaries, and autocomplete source precedence. |
-| `components` | Widget unit tests plus render/cache/list/markdown/table/spacing BDD coverage. | Before relocating `interface/components/` to top-level `components/`, run the existing render characterization and add missing edge cases for any widget whose public module path changes. |
+| `components` | Widget unit tests plus render/cache/list/markdown/table/spacing BDD coverage. | Before changing top-level `components/`, run the existing render characterization and add missing edge cases for any widget whose public module path changes. |
 
 ### Dependency rules for migration
 
@@ -256,14 +256,14 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `domain/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221) |
 | `domain/mod.rs` | remove vestigial placeholder; recreate only for invariant-bearing shared values if needed |
 | `domain/turn_recovery.rs` | `conversation` end-of-turn recovery trigger and batch atomicity (#1221) |
-| `infrastructure/child_watch.rs` | `shell` runtime supervision |
+| `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `infrastructure/client.rs` | `protocol` |
 | `infrastructure/mod.rs` | remove after adapter modules move |
-| `infrastructure/process.rs` | `shell` runtime adapter |
-| `infrastructure/render.rs` | `shell` terminal/render runtime adapter |
-| `infrastructure/signals.rs` | `shell` runtime adapter |
-| `infrastructure/terminal.rs` | `shell` terminal adapter |
-| `infrastructure/warn_capture.rs` | `shell` diagnostics/runtime adapter |
+| `shell/process.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
+| `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
+| `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
+| `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
+| `shell/warn_capture.rs` | `shell` diagnostics/runtime adapter (relocated, #1257 Phase 1) |
 | `infrastructure/workspace_files.rs` | `workspace` |
 | `interface/app.rs` | `shell` composition root plus state delegated to features |
 | `interface/app_commands.rs` | `shell` top-level command routing |
@@ -301,28 +301,29 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `interface/app_workflow.rs` | `workflow` flow owner |
 | `interface/app_workspace.rs` | `workspace` flow owner |
 | `interface/ansi.rs` | `components` rendering primitive |
-| `interface/cli.rs` | `shell` CLI entry |
-| `interface/component.rs` | `components` shared traits/primitives |
-| `interface/components/autocomplete.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/chat.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/chat_render.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/chat_stub.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/editor.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/effort_selector.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/files_autocomplete.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/footer.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/list_navigator.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/list_rows.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/markdown.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/mod.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/model_selector.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/notification.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/select_list.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/spinner.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/suggestion_list.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/components/workflow_bar.rs` | `components` (relocate physically to top-level `components/`) |
-| `interface/fuzzy.rs` | `components` helper used by overlays/autocomplete |
-| `interface/keys.rs` | `shell` input mapping primitive |
+| `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
+| `components/component.rs` | `components` shared traits/primitives (relocated, #1257 Phase 1) |
+| `components/autocomplete.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/chat.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/chat_render.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/chat_stub.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/editor.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/effort_selector.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/files_autocomplete.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/footer.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/list_navigator.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/list_rows.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/markdown.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/mod.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/model_selector.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/notification.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/select_list.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/spinner.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/suggestion_list.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/workflow_bar.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/fuzzy.rs` | `components` helper used by overlays/autocomplete (relocated, #1257 Phase 1) |
+| `shell/mod.rs` | `shell` module root (added, #1257 Phase 1) |
+| `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
 | `interface/kitty.rs` | `shell` terminal integration |
 | `interface/mod.rs` | remove/split into `shell`, features, and `components` |
 | `interface/overlay.rs` | `components` overlay primitive |

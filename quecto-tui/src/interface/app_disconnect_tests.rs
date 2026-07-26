@@ -4,7 +4,7 @@
 //! carries the child's exit diagnosis.
 
 use super::tui_harness::TuiHarness;
-use crate::interface::component::Component;
+use crate::components::component::Component;
 
 /// #1047 AC2: once connected, the persistent left panel must survive an agent
 /// disconnect (shown in a "disconnected" state) rather than vanishing, so the
@@ -63,9 +63,9 @@ async fn stream_closed_path_reports_real_child_exit_detail() {
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("spawn aborting child");
-    app.set_child_exit_watch(crate::infrastructure::child_watch::watch_child(
+    app.set_child_exit_watch(crate::shell::child_watch::watch_child(
         child,
-        crate::infrastructure::child_watch::StderrTail::default(),
+        crate::shell::child_watch::StderrTail::default(),
     ));
 
     app.handle_agent_stream_closed().await;
@@ -83,7 +83,7 @@ async fn stream_closed_path_reports_real_child_exit_detail() {
 /// the process dies, and without this every recurrence is undiagnosable.
 #[tokio::test]
 async fn disconnect_diagnostics_include_drained_stderr_tail() {
-    use crate::infrastructure::child_watch::{StderrTail, watch_child};
+    use crate::shell::child_watch::{StderrTail, watch_child};
 
     let mut h = TuiHarness::new().await;
 
@@ -98,7 +98,7 @@ async fn disconnect_diagnostics_include_drained_stderr_tail() {
         .expect("spawn aborting child");
     let stderr = child.stderr.take().expect("child stderr");
     let tail = StderrTail::default();
-    crate::interface::cli::spawn_stderr_drain(tokio::io::BufReader::new(stderr), tail.clone());
+    crate::shell::cli::spawn_stderr_drain(tokio::io::BufReader::new(stderr), tail.clone());
     let watch = watch_child(child, tail.clone());
     // Deliberately NO wait for the drain here: the disconnect path itself
     // must synchronize on drain completion, or the panic message is

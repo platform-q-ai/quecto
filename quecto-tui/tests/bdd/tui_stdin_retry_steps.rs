@@ -10,8 +10,8 @@
 
 use super::*;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
-use quecto_tui::interface::keys::{Key, parse_key};
 use quecto_tui::interface::stdin_buffer::StdinBuffer;
+use quecto_tui::shell::keys::{Key, parse_key};
 
 // ── Background ────────────────────────────────────────────────────────────
 

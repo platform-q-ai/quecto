@@ -9,8 +9,8 @@ pub(crate) fn build_model_selector_overlay(
         selector.render(content_width)
     })
 }
-use crate::interface::components::model_selector::{ModelEntry, ModelSelector};
-use crate::interface::components::select_list::{SelectItem, SelectList};
+use crate::components::model_selector::{ModelEntry, ModelSelector};
+use crate::components::select_list::{SelectItem, SelectList};
 
 fn sample_selector() -> SelectList {
     SelectList::new(

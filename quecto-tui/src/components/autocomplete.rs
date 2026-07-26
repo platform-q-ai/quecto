@@ -2,11 +2,11 @@
 //!
 //! Provides fuzzy-matched suggestions for slash commands and model names.
 
-use crate::interface::component::Component;
-use crate::interface::components::list_rows::{DescriptionMode, ListRow};
-use crate::interface::components::suggestion_list::SuggestionList;
-use crate::interface::fuzzy::fuzzy_filter;
-use crate::interface::keys::Key;
+use crate::components::component::Component;
+use crate::components::fuzzy::fuzzy_filter;
+use crate::components::list_rows::{DescriptionMode, ListRow};
+use crate::components::suggestion_list::SuggestionList;
+use crate::shell::keys::Key;
 
 /// A slash command definition.
 #[derive(Debug, Clone)]

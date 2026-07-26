@@ -2,9 +2,9 @@
 
 use crate::TuiWorld;
 use cucumber::{given, then, when};
+use quecto_tui::components::chat::{Chat, ChatEntry};
+use quecto_tui::components::component::Component;
 use quecto_tui::interface::ansi::strip_ansi;
-use quecto_tui::interface::component::Component;
-use quecto_tui::interface::components::chat::{Chat, ChatEntry};
 
 const ENTRY_COUNT: usize = 200;
 const VIEWPORT_HEIGHT: usize = 8;

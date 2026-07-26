@@ -6,10 +6,10 @@
 //! preserving (or clamping) the selection; the components differ only by how
 //! they *build* suggestions and style their rows.
 
-use crate::interface::components::autocomplete::{AutocompleteResult, Suggestion};
-use crate::interface::components::list_navigator::ListNavigator;
-use crate::interface::components::list_rows::{DescriptionMode, ListRow, render_windowed};
-use crate::interface::keys::Key;
+use crate::components::autocomplete::{AutocompleteResult, Suggestion};
+use crate::components::list_navigator::ListNavigator;
+use crate::components::list_rows::{DescriptionMode, ListRow, render_windowed};
+use crate::shell::keys::Key;
 
 /// Shared selection/window state for a suggestion dropdown.
 #[derive(Debug)]

@@ -18,11 +18,11 @@ use super::Focus;
 use super::app_methods::strip_ansi;
 use super::app_selection::{SelectionAnchor, TextSelection};
 use super::keys::Key;
+use crate::components::chat::ChatEntry;
+use crate::components::notification::NotifyLevel;
+use crate::components::spinner::Spinner;
 use crate::infrastructure::client::{Client, Event};
-use crate::infrastructure::terminal::Terminal;
-use crate::interface::components::chat::ChatEntry;
-use crate::interface::components::notification::NotifyLevel;
-use crate::interface::components::spinner::Spinner;
+use crate::shell::terminal::Terminal;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
 

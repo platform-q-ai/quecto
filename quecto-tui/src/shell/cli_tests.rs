@@ -215,7 +215,7 @@ fn agent_socket_timeout_message_flows_through_failure_formatter() {
 
 #[test]
 fn stderr_context_redacts_common_secret_shapes() {
-    let tail = crate::infrastructure::child_watch::StderrTail::default();
+    let tail = crate::shell::child_watch::StderrTail::default();
     remember_stderr_line(
         &tail,
         "Authorization: Bearer sk-ant-secret-token api_key=sk-test-secret-token",

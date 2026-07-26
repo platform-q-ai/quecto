@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
-use crate::interface::component::Component;
-use crate::interface::components::select_list::SelectList;
+use crate::components::component::Component;
+use crate::components::select_list::SelectList;
 use crate::interface::theme;
 
 /// Time window for idle double-Escape to open the rewind selector.

@@ -33,7 +33,7 @@ impl TuiHarness {
     /// Whether any notification is currently visible, rendered to text via the
     /// real notification stack so tests can assert the message content.
     pub fn notification_text(&mut self) -> String {
-        use crate::interface::component::Component;
+        use crate::components::component::Component;
         let w = self.width;
         self.app.notifications.render(w).join("\n")
     }
@@ -67,7 +67,7 @@ impl TuiHarness {
     /// stream-closed path (which reads the exit diagnosis from it).
     pub async fn agent_stream_closed_with_child_watch(
         &mut self,
-        watch: crate::infrastructure::child_watch::ChildWatch,
+        watch: crate::shell::child_watch::ChildWatch,
     ) {
         self.app.set_child_exit_watch(watch);
         self.app.handle_agent_stream_closed().await;

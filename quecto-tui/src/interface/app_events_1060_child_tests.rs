@@ -3,13 +3,13 @@
 //!
 //! Loaded from `app.rs` via `#[path = "app_events_1060_child_tests.rs"]`.
 
+use crate::components::chat::ChatEntry;
+use crate::components::component::Component;
 use crate::infrastructure::client::Event;
 use crate::interface::ansi::strip_ansi;
 use crate::interface::app::App;
 use crate::interface::app::app_events::recovered_chat_entries;
 use crate::interface::app::tui_harness::{TuiHarness, subagent, subagents_changed};
-use crate::interface::component::Component;
-use crate::interface::components::chat::ChatEntry;
 
 fn chat_text(app: &mut App) -> String {
     app.master_session

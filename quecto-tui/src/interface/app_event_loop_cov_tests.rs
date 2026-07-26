@@ -1,5 +1,5 @@
 use super::tui_harness::TuiHarness;
-use crate::interface::component::Component;
+use crate::components::component::Component;
 
 async fn harness() -> TuiHarness {
     TuiHarness::new().await
@@ -73,7 +73,7 @@ async fn files_autocomplete_loaded_files_are_accepted_by_tab_completion() {
         .files_autocomplete
         .apply_loaded_files(vec!["first.rs".into(), "src/other.rs".into()]);
     a.refresh_files_autocomplete_from_editor();
-    a.handle_key(crate::interface::keys::Key::Tab);
+    a.handle_key(crate::shell::keys::Key::Tab);
 
     assert_eq!(a.editor.text(), "open @first.rs ");
 }

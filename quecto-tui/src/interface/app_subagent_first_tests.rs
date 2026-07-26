@@ -74,7 +74,7 @@ fn top_region(h: &mut TuiHarness) -> String {
 fn session_bar<'a>(
     app: &'a mut super::App,
     id: &str,
-) -> &'a crate::interface::components::workflow_bar::WorkflowBarState {
+) -> &'a crate::components::workflow_bar::WorkflowBarState {
     &app.subagents.sessions.get(id).unwrap().workflow_bar
 }
 

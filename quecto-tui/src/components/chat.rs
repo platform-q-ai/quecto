@@ -1,7 +1,7 @@
 //! Chat display component — renders conversation history.
 
-use crate::interface::component::Component;
-use crate::interface::components::markdown::Markdown;
+use crate::components::component::Component;
+use crate::components::markdown::Markdown;
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width, wrap_text};
 

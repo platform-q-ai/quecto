@@ -105,9 +105,7 @@ impl App {
             .iter()
             .rev()
             .find_map(|e| match e {
-                crate::interface::components::chat::ChatEntry::Assistant { text, .. } => {
-                    Some(text.clone())
-                }
+                crate::components::chat::ChatEntry::Assistant { text, .. } => Some(text.clone()),
                 _ => None,
             })
             .unwrap_or_default()
@@ -221,8 +219,8 @@ impl App {
 pub(crate) fn recovered_chat_entries(
     refs: &[String],
     responses: &std::collections::HashMap<String, serde_json::Value>,
-) -> Vec<crate::interface::components::chat::ChatEntry> {
-    use crate::interface::components::chat::ChatEntry;
+) -> Vec<crate::components::chat::ChatEntry> {
+    use crate::components::chat::ChatEntry;
     let mut entries = Vec::new();
     let mut tools = std::collections::HashMap::<String, usize>::new();
     let mut suppressed_calls = std::collections::HashSet::<String>::new();
@@ -342,7 +340,7 @@ pub(crate) fn recovered_chat_entries(
 #[cfg(test)]
 mod recovery_cov_tests {
     use super::*;
-    use crate::interface::components::chat::ChatEntry;
+    use crate::components::chat::ChatEntry;
 
     #[test]
     fn recovered_chat_entries_handles_suppressed_calls_errors_and_unknown_roles() {

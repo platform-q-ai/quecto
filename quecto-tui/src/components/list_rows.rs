@@ -5,7 +5,7 @@
 //! dim `(sel/total)` indicator on overflow. Windowing AND the indicator live
 //! here ONCE; surfaces differ only via indent, [`DescriptionMode`], [`ListRow`].
 
-use crate::interface::components::list_navigator::ListNavigator;
+use crate::components::list_navigator::ListNavigator;
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width};
 

@@ -2,7 +2,7 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
-**Version `0.70.20` (pre-1.0).** The TUI is a UDS bus client of the harness: the
+**Version `0.70.21` (pre-1.0).** The TUI is a UDS bus client of the harness: the
 wire protocol and session ownership live in `quecto`, so most breaking risk is
 upstream. This crate stays on `0.y` until feature-oriented presentation boundaries and
 public surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
@@ -163,11 +163,12 @@ alias for `/help`.
 
 ## Notes
 
-- The library crate exposes only Clean Architecture layer modules
-  (`application`, `domain`, `infrastructure`, `interface`). Internal TUI modules
-  are reached through those layers, e.g. `quecto_tui::infrastructure::client` or
-  `quecto_tui::interface::app`; root-level `quecto_tui::client`-style shims are
-  intentionally not part of the public API.
+- During the feature-oriented migration, the library crate exposes the
+  top-level `components` and `shell` modules alongside the temporary
+  compatibility layers `application`, `domain`, `infrastructure`, and
+  `interface`. Internal TUI modules are reached through these owners, e.g.
+  `quecto_tui::shell::cli` or `quecto_tui::interface::app`; root-level
+  `quecto_tui::client`-style shims are intentionally not part of the public API.
 - Auto-discovered socket paths are validated and must be real Unix sockets under
   canonical `/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`, or `$HOME` roots.
 - On exit, `quecto-tui` terminates the spawned agent process group so child

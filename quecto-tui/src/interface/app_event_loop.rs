@@ -115,7 +115,7 @@ impl App {
         self.request_master_attach_backfill();
 
         // Set up SIGWINCH handler.
-        let mut resize_rx = crate::infrastructure::signals::sigwinch_stream().await;
+        let mut resize_rx = crate::shell::signals::sigwinch_stream().await;
 
         // Set up stdin reader (async, byte-level).
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(64);
@@ -478,7 +478,7 @@ impl App {
                 // Suspend (Ctrl+Z).
                 self.kitty.cleanup();
                 self.terminal.show_cursor();
-                crate::infrastructure::signals::suspend();
+                crate::shell::signals::suspend();
                 // Resumed — re-enter raw mode.
                 self.terminal.enter_raw_mode();
                 self.terminal.hide_cursor();

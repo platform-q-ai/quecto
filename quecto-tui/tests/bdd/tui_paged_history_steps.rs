@@ -9,7 +9,7 @@
 use super::*;
 use quecto_tui::infrastructure::client::Event;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
-use quecto_tui::interface::keys::Key;
+use quecto_tui::shell::keys::Key;
 
 /// Per-scenario paged-history fixture stored on the World.
 #[derive(Debug, Default)]

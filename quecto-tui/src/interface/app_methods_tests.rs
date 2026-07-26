@@ -2,9 +2,9 @@
 
 use super::app_methods;
 use super::app_selection::SelectionAnchor;
+use crate::components::component::Component;
 use crate::infrastructure::client::Client;
-use crate::infrastructure::terminal::Terminal;
-use crate::interface::component::Component;
+use crate::shell::terminal::Terminal;
 use tokio::io::AsyncReadExt;
 
 async fn test_app_for_methods() -> super::App {

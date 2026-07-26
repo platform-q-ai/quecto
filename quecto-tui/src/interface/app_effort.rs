@@ -14,7 +14,7 @@
 
 use super::*;
 
-use crate::interface::components::effort_selector::EffortSelector;
+use crate::components::effort_selector::EffortSelector;
 
 impl App {
     /// Handle `/effort` (bare → selector) and `/effort <level>` (direct set).

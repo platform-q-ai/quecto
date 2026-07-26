@@ -22,7 +22,7 @@ async fn spawn_agent_program_retry_etxtbsy(
     (
         PathBuf,
         tokio::process::Child,
-        crate::infrastructure::child_watch::StderrTail,
+        crate::shell::child_watch::StderrTail,
         Option<u8>,
     ),
     String,
@@ -175,7 +175,7 @@ fn truncate_long_line_appends_ellipsis() {
 
 #[test]
 fn remember_stderr_line_evicts_oldest_over_cap() {
-    use crate::infrastructure::child_watch::{STDERR_TAIL_MAX_LINES, StderrTail};
+    use crate::shell::child_watch::{STDERR_TAIL_MAX_LINES, StderrTail};
     let tail = StderrTail::default();
     for i in 0..(STDERR_TAIL_MAX_LINES + 5) {
         remember_stderr_line(&tail, &format!("line {i}"));
@@ -196,7 +196,7 @@ fn remember_stderr_line_evicts_oldest_over_cap() {
 
 #[tokio::test]
 async fn stderr_drain_captures_lines_and_redacts() {
-    use crate::infrastructure::child_watch::StderrTail;
+    use crate::shell::child_watch::StderrTail;
     let tail = StderrTail::default();
     let input: &[u8] = b"plain line\napi_key=supersecretvalue\n";
     spawn_stderr_drain(tokio::io::BufReader::new(input), tail.clone());
@@ -327,11 +327,8 @@ async fn spawn_agent_wires_the_post_startup_stderr_drain() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
-    crate::infrastructure::process::terminate_child(
-        &mut child,
-        crate::infrastructure::process::TERMINATE_GRACE_MS,
-    )
-    .await;
+    crate::shell::process::terminate_child(&mut child, crate::shell::process::TERMINATE_GRACE_MS)
+        .await;
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -373,11 +370,8 @@ async fn spawn_agent_parses_the_protocol_version_announcement() {
         "spawn must parse the announced protocol version"
     );
 
-    crate::infrastructure::process::terminate_child(
-        &mut child,
-        crate::infrastructure::process::TERMINATE_GRACE_MS,
-    )
-    .await;
+    crate::shell::process::terminate_child(&mut child, crate::shell::process::TERMINATE_GRACE_MS)
+        .await;
     let _ = std::fs::remove_dir_all(&dir);
 }
 

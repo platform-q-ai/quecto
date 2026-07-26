@@ -16,7 +16,7 @@ pub trait Component: Send {
     fn render(&mut self, width: usize) -> Vec<String>;
 
     /// Handle a keyboard input event. Return `true` if the input was consumed.
-    fn handle_input(&mut self, _key: &crate::interface::keys::Key) -> bool {
+    fn handle_input(&mut self, _key: &crate::shell::keys::Key) -> bool {
         false
     }
 

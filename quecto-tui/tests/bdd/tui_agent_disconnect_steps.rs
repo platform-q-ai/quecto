@@ -6,8 +6,8 @@
 //! signal, reaped by the production child watcher.
 
 use super::*;
-use quecto_tui::infrastructure::child_watch::{self, ChildWatch};
 use quecto_tui::interface::app::tui_harness::TuiHarness;
+use quecto_tui::shell::child_watch::{self, ChildWatch};
 
 /// A real spawned "agent" child under the production exit watcher.
 #[derive(Debug)]
@@ -106,10 +106,7 @@ fn tui_spawned_agent_child_with_panicky_stderr(world: &mut TuiWorld) {
         let pid = child.id().expect("child pid");
         let stderr = child.stderr.take().expect("child stderr");
         let tail = child_watch::StderrTail::default();
-        quecto_tui::interface::cli::spawn_stderr_drain(
-            tokio::io::BufReader::new(stderr),
-            tail.clone(),
-        );
+        quecto_tui::shell::cli::spawn_stderr_drain(tokio::io::BufReader::new(stderr), tail.clone());
         let watch = child_watch::watch_child(child, tail);
         // Wait until the production drain has captured the panic line, so the
         // later abort exercises the diagnostics path deterministically.

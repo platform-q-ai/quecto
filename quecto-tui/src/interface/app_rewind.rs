@@ -1,5 +1,5 @@
 use super::*;
-use crate::interface::components::select_list::route_overlay_key;
+use crate::components::select_list::route_overlay_key;
 use crate::interface::select_overlay::DOUBLE_ESC_WINDOW;
 
 pub(super) fn rewind_preview(content: &str) -> String {

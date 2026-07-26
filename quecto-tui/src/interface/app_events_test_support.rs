@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use super::*;
-use crate::infrastructure::terminal::Terminal;
+use crate::shell::terminal::Terminal;
 use tempfile::TempDir;
 use tokio::io::AsyncReadExt;
 

@@ -1,4 +1,4 @@
-use crate::interface::fuzzy::fuzzy_filter;
+use crate::components::fuzzy::fuzzy_filter;
 
 use super::*;
 

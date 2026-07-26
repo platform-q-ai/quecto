@@ -1,6 +1,6 @@
 //! Notification component — transient status messages.
 
-use crate::interface::component::Component;
+use crate::components::component::Component;
 use crate::interface::theme;
 use crate::interface::utils::truncate_to_width;
 use std::time::{Duration, Instant};

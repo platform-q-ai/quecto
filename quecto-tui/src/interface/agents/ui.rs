@@ -1,11 +1,11 @@
+use crate::components::chat::Chat;
+use crate::components::footer::Footer;
+use crate::components::list_navigator::ListNavigator;
+use crate::components::workflow_bar;
 use crate::infrastructure::client::{Command, Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::interface::agents::feed::{FeedAuthority, FeedSyncState};
 use crate::interface::agents::focus::Focus;
 use crate::interface::agents::roster::{RosterInfo, TrackedSubagent, subagent_status_is_active};
-use crate::interface::components::chat::Chat;
-use crate::interface::components::footer::Footer;
-use crate::interface::components::list_navigator::ListNavigator;
-use crate::interface::components::workflow_bar;
 use std::collections::{BTreeMap, VecDeque};
 use tokio::sync::mpsc;
 
@@ -60,9 +60,9 @@ pub(crate) struct FeedState {
 
 pub(crate) fn ledger_entry_to_chat_entry(
     entry: crate::interface::agents::ledger::LedgerEntry,
-) -> crate::interface::components::chat::ChatEntry {
+) -> crate::components::chat::ChatEntry {
+    use crate::components::chat::ChatEntry;
     use crate::interface::agents::ledger::LedgerEntry;
-    use crate::interface::components::chat::ChatEntry;
     match entry {
         LedgerEntry::User { text } => ChatEntry::User { text },
         LedgerEntry::Assistant { text } => ChatEntry::Assistant {

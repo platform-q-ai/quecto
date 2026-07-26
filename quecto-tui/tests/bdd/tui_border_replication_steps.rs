@@ -7,13 +7,13 @@ use std::sync::{Arc, Mutex};
 
 use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
+use quecto_tui::components::component::Component;
+use quecto_tui::components::editor::Editor;
 use quecto_tui::infrastructure::client::Event;
-use quecto_tui::infrastructure::render::DiffRenderer;
 use quecto_tui::interface::ansi::sanitize_control;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
-use quecto_tui::interface::component::Component;
-use quecto_tui::interface::components::editor::Editor;
-use quecto_tui::interface::keys::Key;
+use quecto_tui::shell::keys::Key;
+use quecto_tui::shell::render::DiffRenderer;
 
 fn drain_commands(world: &mut TuiWorld) -> Vec<String> {
     if let Some(rt) = &world.tui_parity_rt {

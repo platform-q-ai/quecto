@@ -1,4 +1,4 @@
-use quecto_tui::interface::cli;
+use quecto_tui::shell::cli;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

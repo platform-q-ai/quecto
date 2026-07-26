@@ -13,7 +13,7 @@
 //! reach it the PID/PGID is pinned (alive or zombie) and cannot have been
 //! recycled by an unrelated process. Once the watcher has reaped the child,
 //! terminate requests fall back to a liveness-probed group signal
-//! ([`crate::infrastructure::process::terminate_group_if_alive`]): sub-agents
+//! ([`crate::shell::process::terminate_group_if_alive`]): sub-agents
 //! share the agent's process group and can outlive it, so they must still be
 //! cleaned up on TUI exit — but only after `kill(-pgid, 0)` confirms the
 //! group has members, which pins the PGID against reuse (#1051 review:
@@ -31,7 +31,7 @@ pub const STDERR_TAIL_MAX_LINES: usize = 20;
 /// Bounded ring buffer of the agent child's most recent stderr lines (#1047).
 ///
 /// The TUI keeps draining the child's stderr AFTER startup into this buffer
-/// (see `interface::cli::spawn_stderr_drain`), so when the agent dies
+/// (see `shell::cli::spawn_stderr_drain`), so when the agent dies
 /// mid-session (e.g. a panic-abort near a full context window under the
 /// workspace `panic = "abort"`) the panic message is still available for the
 /// disconnect diagnostics instead of being lost with the process.
@@ -111,7 +111,7 @@ pub fn watch_child(mut child: tokio::process::Child, stderr_tail: StderrTail) ->
     let (term_tx, mut term_rx) = mpsc::channel::<oneshot::Sender<()>>(1);
     let pgid = child
         .id()
-        .and_then(|raw| crate::infrastructure::process::checked_pid(raw).ok());
+        .and_then(|raw| crate::shell::process::checked_pid(raw).ok());
     tokio::spawn(async move {
         tokio::select! {
             status = child.wait() => {
@@ -125,9 +125,9 @@ pub fn watch_child(mut child: tokio::process::Child, stderr_tail: StderrTail) ->
                 // up instead of leaking paid, long-lived processes.
                 while let Some(done) = term_rx.recv().await {
                     if let Some(pgid) = pgid {
-                        crate::infrastructure::process::terminate_group_if_alive(
+                        crate::shell::process::terminate_group_if_alive(
                             pgid,
-                            crate::infrastructure::process::TERMINATE_GRACE_MS,
+                            crate::shell::process::TERMINATE_GRACE_MS,
                         )
                         .await;
                     }
@@ -139,9 +139,9 @@ pub fn watch_child(mut child: tokio::process::Child, stderr_tail: StderrTail) ->
                 // the child un-reaped: its PID/PGID is still pinned (alive or
                 // zombie) and safe to signal via `terminate_child`, which
                 // reaps it afterwards.
-                crate::infrastructure::process::terminate_child(
+                crate::shell::process::terminate_child(
                     &mut child,
-                    crate::infrastructure::process::TERMINATE_GRACE_MS,
+                    crate::shell::process::TERMINATE_GRACE_MS,
                 )
                 .await;
                 let _ = done.send(());

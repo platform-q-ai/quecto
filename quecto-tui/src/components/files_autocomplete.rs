@@ -9,12 +9,12 @@
 
 use std::time::{Duration, Instant};
 
-use crate::interface::component::Component;
-use crate::interface::components::autocomplete::{AutocompleteResult, Suggestion};
-use crate::interface::components::list_rows::{DescriptionMode, ListRow};
-use crate::interface::components::suggestion_list::SuggestionList;
-use crate::interface::fuzzy::fuzzy_filter_limited;
-use crate::interface::keys::Key;
+use crate::components::autocomplete::{AutocompleteResult, Suggestion};
+use crate::components::component::Component;
+use crate::components::fuzzy::fuzzy_filter_limited;
+use crate::components::list_rows::{DescriptionMode, ListRow};
+use crate::components::suggestion_list::SuggestionList;
+use crate::shell::keys::Key;
 
 /// How long a loaded file list stays fresh before the next activation reloads
 /// it — so files the agent creates mid-session eventually appear.

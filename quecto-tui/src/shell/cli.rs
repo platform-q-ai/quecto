@@ -158,7 +158,7 @@ async fn run_tui(flags: CliFlags) -> i32 {
             // Spawn a quecto agent child process
             match spawn_agent(&flags).await {
                 Ok((path, child, stderr_tail, announced_protocol)) => {
-                    let watch = crate::infrastructure::child_watch::watch_child(child, stderr_tail);
+                    let watch = crate::shell::child_watch::watch_child(child, stderr_tail);
                     (path, Some(watch), announced_protocol)
                 }
                 Err(e) => {
@@ -220,7 +220,7 @@ async fn run_tui(flags: CliFlags) -> i32 {
     };
 
     // Run the TUI.
-    let terminal = crate::infrastructure::terminal::Terminal::new();
+    let terminal = crate::shell::terminal::Terminal::new();
     let mut app = crate::interface::app::App::new(terminal, client);
     if let Some(watch) = &child_watch {
         app.set_child_exit_watch(watch.clone());
@@ -311,7 +311,7 @@ async fn spawn_agent(
     (
         PathBuf,
         tokio::process::Child,
-        crate::infrastructure::child_watch::StderrTail,
+        crate::shell::child_watch::StderrTail,
         Option<u8>,
     ),
     String,
@@ -338,7 +338,7 @@ async fn spawn_agent_program(
     (
         PathBuf,
         tokio::process::Child,
-        crate::infrastructure::child_watch::StderrTail,
+        crate::shell::child_watch::StderrTail,
         // Protocol version from the `quecto-agent-protocol: N` announcement
         // line, `None` for pre-#1059 agents (legacy NDJSON framing).
         Option<u8>,
@@ -367,7 +367,7 @@ async fn spawn_agent_program(
 
     let mut reader = tokio::io::BufReader::new(stderr);
     let mut line = String::new();
-    let stderr_context = crate::infrastructure::child_watch::StderrTail::default();
+    let stderr_context = crate::shell::child_watch::StderrTail::default();
 
     // Read stderr lines looking for the socket path announcement (and the
     // protocol-version line that precedes it since #1059).
@@ -436,11 +436,7 @@ async fn spawn_agent_program(
 }
 
 async fn terminate_spawned_agent(child: &mut tokio::process::Child) {
-    crate::infrastructure::process::terminate_child(
-        child,
-        crate::infrastructure::process::TERMINATE_GRACE_MS,
-    )
-    .await;
+    crate::shell::process::terminate_child(child, crate::shell::process::TERMINATE_GRACE_MS).await;
 }
 
 const MAX_STARTUP_STDERR_LINE_CHARS: usize = 1_000;
@@ -450,7 +446,7 @@ const MAX_STARTUP_STDERR_LINE_CHARS: usize = 1_000;
 /// line buffer without bound. Anything past the cap is discarded.
 const MAX_DRAIN_STDERR_LINE_BYTES: usize = 8 * 1024;
 
-fn remember_stderr_line(tail: &crate::infrastructure::child_watch::StderrTail, line: &str) {
+fn remember_stderr_line(tail: &crate::shell::child_watch::StderrTail, line: &str) {
     tail.push(truncate_stderr_line(&redact_stderr_line(line)));
 }
 
@@ -460,7 +456,7 @@ fn remember_stderr_line(tail: &crate::infrastructure::child_watch::StderrTail, l
 /// ends when the child closes its stderr (i.e. exits) and marks the tail
 /// drained, so the disconnect path can wait for the buffered panic message
 /// instead of racing this task (#1051 final review).
-pub fn spawn_stderr_drain<R>(mut reader: R, tail: crate::infrastructure::child_watch::StderrTail)
+pub fn spawn_stderr_drain<R>(mut reader: R, tail: crate::shell::child_watch::StderrTail)
 where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
 {

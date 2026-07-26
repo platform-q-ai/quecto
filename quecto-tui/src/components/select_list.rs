@@ -1,10 +1,10 @@
 //! Select list component — navigable list with selection indicator.
 
-use crate::interface::component::Component;
-use crate::interface::components::list_navigator::ListNavigator;
-use crate::interface::components::list_rows::{DescriptionMode, ListRow, render_windowed};
-use crate::interface::keys::Key;
+use crate::components::component::Component;
+use crate::components::list_navigator::ListNavigator;
+use crate::components::list_rows::{DescriptionMode, ListRow, render_windowed};
 use crate::interface::theme;
+use crate::shell::keys::Key;
 
 /// An item in a select list.
 #[derive(Debug, Clone)]
@@ -17,7 +17,7 @@ pub struct SelectItem {
 /// Result of a select list interaction — the shared list-interaction result
 /// (`Selected` / `Dismissed` / `Pending`), re-exported under this surface's
 /// historical name.
-pub use crate::interface::components::autocomplete::AutocompleteResult as SelectResult;
+pub use crate::components::autocomplete::AutocompleteResult as SelectResult;
 
 /// A navigable list with selection indicator and optional descriptions.
 pub struct SelectList {

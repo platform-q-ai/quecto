@@ -6,7 +6,7 @@
 
 use super::*;
 use quecto_tui::infrastructure::client::{Client, Event, MAX_LINE_BYTES};
-use quecto_tui::infrastructure::warn_capture::{install_warn_capture, oversized_warn_count};
+use quecto_tui::shell::warn_capture::{install_warn_capture, oversized_warn_count};
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixListener;
@@ -78,7 +78,7 @@ fn send_frames_and_receive(world: &mut TuiWorld, frames: Vec<Vec<u8>>) -> Vec<Ev
     // worker thread, so warnings are observable solely if the client
     // propagates the connect-time dispatcher into the reader task. The
     // capture apparatus is shared with the unit tests
-    // (`infrastructure::warn_capture`) so both targets pin one warn contract.
+    // (`shell::warn_capture`) so both targets pin one warn contract.
     let (warnings, dispatch_guard) = install_warn_capture();
     let mut client = rt.block_on(async move {
         let client_future = Client::connect(&socket_path);

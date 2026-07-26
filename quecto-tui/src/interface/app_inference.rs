@@ -1,5 +1,5 @@
-use crate::interface::components::effort_selector::EffortSelector;
-use crate::interface::components::model_selector::{ModelEntry, ModelSelector};
+use crate::components::effort_selector::EffortSelector;
+use crate::components::model_selector::{ModelEntry, ModelSelector};
 
 #[derive(Default)]
 pub(super) struct InferenceFlow {

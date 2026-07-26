@@ -2,13 +2,13 @@
 
 use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
+use quecto_tui::components::chat::Chat;
+use quecto_tui::components::component::Component;
 use quecto_tui::infrastructure::client::Event;
-use quecto_tui::infrastructure::render::DiffRenderer;
 use quecto_tui::interface::app::tui_harness::TuiHarness;
-use quecto_tui::interface::component::Component;
-use quecto_tui::interface::components::chat::Chat;
-use quecto_tui::interface::keys::Key;
 use quecto_tui::interface::utils::visible_width;
+use quecto_tui::shell::keys::Key;
+use quecto_tui::shell::render::DiffRenderer;
 
 fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {

@@ -5,14 +5,14 @@
 //! returned strings — behaviour, not source text. The 30s deadline value, the
 //! message composition through `format_agent_startup_failure`, the run-tui.sh
 //! pre-warm, and the README docs are verified by focused unit/repo-lint tests
-//! (quecto-tui/src/interface/cli.rs and tests/repo_docs.rs), not here.
+//! (quecto-tui/src/shell/cli.rs and tests/repo_docs.rs), not here.
 
 use crate::TuiWorld;
 use cucumber::{then, when};
 
 #[when("the agent does not announce its socket before the deadline")]
 fn when_agent_times_out(world: &mut TuiWorld) {
-    world.stdout = quecto_tui::interface::cli::agent_socket_timeout_message();
+    world.stdout = quecto_tui::shell::cli::agent_socket_timeout_message();
 }
 
 #[then("the timeout message names the cold-binary first-run cause")]
@@ -46,7 +46,7 @@ fn then_message_offers_retry(world: &mut TuiWorld) {
 
 #[when("the TUI is waiting for the agent socket path")]
 fn when_tui_waiting(world: &mut TuiWorld) {
-    world.stdout = quecto_tui::interface::cli::agent_starting_status().to_string();
+    world.stdout = quecto_tui::shell::cli::agent_starting_status().to_string();
 }
 
 #[then(regex = r#"^the TUI surfaces a "([^"]+)" status indicator$"#)]

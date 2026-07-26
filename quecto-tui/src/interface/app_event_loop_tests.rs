@@ -739,7 +739,7 @@ async fn handle_key_at_files_flow_replaces_token_on_tab() {
     let a = h.app_mut();
     a.editor.set_text("see @fi");
     a.workspace.files_autocomplete =
-        crate::interface::components::files_autocomplete::FilesAutocomplete::with_files(
+        crate::components::files_autocomplete::FilesAutocomplete::with_files(
             vec!["first.rs".into()],
             4,
         );
