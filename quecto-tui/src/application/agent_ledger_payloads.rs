@@ -73,7 +73,7 @@ pub struct LedgerToolCall {
     pub name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_json_string")]
     pub arguments: Option<String>,
-    pub function: Option<LedgerFunctionCall>,
+    function: Option<LedgerFunctionCall>,
 }
 
 impl LedgerToolCall {
@@ -98,7 +98,7 @@ impl LedgerToolCall {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LedgerFunctionCall {
+struct LedgerFunctionCall {
     pub name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_json_string")]
     pub arguments: Option<String>,
@@ -109,7 +109,7 @@ pub struct LedgerFunctionCall {
 pub struct SyncCapability {
     pub sync: Option<u64>,
     #[serde(default, deserialize_with = "deserialize_capability_set")]
-    pub capabilities: Option<CapabilitySet>,
+    capabilities: Option<CapabilitySet>,
 }
 
 impl SyncCapability {
@@ -127,7 +127,7 @@ impl SyncCapability {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CapabilitySet {
+struct CapabilitySet {
     pub sync: Option<u64>,
 }
 
