@@ -449,6 +449,10 @@ Parity evidence for #1224:
 | Performance parity | No shared replacement or extra pass introduced; hot-path structures keep same lazy/eager construction. | `WorkspaceFlow::new` still constructs one `FilesAutocomplete::new(8)`; model/effort/resume/rewind selectors remain `Option` lazy overlays; no new background task, clone loop, allocation cache, or protocol command was added. | PASS |
 | Quantitative | `App` thinned and file cap respected. | `app.rs` is 579 lines; extracted owner modules plus app total 658 lines; production touched Rust diff is 20 added/79 deleted (net -59), TUI interface Rust net -31. | PASS |
 
+Review concern disposition for #1224:
+
+- Declined: the review correctly notes that `tui_app_state_is_composed_from_feature_flow_owners` is a source-text architecture guard and cannot prove semantic ownership if future duplicate state is intentionally renamed. Rationale: this guard is intentionally structural, matching the existing architecture-test style in this repository; there is no runtime behavior for a duplicated-but-unused renamed cache to exercise, and adding a Rust parser or heuristic name classifier would make the guard brittle without preventing intentional evasion. The accepted mechanism is layered defense: the guard blocks exact known flattened fields and inline owner definitions, reviewer/conformance steps audit semantic ownership for future PRs, and the parity contract records the limitation rather than claiming behavioral proof.
+
 ### Inter-issue sequencing
 
 1. #1220 establishes protocol mapper conventions and typed feature inputs.
