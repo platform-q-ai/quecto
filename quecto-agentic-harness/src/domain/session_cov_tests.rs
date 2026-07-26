@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::message::Role;
 use std::sync::Mutex;
 
 #[derive(Default)]
@@ -165,14 +166,19 @@ impl SessionStore for DefaultDeltaStore {
 #[tokio::test]
 async fn default_session_store_delta_methods_delegate_to_save() {
     let store = DefaultDeltaStore::default();
-    let messages = vec![Message::user("hello")];
+    let messages = vec![Message::user("hello"), Message::assistant("world", vec![])];
+    let workflow = crate::domain::workflow::WorkflowRunPersisted {
+        template_id: Some("review".into()),
+        done: vec![true, false],
+        active_issue: Some((1247, "delta fallback".into())),
+    };
 
     store
-        .save_delta("chat-a", &messages, 999, None)
+        .save_delta("chat-a", &messages, 999, Some(workflow.clone()))
         .await
         .expect("default save_delta succeeds");
     store
-        .save_clean_delta("chat-b", &messages, 1, None)
+        .save_clean_delta("chat-b", &messages, 1, Some(workflow.clone()))
         .await
         .expect("default save_clean_delta succeeds");
 
@@ -180,8 +186,16 @@ async fn default_session_store_delta_methods_delegate_to_save() {
     assert_eq!(saved.len(), 2);
     assert_eq!(saved[0].key, "chat-a");
     assert_eq!(saved[1].key, "chat-b");
-    assert_eq!(saved[0].messages.len(), 1);
-    assert_eq!(saved[1].messages.len(), 1);
+    assert_eq!(saved[0].messages.len(), 2);
+    assert_eq!(saved[1].messages.len(), 2);
+    assert_eq!(saved[0].messages[0].role, Role::User);
     assert_eq!(saved[0].messages[0].content, "hello");
+    assert_eq!(saved[0].messages[1].role, Role::Assistant);
+    assert_eq!(saved[0].messages[1].content, "world");
+    assert_eq!(saved[1].messages[0].role, Role::User);
     assert_eq!(saved[1].messages[0].content, "hello");
+    assert_eq!(saved[1].messages[1].role, Role::Assistant);
+    assert_eq!(saved[1].messages[1].content, "world");
+    assert_eq!(saved[0].workflow_run, Some(workflow.clone()));
+    assert_eq!(saved[1].workflow_run, Some(workflow));
 }

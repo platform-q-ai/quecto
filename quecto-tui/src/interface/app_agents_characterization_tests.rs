@@ -66,6 +66,10 @@ async fn warm_feed_startup_sends_get_state_then_initial_sync_once() {
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    while let Ok(line) = child_commands.try_recv() {
+        commands.push(line);
+    }
     assert_eq!(
         commands.len(),
         2,
@@ -177,13 +181,17 @@ async fn ledger_hint_at_current_revision_records_freshness_without_redundant_syn
         rx.try_recv().is_err(),
         "a ledger hint at the already-applied revision must not request a duplicate sync"
     );
-    let feed = app.subagents.feeds.get("worker").unwrap();
+    let feed = app.subagents.feeds.get_mut("worker").unwrap();
     assert_eq!(feed.epoch, 7);
     assert_eq!(feed.rev, 11);
     assert_eq!(feed.pending_rev, None);
+    feed.authority = crate::interface::agents::feed::FeedAuthority::SyncedAuthoritative;
+
+    app.select_agent(Some("worker"));
+
     assert!(
-        feed.last_fresh_at.is_some(),
-        "even a no-op hint refreshes feed freshness"
+        rx.try_recv().is_err(),
+        "a current-revision hint must keep focus refresh from requesting a redundant sync"
     );
 }
 

@@ -395,15 +395,8 @@ fn spawn_args_are_read_only(args: &serde_json::Value) -> bool {
             })
 }
 
-pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> bool {
-    // #871: every model-issued `agent_cmd` invocation renders as a normal tool
-    // call, including the control/destructive commands (`prompt`/`steer`/
-    // `abort`/`kill`) that used to be hidden. Hiding them left the transcript
-    // incomplete and made it hard to see why a sub-agent stopped. Only `spawn`
-    // stays suppressed — the sub-agent status bar/panel shows it instead. The
-    // TUI's OWN internal `get_state`/stats polling flows through Response events
-    // (`app_response.rs`), not this tool path, so it remains box-free regardless.
-    tool_name == "spawn"
+pub(super) fn suppress_tool_box(tool_name: &str, args: &serde_json::Value) -> bool {
+    crate::interface::agents::suppress_tool_box(tool_name, args)
 }
 
 #[cfg(test)]
