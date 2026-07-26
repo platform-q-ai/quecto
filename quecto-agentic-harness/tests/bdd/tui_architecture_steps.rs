@@ -127,6 +127,43 @@ fn then_tui_conversation_no_runtime_io(_world: &mut QuectoWorld) {
     );
 }
 
+#[then("the quecto-tui conversation pure policy should not import outer layers")]
+fn then_tui_conversation_pure_policy_no_outer_layers(_world: &mut QuectoWorld) {
+    let forbidden = [
+        "crate::application",
+        "crate::infrastructure",
+        "crate::interface",
+        "crate::protocol",
+        "crate::components",
+        "crate::shell",
+        "super::application",
+        "super::infrastructure",
+        "super::interface",
+        "super::protocol",
+    ];
+    for rel in ["history_paging.rs", "turn_recovery.rs"] {
+        let path = Path::new(TUI_ROOT).join("conversation").join(rel);
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read pure conversation policy {}: {e}", path.display()));
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed == "#[cfg(test)]" {
+                break;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for pattern in forbidden {
+                assert!(
+                    !trimmed.contains(pattern),
+                    "pure conversation policy {} must not import outer layer pattern {pattern}; line: {trimmed}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
 #[then("the quecto-tui infrastructure source should not import application or interface layers")]
 fn then_tui_infrastructure_no_application_or_interface(_world: &mut QuectoWorld) {
     assert!(Path::new(TUI_ROOT).join("infrastructure").is_dir());

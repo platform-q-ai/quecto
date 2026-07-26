@@ -25,7 +25,8 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
     Then the quecto-tui conversation source should not contain runtime I/O patterns
 
   Scenario: quecto-tui layer dependencies point inward
-    Then the quecto-tui infrastructure source should not import application or interface layers
+    Then the quecto-tui conversation pure policy should not import outer layers
+    And the quecto-tui infrastructure source should not import application or interface layers
     And the quecto-tui protocol source should not import feature or shell modules
     And the quecto-tui shell should own runtime adapters
 
