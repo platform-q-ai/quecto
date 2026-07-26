@@ -554,7 +554,7 @@ impl App {
     pub(super) fn render_main_pane_workflow(
         &self,
         width: usize,
-        box_width: usize,
+        _box_width: usize,
         now: tokio::time::Instant,
     ) -> Vec<String> {
         if width < 4 {
