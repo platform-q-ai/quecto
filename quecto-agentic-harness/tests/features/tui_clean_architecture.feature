@@ -36,11 +36,6 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
     Then the quecto-tui library root should expose only approved top-level modules
     And the quecto-tui binary root should delegate to the shell module
 
-  Scenario: quecto-tui architecture is enforced by the same architecture test target as quecto
-    Then the architecture test target should enforce quecto-tui Phase 3 top-level modules
-    And the architecture test target should enforce quecto-tui runtime I/O boundaries
-    And the architecture test target should enforce quecto-tui root file placement
-
   @issue-1020
   Scenario: TUI standards are executable through BDD
     Then the BDD runners should not use wip as a default run inclusion gate

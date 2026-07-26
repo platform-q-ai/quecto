@@ -497,6 +497,43 @@ fn tui_architecture_layers_exist() {
 }
 
 #[test]
+fn tui_conversation_pure_policy_has_no_outer_layer_imports() {
+    let forbidden = [
+        "crate::application",
+        "crate::infrastructure",
+        "crate::interface",
+        "crate::protocol",
+        "crate::components",
+        "crate::shell",
+        "super::application",
+        "super::infrastructure",
+        "super::interface",
+        "super::protocol",
+    ];
+    for rel in ["history_paging.rs", "turn_recovery.rs"] {
+        let path = Path::new(TUI_CONVERSATION).join(rel);
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read pure conversation policy {}: {e}", path.display()));
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed == "#[cfg(test)]" {
+                break;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for pattern in forbidden {
+                assert!(
+                    !trimmed.contains(pattern),
+                    "pure conversation policy {} must not import outer layer pattern {pattern}; line: {trimmed}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn tui_infrastructure_has_no_application_or_interface_imports() {
     assert_no_imports(
         "quecto-tui infrastructure",

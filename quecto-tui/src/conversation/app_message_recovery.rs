@@ -300,6 +300,7 @@ pub(crate) fn recovered_chat_entries(
                 }
                 let name = data
                     .get("toolName")
+                    .or_else(|| data.get("tool_name"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("tool")
                     .to_string();
@@ -373,7 +374,7 @@ mod recovery_cov_tests {
                 serde_json::json!({
                     "role": "tool",
                     "toolCallId": "call-2",
-                    "toolName": "bash",
+                    "tool_name": "bash",
                     "content": "boom",
                     "isError": true
                 }),

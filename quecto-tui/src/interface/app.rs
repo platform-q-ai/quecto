@@ -223,6 +223,10 @@ mod app_events;
 mod app_git;
 #[path = "app_inference.rs"]
 mod app_inference;
+// #1257 Phase 3: conversation-owned app slices are physically housed under
+// `conversation/` but remain mounted inside `interface::app` until the issue's
+// later controller-extraction phases. This is an intentional remount only; do
+// not infer a new dependency direction from the `#[path]` target.
 #[path = "../conversation/app_rewind_state.rs"]
 mod app_rewind_state;
 #[path = "app_sessions.rs"]

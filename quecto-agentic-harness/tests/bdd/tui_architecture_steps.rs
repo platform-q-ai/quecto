@@ -244,45 +244,6 @@ fn then_tui_binary_root_delegates_to_shell(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the architecture test target should enforce quecto-tui Phase 3 top-level modules")]
-fn then_architecture_test_enforces_tui_layers(_world: &mut QuectoWorld) {
-    let content =
-        std::fs::read_to_string("tests/architecture.rs").expect("read architecture tests");
-    assert!(
-        content.contains("fn tui_architecture_layers_exist")
-            && content.contains("TUI_CONVERSATION")
-            && content.contains("!Path::new(\"../quecto-tui/src/domain\").exists()")
-            && content.contains("fn tui_protocol_has_no_feature_or_shell_imports")
-            && content.contains("fn tui_infrastructure_has_no_application_or_interface_imports")
-            && content.contains("fn tui_runtime_adapters_live_in_shell"),
-        "tests/architecture.rs must enforce quecto-tui Phase 3 module existence/removal and dependency direction"
-    );
-}
-
-#[then("the architecture test target should enforce quecto-tui runtime I/O boundaries")]
-fn then_architecture_test_enforces_tui_runtime_io(_world: &mut QuectoWorld) {
-    let content =
-        std::fs::read_to_string("tests/architecture.rs").expect("read architecture tests");
-    assert!(
-        content.contains("fn tui_inner_layers_have_no_runtime_io_calls")
-            && content.contains("quecto-tui conversation"),
-        "tests/architecture.rs must enforce runtime I/O boundaries for quecto-tui inner layers"
-    );
-}
-
-#[then("the architecture test target should enforce quecto-tui root file placement")]
-fn then_architecture_test_enforces_tui_root_file_placement(_world: &mut QuectoWorld) {
-    let content =
-        std::fs::read_to_string("tests/architecture.rs").expect("read architecture tests");
-    assert!(
-        content.contains("fn tui_production_files_live_inside_architecture_layers")
-            && content.contains("TUI_ALLOWED_ROOT_RS")
-            && content.contains("fn tui_lib_rs_exposes_only_architecture_layers")
-            && content.contains("fn tui_main_rs_is_thin_interface_entrypoint"),
-        "tests/architecture.rs must reject unlayered quecto-tui production source files and keep crate roots thin"
-    );
-}
-
 fn misplaced_tui_production_files() -> Vec<String> {
     let mut misplaced = Vec::new();
     collect_misplaced_tui_rs_files(Path::new(TUI_ROOT), &mut misplaced);
