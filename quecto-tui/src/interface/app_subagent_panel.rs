@@ -56,7 +56,7 @@ impl App {
         if !self.subagents.sessions.contains_key(&id) {
             // Cold path only: clone git_branch and build the session here, so the
             // common already-exists render path allocates nothing extra (#827 perf).
-            let git_branch = self.git_branch.clone();
+            let git_branch = self.workspace.git_branch.clone();
             Self::remember_session(&mut self.subagents.session_order, &id);
             self.subagents
                 .sessions
@@ -153,17 +153,18 @@ impl App {
         self.sync_panel_selection_to_active();
         let Some(id) = new_active else {
             // Restore model/effort markers from master footer (#1085).
-            self.current_model = self.master_session.footer.known_model().map(str::to_string);
-            self.current_effort = self.master_session.footer.effort().map(str::to_string);
-            self.effort_levels.clear();
+            self.inference.current_model =
+                self.master_session.footer.known_model().map(str::to_string);
+            self.inference.current_effort = self.master_session.footer.effort().map(str::to_string);
+            self.inference.effort_levels.clear();
             self.send_state_resync();
             return;
         };
         self.ensure_session(&id);
         let f = self.subagents.sessions.get(&id).map(|s| &s.footer);
-        self.current_model = f.and_then(|f| f.known_model()).map(str::to_string);
-        self.current_effort = f.and_then(|f| f.effort()).map(str::to_string);
-        self.effort_levels.clear();
+        self.inference.current_model = f.and_then(|f| f.known_model()).map(str::to_string);
+        self.inference.current_effort = f.and_then(|f| f.effort()).map(str::to_string);
+        self.inference.effort_levels.clear();
         self.seed_session_bar_from_snapshot(&id);
         self.ensure_synced_subagent_feed(&id);
         self.refresh_synced_feed_for_focus(&id);
@@ -181,9 +182,10 @@ impl App {
     /// evicting the oldest non-active session beyond the cap.
     pub(super) fn ensure_session(&mut self, id: &str) {
         if !self.subagents.sessions.contains_key(id) {
-            self.subagents
-                .sessions
-                .insert(id.to_string(), SessionView::new(self.git_branch.clone()));
+            self.subagents.sessions.insert(
+                id.to_string(),
+                SessionView::new(self.workspace.git_branch.clone()),
+            );
             Self::remember_session(&mut self.subagents.session_order, id);
             self.evict_retained_sessions();
         }

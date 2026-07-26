@@ -30,7 +30,7 @@ async fn rendered_for(payload: serde_json::Value) -> String {
     a.open_model_selector();
     a.handle_list_models(Some(payload));
     assert!(
-        a.model_selector.is_some(),
+        a.inference.model_selector.is_some(),
         "a delivered list_models response must open the pending selector"
     );
     overlay_text(a)
@@ -100,15 +100,15 @@ async fn provider_is_inferred_from_slash_prefix() {
     // row label, so a frame match on "anthropic" would survive deleting the
     // slash-inference branch entirely.
     assert_eq!(
-        a.model_registry.entries[0].provider, "anthropic",
+        a.inference.model_registry.entries[0].provider, "anthropic",
         "the slash prefix must be inferred as the provider"
     );
     assert_eq!(
-        a.model_registry.entries[0].id, "anthropic/claude-3-opus",
+        a.inference.model_registry.entries[0].id, "anthropic/claude-3-opus",
         "the full id must be preserved when the provider is inferred"
     );
     assert!(
-        !a.model_registry.entries[0].is_current,
+        !a.inference.model_registry.entries[0].is_current,
         "a freshly parsed entry must never be marked current"
     );
 }
@@ -134,7 +134,7 @@ async fn provider_defaults_to_model_label_without_slash() {
         "models": [ { "model": "local-model" } ]
     })));
     assert_eq!(
-        a.model_registry.entries[0].provider, "Model",
+        a.inference.model_registry.entries[0].provider, "Model",
         "a slashless id with no explicit provider must fall back to the `Model` label"
     );
     let text = overlay_text(a);
@@ -170,11 +170,11 @@ async fn empty_auth_string_yields_no_auth_value() {
         ]
     })));
     assert_eq!(
-        a.model_registry.entries[0].auth, None,
+        a.inference.model_registry.entries[0].auth, None,
         "an empty auth string must be dropped, not carried as an empty label"
     );
     assert_eq!(
-        a.model_registry.entries[1].auth.as_deref(),
+        a.inference.model_registry.entries[1].auth.as_deref(),
         Some("api-key"),
         "a non-empty auth value must be preserved"
     );
@@ -213,7 +213,7 @@ async fn empty_model_id_entry_is_skipped_but_siblings_render() {
         "models": [ { "model": "" }, { "model": "valid/model" } ]
     })));
     assert_eq!(
-        a.model_registry.entries.len(),
+        a.inference.model_registry.entries.len(),
         1,
         "an entry with an empty id must be skipped"
     );
@@ -223,7 +223,7 @@ async fn empty_model_id_entry_is_skipped_but_siblings_render() {
         "the valid sibling must still render, got:\n{text}"
     );
     assert_eq!(
-        a.model_registry.entries[0].id, "valid/model",
+        a.inference.model_registry.entries[0].id, "valid/model",
         "the surviving entry must be the valid sibling, not a coerced placeholder"
     );
 }
@@ -237,12 +237,12 @@ async fn non_string_model_id_entry_is_skipped() {
         "models": [ { "model": 123 }, { "model": "valid/model" } ]
     })));
     assert_eq!(
-        a.model_registry.entries.len(),
+        a.inference.model_registry.entries.len(),
         1,
         "a non-string model id must be skipped"
     );
     assert_eq!(
-        a.model_registry.entries[0].id, "valid/model",
+        a.inference.model_registry.entries[0].id, "valid/model",
         "the surviving entry must be the valid sibling"
     );
 }
@@ -256,10 +256,10 @@ async fn empty_models_array_opens_selector_with_no_entries() {
     a.open_model_selector();
     a.handle_list_models(Some(serde_json::json!({ "models": [] })));
     assert!(
-        a.model_selector.is_some(),
+        a.inference.model_selector.is_some(),
         "an empty list must still open the selector"
     );
-    assert!(a.model_registry.entries.is_empty());
+    assert!(a.inference.model_registry.entries.is_empty());
 }
 
 #[tokio::test]
@@ -268,9 +268,9 @@ async fn missing_models_key_yields_no_entries() {
     let a = h.app_mut();
     a.open_model_selector();
     a.handle_list_models(Some(serde_json::json!({})));
-    assert!(a.model_selector.is_some());
+    assert!(a.inference.model_selector.is_some());
     assert!(
-        a.model_registry.entries.is_empty(),
+        a.inference.model_registry.entries.is_empty(),
         "a payload without `models` must yield no entries"
     );
 }
@@ -281,9 +281,9 @@ async fn models_not_an_array_yields_no_entries() {
     let a = h.app_mut();
     a.open_model_selector();
     a.handle_list_models(Some(serde_json::json!({ "models": "not an array" })));
-    assert!(a.model_selector.is_some());
+    assert!(a.inference.model_selector.is_some());
     assert!(
-        a.model_registry.entries.is_empty(),
+        a.inference.model_registry.entries.is_empty(),
         "a non-array `models` field must yield no entries"
     );
 }
@@ -299,17 +299,17 @@ async fn absent_payload_opens_selector_and_keeps_cached_entries() {
     a.handle_list_models(Some(serde_json::json!({
         "models": [ { "model": "cached/entry" } ]
     })));
-    a.model_selector = None;
+    a.inference.model_selector = None;
 
     // A later open answered with no payload must fall back to the cache.
     a.open_model_selector();
     a.handle_list_models(None);
     assert!(
-        a.model_selector.is_some(),
+        a.inference.model_selector.is_some(),
         "a payload-less response must still open the selector"
     );
     assert_eq!(
-        a.model_registry.entries.len(),
+        a.inference.model_registry.entries.len(),
         1,
         "a payload-less response must not clear cached entries"
     );
@@ -328,11 +328,11 @@ async fn delivery_without_pending_open_updates_cache_without_opening() {
         "models": [ { "model": "quiet/entry" } ]
     })));
     assert!(
-        a.model_selector.is_none(),
+        a.inference.model_selector.is_none(),
         "an unsolicited list must not open the selector"
     );
     assert_eq!(
-        a.model_registry.entries.len(),
+        a.inference.model_registry.entries.len(),
         1,
         "an unsolicited list must still refresh the cache"
     );
@@ -344,18 +344,18 @@ async fn pending_open_flag_clears_exactly_once() {
     let a = h.app_mut();
     a.open_model_selector();
     assert!(
-        a.model_registry.open_pending,
+        a.inference.model_registry.open_pending,
         "opening defers until the fresh list arrives"
     );
     a.handle_list_models(Some(serde_json::json!({ "models": [] })));
     assert!(
-        !a.model_registry.open_pending,
+        !a.inference.model_registry.open_pending,
         "the pending flag must clear when the list arrives"
     );
-    a.model_selector = None;
+    a.inference.model_selector = None;
     a.handle_list_models(Some(serde_json::json!({ "models": [] })));
     assert!(
-        a.model_selector.is_none(),
+        a.inference.model_selector.is_none(),
         "a later unsolicited list must not re-open the selector"
     );
 }

@@ -178,7 +178,7 @@ impl App {
                         continue;
                     }
 
-                    if self.files_autocomplete.take_load_request() {
+                    if self.workspace.files_autocomplete.take_load_request() {
                         self.start_files_autocomplete_load(
                             &files_autocomplete_tx,
                             &mut files_autocomplete_load_in_flight,
@@ -251,7 +251,7 @@ impl App {
                 }
                 Some(files) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;
-                    self.files_autocomplete.apply_loaded_files(files);
+                    self.workspace.files_autocomplete.apply_loaded_files(files);
                     self.refresh_files_autocomplete_from_editor();
                     self.render_and_note(&mut stream_render_coalescer);
                 }
@@ -322,7 +322,7 @@ impl App {
         }
 
         // If the resume selector is active, route input to it.
-        if self.resume_selector.is_some() {
+        if self.sessions.resume_selector.is_some() {
             self.rewind.last_idle_escape = None;
             self.handle_resume_selector_key(&key);
             return;
@@ -336,14 +336,14 @@ impl App {
         }
 
         // If the model selector is active, route input to it.
-        if self.model_selector.is_some() {
+        if self.inference.model_selector.is_some() {
             self.rewind.last_idle_escape = None;
             self.handle_model_selector_key(&key);
             return;
         }
 
         // If the effort selector is active, route input to it (#1067).
-        if self.effort_selector.is_some() {
+        if self.inference.effort_selector.is_some() {
             self.rewind.last_idle_escape = None;
             self.handle_effort_selector_key(&key);
             return;
@@ -388,21 +388,21 @@ impl App {
         // If the @files autocomplete is active, route navigation keys there.
         // Unlike slash commands, Enter ACCEPTS the mention but does NOT submit —
         // the `@path` is part of a longer message.
-        if self.files_autocomplete.is_active() {
+        if self.workspace.files_autocomplete.is_active() {
             match &key {
                 Key::Up | Key::Down | Key::Tab | Key::Escape => {
-                    self.files_autocomplete.handle_input(&key);
+                    self.workspace.files_autocomplete.handle_input(&key);
                     if let AutocompleteResult::Selected(path) =
-                        self.files_autocomplete.take_result()
+                        self.workspace.files_autocomplete.take_result()
                     {
                         self.accept_file_mention(&path);
                     }
                     return;
                 }
                 Key::Enter => {
-                    self.files_autocomplete.handle_input(&Key::Tab);
+                    self.workspace.files_autocomplete.handle_input(&Key::Tab);
                     if let AutocompleteResult::Selected(path) =
-                        self.files_autocomplete.take_result()
+                        self.workspace.files_autocomplete.take_result()
                     {
                         self.accept_file_mention(&path);
                     }
@@ -593,7 +593,7 @@ impl App {
 
         // Update the @files popup from the cursor's line (slash takes priority).
         if self.autocomplete.is_active() {
-            self.files_autocomplete.dismiss();
+            self.workspace.files_autocomplete.dismiss();
         } else {
             self.refresh_files_autocomplete_from_editor();
         }
@@ -632,10 +632,10 @@ impl App {
 
     /// Replace the active `@token` in the editor with the selected file path.
     fn accept_file_mention(&mut self, path: &str) {
-        if let Some(start) = self.files_autocomplete.token_start() {
+        if let Some(start) = self.workspace.files_autocomplete.token_start() {
             self.editor
                 .replace_before_cursor(start, &format!("@{path} "));
         }
-        self.files_autocomplete.dismiss();
+        self.workspace.files_autocomplete.dismiss();
     }
 }

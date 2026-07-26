@@ -48,8 +48,8 @@ impl App {
         }
         self.send_command(cmd);
         self.master_session.footer.set_model(model);
-        self.current_model = Some(model.to_string());
-        self.context_stats_requested = false;
+        self.inference.current_model = Some(model.to_string());
+        self.sessions.context_stats_requested = false;
     }
 
     pub(super) fn open_model_selector(&mut self) {
@@ -59,8 +59,8 @@ impl App {
         // so this is cheap when nothing changed. We defer opening the selector
         // until the fresh list arrives (handled in `handle_list_models`) so the
         // list is always correct rather than a stale cached snapshot.
-        if !self.model_registry.open_pending {
-            self.model_registry.open_pending = true;
+        if !self.inference.model_registry.open_pending {
+            self.inference.model_registry.open_pending = true;
             self.send_command(Command::ListModels {
                 id: Some("model-selector".into()),
             });
@@ -68,26 +68,26 @@ impl App {
     }
 
     pub(super) fn open_model_selector_now(&mut self) {
-        let selector = if self.model_registry.entries.is_empty() {
-            ModelSelector::new(self.current_model.as_deref())
+        let selector = if self.inference.model_registry.entries.is_empty() {
+            ModelSelector::new(self.inference.current_model.as_deref())
         } else {
-            let entries = self.model_registry.entries.clone();
-            ModelSelector::with_models(entries, self.current_model.as_deref())
+            let entries = self.inference.model_registry.entries.clone();
+            ModelSelector::with_models(entries, self.inference.current_model.as_deref())
         };
-        self.model_selector = Some(selector);
+        self.inference.model_selector = Some(selector);
     }
 
     pub(super) fn handle_model_selector_key(&mut self, key: &Key) {
-        if let Some(selector) = &mut self.model_selector {
+        if let Some(selector) = &mut self.inference.model_selector {
             selector.handle_input(key);
 
             match selector.take_result() {
                 ModelSelectorResult::Selected(model) => {
-                    self.model_selector = None;
+                    self.inference.model_selector = None;
                     self.send_set_model(&model);
                 }
                 ModelSelectorResult::Dismissed => {
-                    self.model_selector = None;
+                    self.inference.model_selector = None;
                 }
                 ModelSelectorResult::Pending => {}
             }
@@ -98,15 +98,15 @@ impl App {
         let Some(data) = data else {
             // No data on the response: clear the pending flag so a later open can
             // re-request, and fall back to opening with whatever we have cached.
-            if self.model_registry.open_pending {
-                self.model_registry.open_pending = false;
+            if self.inference.model_registry.open_pending {
+                self.inference.model_registry.open_pending = false;
                 self.open_model_selector_now();
             }
             return;
         };
-        self.model_registry.entries = parse_model_entries(&data);
-        if self.model_registry.open_pending {
-            self.model_registry.open_pending = false;
+        self.inference.model_registry.entries = parse_model_entries(&data);
+        if self.inference.model_registry.open_pending {
+            self.inference.model_registry.open_pending = false;
             self.open_model_selector_now();
         }
     }

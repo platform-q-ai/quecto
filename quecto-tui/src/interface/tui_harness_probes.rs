@@ -47,8 +47,8 @@ impl TuiHarness {
     /// Model-registry owner group (#997): `(entry count, open pending)`.
     pub fn model_registry_group(&self) -> (usize, bool) {
         (
-            self.app.model_registry.entries.len(),
-            self.app.model_registry.open_pending,
+            self.app.inference.model_registry.entries.len(),
+            self.app.inference.model_registry.open_pending,
         )
     }
 
@@ -76,6 +76,7 @@ impl TuiHarness {
     /// "high" is a substring of "xhigh" and the footer also names levels).
     pub fn effort_selector_entries(&self) -> Option<Vec<String>> {
         self.app
+            .inference
             .effort_selector
             .as_ref()
             .map(crate::interface::components::effort_selector::EffortSelector::visible_levels)
@@ -94,7 +95,7 @@ impl TuiHarness {
     /// [`Self::master_footer_text`] to assert late master responses do not
     /// clobber focused-child state.
     pub fn current_model(&self) -> Option<String> {
-        self.app.current_model.clone()
+        self.app.inference.current_model.clone()
     }
 
     /// Master chat tool entries in transcript order: `(name, result)`.

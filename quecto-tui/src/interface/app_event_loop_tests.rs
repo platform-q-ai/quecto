@@ -449,7 +449,7 @@ async fn handle_submit_model_with_name_sends_set_model() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.handle_submit("/model test-model");
-    assert_eq!(a.current_model.as_deref(), Some("test-model"));
+    assert_eq!(a.inference.current_model.as_deref(), Some("test-model"));
 }
 
 #[tokio::test]
@@ -519,7 +519,7 @@ async fn handle_submit_workflow_shows_status() {
 #[tokio::test]
 async fn handle_submit_workflow_auto_sends_toggle_command() {
     let mut h = harness().await;
-    let before = h.app_mut().workflow_auto_continue;
+    let before = h.app_mut().workflow.auto_continue;
     h.app_mut().handle_submit("/workflow-auto");
     let cmds = h.drain_commands().await;
     assert!(
@@ -529,13 +529,13 @@ async fn handle_submit_workflow_auto_sends_toggle_command() {
     );
     // The local state is NOT toggled synchronously — it's updated when the
     // server responds. We only verify the command was sent.
-    assert_eq!(h.app_mut().workflow_auto_continue, before);
+    assert_eq!(h.app_mut().workflow.auto_continue, before);
 }
 
 #[tokio::test]
 async fn handle_submit_workflow_nudge_sends_toggle_command() {
     let mut h = harness().await;
-    let before = h.app_mut().workflow_completion_nudge;
+    let before = h.app_mut().workflow.completion_nudge;
     h.app_mut().handle_submit("/workflow-nudge");
     let cmds = h.drain_commands().await;
     assert!(
@@ -543,7 +543,7 @@ async fn handle_submit_workflow_nudge_sends_toggle_command() {
             .any(|c| c.contains("\"type\":\"set_workflow_automation\"")),
         "/workflow-nudge should send set_workflow_automation: {cmds:?}"
     );
-    assert_eq!(h.app_mut().workflow_completion_nudge, before);
+    assert_eq!(h.app_mut().workflow.completion_nudge, before);
 }
 
 // ── handle_submit: command verification ────────────────────────────────
@@ -668,10 +668,13 @@ async fn handle_key_routes_to_overlay_when_active() {
     // Open the resume selector to activate an overlay-like state.
     let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
     a.open_resume_selector(&data);
-    assert!(a.resume_selector.is_some());
+    assert!(a.sessions.resume_selector.is_some());
     // Escape should close the selector, not clear the editor.
     a.handle_key(Key::Escape);
-    assert!(a.resume_selector.is_none(), "Escape should close selector");
+    assert!(
+        a.sessions.resume_selector.is_none(),
+        "Escape should close selector"
+    );
 }
 
 #[tokio::test]
@@ -680,10 +683,10 @@ async fn handle_key_routes_to_model_selector_when_active() {
     let a = h.app_mut();
     a.open_model_selector();
     a.handle_list_models(Some(serde_json::json!({ "models": [] })));
-    assert!(a.model_selector.is_some());
+    assert!(a.inference.model_selector.is_some());
     // Escape closes the selector.
     a.handle_key(Key::Escape);
-    assert!(a.model_selector.is_none());
+    assert!(a.inference.model_selector.is_none());
 }
 
 #[tokio::test]
@@ -702,7 +705,7 @@ async fn handle_key_routes_to_rewind_selector_when_active() {
 #[tokio::test]
 async fn handle_key_ctrl_shift_a_sends_toggle_command() {
     let mut h = harness().await;
-    let before = h.app_mut().workflow_auto_continue;
+    let before = h.app_mut().workflow.auto_continue;
     h.app_mut().handle_key(Key::CtrlShift('a'));
     let cmds = h.drain_commands().await;
     assert!(
@@ -711,13 +714,13 @@ async fn handle_key_ctrl_shift_a_sends_toggle_command() {
         "Ctrl+Shift+A should send set_workflow_automation: {cmds:?}"
     );
     // Local state is NOT toggled synchronously — updated on server response.
-    assert_eq!(h.app_mut().workflow_auto_continue, before);
+    assert_eq!(h.app_mut().workflow.auto_continue, before);
 }
 
 #[tokio::test]
 async fn handle_key_ctrl_shift_n_sends_toggle_command() {
     let mut h = harness().await;
-    let before = h.app_mut().workflow_completion_nudge;
+    let before = h.app_mut().workflow.completion_nudge;
     h.app_mut().handle_key(Key::CtrlShift('n'));
     let cmds = h.drain_commands().await;
     assert!(
@@ -725,7 +728,7 @@ async fn handle_key_ctrl_shift_n_sends_toggle_command() {
             .any(|c| c.contains("\"type\":\"set_workflow_automation\"")),
         "Ctrl+Shift+N should send set_workflow_automation: {cmds:?}"
     );
-    assert_eq!(h.app_mut().workflow_completion_nudge, before);
+    assert_eq!(h.app_mut().workflow.completion_nudge, before);
 }
 
 // ── accept_file_mention (tested indirectly via handle_key @files flow) ──
@@ -735,7 +738,7 @@ async fn handle_key_at_files_flow_replaces_token_on_tab() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.editor.set_text("see @fi");
-    a.files_autocomplete =
+    a.workspace.files_autocomplete =
         crate::interface::components::files_autocomplete::FilesAutocomplete::with_files(
             vec!["first.rs".into()],
             4,

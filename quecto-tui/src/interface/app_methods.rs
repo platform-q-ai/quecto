@@ -136,7 +136,7 @@ impl App {
     }
 
     pub(super) fn toggle_workflow_auto_continue(&mut self) {
-        let next = !self.workflow_auto_continue;
+        let next = !self.workflow.auto_continue;
         self.send_command(Command::SetWorkflowAutomation {
             id: Some("workflow-auto".into()),
             auto_continue: Some(next),
@@ -145,7 +145,7 @@ impl App {
     }
 
     pub(super) fn toggle_workflow_completion_nudge(&mut self) {
-        let next = !self.workflow_completion_nudge;
+        let next = !self.workflow.completion_nudge;
         self.send_command(Command::SetWorkflowAutomation {
             id: Some("workflow-nudge".into()),
             auto_continue: None,
@@ -172,7 +172,7 @@ impl App {
     pub(super) fn update_footer_stats(&mut self, data: &serde_json::Value) {
         let stats = session_payloads::parse_session_stats(data);
         if stats.context_usage.is_some() {
-            self.context_stats_requested = true;
+            self.sessions.context_stats_requested = true;
         }
         // Shared session-stats→footer mapping (context + cost gate); see #805.
         self.master_session.footer.apply_session_stats(&stats);
@@ -236,11 +236,11 @@ impl App {
                 }
             })
             .collect::<Vec<_>>();
-        self.resume_selector = Some(SelectList::new(items, 10));
+        self.sessions.resume_selector = Some(SelectList::new(items, 10));
     }
 
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
-        if let Some(session) = route_overlay_key(&mut self.resume_selector, key) {
+        if let Some(session) = route_overlay_key(&mut self.sessions.resume_selector, key) {
             self.send_resume_session(&session);
         }
     }
@@ -356,7 +356,7 @@ impl App {
 
         // Autocomplete dropdown (slash commands, then @files — only one active).
         bottom.extend(self.autocomplete.render(width));
-        bottom.extend(self.files_autocomplete.render(width));
+        bottom.extend(self.workspace.files_autocomplete.render(width));
         // Editor. Hide the block cursor while the sub-agent panel has focus so
         // it's unambiguous that keystrokes won't land in the input.
         self.editor
@@ -483,7 +483,7 @@ impl App {
         // Composite the active centered overlay (only one is ever active at a
         // time). All three splice through the same ANSI-aware helper so the
         // centering and escape-safe splice rule lives in one place.
-        if let Some(selector) = &mut self.resume_selector {
+        if let Some(selector) = &mut self.sessions.resume_selector {
             let (selector_lines, overlay_width) =
                 build_resume_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
@@ -493,14 +493,14 @@ impl App {
                 build_rewind_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
-        if let Some(selector) = &mut self.model_selector {
+        if let Some(selector) = &mut self.inference.model_selector {
             let (selector_lines, overlay_width) =
                 build_select_overlay(width, height, |content_width| {
                     selector.render(content_width)
                 });
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
-        if let Some(selector) = &mut self.effort_selector {
+        if let Some(selector) = &mut self.inference.effort_selector {
             let (selector_lines, overlay_width) =
                 build_select_overlay(width, height, |content_width| {
                     selector.render(content_width)
@@ -627,7 +627,7 @@ impl App {
         // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
         self.clear_message_recovery();
         self.master_session.footer.set_context(None, 0);
-        self.context_stats_requested = false;
+        self.sessions.context_stats_requested = false;
         // The agent resets session-scoped state (e.g. the effort override,
         // #1067) on new_session; re-fetch so the footer tracks it. Commands
         // are dispatched in order, so this get_state observes the fresh

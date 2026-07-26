@@ -24,13 +24,15 @@ impl App {
         // Local pre-validation against the agent-reported vocabulary; when it
         // hasn't arrived yet, defer to the agent's own validation (it rejects
         // invalid levels listing the valid ones).
-        if self.effort_levels.is_empty() || self.effort_levels.iter().any(|l| l == arg) {
+        if self.inference.effort_levels.is_empty()
+            || self.inference.effort_levels.iter().any(|l| l == arg)
+        {
             self.send_set_effort(arg);
         } else {
             self.notify(
                 &format!(
                     "Invalid effort level \"{arg}\" — valid levels: {}",
-                    self.effort_levels.join(", ")
+                    self.inference.effort_levels.join(", ")
                 ),
                 NotifyLevel::Error,
             );
@@ -38,27 +40,35 @@ impl App {
     }
 
     pub(super) fn open_effort_selector(&mut self) {
-        if self.effort_levels.is_empty() {
+        if self.inference.effort_levels.is_empty() {
             self.notify(
                 "Effort levels not known yet — still waiting for agent state",
                 NotifyLevel::Warning,
             );
             return;
         }
-        let levels: Vec<&str> = self.effort_levels.iter().map(String::as_str).collect();
-        self.effort_selector = Some(EffortSelector::new(&levels, self.current_effort.as_deref()));
+        let levels: Vec<&str> = self
+            .inference
+            .effort_levels
+            .iter()
+            .map(String::as_str)
+            .collect();
+        self.inference.effort_selector = Some(EffortSelector::new(
+            &levels,
+            self.inference.current_effort.as_deref(),
+        ));
     }
 
     pub(super) fn handle_effort_selector_key(&mut self, key: &Key) {
-        if let Some(selector) = &mut self.effort_selector {
+        if let Some(selector) = &mut self.inference.effort_selector {
             selector.handle_input(key);
             match selector.take_result() {
                 EffortSelectorResult::Selected(level) => {
-                    self.effort_selector = None;
+                    self.inference.effort_selector = None;
                     self.send_set_effort(&level);
                 }
                 EffortSelectorResult::Dismissed => {
-                    self.effort_selector = None;
+                    self.inference.effort_selector = None;
                 }
                 EffortSelectorResult::Pending => {}
             }
@@ -103,7 +113,7 @@ impl App {
         self.master_session.footer.set_effort(Some(level.clone()));
         if self.subagents.active_agent_id.is_none() {
             self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
-            self.current_effort = Some(level);
+            self.inference.current_effort = Some(level);
         }
     }
 

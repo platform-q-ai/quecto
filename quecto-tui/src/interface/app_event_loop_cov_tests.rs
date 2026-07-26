@@ -10,7 +10,7 @@ async fn files_autocomplete_lazy_load_request_is_spawned_once_and_applied() {
     let a = h.app_mut();
     a.editor.set_text("open @");
     a.refresh_files_autocomplete_from_editor();
-    assert!(a.files_autocomplete.take_load_request());
+    assert!(a.workspace.files_autocomplete.take_load_request());
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     let mut in_flight = false;
@@ -24,11 +24,28 @@ async fn files_autocomplete_lazy_load_request_is_spawned_once_and_applied() {
         .await
         .expect("file load worker should respond")
         .expect("worker should send a file list");
-    a.files_autocomplete.apply_loaded_files(files);
+    a.workspace.files_autocomplete.apply_loaded_files(files);
     assert!(
         in_flight,
         "worker completion normally clears this flag in the event loop"
     );
     a.refresh_files_autocomplete_from_editor();
-    assert!(!a.files_autocomplete.take_load_request());
+    assert!(!a.workspace.files_autocomplete.take_load_request());
+}
+
+#[tokio::test]
+async fn files_autocomplete_loaded_files_are_accepted_by_tab_completion() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.editor.set_text("open @fi");
+    a.refresh_files_autocomplete_from_editor();
+    assert!(a.workspace.files_autocomplete.take_load_request());
+
+    a.workspace
+        .files_autocomplete
+        .apply_loaded_files(vec!["first.rs".into(), "src/other.rs".into()]);
+    a.refresh_files_autocomplete_from_editor();
+    a.handle_key(crate::interface::keys::Key::Tab);
+
+    assert_eq!(a.editor.text(), "open @first.rs ");
 }
