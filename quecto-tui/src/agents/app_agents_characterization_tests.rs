@@ -40,8 +40,8 @@ fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
             last_fresh_at: None,
             supports_sync: false,
             pending_rev: None,
-            transcript: crate::interface::agents::ledger::LedgerTranscript::default(),
-            authority: crate::interface::agents::feed::FeedAuthority::WarmSync,
+            transcript: crate::agents::ledger::LedgerTranscript::default(),
+            authority: crate::agents::feed::FeedAuthority::WarmSync,
         },
         cmd_rx,
     )
@@ -134,7 +134,7 @@ async fn retained_sessions_and_warm_feeds_evict_oldest_non_active_beyond_cap() {
 
 #[test]
 fn duplicate_ids_within_one_sync_delta_keep_first_position_and_latest_content() {
-    let mut transcript = crate::interface::agents::ledger::LedgerTranscript::default();
+    let mut transcript = crate::agents::ledger::LedgerTranscript::default();
 
     let entries = transcript.apply_sync_delta(&crate::protocol::agent_ledger_payloads::SyncDelta {
         epoch: 1,
@@ -154,8 +154,8 @@ fn duplicate_ids_within_one_sync_delta_keep_first_position_and_latest_content() 
         matches!(
             entries.as_slice(),
             [
-                crate::interface::agents::ledger::LedgerEntry::Assistant { text: first },
-                crate::interface::agents::ledger::LedgerEntry::User { text: second }
+                crate::agents::ledger::LedgerEntry::Assistant { text: first },
+                crate::agents::ledger::LedgerEntry::User { text: second }
             ] if first == "new" && second == "between"
         ),
         "duplicate ids must update in place without moving their original order slot: {entries:?}"
@@ -186,7 +186,7 @@ async fn ledger_hint_at_current_revision_records_freshness_without_redundant_syn
         feed.last_fresh_at.is_some(),
         "even a no-op hint refreshes feed freshness"
     );
-    feed.authority = crate::interface::agents::feed::FeedAuthority::SyncedAuthoritative;
+    feed.authority = crate::agents::feed::FeedAuthority::SyncedAuthoritative;
 
     app.select_agent(Some("worker"));
 
@@ -228,7 +228,7 @@ async fn caught_up_sync_clears_pending_revision_without_follow_up_command() {
     assert_eq!(feed.pending_rev, None);
     assert_eq!(
         feed.authority,
-        crate::interface::agents::feed::FeedAuthority::SyncedAuthoritative,
+        crate::agents::feed::FeedAuthority::SyncedAuthoritative,
         "authority changes only after applying a valid sync delta"
     );
     let entries = app.subagents.sessions["worker"].chat.entries();

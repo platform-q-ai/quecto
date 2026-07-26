@@ -312,6 +312,7 @@ fn to_snake_case(name: &str) -> String {
 
 const TUI_SRC: &str = "../quecto-tui/src";
 const TUI_CONVERSATION: &str = "../quecto-tui/src/conversation";
+const TUI_AGENTS: &str = "../quecto-tui/src/agents";
 const TUI_PROTOCOL: &str = "../quecto-tui/src/protocol";
 const TUI_INFRASTRUCTURE: &str = "../quecto-tui/src/infrastructure";
 const TUI_INTERFACE: &str = "../quecto-tui/src/interface";
@@ -320,8 +321,9 @@ const TUI_SHELL: &str = "../quecto-tui/src/shell";
 const TUI_ALLOWED_ROOT_RS: &[&str] = &["lib.rs", "main.rs"];
 /// #1257 phased migration: the exact set of top-level modules `lib.rs` may
 /// expose, updated per phase as feature modules land (Phase 3: `conversation`;
-/// `application` and vestigial TUI `domain` deleted).
+/// Phase 4: `agents`; `application` and vestigial TUI `domain` deleted).
 const TUI_LIB_RS_MODULES: &[&str] = &[
+    "agents",
     "components",
     "conversation",
     "infrastructure",
@@ -332,6 +334,7 @@ const TUI_LIB_RS_MODULES: &[&str] = &[
 /// #1257 phased migration: top-level directories production files may live in
 /// (legacy layers plus the feature modules landed so far).
 const TUI_TOP_LEVEL_MODULES: &[&str] = &[
+    "agents",
     "conversation",
     "infrastructure",
     "interface",
@@ -382,6 +385,10 @@ fn tui_feature_oriented_architecture_is_documented() {
         "`conversation/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221; relocated, #1257 Phase 3)",
         "`conversation/app_rewind.rs` | `conversation` rewind flow owner (relocated, #1257 Phase 3)",
         "`domain/` | deleted in #1257 Phase 3",
+        "`agents/roster.rs` | `agents` pure roster/lifecycle policy (#1222; relocated, #1257 Phase 4)",
+        "`agents/app_subagents.rs` | `agents` (relocated, #1257 Phase 4)",
+        "`agents/runtime.rs` | `agents` feed connect-task runtime ownership (#1257 Phase 4 ui.rs split)",
+        "`agents/view.rs` | `agents` concrete UI/runtime adapter state (#1222; relocated + split, #1257 Phase 4)",
         "#1221 (`conversation`) and #1222 (`agents`) depend on #1220",
     ] {
         assert!(
@@ -475,6 +482,14 @@ fn tui_architecture_layers_exist() {
         "quecto-tui/src/conversation/ must exist after #1257 Phase 3"
     );
     assert!(
+        Path::new(TUI_AGENTS).exists(),
+        "quecto-tui/src/agents/ must exist after #1257 Phase 4"
+    );
+    assert!(
+        !Path::new("../quecto-tui/src/interface/agents").exists(),
+        "quecto-tui/src/interface/agents/ must be promoted to top-level agents/ after #1257 Phase 4"
+    );
+    assert!(
         Path::new(TUI_PROTOCOL).exists(),
         "quecto-tui/src/protocol/ must exist"
     );
@@ -529,6 +544,78 @@ fn tui_conversation_pure_policy_has_no_outer_layer_imports() {
                     path.display()
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn tui_agents_pure_policy_has_no_outer_layer_imports() {
+    // Pure agents policy (#1222): feed/focus/roster must not depend on
+    // terminal/widget types, concrete client, or outer presentation layers.
+    // `ledger.rs` is a typed adapter over protocol ledger payloads + conversation
+    // recovery ordering and is checked separately for widget/client freedom.
+    let forbidden = [
+        "crate::application",
+        "crate::infrastructure",
+        "crate::interface",
+        "crate::components",
+        "crate::shell",
+        "crate::protocol::client",
+        "super::application",
+        "super::infrastructure",
+        "super::interface",
+        "super::components",
+        "super::shell",
+        "mpsc::",
+        "JoinHandle",
+        "Client::",
+        "serde_json::",
+    ];
+    for rel in ["feed.rs", "focus.rs", "roster.rs"] {
+        let path = Path::new(TUI_AGENTS).join(rel);
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read pure agents policy {}: {e}", path.display()));
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed == "#[cfg(test)]" {
+                break;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for pattern in forbidden {
+                assert!(
+                    !trimmed.contains(pattern),
+                    "pure agents policy {} must not contain pattern {pattern}; line: {trimmed}",
+                    path.display()
+                );
+            }
+        }
+    }
+    let ledger =
+        fs::read_to_string(Path::new(TUI_AGENTS).join("ledger.rs")).expect("read agents ledger");
+    for pattern in [
+        "crate::interface",
+        "crate::components",
+        "crate::shell",
+        "crate::protocol::client",
+        "mpsc::",
+        "JoinHandle",
+        "Client::",
+        "serde_json::",
+    ] {
+        for line in ledger.lines() {
+            let trimmed = line.trim();
+            if trimmed == "#[cfg(test)]" {
+                break;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            assert!(
+                !trimmed.contains(pattern),
+                "agents ledger must not contain pattern {pattern}; line: {trimmed}"
+            );
         }
     }
 }
@@ -988,10 +1075,15 @@ const TUI_INTERFACE_RAW_JSON_SITE_SEED: usize = 120;
 const TUI_PHASE_3_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 109;
 
 /// #1257: feature/view ratchet scan roots follow the code as modules relocate,
-/// so a move alone can never lower a measured count (Phase 3: `interface/`,
-/// `components/`, `shell/`, plus landed `conversation/`).
-const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] =
-    &[TUI_INTERFACE, TUI_COMPONENTS, TUI_SHELL, TUI_CONVERSATION];
+/// so a move alone can never lower a measured count (Phase 4: `interface/`,
+/// `components/`, `shell/`, plus landed `conversation/` and `agents/`).
+const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
+    TUI_INTERFACE,
+    TUI_COMPONENTS,
+    TUI_SHELL,
+    TUI_CONVERSATION,
+    TUI_AGENTS,
+];
 
 /// Seed: production raw `serde_json` parsing sites in TUI `protocol/` mappers.
 /// These sites are an allowed but temporary protocol-mapping foothold; lower
@@ -1020,9 +1112,14 @@ const TUI_INTERFACE_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("interface/app_resp
 /// sites remain measured. (#1257 Phase 2)
 const TUI_PROTOCOL_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("protocol/client.rs", "#1257")];
 
-/// Narrow, issue-linked allowlist for the WIRE-DTO ratchet only. Empty: no file
-/// currently has an approved reason to accumulate wire-DTO usage unmeasured.
-const TUI_WIRE_DTO_ALLOWLIST: &[(&str, &str)] = &[];
+/// Narrow, issue-linked allowlist for the WIRE-DTO ratchet only.
+///
+/// `agents/runtime.rs` exists solely because #1257 Phase 4 splits the former
+/// `ui.rs` FeedRuntime type into its own file; the `protocol::client::Command`
+/// path is the same structural site that already counted under `ui.rs`, not a
+/// new wire consumer. Keep this allowlist entry until FeedRuntime is hidden
+/// behind a non-wire channel type.
+const TUI_WIRE_DTO_ALLOWLIST: &[(&str, &str)] = &[("agents/runtime.rs", "#1257 Phase 4")];
 
 /// Production (non-`cfg(test)`) TUI layer sources, minus `allowlist`.
 fn tui_production_layer_files(root: &str, allowlist: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -1157,7 +1254,7 @@ fn tui_interface_raw_json_parsing_sites_do_not_grow() {
     );
     assert_eq!(
         total, TUI_PHASE_3_FEATURE_VIEW_RAW_JSON_TOTAL,
-        "#1257 Phase 3 relocation must preserve moved feature/view raw serde_json \
+        "#1257 Phase 4 relocation must preserve moved feature/view raw serde_json \
          sites except genuine protocol-mapper conversions: found {total}, seed \
          {TUI_INTERFACE_RAW_JSON_SITE_SEED}. Move payload interpretation into a \
          protocol-layer mapper (see quecto-tui/src/protocol/model_payloads.rs, \
@@ -1196,7 +1293,7 @@ fn tui_wire_dto_usage_does_not_grow() {
     );
     assert_eq!(
         total, TUI_PHASE_1_WIRE_DTO_USAGE_TOTAL,
-        "#1257 Phase 1 relocation must preserve TUI feature/view wire-DTO usage: \
+        "#1257 Phase 4 relocation must preserve TUI feature/view wire-DTO usage: \
          found {total}, seed {TUI_WIRE_DTO_USAGE_SEED} (#1220). Counting usages, not \
          `use` lines, so `use super::*` and fully-qualified paths are visible. \
          Inventory (burn-down order): {per_file:?}"

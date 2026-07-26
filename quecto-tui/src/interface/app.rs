@@ -3,6 +3,9 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::agents::focus::{Focus, MAX_RETAINED_SESSIONS, SUBAGENT_PANEL_WIDTH};
+use crate::agents::view::FeedState;
+use crate::agents::view::{SessionView, SubagentUi};
 use crate::components::autocomplete::{Autocomplete, AutocompleteResult};
 use crate::components::chat::{Chat, ChatEntry};
 use crate::components::component::Component;
@@ -15,9 +18,6 @@ use crate::components::select_list::{SelectItem, SelectList};
 use crate::components::spinner::Spinner;
 use crate::components::workflow_bar;
 use crate::infrastructure::workspace_files::list_workspace_files;
-use crate::interface::agents::focus::{Focus, MAX_RETAINED_SESSIONS, SUBAGENT_PANEL_WIDTH};
-use crate::interface::agents::ui::FeedState;
-use crate::interface::agents::ui::{SessionView, SubagentUi};
 use crate::interface::kitty::KittyProtocol;
 use crate::protocol::client::{Client, Command, Event};
 use crate::shell::keys::{self, Key};
@@ -245,7 +245,10 @@ mod app_stdin;
 pub const GIT_BRANCH_POLL_INTERVAL: std::time::Duration = app_git::GIT_BRANCH_POLL_INTERVAL;
 #[path = "app_idle_efficiency.rs"]
 mod app_idle_efficiency;
-#[path = "app_ledger_sync.rs"]
+// #1257 Phase 4: agents-owned app slices are physically housed under
+// `agents/` but remain mounted inside `interface::app` until later
+// controller-extraction phases.
+#[path = "../agents/app_ledger_sync.rs"]
 mod app_ledger_sync;
 #[path = "../conversation/app_message_recovery.rs"]
 pub(crate) mod app_message_recovery;
@@ -263,20 +266,20 @@ mod app_resumed_history;
 mod app_rewind;
 #[path = "app_selection.rs"]
 mod app_selection;
-#[path = "app_subagent_feed.rs"]
+#[path = "../agents/app_subagent_feed.rs"]
 mod app_subagent_feed;
-#[path = "app_subagent_panel.rs"]
+#[path = "../agents/app_subagent_panel.rs"]
 mod app_subagent_panel;
 #[path = "app_submit.rs"]
 mod app_submit;
-use crate::interface::agents::roster::{
+use crate::agents::roster::{
     gc_exited_subagents, next_exited_subagent_gc_deadline, subagent_status_is_active,
 };
 type TrackedSubagent =
-    crate::interface::agents::roster::TrackedSubagent<crate::protocol::client::SubagentInfoEvent>;
-#[path = "app_subagent_stream.rs"]
+    crate::agents::roster::TrackedSubagent<crate::protocol::client::SubagentInfoEvent>;
+#[path = "../agents/app_subagent_stream.rs"]
 mod app_subagent_stream;
-#[path = "app_subagents.rs"]
+#[path = "../agents/app_subagents.rs"]
 mod app_subagents;
 
 /// Maximum bytes for OSC 52 clipboard payload (100 KiB before base64 encoding).
@@ -473,7 +476,7 @@ fn sanitize_agent_id(id: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "app_agents_characterization_tests.rs"]
+#[path = "../agents/app_agents_characterization_tests.rs"]
 mod app_agents_characterization_tests;
 #[cfg(test)]
 #[path = "app_attach_backfill_tests.rs"]
@@ -488,7 +491,7 @@ mod app_conversation_characterization_tests;
 #[path = "app_cov_tests.rs"]
 mod app_cov_tests;
 #[cfg(test)]
-#[path = "app_delete_all_subagents_tests.rs"]
+#[path = "../agents/app_delete_all_subagents_tests.rs"]
 mod app_delete_all_subagents_tests;
 #[cfg(test)]
 #[path = "app_disconnect_tests.rs"]
@@ -536,22 +539,22 @@ mod app_selection_tests;
 #[path = "app_streaming_stability_tests.rs"]
 mod app_streaming_stability_tests;
 #[cfg(test)]
-#[path = "app_subagent_first_tests.rs"]
+#[path = "../agents/app_subagent_first_tests.rs"]
 mod app_subagent_first_tests;
 #[cfg(test)]
-#[path = "app_subagent_panel_observer_tests.rs"]
+#[path = "../agents/app_subagent_panel_observer_tests.rs"]
 mod app_subagent_panel_observer_tests;
 #[cfg(test)]
-#[path = "app_subagent_panel_tests.rs"]
+#[path = "../agents/app_subagent_panel_tests.rs"]
 mod app_subagent_panel_tests;
 #[cfg(test)]
-#[path = "app_subagent_roster_authority_tests.rs"]
+#[path = "../agents/app_subagent_roster_authority_tests.rs"]
 mod app_subagent_roster_authority_tests;
 #[cfg(test)]
-#[path = "app_subagent_workflow_sticky_tests.rs"]
+#[path = "../agents/app_subagent_workflow_sticky_tests.rs"]
 mod app_subagent_workflow_sticky_tests;
 #[cfg(test)]
-#[path = "app_subagents_tests.rs"]
+#[path = "../agents/app_subagents_tests.rs"]
 mod app_subagents_tests;
 #[cfg(test)]
 #[path = "app_workflow_box_width_tests.rs"]
@@ -566,7 +569,7 @@ mod chat_session_tests;
 #[path = "app_focus_parity_tests.rs"]
 mod focus_parity_tests;
 #[cfg(test)]
-#[path = "app_subagent_selection_tests.rs"]
+#[path = "../agents/app_subagent_selection_tests.rs"]
 mod subagent_selection_tests;
 #[cfg(test)]
 #[path = "app_tests.rs"]

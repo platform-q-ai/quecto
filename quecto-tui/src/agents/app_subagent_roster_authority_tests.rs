@@ -93,7 +93,7 @@ async fn recursive_discovery_registers_grandchild_and_opens_warm_feed() {
     );
     assert_eq!(
         a.subagents.feeds["g1"].authority,
-        crate::interface::agents::feed::FeedAuthority::WarmSync,
+        crate::agents::feed::FeedAuthority::WarmSync,
         "warm feeds must not suppress legacy child events until sync support is confirmed"
     );
 }

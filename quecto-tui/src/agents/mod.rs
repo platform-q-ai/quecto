@@ -1,13 +1,15 @@
-//! Agents presentation policy extracted from the legacy `App` slice (#1222).
+//! Agents ownership for `quecto-tui` (#1222 / #1257 Phase 4).
 //!
-//! Runtime glue still lives beside `App`; these modules own the pure roster,
-//! feed-synchronization, ledger, and focus state used by that glue.
+//! Owns subagent roster, lifecycle, feeds, ledger sync, focus, retention, and
+//! view projection. App slices remain mounted inside `interface::app` until
+//! later controller-extraction phases.
 
 pub(crate) mod feed;
 pub(crate) mod focus;
 pub(crate) mod ledger;
 pub(crate) mod roster;
-pub(crate) mod ui;
+pub(crate) mod runtime;
+pub(crate) mod view;
 
 /// Whether a tool call renders without its own tool box. The decision depends
 /// only on the tool name, so pure policy callers never parse arguments.

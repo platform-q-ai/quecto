@@ -1,6 +1,7 @@
 #![deny(dead_code)]
 #![deny(unused_imports)]
 
+pub mod agents;
 pub mod components;
 pub mod conversation;
 pub mod infrastructure;

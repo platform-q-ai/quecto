@@ -1,10 +1,16 @@
+//! Agents view / concrete UI adapter state (#1222 / #1257 Phase 4).
+//!
+//! Owns `SubagentUi`, `SessionView`, flattened `FeedState`, and the
+//! ledger-to-chat adapter. Runtime connect handles live in `runtime`.
+
+use crate::agents::feed::{FeedAuthority, FeedSyncState};
+use crate::agents::focus::Focus;
+use crate::agents::roster::{RosterInfo, TrackedSubagent, subagent_status_is_active};
+use crate::agents::runtime::FeedRuntime;
 use crate::components::chat::Chat;
 use crate::components::footer::Footer;
 use crate::components::list_navigator::ListNavigator;
 use crate::components::workflow_bar;
-use crate::interface::agents::feed::{FeedAuthority, FeedSyncState};
-use crate::interface::agents::focus::Focus;
-use crate::interface::agents::roster::{RosterInfo, TrackedSubagent, subagent_status_is_active};
 use crate::protocol::client::{Command, Event, SubagentInfoEvent, SubagentWorkflow};
 use std::collections::{BTreeMap, VecDeque};
 use tokio::sync::mpsc;
@@ -30,22 +36,15 @@ impl RosterInfo for SubagentInfoEvent {
     }
 }
 
-/// Runtime ownership for a direct child feed. Kept separate from feed sync
-/// policy so pure synchronization state has no Tokio channel or task handle.
-pub(crate) struct FeedRuntime {
-    pub(crate) cmd_tx: mpsc::Sender<Command>,
-    pub(crate) handle: tokio::task::JoinHandle<()>,
-}
-
 /// Direct-feed state as consumed by the legacy `App` slice. The flattened fields
 /// preserve existing call sites while construction flows through separated
 /// runtime and synchronization parts above.
 ///
-/// This flattening is a deliberate staging step: the split into `FeedRuntime` +
-/// `FeedSyncState` is currently enforced only at construction, so new
-/// synchronization fields must be added to `FeedSyncState` (not directly here)
-/// until the remaining call sites are migrated to `feed.sync.*` under #1222's
-/// follow-up.
+/// This flattening is a deliberate staging step: the split into
+/// `runtime::FeedRuntime` + `FeedSyncState` is currently enforced only at
+/// construction, so new synchronization fields must be added to `FeedSyncState`
+/// (not directly here) until the remaining call sites are migrated to
+/// `feed.sync.*` under #1222's follow-up.
 pub(crate) struct FeedState {
     pub(crate) cmd_tx: mpsc::Sender<Command>,
     pub(crate) handle: tokio::task::JoinHandle<()>,
@@ -54,15 +53,15 @@ pub(crate) struct FeedState {
     pub(crate) last_fresh_at: Option<std::time::Instant>,
     pub(crate) supports_sync: bool,
     pub(crate) pending_rev: Option<u64>,
-    pub(crate) transcript: crate::interface::agents::ledger::LedgerTranscript,
+    pub(crate) transcript: crate::agents::ledger::LedgerTranscript,
     pub(crate) authority: FeedAuthority,
 }
 
 pub(crate) fn ledger_entry_to_chat_entry(
-    entry: crate::interface::agents::ledger::LedgerEntry,
+    entry: crate::agents::ledger::LedgerEntry,
 ) -> crate::components::chat::ChatEntry {
+    use crate::agents::ledger::LedgerEntry;
     use crate::components::chat::ChatEntry;
-    use crate::interface::agents::ledger::LedgerEntry;
     match entry {
         LedgerEntry::User { text } => ChatEntry::User { text },
         LedgerEntry::Assistant { text } => ChatEntry::Assistant {
