@@ -31,8 +31,8 @@
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-HP=quecto-tui/src/domain/history_paging.rs
-TR=quecto-tui/src/domain/turn_recovery.rs
+HP=quecto-tui/src/conversation/history_paging.rs
+TR=quecto-tui/src/conversation/turn_recovery.rs
 RA=quecto-tui/src/protocol/range_accumulator.rs
 
 HP_BAK=$(mktemp)
@@ -123,7 +123,7 @@ PYEOF
   fi
 }
 
-echo "== domain/history_paging.rs =="
+echo "== conversation/history_paging.rs =="
 check "$HP" "$HP_BAK" "self.pending_page = None;"        3 "reset: forgets the in-flight page"
 check "$HP" "$HP_BAK" "self.before_cursor = None;"       1 "reset: drops the paging cursor"
 check "$HP" "$HP_BAK" "self.has_more_before = false;"    1 "reset: drops the advertised-more flag"
@@ -134,7 +134,7 @@ check "$HP" "$HP_BAK" "self.partial_prefix_len = None;"  2 "reopen_backfill: dro
 check "$HP" "$HP_BAK" "self.backfilled = false;"         3 "reconcile keep-open arm: unlatches"
 check "$HP" "$HP_BAK" "self.partial_prefix_len = None;"  3 "reconcile latch arm: clears the prefix"
 
-echo "== domain/turn_recovery.rs =="
+echo "== conversation/turn_recovery.rs =="
 check_replace "$TR" "$TR_BAK" \
   "!refs.is_empty() && open_tool_calls > 0" \
   "open_tool_calls > 0" \

@@ -98,9 +98,35 @@ async fn open_rewind_selector_builds_turns_in_reverse() {
             {"role": "user", "content": "two", "id": "u2"}
         ]
     });
-    let a = h.app_mut();
-    a.open_rewind_selector(&data);
-    assert_eq!(a.rewind.selector.as_ref().unwrap().item_count(), 2);
+    {
+        let a = h.app_mut();
+        a.open_rewind_selector(&data);
+        assert_eq!(a.rewind.selector.as_ref().unwrap().item_count(), 2);
+        let frame = a.compose_frame().join("\n");
+        assert!(
+            frame.contains("Previous turn: two"),
+            "the newest user turn must be labelled as the previous turn; frame={frame}"
+        );
+        assert!(
+            frame.contains("2 turns ago: one"),
+            "older user turns must keep their relative-turn labels; frame={frame}"
+        );
+        a.handle_rewind_selector_key(&Key::Enter);
+    }
+
+    let commands = h.drain_commands().await;
+    let rewind = commands
+        .iter()
+        .find_map(|line| {
+            let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("rewind_to")).then_some(cmd)
+        })
+        .expect("a rewind_to command must be sent");
+    assert_eq!(
+        rewind.get("messageId").and_then(|v| v.as_str()),
+        Some("u2"),
+        "the newest user turn must be selected first"
+    );
 }
 
 #[tokio::test]
@@ -111,6 +137,44 @@ async fn open_rewind_selector_no_user_turns_notifies() {
     a.open_rewind_selector(&data);
     assert!(a.rewind.selector.is_none());
     assert!(!a.notifications.is_empty());
+}
+
+#[tokio::test]
+async fn rewind_selector_skips_idless_user_turns() {
+    let mut h = harness().await;
+    let data = serde_json::json!({"messages": [
+        {"role": "user", "content": "idless newest"},
+        {"role": "user", "content": "stable older", "id": "stable-u1"}
+    ]});
+    {
+        let a = h.app_mut();
+        a.open_rewind_selector(&data);
+        assert_eq!(a.rewind.selector.as_ref().unwrap().item_count(), 1);
+        let frame = a.compose_frame().join("\n");
+        assert!(
+            frame.contains("Previous turn: stable older"),
+            "the remaining stable-id user turn should still be selectable; frame={frame}"
+        );
+        assert!(
+            !frame.contains("idless newest"),
+            "id-less user turns must not be selectable rewind targets; frame={frame}"
+        );
+        a.handle_rewind_selector_key(&Key::Enter);
+    }
+
+    let commands = h.drain_commands().await;
+    let rewind = commands
+        .iter()
+        .find_map(|line| {
+            let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("rewind_to")).then_some(cmd)
+        })
+        .expect("a rewind_to command must be sent");
+    assert_eq!(
+        rewind.get("messageId").and_then(|v| v.as_str()),
+        Some("stable-u1"),
+        "only the stable-id user turn may be selected"
+    );
 }
 
 #[tokio::test]

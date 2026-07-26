@@ -178,7 +178,7 @@ pub(crate) struct SessionView {
     pub(crate) deferred_subagent_notes: VecDeque<String>,
     /// History cursors, older-page correlation and the partial-vs-complete
     /// backfill latch (#828/#1050/#1061), owned by a pure policy (#1221).
-    pub(crate) history: crate::domain::history_paging::HistoryPaging,
+    pub(crate) history: crate::conversation::history_paging::HistoryPaging,
     /// Until this session's own stream reports run-state, `active_subagent_running`
     /// trusts the tracked status not `running` (#834).
     pub(crate) observed_run_state: bool,
@@ -205,7 +205,7 @@ impl SessionView {
             running: false,
             footer,
             deferred_subagent_notes: VecDeque::new(),
-            history: crate::domain::history_paging::HistoryPaging::default(),
+            history: crate::conversation::history_paging::HistoryPaging::default(),
             observed_run_state: false,
             active_turn_start: 0,
             tools_this_turn: 0,
