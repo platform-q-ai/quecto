@@ -39,6 +39,8 @@ impl App {
             if feed.epoch != 0 && delta.epoch != feed.epoch && !delta.resync {
                 return;
             }
+            let prev_rev = feed.rev;
+            let prev_epoch = feed.epoch;
             let entries = feed.transcript.apply_sync_delta(&delta);
             feed.epoch = delta.epoch;
             feed.rev = if delta.caught_up {
@@ -57,13 +59,17 @@ impl App {
                 });
             }
             feed.authority = crate::agents::feed::FeedAuthority::SyncedAuthoritative;
+            // A newer committed revision (or epoch resync) supersedes the
+            // ephemeral in-flight live tail; same-rev re-projection keeps it
+            // so focus/refocus mid-turn does not reset the transcript (#1259).
+            let supersede_live = delta.resync || feed.epoch != prev_epoch || feed.rev != prev_rev;
+            let focused = self.subagents.active_agent_id.as_deref() == Some(agent_id);
             if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
-                session.chat.clear();
-                for entry in entries {
-                    session
-                        .chat
-                        .add_entry(crate::agents::view::ledger_entry_to_chat_entry(entry));
-                }
+                session.project_ledger_with_live(
+                    entries,
+                    focused && !supersede_live,
+                    supersede_live,
+                );
             }
         }
     }

@@ -168,6 +168,11 @@ impl SubagentUi {
 /// Per-session state for the multi-session UI (#800/#802/#828).
 pub(crate) struct SessionView {
     pub(crate) chat: Chat,
+    /// Retained in-flight turn stream for a synced child (#1259). Survives
+    /// focus changes and same-rev ledger re-projection; cleared when a newer
+    /// committed ledger revision supersedes it. Not shown for unfocused
+    /// children until focus/reproject merges it onto `chat`.
+    pub(crate) live_inflight: Chat,
     pub(crate) workflow_bar: workflow_bar::WorkflowBarState,
     /// Whether the child is mid-turn — drives a per-session working indicator.
     pub(crate) running: bool,
@@ -200,6 +205,7 @@ impl SessionView {
     pub(crate) fn with_footer(footer: Footer) -> Self {
         Self {
             chat: Chat::new(),
+            live_inflight: Chat::new(),
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             running: false,
             footer,
@@ -209,6 +215,34 @@ impl SessionView {
             active_turn_start: 0,
             tools_this_turn: 0,
             open_tool_calls: 0,
+        }
+    }
+
+    /// Rebuild `chat` from committed ledger entries (#1259).
+    ///
+    /// - `clear_live`: drop the retained in-flight buffer (ledger supersedes it).
+    /// - `attach_live`: append the retained buffer onto `chat` (focused mid-turn).
+    ///
+    /// Unfocused re-projection uses `attach_live = false` so chat stays
+    /// ledger-authoritative while the buffer survives until focus or supersession.
+    pub(crate) fn project_ledger_with_live(
+        &mut self,
+        ledger: impl IntoIterator<Item = crate::agents::ledger::LedgerEntry>,
+        attach_live: bool,
+        clear_live: bool,
+    ) {
+        if clear_live {
+            self.live_inflight.clear();
+        }
+        self.chat.clear();
+        for entry in ledger {
+            self.chat
+                .add_entry(crate::agents::view::ledger_entry_to_chat_entry(entry));
+        }
+        if attach_live {
+            for entry in self.live_inflight.entries() {
+                self.chat.add_entry(entry.clone());
+            }
         }
     }
 }

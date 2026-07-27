@@ -220,6 +220,8 @@ impl App {
                     // end-of-turn ref-cardinality recovery (#1060 review, F2).
                     session.tools_this_turn = 0;
                     session.open_tool_calls = 0;
+                    // Fresh in-flight buffer for this turn (#1259).
+                    session.live_inflight.clear();
                 }
                 session.running = true;
                 session.observed_run_state = true;
@@ -250,8 +252,8 @@ impl App {
             return;
         }
         // Flush deferred grandchild notes once this child goes idle (after the
-        // streamed response is finalized below).
-        let flush_notes = matches!(ev, Event::AgentEnd { .. } | Event::TurnEnd { .. });
+        // streamed response is finalized below). Run-state already flipped above.
+        let flush_notes = was_running && !session.running;
         let recovery_refs = Self::subagent_end_of_turn_refs(&ev);
         let early_return = matches!(
             &ev,
@@ -303,6 +305,12 @@ impl App {
         was_running: bool,
         early: bool,
     ) -> bool {
+        // Always retain in-flight stream events on a synced feed so focus /
+        // refocus can restore the full mid-turn transcript (#1259). Visible
+        // `chat` stays ledger-only while unfocused.
+        if synced {
+            Self::buffer_live_inflight(session, ev, was_running);
+        }
         if synced && !focused_live {
             if was_running && !session.running {
                 session.chat.finalize_assistant();
@@ -316,18 +324,45 @@ impl App {
         early
     }
 
+    /// Record mid-turn live stream events into the retained buffer (#1259).
+    /// Non-chat events no-op inside `apply_chat_stream_event`; turn-start clear
+    /// happens in the run-state arm above.
+    fn buffer_live_inflight(session: &mut SessionView, ev: &Event, was_running: bool) {
+        // Idle stale tokens after a finished turn must not seed a new buffer.
+        if !session.running && !was_running {
+            return;
+        }
+        Self::apply_chat_stream_event(&mut session.live_inflight, ev, None);
+    }
+
     /// Apply a single non-workflow child stream event to its chat.
     fn apply_subagent_chat_event(session: &mut SessionView, ev: &Event) {
-        // Maintain the per-turn tool count (ref cardinality, F2) and the
-        // open-tool-call count (dropped tool-end recovery, review 3) before
-        // borrowing `chat`, mirroring the master path (#1060).
-        if matches!(ev, Event::ToolExecutionStart { .. }) {
-            session.tools_this_turn = session.tools_this_turn.saturating_add(1);
-            session.open_tool_calls = session.open_tool_calls.saturating_add(1);
-        } else if matches!(ev, Event::ToolExecutionEnd { .. }) {
-            session.open_tool_calls = session.open_tool_calls.saturating_sub(1);
+        if matches!(
+            ev,
+            Event::Response { command, id, .. }
+                if command == "get_messages" && session.is_pending_history_page(id.as_deref())
+        ) {
+            // Failed / ignored child page fetch: clear the in-flight request so
+            // a future ledger-sync compatible pagination path can retry cleanly.
+            session.clear_pending_history_page();
+            return;
         }
-        let chat = &mut session.chat;
+        // Tool counts update only on the visible chat path (master parity, #1060).
+        Self::apply_chat_stream_event(
+            &mut session.chat,
+            ev,
+            Some((&mut session.tools_this_turn, &mut session.open_tool_calls)),
+        );
+    }
+
+    /// Apply one stream event to a chat buffer (visible session or live tail).
+    /// When `tool_counts` is `Some((tools_this_turn, open_tool_calls))`, tool
+    /// start/end also maintain the per-turn recovery counters (#1060).
+    fn apply_chat_stream_event(
+        chat: &mut Chat,
+        ev: &Event,
+        tool_counts: Option<(&mut usize, &mut usize)>,
+    ) {
         match ev {
             Event::Token { token } => chat.append_token(token),
             Event::AgentEnd { .. } | Event::TurnEnd { .. } => chat.finalize_assistant(),
@@ -336,6 +371,10 @@ impl App {
                 tool_name,
                 args,
             } => {
+                if let Some((tools, open)) = tool_counts {
+                    *tools = tools.saturating_add(1);
+                    *open = open.saturating_add(1);
+                }
                 let args_str = if args.is_object() || args.is_array() {
                     serde_json::to_string(args).unwrap_or_default()
                 } else {
@@ -353,15 +392,11 @@ impl App {
                 is_error,
                 ..
             } => {
+                if let Some((_, open)) = tool_counts {
+                    *open = open.saturating_sub(1);
+                }
                 let text = crate::protocol::client::extract_result_text(result);
                 chat.complete_tool(tool_call_id, &text, *is_error, None);
-            }
-            Event::Response { command, id, .. }
-                if command == "get_messages" && session.is_pending_history_page(id.as_deref()) =>
-            {
-                // Failed / ignored child page fetch: clear the in-flight request so
-                // a future ledger-sync compatible pagination path can retry cleanly.
-                session.clear_pending_history_page();
             }
             _ => {}
         }

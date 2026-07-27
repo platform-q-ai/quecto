@@ -40,6 +40,11 @@ impl LedgerTranscript {
                 self.messages.insert(id, message.clone());
             }
         }
+        self.entries()
+    }
+
+    /// Current committed projection (order × messages), without mutating state.
+    pub(crate) fn entries(&self) -> Vec<LedgerEntry> {
         ledger_entries(&self.order, &self.messages)
     }
 }

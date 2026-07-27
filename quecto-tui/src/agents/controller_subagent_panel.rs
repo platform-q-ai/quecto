@@ -167,7 +167,29 @@ impl App {
         self.inference.effort_levels.clear();
         self.seed_session_bar_from_snapshot(&id);
         self.ensure_synced_subagent_feed(&id);
+        // Merge committed ledger + retained in-flight live tail so focusing a
+        // busy child mid-turn shows the full transcript so far (#1259).
+        self.reproject_child_chat_with_live(&id);
         self.refresh_synced_feed_for_focus(&id);
+    }
+
+    /// Project the child's session chat from its authoritative ledger transcript
+    /// plus any retained in-flight live buffer (#1259).
+    pub(super) fn reproject_child_chat_with_live(&mut self, id: &str) {
+        let Some(entries) = self
+            .subagents
+            .feeds
+            .get(id)
+            .filter(|f| f.authority == crate::agents::feed::FeedAuthority::SyncedAuthoritative)
+            .map(|f| f.transcript.entries())
+        else {
+            return;
+        };
+        let Some(session) = self.subagents.sessions.get_mut(id) else {
+            return;
+        };
+        // Focus always attaches the retained buffer; never clear it here.
+        session.project_ledger_with_live(entries, true, false);
     }
 
     fn reconcile_active_agent(&mut self) {
