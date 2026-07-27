@@ -33,7 +33,7 @@ fn tool_output_uses_gray() {
 fn apply_bg_plain_text_pads_to_width() {
     let result = apply_bg("hello", 20, tool_success_bg);
     assert!(result.contains(BG_SUCCESS));
-    let vis = crate::interface::utils::visible_width(&result);
+    let vis = crate::components::utils::visible_width(&result);
     assert_eq!(vis, 20);
 }
 
@@ -50,7 +50,7 @@ fn apply_bg_preserves_background_through_sgr_resets() {
 fn apply_bg_with_multiple_styled_elements() {
     let content = format!(" {} {} {} ", green("✓"), bold("$ cargo test"), dim("42ms"));
     let result = apply_bg(&content, 60, tool_success_bg);
-    let vis = crate::interface::utils::visible_width(&result);
+    let vis = crate::components::utils::visible_width(&result);
     assert_eq!(vis, 60);
     let occurrences = result.matches(BG_SUCCESS).count();
     assert!(occurrences >= 2);
@@ -60,20 +60,20 @@ fn apply_bg_with_multiple_styled_elements() {
 fn apply_bg_no_resets_in_plain_text() {
     let result = apply_bg("plain text", 30, tool_pending_bg);
     assert!(result.starts_with(BG_PENDING));
-    assert_eq!(crate::interface::utils::visible_width(&result), 30);
+    assert_eq!(crate::components::utils::visible_width(&result), 30);
 }
 
 #[test]
 fn apply_bg_error_bg_works() {
     let result = apply_bg("error!", 20, tool_error_bg);
     assert!(result.contains(BG_ERROR));
-    assert_eq!(crate::interface::utils::visible_width(&result), 20);
+    assert_eq!(crate::components::utils::visible_width(&result), 20);
 }
 
 #[test]
 fn apply_bg_empty_text_fills_width() {
     let result = apply_bg("", 10, tool_success_bg);
-    assert_eq!(crate::interface::utils::visible_width(&result), 10);
+    assert_eq!(crate::components::utils::visible_width(&result), 10);
 }
 
 // ── gap fix: re-assert bg after ANY bg-clearing escape, not just \x1b[0m ──
@@ -170,5 +170,5 @@ fn background_helpers_and_overlay_emit_expected_codes() {
         overlay.starts_with(BG_OVERLAY),
         "overlay should use default-bg code: {overlay:?}"
     );
-    assert_eq!(crate::interface::utils::visible_width(&overlay), 5);
+    assert_eq!(crate::components::utils::visible_width(&overlay), 5);
 }

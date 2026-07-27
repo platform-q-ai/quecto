@@ -21,15 +21,15 @@ async fn read_only_subagent_shows_observer_marker_without_shifting_rows() {
         .unwrap_or_else(|| panic!("worker row not found:\n{panel}"));
 
     assert!(
-        reviewer.contains(crate::interface::theme::OBSERVER_GLYPH),
+        reviewer.contains(crate::components::theme::OBSERVER_GLYPH),
         "read-only sub-agent row must show an observer marker:\n{panel}"
     );
     assert!(
-        !worker.contains(crate::interface::theme::OBSERVER_GLYPH),
+        !worker.contains(crate::components::theme::OBSERVER_GLYPH),
         "read-write sub-agent row must not show an observer marker:\n{panel}"
     );
     let marker_col = reviewer
-        .find(crate::interface::theme::OBSERVER_GLYPH)
+        .find(crate::components::theme::OBSERVER_GLYPH)
         .expect("reviewer row should include the observer marker");
     let reviewer_name_end = reviewer.find("reviewer").unwrap() + "reviewer".len();
     assert_eq!(
@@ -67,7 +67,7 @@ async fn observer_marker_disappears_when_read_only_subagent_leaves() {
     ]));
     assert!(
         h.left_panel()
-            .contains(crate::interface::theme::OBSERVER_GLYPH)
+            .contains(crate::components::theme::OBSERVER_GLYPH)
     );
 
     h.event(subagents_changed(vec![subagent(
@@ -78,7 +78,7 @@ async fn observer_marker_disappears_when_read_only_subagent_leaves() {
 
     let panel = h.left_panel();
     assert!(
-        !panel.contains(crate::interface::theme::OBSERVER_GLYPH),
+        !panel.contains(crate::components::theme::OBSERVER_GLYPH),
         "observer marker must leave the panel with the read-only sub-agent:\n{panel}"
     );
     assert!(

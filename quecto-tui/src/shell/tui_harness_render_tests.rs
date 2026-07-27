@@ -6,7 +6,7 @@
 //! no green-panel background bleed.
 
 use super::tui_harness::*;
-use crate::interface::theme::BG_SUCCESS;
+use crate::components::theme::BG_SUCCESS;
 use crate::protocol::client::Event;
 use crate::shell::render::DiffRenderer;
 use std::sync::{Arc, Mutex};
@@ -251,7 +251,7 @@ async fn full_height_multi_agent_renderer_no_desync_or_bleed() {
     let box_row = 4usize;
     let green_box = format!("{BG_SUCCESS}  cargo build  ✓  \x1b[0m");
 
-    let frame_with_box = |app: &mut crate::interface::app::App| -> Vec<String> {
+    let frame_with_box = |app: &mut crate::shell::app::App| -> Vec<String> {
         let mut f = app.compose_frame();
         while f.len() < H {
             f.push(String::new());
@@ -337,5 +337,7 @@ async fn full_height_multi_agent_renderer_no_desync_or_bleed() {
 }
 
 fn strip_ansi_line(s: &str) -> String {
-    crate::interface::ansi::strip_ansi(s).trim_end().to_string()
+    crate::components::ansi::strip_ansi(s)
+        .trim_end()
+        .to_string()
 }

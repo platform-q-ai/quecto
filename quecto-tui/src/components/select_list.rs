@@ -3,7 +3,7 @@
 use crate::components::component::Component;
 use crate::components::list_navigator::ListNavigator;
 use crate::components::list_rows::{DescriptionMode, ListRow, render_windowed};
-use crate::interface::theme;
+use crate::components::theme;
 use crate::shell::keys::Key;
 
 /// An item in a select list.

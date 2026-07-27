@@ -34,7 +34,7 @@ impl App {
         stdin_rx: &mut mpsc::Receiver<Vec<u8>>,
         escape_timeout: Duration,
     ) {
-        use crate::interface::stdin_buffer::PendingReason;
+        use crate::shell::stdin_buffer::PendingReason;
 
         while !self.should_exit {
             let Some(reason) = self.stdin_buffer.pending_reason() else {
@@ -109,8 +109,8 @@ impl App {
         self.process_stdin_events(events);
     }
 
-    fn process_stdin_events(&mut self, events: Vec<crate::interface::stdin_buffer::InputEvent>) {
-        use crate::interface::stdin_buffer::InputEvent;
+    fn process_stdin_events(&mut self, events: Vec<crate::shell::stdin_buffer::InputEvent>) {
+        use crate::shell::stdin_buffer::InputEvent;
 
         for event in events {
             match event {

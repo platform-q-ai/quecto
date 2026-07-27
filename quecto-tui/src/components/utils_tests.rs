@@ -106,7 +106,7 @@ fn truncate_to_zero_width() {
 fn truncate_with_ellipsis_never_exceeds_width_when_ellipsis_too_wide() {
     let result = truncate_to_width("hello", 0, Some("..."));
     assert_eq!(visible_width(&result), 0);
-    assert!(crate::interface::ansi::strip_ansi(&result).is_empty());
+    assert!(crate::components::ansi::strip_ansi(&result).is_empty());
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use super::*;
-use crate::interface::ansi::AnsiSegment;
+use crate::components::ansi::AnsiSegment;
 
 pub(super) struct ToolRenderArgs<'a> {
     pub tool_name: &'a str,
@@ -343,7 +343,7 @@ pub(super) fn render_subagent(
                     format!(
                         "{} — {}",
                         agent,
-                        crate::interface::utils::truncate_to_width(&task, 50, Some("..."))
+                        crate::components::utils::truncate_to_width(&task, 50, Some("..."))
                     )
                 };
                 (detail, Some(agent))
@@ -518,7 +518,7 @@ pub(super) fn push_header(
 const TOOL_HEADER_MAX_ROWS: usize = 8;
 
 fn wrap_tool_line(line: &str, width: usize) -> Vec<String> {
-    let mut rows: Vec<String> = crate::interface::utils::wrap_text(line, width)
+    let mut rows: Vec<String> = crate::components::utils::wrap_text(line, width)
         .into_iter()
         .map(|segment| truncate_to_width(&segment, width, None))
         .collect();
@@ -537,7 +537,7 @@ const PREVIEW_ROWS_PER_LINE: usize = 4;
 
 /// Push a dimmed hint, wrapped so it stays readable at narrow widths.
 fn push_dim_wrapped(lines: &mut Vec<String>, hint: &str, width: usize) {
-    for segment in crate::interface::utils::wrap_text(hint, width) {
+    for segment in crate::components::utils::wrap_text(hint, width) {
         lines.push(theme::dim(&segment));
     }
 }
@@ -548,7 +548,7 @@ fn push_wrapped_output(
     color_fn: fn(&str) -> String,
     width: usize,
 ) {
-    for segment in crate::interface::utils::wrap_text(text, width) {
+    for segment in crate::components::utils::wrap_text(text, width) {
         lines.push(color_fn(&segment));
     }
 }
@@ -562,7 +562,7 @@ pub(super) fn push_full_output(
     width: usize,
 ) {
     for line in content_lines {
-        let sanitized = crate::interface::ansi::sanitize_control(line);
+        let sanitized = crate::components::ansi::sanitize_control(line);
         push_wrapped_output(lines, &sanitized, color_fn, width);
     }
 }
@@ -587,7 +587,7 @@ fn push_wrapped_output_limited(
     }
     let mut truncated = bounded != text;
     let mut pushed = 0;
-    for segment in crate::interface::utils::wrap_text(&bounded, width) {
+    for segment in crate::components::utils::wrap_text(&bounded, width) {
         if pushed == max_rows {
             // Word-wrap can spend fewer columns per row than the width bound
             // assumed, leaving segments beyond the row budget.
@@ -626,7 +626,7 @@ pub(super) fn push_preview(
         // the result body before colouring (#865 security review): otherwise a
         // malicious sub-agent could inject ANSI/OSC escapes (cursor control,
         // title/clipboard spoofing) into the parent operator's terminal.
-        let sanitized = crate::interface::ansi::sanitize_control(line);
+        let sanitized = crate::components::ansi::sanitize_control(line);
         let (pushed, line_truncated) =
             push_wrapped_output_limited(lines, &sanitized, color_fn, width, rows_left);
         rows_left -= pushed;
@@ -682,7 +682,7 @@ pub(super) fn extract_path(args: &Option<serde_json::Value>) -> String {
 pub(super) fn extract_best_arg(v: &serde_json::Value) -> String {
     for key in &["command", "path", "query", "url", "content", "oldText"] {
         if let Some(val) = v.get(key).and_then(|v| v.as_str()) {
-            return sanitize(&crate::interface::utils::truncate_to_width(
+            return sanitize(&crate::components::utils::truncate_to_width(
                 val,
                 60,
                 Some("..."),
@@ -705,12 +705,12 @@ pub(super) fn style_diff_line(line: &str) -> String {
 
 /// Sanitize a string by stripping terminal control sequences.
 pub(super) fn sanitize(s: &str) -> String {
-    crate::interface::ansi::sanitize_control(s)
+    crate::components::ansi::sanitize_control(s)
 }
 
 #[cfg(test)]
 pub(super) fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
-    crate::interface::utils::truncate_to_width(s, max_chars, Some("..."))
+    crate::components::utils::truncate_to_width(s, max_chars, Some("..."))
 }
 
 /// Expand tab characters to spaces using 8-column tab stops, ANSI-aware.
@@ -727,7 +727,7 @@ pub(super) fn expand_tabs(s: &str) -> Cow<'_, str> {
     }
     let mut out = String::with_capacity(s.len());
     let mut col = 0;
-    for seg in crate::interface::ansi::ansi_segments_legacy_csi(s) {
+    for seg in crate::components::ansi::ansi_segments_legacy_csi(s) {
         match seg {
             AnsiSegment::Escape(esc) => out.push_str(esc),
             AnsiSegment::Text(text) => {

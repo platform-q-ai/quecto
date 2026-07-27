@@ -5,8 +5,8 @@
 //! base content lines at a computed row/col position. These ANSI-aware helpers
 //! own that splicing.
 
-use crate::interface::ansi::{AnsiSegment, ansi_segments};
-use crate::interface::utils::visible_width;
+use crate::components::ansi::{AnsiSegment, ansi_segments};
+use crate::components::utils::visible_width;
 use unicode_width::UnicodeWidthChar;
 
 /// Splice overlay content into a base line at the given column.

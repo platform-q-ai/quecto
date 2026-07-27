@@ -188,7 +188,7 @@ impl App {
         if let Some(model) = data.as_ref().and_then(|d| {
             crate::protocol::state_payloads::parse_set_model_id(
                 d,
-                &crate::interface::ansi::sanitize_control,
+                &crate::components::ansi::sanitize_control,
             )
         }) {
             self.master_session.footer.set_model(&model);
@@ -208,7 +208,7 @@ impl App {
         let Some(data) = data else { return };
         let snap = crate::protocol::state_payloads::parse_get_state(
             &data,
-            &crate::interface::ansi::sanitize_control,
+            &crate::components::ansi::sanitize_control,
         );
         // Shared get_state→footer mapping (model + context-window); see #805.
         // #1067/#1085: only mirror master model/effort into the active selector
@@ -237,7 +237,7 @@ impl App {
             let name = key.rsplit(':').next().unwrap_or("");
             self.connected_agent_id = match name {
                 "" | "default" => None,
-                other => Some(crate::interface::ansi::sanitize_control(other)),
+                other => Some(crate::components::ansi::sanitize_control(other)),
             };
         }
         if let Some(wf) = snap.workflow.as_ref() {

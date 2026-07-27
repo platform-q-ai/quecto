@@ -1,5 +1,5 @@
 use super::*;
-use crate::interface::ansi::strip_ansi;
+use crate::components::ansi::strip_ansi;
 
 #[test]
 fn insert_characters() {

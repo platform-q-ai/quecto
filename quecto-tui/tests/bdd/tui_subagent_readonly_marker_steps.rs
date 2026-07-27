@@ -4,11 +4,11 @@
 //! assert on observable output in the left sub-agent panel.
 
 use super::*;
-use quecto_tui::interface::app::tui_harness::{
+use quecto_tui::components::theme::OBSERVER_GLYPH;
+use quecto_tui::protocol::client::Event;
+use quecto_tui::shell::app::tui_harness::{
     TuiHarness, subagent, subagent_readonly, subagents_changed,
 };
-use quecto_tui::interface::theme::OBSERVER_GLYPH;
-use quecto_tui::protocol::client::Event;
 
 async fn build(agents: &[(String, bool)]) -> TuiHarness {
     let mut h = TuiHarness::new().await;

@@ -56,7 +56,7 @@ fn workflow_widget_renders_plain_text_like_quecto() {
         "should include current step: {line}"
     );
     assert!(
-        crate::interface::utils::visible_width(line) < 100,
+        crate::components::utils::visible_width(line) < 100,
         "widget should be content-sized, not padded to full width: {line}"
     );
     let hints = lines.last().unwrap();
@@ -438,7 +438,7 @@ fn compact_line_shows_current_step_context() {
     // done=3 of 14 → step 4 (GREEN), label "Step 4 label", issue #100.
     let state = make_state(Some(100), 3, 14);
     let line = render_compact_line(&state).expect("active workflow should render a compact line");
-    let clean = crate::interface::ansi::strip_ansi(&line);
+    let clean = crate::components::ansi::strip_ansi(&line);
     assert!(
         clean.contains("Step 4/14"),
         "compact line must show current step number/total: {clean}"
@@ -462,7 +462,7 @@ fn compact_line_ellipsizes_long_step_label() {
     let mut state = make_state(Some(1), 0, 2);
     state.steps[0].label = "x".repeat(120);
     let line = render_compact_line(&state).expect("active workflow should render a compact line");
-    let clean = crate::interface::ansi::strip_ansi(&line);
+    let clean = crate::components::ansi::strip_ansi(&line);
     assert!(
         clean.contains('…'),
         "an over-long step label must be ellipsized: {clean}"
@@ -478,7 +478,7 @@ fn compact_line_ellipsizes_cjk_step_label_by_display_width() {
     let mut state = make_state(Some(1), 0, 2);
     state.steps[0].label = "日本語日本語日本語日本語日本語日本語".into();
     let line = render_compact_line(&state).expect("active workflow should render a compact line");
-    let clean = crate::interface::ansi::strip_ansi(&line);
+    let clean = crate::components::ansi::strip_ansi(&line);
     assert!(clean.contains("日本語日本語日本語日本語日本語…"), "{clean}");
     assert!(
         !clean.contains("日本語日本語日本語日本語日本語日本"),
@@ -490,7 +490,7 @@ fn compact_line_ellipsizes_cjk_step_label_by_display_width() {
 fn compact_line_complete_state_has_no_misleading_step() {
     let state = make_state(Some(7), 14, 14);
     let line = render_compact_line(&state).expect("a complete workflow is still visible");
-    let clean = crate::interface::ansi::strip_ansi(&line);
+    let clean = crate::components::ansi::strip_ansi(&line);
     assert!(
         !clean.contains("Step "),
         "a complete workflow must not show a current step: {clean}"
@@ -508,7 +508,7 @@ fn compact_line_exposes_auto_continue_state() {
     let mut state = make_state(Some(100), 3, 14);
     state.workflow_auto_continue = true;
     let on = render_compact_line(&state).expect("active workflow renders a compact line");
-    let on_clean = crate::interface::ansi::strip_ansi(&on).to_lowercase();
+    let on_clean = crate::components::ansi::strip_ansi(&on).to_lowercase();
     assert!(
         on_clean.contains("auto:on"),
         "compact line must show auto-continue ON: {on_clean}"
@@ -516,7 +516,7 @@ fn compact_line_exposes_auto_continue_state() {
 
     state.workflow_auto_continue = false;
     let off = render_compact_line(&state).expect("active workflow renders a compact line");
-    let off_clean = crate::interface::ansi::strip_ansi(&off).to_lowercase();
+    let off_clean = crate::components::ansi::strip_ansi(&off).to_lowercase();
     assert!(
         off_clean.contains("auto:off"),
         "compact line must show auto-continue OFF: {off_clean}"

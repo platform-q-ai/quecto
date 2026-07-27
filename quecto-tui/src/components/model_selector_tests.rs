@@ -345,7 +345,7 @@ fn shared_list_suggestions_track_filter_changes() {
 #[test]
 fn sanitize_strips_control_chars() {
     let dirty = "model\x1b[31m-evil\x07name";
-    let clean = crate::interface::ansi::sanitize_control(dirty);
+    let clean = crate::components::ansi::sanitize_control(dirty);
     assert!(!clean.contains('\x1b'));
     assert!(!clean.contains('\x07'));
     assert!(clean.contains("model"));

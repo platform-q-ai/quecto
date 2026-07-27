@@ -1,11 +1,11 @@
 use super::*;
 use crate::components::select_list::route_overlay_key;
-use crate::interface::select_overlay::DOUBLE_ESC_WINDOW;
+use crate::components::select_overlay::DOUBLE_ESC_WINDOW;
 use crate::protocol::session_payloads::{self, ResumedChatMessage};
 
 pub(super) fn rewind_preview(content: &str) -> String {
     let sanitized = strip_ansi_for_selection(content);
-    crate::interface::utils::truncate_to_width(&sanitized, 48, Some("…"))
+    crate::components::utils::truncate_to_width(&sanitized, 48, Some("…"))
 }
 
 impl App {

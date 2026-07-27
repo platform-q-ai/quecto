@@ -197,7 +197,7 @@ fn bg_code_from_fn(bg_fn: fn(&str) -> String) -> &'static str {
 /// *set* a background (an inner highlight like `48;2;…`) are left intact so
 /// deliberate highlights survive.
 fn apply_bg_code(text: &str, width: usize, bg_code: &str) -> String {
-    use crate::interface::ansi::{AnsiSegment, ansi_segments};
+    use crate::components::ansi::{AnsiSegment, ansi_segments};
 
     let mut out = String::with_capacity(text.len() + bg_code.len() * 4 + width);
     out.push_str(bg_code);
@@ -222,7 +222,7 @@ fn apply_bg_code(text: &str, width: usize, bg_code: &str) -> String {
         }
     }
 
-    let pad = width.saturating_sub(crate::interface::utils::visible_width(text));
+    let pad = width.saturating_sub(crate::components::utils::visible_width(text));
     out.push_str(bg_code);
     out.push_str(&" ".repeat(pad));
     out.push_str("\x1b[0m");

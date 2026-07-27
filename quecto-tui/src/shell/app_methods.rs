@@ -1,10 +1,10 @@
 use super::app_selection::{SelectionAnchor, apply_selection_highlight, display_col_to_char_idx};
 use super::*;
 use crate::components::select_list::route_overlay_key;
-use crate::interface::select_overlay::{
+use crate::components::select_overlay::{
     build_resume_selector_overlay, build_rewind_selector_overlay, build_select_overlay,
 };
-use crate::interface::theme;
+use crate::components::theme;
 use crate::protocol::session_payloads;
 
 /// Format a Unix timestamp as `YYYY-MM-DD HH:MM` in **local** time, falling
@@ -509,8 +509,8 @@ impl App {
         }
 
         for line in &mut lines {
-            if crate::interface::utils::visible_width(line) > width {
-                *line = crate::interface::utils::truncate_to_width(line, width, None);
+            if crate::components::utils::visible_width(line) > width {
+                *line = crate::components::utils::truncate_to_width(line, width, None);
             }
         }
 
@@ -558,7 +558,7 @@ impl App {
         for i in 0..overlay_height {
             let row = start_row + i;
             if row < lines.len() && i < overlay_lines.len() {
-                lines[row] = crate::interface::overlay::splice_line(
+                lines[row] = crate::components::overlay::splice_line(
                     &lines[row],
                     &overlay_lines[i],
                     start_col,
@@ -699,7 +699,7 @@ impl App {
                 break;
             }
             let visible = strip_ansi_for_selection(&lines[row_idx]);
-            let visible_width = crate::interface::utils::visible_width(&visible);
+            let visible_width = crate::components::utils::visible_width(&visible);
             let chars: Vec<char> = visible.chars().collect();
 
             let col_start = if row == start.row {
@@ -733,7 +733,7 @@ impl App {
 /// Animated "N subagent(s) working…" line shown in the reserved spinner slot
 /// while the parent is idle but children are still active.
 pub(super) fn subagent_activity_line(active: usize, frame: usize) -> String {
-    use crate::interface::theme::SPINNER_FRAMES;
+    use crate::components::theme::SPINNER_FRAMES;
     let spin = theme::spinner(SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]);
     let noun = if active == 1 { "subagent" } else { "subagents" };
     format!(
@@ -746,5 +746,5 @@ pub(super) fn subagent_activity_line(active: usize, frame: usize) -> String {
 /// Strip ANSI escape sequences (CSI + OSC) for the render-log diagnostic and
 /// the headless test harness.
 pub(super) fn strip_ansi(s: &str) -> String {
-    crate::interface::ansi::strip_ansi(s)
+    crate::components::ansi::strip_ansi(s)
 }

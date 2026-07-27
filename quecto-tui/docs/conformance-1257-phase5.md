@@ -7,7 +7,7 @@
 | `sessions/`, `workflow/`, `inference/`, `workspace/` modules | met | `quecto-tui/src/{sessions,workflow,inference,workspace}/mod.rs` |
 | `infrastructure/` deleted | met | directory absent; `architecture.rs` `tui_architecture_layers_exist` asserts `!infrastructure` |
 | `lib.rs` exact module set | met | `quecto-tui/src/lib.rs:4-13` agents…workspace; BDD + architecture lockstep |
-| App slices `#[path]`-mounted (no controller extraction) | met | `interface/app.rs` mounts `../sessions|workflow|inference|workspace/…` |
+| App slices `#[path]`-mounted (no controller extraction) | met | `shell/app.rs` mounts `../sessions|workflow|inference|workspace/…` |
 | Architecture/BDD/doc lockstep | met | architecture 39/39; feature Phase 5 scenario; owner map exact |
 | Feature/view raw-JSON = 55 | met | `architecture.rs` `TUI_PHASE_5_FEATURE_VIEW_RAW_JSON_TOTAL = 55` |
 | Protocol raw-JSON = 121 | met | `TUI_PHASE_5_PROTOCOL_RAW_JSON_TOTAL = 121` |

@@ -149,7 +149,7 @@ fn render_file_preview_truncates_long_lines() {
     let mut lines = Vec::new();
     render_file_preview(&mut lines, &long_line, false, 20, false);
     // Should be truncated to width 20 (visible width).
-    let visible = crate::interface::utils::visible_width(&lines[0]);
+    let visible = crate::components::utils::visible_width(&lines[0]);
     assert!(
         visible <= 20,
         "long line should be truncated to width 20, got {visible}: {}",

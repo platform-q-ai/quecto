@@ -6,7 +6,7 @@
 //! signal, reaped by the production child watcher.
 
 use super::*;
-use quecto_tui::interface::app::tui_harness::TuiHarness;
+use quecto_tui::shell::app::tui_harness::TuiHarness;
 use quecto_tui::shell::child_watch::{self, ChildWatch};
 
 /// A real spawned "agent" child under the production exit watcher.

@@ -394,7 +394,7 @@ async fn model_selector_pending_keeps_open() {
 
 #[tokio::test]
 async fn model_selector_overlay_renders_with_theme_background() {
-    use crate::interface::theme;
+    use crate::components::theme;
     let mut h = harness().await;
     let a = h.app_mut();
     a.open_model_selector();
@@ -425,10 +425,10 @@ async fn model_selector_overlay_renders_with_theme_background() {
         .iter()
         .filter(|l| l.contains(theme::BG_OVERLAY))
         .collect();
-    let first_width = crate::interface::utils::visible_width(overlay_lines[0]);
+    let first_width = crate::components::utils::visible_width(overlay_lines[0]);
     for line in &overlay_lines {
         assert_eq!(
-            crate::interface::utils::visible_width(line),
+            crate::components::utils::visible_width(line),
             first_width,
             "all overlay lines should have the same width"
         );
@@ -442,7 +442,7 @@ async fn model_selector_overlay_renders_with_theme_background() {
 /// `compose_frame` render path).
 #[tokio::test]
 async fn overlays_follow_theme_background_not_black() {
-    use crate::interface::theme;
+    use crate::components::theme;
     const BLACK_BG: &str = "\x1b[48;2;0;0;0m";
 
     let mut h = harness().await;

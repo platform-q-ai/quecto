@@ -10,8 +10,8 @@ use crate::components::component::Component;
 use crate::components::fuzzy::fuzzy_filter;
 use crate::components::list_rows::{DescriptionMode, ListRow};
 use crate::components::suggestion_list::SuggestionList;
-use crate::interface::theme;
-use crate::interface::utils::truncate_to_width;
+use crate::components::theme;
+use crate::components::utils::truncate_to_width;
 use crate::shell::keys::Key;
 
 /// Maximum query length to prevent unbounded growth.

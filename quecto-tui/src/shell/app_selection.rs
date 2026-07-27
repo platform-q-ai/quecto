@@ -64,7 +64,7 @@ pub(super) fn apply_selection_highlight(
             let line_end = if row_idx == er {
                 ec
             } else {
-                crate::interface::utils::visible_width(&lines[row_idx as usize]) as u16
+                crate::components::utils::visible_width(&lines[row_idx as usize]) as u16
             }
             .max(body_start_col);
             lines[row_idx as usize] =
@@ -86,7 +86,7 @@ pub(super) fn apply_selection_highlight(
 /// selection span, any escape that clears reverse is followed by a re-assert
 /// of `\x1b[7m` — the same pattern `theme::apply_bg` uses for box backgrounds.
 pub(super) fn apply_line_highlight(line: &str, start_col: u16, end_col: u16) -> String {
-    use crate::interface::ansi::{AnsiSegment, ansi_segments};
+    use crate::components::ansi::{AnsiSegment, ansi_segments};
 
     if start_col >= end_col {
         return line.to_string();

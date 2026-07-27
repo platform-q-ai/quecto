@@ -221,7 +221,7 @@ async fn run_tui(flags: CliFlags) -> i32 {
 
     // Run the TUI.
     let terminal = crate::shell::terminal::Terminal::new();
-    let mut app = crate::interface::app::App::new(terminal, client);
+    let mut app = crate::shell::app::App::new(terminal, client);
     if let Some(watch) = &child_watch {
         app.set_child_exit_watch(watch.clone());
     }
@@ -524,7 +524,7 @@ where
 }
 
 fn truncate_stderr_line(line: &str) -> String {
-    crate::interface::utils::truncate_chars_with_ellipsis(line, MAX_STARTUP_STDERR_LINE_CHARS, "…")
+    crate::components::utils::truncate_chars_with_ellipsis(line, MAX_STARTUP_STDERR_LINE_CHARS, "…")
 }
 
 fn redact_stderr_line(line: &str) -> String {

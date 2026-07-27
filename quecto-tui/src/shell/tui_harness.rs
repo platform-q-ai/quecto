@@ -14,14 +14,14 @@
 //! the chat, so that's what the harness records.
 
 use super::App;
-use super::Focus;
 use super::app_methods::strip_ansi;
 use super::app_selection::{SelectionAnchor, TextSelection};
-use super::keys::Key;
+use crate::agents::focus::Focus;
 use crate::components::chat::ChatEntry;
 use crate::components::notification::NotifyLevel;
 use crate::components::spinner::Spinner;
 use crate::protocol::client::{Client, Event};
+use crate::shell::keys::Key;
 use crate::shell::terminal::Terminal;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;

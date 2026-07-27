@@ -722,10 +722,10 @@ fn given_forwarded_state_with_idle_grandchild(
     child: String,
 ) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let mut h = rt.block_on(quecto_tui::interface::app::tui_harness::TuiHarness::new());
-    let mut info = quecto_tui::interface::app::tui_harness::subagent(&grandchild, "idle", None);
+    let mut h = rt.block_on(quecto_tui::shell::app::tui_harness::TuiHarness::new());
+    let mut info = quecto_tui::shell::app::tui_harness::subagent(&grandchild, "idle", None);
     info.parent_id = Some(child);
-    h.event(quecto_tui::interface::app::tui_harness::subagents_changed(
+    h.event(quecto_tui::shell::app::tui_harness::subagents_changed(
         vec![info],
     ));
     world.tui_parity_rt = Some(rt);
@@ -817,12 +817,10 @@ fn then_observers_receive_child_running(world: &mut QuectoWorld, child: String) 
 #[given(expr = "the TUI is tracking a spawning agent {string}")]
 fn given_tui_tracking_spawning_agent(world: &mut QuectoWorld, agent_id: String) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let mut h = rt.block_on(quecto_tui::interface::app::tui_harness::TuiHarness::new());
+    let mut h = rt.block_on(quecto_tui::shell::app::tui_harness::TuiHarness::new());
     // The spawn ToolStart registers the child locally as "starting" before the
     // kernel has confirmed it (the #866 pre-registration window).
-    h.event(quecto_tui::interface::app::tui_harness::spawn_start(
-        &agent_id,
-    ));
+    h.event(quecto_tui::shell::app::tui_harness::spawn_start(&agent_id));
     world.tui_parity_rt = Some(rt);
     world.tui_parity = Some(TuiParityHarness(h));
 }
@@ -831,8 +829,8 @@ fn given_tui_tracking_spawning_agent(world: &mut QuectoWorld, agent_id: String) 
 fn when_push_omits_agent(world: &mut QuectoWorld, agent_id: String) {
     let h = &mut world.tui_parity.as_mut().expect("no TUI harness").0;
     let other = format!("not-{agent_id}");
-    h.event(quecto_tui::interface::app::tui_harness::subagents_changed(
-        vec![quecto_tui::interface::app::tui_harness::subagent(
+    h.event(quecto_tui::shell::app::tui_harness::subagents_changed(
+        vec![quecto_tui::shell::app::tui_harness::subagent(
             &other, "running", None,
         )],
     ));

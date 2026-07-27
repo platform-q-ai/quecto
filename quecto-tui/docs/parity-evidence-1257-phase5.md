@@ -7,7 +7,7 @@
 | Four top-level modules `sessions/`, `workflow/`, `inference/`, `workspace/` | `ls quecto-tui/src/{sessions,workflow,inference,workspace}/mod.rs`; architecture `tui_architecture_layers_exist`; BDD Phase 5 scenario | PASS |
 | `infrastructure/` deleted | `! test -d quecto-tui/src/infrastructure`; architecture + BDD negative layer checks | PASS |
 | `lib.rs` exact module set | `tui_lib_rs_exposes_only_architecture_layers` + BDD library-root step | PASS |
-| App slices `#[path]`-mounted under `interface::app` | `interface/app.rs` mounts `../{sessions,workflow,inference,workspace}/…` | PASS |
+| App slices `#[path]`-mounted under `interface::app` | `shell/app.rs` mounts `../{sessions,workflow,inference,workspace}/…` | PASS |
 | Architecture/BDD/doc lockstep | architecture 39/39; `QUECTO_TAG=tui` BDD architecture feature green; owner map exact match 95/95 | PASS |
 | Feature/view raw-JSON seed lowered only by genuine mapper conversions | Pre-phase feature-view total 109 → post-phase 55 with extended scan roots; protocol total 69 → 121 (absorbed mapper sites); net feature-view burn-down 54 sites; combined total 176 remains below the historical ceiling 178 | PASS |
 

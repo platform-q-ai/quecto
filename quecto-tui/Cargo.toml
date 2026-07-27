@@ -1,6 +1,6 @@
 [package]
 name = "quecto-tui"
-version = "0.70.26"
+version = "0.70.27"
 edition = "2024"
 description = "Lightweight terminal UI client for quecto"
 license = "LicenseRef-Proprietary"
@@ -9,7 +9,7 @@ license = "LicenseRef-Proprietary"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 
 [features]
-# Exposes the headless render harness (`interface::app::tui_harness`) and a few
+# Exposes the headless render harness (`shell::app::tui_harness`) and a few
 # read-only App accessors to integration tests in the workspace `bdd` target so
 # they can drive the real render/key path without a TTY (#805).
 test-harness = []

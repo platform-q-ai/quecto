@@ -42,7 +42,7 @@ fn kitty_arrow_release_is_not_actionable() {
 
 #[test]
 fn kitty_arrow_release_final_is_detected() {
-    assert!(crate::interface::kitty::is_key_release(b"\x1b[1;1:3A"));
+    assert!(crate::components::kitty::is_key_release(b"\x1b[1;1:3A"));
 }
 
 #[test]

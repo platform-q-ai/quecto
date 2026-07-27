@@ -4,7 +4,7 @@
 //! above the editor with no background, and the checklist panel is a read-only
 //! mirror of the Quecto WorkflowChecklist.
 
-use crate::interface::theme;
+use crate::components::theme;
 
 /// Workflow step info received from a `workflow_state` event.
 #[derive(Debug, Clone)]
@@ -362,7 +362,7 @@ fn phase_display(phase: &str) -> String {
         // Unknown phases come from wire data (forwarded sub-agent events) and
         // must be sanitized to prevent terminal control-sequence injection into
         // the always-visible main pane.
-        other => crate::interface::ansi::sanitize_control(&other.to_uppercase()),
+        other => crate::components::ansi::sanitize_control(&other.to_uppercase()),
     }
 }
 
@@ -411,11 +411,11 @@ fn is_widget_visible(state: &WorkflowBarState) -> bool {
 }
 
 fn truncate_line(text: &str, width: usize) -> String {
-    crate::interface::utils::truncate_to_width(text, width, Some("…"))
+    crate::components::utils::truncate_to_width(text, width, Some("…"))
 }
 
 fn ellipsize_clean(text: &str, max_chars: usize) -> String {
-    crate::interface::utils::sanitize_truncate_width_with_ellipsis(text, max_chars, "…")
+    crate::components::utils::sanitize_truncate_width_with_ellipsis(text, max_chars, "…")
 }
 
 /// Parse a `workflow_state` JSON event into `WorkflowBarState`.

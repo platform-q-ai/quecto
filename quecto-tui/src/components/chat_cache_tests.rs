@@ -1,5 +1,5 @@
 use super::*;
-use crate::interface::ansi::strip_ansi;
+use crate::components::ansi::strip_ansi;
 
 fn render_plain(chat: &mut Chat, width: usize) -> String {
     let lines = chat.render(width);

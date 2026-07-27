@@ -6,7 +6,7 @@
 //!
 //! This module must not import `components`, `shell`, or other feature modules
 //! (`conversation`, `sessions`, `agents`, `workflow`, `inference`, `workspace`,
-//! `interface`).
+//! `shell`/`components`).
 
 pub mod agent_ledger_payloads;
 pub mod client;

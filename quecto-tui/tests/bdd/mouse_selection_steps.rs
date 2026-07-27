@@ -1,6 +1,6 @@
 use super::*;
-use quecto_tui::interface::app::tui_harness::TuiHarness;
 use quecto_tui::protocol::client::Event;
+use quecto_tui::shell::app::tui_harness::TuiHarness;
 use std::io::{self, Write};
 
 struct BddClipboardWriter {
@@ -277,7 +277,7 @@ fn when_osc52_clipboard_write_fails(world: &mut TuiWorld) {
         fail_on_flush: false,
     };
     world.stderr =
-        quecto_tui::interface::app::write_osc52_clipboard_sequence(&world.stdout, &mut writer)
+        quecto_tui::shell::app::write_osc52_clipboard_sequence(&world.stdout, &mut writer)
             .expect_err("write failure should be reported")
             .to_string();
 }
@@ -289,7 +289,7 @@ fn when_osc52_clipboard_flush_fails(world: &mut TuiWorld) {
         fail_on_flush: true,
     };
     world.stderr =
-        quecto_tui::interface::app::write_osc52_clipboard_sequence(&world.stdout, &mut writer)
+        quecto_tui::shell::app::write_osc52_clipboard_sequence(&world.stdout, &mut writer)
             .expect_err("flush failure should be reported")
             .to_string();
 }

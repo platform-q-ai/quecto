@@ -1,5 +1,5 @@
 use super::*;
-use crate::interface::theme;
+use crate::components::theme;
 const MAX_WARM_AGENT_FEEDS: usize = MAX_RETAINED_SESSIONS;
 
 impl App {
@@ -471,7 +471,7 @@ impl App {
         width: usize,
         now: tokio::time::Instant,
     ) -> String {
-        use crate::interface::utils::{truncate_to_width, visible_width};
+        use crate::components::utils::{truncate_to_width, visible_width};
         // `show_bar` = selected AND panel-focused: the ▌ bar is the panel's
         // cursor, mirroring the editor's cursor which hides when focus is here.
         let selbar = if show_bar {
@@ -566,7 +566,7 @@ impl App {
         if let Some(content) = workflow_bar::render_compact_line(state) {
             let inner = box_width.saturating_sub(2);
             out.push(theme::dim(&"─".repeat(box_width)));
-            out.push(crate::interface::utils::truncate_to_width(
+            out.push(crate::components::utils::truncate_to_width(
                 &format!(" {} ", boxed_inner(&content, inner)),
                 box_width,
                 None,
@@ -628,7 +628,7 @@ fn fmt_mss(secs: u64) -> String {
 /// so the selection (`▌`) stays one line tall; the tree stalk continues down
 /// through the bar via the agent's continuation prefix.
 fn panel_bar_line(prefix: &str, done: u32, total: u32, width: usize) -> String {
-    use crate::interface::utils::visible_width;
+    use crate::components::utils::visible_width;
     const MAX_CELLS: usize = 20;
     let cont = bar_continuation(prefix);
     let cont_vis = visible_width(&cont);
@@ -660,9 +660,9 @@ fn bar_continuation(prefix: &str) -> String {
 
 /// Pad (ANSI-aware) a boxed workflow line's content to exactly `inner` columns.
 fn boxed_inner(content: &str, inner: usize) -> String {
-    let visible = crate::interface::utils::visible_width(content);
+    let visible = crate::components::utils::visible_width(content);
     if visible >= inner {
-        crate::interface::utils::truncate_to_width(content, inner, None)
+        crate::components::utils::truncate_to_width(content, inner, None)
     } else {
         format!("{}{}", content, " ".repeat(inner - visible))
     }
@@ -696,14 +696,14 @@ fn status_colored_name(status: &str, name: &str) -> String {
 
 /// Strip terminal control sequences from a panel label.
 fn sanitize_panel_label(s: &str) -> String {
-    crate::interface::ansi::sanitize_control(s)
+    crate::components::ansi::sanitize_control(s)
 }
 
 /// Pad (or truncate) a cell to exactly `width` visible columns.
 fn pad_cell(text: &str, width: usize) -> String {
-    let visible = crate::interface::utils::visible_width(text);
+    let visible = crate::components::utils::visible_width(text);
     if visible > width {
-        crate::interface::utils::truncate_to_width(text, width, None)
+        crate::components::utils::truncate_to_width(text, width, None)
     } else {
         format!("{}{}", text, " ".repeat(width - visible))
     }

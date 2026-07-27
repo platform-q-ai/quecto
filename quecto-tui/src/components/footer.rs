@@ -1,8 +1,8 @@
 //! Footer component — status bar showing model, context, git branch.
 
 use crate::components::component::Component;
-use crate::interface::theme;
-use crate::interface::utils::{truncate_to_width, visible_width};
+use crate::components::theme;
+use crate::components::utils::{truncate_to_width, visible_width};
 
 /// Footer status bar.
 pub struct Footer {
@@ -143,7 +143,7 @@ impl Footer {
     pub fn apply_get_state(&mut self, data: &serde_json::Value) -> Option<String> {
         let fields = crate::protocol::state_payloads::parse_get_state_footer(
             data,
-            &crate::interface::ansi::sanitize_control,
+            &crate::components::ansi::sanitize_control,
         );
         self.apply_get_state_fields(&fields)
     }

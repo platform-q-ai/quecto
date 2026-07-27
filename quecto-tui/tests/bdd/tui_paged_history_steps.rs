@@ -1,14 +1,14 @@
 //! Step definitions for `tui_paged_history.feature` (#1061 / ADR-0008 part 3).
 //!
 //! These drive the REAL TUI backfill/scroll/recall paths through the headless
-//! render harness (`quecto_tui::interface::app::tui_harness`) — the same App the
+//! render harness (`quecto_tui::shell::app::tui_harness`) — the same App the
 //! binary runs. Pages are delivered as the wire `get_messages`/`get_message`
 //! responses the server would send, and assertions read observable state: the
 //! rendered transcript and the commands the client emits.
 
 use super::*;
-use quecto_tui::interface::app::tui_harness::TuiHarness;
 use quecto_tui::protocol::client::Event;
+use quecto_tui::shell::app::tui_harness::TuiHarness;
 use quecto_tui::shell::keys::Key;
 
 /// Per-scenario paged-history fixture stored on the World.

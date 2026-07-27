@@ -14,7 +14,7 @@ impl TuiHarness {
         chat.scroll_down(usize::MAX);
         chat.render(width)
             .iter()
-            .map(|l| crate::interface::ansi::strip_ansi(l))
+            .map(|l| crate::components::ansi::strip_ansi(l))
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -88,7 +88,7 @@ impl TuiHarness {
     pub fn master_footer_text(&mut self) -> String {
         use crate::components::component::Component;
         let rendered = self.app.master_session.footer.render(200).join("\n");
-        crate::interface::ansi::strip_ansi(&rendered)
+        crate::components::ansi::strip_ansi(&rendered)
     }
 
     /// The App-level `current_model` tracker (#1085), used with

@@ -9,14 +9,14 @@ impl App {
         for message in messages {
             match message {
                 ResumedChatMessage::User { text, id, stub } => entries.push(Self::history_entry(
-                    crate::interface::ansi::sanitize_control_keep_newlines(&text),
+                    crate::components::ansi::sanitize_control_keep_newlines(&text),
                     id,
                     stub,
                     true,
                 )),
                 ResumedChatMessage::Assistant { text, id, stub } => {
                     entries.push(Self::history_entry(
-                        crate::interface::ansi::sanitize_control_keep_newlines(&text),
+                        crate::components::ansi::sanitize_control_keep_newlines(&text),
                         id,
                         stub,
                         false,
@@ -34,13 +34,13 @@ impl App {
                         suppressed_tools.insert(tool_call_id);
                         continue;
                     }
-                    let tool_name = crate::interface::ansi::sanitize_control(&tool_name);
+                    let tool_name = crate::components::ansi::sanitize_control(&tool_name);
                     tools.push((tool_call_id.clone(), entries.len()));
                     entries.push(ChatEntry::ToolExecution {
                         tool_call_id,
                         tool_name,
                         parsed_args,
-                        args: crate::interface::ansi::sanitize_control_keep_newlines(&args),
+                        args: crate::components::ansi::sanitize_control_keep_newlines(&args),
                         result: None,
                         is_error: false,
                         duration_ms: None,
@@ -76,7 +76,7 @@ impl App {
         content: String,
         is_error: bool,
     ) {
-        let content = crate::interface::ansi::sanitize_control_keep_newlines(&content);
+        let content = crate::components::ansi::sanitize_control_keep_newlines(&content);
         let pending_idx = tools.iter().find_map(|(id, idx)| {
             if id == &tool_call_id
                 && matches!(
@@ -103,7 +103,7 @@ impl App {
         entries.push(ChatEntry::ToolExecution {
             tool_call_id,
             tool_name: tool_name
-                .map(|name| crate::interface::ansi::sanitize_control(&name))
+                .map(|name| crate::components::ansi::sanitize_control(&name))
                 .unwrap_or_else(|| "tool".to_string()),
             parsed_args: None,
             args: String::new(),

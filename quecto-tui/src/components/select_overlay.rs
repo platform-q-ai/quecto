@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::components::component::Component;
 use crate::components::select_list::SelectList;
-use crate::interface::theme;
+use crate::components::theme;
 
 /// Time window for idle double-Escape to open the rewind selector.
 pub const DOUBLE_ESC_WINDOW: Duration = Duration::from_millis(750);
@@ -13,8 +13,8 @@ pub const DOUBLE_ESC_WINDOW: Duration = Duration::from_millis(750);
 const SELECTOR_MAX_PANEL_WIDTH: usize = 88;
 
 fn pad_ansi_to_width(text: &str, width: usize) -> String {
-    let truncated = crate::interface::utils::truncate_to_width(text, width, Some("…"));
-    let visible = crate::interface::utils::visible_width(&truncated);
+    let truncated = crate::components::utils::truncate_to_width(text, width, Some("…"));
+    let visible = crate::components::utils::visible_width(&truncated);
     if visible >= width {
         truncated
     } else {

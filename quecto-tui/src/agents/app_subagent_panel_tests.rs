@@ -6,8 +6,8 @@
 mod note_coalesce;
 
 use super::tui_harness::*;
+use crate::components::ansi::strip_ansi;
 use crate::components::chat::ChatEntry;
-use crate::interface::ansi::strip_ansi;
 use crate::protocol::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::shell::keys::Key;
 

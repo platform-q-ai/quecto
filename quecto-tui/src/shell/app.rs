@@ -12,12 +12,12 @@ use crate::components::component::Component;
 use crate::components::editor::Editor;
 use crate::components::effort_selector::EffortSelectorResult;
 use crate::components::footer::Footer;
+use crate::components::kitty::KittyProtocol;
 use crate::components::model_selector::ModelSelectorResult;
 use crate::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::components::select_list::{SelectItem, SelectList};
 use crate::components::spinner::Spinner;
 use crate::components::workflow_bar;
-use crate::interface::kitty::KittyProtocol;
 use crate::protocol::client::{Client, Command, Event};
 use crate::shell::keys::{self, Key};
 use crate::shell::render::DiffRenderer;
@@ -57,7 +57,7 @@ pub struct App {
     kitty: KittyProtocol,
     agent_state: AgentRunState,
     should_exit: bool,
-    stdin_buffer: crate::interface::stdin_buffer::StdinBuffer,
+    stdin_buffer: crate::shell::stdin_buffer::StdinBuffer,
     agent_connected: bool,
     /// Pin: once the left panel has shown for a connected agent it must not
     /// vanish when the agent dies (#1047) — the user keeps the session /
@@ -132,7 +132,7 @@ impl App {
             kitty: KittyProtocol::new(),
             agent_state: AgentRunState::new(),
             should_exit: false,
-            stdin_buffer: crate::interface::stdin_buffer::StdinBuffer::new(),
+            stdin_buffer: crate::shell::stdin_buffer::StdinBuffer::new(),
             agent_connected: true,
             agent_ever_connected: true,
             child_exit_watch: None,
@@ -215,7 +215,7 @@ impl App {
 mod app_disconnect;
 // #1257 Phase 5: inference/workspace/sessions/workflow-owned app slices are
 // physically housed under their feature modules but remain mounted inside
-// `interface::app` until later controller-extraction phases. Intentional
+// `shell::app` until later controller-extraction phases. Intentional
 // remount only; do not infer a new dependency direction from the `#[path]`.
 #[path = "../inference/app_effort.rs"]
 mod app_effort;
@@ -228,7 +228,7 @@ mod app_git;
 #[path = "../inference/app_inference.rs"]
 mod app_inference;
 // #1257 Phase 3: conversation-owned app slices are physically housed under
-// `conversation/` but remain mounted inside `interface::app` until the issue's
+// `conversation/` but remain mounted inside `shell::app` until the issue's
 // later controller-extraction phases. This is an intentional remount only; do
 // not infer a new dependency direction from the `#[path]` target.
 #[path = "../conversation/app_rewind_state.rs"]
@@ -250,7 +250,7 @@ pub const GIT_BRANCH_POLL_INTERVAL: std::time::Duration = app_git::GIT_BRANCH_PO
 #[path = "app_idle_efficiency.rs"]
 mod app_idle_efficiency;
 // #1257 Phase 4: agents-owned app slices are physically housed under
-// `agents/` but remain mounted inside `interface::app` until later
+// `agents/` but remain mounted inside `shell::app` until later
 // controller-extraction phases.
 #[path = "../agents/app_ledger_sync.rs"]
 mod app_ledger_sync;
@@ -340,14 +340,14 @@ fn base64_encode(data: &[u8]) -> String {
 
 /// Strip ANSI escape sequences from a string to get visible text.
 fn strip_ansi_for_selection(s: &str) -> String {
-    crate::interface::ansi::strip_ansi(s)
+    crate::components::ansi::strip_ansi(s)
 }
 
 /// Truncate tool arguments for spinner display.
 fn truncate_args(args: &str) -> String {
     // sanitize_control (rather than a printable-range filter) so CSI bodies —
     // whose bytes are all printable — don't leak into the spinner line.
-    crate::interface::utils::sanitize_truncate_width_with_ellipsis(args, 40, "...")
+    crate::components::utils::sanitize_truncate_width_with_ellipsis(args, 40, "...")
 }
 
 // ── Agent state machine (extracted for testability) ───────────────────────
@@ -472,11 +472,11 @@ fn is_subagent_tool(tool_name: &str) -> bool {
 const EXITED_SUBAGENT_GRACE: Duration = Duration::from_secs(5);
 
 fn sanitize_workflow_status_text(text: &str, max_chars: usize) -> String {
-    crate::interface::utils::sanitize_truncate_width_with_ellipsis(text, max_chars, "…")
+    crate::components::utils::sanitize_truncate_width_with_ellipsis(text, max_chars, "…")
 }
 
 fn sanitize_agent_id(id: &str) -> String {
-    crate::interface::ansi::sanitize_control(id)
+    crate::components::ansi::sanitize_control(id)
 }
 
 #[cfg(test)]

@@ -522,7 +522,7 @@ async fn spawn_turn_does_not_trigger_recovery_fetches() {
 #[test]
 fn recovered_chat_entries_suppresses_spawn_like_live_stream() {
     use crate::components::chat::ChatEntry;
-    use crate::interface::app::app_events::recovered_chat_entries;
+    use crate::shell::app::app_events::recovered_chat_entries;
     use std::collections::HashMap;
     let refs = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     let mut responses: HashMap<String, serde_json::Value> = HashMap::new();

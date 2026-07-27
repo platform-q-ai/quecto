@@ -1,5 +1,5 @@
 use super::*;
-use crate::interface::theme;
+use crate::components::theme;
 
 #[test]
 fn initial_state_not_running() {
@@ -328,7 +328,7 @@ fn resume_selector_overlay_has_opaque_border() {
         }],
         10,
     );
-    let (lines, width) = crate::interface::select_overlay::build_select_list_overlay(
+    let (lines, width) = crate::components::select_overlay::build_select_list_overlay(
         "Resume session",
         "Enter resume · Esc cancel",
         &mut selector,
@@ -351,7 +351,7 @@ fn resume_selector_overlay_has_opaque_border() {
     assert!(
         lines
             .iter()
-            .all(|line| crate::interface::utils::visible_width(line) == width),
+            .all(|line| crate::components::utils::visible_width(line) == width),
         "opaque background should span the full overlay width"
     );
 }
@@ -366,7 +366,7 @@ fn rewind_selector_overlay_uses_go_back_title() {
         }],
         10,
     );
-    let (lines, _) = crate::interface::select_overlay::build_select_list_overlay(
+    let (lines, _) = crate::components::select_overlay::build_select_list_overlay(
         "Go back to…",
         "Enter select · Esc cancel",
         &mut selector,

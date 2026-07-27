@@ -318,34 +318,27 @@ const TUI_SESSIONS: &str = "../quecto-tui/src/sessions";
 const TUI_WORKFLOW: &str = "../quecto-tui/src/workflow";
 const TUI_INFERENCE: &str = "../quecto-tui/src/inference";
 const TUI_WORKSPACE: &str = "../quecto-tui/src/workspace";
-const TUI_INTERFACE: &str = "../quecto-tui/src/interface";
 const TUI_COMPONENTS: &str = "../quecto-tui/src/components";
 const TUI_SHELL: &str = "../quecto-tui/src/shell";
 const TUI_ALLOWED_ROOT_RS: &[&str] = &["lib.rs", "main.rs"];
-/// #1257 phased migration: the exact set of top-level modules `lib.rs` may
-/// expose, updated per phase as feature modules land (Phase 3: `conversation`;
-/// Phase 4: `agents`; Phase 5: `sessions`/`workflow`/`inference`/`workspace`;
-/// `application`, vestigial TUI `domain`, and `infrastructure` deleted).
+/// #1257 Phase 6 final module set: feature-oriented presentation modules only.
 const TUI_LIB_RS_MODULES: &[&str] = &[
     "agents",
     "components",
     "conversation",
     "inference",
-    "interface",
     "protocol",
     "sessions",
     "shell",
     "workflow",
     "workspace",
 ];
-/// #1257 phased migration: top-level directories production files may live in
-/// (legacy layers plus the feature modules landed so far).
+/// #1257 Phase 6: production files may live only under feature-oriented modules.
 const TUI_TOP_LEVEL_MODULES: &[&str] = &[
     "agents",
     "components",
     "conversation",
     "inference",
-    "interface",
     "protocol",
     "sessions",
     "shell",
@@ -387,11 +380,14 @@ fn tui_feature_oriented_architecture_is_documented() {
         "raw JSON interpretation",
         "Pure policy modules must not depend on terminal/widget types",
         "Do not introduce a second global command/event hierarchy",
-        "Interim compatibility map",
         "Capability characterization and migration map",
         "Production file target-owner map",
         "`components/autocomplete.rs` | `components` (relocated, #1257 Phase 1)",
         "`components/workflow_bar.rs` | `components` (relocated, #1257 Phase 1)",
+        "`components/ansi.rs` | `components` rendering primitive (relocated, #1257 Phase 6)",
+        "`components/theme.rs` | `components` styling primitive (relocated, #1257 Phase 6)",
+        "`shell/app.rs` | `shell` composition root (relocated, #1257 Phase 6)",
+        "`shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6)",
         "`conversation/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221; relocated, #1257 Phase 3)",
         "`conversation/app_rewind.rs` | `conversation` rewind flow owner (relocated, #1257 Phase 3)",
         "`domain/` | deleted in #1257 Phase 3",
@@ -404,6 +400,7 @@ fn tui_feature_oriented_architecture_is_documented() {
         "`inference/app_models.rs` | `inference` (relocated, #1257 Phase 5)",
         "`workspace/workspace_files.rs` | `workspace` (relocated, #1257 Phase 5)",
         "`infrastructure/` | deleted in #1257 Phase 5",
+        "`interface/` | deleted in #1257 Phase 6",
         "#1221 (`conversation`) and #1222 (`agents`) depend on #1220",
     ] {
         assert!(
@@ -411,6 +408,10 @@ fn tui_feature_oriented_architecture_is_documented() {
             "feature-oriented TUI architecture doc must include {required:?}"
         );
     }
+    assert!(
+        !feature_doc.contains("## Interim compatibility map"),
+        "feature-oriented TUI architecture doc must not retain the interim compatibility map after #1257 Phase 6"
+    );
 
     let mapped_files = production_owner_map_files(&feature_doc);
     let current_files = current_tui_production_files();
@@ -529,8 +530,16 @@ fn tui_architecture_layers_exist() {
         "quecto-tui/src/infrastructure/ must be deleted after #1257 Phase 5"
     );
     assert!(
-        Path::new(TUI_INTERFACE).exists(),
-        "quecto-tui/src/interface/ must exist"
+        Path::new(TUI_SHELL).exists(),
+        "quecto-tui/src/shell/ must exist"
+    );
+    assert!(
+        Path::new(TUI_COMPONENTS).exists(),
+        "quecto-tui/src/components/ must exist"
+    );
+    assert!(
+        !Path::new("../quecto-tui/src/interface").exists(),
+        "quecto-tui/src/interface/ must be deleted after #1257 Phase 6"
     );
     assert!(
         !Path::new("../quecto-tui/src/application").exists(),
@@ -738,14 +747,14 @@ fn tui_runtime_adapters_live_in_shell() {
         (TUI_SHELL, "warn_capture"),
     ] {
         let adapter_path = format!("{root}/{adapter}.rs");
-        let interface_path = format!("{TUI_INTERFACE}/{adapter}.rs");
+        let deleted_interface_path = format!("../quecto-tui/src/interface/{adapter}.rs");
         assert!(
             Path::new(&adapter_path).is_file(),
             "TUI runtime adapter must live in its owning module: {adapter_path}"
         );
         assert!(
-            !Path::new(&interface_path).exists(),
-            "TUI runtime adapter must not live in interface: {interface_path}"
+            !Path::new(&deleted_interface_path).exists(),
+            "TUI runtime adapter must not live in deleted interface/: {deleted_interface_path}"
         );
     }
 }
@@ -838,7 +847,7 @@ fn tui_lib_rs_exposes_only_architecture_layers() {
     );
     assert!(
         !content.contains("#[path ="),
-        "quecto-tui/src/lib.rs must not re-export interface internals with #[path] shims"
+        "quecto-tui/src/lib.rs must not re-export feature internals with #[path] shims"
     );
 }
 
@@ -1120,13 +1129,13 @@ const TUI_INTERFACE_RAW_JSON_SITE_SEED: usize = 120;
 /// Measured after #1257 Phase 5 relocation plus genuine get_state/workflow/
 /// set_effort mapper conversions; future relocations must not burn down sites
 /// by moving scan roots alone.
-const TUI_PHASE_5_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 55;
+const TUI_PHASE_6_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 55;
 
 /// #1257: feature/view ratchet scan roots follow the code as modules relocate,
 /// so a move alone can never lower a measured count (Phase 5: four new feature
 /// modules plus remaining `interface/`/`components/`/`shell/`).
+/// #1257 Phase 6 final feature/view scan roots (no interface/).
 const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
-    TUI_INTERFACE,
     TUI_COMPONENTS,
     TUI_SHELL,
     TUI_CONVERSATION,
@@ -1144,7 +1153,7 @@ const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
 /// feature/view — net feature-view burn-down is required when raising.)
 const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 121;
 /// Measured after #1257 Phase 5 mapper additions (state + workflow payloads).
-const TUI_PHASE_5_PROTOCOL_RAW_JSON_TOTAL: usize = 121;
+const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 121;
 /// Historical combined feature/view + protocol ceiling. This prevents moving
 /// sites between buckets (and adjusting their individual seeds) from hiding
 /// growth in the total raw-JSON inventory.
@@ -1155,14 +1164,14 @@ const TUI_RAW_JSON_COMBINED_CEILING: usize = 178;
 const TUI_WIRE_DTO_USAGE_SEED: usize = 124;
 /// Measured after #1257 Phase 5 relocation (inference paths absorbed Command::
 /// sites that already counted under interface/).
-const TUI_PHASE_5_WIRE_DTO_USAGE_TOTAL: usize = 122;
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 122;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
 /// The response dispatcher IS the protocol seam: it receives raw responses and
 /// routes them to mappers, so raw JSON access there is by construction. It is
 /// deliberately NOT exempt from the wire-DTO ratchet.
-const TUI_INTERFACE_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("interface/app_response.rs", "#1220")];
+const TUI_INTERFACE_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("shell/app_response.rs", "#1220")];
 
 /// Narrow, issue-linked allowlist for the PROTOCOL RAW-JSON ratchet only.
 /// The UDS client is the wire seam itself (frame/event field access); mapper
@@ -1310,8 +1319,8 @@ fn tui_interface_raw_json_parsing_sites_do_not_grow() {
         raw_json_site_count,
     );
     assert_eq!(
-        total, TUI_PHASE_5_FEATURE_VIEW_RAW_JSON_TOTAL,
-        "#1257 Phase 5 relocation must preserve moved feature/view raw serde_json \
+        total, TUI_PHASE_6_FEATURE_VIEW_RAW_JSON_TOTAL,
+        "#1257 Phase 6 relocation must preserve moved feature/view raw serde_json \
          sites except genuine protocol-mapper conversions: found {total}, seed \
          {TUI_INTERFACE_RAW_JSON_SITE_SEED}. Move payload interpretation into a \
          protocol-layer mapper (see quecto-tui/src/protocol/model_payloads.rs, \
@@ -1327,8 +1336,8 @@ fn tui_protocol_raw_json_parsing_sites_do_not_grow() {
         raw_json_site_count,
     );
     assert_eq!(
-        total, TUI_PHASE_5_PROTOCOL_RAW_JSON_TOTAL,
-        "#1257 Phase 5 protocol mapper raw serde_json sites: found {total}, seed \
+        total, TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL,
+        "#1257 Phase 6 protocol mapper raw serde_json sites: found {total}, seed \
          {TUI_PROTOCOL_RAW_JSON_SITE_SEED}. Convert ad-hoc parsing into typed \
          protocol mappers and lower this seed. Inventory (burn-down order): \
          {per_file:?}"
@@ -1368,10 +1377,63 @@ fn tui_wire_dto_usage_does_not_grow() {
         wire_dto_usage_count,
     );
     assert_eq!(
-        total, TUI_PHASE_5_WIRE_DTO_USAGE_TOTAL,
-        "#1257 Phase 5 relocation must preserve TUI feature/view wire-DTO usage: \
+        total, TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL,
+        "#1257 Phase 6 relocation must preserve TUI feature/view wire-DTO usage: \
          found {total}, seed {TUI_WIRE_DTO_USAGE_SEED} (#1220). Counting usages, not \
          `use` lines, so `use super::*` and fully-qualified paths are visible. \
          Inventory (burn-down order): {per_file:?}"
+    );
+}
+
+// ── #1257 Phase 6 responsibility-based purity checks ────────────────
+
+#[test]
+fn tui_components_do_not_import_protocol_client() {
+    // Components are presentation widgets: they must not depend on the UDS
+    // client/wire DTOs. Residual raw-JSON in chat_render remains measured by
+    // the feature/view ratchet; this check enforces the transport boundary.
+    assert_no_imports(
+        "quecto-tui components",
+        Path::new(TUI_COMPONENTS),
+        &["crate::protocol::client"],
+    );
+}
+
+#[test]
+fn tui_protocol_has_no_widget_or_terminal_types() {
+    assert_no_imports(
+        "quecto-tui protocol",
+        Path::new(TUI_PROTOCOL),
+        &[
+            "crate::components",
+            "crate::shell::terminal",
+            "crate::shell::render",
+            "crate::shell::keys",
+            "crate::shell::app",
+        ],
+    );
+}
+
+#[test]
+fn tui_shell_owns_app_composition_root() {
+    assert!(
+        Path::new(TUI_SHELL).join("app.rs").is_file(),
+        "shell must own App composition root after #1257 Phase 6"
+    );
+    assert!(
+        Path::new(TUI_SHELL).join("stdin_buffer.rs").is_file(),
+        "shell must own stdin_buffer after #1257 Phase 6"
+    );
+    assert!(
+        Path::new(TUI_COMPONENTS).join("ansi.rs").is_file(),
+        "components must own ansi after #1257 Phase 6"
+    );
+    assert!(
+        Path::new(TUI_COMPONENTS).join("theme.rs").is_file(),
+        "components must own theme after #1257 Phase 6"
+    );
+    assert!(
+        !Path::new("../quecto-tui/src/interface").exists(),
+        "interface/ must be fully retired after #1257 Phase 6"
     );
 }

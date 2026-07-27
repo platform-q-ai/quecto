@@ -197,7 +197,7 @@ impl App {
         // (e.g. "Sub-agent 'poet-2' ended a turn (status: idle). Inspect agent_cmd get_messages
         // when you need its output."), so we do NOT re-prefix the agent id here —
         // that just duplicated the name.
-        let message = crate::interface::ansi::sanitize_control(&message);
+        let message = crate::components::ansi::sanitize_control(&message);
         // Never split an in-flight streaming response: if the parent is mid-turn,
         // defer the note and flush it when the parent goes idle (handle_agent_end).
         // Shared defer/flush policy with the per-session path (#828).
@@ -220,7 +220,7 @@ impl App {
         let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) else {
             return;
         };
-        let sanitized = crate::interface::ansi::sanitize_control(agent_id);
+        let sanitized = crate::components::ansi::sanitize_control(agent_id);
         // If the kernel already confirmed this id (a non-optimistic entry), do
         // not clobber it with a fresh unconfirmed "starting" guess. A re-played
         // or duplicate spawn ToolStart (event replay on reconnect) would
@@ -282,7 +282,7 @@ impl App {
             return;
         };
         let agent_id = &result_text[start + 1..start + 1 + end];
-        let sanitized = crate::interface::ansi::sanitize_control(agent_id);
+        let sanitized = crate::components::ansi::sanitize_control(agent_id);
         if let Some(entry) = self.subagents.tracked.get_mut(&sanitized) {
             entry.info.status = "running".to_string();
         }
@@ -377,7 +377,7 @@ struct WorkflowStateEvent {
 }
 
 fn sanitized_arg(args: &serde_json::Value, key: &str, fallback: &str) -> String {
-    crate::interface::ansi::sanitize_control(
+    crate::components::ansi::sanitize_control(
         args.get(key).and_then(|v| v.as_str()).unwrap_or(fallback),
     )
 }

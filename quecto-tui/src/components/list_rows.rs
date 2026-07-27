@@ -6,8 +6,8 @@
 //! here ONCE; surfaces differ only via indent, [`DescriptionMode`], [`ListRow`].
 
 use crate::components::list_navigator::ListNavigator;
-use crate::interface::theme;
-use crate::interface::utils::{truncate_to_width, visible_width};
+use crate::components::theme;
+use crate::components::utils::{truncate_to_width, visible_width};
 
 /// One renderable row: the display label exactly as the surface shows it
 /// (with any `/`/`@` sigil), plus per-row decorations.

@@ -200,7 +200,7 @@ impl App {
         // Untrusted transcript text (especially sub-agents): strip control
         // sequences once after all pages are reassembled, so split ANSI/control
         // sequences are interpreted identically to the original message.
-        let accumulated = crate::interface::ansi::sanitize_control_keep_newlines(&accumulated);
+        let accumulated = crate::components::ansi::sanitize_control_keep_newlines(&accumulated);
         if !chat.recall_stub(&recall.message_id, &accumulated) {
             self.failed_stub_recalls.insert(recall_key);
         }

@@ -1,15 +1,15 @@
 //! Step definitions for `tui_subagent_first_layout.feature` (#820).
 //!
 //! These drive the REAL TUI render path through the headless render harness
-//! (`quecto_tui::interface::app::tui_harness`), exposed via the `test-harness`
+//! (`quecto_tui::shell::app::tui_harness`), exposed via the `test-harness`
 //! feature. Each step asserts on observable rendered output (the main-pane vs
 //! the bottom stack), not internal mechanics.
 
 use super::*;
-use quecto_tui::interface::ansi::strip_ansi;
-use quecto_tui::interface::app::tui_harness::{TuiHarness, subagent, subagents_changed};
-use quecto_tui::interface::utils::visible_width;
+use quecto_tui::components::ansi::strip_ansi;
+use quecto_tui::components::utils::visible_width;
 use quecto_tui::protocol::client::Event;
+use quecto_tui::shell::app::tui_harness::{TuiHarness, subagent, subagents_changed};
 
 /// Build a sub-agent-first harness optionally tracking sub-agent `a1` whose own
 /// workflow (issue #820) has been routed into its session.

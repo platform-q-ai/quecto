@@ -103,7 +103,7 @@ fn model_overlay_lines_span_full_width() {
     );
     for (i, line) in lines.iter().enumerate() {
         assert_eq!(
-            crate::interface::utils::visible_width(line),
+            crate::components::utils::visible_width(line),
             width,
             "line {i} has wrong width"
         );
@@ -128,7 +128,7 @@ fn model_overlay_uses_opaque_background() {
             "line {i} should use the opaque background"
         );
         assert_eq!(
-            crate::interface::utils::visible_width(line),
+            crate::components::utils::visible_width(line),
             width,
             "line {i} has wrong width"
         );
@@ -207,7 +207,7 @@ fn overlay_lines_are_uniform_width() {
     let mut sel = sample_selector();
     let (lines, width) = build_resume_selector_overlay(&mut sel, 100, 40);
     for (i, line) in lines.iter().enumerate() {
-        let vis = crate::interface::utils::visible_width(line);
+        let vis = crate::components::utils::visible_width(line);
         assert_eq!(
             vis, width,
             "line {i} has visible width {vis} but overlay width is {width}"
@@ -249,20 +249,20 @@ fn double_esc_window_is_reasonable() {
 #[test]
 fn pad_short_text_to_width() {
     let result = pad_ansi_to_width("hi", 10);
-    assert_eq!(crate::interface::utils::visible_width(&result), 10);
+    assert_eq!(crate::components::utils::visible_width(&result), 10);
 }
 
 #[test]
 fn pad_exact_width_unchanged() {
     let result = pad_ansi_to_width("hello", 5);
-    assert_eq!(crate::interface::utils::visible_width(&result), 5);
+    assert_eq!(crate::components::utils::visible_width(&result), 5);
 }
 
 #[test]
 fn pad_truncates_overlong_text() {
     let result = pad_ansi_to_width("hello world", 5);
     assert!(
-        crate::interface::utils::visible_width(&result) <= 5,
+        crate::components::utils::visible_width(&result) <= 5,
         "overlong text should be truncated"
     );
 }

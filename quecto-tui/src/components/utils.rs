@@ -3,7 +3,7 @@
 //! All width calculations are ANSI-aware: escape sequences have zero visual
 //! width. CJK characters are correctly counted as width 2.
 
-use crate::interface::ansi::{AnsiSegment, ansi_segments};
+use crate::components::ansi::{AnsiSegment, ansi_segments};
 use unicode_width::UnicodeWidthChar;
 
 /// Calculate the visible width of a string, ignoring ANSI escape sequences.
@@ -109,7 +109,7 @@ pub fn sanitize_truncate_width_with_ellipsis(s: &str, max_width: usize, ellipsis
     'outer: for seg in ansi_segments(s) {
         if let AnsiSegment::Text(text) = seg {
             for ch in text.chars() {
-                if !crate::interface::ansi::keep_char(ch, false) {
+                if !crate::components::ansi::keep_char(ch, false) {
                     continue;
                 }
                 let ch_width = ch.width().unwrap_or(0);
@@ -131,7 +131,7 @@ pub fn sanitize_truncate_width_with_ellipsis(s: &str, max_width: usize, ellipsis
 
 /// Sanitize, then truncate by Unicode scalar count with an ellipsis on overflow.
 pub fn sanitize_truncate_chars_with_ellipsis(s: &str, max_chars: usize, ellipsis: &str) -> String {
-    let (mut out, truncated) = crate::interface::ansi::sanitize_control_truncated(s, max_chars);
+    let (mut out, truncated) = crate::components::ansi::sanitize_control_truncated(s, max_chars);
     if truncated {
         out.push_str(ellipsis);
     }

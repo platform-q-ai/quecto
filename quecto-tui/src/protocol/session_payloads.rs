@@ -1,7 +1,7 @@
 //! Typed protocol values for TUI session-related wire payloads.
 //!
 //! The infrastructure client still receives raw JSON from the UDS protocol, but
-//! interface code should not hand-parse those protocol shapes in render/app
+//! presentation code should not hand-parse those protocol shapes in render/app
 //! paths. These mappers keep that translation in the protocol layer.
 
 /// Parsed session statistics used by chat status lines and footer indicators.
@@ -261,7 +261,7 @@ fn json_string_or_raw(value: &serde_json::Value) -> String {
 }
 
 /// Whether the payload explicitly contained session entries, even if none are
-/// resumable after parsing. Allows the interface to keep its more specific
+/// resumable after parsing. Allows the presentation layer to keep its more specific
 /// empty-vs-malformed user messages without parsing raw fields itself.
 pub fn has_session_entries(data: &serde_json::Value) -> bool {
     !session_values(data).is_empty()

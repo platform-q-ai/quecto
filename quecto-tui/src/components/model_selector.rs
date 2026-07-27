@@ -9,8 +9,8 @@ use crate::components::component::Component;
 use crate::components::fuzzy::fuzzy_filter;
 use crate::components::list_rows::{DescriptionMode, ListRow};
 use crate::components::suggestion_list::SuggestionList;
-use crate::interface::theme;
-use crate::interface::utils::{truncate_to_width, visible_width};
+use crate::components::theme;
+use crate::components::utils::{truncate_to_width, visible_width};
 use crate::shell::keys::Key;
 
 /// Well-known fallback models, used when the caller doesn't supply a model
@@ -117,7 +117,7 @@ impl ModelSelector {
         if let Some(current) = current_model {
             // Strip control characters — prevents terminal escape injection
             // via agent-sourced model names.
-            let safe_current = crate::interface::ansi::sanitize_control(current);
+            let safe_current = crate::components::ansi::sanitize_control(current);
             let mut found = false;
             for m in &mut models {
                 if m.id == safe_current {

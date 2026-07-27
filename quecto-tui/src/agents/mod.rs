@@ -1,7 +1,7 @@
 //! Agents ownership for `quecto-tui` (#1222 / #1257 Phase 4).
 //!
 //! Owns subagent roster, lifecycle, feeds, ledger sync, focus, retention, and
-//! view projection. App slices remain mounted inside `interface::app` until
+//! view projection. App slices remain mounted inside `shell::app` until
 //! later controller-extraction phases.
 
 pub(crate) mod feed;

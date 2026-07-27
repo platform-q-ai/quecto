@@ -298,7 +298,7 @@ impl App {
         // Kitty key release events can arrive in the same stdin read as a key
         // press. Filtering only the raw read can miss them, causing one arrow
         // key press to be handled twice. Drop releases per decoded sequence.
-        if self.kitty.active && crate::interface::kitty::is_key_release(seq) {
+        if self.kitty.active && crate::components::kitty::is_key_release(seq) {
             return;
         }
         if let Some((key, _)) = keys::parse_key(seq) {

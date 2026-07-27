@@ -11,7 +11,7 @@ pub(crate) struct PendingMessageRecovery {
 
 /// A turn awaiting rebuild from its refs. The atomicity invariant lives in
 /// `conversation::turn_recovery`; this alias binds it to the raw response payloads
-/// the interface layer buffers.
+/// the shell composition layer buffers.
 pub(crate) type MessageRecoveryBatch =
     crate::conversation::turn_recovery::RecoveryBatch<serde_json::Value>;
 

@@ -9,10 +9,10 @@ Feature: Sub-agent session view + interaction parity, Tab focus model, focus div
 
   # Wired to step definitions in tests/bdd/tui_subagent_parity_steps.rs, which
   # drive the REAL render/key path through the headless render harness
-  # (quecto_tui::interface::app::tui_harness) so these scenarios actually
+  # (quecto_tui::shell::app::tui_harness) so these scenarios actually
   # execute in the non-real BDD suite (#805). The same behaviour is also
   # covered by the unit tests in
-  # quecto-tui/src/interface/app_focus_parity_tests.rs.
+  # quecto-tui/src/shell/app_focus_parity_tests.rs.
 
   Scenario: Selecting a sub-agent renders its own session chrome
     Given a TUI tracking sub-agent "a1" with its own workflow

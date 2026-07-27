@@ -135,9 +135,9 @@ fn apply_line_highlight_with_ansi_escapes() {
 fn apply_line_highlight_survives_theme_reset_after_blockquote_gutter() {
     // Markdown blockquotes are `dim("│ ")` + body. dim() ends with `\x1b[0m`,
     // which must not kill reverse video for the following body text.
-    let gutter = crate::interface::theme::dim("│ ");
+    let gutter = crate::components::theme::dim("│ ");
     let line = format!("{gutter}quoted body text");
-    let end = crate::interface::utils::visible_width(&line) as u16;
+    let end = crate::components::utils::visible_width(&line) as u16;
     let result = apply_line_highlight(&line, 0, end);
 
     let plain = super::app_methods::strip_ansi(&result);
@@ -150,9 +150,9 @@ fn apply_line_highlight_survives_theme_reset_after_blockquote_gutter() {
 #[test]
 fn apply_line_highlight_survives_theme_reset_after_bullet_marker() {
     // List items are `accent("•")` + " " + body. accent/cyan ends with `\x1b[0m`.
-    let marker = format!("{} ", crate::interface::theme::accent("•"));
+    let marker = format!("{} ", crate::components::theme::accent("•"));
     let line = format!("{marker}list item body");
-    let end = crate::interface::utils::visible_width(&line) as u16;
+    let end = crate::components::utils::visible_width(&line) as u16;
     let result = apply_line_highlight(&line, 0, end);
 
     let plain = super::app_methods::strip_ansi(&result);
@@ -164,7 +164,7 @@ fn apply_line_highlight_survives_theme_reset_after_bullet_marker() {
 /// open reverse-video SGR (`\x1b[7m` … `\x1b[27m` / full reset), so a mid-line
 /// theme `\x1b[0m` cannot leave the body unhighlighted.
 fn assert_visible_range_is_reversed(line: &str, start_col: u16, end_col: u16) {
-    use crate::interface::ansi::{AnsiSegment, ansi_segments};
+    use crate::components::ansi::{AnsiSegment, ansi_segments};
     use unicode_width::UnicodeWidthChar;
 
     let mut vis_col: u16 = 0;
@@ -394,7 +394,7 @@ fn assert_first_reverse_video_starts_at_or_after(line: &str, min_col: u16, row_i
         panic!("row {row_idx} should be highlighted: {line:?}");
     };
     let visible_before_highlight = super::app_methods::strip_ansi(&line[..byte_idx]);
-    let start_col = crate::interface::utils::visible_width(&visible_before_highlight) as u16;
+    let start_col = crate::components::utils::visible_width(&visible_before_highlight) as u16;
     assert!(
         start_col >= min_col,
         "row {row_idx} highlight starts at visible col {start_col}, before body col {min_col}: {line:?}"

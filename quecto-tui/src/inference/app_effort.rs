@@ -103,7 +103,7 @@ impl App {
         let Some(level) = data.as_ref().and_then(|d| {
             crate::protocol::state_payloads::parse_set_effort_level(
                 d,
-                &crate::interface::ansi::sanitize_control,
+                &crate::components::ansi::sanitize_control,
             )
         }) else {
             return;

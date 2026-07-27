@@ -108,7 +108,7 @@ impl App {
                 if let Some(model) = data.as_ref().and_then(|d| {
                     crate::protocol::state_payloads::parse_set_model_id(
                         d,
-                        &crate::interface::ansi::sanitize_control,
+                        &crate::components::ansi::sanitize_control,
                     )
                 }) {
                     if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
@@ -151,7 +151,7 @@ impl App {
                 self.note_sync_capability(agent_id, data);
                 let snap = crate::protocol::state_payloads::parse_get_state(
                     data,
-                    &crate::interface::ansi::sanitize_control,
+                    &crate::components::ansi::sanitize_control,
                 );
                 if let Some(wf) = snap.workflow.as_ref() {
                     let bar = workflow_bar::parse_workflow_event(wf);
@@ -179,7 +179,7 @@ impl App {
             if command == "set_effort" {
                 if let Some(level) = crate::protocol::state_payloads::parse_set_effort_level(
                     data,
-                    &crate::interface::ansi::sanitize_control,
+                    &crate::components::ansi::sanitize_control,
                 ) {
                     if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
                         session.footer.set_effort(Some(level.clone()));
@@ -240,7 +240,7 @@ impl App {
         // it as a passive one-line status in this session's chat, deferred while
         // the child streams so it never splits the child's response (#816).
         if let Event::SubagentNotification { message, .. } = &ev {
-            let message = crate::interface::ansi::sanitize_control(message);
+            let message = crate::components::ansi::sanitize_control(message);
             Self::push_or_defer_note(
                 &mut session.chat,
                 &mut session.deferred_subagent_notes,

@@ -106,7 +106,7 @@ fn kitty_press_and_release_in_one_read_split_into_sequences() {
     assert_eq!(seqs.len(), 2);
     assert_eq!(seqs[0], b"\x1b[65;1:1u".to_vec());
     assert_eq!(seqs[1], b"\x1b[65;1:3u".to_vec());
-    assert!(crate::interface::kitty::is_key_release(&seqs[1]));
+    assert!(crate::components::kitty::is_key_release(&seqs[1]));
 }
 
 #[test]
