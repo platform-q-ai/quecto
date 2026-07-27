@@ -132,7 +132,11 @@ impl App {
             self.abandon_recovery_batch(&pending.batch_id);
             return;
         };
-        if data.get("id").and_then(|v| v.as_str()) != Some(pending.message_id.as_str()) {
+        if crate::protocol::presentation_payloads::response_identity(&data)
+            .0
+            .as_deref()
+            != Some(pending.message_id.as_str())
+        {
             self.abandon_recovery_batch(&pending.batch_id);
             return;
         }
@@ -227,59 +231,35 @@ pub(crate) fn recovered_chat_entries(
     // Ordering is the domain's rule, not this function's: walk in ref order,
     // never arrival order.
     for data in crate::conversation::turn_recovery::ordered_by_refs(refs, responses) {
-        let role = data.get("role").and_then(|v| v.as_str()).unwrap_or("");
-        let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let message = crate::protocol::presentation_payloads::recovered_message(data);
+        let role = message.role();
+        let content = message.content();
         match role {
-            "user" if !content.is_empty() => {
-                entries.push(ChatEntry::User {
-                    text: content.to_string(),
-                });
-            }
+            "user" if !content.is_empty() => entries.push(ChatEntry::User {
+                text: content.to_string(),
+            }),
             "assistant" => {
-                if let Some(calls) = data
-                    .get("toolCalls")
-                    .or_else(|| data.get("tool_calls"))
-                    .and_then(|v| v.as_array())
-                {
-                    for call in calls {
-                        let id = call
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        if id.is_empty() {
-                            continue;
-                        }
-                        let name = call
-                            .get("name")
-                            .or_else(|| call.pointer("/function/name"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("tool")
-                            .to_string();
-                        if super::app_events::suppress_tool_box(&name, &serde_json::Value::Null) {
-                            suppressed_calls.insert(id);
-                            continue;
-                        }
-                        let args = call
-                            .get("arguments")
-                            .or_else(|| call.pointer("/function/arguments"))
-                            .map(|v| {
-                                v.as_str()
-                                    .map(str::to_string)
-                                    .unwrap_or_else(|| v.to_string())
-                            })
-                            .unwrap_or_else(|| "{}".into());
-                        tools.insert(id.clone(), entries.len());
-                        entries.push(ChatEntry::ToolExecution {
-                            tool_call_id: id,
-                            tool_name: name,
-                            parsed_args: serde_json::from_str(&args).ok(),
-                            args,
-                            result: None,
-                            is_error: false,
-                            duration_ms: None,
-                        });
+                for call in message.tool_calls() {
+                    let id = call.id().to_string();
+                    if id.is_empty() {
+                        continue;
                     }
+                    let name = call.name().to_string();
+                    if super::app_events::suppress_tool_box(&name, &serde_json::Value::Null) {
+                        suppressed_calls.insert(id);
+                        continue;
+                    }
+                    let args = call.arguments();
+                    tools.insert(id.clone(), entries.len());
+                    entries.push(ChatEntry::ToolExecution {
+                        tool_call_id: id,
+                        tool_name: name,
+                        parsed_args: crate::protocol::agent_ledger_payloads::parse_tool_args(&args),
+                        args,
+                        result: None,
+                        is_error: false,
+                        duration_ms: None,
+                    });
                 }
                 if !content.is_empty() {
                     entries.push(ChatEntry::Assistant {
@@ -289,45 +269,27 @@ pub(crate) fn recovered_chat_entries(
                 }
             }
             "tool" => {
-                let call_id = data
-                    .get("toolCallId")
-                    .or_else(|| data.get("tool_call_id"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                let call_id = message.tool_call_id().to_string();
                 if suppressed_calls.contains(&call_id) {
                     continue;
                 }
-                let name = data
-                    .get("toolName")
-                    .or_else(|| data.get("tool_name"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("tool")
-                    .to_string();
-                let is_error = data
-                    .get("isError")
-                    .or_else(|| data.get("is_error"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
                 if let Some(idx) = tools.get(&call_id).copied()
                     && let Some(ChatEntry::ToolExecution {
-                        result,
-                        is_error: err,
-                        ..
+                        result, is_error, ..
                     }) = entries.get_mut(idx)
                 {
                     *result = Some(content.to_string());
-                    *err = is_error;
+                    *is_error = message.is_error();
                     continue;
                 }
                 if !call_id.is_empty() {
                     entries.push(ChatEntry::ToolExecution {
                         tool_call_id: call_id,
-                        tool_name: name,
+                        tool_name: message.tool_name().to_string(),
                         parsed_args: None,
                         args: String::new(),
                         result: Some(content.to_string()),
-                        is_error,
+                        is_error: message.is_error(),
                         duration_ms: None,
                     });
                 }

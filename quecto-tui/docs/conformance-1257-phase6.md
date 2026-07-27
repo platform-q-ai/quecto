@@ -18,7 +18,7 @@ No command ordering, protocol handling, render semantics, or user-visible behavi
 
 - `TUI_LIB_RS_MODULES` / `TUI_TOP_LEVEL_MODULES`: final nine feature modules (no `interface`)
 - Feature/view ratchet roots: `components`, `shell`, `conversation`, `agents`, `sessions`, `workflow`, `inference`, `workspace`
-- Exact totals preserved: feature/view raw-JSON `0`, protocol raw-JSON `126`, explicit wire-DTO references `16`, combined ≤ `178`
+- Exact totals preserved: feature/view raw-JSON `0`, protocol raw-JSON `86`, explicit wire-DTO references `16`, combined ≤ `178`
 - `interface/` deletion asserted; shell owns `app`/`stdin_buffer`; components own `ansi`/`theme`
 - Components must not import `protocol::client`; protocol must not import shell app/terminal widgets
 

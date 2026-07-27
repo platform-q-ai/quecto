@@ -81,9 +81,9 @@ Observable surfaces and required parity:
 | Surface | Required identical behavior | Boundary cases | Performance characteristics |
 |---|---|---|---|
 | TUI runtime behavior | No runtime behavior changes except the intentional patch-version string update required by repository release policy: no command ordering, protocol handling, event routing, terminal handling, render output other than version text, or widget behavior changes. | Not applicable to this docs/guardrail slice; no runtime call sites are changed. | Not applicable; no specialized runtime code is replaced. |
-| TUI public crate shape during migration | Feature modules only: `agents`, `components`, `conversation`, `inference`, `protocol`, `sessions`, `shell`, `workflow`, and `workspace`; interim CA buckets `application`, `domain`, `infrastructure`, and `interface` are intentionally absent after #1257 Phases 2–6, and `main.rs` remains a thin entrypoint. | Empty/one/many module cases are not relevant because the compatibility set is exact and already pinned by existing architecture tests. | Not applicable; module exports are compile-time structure. |
+| TUI final public crate shape | Feature modules only: `agents`, `components`, `conversation`, `inference`, `protocol`, `sessions`, `shell`, `workflow`, and `workspace`; retired CA buckets `application`, `domain`, `infrastructure`, and `interface` are intentionally absent after #1257 Phases 2–6, and `main.rs` remains a thin entrypoint. | Empty/one/many module cases are not relevant because the compatibility set is exact and already pinned by existing architecture tests. | Not applicable; module exports are compile-time structure. |
 | Architecture documentation | The current architecture direction is discoverable from the TUI README; the superseded Clean Architecture target model clearly points to the feature-oriented architecture document; the new document lists all target harness-facing capability modules. | Full target set must be present: shell, protocol, conversation, sessions, agents, workflow, inference, workspace, components. | Not applicable; documentation-only surface. |
-| Executable guardrails | Architecture tests and BDD steps continue to execute, and the new feature-oriented guardrail is additive rather than weakening existing interim compatibility checks. | Existing checks cover the Phase 4 module set (`agents` + `conversation`), intentional deletion of `domain/`, root file placement, and the full capability list plus protocol and pure-policy boundary rules. | Not applicable; test/runtime cost is outside shipped TUI behavior. |
+| Executable guardrails | Architecture tests and BDD steps continue to execute, and the new feature-oriented guardrail is additive rather than weakening final responsibility checks. | Existing checks cover the Phase 4 module set (`agents` + `conversation`), intentional deletion of `domain/`, root file placement, and the full capability list plus protocol and pure-policy boundary rules. | Not applicable; test/runtime cost is outside shipped TUI behavior. |
 
 Approved parity contract: all readiness-gate items are resolved; no `__UNRESOLVED__` markers remain.
 
@@ -193,7 +193,7 @@ No production runtime code, rendering code, protocol code, or characterization t
 | Deleted/replaced text | Invariant it enforced | New location preserving invariant |
 |---|---|---|
 | README phrase “Clean Architecture layering” | The TUI has an explicit architecture direction before `1.0`. | README now names feature-oriented presentation boundaries and links this document. |
-| Feature title/body wording that described Clean Architecture as the target | The TUI architecture rules remain executable through BDD. | Feature now describes interim compatibility layers plus the feature-oriented target boundary scenario. |
+| Feature title/body wording that described Clean Architecture as the target | The TUI architecture rules remain executable through BDD. | Feature now describes the final feature-oriented responsibility boundaries. |
 | Old target-model note saying it would be rewritten or removed under #1219 | Readers must not implement against the abandoned four-layer target. | Superseded banner now links this current feature-oriented architecture document. |
 
 No shared helper was introduced, so consolidation completeness is not applicable for this slice.
@@ -203,9 +203,9 @@ No shared helper was introduced, so consolidation completeness is not applicable
 | Surface | Behavior | Evidence | Verdict |
 |---|---|---|---|
 | TUI runtime behavior | No command ordering, protocol handling, event routing, terminal handling, render output other than required version text, or widget behavior changes. | `git diff HEAD~1..HEAD -- quecto-tui/src` is empty; no production TUI source files changed. Patch-version surfaces changed intentionally because changed crates are versioned in this repository. `cargo check -p quecto-tui` passed. | PASS |
-| TUI public crate shape during migration | Compatibility modules and thin entrypoint remain available. | `cargo test -p quecto-agentic-harness --test architecture` passed, including existing TUI layer/root-file checks. | PASS |
+| TUI final public crate shape | Feature modules and the thin entrypoint are the only public crate shape. | `cargo test -p quecto-agentic-harness --test architecture` passed, including existing TUI layer/root-file checks. | PASS |
 | Architecture documentation | README points to current feature-oriented doc; old Clean Architecture target is superseded; all target capability modules and boundary rules are documented. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_oriented_architecture_is_documented` passed; `QUECTO_TAG=issue-1149 cargo test -p quecto-agentic-harness --features test-support --test bdd` passed. | PASS |
-| Executable guardrails | New feature-oriented guardrail is additive and existing interim compatibility checks still run. | Full architecture integration test passed; BDD target compiled with `cargo test -p quecto-agentic-harness --features test-support --test bdd --no-run`. | PASS |
+| Executable guardrails | New feature-oriented guardrail is additive and final responsibility checks still run. | Full architecture integration test passed; BDD target compiled with `cargo test -p quecto-agentic-harness --features test-support --test bdd --no-run`. | PASS |
 | Frozen characterization suite | #1219 intentionally extends the architecture guardrail, so `architecture.rs` is not claimed frozen for this slice; the unchanged BDD feature and step files remain the #1149 characterization baseline. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_oriented_architecture_is_documented` passed, including the exact production-file/map comparison added for #1219. | PASS |
 | Visual parity | No render frames or visual surfaces are touched. | No files under `quecto-tui/src` changed; this slice only changes docs, tests, Cargo metadata, and lockfile. | PASS |
 | Performance parity | No specialized runtime/rendering code is replaced, so no allocation, cache, single-pass, or complexity characteristic changes. | No production code changed. Targeted clippy passed: `cargo clippy -p quecto-agentic-harness --test architecture -- -D warnings` and `cargo clippy -p quecto-tui --all-targets -- -D warnings`. | PASS |
@@ -254,11 +254,11 @@ This issue is the characterization-readiness slice for the later code-moving iss
 
 | Current production file | Target owner |
 |---|---|
-| `agents/app_ledger_sync.rs` | `agents` (relocated, #1257 Phase 4) |
-| `agents/app_subagent_feed.rs` | `agents` (relocated, #1257 Phase 4) |
-| `agents/app_subagent_panel.rs` | `agents` (relocated, #1257 Phase 4) |
-| `agents/app_subagent_stream.rs` | `agents` (relocated, #1257 Phase 4) |
-| `agents/app_subagents.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/controller_ledger_sync.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/controller_subagent_feed.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/controller_subagent_panel.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/controller_subagent_stream.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/controller_subagents.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/feed.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/focus.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/ledger.rs` | `agents` (relocated, #1257 Phase 4) |
@@ -292,17 +292,17 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `components/theme.rs` | `components` styling primitive (relocated, #1257 Phase 6) |
 | `components/utils.rs` | `components` shared UI helpers (relocated, #1257 Phase 6) |
 | `components/workflow_bar.rs` | `components` (relocated, #1257 Phase 1) |
-| `conversation/app_message_recovery.rs` | `conversation` (relocated, #1257 Phase 3) |
-| `conversation/app_paged_history.rs` | `conversation` (relocated, #1257 Phase 3) |
-| `conversation/app_resumed_history.rs` | `conversation` (relocated, #1257 Phase 3) |
-| `conversation/app_rewind.rs` | `conversation` rewind flow owner (relocated, #1257 Phase 3) |
-| `conversation/app_rewind_state.rs` | `conversation` (relocated, #1257 Phase 3) |
+| `conversation/controller_message_recovery.rs` | `conversation` (relocated, #1257 Phase 3) |
+| `conversation/controller_paged_history.rs` | `conversation` (relocated, #1257 Phase 3) |
+| `conversation/controller_resumed_history.rs` | `conversation` (relocated, #1257 Phase 3) |
+| `conversation/controller_rewind.rs` | `conversation` rewind flow owner (relocated, #1257 Phase 3) |
+| `conversation/controller_rewind_state.rs` | `conversation` (relocated, #1257 Phase 3) |
 | `conversation/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221; relocated, #1257 Phase 3) |
 | `conversation/mod.rs` | `conversation` (relocated, #1257 Phase 3) |
 | `conversation/turn_recovery.rs` | `conversation` end-of-turn recovery trigger and batch atomicity (#1221; relocated, #1257 Phase 3) |
-| `inference/app_effort.rs` | `inference` (relocated, #1257 Phase 5) |
-| `inference/app_inference.rs` | `inference` (relocated, #1257 Phase 5) |
-| `inference/app_models.rs` | `inference` (relocated, #1257 Phase 5) |
+| `inference/controller_effort.rs` | `inference` (relocated, #1257 Phase 5) |
+| `inference/controller_inference.rs` | `inference` (relocated, #1257 Phase 5) |
+| `inference/controller_models.rs` | `inference` (relocated, #1257 Phase 5) |
 | `inference/mod.rs` | `inference` (relocated, #1257 Phase 5) |
 | `lib.rs` | `shell` crate composition/export root |
 | `main.rs` | `shell` thin binary entrypoint |
@@ -315,7 +315,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/session_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/state_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
-| `sessions/app_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
+| `sessions/controller_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `shell/app.rs` | `shell` composition root (relocated, #1257 Phase 6) |
 | `shell/app_commands.rs` | `shell` top-level command routing (relocated, #1257 Phase 6) |
@@ -343,10 +343,10 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/tui_harness_events.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_probes.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/warn_capture.rs` | `shell` diagnostics/runtime adapter (relocated, #1257 Phase 1) |
-| `workflow/app_workflow.rs` | `workflow` (relocated, #1257 Phase 5) |
+| `workflow/controller_workflow.rs` | `workflow` (relocated, #1257 Phase 5) |
 | `workflow/mod.rs` | `workflow` (relocated, #1257 Phase 5) |
-| `workspace/app_git.rs` | `workspace` (relocated, #1257 Phase 5) |
-| `workspace/app_workspace.rs` | `workspace` (relocated, #1257 Phase 5) |
+| `workspace/controller_git.rs` | `workspace` (relocated, #1257 Phase 5) |
+| `workspace/controller_workspace.rs` | `workspace` (relocated, #1257 Phase 5) |
 | `workspace/mod.rs` | `workspace` (relocated, #1257 Phase 5) |
 | `workspace/workspace_files.rs` | `workspace` (relocated, #1257 Phase 5) |
 
@@ -441,11 +441,11 @@ Characterization review/freeze manifest for #1224:
 
 Deletion ledger for #1224 App thinning:
 
-- Deleted inline `RewindFlow`/fields from `app.rs`: rewind selector, double-Escape timestamp, request ids, and request sequence invariants are re-established unchanged in `conversation/app_rewind_state.rs` and accessed through the existing `rewind` owner.
-- Deleted inline `SessionsFlow`: resume selector and context-stats request latch invariants are re-established unchanged in former `interface/app_sessions.rs` (now `sessions/app_sessions.rs`).
-- Deleted inline `WorkflowFlow`: auto-continue and completion-nudge mirror invariants are re-established unchanged in former `interface/app_workflow.rs` (now `workflow/app_workflow.rs`).
-- Deleted inline `InferenceFlow`/`ModelRegistry`: current model, selector overlays, registry cache, pending-open latch, current effort, and effort vocabulary invariants are re-established unchanged in former `interface/app_inference.rs` (now `inference/app_inference.rs`).
-- Deleted inline `WorkspaceFlow`: file autocomplete capacity 8, Git branch footer state, and Git repo polling root invariants are re-established unchanged in former `interface/app_workspace.rs` (now `workspace/app_workspace.rs`); production capacity is pinned by `app_workspace_file_autocomplete_uses_production_visible_capacity`.
+- Deleted inline `RewindFlow`/fields from `app.rs`: rewind selector, double-Escape timestamp, request ids, and request sequence invariants are re-established unchanged in `conversation/controller_rewind_state.rs` and accessed through the existing `rewind` owner.
+- Deleted inline `SessionsFlow`: resume selector and context-stats request latch invariants are re-established unchanged in former `interface/app_sessions.rs` (now `sessions/controller_sessions.rs`).
+- Deleted inline `WorkflowFlow`: auto-continue and completion-nudge mirror invariants are re-established unchanged in former `interface/app_workflow.rs` (now `workflow/controller_workflow.rs`).
+- Deleted inline `InferenceFlow`/`ModelRegistry`: current model, selector overlays, registry cache, pending-open latch, current effort, and effort vocabulary invariants are re-established unchanged in former `interface/app_inference.rs` (now `inference/controller_inference.rs`).
+- Deleted inline `WorkspaceFlow`: file autocomplete capacity 8, Git branch footer state, and Git repo polling root invariants are re-established unchanged in former `interface/app_workspace.rs` (now `workspace/controller_workspace.rs`); production capacity is pinned by `app_workspace_file_autocomplete_uses_production_visible_capacity`.
 - One source-text architecture test (`tui_app_state_is_composed_from_feature_flow_owners`) was deleted during conformance because final conformance bans source-text assertions; frozen behavioural characterization tests were not edited after freeze.
 - Consolidation completeness: no shared helper was introduced or canonicalized in this slice; moved state owners only.
 
@@ -529,7 +529,7 @@ module docs of `protocol/model_payloads.rs`):
 - `protocol/model_payloads.rs` — `parse_model_list` → `Vec<ModelListEntry>`,
   owning the id/provider/auth derivation and the drop rules for absent,
   non-string, and sanitize-to-empty identifiers.
-- `inference/app_models.rs::parse_model_entries` — the seam: maps the DTO to the
+- `inference/controller_models.rs::parse_model_entries` — the seam: maps the DTO to the
   selector's `ModelEntry`, adding only the interface-owned `is_current: false`.
 
 Mapper fixtures in `protocol/model_payloads_tests.rs` cover valid, legacy
@@ -544,9 +544,9 @@ and therefore run in the fast pre-commit guard suite (targets are enumerated
 dynamically, so they cannot be silently dropped):
 
 - `tui_feature_view_raw_json_parsing_sites_are_eliminated` — final feature/view total `0`; scan roots include `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`.
-- `tui_protocol_raw_json_parsing_sites_do_not_grow` — final protocol mapper total and seed `126`.
+- `tui_protocol_raw_json_parsing_sites_do_not_grow` — final protocol mapper total and seed `86`.
 - `tui_combined_raw_json_inventory_does_not_grow` — feature/view plus protocol sites may not exceed the historical combined ceiling `178` (current total `176`), preventing growth hidden by moving sites between buckets.
-- `tui_wire_dto_usage_does_not_grow` — refined true-use seed and final total `16`.
+- `tui_wire_dto_usage_does_not_grow` — import-aware inventory is zero outside exact documented seams.
 
 Both were hardened after review on #1235, which proved the first drafts did not
 measure what they claimed:
@@ -582,9 +582,9 @@ Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-The Phase 6 feature/view raw-JSON ratchet scans `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`; its exact total is 0. The protocol raw-JSON ratchet has an exact total and seed of 126, with `protocol/client.rs` allowlisted as the wire seam. The combined inventory is 126 and may not exceed its historical ceiling of 178, so moving parsing between these buckets cannot conceal growth. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
+The Phase 6 feature/view raw-JSON ratchet scans `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`; its exact total is 0. The protocol raw-JSON ratchet has an exact total and seed of 86, with `protocol/client.rs` allowlisted as the wire seam. The combined inventory is 86 and may not exceed its historical ceiling of 178, so moving parsing between these buckets cannot conceal growth. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
 
-The refined wire-DTO inventory counts explicit `protocol::client` references only and has a final total and seed of 16; `agents/runtime.rs` is narrowly allowlisted as described above.
+The import-aware wire-DTO inventory is zero outside exact, issue-linked shell/runtime and direct-feed adapter seams; `agents/runtime.rs` is narrowly allowlisted as described above.
 
 ### Deletion ledger
 

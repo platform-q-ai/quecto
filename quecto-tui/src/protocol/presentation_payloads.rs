@@ -5,6 +5,21 @@
 
 use serde_json::Value;
 
+/// Parse a recovered transcript message with the same lenient per-field
+/// semantics as ledger synchronization.
+pub fn recovered_message(value: &Value) -> crate::protocol::agent_ledger_payloads::LedgerMessage {
+    serde_json::from_value(value.clone()).unwrap_or_default()
+}
+
+/// Parse a `get_subagents` response at the protocol boundary.
+pub fn subagents(value: &Value) -> Vec<crate::protocol::client::SubagentInfoEvent> {
+    value
+        .get("subagents")
+        .cloned()
+        .and_then(|items| serde_json::from_value(items).ok())
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TurnEndPayload {
     pub message_refs: Vec<String>,

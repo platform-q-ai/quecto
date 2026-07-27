@@ -51,7 +51,7 @@ Frozen pre-move bodies were path-relocated with content preserved (tests moved w
 | Deleted | Invariant | New location |
 |---|---|---|
 | `infrastructure/` | workspace filesystem adapter available | `workspace/workspace_files.rs` |
-| `interface/app_sessions.rs` (path) | SessionsFlow defaults | `sessions/app_sessions.rs` (#[path] remount) |
-| `interface/app_workflow.rs` (path) | WorkflowFlow automation mirrors | `workflow/app_workflow.rs` |
+| `interface/app_sessions.rs` (path) | SessionsFlow defaults | `sessions/controller_sessions.rs` (#[path] remount) |
+| `interface/app_workflow.rs` (path) | WorkflowFlow automation mirrors | `workflow/controller_workflow.rs` |
 | `interface/app_{inference,models,effort}.rs` (paths) | model/effort flows | `inference/` |
 | `interface/app_{workspace,git}.rs` (paths) | workspace flow + git branch | `workspace/` |

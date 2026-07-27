@@ -14,7 +14,7 @@
 | Wire DTO = 122 | met | `TUI_PHASE_5_WIRE_DTO_USAGE_TOTAL = 122` |
 | Zero behaviour change | met | characterization 1667 passed; frozen suites moved without body rewrites |
 | Genuine mapper burn-down | met | `protocol/state_payloads.rs`, `workflow_payloads.rs`; consumers in footer, app_response, workflow_bar, app_effort, app_subagent_stream |
-| Subagent dual-path consolidated | met | `agents/app_subagent_stream.rs` uses mappers (follow-up `a9836ac8`) |
+| Subagent dual-path consolidated | met | `agents/controller_subagent_stream.rs` uses mappers (follow-up `a9836ac8`) |
 | Version bumps only changed crates | met | `quecto-tui` 0.70.26, `quecto-agentic-harness` 0.96.10 |
 | Parity docs complete | met | contract APPROVED, mutation log, freeze, evidence |
 | No speculative public API | met | new `pub` mappers consumed outside their modules |

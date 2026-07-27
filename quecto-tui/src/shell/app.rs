@@ -216,27 +216,24 @@ mod app_disconnect;
 // #1257 Phase 5: inference/workspace/sessions/workflow-owned app slices are
 // physically housed under their feature modules; shell composes them as App
 // extensions without taking ownership of their policy.
-#[path = "../inference/app_effort.rs"]
+#[path = "../inference/controller_effort.rs"]
 mod app_effort;
 #[path = "app_event_loop.rs"]
 mod app_event_loop;
 #[path = "app_events.rs"]
 mod app_events;
-#[path = "../workspace/app_git.rs"]
+#[path = "../workspace/controller_git.rs"]
 mod app_git;
-#[path = "../inference/app_inference.rs"]
+#[path = "../inference/controller_inference.rs"]
 mod app_inference;
-// #1257 Phase 3: conversation-owned app slices are physically housed under
-// `conversation/` but remain mounted inside `shell::app` until the issue's
-// later controller-extraction phases. This is an intentional remount only; do
-// not infer a new dependency direction from the `#[path]` target.
-#[path = "../conversation/app_rewind_state.rs"]
+// Feature controllers own policy; shell composes their App extension methods.
+#[path = "../conversation/controller_rewind_state.rs"]
 mod app_rewind_state;
-#[path = "../sessions/app_sessions.rs"]
+#[path = "../sessions/controller_sessions.rs"]
 mod app_sessions;
-#[path = "../workflow/app_workflow.rs"]
+#[path = "../workflow/controller_workflow.rs"]
 mod app_workflow;
-#[path = "../workspace/app_workspace.rs"]
+#[path = "../workspace/controller_workspace.rs"]
 mod app_workspace;
 use app_inference::InferenceFlow;
 use app_rewind_state::RewindFlow;
@@ -250,27 +247,27 @@ pub const GIT_BRANCH_POLL_INTERVAL: std::time::Duration = app_git::GIT_BRANCH_PO
 mod app_idle_efficiency;
 // #1257 Phase 4: agents-owned app slices are physically housed under
 // `agents/`; shell composes them as App extensions.
-#[path = "../agents/app_ledger_sync.rs"]
+#[path = "../agents/controller_ledger_sync.rs"]
 mod app_ledger_sync;
-#[path = "../conversation/app_message_recovery.rs"]
+#[path = "../conversation/controller_message_recovery.rs"]
 pub(crate) mod app_message_recovery;
 #[path = "app_methods.rs"]
 mod app_methods;
-#[path = "../inference/app_models.rs"]
+#[path = "../inference/controller_models.rs"]
 mod app_models;
-#[path = "../conversation/app_paged_history.rs"]
+#[path = "../conversation/controller_paged_history.rs"]
 mod app_paged_history;
 #[path = "app_response.rs"]
 mod app_response;
-#[path = "../conversation/app_resumed_history.rs"]
+#[path = "../conversation/controller_resumed_history.rs"]
 mod app_resumed_history;
-#[path = "../conversation/app_rewind.rs"]
+#[path = "../conversation/controller_rewind.rs"]
 mod app_rewind;
 #[path = "app_selection.rs"]
 mod app_selection;
-#[path = "../agents/app_subagent_feed.rs"]
+#[path = "../agents/controller_subagent_feed.rs"]
 mod app_subagent_feed;
-#[path = "../agents/app_subagent_panel.rs"]
+#[path = "../agents/controller_subagent_panel.rs"]
 mod app_subagent_panel;
 #[path = "app_submit.rs"]
 mod app_submit;
@@ -279,9 +276,9 @@ use crate::agents::roster::{
 };
 type TrackedSubagent =
     crate::agents::roster::TrackedSubagent<crate::protocol::client::SubagentInfoEvent>;
-#[path = "../agents/app_subagent_stream.rs"]
+#[path = "../agents/controller_subagent_stream.rs"]
 mod app_subagent_stream;
-#[path = "../agents/app_subagents.rs"]
+#[path = "../agents/controller_subagents.rs"]
 mod app_subagents;
 
 /// Maximum bytes for OSC 52 clipboard payload (100 KiB before base64 encoding).

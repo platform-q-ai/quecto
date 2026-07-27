@@ -304,16 +304,7 @@ impl App {
 
     fn handle_get_subagents(&mut self, data: Option<serde_json::Value>) {
         let Some(data) = data else { return };
-        let Some(arr) = data.get("subagents") else {
-            return;
-        };
-        if let Ok(infos) =
-            <Vec<crate::protocol::client::SubagentInfoEvent> as serde::Deserialize>::deserialize(
-                arr,
-            )
-        {
-            self.update_subagent_bar(infos);
-        }
+        self.update_subagent_bar(crate::protocol::presentation_payloads::subagents(&data));
     }
 
     fn handle_agent_error(&mut self, error: Option<String>) {
