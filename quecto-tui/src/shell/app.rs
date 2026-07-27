@@ -518,6 +518,9 @@ mod app_idle_efficiency_tests;
 #[path = "app_input_paste_tests.rs"]
 mod app_input_paste_tests;
 #[cfg(test)]
+#[path = "../agents/app_live_inflight_1259_tests.rs"]
+mod app_live_inflight_1259_tests;
+#[cfg(test)]
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;
 #[cfg(test)]

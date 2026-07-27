@@ -2,6 +2,15 @@ use super::*;
 /// Defensive cap on deferred sub-agent notes; oldest notes are evicted.
 pub(super) const DEFERRED_NOTE_CAP: usize = 256;
 
+/// Routing flags for whether a child stream event updates the visible chat
+/// and/or the retained live_inflight buffer (#1259).
+struct LiveChatRoute {
+    synced_authoritative: bool,
+    retain_live: bool,
+    focused_live: bool,
+    was_running: bool,
+}
+
 impl App {
     /// Is `id` still rendered (live-tracked or retained post-exit)? The drop-stale
     /// invariant (#800): stale/untracked frames must never resurrect sessions.
@@ -207,6 +216,9 @@ impl App {
         }
         self.ensure_session(agent_id);
         let synced_authoritative = self.is_synced_authoritative_feed(agent_id);
+        // Retain live buffer for warm-sync feeds before the first sync promotes
+        // them to authoritative, so connect/focus races keep the prefix (#1259).
+        let retain_live = self.retains_live_inflight_feed(agent_id);
         let focused_live = self.subagents.active_agent_id.as_deref() == Some(agent_id);
         let Some(session) = self.subagents.sessions.get_mut(agent_id) else {
             return;
@@ -262,9 +274,12 @@ impl App {
         if Self::apply_subagent_chat_event_or_skip(
             session,
             &ev,
-            synced_authoritative,
-            focused_live,
-            was_running,
+            LiveChatRoute {
+                synced_authoritative,
+                retain_live,
+                focused_live,
+                was_running,
+            },
             early_return,
         ) {
             return;
@@ -300,24 +315,22 @@ impl App {
     fn apply_subagent_chat_event_or_skip(
         session: &mut SessionView,
         ev: &Event,
-        synced: bool,
-        focused_live: bool,
-        was_running: bool,
+        route: LiveChatRoute,
         early: bool,
     ) -> bool {
-        // Always retain in-flight stream events on a synced feed so focus /
+        // Retain in-flight stream events on warm/synced feeds so focus /
         // refocus can restore the full mid-turn transcript (#1259). Visible
-        // `chat` stays ledger-only while unfocused.
-        if synced {
-            Self::buffer_live_inflight(session, ev, was_running);
+        // `chat` stays ledger-only once the feed is authoritative and unfocused.
+        if route.retain_live {
+            Self::buffer_live_inflight(session, ev, route.was_running);
         }
-        if synced && !focused_live {
-            if was_running && !session.running {
+        if route.synced_authoritative && !route.focused_live {
+            if route.was_running && !session.running {
                 session.chat.finalize_assistant();
             }
             return early;
         }
-        if synced && focused_live && !was_running {
+        if route.synced_authoritative && route.focused_live && !route.was_running {
             return early;
         }
         Self::apply_subagent_chat_event(session, ev);
@@ -326,13 +339,14 @@ impl App {
 
     /// Record mid-turn live stream events into the retained buffer (#1259).
     /// Non-chat events no-op inside `apply_chat_stream_event`; turn-start clear
-    /// happens in the run-state arm above.
+    /// happens in the run-state arm above. Capped via [`SessionView::cap_live_inflight`].
     fn buffer_live_inflight(session: &mut SessionView, ev: &Event, was_running: bool) {
         // Idle stale tokens after a finished turn must not seed a new buffer.
         if !session.running && !was_running {
             return;
         }
         Self::apply_chat_stream_event(&mut session.live_inflight, ev, None);
+        session.cap_live_inflight();
     }
 
     /// Apply a single non-workflow child stream event to its chat.

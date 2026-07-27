@@ -165,13 +165,18 @@ impl SubagentUi {
     }
 }
 
+/// Max entries retained in `SessionView::live_inflight` (#1259 review).
+/// Older entries are dropped with a truncation marker so a long/noisy
+/// unfocused turn cannot grow a second unbounded transcript.
+pub(crate) const LIVE_INFLIGHT_ENTRY_CAP: usize = 256;
+
 /// Per-session state for the multi-session UI (#800/#802/#828).
 pub(crate) struct SessionView {
     pub(crate) chat: Chat,
-    /// Retained in-flight turn stream for a synced child (#1259). Survives
-    /// focus changes and same-rev ledger re-projection; cleared when a newer
-    /// committed ledger revision supersedes it. Not shown for unfocused
-    /// children until focus/reproject merges it onto `chat`.
+    /// Retained in-flight turn stream for a synced/warm child (#1259). Survives
+    /// focus changes and mid-turn ledger re-projection; cleared on epoch/resync
+    /// or when an idle turn's ledger advances past the live tail. Not shown for
+    /// unfocused children until focus/reproject merges it onto `chat`.
     pub(crate) live_inflight: Chat,
     pub(crate) workflow_bar: workflow_bar::WorkflowBarState,
     /// Whether the child is mid-turn — drives a per-session working indicator.
@@ -240,9 +245,51 @@ impl SessionView {
                 .add_entry(crate::agents::view::ledger_entry_to_chat_entry(entry));
         }
         if attach_live {
-            for entry in self.live_inflight.entries() {
-                self.chat.add_entry(entry.clone());
+            // Skip live tool cards already present in the committed ledger so a
+            // mid-turn tool checkpoint does not double-render (#1259 review).
+            let ledger_tool_ids: std::collections::HashSet<String> = self
+                .chat
+                .entries()
+                .iter()
+                .filter_map(|e| match e {
+                    crate::components::chat::ChatEntry::ToolExecution { tool_call_id, .. } => {
+                        Some(tool_call_id.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            let live_entries: Vec<_> = self.live_inflight.entries().to_vec();
+            for entry in live_entries {
+                if let crate::components::chat::ChatEntry::ToolExecution { tool_call_id, .. } =
+                    &entry
+                {
+                    if ledger_tool_ids.contains(tool_call_id) {
+                        continue;
+                    }
+                }
+                self.chat.add_entry(entry);
             }
+        }
+    }
+
+    /// Drop oldest live-inflight entries past [`LIVE_INFLIGHT_ENTRY_CAP`],
+    /// leaving a single truncation status so overflow is visible (#1259).
+    pub(crate) fn cap_live_inflight(&mut self) {
+        let n = self.live_inflight.entry_count();
+        if n <= LIVE_INFLIGHT_ENTRY_CAP {
+            return;
+        }
+        // Keep the newest (cap - 1) entries and prepend a truncation marker.
+        let keep = LIVE_INFLIGHT_ENTRY_CAP.saturating_sub(1);
+        let start = n.saturating_sub(keep);
+        let kept: Vec<_> = self.live_inflight.entries()[start..].to_vec();
+        self.live_inflight.clear();
+        self.live_inflight
+            .add_entry(crate::components::chat::ChatEntry::Status {
+                text: "… earlier live output truncated …".into(),
+            });
+        for entry in kept {
+            self.live_inflight.add_entry(entry);
         }
     }
 }

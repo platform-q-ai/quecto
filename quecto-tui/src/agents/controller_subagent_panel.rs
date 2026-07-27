@@ -263,6 +263,20 @@ impl App {
         })
     }
 
+    /// Whether this feed should retain a mid-turn live buffer (#1259).
+    /// Includes warm-sync feeds before the first authoritative sync response so
+    /// connect races do not drop the in-flight prefix.
+    pub(super) fn retains_live_inflight_feed(&self, id: &str) -> bool {
+        self.subagents.feeds.get(id).is_some_and(|feed| {
+            feed.supports_sync
+                || matches!(
+                    feed.authority,
+                    crate::agents::feed::FeedAuthority::WarmSync
+                        | crate::agents::feed::FeedAuthority::SyncedAuthoritative
+                )
+        })
+    }
+
     pub(super) fn enforce_warm_feed_cap(&mut self) {
         while self.subagents.feeds.len() > MAX_WARM_AGENT_FEEDS {
             let Some(victim) = self

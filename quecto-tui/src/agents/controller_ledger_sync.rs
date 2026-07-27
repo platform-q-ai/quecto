@@ -59,11 +59,29 @@ impl App {
                 });
             }
             feed.authority = crate::agents::feed::FeedAuthority::SyncedAuthoritative;
-            // A newer committed revision (or epoch resync) supersedes the
-            // ephemeral in-flight live tail; same-rev re-projection keeps it
-            // so focus/refocus mid-turn does not reset the transcript (#1259).
-            let supersede_live = delta.resync || feed.epoch != prev_epoch || feed.rev != prev_rev;
+            // Live-tail supersession (#1259 / PR review):
+            // - explicit resync, or a true epoch *change* (prev != 0), clears
+            // - initial epoch latch (prev_epoch == 0) is NOT a supersede so
+            //   pre-authority live tokens survive the first sync response
+            // - ordinary rev advances that commit an assistant body replace the
+            //   live tail (turn-end / full reconcile) — even if still "running"
+            // - mid-turn rev advances that only extend committed prefix (user
+            //   prompt, tool checkpoints) KEEP the live tail so tokens that
+            //   raced ahead of the sync are not wiped; attach path dedupes tools
+            // - rev advance after the turn goes idle clears it
+            let hard_supersede = delta.resync || (prev_epoch != 0 && feed.epoch != prev_epoch);
+            let rev_advanced = feed.rev != prev_rev;
             let focused = self.subagents.active_agent_id.as_deref() == Some(agent_id);
+            let session_running = self
+                .subagents
+                .sessions
+                .get(agent_id)
+                .is_some_and(|s| s.running);
+            let ledger_has_assistant = entries
+                .iter()
+                .any(|e| matches!(e, crate::agents::ledger::LedgerEntry::Assistant { .. }));
+            let supersede_live =
+                hard_supersede || (rev_advanced && (!session_running || ledger_has_assistant));
             if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
                 session.project_ledger_with_live(
                     entries,
