@@ -1,6 +1,6 @@
+use super::DispatchCtx;
 use super::uds_dispatch_get_message_forward::{ForwardGetMessage, forward_subagent_get_message};
 use super::{AgentCommand, AgentEvent};
-use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
 
 /// Pre-router for commands addressed to a spawned sub-agent.
 ///
@@ -28,7 +28,7 @@ pub(super) async fn try_forward_subagent_targeted_command(
             before.as_deref(),
         )
         .await;
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        super::emit_response_or_frame_limit_error(ctx, id.as_deref(), tn, ev).await;
         return Some(false);
     }
     if let AgentCommand::GetMessagesTail {
@@ -41,7 +41,7 @@ pub(super) async fn try_forward_subagent_targeted_command(
         let ev =
             forward_subagent_get_messages(ctx, id.as_deref(), tn, agent_id, Some(*count), None)
                 .await;
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        super::emit_response_or_frame_limit_error(ctx, id.as_deref(), tn, ev).await;
         return Some(false);
     }
     if let AgentCommand::Sync {
@@ -61,7 +61,7 @@ pub(super) async fn try_forward_subagent_targeted_command(
             *since_rev,
         )
         .await;
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        super::emit_response_or_frame_limit_error(ctx, id.as_deref(), tn, ev).await;
         return Some(false);
     }
     if let AgentCommand::GetMessage {

@@ -167,6 +167,68 @@ async fn forward_get_message_propagates_child_failure() {
 }
 
 #[tokio::test]
+async fn forward_get_message_rejects_wrong_command_child_response() {
+    let (sock, _dir, handle) = spawn_replying_child(
+        "{\"type\":\"response\",\"id\":\"__ID__\",\"command\":\"get_messages\",\"success\":true,\"data\":{\"messages\":[]}}\n",
+    )
+    .await;
+    let registry = new_registry();
+    register_child(&registry, "worker", sock);
+    let mut fx = Fx::new();
+    let mut ctx = fx.ctx();
+    ctx.subagent_registry = Some(registry);
+
+    let ev = forward_subagent_get_message(
+        &ctx,
+        Some("parent-page"),
+        "get_message",
+        ForwardGetMessage {
+            agent_id: "worker",
+            message_id: "m1",
+            tool_call_id: None,
+            offset: None,
+            limit: None,
+        },
+    )
+    .await;
+    handle.await.unwrap();
+    let json = serde_json::to_value(&ev).unwrap();
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error"], "unexpected child response command");
+}
+
+#[tokio::test]
+async fn forward_get_message_rejects_missing_data_child_response() {
+    let (sock, _dir, handle) = spawn_replying_child(
+        "{\"type\":\"response\",\"id\":\"__ID__\",\"command\":\"get_message\",\"success\":true}\n",
+    )
+    .await;
+    let registry = new_registry();
+    register_child(&registry, "worker", sock);
+    let mut fx = Fx::new();
+    let mut ctx = fx.ctx();
+    ctx.subagent_registry = Some(registry);
+
+    let ev = forward_subagent_get_message(
+        &ctx,
+        Some("parent-page"),
+        "get_message",
+        ForwardGetMessage {
+            agent_id: "worker",
+            message_id: "m1",
+            tool_call_id: None,
+            offset: None,
+            limit: None,
+        },
+    )
+    .await;
+    handle.await.unwrap();
+    let json = serde_json::to_value(&ev).unwrap();
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error"], "get_message response missing data");
+}
+
+#[tokio::test]
 async fn forward_get_message_rejects_malformed_child_response() {
     let (sock, _dir, handle) = spawn_replying_child("not-json\n").await;
     let registry = new_registry();

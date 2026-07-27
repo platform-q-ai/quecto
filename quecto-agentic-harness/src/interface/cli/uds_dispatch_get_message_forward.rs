@@ -42,21 +42,10 @@ pub(super) async fn forward_subagent_get_message(
     match send_subagent_uds_command_with_timeout(&socket_path, &cmd, INSPECTOR_RESPONSE_TIMEOUT)
         .await
     {
-        Ok(line) => {
-            let parsed: serde_json::Value = match serde_json::from_str(&line) {
-                Ok(v) => v,
-                Err(e) => return AgentEvent::err(id, tn, e.to_string()),
-            };
-            if parsed.get("success").and_then(|v| v.as_bool()) == Some(false) {
-                let err = parsed
-                    .get("error")
-                    .and_then(|e| e.as_str())
-                    .unwrap_or("get_message failed");
-                return AgentEvent::err(id, tn, err.to_string());
-            }
-            let data = parsed.get("data").cloned();
-            AgentEvent::ok(id, tn, data)
-        }
+        Ok(line) => match super::uds_forward_response::parse_forwarded_get_message(&line) {
+            Ok(data) => AgentEvent::ok(id, tn, Some(data)),
+            Err(error) => AgentEvent::err(id, tn, error),
+        },
         Err(e) => AgentEvent::err(id, tn, e.to_string()),
     }
 }

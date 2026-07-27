@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn parse_forwarded_get_message_rejects_wrong_command_missing_data_and_bad_json() {
+    let data = parse_forwarded_get_message(
+        r#"{"success":true,"command":"get_message","data":{"id":"m1","content":"child"}}"#,
+    )
+    .expect("success response parses");
+    assert_eq!(data["content"], "child");
+
+    assert_eq!(
+        parse_forwarded_get_message(r#"{"success":true,"command":"get_messages","data":{}}"#)
+            .unwrap_err(),
+        "unexpected child response command"
+    );
+    assert_eq!(
+        parse_forwarded_get_message(r#"{"success":true,"command":"get_message"}"#).unwrap_err(),
+        "get_message response missing data"
+    );
+}
+
+#[test]
 fn parse_forwarded_get_messages_returns_data_for_success() {
     let data = parse_forwarded_get_messages(
         r#"{"success":true,"command":"get_messages","data":{"messages":[{"id":"m1"}]}}"#,
