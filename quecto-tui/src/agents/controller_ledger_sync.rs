@@ -39,6 +39,8 @@ impl App {
             if feed.epoch != 0 && delta.epoch != feed.epoch && !delta.resync {
                 return;
             }
+            let prev_rev = feed.rev;
+            let prev_epoch = feed.epoch;
             let entries = feed.transcript.apply_sync_delta(&delta);
             feed.epoch = delta.epoch;
             feed.rev = if delta.caught_up {
@@ -57,13 +59,39 @@ impl App {
                 });
             }
             feed.authority = crate::agents::feed::FeedAuthority::SyncedAuthoritative;
+            // Live-tail supersession (#1259 / PR review):
+            // - explicit resync, or a true epoch *change* (prev != 0), clears
+            // - initial epoch latch (prev_epoch == 0) is NOT a supersede so
+            //   pre-authority live tokens survive the first sync response
+            // - ordinary rev advances that commit an assistant body replace the
+            //   live tail (turn-end / full reconcile) — even if still "running"
+            // - mid-turn rev advances that only extend committed prefix (user
+            //   prompt, tool checkpoints) KEEP the live tail so tokens that
+            //   raced ahead of the sync are not wiped; attach path dedupes tools
+            // - rev advance after the turn goes idle clears it
+            let hard_supersede = delta.resync || (prev_epoch != 0 && feed.epoch != prev_epoch);
+            let rev_advanced = feed.rev != prev_rev;
+            let focused = self.subagents.active_agent_id.as_deref() == Some(agent_id);
+            let session_running = self
+                .subagents
+                .sessions
+                .get(agent_id)
+                .is_some_and(|s| s.running);
+            // Only an assistant carried by this delta can commit the current
+            // live turn. Historical assistants remain in `entries` forever and
+            // must not supersede a later turn's uncommitted tail.
+            let delta_has_assistant = delta
+                .messages
+                .iter()
+                .any(|message| message.role() == "assistant");
+            let supersede_live =
+                hard_supersede || (rev_advanced && (!session_running || delta_has_assistant));
             if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
-                session.chat.clear();
-                for entry in entries {
-                    session
-                        .chat
-                        .add_entry(crate::agents::view::ledger_entry_to_chat_entry(entry));
-                }
+                session.project_ledger_with_live(
+                    entries,
+                    focused && !supersede_live,
+                    supersede_live,
+                );
             }
         }
     }

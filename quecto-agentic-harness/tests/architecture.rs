@@ -1161,9 +1161,10 @@ const TUI_RAW_JSON_COMBINED_CEILING: usize = 178;
 
 /// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
-const TUI_WIRE_DTO_USAGE_SEED: usize = 98;
+const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// Measured after #1257 Phase 6, including the documented transport seams.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 98;
+/// #1259 folded child stream Event matches while adding live-buffer retention.
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 97;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///

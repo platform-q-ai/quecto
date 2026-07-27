@@ -165,9 +165,19 @@ impl SubagentUi {
     }
 }
 
+/// Max entries retained in `SessionView::live_inflight` (#1259 review).
+/// Older entries are dropped with a truncation marker so a long/noisy
+/// unfocused turn cannot grow a second unbounded transcript.
+pub(crate) const LIVE_INFLIGHT_ENTRY_CAP: usize = 256;
+
 /// Per-session state for the multi-session UI (#800/#802/#828).
 pub(crate) struct SessionView {
     pub(crate) chat: Chat,
+    /// Retained in-flight turn stream for a synced/warm child (#1259). Survives
+    /// focus changes and mid-turn ledger re-projection; cleared on epoch/resync
+    /// or when an idle turn's ledger advances past the live tail. Not shown for
+    /// unfocused children until focus/reproject merges it onto `chat`.
+    pub(crate) live_inflight: Chat,
     pub(crate) workflow_bar: workflow_bar::WorkflowBarState,
     /// Whether the child is mid-turn — drives a per-session working indicator.
     pub(crate) running: bool,
@@ -200,6 +210,7 @@ impl SessionView {
     pub(crate) fn with_footer(footer: Footer) -> Self {
         Self {
             chat: Chat::new(),
+            live_inflight: Chat::new(),
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             running: false,
             footer,
@@ -209,6 +220,76 @@ impl SessionView {
             active_turn_start: 0,
             tools_this_turn: 0,
             open_tool_calls: 0,
+        }
+    }
+
+    /// Rebuild `chat` from committed ledger entries (#1259).
+    ///
+    /// - `clear_live`: drop the retained in-flight buffer (ledger supersedes it).
+    /// - `attach_live`: append the retained buffer onto `chat` (focused mid-turn).
+    ///
+    /// Unfocused re-projection uses `attach_live = false` so chat stays
+    /// ledger-authoritative while the buffer survives until focus or supersession.
+    pub(crate) fn project_ledger_with_live(
+        &mut self,
+        ledger: impl IntoIterator<Item = crate::agents::ledger::LedgerEntry>,
+        attach_live: bool,
+        clear_live: bool,
+    ) {
+        if clear_live {
+            self.live_inflight.clear();
+        }
+        self.chat.clear();
+        for entry in ledger {
+            self.chat
+                .add_entry(crate::agents::view::ledger_entry_to_chat_entry(entry));
+        }
+        if attach_live {
+            // Skip live tool cards already present in the committed ledger so a
+            // mid-turn tool checkpoint does not double-render (#1259 review).
+            let ledger_tool_ids: std::collections::HashSet<String> = self
+                .chat
+                .entries()
+                .iter()
+                .filter_map(|e| match e {
+                    crate::components::chat::ChatEntry::ToolExecution { tool_call_id, .. } => {
+                        Some(tool_call_id.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            let live_entries: Vec<_> = self.live_inflight.entries().to_vec();
+            for entry in live_entries {
+                if let crate::components::chat::ChatEntry::ToolExecution { tool_call_id, .. } =
+                    &entry
+                {
+                    if ledger_tool_ids.contains(tool_call_id) {
+                        continue;
+                    }
+                }
+                self.chat.add_entry(entry);
+            }
+        }
+    }
+
+    /// Drop oldest live-inflight entries past [`LIVE_INFLIGHT_ENTRY_CAP`],
+    /// leaving a single truncation status so overflow is visible (#1259).
+    pub(crate) fn cap_live_inflight(&mut self) {
+        let n = self.live_inflight.entry_count();
+        if n <= LIVE_INFLIGHT_ENTRY_CAP {
+            return;
+        }
+        // Keep the newest (cap - 1) entries and prepend a truncation marker.
+        let keep = LIVE_INFLIGHT_ENTRY_CAP.saturating_sub(1);
+        let start = n.saturating_sub(keep);
+        let kept: Vec<_> = self.live_inflight.entries()[start..].to_vec();
+        self.live_inflight.clear();
+        self.live_inflight
+            .add_entry(crate::components::chat::ChatEntry::Status {
+                text: "… earlier live output truncated …".into(),
+            });
+        for entry in kept {
+            self.live_inflight.add_entry(entry);
         }
     }
 }
