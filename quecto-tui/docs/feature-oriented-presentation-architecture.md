@@ -544,9 +544,9 @@ and therefore run in the fast pre-commit guard suite (targets are enumerated
 dynamically, so they cannot be silently dropped):
 
 - `tui_feature_view_raw_json_parsing_sites_are_eliminated` — final feature/view total `0`; scan roots include `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`.
-- `tui_protocol_raw_json_parsing_sites_do_not_grow` — final protocol mapper total and seed `86`.
-- `tui_combined_raw_json_inventory_does_not_grow` — feature/view plus protocol sites may not exceed the historical combined ceiling `178` (current total `176`), preventing growth hidden by moving sites between buckets.
-- `tui_wire_dto_usage_does_not_grow` — import-aware inventory is zero outside exact documented seams.
+- `tui_protocol_raw_json_parsing_sites_do_not_grow` — final protocol mapper total and seed `127`.
+- `tui_combined_raw_json_inventory_does_not_grow` — feature/view plus protocol sites may not exceed the historical combined ceiling `178` (current total `127`), preventing growth hidden by moving sites between buckets.
+- `tui_wire_dto_usage_does_not_grow` — import-aware inventory exact total and seed `98` with no whole-file exemptions (documented shell/runtime and agents direct-feed seams remain measured).
 
 Both were hardened after review on #1235, which proved the first drafts did not
 measure what they claimed:
@@ -573,8 +573,9 @@ measure what they claimed:
   raw-JSON ratchet only — it *is* the dispatcher that routes raw responses to
   mappers — and is measured by the wire-DTO ratchet. `protocol/client.rs` is
   exempt only from the protocol raw-JSON ratchet as the wire seam.
-  `agents/runtime.rs` is narrowly allowlisted for wire-DTO usage under #1257
-  Phase 4 until `FeedRuntime` is hidden behind a non-wire channel type.
+  Wire-DTO whole-file exemptions were removed in #1257 Phase 6: seam files
+  (including `agents/runtime.rs`, `agents/view.rs`, and shell composition/runtime
+  adapters) remain in the measured inventory under a decrease-only seed of `98`.
 - **No vacuous pass.** Both ratchets assert the scan yielded a non-empty file
   list, so renaming the scan root fails them instead of silently disabling them.
 
@@ -582,9 +583,9 @@ Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-The Phase 6 feature/view raw-JSON ratchet scans `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`; its exact total is 0. The protocol raw-JSON ratchet has an exact total and seed of 86, with `protocol/client.rs` allowlisted as the wire seam. The combined inventory is 86 and may not exceed its historical ceiling of 178, so moving parsing between these buckets cannot conceal growth. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
+The Phase 6 feature/view raw-JSON ratchet scans `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`; its exact total is 0 (`shell/app_response.rs` is the only feature/view allowlisted raw-JSON seam as the #1220 response dispatcher). The protocol raw-JSON ratchet has an exact total and seed of 127, with `protocol/client.rs` allowlisted as the wire seam. The combined inventory is 127 and may not exceed its historical ceiling of 178, so moving parsing between these buckets cannot conceal growth. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
 
-The import-aware wire-DTO inventory is zero outside exact, issue-linked shell/runtime and direct-feed adapter seams; `agents/runtime.rs` is narrowly allowlisted as described above.
+The import-aware wire-DTO inventory has an exact total and seed of 98 with an empty allowlist. Residual usages are concentrated in shell composition/runtime paths and agents direct-feed adapters; because those files stay measured, new DTO coupling inside a seam still fails the decrease-only ratchet.
 
 ### Deletion ledger
 
