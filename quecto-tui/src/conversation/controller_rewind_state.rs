@@ -13,6 +13,10 @@ pub(crate) struct RewindFlow {
     pub(super) pending_load_id: Option<String>,
     /// Selected message id awaiting rewind after its full body is loaded.
     pub(super) pending_apply_message_id: Option<String>,
+    /// Accumulated selected-message content while loading paged rewind text.
+    pub(super) pending_load_content: String,
+    /// Next expected byte offset for the selected-message rewind load.
+    pub(super) pending_load_offset: usize,
     /// Locally-issued rewind_to id awaiting acknowledgement.
     pub(super) pending_apply_id: Option<String>,
     /// Editor contents when rewind apply was sent; protects user edits typed

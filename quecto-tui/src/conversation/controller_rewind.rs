@@ -89,13 +89,15 @@ impl App {
         let id = self.next_rewind_request_id("load");
         self.rewind.pending_load_id = Some(id.clone());
         self.rewind.pending_apply_message_id = Some(message_id.clone());
+        self.rewind.pending_load_content.clear();
+        self.rewind.pending_load_offset = 0;
         self.send_command(Command::GetMessage {
             id: Some(id),
             message_id,
             agent_id: None,
             tool_call_id: None,
-            offset: None,
-            limit: None,
+            offset: Some(0),
+            limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
         });
     }
 }

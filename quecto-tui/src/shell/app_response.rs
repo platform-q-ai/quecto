@@ -345,21 +345,66 @@ impl App {
 
     fn handle_rewind_get_message_success(&mut self, data: Option<serde_json::Value>) {
         self.rewind.pending_load_id = None;
-        let Some(message_id) = self.rewind.pending_apply_message_id.take() else {
+        let Some(message_id) = self.rewind.pending_apply_message_id.clone() else {
             return;
         };
-        let Some(text) = data
-            .as_ref()
-            .and_then(|data| data.get("content"))
-            .and_then(|content| content.as_str())
-            .map(str::to_owned)
-        else {
+        let Some(data) = data else {
+            self.clear_pending_rewind_load();
             self.notify(
                 "Rewind failed: selected message not found",
                 NotifyLevel::Error,
             );
             return;
         };
+        if crate::protocol::presentation_payloads::response_identity(&data)
+            .0
+            .as_deref()
+            != Some(message_id.as_str())
+        {
+            self.clear_pending_rewind_load();
+            self.notify(
+                "Rewind failed: selected message not found",
+                NotifyLevel::Error,
+            );
+            return;
+        }
+
+        let update = crate::protocol::range_accumulator::RangeAccumulator::new(
+            std::mem::take(&mut self.rewind.pending_load_content),
+            self.rewind.pending_load_offset,
+        )
+        .apply(&data);
+        let text = match update {
+            Ok(crate::protocol::range_accumulator::RangeUpdate::Continue {
+                content,
+                next_offset,
+            }) => {
+                let id = self.next_rewind_request_id("load");
+                self.rewind.pending_load_id = Some(id.clone());
+                self.rewind.pending_load_content = content;
+                self.rewind.pending_load_offset = next_offset;
+                self.send_command(Command::GetMessage {
+                    id: Some(id),
+                    message_id,
+                    agent_id: None,
+                    tool_call_id: None,
+                    offset: Some(next_offset),
+                    limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
+                });
+                return;
+            }
+            Ok(crate::protocol::range_accumulator::RangeUpdate::Complete(text)) => text,
+            Err(_) => {
+                self.clear_pending_rewind_load();
+                self.notify(
+                    "Rewind failed: selected message not found",
+                    NotifyLevel::Error,
+                );
+                return;
+            }
+        };
+
+        self.clear_pending_rewind_load();
         let id = self.next_rewind_request_id("to");
         self.rewind.pending_apply_id = Some(id.clone());
         self.rewind.pending_apply_editor_baseline = Some(self.editor.text());
@@ -371,9 +416,15 @@ impl App {
     }
 
     fn handle_rewind_get_message_failure(&mut self, error: Option<String>) {
+        self.clear_pending_rewind_load();
+        self.notify_response_error("Rewind failed", error);
+    }
+
+    fn clear_pending_rewind_load(&mut self) {
         self.rewind.pending_load_id = None;
         self.rewind.pending_apply_message_id = None;
-        self.notify_response_error("Rewind failed", error);
+        self.rewind.pending_load_content.clear();
+        self.rewind.pending_load_offset = 0;
     }
 
     fn handle_agent_error(&mut self, error: Option<String>) {

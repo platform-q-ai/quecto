@@ -219,6 +219,11 @@ async fn rewind_selector_enter_sends_stable_message_id_not_page_local_index() {
         rewind.get("messageIndex").is_none(),
         "must not send a page-local index; command={rewind}"
     );
+    assert_eq!(rewind.get("offset").and_then(|v| v.as_u64()), Some(0));
+    assert_eq!(
+        rewind.get("limit").and_then(|v| v.as_u64()),
+        Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES as u64)
+    );
 }
 
 #[tokio::test]
@@ -454,9 +459,17 @@ async fn response_get_message_for_rewind_sends_rewind_with_full_text() {
     a.editor.set_text("draft");
     a.rewind.pending_load_id = Some("load".into());
     a.rewind.pending_apply_message_id = Some("u1".into());
-    let data = serde_json::json!({"id": "u1", "role": "user", "content": "full prompt body"});
+    let data = serde_json::json!({
+        "id": "u1",
+        "role": "user",
+        "content": "full prompt body",
+        "contentLength": "full prompt body".len(),
+        "hasMoreContent": false,
+        "offset": 0
+    });
     respond(a, Some("load"), "get_message", true, Some(data), None);
     assert!(a.rewind.pending_load_id.is_none());
+    assert!(a.rewind.pending_apply_message_id.is_none());
     assert!(a.rewind.pending_apply_id.is_some());
     assert_eq!(
         a.rewind.pending_apply_text.as_deref(),
