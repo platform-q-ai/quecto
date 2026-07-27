@@ -1120,7 +1120,7 @@ const TUI_INTERFACE_RAW_JSON_SITE_SEED: usize = 120;
 /// Measured after #1257 Phase 5 relocation plus genuine get_state/workflow/
 /// set_effort mapper conversions; future relocations must not burn down sites
 /// by moving scan roots alone.
-const TUI_PHASE_5_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 65;
+const TUI_PHASE_5_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 55;
 
 /// #1257: feature/view ratchet scan roots follow the code as modules relocate,
 /// so a move alone can never lower a measured count (Phase 5: four new feature

@@ -9,7 +9,7 @@
 | `lib.rs` exact module set | `tui_lib_rs_exposes_only_architecture_layers` + BDD library-root step | PASS |
 | App slices `#[path]`-mounted under `interface::app` | `interface/app.rs` mounts `../{sessions,workflow,inference,workspace}/…` | PASS |
 | Architecture/BDD/doc lockstep | architecture 39/39; `QUECTO_TAG=tui` BDD architecture feature green; owner map exact match 95/95 | PASS |
-| Feature/view raw-JSON seed lowered only by genuine mapper conversions | Pre-phase feature-view total 109 → post-phase 65 with extended scan roots; protocol total 69 → 121 (absorbed mapper sites); net feature-view burn-down 44 sites | PASS |
+| Feature/view raw-JSON seed lowered only by genuine mapper conversions | Pre-phase feature-view total 109 → post-phase 65 with extended scan roots; protocol total 69 → 121 (absorbed mapper sites); net feature-view burn-down 54 sites | PASS |
 
 ## Behavioural surfaces
 
@@ -31,6 +31,7 @@
 | `App::handle_resume_success` | raw `data.session` | `parse_resume_session_name` |
 | `App::sync_workflow_automation` | raw automation keys | `parse_workflow_automation` |
 | `workflow_bar::parse_workflow_event` | full raw JSON walk | `parse_workflow_snapshot` → component DTO |
+| `agents/app_subagent_stream` get_state/set_effort/set_model | hand-rolled field extract | shared `state_payloads` mappers (consolidation from review) |
 
 ## Characterization hash deltas
 

@@ -105,12 +105,12 @@ impl App {
         } = &ev
         {
             if command == "set_model" {
-                if let Some(model) = data
-                    .as_ref()
-                    .and_then(|d| d.get("model"))
-                    .and_then(|v| v.as_str())
-                    .map(crate::interface::ansi::sanitize_control)
-                {
+                if let Some(model) = data.as_ref().and_then(|d| {
+                    crate::protocol::state_payloads::parse_set_model_id(
+                        d,
+                        &crate::interface::ansi::sanitize_control,
+                    )
+                }) {
                     if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
                         session.footer.set_model(&model);
                     }
@@ -149,7 +149,11 @@ impl App {
                 }
                 self.ensure_session(agent_id);
                 self.note_sync_capability(agent_id, data);
-                if let Some(wf) = data.get("workflow") {
+                let snap = crate::protocol::state_payloads::parse_get_state(
+                    data,
+                    &crate::interface::ansi::sanitize_control,
+                );
+                if let Some(wf) = snap.workflow.as_ref() {
                     let bar = workflow_bar::parse_workflow_event(wf);
                     self.record_subagent_workflow(agent_id, &bar);
                     if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
@@ -162,36 +166,21 @@ impl App {
                     Self::update_session_footer(session, &ev);
                 }
                 if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
-                    if let Some(model) = data
-                        .get("model")
-                        .and_then(|v| v.as_str())
-                        .map(crate::interface::ansi::sanitize_control)
-                    {
+                    if let Some(model) = snap.footer.model.clone() {
                         self.inference.current_model = Some(model);
                     }
-                    self.inference.current_effort = data
-                        .get("effort")
-                        .and_then(|v| v.as_str())
-                        .map(crate::interface::ansi::sanitize_control);
-                    if let Some(levels) = data.get("effortLevels").and_then(|v| v.as_array()) {
-                        let levels: Vec<String> = levels
-                            .iter()
-                            .filter_map(|l| l.as_str())
-                            .map(crate::interface::ansi::sanitize_control)
-                            .collect();
-                        if !levels.is_empty() {
-                            self.inference.effort_levels = levels;
-                        }
+                    self.inference.current_effort = snap.footer.effort.clone();
+                    if !snap.effort_levels.is_empty() {
+                        self.inference.effort_levels = snap.effort_levels;
                     }
                 }
                 return;
             }
             if command == "set_effort" {
-                if let Some(level) = data
-                    .get("effort")
-                    .and_then(|v| v.as_str())
-                    .map(crate::interface::ansi::sanitize_control)
-                {
+                if let Some(level) = crate::protocol::state_payloads::parse_set_effort_level(
+                    data,
+                    &crate::interface::ansi::sanitize_control,
+                ) {
                     if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
                         session.footer.set_effort(Some(level.clone()));
                     }
