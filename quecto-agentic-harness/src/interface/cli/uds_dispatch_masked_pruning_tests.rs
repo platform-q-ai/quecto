@@ -1,6 +1,9 @@
 use super::cov_tests::Fixture;
 use super::*;
-use crate::domain::{message::Message, session::Session};
+use crate::domain::{
+    message::Message,
+    session::{Session, SessionStore},
+};
 
 /// Unit test of `persist_current_session`'s CONSUMER branch only: the dirty
 /// flag is hand-set here, so this cannot detect a deleted producer. The

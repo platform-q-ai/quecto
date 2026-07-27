@@ -5,10 +5,9 @@ use super::uds_cancel::{
     CancelHandle, EventSink, PromptOutcome, PromptRun, TurnControlHandle, arm_cancel,
     disarm_cancel, run_agent_message,
 };
-use super::uds_query::query_response_data;
-use super::uds_session::{
-    AgentSession, clear_conversation, resolve_rewind_target, rewind_to_message_index,
-};
+use super::uds_session::AgentSession;
+#[cfg(test)]
+use super::uds_session::{clear_conversation, resolve_rewind_target, rewind_to_message_index};
 #[cfg(test)]
 use super::uds_session::{
     compute_session_stats, compute_session_stats_with_usage, messages_tail_json,
@@ -20,9 +19,8 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::Message;
 #[cfg(test)]
 use crate::domain::message::Role;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::SessionStore;
 use crate::domain::workflow::WorkflowRunPersisted;
-use crate::infrastructure::model_registry::ModelRegistry;
 
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
@@ -194,7 +192,7 @@ pub(super) async fn emit_ledger_advanced(
 /// Emit a command response, replacing an over-cap success payload with a small,
 /// correlated error. Normal events reaching the cap are invariant violations;
 /// responses can instead tell callers how to retry without silently hanging.
-async fn emit_response_or_frame_limit_error(
+pub(super) async fn emit_response_or_frame_limit_error(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     command: &str,
@@ -203,7 +201,7 @@ async fn emit_response_or_frame_limit_error(
     emit_response_or_frame_limit_error_with_message(ctx, id, command, event, "").await;
 }
 
-async fn emit_response_or_frame_limit_error_with_message(
+pub(super) async fn emit_response_or_frame_limit_error_with_message(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     command: &str,
@@ -230,74 +228,6 @@ async fn emit_response_or_frame_limit_error_with_message(
     }
 }
 
-fn resolve_set_model_target(
-    model: Option<String>,
-    provider: Option<String>,
-    model_id: Option<String>,
-) -> Result<String, &'static str> {
-    if let Some(m) = model.filter(|m| !m.trim().is_empty()) {
-        return Ok(m);
-    }
-    match (provider, model_id) {
-        (Some(provider), Some(model_id)) => {
-            if provider.trim().is_empty() || model_id.trim().is_empty() {
-                Err("set_model requires non-empty model, or non-empty provider+modelId")
-            } else {
-                Ok(format!("{provider}/{model_id}"))
-            }
-        }
-        _ => Err("set_model requires model, or provider+modelId"),
-    }
-}
-
-struct SetModelArgs {
-    id: Option<String>,
-    type_name: String,
-    model: Option<String>,
-    provider: Option<String>,
-    model_id: Option<String>,
-}
-
-async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool {
-    super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
-    let resolved_model = match resolve_set_model_target(args.model, args.provider, args.model_id) {
-        Ok(m) => m,
-        Err(msg) => {
-            let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, msg);
-            emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            return false;
-        }
-    };
-    // #935/#1044: re-derive the per-model output cap AND context window so a
-    // model switch re-clamps subsequent turns and the pruning budget; one
-    // registry load feeds both, and set_model takes them atomically so model,
-    // cap, and window can never diverge.
-    let (cap, window) = ModelRegistry::model_limits_from_base_dir(ctx.base_dir, &resolved_model);
-    ctx.agent.set_model(resolved_model.clone(), cap, window);
-    ctx.session.set_model(resolved_model);
-    // Every model switch resets the session effort to `low` (#1067): a level
-    // chosen for one provider (e.g. OpenAI `xhigh`) must not silently carry
-    // into another provider's vocabulary, where it would be clamped on the
-    // wire while the UI still displays the stale level. Explicit `low` is
-    // predictable and cost-safe; the user re-raises effort via set_effort.
-    ctx.agent
-        .set_effort(crate::domain::provider::EffortLevel::Low);
-    tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched; effort reset to low");
-    let ev = AgentEvent::ok(args.id.as_deref(), &args.type_name, None);
-    emit_event_to_broadcast_or_writer(ctx, &ev).await;
-    false
-}
-
-fn session_summary_to_json(summary: &crate::domain::session::SessionSummary) -> serde_json::Value {
-    serde_json::json!({
-        "key": summary.key,
-        "title": display_title(&summary.title),
-        "messageCount": summary.message_count,
-        "updatedUnixSecs": summary.updated_unix_secs,
-        "updatedAt": summary.updated_unix_secs,
-    })
-}
-
 /// Apply display policy to a raw title: blank → "(untitled)", else truncate to 50 chars.
 fn display_title(raw: &str) -> String {
     const MAX_CHARS: usize = 50;
@@ -312,134 +242,33 @@ fn display_title(raw: &str) -> String {
     out
 }
 
-/// Returns `Some(bool)` if handled, `None` to fall through to the main match.
-async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_>) -> Option<bool> {
-    let id = cmd.id();
-    let tn = cmd.type_name();
-    if matches!(cmd, AgentCommand::ListSessions { .. }) {
-        let event = match ctx
-            .session_store
-            .list(Some(crate::domain::session::USER_CHAT_PREFIX))
-            .await
-        {
-            Ok(sessions) => AgentEvent::ok(
-                id,
-                tn,
-                Some(serde_json::json!({
-                    "sessions": sessions
-                        .iter()
-                        .map(session_summary_to_json)
-                        .collect::<Vec<_>>()
-                })),
-            ),
-            Err(err) => AgentEvent::err(id, tn, err.to_string()),
-        };
-        emit_event_to_broadcast_or_writer(ctx, &event).await;
-        return Some(false);
-    }
-    // #1060 review 1a: resolve get_message against the id-addressable ledger
-    // (full copies) before the live conversation, so a ref pruned/collapsed
-    // from `ctx.messages` still resolves to full content. The ledger wins over
-    // a possibly-collapsed live entry.
-    if let AgentCommand::GetMessage {
-        message_id,
-        tool_call_id,
-        offset,
-        limit,
-        ..
-    } = cmd
-    {
-        let resolved =
-            super::uds_snapshots::resolve_get_message(&ctx.conversation_snapshot, message_id)
-                .await
-                .and_then(|msg| match tool_call_id.as_deref() {
-                    Some(tool_call_id) => {
-                        super::uds_session::tool_call_arguments_to_json_range_for_response(
-                            &msg,
-                            tool_call_id,
-                            *offset,
-                            *limit,
-                            id,
-                        )
-                    }
-                    None => Some(super::uds_session::message_to_json_range_for_response(
-                        &msg, *offset, *limit, id,
-                    )),
-                });
-        let ev = match resolved.or_else(|| {
-            super::uds_query::get_message_response_data(
-                message_id,
-                tool_call_id.as_deref(),
-                *offset,
-                *limit,
-                id,
-                ctx,
-            )
-        }) {
-            Some(data) => AgentEvent::ok(id, tn, Some(data)),
-            None => AgentEvent::err(id, tn, format!("message not found: {message_id}")),
-        };
-        emit_response_or_frame_limit_error(ctx, id, tn, ev).await;
-        return Some(false);
-    }
-    // A supplied paging cursor is a stable message id. Treat a stale/unknown
-    // id as an error instead of silently restarting at the newest page, which a
-    // client would otherwise prepend and duplicate as "older" history.
-    if let AgentCommand::GetMessages {
-        before: Some(cursor),
-        ..
-    } = cmd
-        && super::uds_session::position_by_wire_id(ctx.messages, cursor).is_none()
-    {
-        let ev = AgentEvent::err(id, tn, format!("history cursor not found: {cursor}"));
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-        return Some(false);
-    }
-    if let AgentCommand::Sync {
-        epoch, since_rev, ..
-    } = cmd
-    {
-        let data = ctx
-            .conversation_snapshot
-            .read()
-            .await
-            .sync_json(*epoch, *since_rev);
-        emit_response_or_frame_limit_error_with_message(
-            ctx,
-            id,
-            tn,
-            AgentEvent::ok(id, tn, Some(data)),
-            super::uds_busy_sync::SYNC_OVERSIZED_ERROR,
-        )
-        .await;
-        return Some(false);
-    }
-    if let Some(data) = query_response_data(cmd, ctx) {
-        emit_response_or_frame_limit_error(ctx, id, tn, AgentEvent::ok(id, tn, Some(data))).await;
-        return Some(false);
-    }
-    if matches!(cmd, AgentCommand::ClearHistory { .. }) {
-        return Some(handle_clear_history(ctx, id, tn).await);
-    }
-    None
-}
-
 #[path = "uds_dispatch.rs"]
 mod uds_dispatch;
+#[path = "uds_dispatch_forwarding.rs"]
+mod uds_dispatch_forwarding;
 #[path = "uds_dispatch_get_message_forward.rs"]
 mod uds_dispatch_get_message_forward;
+#[path = "uds_dispatch_query.rs"]
+mod uds_dispatch_query;
+#[path = "uds_dispatch_runtime.rs"]
+mod uds_dispatch_runtime;
+#[path = "uds_dispatch_session.rs"]
+mod uds_dispatch_session;
 #[path = "uds_dispatch_sync_forward.rs"]
 mod uds_dispatch_sync_forward;
 #[path = "uds_forward_response.rs"]
 mod uds_forward_response;
 pub(crate) use uds_dispatch::dispatch_command;
-use uds_dispatch::handle_clear_history;
+#[cfg(test)]
+use uds_dispatch_query::session_summary_to_json;
+#[cfg(test)]
+use uds_dispatch_runtime::resolve_set_model_target;
 
-struct PromptCommand {
-    id: Option<String>,
-    type_name: String,
-    message: String,
-    streaming_behavior: Option<StreamingBehavior>,
+pub(super) struct PromptCommand {
+    pub(super) id: Option<String>,
+    pub(super) type_name: String,
+    pub(super) message: String,
+    pub(super) streaming_behavior: Option<StreamingBehavior>,
 }
 
 fn persisted_workflow_run(ctx: &DispatchCtx<'_>) -> Option<WorkflowRunPersisted> {
@@ -474,7 +303,7 @@ async fn persist_user_prompt_before_run(
     result
 }
 
-async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
+pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
     // A prompt clears any stale substring-detected steer gate (#896 AC3).
     ctx.turn_control.clear_steer();
     let PromptCommand {
@@ -521,7 +350,7 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
     // Publish completed-turn state before any post-turn query queues behind the next command (#1104).
     super::uds_snapshots::refresh_busy_snapshots(ctx).await;
     // Persist after every turn so the conversation survives an ungraceful exit.
-    if let Err(err) = uds_dispatch::persist_current_session(ctx).await {
+    if let Err(err) = uds_dispatch_session::persist_current_session(ctx).await {
         tracing::warn!("failed to persist session after turn: {err}");
     }
     false
