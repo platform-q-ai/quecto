@@ -77,11 +77,15 @@ impl App {
                 .sessions
                 .get(agent_id)
                 .is_some_and(|s| s.running);
-            let ledger_has_assistant = entries
+            // Only an assistant carried by this delta can commit the current
+            // live turn. Historical assistants remain in `entries` forever and
+            // must not supersede a later turn's uncommitted tail.
+            let delta_has_assistant = delta
+                .messages
                 .iter()
-                .any(|e| matches!(e, crate::agents::ledger::LedgerEntry::Assistant { .. }));
+                .any(|message| message.role() == "assistant");
             let supersede_live =
-                hard_supersede || (rev_advanced && (!session_running || ledger_has_assistant));
+                hard_supersede || (rev_advanced && (!session_running || delta_has_assistant));
             if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
                 session.project_ledger_with_live(
                     entries,

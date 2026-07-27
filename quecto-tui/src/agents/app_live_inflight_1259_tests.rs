@@ -374,6 +374,70 @@ async fn live_inflight_buffer_is_entry_capped() {
     );
 }
 
+/// #1259 review follow-up: an assistant committed in a prior turn must not
+/// cause a user-only revision advance in the current turn to erase its live tail.
+#[tokio::test]
+async fn later_turn_user_rev_advance_keeps_current_live_tail() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (mut feed, _rx) = feed_with_rx();
+    feed.supports_sync = true;
+    app.subagents.feeds.insert("worker".into(), feed);
+    app.update_subagent_bar(vec![subagent("worker", "running")]);
+    app.select_agent(Some("worker"));
+    app.ensure_session("worker");
+    app.route_sync_response(
+        "worker",
+        &json!({
+            "epoch": 1,
+            "rev": 2,
+            "messages": [
+                {"id":"u1","role":"user","content":"first task"},
+                {"id":"a1","role":"assistant","content":"first answer"}
+            ],
+            "nextRev": null,
+            "caughtUp": true,
+            "resync": false
+        }),
+    );
+
+    app.route_subagent_event("worker", Event::TurnStart);
+    app.route_subagent_event(
+        "worker",
+        Event::Token {
+            token: "second answer live".into(),
+        },
+    );
+    app.route_sync_response(
+        "worker",
+        &json!({
+            "epoch": 1,
+            "rev": 3,
+            "messages": [{"id":"u2","role":"user","content":"second task"}],
+            "nextRev": null,
+            "caughtUp": true,
+            "resync": false
+        }),
+    );
+
+    let entries = app.subagents.sessions["worker"].chat.entries();
+    assert!(
+        matches!(
+            entries,
+            [
+                ChatEntry::User { text: first, .. },
+                ChatEntry::Assistant { text: prior, streaming: false },
+                ChatEntry::User { text: second, .. },
+                ChatEntry::Assistant { text: live, streaming: true }
+            ] if first == "first task"
+                && prior == "first answer"
+                && second == "second task"
+                && live == "second answer live"
+        ),
+        "a prior-turn assistant must not supersede the current live tail: {entries:?}"
+    );
+}
+
 /// #1259 (c): turn-end ledger reconciliation must produce the committed
 /// transcript exactly once — no duplicates, no gaps — after a retained
 /// in-flight live buffer was shown.
