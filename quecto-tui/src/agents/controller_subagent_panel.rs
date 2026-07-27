@@ -554,26 +554,14 @@ impl App {
     pub(super) fn render_main_pane_workflow(
         &self,
         width: usize,
-        box_width: usize,
+        _box_width: usize,
         now: tokio::time::Instant,
     ) -> Vec<String> {
         if width < 4 {
             return Vec::new();
         }
         let state = self.active_workflow_bar();
-        // Title ALWAYS renders; the boxed bar is conditional on a workflow (#820).
-        let mut out = vec![pad_cell(&self.main_pane_title(state, now), width)];
-        if let Some(content) = workflow_bar::render_compact_line(state) {
-            let inner = box_width.saturating_sub(2);
-            out.push(theme::dim(&"─".repeat(box_width)));
-            out.push(crate::components::utils::truncate_to_width(
-                &format!(" {} ", boxed_inner(&content, inner)),
-                box_width,
-                None,
-            ));
-            out.push(theme::dim(&"─".repeat(box_width)));
-        }
-        out
+        vec![pad_cell(&self.main_pane_title(state, now), width)]
     }
 
     /// Build the main-pane title line for the active agent (#820).
@@ -602,11 +590,17 @@ impl App {
             theme::dim(&elapsed),
         );
         if let Some(n) = state.issue_number {
+            let auto = if state.workflow_auto_continue {
+                "auto:on"
+            } else {
+                "auto:off"
+            };
             title.push_str(&format!(
-                " {} {} {}",
+                " {} {} {} {}",
                 theme::dim("·"),
                 theme::accent(&theme::bold(&format!("#{n}"))),
                 theme::dim("workflow"),
+                theme::dim(auto),
             ));
         }
         title
@@ -655,16 +649,6 @@ fn bar_continuation(prefix: &str) -> String {
         format!("{head}  ")
     } else {
         prefix.to_string()
-    }
-}
-
-/// Pad (ANSI-aware) a boxed workflow line's content to exactly `inner` columns.
-fn boxed_inner(content: &str, inner: usize) -> String {
-    let visible = crate::components::utils::visible_width(content);
-    if visible >= inner {
-        crate::components::utils::truncate_to_width(content, inner, None)
-    } else {
-        format!("{}{}", content, " ".repeat(inner - visible))
     }
 }
 

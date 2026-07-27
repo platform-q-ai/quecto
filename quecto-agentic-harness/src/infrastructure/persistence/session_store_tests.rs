@@ -9,6 +9,48 @@ fn make_message(role: Role, content: &str) -> Message {
         Role::Tool => Message::tool("call", content),
     }
 }
+
+#[tokio::test]
+async fn empty_conversation_is_not_persisted() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    store.save(&Session::new("test:empty")).await.unwrap();
+
+    assert!(
+        !store.exists("test:empty").await.unwrap(),
+        "saving an empty conversation must not create a resumable session"
+    );
+    assert!(
+        store.load("test:empty").await.unwrap().is_none(),
+        "loading an empty conversation key must behave like an unknown session"
+    );
+}
+
+#[tokio::test]
+async fn empty_delta_is_not_persisted() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    store
+        .save_delta("test:empty-delta", &[], 0, None)
+        .await
+        .unwrap();
+    store
+        .save_clean_delta("test:empty-clean-delta", &[], 0, None)
+        .await
+        .unwrap();
+
+    assert!(
+        !store.exists("test:empty-delta").await.unwrap(),
+        "saving an empty delta must not create a zero-message session"
+    );
+    assert!(
+        !store.exists("test:empty-clean-delta").await.unwrap(),
+        "saving an empty clean delta must not create a zero-message session"
+    );
+}
+
 #[tokio::test]
 async fn appending_a_completed_turn_preserves_previously_saved_bytes() {
     let tmp = TempDir::new().unwrap();

@@ -317,40 +317,29 @@ impl App {
     pub(super) fn compose_bottom(&mut self, width: usize) -> Vec<String> {
         let mut bottom = Vec::new();
 
-        // Sub-agent-first layout (#820): the sub-agent bar and the workflow bar
-        // no longer live in the bottom stack — the always-on left panel and the
-        // boxed main-pane workflow bar carry that information now. Only the
-        // spinner / "N working" indicator, autocompletes, editor, notifications
-        // and footer remain below the chat.
-
-        // Spinner sits above autocomplete (#534). While
-        // sub-agents are tracked, RESERVE its line (spinner when active, blank
-        // when idle): workflow children fire notifications that make the parent
-        // do many short runs, each creating/dropping the spinner — a toggling
-        // 0↔1 line would reflow the chat on every run (the panel-size 6↔7 /
-        // 11↔12 judder). A reserved slot keeps the below-chat height stable.
+        // Sub-agent/workflow bars moved out of the bottom stack.
         if self.subagents.active_agent_id.is_none() && self.spinner.is_some() {
             // Master is active and mid-turn: show its richer tool spinner (tool
             // name + elapsed), the only master-local render telemetry layered on
             // top of the shared per-session `running` flag (#828).
             if let Some(spinner) = &mut self.spinner {
+                if self.subagents.tracked.is_empty() {
+                    bottom.push(String::new());
+                }
                 bottom.extend(spinner.render(width));
             }
         } else if self.active_subagent_running() {
             // The active session is mid-turn (a sub-agent processing queued
             // follow-up work, or the master before its spinner exists); show the
             // working indicator so it never looks dead.
+            bottom.push(String::new());
             bottom.push(subagent_activity_line(1, self.subagents.frame));
         } else if !self.subagents.tracked.is_empty() {
-            // Parent is idle but sub-agents are tracked. Keep the reserved slot
-            // meaningful: if any child is still working, show an animated
-            // "N working" indicator (so activity stays visible while the parent
-            // waits); otherwise a blank keeps the height stable.
             let active = self.subagents.tracked_active_count();
             if active > 0 {
                 bottom.push(subagent_activity_line(active, self.subagents.frame));
             } else {
-                bottom.push(String::new());
+                bottom.push(subagent_idle_line(self.subagents.tracked.len()));
             }
         }
 
@@ -439,18 +428,17 @@ impl App {
             version
         )));
 
-        // Sub-agent-first main pane (#820): the selected agent's title line and
-        // boxed single-line workflow bar sit at the top of the body, above the
-        // chat (replacing the removed bottom workflow bar).
+        // Sub-agent-first main pane (#820): the selected agent's title line sits
+        // at the top of the body above the chat. The former boxed workflow bar
+        // is omitted so the conversation viewport keeps the reclaimed height.
         let main_box_width = width;
         let main_pane_workflow = self.render_main_pane_workflow(width, main_box_width, now);
-        let workflow_height = main_pane_workflow.len();
         lines.extend(main_pane_workflow);
 
-        // Chat — render into available space above the bottom section.
-        // Reserve MIN_CHAT_GAP lines for spacing between chat and editor (#480).
-        const MIN_CHAT_GAP: usize = 3;
-        let chat_height = height.saturating_sub(bottom_height + workflow_height + 2 + MIN_CHAT_GAP);
+        // Chat uses all space above bottom; top-pad short transcripts so the
+        // latest output sits directly above the input bar.
+        let top_chrome_height = lines.len();
+        let chat_height = height.saturating_sub(bottom_height + top_chrome_height);
         let chat = self.active_chat_mut();
         chat.set_viewport_height(chat_height);
         let mut chat_lines = chat.render(width);
@@ -460,12 +448,14 @@ impl App {
             let start = chat_lines.len() - chat_height;
             chat_lines = chat_lines[start..].to_vec();
         }
+        while chat_lines.len() < chat_height {
+            chat_lines.insert(0, String::new());
+        }
         lines.extend(chat_lines);
 
-        // Pad between chat and bottom to push bottom to the screen bottom.
         let available = height.saturating_sub(bottom_height);
         while lines.len() < available {
-            lines.push(String::new());
+            lines.insert(top_chrome_height, String::new());
         }
 
         // ── Append bottom section ───────────────────────────────────
@@ -741,6 +731,16 @@ pub(super) fn subagent_activity_line(active: usize, frame: usize) -> String {
         spin,
         theme::muted(&format!("{active} {noun} working..."))
     )
+}
+
+/// Visible tracked-child idle placeholder; preserves chat height without a blank row.
+pub(super) fn subagent_idle_line(tracked: usize) -> String {
+    let noun = if tracked == 1 {
+        "subagent"
+    } else {
+        "subagents"
+    };
+    format!("    {}", theme::muted(&format!("{tracked} {noun} idle")))
 }
 
 /// Strip ANSI escape sequences (CSI + OSC) for the render-log diagnostic and

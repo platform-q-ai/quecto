@@ -2,10 +2,10 @@
 Feature: Sub-agent-first default layout (#820)
   As a human operator driving workflows in the TUI
   I want the left sub-agent panel always on (Master included, even solo), agent
-  rows colour-coded by status, and the selected agent's workflow shown as a boxed
-  one-line bar at the top of the main pane
-  So that the TUI is sub-agent-first by default and the duplicated bottom
-  sub-agent/workflow bars are gone
+  rows colour-coded by status, and the selected agent's workflow context kept in
+  the main-pane title without a separate status box
+  So that the TUI is sub-agent-first by default and the conversation output keeps
+  the space reclaimed from duplicated bottom sub-agent/workflow bars
 
   # Wired to step definitions in tests/bdd/tui_subagent_first_layout_steps.rs,
   # which drive the REAL render path through the headless render harness
@@ -16,10 +16,11 @@ Feature: Sub-agent-first default layout (#820)
     Given a sub-agent-first TUI with no sub-agents
     Then the left panel shows the master row
 
-  Scenario: A selected agent's workflow shows as a full-width status bar aligned to the tool/message content column in the main pane
+  Scenario: A selected agent's workflow keeps compact title context without a status box
     Given a sub-agent-first TUI tracking sub-agent "a1" with its own workflow
     When I select sub-agent "a1"
-    Then the main pane shows a workflow status bar aligned to the tool/message content column
+    Then the main pane title shows compact workflow context for sub-agent "a1"
+    And the main pane no longer shows the workflow status box
     And the bottom stack no longer shows the workflow bar
 
   Scenario: The bottom stack no longer shows the sub-agent bar

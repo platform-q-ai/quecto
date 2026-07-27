@@ -1,9 +1,9 @@
-//! Steps for `tui_chat_spacing.feature` (#480).
+//! Steps for `tui_chat_spacing.feature`.
 //!
 //! Drives the REAL frame composition (`App::compose_frame`) through the headless
 //! render harness at a fixed terminal size and asserts on the observable layout:
-//! a short chat keeps at least `MIN_CHAT_GAP` blank lines above the editor
-//! border, and a chat that overflows auto-scrolls to the latest content.
+//! a short chat places the latest output directly above the editor border, and a
+//! chat that overflows auto-scrolls to the latest content.
 
 use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
@@ -100,15 +100,18 @@ fn screen_renders(world: &mut TuiWorld) {
 
 // ── Then ───────────────────────────────────────────────────────────────────
 
-#[then("at least 3 blank lines should appear between chat and editor border")]
-fn at_least_3_blank_lines(world: &mut TuiWorld) {
+#[then("the latest chat line appears directly above the editor border")]
+fn latest_chat_line_touches_editor_border(world: &mut TuiWorld) {
     let frame = with_harness(world, |h| h.full_frame());
     let lines = body_lines(&frame);
     let border = editor_border_index(&lines);
-    let blanks = blank_lines_above(&lines, border);
+    let previous = border
+        .checked_sub(1)
+        .and_then(|idx| lines.get(idx))
+        .unwrap_or_else(|| panic!("editor border should have a preceding chat line\n{frame}"));
     assert!(
-        blanks >= 3,
-        "expected at least 3 blank lines between chat and editor border, got {blanks}\n{frame}"
+        previous.contains("line 5"),
+        "latest chat line should sit directly above editor border, got {previous:?}\n{frame}"
     );
 }
 

@@ -1,14 +1,14 @@
 @tui @done
-Feature: TUI 3-line spacing between agent response and input border
+Feature: TUI chat adjacency to input border
   As a TUI user
-  I want at least 3 blank lines between the chat and the input area
-  So that the response text is visually separated from the editor
+  I want the latest chat output directly above the input area
+  So that the conversation uses the maximum available height
 
-  Scenario: Minimum spacing when chat is short
+  Scenario: No blank gap when chat is short
     Given the chat has 5 lines of content
     And the terminal has 30 rows
     When the screen renders
-    Then at least 3 blank lines should appear between chat and editor border
+    Then the latest chat line appears directly above the editor border
 
   Scenario: Chat fills screen — auto-scroll takes priority
     Given the chat fills the entire available space

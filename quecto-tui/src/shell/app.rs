@@ -479,6 +479,9 @@ mod app_agents_characterization_tests;
 #[path = "app_attach_backfill_tests.rs"]
 mod app_attach_backfill_tests;
 #[cfg(test)]
+#[path = "app_bottom_spacing_tests.rs"]
+mod app_bottom_spacing_tests;
+#[cfg(test)]
 #[path = "app_clipboard_tests.rs"]
 mod app_clipboard_tests;
 #[cfg(test)]

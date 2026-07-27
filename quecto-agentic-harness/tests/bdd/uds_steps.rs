@@ -1562,7 +1562,7 @@ fn given_session_has_workflow_progress(
         world,
         &Session {
             key: uds_session_key(&session_name),
-            messages: vec![],
+            messages: vec![Message::user("workflow context")],
             workflow_run: Some(quecto::domain::workflow::WorkflowRunPersisted {
                 template_id: Some(template_id),
                 done: (0..7).map(|i| i < completed).collect(),

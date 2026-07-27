@@ -101,8 +101,8 @@ async fn just_selected_zero_of_n_renders_both_indicators() {
         "a just-selected 0/18 workflow must render the LEFT panel cells:\n{frame}"
     );
     assert!(
-        frame.contains("Step 1/18"),
-        "a just-selected 0/18 workflow must render the main-pane bar at 0/N:\n{frame}"
+        frame.contains("worker · running") && !frame.contains("Step 1/18"),
+        "a just-selected 0/18 workflow must keep only the compact main-pane title:\n{frame}"
     );
 }
 
@@ -123,16 +123,16 @@ async fn transient_empty_event_does_not_blank_visible_workflow() {
         "a transient empty workflow_state must NOT blank the LEFT panel cells:\n{frame}"
     );
     assert!(
-        frame.contains("Step 4/18"),
-        "a transient empty workflow_state must NOT blank the main-pane bar:\n{frame}"
+        frame.contains("worker · running") && !frame.contains("Step 4/18"),
+        "a transient empty workflow_state must keep only the compact main-pane title:\n{frame}"
     );
     // A subsequent real event still advances progress.
     h.app_mut()
         .route_subagent_event("worker", workflow_count("worker", 5, 18));
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
-        frame.contains("Step 6/18"),
-        "a real workflow_state after a transient one still advances progress:\n{frame}"
+        frame.contains("worker · running") && !frame.contains("Step 6/18"),
+        "a real workflow_state after a transient one still keeps the main-pane box removed:\n{frame}"
     );
 }
 

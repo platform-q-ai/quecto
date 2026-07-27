@@ -508,7 +508,7 @@ fn test_handle_clear_ephemeral_skips_save() {
 }
 
 #[test]
-fn test_handle_clear_non_ephemeral_saves_empty() {
+fn test_handle_clear_non_ephemeral_removes_empty_session() {
     let tmp = tempfile::TempDir::new().unwrap();
     let mut repl = make_repl_loop(
         tmp.path(),
@@ -524,12 +524,10 @@ fn test_handle_clear_non_ephemeral_saves_empty() {
     assert!(repl.session.messages.is_empty());
     let out = repl_output(&repl);
     assert!(out.contains("Conversation cleared"));
-    // Verify an empty session was persisted
-    let loaded = rt
-        .block_on(repl.session.session_store.load("test:repl"))
-        .unwrap()
-        .expect("expected session to be saved");
-    assert!(loaded.messages.is_empty());
+    // Verify clearing the last message removes the persisted session instead
+    // of leaving a zero-message conversation behind.
+    let loaded = rt.block_on(repl.session.session_store.load("test:repl"));
+    assert!(loaded.unwrap().is_none());
 }
 
 // ---------------------------------------------------------------

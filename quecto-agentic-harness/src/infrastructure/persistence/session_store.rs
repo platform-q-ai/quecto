@@ -48,6 +48,9 @@ impl FileSessionStore {
         previously_persisted: usize,
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Result<(), DomainError> {
+        if messages.is_empty() && workflow_run.is_none() {
+            return self.delete_session_file_if_present(key).await;
+        }
         self.ensure_dir().await?;
         let path = self.session_path(key);
         // Trust-the-caller gate: unlike `append_known_delta` this deliberately
@@ -67,6 +70,16 @@ impl FileSessionStore {
             must_compact,
         )
         .await
+    }
+
+    async fn delete_session_file_if_present(&self, key: &str) -> Result<(), DomainError> {
+        match tokio::fs::remove_file(self.session_path(key)).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(DomainError::Session(format!(
+                "failed to delete empty session: {err}"
+            ))),
+        }
     }
 
     /// Ensure the sessions directory exists.
@@ -103,6 +116,9 @@ impl SessionStore for FileSessionStore {
         let path = self.session_path(&session.key);
         let session = session.clone();
         Box::pin(async move {
+            if session.messages.is_empty() && session.workflow_run.is_none() {
+                return self.delete_session_file_if_present(&session.key).await;
+            }
             self.ensure_dir().await?;
             append_or_compact(&path, &session).await
         })
@@ -117,6 +133,9 @@ impl SessionStore for FileSessionStore {
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         let path = self.session_path(key);
         Box::pin(async move {
+            if messages.is_empty() && workflow_run.is_none() {
+                return self.delete_session_file_if_present(key).await;
+            }
             self.ensure_dir().await?;
             append_known_delta(
                 &path,
@@ -136,13 +155,19 @@ impl SessionStore for FileSessionStore {
         previously_persisted: usize,
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        Box::pin(FileSessionStore::save_clean_delta(
-            self,
-            key,
-            messages,
-            previously_persisted,
-            workflow_run,
-        ))
+        Box::pin(async move {
+            if messages.is_empty() && workflow_run.is_none() {
+                return self.delete_session_file_if_present(key).await;
+            }
+            FileSessionStore::save_clean_delta(
+                self,
+                key,
+                messages,
+                previously_persisted,
+                workflow_run,
+            )
+            .await
+        })
     }
 
     fn exists(

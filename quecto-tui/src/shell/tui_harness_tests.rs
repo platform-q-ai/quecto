@@ -540,8 +540,8 @@ mod workflow_display_regression {
         h.select(Some("wfsub"));
         let pane = h.main_pane();
         assert!(
-            pane.contains("2/6") || pane.contains("Step"),
-            "#913: selecting a sub-agent with a workflow snapshot must show its bar (2/6), got:\n{pane}"
+            pane.contains("wfsub · running") && !pane.contains("2/6") && !pane.contains("Step"),
+            "#913: selecting a sub-agent with a workflow snapshot must show only compact title chrome, got:\n{pane}"
         );
     }
 
@@ -563,8 +563,8 @@ mod workflow_display_regression {
         h.route("wfsub", wf_state(None, 0, 0, false, true)); // transient 0/0 WITH issue
         let pane = h.main_pane();
         assert!(
-            pane.contains("2/6") && !pane.contains("starting"),
-            "#915: a 0/0-with-issue event must not regress an advanced bar to 'starting…', got:\n{pane}"
+            pane.contains("#42 workflow") && !pane.contains("2/6") && !pane.contains("starting"),
+            "#915: a 0/0-with-issue event must not reintroduce workflow detail text, got:\n{pane}"
         );
     }
 
@@ -602,8 +602,10 @@ mod workflow_display_regression {
         // select a workflow child -> bar shows immediately from snapshot (#913)
         h.select(Some("wf-2"));
         assert!(
-            h.main_pane().contains("2/18") || h.main_pane().contains("Step"),
-            "fleet: selected wf-2 must show its bar from the snapshot:\n{}",
+            h.main_pane().contains("wf-2 · running")
+                && !h.main_pane().contains("2/18")
+                && !h.main_pane().contains("Step"),
+            "fleet: selected wf-2 must show only compact title chrome from the snapshot:\n{}",
             h.main_pane()
         );
         // completion-note coalescing (deferred then flushed)

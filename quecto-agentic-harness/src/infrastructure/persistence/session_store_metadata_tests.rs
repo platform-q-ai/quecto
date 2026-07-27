@@ -52,7 +52,8 @@ async fn test_exists() {
 
     assert!(!store.exists("telegram:12345").await.unwrap());
 
-    let session = Session::new("telegram:12345");
+    let mut session = Session::new("telegram:12345");
+    session.messages.push(make_message(Role::User, "hello"));
     store.save(&session).await.unwrap();
 
     assert!(store.exists("telegram:12345").await.unwrap());
@@ -296,6 +297,14 @@ async fn test_spill_id_survives_round_trip() {
     );
 }
 
+fn persisted_workflow_run() -> WorkflowRunPersisted {
+    WorkflowRunPersisted {
+        template_id: Some("fix".to_string()),
+        done: vec![true, true, false, false, false, false],
+        active_issue: Some((42, "login bug".to_string())),
+    }
+}
+
 #[tokio::test]
 async fn test_workflow_run_survives_round_trip() {
     let tmp = TempDir::new().unwrap();
@@ -304,11 +313,7 @@ async fn test_workflow_run_survives_round_trip() {
     let session = Session {
         key: "test:wf_persist".to_string(),
         messages: vec![make_message(Role::User, "hello")],
-        workflow_run: Some(WorkflowRunPersisted {
-            template_id: Some("fix".to_string()),
-            done: vec![true, true, false, false, false, false],
-            active_issue: Some((42, "login bug".to_string())),
-        }),
+        workflow_run: Some(persisted_workflow_run()),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("test:wf_persist").await.unwrap().unwrap();
@@ -318,6 +323,80 @@ async fn test_workflow_run_survives_round_trip() {
     assert_eq!(wf.template_id.as_deref(), Some("fix"));
     assert_eq!(wf.done, vec![true, true, false, false, false, false]);
     assert_eq!(wf.active_issue, Some((42, "login bug".to_string())));
+}
+
+#[tokio::test]
+async fn workflow_only_session_survives_round_trip() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    store
+        .save(&Session {
+            key: "test:wf_only".to_string(),
+            messages: Vec::new(),
+            workflow_run: Some(persisted_workflow_run()),
+        })
+        .await
+        .unwrap();
+
+    let loaded = store.load("test:wf_only").await.unwrap().unwrap();
+    assert!(
+        loaded.messages.is_empty(),
+        "workflow-only sessions must not invent chat messages"
+    );
+    assert_eq!(
+        loaded
+            .workflow_run
+            .expect("workflow_run should persist")
+            .done,
+        vec![true, true, false, false, false, false]
+    );
+}
+
+#[tokio::test]
+async fn workflow_only_delta_survives_round_trip() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    store
+        .save_delta("test:wf_only_delta", &[], 0, Some(persisted_workflow_run()))
+        .await
+        .unwrap();
+    let loaded_delta = store
+        .load("test:wf_only_delta")
+        .await
+        .unwrap()
+        .expect("workflow-only delta should persist");
+    assert_eq!(
+        loaded_delta
+            .workflow_run
+            .expect("workflow_run should persist from delta")
+            .active_issue,
+        Some((42, "login bug".to_string()))
+    );
+
+    store
+        .save_clean_delta(
+            "test:wf_only_clean_delta",
+            &[],
+            0,
+            Some(persisted_workflow_run()),
+        )
+        .await
+        .unwrap();
+    let loaded_clean = store
+        .load("test:wf_only_clean_delta")
+        .await
+        .unwrap()
+        .expect("workflow-only clean delta should persist");
+    assert_eq!(
+        loaded_clean
+            .workflow_run
+            .expect("workflow_run should persist from clean delta")
+            .template_id
+            .as_deref(),
+        Some("fix")
+    );
 }
 
 #[tokio::test]
@@ -373,7 +452,7 @@ async fn test_workflow_run_unknown_template_persists_raw_fields() {
 
     let session = Session {
         key: "test:wf_compat".to_string(),
-        messages: vec![],
+        messages: vec![make_message(Role::User, "hello")],
         workflow_run: Some(WorkflowRunPersisted {
             template_id: Some("deleted_template".to_string()),
             done: vec![true, false],
