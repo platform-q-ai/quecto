@@ -268,6 +268,47 @@ fn then_tui_protocol_no_feature_or_shell(_world: &mut QuectoWorld) {
     );
 }
 
+#[then("the quecto-tui components should not import the protocol client")]
+fn then_tui_components_do_not_import_protocol_client(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("components").is_dir());
+    assert_no_tui_patterns(
+        "components",
+        &["crate::protocol::client", "super::protocol::client"],
+    );
+}
+
+#[then("the quecto-tui protocol should not import widget or terminal types")]
+fn then_tui_protocol_has_no_presentation_types(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("protocol").is_dir());
+    assert_no_tui_patterns(
+        "protocol",
+        &["ratatui", "crossterm", "crate::shell::app::App"],
+    );
+}
+
+#[then("the quecto-tui shell should own the App composition root")]
+fn then_tui_shell_owns_app(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("shell/app.rs").is_file());
+    assert!(!Path::new(TUI_ROOT).join("interface").exists());
+}
+
+#[then("the quecto-tui final presentation primitives should have their assigned owners")]
+fn then_tui_final_primitives_have_owners(_world: &mut QuectoWorld) {
+    for file in [
+        "ansi.rs",
+        "theme.rs",
+        "utils.rs",
+        "kitty.rs",
+        "overlay.rs",
+        "select_overlay.rs",
+    ] {
+        assert!(Path::new(TUI_ROOT).join("components").join(file).is_file());
+    }
+    for file in ["app.rs", "stdin_buffer.rs"] {
+        assert!(Path::new(TUI_ROOT).join("shell").join(file).is_file());
+    }
+}
+
 #[then("the quecto-tui shell should own runtime adapters")]
 fn then_tui_shell_owns_runtime_adapters(_world: &mut QuectoWorld) {
     // #1257 Phase 2: UDS client lives in `protocol/`; terminal/runtime adapters

@@ -4,5 +4,4 @@
 //! App slices remain mounted inside `shell::app` until later
 //! controller-extraction phases.
 
-// Flow types are mounted via `#[path]` from `shell::app` so they remain
-// sibling modules of `App` during the phased migration.
+// Shell composes these feature-owned flow types as App extensions.

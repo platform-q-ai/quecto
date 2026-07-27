@@ -140,9 +140,8 @@ impl App {
         };
         // Reject a mismatched body (stale / rerouted response) and require the
         // authoritative response role to agree with the original stub metadata.
-        let response_matches =
-            data.get("id").and_then(|v| v.as_str()) == Some(recall.message_id.as_str());
-        let role = data.get("role").and_then(|v| v.as_str());
+        let (response_id, role) = crate::protocol::presentation_payloads::response_identity(data);
+        let response_matches = response_id.as_deref() == Some(recall.message_id.as_str());
         let chat = match &recall.agent_id {
             None => Some(&mut self.master_session.chat),
             Some(child) => self
@@ -156,7 +155,9 @@ impl App {
             return true;
         };
         if !response_matches
-            || !role.is_some_and(|role| chat.stub_role_matches(&recall.message_id, role))
+            || !role
+                .as_deref()
+                .is_some_and(|role| chat.stub_role_matches(&recall.message_id, role))
         {
             self.failed_stub_recalls.insert(recall_key);
             return true;
@@ -230,12 +231,7 @@ impl App {
     /// servers always attach it; a legacy payload without it falls back to the
     /// wholesale-replacement path.
     pub(super) fn is_history_page_payload(data: &serde_json::Value) -> bool {
-        data.get("messages").and_then(|v| v.as_array()).is_some()
-            && (data
-                .get("hasMoreBefore")
-                .and_then(|v| v.as_bool())
-                .is_some()
-                || data.get("before").is_some())
+        crate::protocol::presentation_payloads::is_history_page(data)
     }
 
     /// Replace the master transcript with a fresh newest page and reconcile the

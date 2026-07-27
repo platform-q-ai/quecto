@@ -132,11 +132,8 @@ pub(super) fn render_bash(
     expanded: bool,
     width: usize,
 ) {
-    let command = args
-        .as_ref()
-        .and_then(|v| v.get("command").and_then(|c| c.as_str()))
-        .unwrap_or("");
-    let command = sanitize(command);
+    let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
+    let command = sanitize(display.command.as_deref().unwrap_or(""));
 
     // Header: ✓ $ command  42ms
     push_header(
@@ -234,10 +231,8 @@ pub(super) fn render_write(
     let path = extract_path(args);
 
     // For write, the content is in the args, not the result.
-    let content = args
-        .as_ref()
-        .and_then(|v| v.get("content").and_then(|c| c.as_str()))
-        .unwrap_or("");
+    let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
+    let content = display.content.as_deref().unwrap_or("");
 
     // Header: ✓ write path  42ms
     push_header(
@@ -328,35 +323,28 @@ pub(super) fn render_subagent(
     is_error: bool,
     width: usize,
 ) {
-    let (header_detail, _agent_label) = if let Some(v) = args {
-        match tool_name {
-            "spawn" => {
-                let agent = sanitize(
-                    v.get("agent_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("agent"),
-                );
-                let task = sanitize(v.get("task").and_then(|v| v.as_str()).unwrap_or(""));
-                let detail = if task.is_empty() {
-                    agent.clone()
-                } else {
-                    format!(
-                        "{} — {}",
-                        agent,
-                        crate::components::utils::truncate_to_width(&task, 50, Some("..."))
-                    )
-                };
-                (detail, Some(agent))
-            }
-            "agent_cmd" => {
-                let command = sanitize(v.get("command").and_then(|v| v.as_str()).unwrap_or("?"));
-                let agent_id = sanitize(v.get("agent_id").and_then(|v| v.as_str()).unwrap_or("?"));
-                (format!("{} → {}", command, agent_id), Some(agent_id))
-            }
-            _ => (String::new(), None),
+    let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
+    let (header_detail, _agent_label) = match tool_name {
+        "spawn" => {
+            let agent = sanitize(display.agent_id.as_deref().unwrap_or("agent"));
+            let task = sanitize(display.task.as_deref().unwrap_or(""));
+            let detail = if task.is_empty() {
+                agent.clone()
+            } else {
+                format!(
+                    "{} — {}",
+                    agent,
+                    crate::components::utils::truncate_to_width(&task, 50, Some("..."))
+                )
+            };
+            (detail, Some(agent))
         }
-    } else {
-        (String::new(), None)
+        "agent_cmd" => {
+            let command = sanitize(display.command.as_deref().unwrap_or("?"));
+            let agent_id = sanitize(display.agent_id.as_deref().unwrap_or("?"));
+            (format!("{} → {}", command, agent_id), Some(agent_id))
+        }
+        _ => (String::new(), None),
     };
 
     // Header: ✓ spawn reviewer — Review PR  42ms
@@ -392,37 +380,27 @@ pub(super) fn render_workflow(
     result: Option<&str>,
     width: usize,
 ) {
-    let action = args
-        .as_ref()
-        .and_then(|v| v.get("action").and_then(|a| a.as_str()))
-        .unwrap_or("workflow");
-
+    let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
+    let action = display.action.as_deref().unwrap_or("workflow");
     let detail = match action {
-        "check" | "uncheck" | "skip" => {
-            let step = args
-                .as_ref()
-                .and_then(|v| v.get("step"))
-                .and_then(|s| s.as_u64())
+        "check" | "uncheck" | "skip" => format!(
+            "{action}{}",
+            display
+                .step
                 .map(|n| format!(" step {n}"))
-                .unwrap_or_default();
-            format!("{action}{step}")
-        }
-        "select_template" => {
-            let tpl = args
-                .as_ref()
-                .and_then(|v| v.get("template").and_then(|t| t.as_str()))
-                .unwrap_or("?");
-            format!("select_template {tpl}")
-        }
-        "set_issue" => {
-            let num = args
-                .as_ref()
-                .and_then(|v| v.get("issueNumber"))
-                .and_then(|n| n.as_u64())
+                .unwrap_or_default()
+        ),
+        "select_template" => format!(
+            "select_template {}",
+            display.template.as_deref().unwrap_or("?")
+        ),
+        "set_issue" => format!(
+            "set_issue{}",
+            display
+                .issue_number
                 .map(|n| format!(" #{n}"))
-                .unwrap_or_default();
-            format!("set_issue{num}")
-        }
+                .unwrap_or_default()
+        ),
         _ => action.to_string(),
     };
 
@@ -668,28 +646,32 @@ pub(super) fn render_file_preview(
 
 /// Extract the file path from tool args (tries "path", "file_path").
 pub(super) fn extract_path(args: &Option<serde_json::Value>) -> String {
-    args.as_ref()
-        .and_then(|v| {
-            v.get("path")
-                .or_else(|| v.get("file_path"))
-                .and_then(|p| p.as_str())
-        })
-        .map(sanitize)
-        .unwrap_or_default()
+    let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
+    display.path.as_deref().map(sanitize).unwrap_or_default()
 }
 
 /// Extract the most informative arg value for display.
 pub(super) fn extract_best_arg(v: &serde_json::Value) -> String {
-    for key in &["command", "path", "query", "url", "content", "oldText"] {
-        if let Some(val) = v.get(key).and_then(|v| v.as_str()) {
-            return sanitize(&crate::components::utils::truncate_to_width(
-                val,
-                60,
-                Some("..."),
-            ));
-        }
-    }
-    String::new()
+    let display = crate::protocol::presentation_payloads::tool_display_args(Some(v));
+    [
+        display.command,
+        display.path,
+        display.query,
+        display.url,
+        display.content,
+        display.old_text,
+    ]
+    .into_iter()
+    .flatten()
+    .next()
+    .map(|value| {
+        sanitize(&crate::components::utils::truncate_to_width(
+            &value,
+            60,
+            Some("..."),
+        ))
+    })
+    .unwrap_or_default()
 }
 
 /// Style a diff line with color (green for +, red for -, cyan for @@).

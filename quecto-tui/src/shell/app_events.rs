@@ -90,26 +90,16 @@ impl App {
         self.master_session.chat.finalize_assistant();
         // #1060: messageRefs identify the turn; fetch-on-miss only when the
         // active-turn stream did not already deliver full content.
-        let refs = message_refs_from_value(&message);
-        let content_len = message.get("contentLength").and_then(|v| v.as_u64());
+        let payload = crate::protocol::presentation_payloads::parse_turn_end(&message);
+        let refs = payload.message_refs;
+        let content_len = payload.content_length;
         self.maybe_recover_from_refs_with_len(&refs, content_len);
         // `usage` is absent on streaming OpenAI-compatible providers (e.g.
         // Fireworks) because their SSE stream does not carry token counts.
         // Don't gate context-gauge updates on it — `contextTokens` is emitted
         // independently and must still drive the footer.
-        let total = message
-            .get("usage")
-            .and_then(|u| u.get("total"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let context_tokens = message.get("contextTokens").and_then(|v| v.as_u64());
-        if let (Some(used), Some(window)) = (
-            context_tokens,
-            message
-                .get("maxContextTokens")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as usize),
-        ) {
+        let total = payload.usage_total;
+        if let (Some(used), Some(window)) = (payload.context_tokens, payload.max_context_tokens) {
             self.master_session
                 .footer
                 .update_context_usage(used, window);
@@ -140,12 +130,12 @@ impl App {
         self.update_tool_spinner(&tool_name, &args, &args_str);
         // Mark the awaited sub-agent so its row shows a per-row "awaiting"
         // indicator instead of the shared spinner line.
-        if tool_name == "agent_cmd" && args.get("command").and_then(|v| v.as_str()) == Some("await")
+        if tool_name == "agent_cmd"
+            && crate::protocol::presentation_payloads::string_field(&args, "command").as_deref()
+                == Some("await")
         {
-            self.subagents.awaited_agent_id = args
-                .get("agent_id")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
+            self.subagents.awaited_agent_id =
+                crate::protocol::presentation_payloads::string_field(&args, "agent_id");
         }
         let is_spawn = tool_name == "spawn";
         // Every model-issued tool call — even one whose box is suppressed (spawn)
@@ -175,7 +165,11 @@ impl App {
             "spawn" => format!("Spawning {}...", sanitized_arg(args, "agent_id", "agent")),
             // For `await`, keep a generic, stable message — the awaited agent is
             // marked on its own sub-agent row, so the shared line stays put.
-            "agent_cmd" if args.get("command").and_then(|v| v.as_str()) == Some("await") => {
+            "agent_cmd"
+                if crate::protocol::presentation_payloads::string_field(args, "command")
+                    .as_deref()
+                    == Some("await") =>
+            {
                 "Working... (Esc to interrupt)".to_string()
             }
             "agent_cmd" => format!(
@@ -217,10 +211,11 @@ impl App {
     }
 
     pub(super) fn track_starting_subagent(&mut self, args: &serde_json::Value) {
-        let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) else {
+        let Some(agent_id) = crate::protocol::presentation_payloads::string_field(args, "agent_id")
+        else {
             return;
         };
-        let sanitized = crate::components::ansi::sanitize_control(agent_id);
+        let sanitized = crate::components::ansi::sanitize_control(&agent_id);
         // If the kernel already confirmed this id (a non-optimistic entry), do
         // not clobber it with a fresh unconfirmed "starting" guess. A re-played
         // or duplicate spawn ToolStart (event replay on reconnect) would
@@ -378,21 +373,14 @@ struct WorkflowStateEvent {
 
 fn sanitized_arg(args: &serde_json::Value, key: &str, fallback: &str) -> String {
     crate::components::ansi::sanitize_control(
-        args.get(key).and_then(|v| v.as_str()).unwrap_or(fallback),
+        crate::protocol::presentation_payloads::string_field(args, key)
+            .as_deref()
+            .unwrap_or(fallback),
     )
 }
 
 fn spawn_args_are_read_only(args: &serde_json::Value) -> bool {
-    args.get("read_only")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-        || args
-            .get("disable_tools")
-            .and_then(|v| v.as_array())
-            .is_some_and(|tools| {
-                let has = |name| tools.iter().any(|v| v.as_str() == Some(name));
-                has("write") && has("edit")
-            })
+    crate::protocol::presentation_payloads::spawn_is_read_only(args)
 }
 
 pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> bool {
@@ -408,30 +396,6 @@ mod cursor_tests;
 #[cfg(test)]
 #[path = "app_events_readonly_tests.rs"]
 mod readonly_tests;
-
-fn message_refs_from_value(v: &serde_json::Value) -> Vec<String> {
-    let candidates = [v.get("messageRefs"), v.get("message_refs")];
-    for c in candidates.into_iter().flatten() {
-        if let Some(arr) = c.as_array() {
-            let refs: Vec<String> = arr
-                .iter()
-                .filter_map(|item| {
-                    if let Some(s) = item.as_str() {
-                        return Some(s.to_string());
-                    }
-                    item.get("id")
-                        .and_then(|id| id.as_str())
-                        .map(str::to_string)
-                })
-                .filter(|s| !s.is_empty())
-                .collect();
-            if !refs.is_empty() {
-                return refs;
-            }
-        }
-    }
-    Vec::new()
-}
 
 /// A process-unique token for request/batch ids. Combines a wall-clock stamp
 /// (readability in logs) with a monotonic counter so two calls in the same

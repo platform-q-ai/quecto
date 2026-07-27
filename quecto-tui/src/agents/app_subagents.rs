@@ -75,11 +75,9 @@ impl App {
                 session.footer.apply_session_stats(&stats);
             }
             Event::TurnEnd { message } => {
-                let used = message.get("contextTokens").and_then(|v| v.as_u64());
-                let window = message
-                    .get("maxContextTokens")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize);
+                let payload = crate::protocol::presentation_payloads::parse_turn_end(message);
+                let used = payload.context_tokens;
+                let window = payload.max_context_tokens;
                 if let (Some(used), Some(window)) = (used, window) {
                     session.footer.update_context_usage(used, window);
                 }

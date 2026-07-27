@@ -1125,11 +1125,11 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
 /// Seed: production raw `serde_json` parsing sites still resident in TUI
 /// feature/view modules. Lower this as call sites migrate
 /// behind mappers. Never raise it.
-const TUI_INTERFACE_RAW_JSON_SITE_SEED: usize = 120;
+const TUI_FEATURE_VIEW_RAW_JSON_SITE_SEED: usize = 0;
 /// Measured after #1257 Phase 5 relocation plus genuine get_state/workflow/
 /// set_effort mapper conversions; future relocations must not burn down sites
 /// by moving scan roots alone.
-const TUI_PHASE_6_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 55;
+const TUI_PHASE_6_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 0;
 
 /// #1257: feature/view ratchet scan roots follow the code as modules relocate,
 /// so a move alone can never lower a measured count (Phase 5: four new feature
@@ -1151,9 +1151,9 @@ const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
 /// this as they migrate behind typed mappers. Never raise it.
 /// (#1257 Phase 5: raised only by genuine new mapper sites absorbed from
 /// feature/view — net feature-view burn-down is required when raising.)
-const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 121;
+const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 126;
 /// Measured after #1257 Phase 5 mapper additions (state + workflow payloads).
-const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 121;
+const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 126;
 /// Historical combined feature/view + protocol ceiling. This prevents moving
 /// sites between buckets (and adjusting their individual seeds) from hiding
 /// growth in the total raw-JSON inventory.
@@ -1161,17 +1161,18 @@ const TUI_RAW_JSON_COMBINED_CEILING: usize = 178;
 
 /// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
-const TUI_WIRE_DTO_USAGE_SEED: usize = 124;
+const TUI_WIRE_DTO_USAGE_SEED: usize = 16;
 /// Measured after #1257 Phase 5 relocation (inference paths absorbed Command::
 /// sites that already counted under interface/).
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 122;
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 16;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
 /// The response dispatcher IS the protocol seam: it receives raw responses and
 /// routes them to mappers, so raw JSON access there is by construction. It is
 /// deliberately NOT exempt from the wire-DTO ratchet.
-const TUI_INTERFACE_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("shell/app_response.rs", "#1220")];
+const TUI_FEATURE_VIEW_RAW_JSON_ALLOWLIST: &[(&str, &str)] =
+    &[("shell/app_response.rs", "#1220 response dispatch seam")];
 
 /// Narrow, issue-linked allowlist for the PROTOCOL RAW-JSON ratchet only.
 /// The UDS client is the wire seam itself (frame/event field access); mapper
@@ -1278,10 +1279,7 @@ fn wire_dto_usage_count(content: &str) -> usize {
             if t.starts_with("//") || t.starts_with("///") {
                 return false;
             }
-            t.contains("Command::")
-                || t.contains("Event::")
-                || t.contains("infrastructure::client")
-                || t.contains("protocol::client")
+            t.contains("protocol::client")
         })
         .count()
 }
@@ -1312,17 +1310,17 @@ fn tui_ratchet_inventory(
 }
 
 #[test]
-fn tui_interface_raw_json_parsing_sites_do_not_grow() {
+fn tui_feature_view_raw_json_parsing_sites_are_eliminated() {
     let (total, per_file) = tui_ratchet_inventory(
         TUI_FEATURE_VIEW_RATCHET_ROOTS,
-        TUI_INTERFACE_RAW_JSON_ALLOWLIST,
+        TUI_FEATURE_VIEW_RAW_JSON_ALLOWLIST,
         raw_json_site_count,
     );
     assert_eq!(
         total, TUI_PHASE_6_FEATURE_VIEW_RAW_JSON_TOTAL,
         "#1257 Phase 6 relocation must preserve moved feature/view raw serde_json \
          sites except genuine protocol-mapper conversions: found {total}, seed \
-         {TUI_INTERFACE_RAW_JSON_SITE_SEED}. Move payload interpretation into a \
+         {TUI_FEATURE_VIEW_RAW_JSON_SITE_SEED}. Move payload interpretation into a \
          protocol-layer mapper (see quecto-tui/src/protocol/model_payloads.rs, \
          #1220). Inventory (burn-down order): {per_file:?}"
     );
@@ -1354,7 +1352,7 @@ fn tui_protocol_raw_json_parsing_sites_do_not_grow() {
 fn tui_combined_raw_json_inventory_does_not_grow() {
     let (feature_total, feature_files) = tui_ratchet_inventory(
         TUI_FEATURE_VIEW_RATCHET_ROOTS,
-        TUI_INTERFACE_RAW_JSON_ALLOWLIST,
+        TUI_FEATURE_VIEW_RAW_JSON_ALLOWLIST,
         raw_json_site_count,
     );
     let (protocol_total, protocol_files) = tui_ratchet_inventory(

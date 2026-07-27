@@ -11,6 +11,7 @@
 pub mod agent_ledger_payloads;
 pub mod client;
 pub mod model_payloads;
+pub mod presentation_payloads;
 pub mod range_accumulator;
 pub mod session_payloads;
 pub mod state_payloads;

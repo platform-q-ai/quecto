@@ -214,9 +214,8 @@ impl App {
 #[path = "app_disconnect.rs"]
 mod app_disconnect;
 // #1257 Phase 5: inference/workspace/sessions/workflow-owned app slices are
-// physically housed under their feature modules but remain mounted inside
-// `shell::app` until later controller-extraction phases. Intentional
-// remount only; do not infer a new dependency direction from the `#[path]`.
+// physically housed under their feature modules; shell composes them as App
+// extensions without taking ownership of their policy.
 #[path = "../inference/app_effort.rs"]
 mod app_effort;
 #[path = "app_event_loop.rs"]
@@ -250,8 +249,7 @@ pub const GIT_BRANCH_POLL_INTERVAL: std::time::Duration = app_git::GIT_BRANCH_PO
 #[path = "app_idle_efficiency.rs"]
 mod app_idle_efficiency;
 // #1257 Phase 4: agents-owned app slices are physically housed under
-// `agents/` but remain mounted inside `shell::app` until later
-// controller-extraction phases.
+// `agents/`; shell composes them as App extensions.
 #[path = "../agents/app_ledger_sync.rs"]
 mod app_ledger_sync;
 #[path = "../conversation/app_message_recovery.rs"]

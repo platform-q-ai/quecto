@@ -282,17 +282,9 @@ impl App {
                 Some((message_refs.clone(), None))
             }
             Event::TurnEnd { message } => {
-                let refs = message
-                    .get("messageRefs")
-                    .and_then(|r| r.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(str::to_string))
-                            .filter(|s| !s.is_empty())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let len = message.get("contentLength").and_then(|v| v.as_u64());
+                let payload = crate::protocol::presentation_payloads::parse_turn_end(message);
+                let refs = payload.message_refs;
+                let len = payload.content_length;
                 if refs.is_empty() {
                     None
                 } else {
@@ -552,19 +544,11 @@ impl App {
             return;
         };
         let history: Vec<ChatEntry> = Self::resumed_chat_entries(messages);
+        let page = crate::protocol::presentation_payloads::history_page_facts(data);
         let facts = PageFacts {
-            before: data
-                .get("before")
-                .and_then(|v| v.as_str())
-                .map(ToOwned::to_owned),
-            has_more_before: data
-                .get("hasMoreBefore")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            trimmed: data
-                .get("trimmed")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
+            before: page.before,
+            has_more_before: page.has_more_before,
+            trimmed: page.trimmed,
             page_len: history.len(),
             extend_prefix,
         };

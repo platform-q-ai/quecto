@@ -310,6 +310,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/client.rs` | `protocol` UDS client and wire DTOs (relocated, #1257 Phase 2) |
 | `protocol/mod.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/model_payloads.rs` | `protocol` mapper feeding `models` (relocated, #1257 Phase 2) |
+| `protocol/presentation_payloads.rs` | `protocol` typed mapping for turn, history, spawn, and tool display payloads (#1257 Phase 6) |
 | `protocol/range_accumulator.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/session_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/state_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
@@ -404,7 +405,7 @@ Parity evidence recorded during #1222 implementation:
 | Frozen characterization suite | Roster/source authority, warm-feed startup, retained feed/session cap, ledger no-op hints, caught-up sync, duplicate-id transcript upsert, active-child fallback, and authoritative ledger projection preserve behavior. | `cargo test -p quecto-tui --lib app_agents_characterization_tests` passed after refactor. Mutation evidence before freeze killed M1–M15. The ledger projection test needed a mechanical type adaptation from `ChatEntry` to pure `LedgerEntry` after extraction; follow-up mutations M16/M17 against `agents/ledger.rs` both failed the adapted test. | PASS |
 | Existing targeted unit suites | Existing subagent, ledger, workflow-stickiness, panel/session, and roster-authority behavior remains unchanged. | Passed: `cargo test -p quecto-tui --lib` (1642 tests); explicit targeted runs of `app_ledger_sync_tests`, `ledger_sync_tests`, `app_subagent_roster_authority_tests`, `app_subagents_tests`, `app_subagent_panel_tests`, and `app_subagent_workflow_sticky_tests`. Existing tests changed only for mechanical module/type moves (`feed_state`/`ledger_sync` into top-level `agents/*`, `ui` → `runtime`/`view`, plus typed `LedgerEntry` projection). | PASS |
 | Visual / rendered frames | Panel-first layout, read-only marker, and sub-agent session parity render identical user-visible surfaces. | `cd quecto-tui && QUECTO_TAG=tui cargo test --features test-harness --test bdd` passed 28 TUI features / 175 scenarios, including `tui_subagent_first_layout`, `tui_subagent_readonly_marker`, and `tui_subagent_session_parity`. | PASS |
-| Architecture policy | Raw JSON and wire DTO parsing sites do not grow; pure agents policy has no Tokio handles/channels, terminal/widget types, or concrete client; runtime feed ownership remains separated. | `cargo test -p quecto-agentic-harness --test architecture tui_interface_raw_json_parsing_sites_do_not_grow -- --exact` and `cargo test -p quecto-agentic-harness --test architecture tui_wire_dto_usage_does_not_grow -- --exact` passed. `grep` over `agents/{feed,roster,ledger,focus}.rs` found no channels, task handles, concrete client, terminal/widget types, or `serde_json`; only `tokio::time::Instant` remains in roster lifecycle timestamps. Caveat on the ratchets: both counters are heuristic — the raw-JSON counter matches literal `.get("`/`.pointer("` and accessor+`and_then` lines, so `serde_json::from_str`/`from_value` and dynamic `value.get(key)` in `protocol/agent_ledger_payloads.rs` are not counted; the wire-DTO counter matches `Command::`/`Event::`/`infrastructure::client`/`protocol::client` lines, so unqualified DTO uses after a single grouped import are not counted. They confirm no growth in the shapes they measure, not the absence of raw JSON parsing. Runtime `cmd_tx`/task handle live in `agents/runtime.rs::FeedRuntime`, separate from `FeedSyncState`, but are re-flattened into `FeedState` (see the structural-check caveat above). | PASS |
+| Architecture policy | Raw JSON and wire DTO parsing sites do not grow; pure agents policy has no Tokio handles/channels, terminal/widget types, or concrete client; runtime feed ownership remains separated. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_view_raw_json_parsing_sites_are_eliminated -- --exact` and `cargo test -p quecto-agentic-harness --test architecture tui_wire_dto_usage_does_not_grow -- --exact` passed. `grep` over `agents/{feed,roster,ledger,focus}.rs` found no channels, task handles, concrete client, terminal/widget types, or `serde_json`; only `tokio::time::Instant` remains in roster lifecycle timestamps. Caveat on the ratchets: both counters are heuristic — the raw-JSON counter matches literal `.get("`/`.pointer("` and accessor+`and_then` lines, so `serde_json::from_str`/`from_value` and dynamic `value.get(key)` in `protocol/agent_ledger_payloads.rs` are not counted; the wire-DTO counter matches `Command::`/`Event::`/`infrastructure::client`/`protocol::client` lines, so unqualified DTO uses after a single grouped import are not counted. They confirm no growth in the shapes they measure, not the absence of raw JSON parsing. Runtime `cmd_tx`/task handle live in `agents/runtime.rs::FeedRuntime`, separate from `FeedSyncState`, but are re-flattened into `FeedState` (see the structural-check caveat above). | PASS |
 | Performance parity (source inspection only; no enforcing check) | Replaced specialized code keeps the same asymptotic passes and allocation boundaries. | Roster snapshot merge still builds one `BTreeMap` of candidates/incoming/new map and one parent carry-over queue in `apply_roster_snapshot`; no render-loop work or background task moved into policy. Ledger transcript still uses one `HashMap` plus one ordered `Vec` and applies deltas in O(messages). Retention still evicts through the existing session-order vector and active-id skip. Warm feeds remain bounded by `MAX_RETAINED_SESSIONS`. | PASS |
 | Quantitative / formatting / lint | File-size cap and strict local checks remain green. | Largest agents pure-policy file is `agents/roster.rs` at 294 lines; `app.rs` dropped from 741 to 617 lines. Overall changed-file line count is +884 (1437 insertions, 553 deletions) including 310 lines of new characterization tests, 203 lines of typed ledger DTOs, and the parity/deletion documentation below. `cargo fmt --check` and `cargo clippy -p quecto-tui --lib -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines` passed. | PASS |
 
@@ -441,10 +442,10 @@ Characterization review/freeze manifest for #1224:
 Deletion ledger for #1224 App thinning:
 
 - Deleted inline `RewindFlow`/fields from `app.rs`: rewind selector, double-Escape timestamp, request ids, and request sequence invariants are re-established unchanged in `conversation/app_rewind_state.rs` and accessed through the existing `rewind` owner.
-- Deleted inline `SessionsFlow`: resume selector and context-stats request latch invariants are re-established unchanged in `interface/app_sessions.rs`.
-- Deleted inline `WorkflowFlow`: auto-continue and completion-nudge mirror invariants are re-established unchanged in `interface/app_workflow.rs`.
-- Deleted inline `InferenceFlow`/`ModelRegistry`: current model, selector overlays, registry cache, pending-open latch, current effort, and effort vocabulary invariants are re-established unchanged in `interface/app_inference.rs`.
-- Deleted inline `WorkspaceFlow`: file autocomplete capacity 8, Git branch footer state, and Git repo polling root invariants are re-established unchanged in `interface/app_workspace.rs`; production capacity is pinned by `app_workspace_file_autocomplete_uses_production_visible_capacity`.
+- Deleted inline `SessionsFlow`: resume selector and context-stats request latch invariants are re-established unchanged in former `interface/app_sessions.rs` (now `sessions/app_sessions.rs`).
+- Deleted inline `WorkflowFlow`: auto-continue and completion-nudge mirror invariants are re-established unchanged in former `interface/app_workflow.rs` (now `workflow/app_workflow.rs`).
+- Deleted inline `InferenceFlow`/`ModelRegistry`: current model, selector overlays, registry cache, pending-open latch, current effort, and effort vocabulary invariants are re-established unchanged in former `interface/app_inference.rs` (now `inference/app_inference.rs`).
+- Deleted inline `WorkspaceFlow`: file autocomplete capacity 8, Git branch footer state, and Git repo polling root invariants are re-established unchanged in former `interface/app_workspace.rs` (now `workspace/app_workspace.rs`); production capacity is pinned by `app_workspace_file_autocomplete_uses_production_visible_capacity`.
 - One source-text architecture test (`tui_app_state_is_composed_from_feature_flow_owners`) was deleted during conformance because final conformance bans source-text assertions; frozen behavioural characterization tests were not edited after freeze.
 - Consolidation completeness: no shared helper was introduced or canonicalized in this slice; moved state owners only.
 
@@ -528,7 +529,7 @@ module docs of `protocol/model_payloads.rs`):
 - `protocol/model_payloads.rs` — `parse_model_list` → `Vec<ModelListEntry>`,
   owning the id/provider/auth derivation and the drop rules for absent,
   non-string, and sanitize-to-empty identifiers.
-- `interface/app_models.rs::parse_model_entries` — the seam: maps the DTO to the
+- `inference/app_models.rs::parse_model_entries` — the seam: maps the DTO to the
   selector's `ModelEntry`, adding only the interface-owned `is_current: false`.
 
 Mapper fixtures in `protocol/model_payloads_tests.rs` cover valid, legacy
@@ -542,10 +543,10 @@ Four decrease-only guards live in `quecto-agentic-harness/tests/architecture.rs`
 and therefore run in the fast pre-commit guard suite (targets are enumerated
 dynamically, so they cannot be silently dropped):
 
-- `tui_interface_raw_json_parsing_sites_do_not_grow` — exact Phase 5 feature/view total `55`; scan roots include `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`.
-- `tui_protocol_raw_json_parsing_sites_do_not_grow` — exact Phase 5 protocol mapper total and seed `121`.
+- `tui_feature_view_raw_json_parsing_sites_are_eliminated` — final feature/view total `0`; scan roots include `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`.
+- `tui_protocol_raw_json_parsing_sites_do_not_grow` — final protocol mapper total and seed `126`.
 - `tui_combined_raw_json_inventory_does_not_grow` — feature/view plus protocol sites may not exceed the historical combined ceiling `178` (current total `176`), preventing growth hidden by moving sites between buckets.
-- `tui_wire_dto_usage_does_not_grow` — seed `124`, exact Phase 5 total `122`.
+- `tui_wire_dto_usage_does_not_grow` — refined true-use seed and final total `16`.
 
 Both were hardened after review on #1235, which proved the first drafts did not
 measure what they claimed:
@@ -581,9 +582,9 @@ Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-The Phase 6 feature/view raw-JSON ratchet scans `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`; its exact total is 55. The protocol raw-JSON ratchet has an exact total and seed of 121, with `protocol/client.rs` allowlisted as the wire seam. The combined inventory is 176 and may not exceed its historical ceiling of 178, so moving parsing between these buckets cannot conceal growth. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
+The Phase 6 feature/view raw-JSON ratchet scans `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`; its exact total is 0. The protocol raw-JSON ratchet has an exact total and seed of 126, with `protocol/client.rs` allowlisted as the wire seam. The combined inventory is 126 and may not exceed its historical ceiling of 178, so moving parsing between these buckets cannot conceal growth. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
 
-Wire-DTO usage retains its never-raise seed of 124 and has an exact Phase 5 total of 122; `agents/runtime.rs` is narrowly allowlisted as described above.
+The refined wire-DTO inventory counts explicit `protocol::client` references only and has a final total and seed of 16; `agents/runtime.rs` is narrowly allowlisted as described above.
 
 ### Deletion ledger
 
