@@ -1145,6 +1145,10 @@ const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
 const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 121;
 /// Measured after #1257 Phase 5 mapper additions (state + workflow payloads).
 const TUI_PHASE_5_PROTOCOL_RAW_JSON_TOTAL: usize = 121;
+/// Historical combined feature/view + protocol ceiling. This prevents moving
+/// sites between buckets (and adjusting their individual seeds) from hiding
+/// growth in the total raw-JSON inventory.
+const TUI_RAW_JSON_COMBINED_CEILING: usize = 178;
 
 /// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
@@ -1334,6 +1338,25 @@ fn tui_protocol_raw_json_parsing_sites_do_not_grow() {
         "raw serde_json parsing in TUI protocol mappers must not grow: \
          found {total}, seed {TUI_PROTOCOL_RAW_JSON_SITE_SEED}. Inventory \
          (burn-down order): {per_file:?}"
+    );
+}
+
+#[test]
+fn tui_combined_raw_json_inventory_does_not_grow() {
+    let (feature_total, feature_files) = tui_ratchet_inventory(
+        TUI_FEATURE_VIEW_RATCHET_ROOTS,
+        TUI_INTERFACE_RAW_JSON_ALLOWLIST,
+        raw_json_site_count,
+    );
+    let (protocol_total, protocol_files) = tui_ratchet_inventory(
+        &[TUI_PROTOCOL],
+        TUI_PROTOCOL_RAW_JSON_ALLOWLIST,
+        raw_json_site_count,
+    );
+    let total = feature_total + protocol_total;
+    assert!(
+        total <= TUI_RAW_JSON_COMBINED_CEILING,
+        "combined TUI raw serde_json inventory must not grow when sites move between feature/view and protocol buckets: found {total} ({feature_total} feature/view + {protocol_total} protocol), historical ceiling {TUI_RAW_JSON_COMBINED_CEILING}. Feature inventory: {feature_files:?}; protocol inventory: {protocol_files:?}"
     );
 }
 

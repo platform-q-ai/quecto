@@ -9,14 +9,14 @@
 | `lib.rs` exact module set | `tui_lib_rs_exposes_only_architecture_layers` + BDD library-root step | PASS |
 | App slices `#[path]`-mounted under `interface::app` | `interface/app.rs` mounts `../{sessions,workflow,inference,workspace}/…` | PASS |
 | Architecture/BDD/doc lockstep | architecture 39/39; `QUECTO_TAG=tui` BDD architecture feature green; owner map exact match 95/95 | PASS |
-| Feature/view raw-JSON seed lowered only by genuine mapper conversions | Pre-phase feature-view total 109 → post-phase 65 with extended scan roots; protocol total 69 → 121 (absorbed mapper sites); net feature-view burn-down 54 sites | PASS |
+| Feature/view raw-JSON seed lowered only by genuine mapper conversions | Pre-phase feature-view total 109 → post-phase 55 with extended scan roots; protocol total 69 → 121 (absorbed mapper sites); net feature-view burn-down 54 sites; combined total 176 remains below the historical ceiling 178 | PASS |
 
 ## Behavioural surfaces
 
 | Surface | Evidence | Verdict |
 |---|---|---|
 | Sessions / workflow / inference / workspace characterization | `cargo test -p quecto-tui --lib` → **1667 passed** (includes moved suites + new protocol mapper tests) | PASS |
-| Architecture ratchets | `tui_interface_raw_json_parsing_sites_do_not_grow` (65), `tui_protocol_raw_json_parsing_sites_do_not_grow` (121), `tui_wire_dto_usage_does_not_grow` (122) | PASS |
+| Architecture ratchets | `tui_interface_raw_json_parsing_sites_do_not_grow` (55), `tui_protocol_raw_json_parsing_sites_do_not_grow` (121), combined raw-JSON inventory 176 ≤ historical ceiling 178, `tui_wire_dto_usage_does_not_grow` (122) | PASS |
 | TUI architecture BDD | `QUECTO_TAG=tui cargo test -p quecto-agentic-harness --features test-support --test bdd` → Phase 5 scenarios green | PASS |
 | Formatting / lint | `cargo fmt --all -- --check`; `cargo clippy -p quecto-tui --all-targets -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines`; architecture clippy `-D warnings` | PASS |
 

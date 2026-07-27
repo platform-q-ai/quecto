@@ -535,13 +535,14 @@ ordering are pinned end-to-end by the frozen characterization suite.
 
 ### Ratchets
 
-Two decrease-only guards live in `quecto-agentic-harness/tests/architecture.rs`
+Four decrease-only guards live in `quecto-agentic-harness/tests/architecture.rs`
 and therefore run in the fast pre-commit guard suite (targets are enumerated
 dynamically, so they cannot be silently dropped):
 
-- `tui_interface_raw_json_parsing_sites_do_not_grow` — feature/view raw-JSON ceiling `120`, exact Phase 3 total `109`, scan roots include `conversation/`.
-- `tui_protocol_raw_json_parsing_sites_do_not_grow` — protocol mapper seed `69` (#1257 Phase 2 re-pointed from `application/`).
-- `tui_wire_dto_usage_does_not_grow` — seed `124`.
+- `tui_interface_raw_json_parsing_sites_do_not_grow` — exact Phase 5 feature/view total `55`; scan roots include `interface/`, `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`.
+- `tui_protocol_raw_json_parsing_sites_do_not_grow` — exact Phase 5 protocol mapper total and seed `121`.
+- `tui_combined_raw_json_inventory_does_not_grow` — feature/view plus protocol sites may not exceed the historical combined ceiling `178` (current total `176`), preventing growth hidden by moving sites between buckets.
+- `tui_wire_dto_usage_does_not_grow` — seed `124`, exact Phase 5 total `122`.
 
 Both were hardened after review on #1235, which proved the first drafts did not
 measure what they claimed:
@@ -566,8 +567,10 @@ measure what they claimed:
   trailing `mod tests;`.
 - **Per-ratchet allowlists.** `interface/app_response.rs` is exempt from the
   raw-JSON ratchet only — it *is* the dispatcher that routes raw responses to
-  mappers — and is now measured by the wire-DTO ratchet. The wire-DTO allowlist
-  is empty.
+  mappers — and is measured by the wire-DTO ratchet. `protocol/client.rs` is
+  exempt only from the protocol raw-JSON ratchet as the wire seam.
+  `agents/runtime.rs` is narrowly allowlisted for wire-DTO usage under #1257
+  Phase 4 until `FeedRuntime` is hidden behind a non-wire channel type.
 - **No vacuous pass.** Both ratchets assert the scan yielded a non-empty file
   list, so renaming the scan root fails them instead of silently disabling them.
 
@@ -575,10 +578,9 @@ Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-The feature/view raw-JSON ratchet scans `interface/`, `components/`, `shell/`, and landed `conversation/`. Its never-raise ceiling remains 120, and its exact relocation/conversion total is 109 after #1257 Phase 3 moved conversation ownership and converted the rewind selector to the typed `session_payloads` mapper. The protocol raw-JSON ratchet is seeded separately at 69 sites (#1257 Phase 2 re-pointed the scan root from deleted `application/` to `protocol/`, with `protocol/client.rs` allowlisted as the wire seam), so moved wire parsing remains measured instead of disappearing from the burn-down surface. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
+The Phase 5 feature/view raw-JSON ratchet scans `interface/`, `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`; its exact total is 55. The protocol raw-JSON ratchet has an exact total and seed of 121, with `protocol/client.rs` allowlisted as the wire seam. The combined inventory is 176 and may not exceed its historical ceiling of 178, so moving parsing between these buckets cannot conceal growth. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
 
-Wire-DTO usage is seeded at 124, led by `app_subagent_stream.rs`,
-`app_subagents.rs`, `app_submit.rs`, and `tui_harness_events.rs`.
+Wire-DTO usage retains its never-raise seed of 124 and has an exact Phase 5 total of 122; `agents/runtime.rs` is narrowly allowlisted as described above.
 
 ### Deletion ledger
 

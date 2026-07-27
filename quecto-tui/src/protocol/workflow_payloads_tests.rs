@@ -21,6 +21,14 @@ fn parse_workflow_snapshot_reads_v2_steps_and_progress() {
 }
 
 #[test]
+fn parse_workflow_snapshot_prefers_v2_index_over_legacy_id() {
+    let snap = parse_workflow_snapshot(&json!({
+        "steps": [{"index": 0, "id": 9, "label": "X", "phase": "build", "done": false}]
+    }));
+    assert_eq!(snap.steps[0].id, 0);
+}
+
+#[test]
 fn parse_workflow_snapshot_accepts_snake_case_and_array_issue() {
     let snap = parse_workflow_snapshot(&json!({
         "steps": [{"id": 2, "label": "X", "phase": "red", "done": true}],
