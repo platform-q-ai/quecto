@@ -208,20 +208,42 @@ fn then_tui_agents_pure_policy_no_outer_layers(_world: &mut QuectoWorld) {
     }
 }
 
-#[then("the quecto-tui infrastructure source should not import application or interface layers")]
-fn then_tui_infrastructure_no_application_or_interface(_world: &mut QuectoWorld) {
-    assert!(Path::new(TUI_ROOT).join("infrastructure").is_dir());
-    assert_no_tui_patterns(
-        "infrastructure",
-        &[
-            "crate::application",
-            "crate::interface",
-            "crate::protocol",
-            "super::application",
-            "super::interface",
-            "super::protocol",
-        ],
+#[then("the quecto-tui workspace files adapter should not import presentation layers")]
+fn then_tui_workspace_files_no_presentation(_world: &mut QuectoWorld) {
+    let path = Path::new(TUI_ROOT)
+        .join("workspace")
+        .join("workspace_files.rs");
+    assert!(
+        path.is_file(),
+        "workspace_files adapter must exist at {}",
+        path.display()
     );
+    let content = std::fs::read_to_string(&path).expect("read workspace_files");
+    for pattern in [
+        "crate::interface",
+        "crate::components",
+        "crate::shell",
+        "crate::protocol",
+        "crate::conversation",
+        "crate::agents",
+        "crate::sessions",
+        "crate::workflow",
+        "crate::inference",
+    ] {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed == "#[cfg(test)]" {
+                break;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            assert!(
+                !trimmed.contains(pattern),
+                "workspace_files must not import {pattern}; line: {trimmed}"
+            );
+        }
+    }
 }
 
 #[then("the quecto-tui protocol source should not import feature or shell modules")]
@@ -283,7 +305,7 @@ fn then_every_tui_production_file_is_layered(_world: &mut QuectoWorld) {
     let misplaced = misplaced_tui_production_files();
     assert!(
         misplaced.is_empty(),
-        "quecto-tui production Rust files must live under agents/, conversation/, infrastructure/, interface/, components/, shell/, or protocol/; misplaced: {misplaced:?}"
+        "quecto-tui production Rust files must live under an approved top-level module; misplaced: {misplaced:?}"
     );
 }
 
@@ -303,12 +325,15 @@ fn then_tui_library_root_exposes_only_layers(_world: &mut QuectoWorld) {
             "agents",
             "components",
             "conversation",
-            "infrastructure",
+            "inference",
             "interface",
             "protocol",
-            "shell"
+            "sessions",
+            "shell",
+            "workflow",
+            "workspace",
         ],
-        "../quecto-tui/src/lib.rs should expose exactly the per-phase module set (#1257 Phase 4)"
+        "../quecto-tui/src/lib.rs should expose exactly the per-phase module set (#1257 Phase 5)"
     );
     assert!(
         !content.contains("#[path ="),
@@ -355,12 +380,15 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
         let in_layer = matches!(
             top,
             "agents"
-                | "conversation"
-                | "infrastructure"
-                | "interface"
                 | "components"
-                | "shell"
+                | "conversation"
+                | "inference"
+                | "interface"
                 | "protocol"
+                | "sessions"
+                | "shell"
+                | "workflow"
+                | "workspace"
         );
         let allowed_root = !rel.contains('/') && matches!(rel.as_str(), "lib.rs" | "main.rs");
         if !in_layer && !allowed_root {

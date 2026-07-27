@@ -22,19 +22,20 @@ These are presentation modules aligned with harness capabilities. They must rema
 
 ## Interim compatibility map
 
-The current crate still uses `infrastructure/` and `interface/` directories as interim compatibility buckets alongside landed feature modules (`components/`, `shell/`, `protocol/`, `conversation/`, `agents/`). During migration, treat the remaining CA folders as compatibility buckets, not as the final target model. `application/` was deleted in #1257 Phase 2 when mappers moved into `protocol/`; the vestigial TUI `domain/` bucket was deleted in #1257 Phase 3 when conversation history/recovery policy moved to `conversation/`; `interface/agents/` was promoted to top-level `agents/` in #1257 Phase 4 (with `ui.rs` split into `runtime.rs` + `view.rs`).
+The current crate still uses `interface/` as an interim compatibility bucket alongside landed feature modules (`components/`, `shell/`, `protocol/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, `workspace/`). During migration, treat remaining CA folders as compatibility buckets, not as the final target model. `application/` was deleted in #1257 Phase 2 when mappers moved into `protocol/`; the vestigial TUI `domain/` bucket was deleted in #1257 Phase 3 when conversation history/recovery policy moved to `conversation/`; `interface/agents/` was promoted to top-level `agents/` in #1257 Phase 4 (with `ui.rs` split into `runtime.rs` + `view.rs`); `infrastructure/` was deleted in #1257 Phase 5 when `workspace_files` moved to `workspace/` and the remaining flow slices landed under `sessions/`, `workflow/`, `inference/`, and `workspace/`.
 
 | Current location | Interim role | Target direction |
 |---|---|---|
-| `interface/app*.rs` | shell plus not-yet-moved feature controllers still co-located in `App` | split by `shell`, `sessions`, `agents`, `workflow`, `inference`, and `workspace`; conversation- and agents-owned slices already mount from `conversation/` and `agents/` |
+| `interface/app*.rs` | shell plus not-yet-moved feature controllers still co-located in `App` | split by `shell` remaining composition; conversation-, agents-, sessions-, workflow-, inference-, and workspace-owned slices already mount from their feature modules |
 | `interface/components/*` | widgets and render helpers (relocated to top-level `components/`, #1257 Phase 1) | `components` |
 | `protocol/client*.rs` | UDS client and wire protocol boundary (relocated, #1257 Phase 2) | `protocol` |
 | `shell/{process,terminal,signals,render,child_watch,warn_capture}.rs` | runtime/terminal adapters (relocated, #1257 Phase 1) | `shell` |
-| `infrastructure/workspace_files.rs` | workspace filesystem/Git adapter | `workspace` boundary adapter |
+| `workspace/workspace_files.rs` | workspace filesystem/Git adapter (relocated, #1257 Phase 5) | `workspace` boundary adapter |
 | `protocol/model_payloads.rs` | typed mapper for `list_models` wire payloads (#1220; relocated, #1257 Phase 2) | `protocol` mapping feeding `models` |
 | `protocol/session_payloads.rs` | typed parsing foothold for session payloads (relocated, #1257 Phase 2) | `protocol` mapping feeding `sessions` |
 | `conversation/` | master history, paging, recovery, rewind state/flow and conversation-owned app slices (#1221/#1257 Phase 3) | `conversation` |
 | `domain/` | deleted in #1257 Phase 3 | do not recreate for TUI; pure invariant policy now lives under the owning feature |
+| `infrastructure/` | deleted in #1257 Phase 5 | do not recreate; workspace filesystem adapter lives under `workspace/` |
 
 Each migration PR should preserve one source of truth for every moved state cluster and avoid long-lived dual writes.
 
@@ -76,7 +77,7 @@ Observable surfaces and required parity:
 | Surface | Required identical behavior | Boundary cases | Performance characteristics |
 |---|---|---|---|
 | TUI runtime behavior | No runtime behavior changes except the intentional patch-version string update required by repository release policy: no command ordering, protocol handling, event routing, terminal handling, render output other than version text, or widget behavior changes. | Not applicable to this docs/guardrail slice; no runtime call sites are changed. | Not applicable; no specialized runtime code is replaced. |
-| TUI public crate shape during migration | Current compatibility modules remain available: `infrastructure` and `interface`, plus landed feature modules `agents`, `components`, `shell`, `protocol`, and `conversation`; the vestigial TUI `domain` module is intentionally absent after #1257 Phase 3, and `main.rs` remains a thin entrypoint. | Empty/one/many module cases are not relevant because the compatibility set is exact and already pinned by existing architecture tests. | Not applicable; module exports are compile-time structure. |
+| TUI public crate shape during migration | Current compatibility modules remain available: `interface`, plus landed feature modules `agents`, `components`, `conversation`, `inference`, `protocol`, `sessions`, `shell`, `workflow`, and `workspace`; the vestigial TUI `domain` and `infrastructure` modules are intentionally absent after #1257 Phases 3 and 5, and `main.rs` remains a thin entrypoint. | Empty/one/many module cases are not relevant because the compatibility set is exact and already pinned by existing architecture tests. | Not applicable; module exports are compile-time structure. |
 | Architecture documentation | The current architecture direction is discoverable from the TUI README; the superseded Clean Architecture target model clearly points to the feature-oriented architecture document; the new document lists all target harness-facing capability modules. | Full target set must be present: shell, protocol, conversation, sessions, agents, workflow, inference, workspace, components. | Not applicable; documentation-only surface. |
 | Executable guardrails | Architecture tests and BDD steps continue to execute, and the new feature-oriented guardrail is additive rather than weakening existing interim compatibility checks. | Existing checks cover the Phase 4 module set (`agents` + `conversation`), intentional deletion of `domain/`, root file placement, and the full capability list plus protocol and pure-policy boundary rules. | Not applicable; test/runtime cost is outside shipped TUI behavior. |
 
@@ -255,6 +256,8 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/session_payloads.rs` | `protocol` mapper feeding `sessions` (relocated, #1257 Phase 2) |
 | `protocol/client.rs` | `protocol` UDS client and wire DTOs (relocated, #1257 Phase 2) |
 | `protocol/mod.rs` | `protocol` module root (added, #1257 Phase 2) |
+| `protocol/state_payloads.rs` | `protocol` mapper for get_state / set_effort / set_model / resume ack (#1257 Phase 5) |
+| `protocol/workflow_payloads.rs` | `protocol` mapper for workflow snapshots and automation flags (#1257 Phase 5) |
 | `conversation/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221; relocated, #1257 Phase 3) |
 | `conversation/turn_recovery.rs` | `conversation` end-of-turn recovery trigger and batch atomicity (#1221; relocated, #1257 Phase 3) |
 | `conversation/app_paged_history.rs` | `conversation` master-history pagination/stub recall flow (relocated, #1257 Phase 3) |
@@ -263,30 +266,35 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `conversation/app_rewind.rs` | `conversation` rewind flow owner (relocated, #1257 Phase 3) |
 | `conversation/app_rewind_state.rs` | `conversation` rewind state owner (relocated, #1257 Phase 3) |
 | `conversation/mod.rs` | `conversation` module root (#1257 Phase 3) |
+| `sessions/app_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
+| `sessions/mod.rs` | `sessions` module root (#1257 Phase 5) |
+| `workflow/app_workflow.rs` | `workflow` (relocated, #1257 Phase 5) |
+| `workflow/mod.rs` | `workflow` module root (#1257 Phase 5) |
+| `inference/app_effort.rs` | `inference` (relocated, #1257 Phase 5) |
+| `inference/app_inference.rs` | `inference` flow owner (relocated, #1257 Phase 5) |
+| `inference/app_models.rs` | `inference` (relocated, #1257 Phase 5) |
+| `inference/mod.rs` | `inference` module root (#1257 Phase 5) |
+| `workspace/app_git.rs` | `workspace` (relocated, #1257 Phase 5) |
+| `workspace/app_workspace.rs` | `workspace` flow owner (relocated, #1257 Phase 5) |
+| `workspace/workspace_files.rs` | `workspace` (relocated, #1257 Phase 5) |
+| `workspace/mod.rs` | `workspace` module root (#1257 Phase 5) |
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
-| `infrastructure/mod.rs` | remaining adapters until workspace move (Phase 5) |
 | `shell/process.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
 | `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
 | `shell/warn_capture.rs` | `shell` diagnostics/runtime adapter (relocated, #1257 Phase 1) |
-| `infrastructure/workspace_files.rs` | `workspace` |
 | `interface/app.rs` | `shell` composition root plus state delegated to features |
 | `interface/app_commands.rs` | `shell` top-level command routing |
 | `interface/app_disconnect.rs` | `shell` runtime/disconnect coordination |
-| `interface/app_effort.rs` | `inference` |
 | `interface/app_event_loop.rs` | `shell` event loop |
 | `interface/app_events.rs` | `shell` top-level event routing |
 | `interface/app_events_test_support.rs` | `shell` test support |
-| `interface/app_git.rs` | `workspace` |
 | `interface/app_idle_efficiency.rs` | `shell` event-loop policy |
-| `interface/app_inference.rs` | `inference` flow owner |
 | `agents/app_ledger_sync.rs` | `agents` (relocated, #1257 Phase 4) |
 | `interface/app_methods.rs` | `shell` composition methods until split by feature |
-| `interface/app_models.rs` | `inference` |
 | `interface/app_response.rs` | `conversation` |
 | `interface/app_selection.rs` | `shell` focus/routing until delegated to feature views |
-| `interface/app_sessions.rs` | `sessions` flow owner |
 | `interface/app_stdin.rs` | `conversation` input coordination with `shell` stdin adapter |
 | `agents/app_subagent_feed.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/feed.rs` | `agents` pure feed sync state (#1222; relocated, #1257 Phase 4) |
@@ -300,8 +308,6 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `agents/app_subagent_stream.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/app_subagents.rs` | `agents` (relocated, #1257 Phase 4) |
 | `interface/app_submit.rs` | `conversation` |
-| `interface/app_workflow.rs` | `workflow` flow owner |
-| `interface/app_workspace.rs` | `workspace` flow owner |
 | `interface/ansi.rs` | `components` rendering primitive |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
 | `components/component.rs` | `components` shared traits/primitives (relocated, #1257 Phase 1) |

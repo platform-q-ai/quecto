@@ -100,12 +100,12 @@ impl App {
     /// Apply a successful `set_effort` response: the agent echoes the level
     /// it actually applied in `data.effort`.
     pub(super) fn handle_set_effort_success(&mut self, data: Option<serde_json::Value>) {
-        let Some(level) = data
-            .as_ref()
-            .and_then(|d| d.get("effort"))
-            .and_then(|v| v.as_str())
-            .map(crate::interface::ansi::sanitize_control)
-        else {
+        let Some(level) = data.as_ref().and_then(|d| {
+            crate::protocol::state_payloads::parse_set_effort_level(
+                d,
+                &crate::interface::ansi::sanitize_control,
+            )
+        }) else {
             return;
         };
         // Master responses can arrive after focus moved to a child. Preserve the

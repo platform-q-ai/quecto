@@ -185,12 +185,12 @@ impl App {
     /// focused, only the master's retained footer may update — never toast or
     /// clobber the focused child's displayed model (#1085, mirrors effort).
     fn handle_set_model_success(&mut self, data: Option<serde_json::Value>) {
-        if let Some(model) = data
-            .as_ref()
-            .and_then(|d| d.get("model"))
-            .and_then(|v| v.as_str())
-            .map(crate::interface::ansi::sanitize_control)
-        {
+        if let Some(model) = data.as_ref().and_then(|d| {
+            crate::protocol::state_payloads::parse_set_model_id(
+                d,
+                &crate::interface::ansi::sanitize_control,
+            )
+        }) {
             self.master_session.footer.set_model(&model);
             if self.subagents.active_agent_id.is_none() {
                 self.inference.current_model = Some(model);
@@ -206,58 +206,52 @@ impl App {
 
     fn handle_get_state(&mut self, data: Option<serde_json::Value>) {
         let Some(data) = data else { return };
+        let snap = crate::protocol::state_payloads::parse_get_state(
+            &data,
+            &crate::interface::ansi::sanitize_control,
+        );
         // Shared get_state→footer mapping (model + context-window); see #805.
         // #1067/#1085: only mirror master model/effort into the active selector
         // when the master is selected. A late master get_state must not
         // overwrite a focused child's level/vocabulary/model.
-        if let Some(model) = self.master_session.footer.apply_get_state(&data) {
+        if let Some(model) = self
+            .master_session
+            .footer
+            .apply_get_state_fields(&snap.footer)
+        {
             if self.subagents.active_agent_id.is_none() {
                 self.inference.current_model = Some(model);
             }
         }
         if self.subagents.active_agent_id.is_none() {
-            self.inference.current_effort = data
-                .get("effort")
-                .and_then(|v| v.as_str())
-                .map(crate::interface::ansi::sanitize_control);
-            if let Some(levels) = data.get("effortLevels").and_then(|v| v.as_array()) {
-                let levels: Vec<String> = levels
-                    .iter()
-                    .filter_map(|l| l.as_str())
-                    .map(crate::interface::ansi::sanitize_control)
-                    .collect();
-                if !levels.is_empty() {
-                    self.inference.effort_levels = levels;
-                }
+            self.inference.current_effort = snap.footer.effort.clone();
+            if !snap.effort_levels.is_empty() {
+                self.inference.effort_levels = snap.effort_levels;
             }
         }
-        if data
-            .get("maxContextTokens")
-            .and_then(|v| v.as_u64())
-            .is_some()
-        {
+        if snap.footer.max_context_tokens.is_some() {
             self.sessions.context_stats_requested = true;
         }
         // Learn the connected agent's own id from its sessionKey ("cli:<name>").
-        if let Some(key) = data.get("sessionKey").and_then(|v| v.as_str()) {
+        if let Some(key) = snap.session_key.as_deref() {
             let name = key.rsplit(':').next().unwrap_or("");
             self.connected_agent_id = match name {
                 "" | "default" => None,
                 other => Some(crate::interface::ansi::sanitize_control(other)),
             };
         }
-        if let Some(wf) = data.get("workflow") {
+        if let Some(wf) = snap.workflow.as_ref() {
             self.master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
     }
 
     fn sync_workflow_automation(&mut self, data: &serde_json::Value) {
-        let automation = data.get("automation").unwrap_or(data);
-        if let Some(value) = automation.get("autoContinue").and_then(|v| v.as_bool()) {
+        let flags = crate::protocol::workflow_payloads::parse_workflow_automation(data);
+        if let Some(value) = flags.auto_continue {
             self.workflow.auto_continue = value;
         }
-        if let Some(value) = automation.get("completionNudge").and_then(|v| v.as_bool()) {
+        if let Some(value) = flags.completion_nudge {
             self.workflow.completion_nudge = value;
         }
         self.mirror_automation_to_bar();
@@ -295,8 +289,8 @@ impl App {
     fn handle_resume_success(&mut self, data: Option<serde_json::Value>) {
         let session = data
             .as_ref()
-            .and_then(|d| d.get("session").and_then(|v| v.as_str()))
-            .unwrap_or("session");
+            .map(crate::protocol::state_payloads::parse_resume_session_name)
+            .unwrap_or_else(|| "session".to_string());
         self.notify(&format!("Resumed session {session}"), NotifyLevel::Success);
         self.send_command(Command::GetMessages {
             id: Some("resume-messages".into()),

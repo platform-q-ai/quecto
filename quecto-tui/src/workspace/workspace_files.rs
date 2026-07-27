@@ -1,8 +1,8 @@
 //! Workspace file enumeration for the `@files` autocomplete.
 //!
-//! Lives in the infrastructure layer because it shells out to `git` and walks
-//! the filesystem. Prefers `git ls-files` (tracked + untracked-not-ignored) and
-//! falls back to a bounded filesystem walk when git is unavailable.
+//! Lives under `workspace/` (#1257 Phase 5) because it shells out to `git` and
+//! walks the filesystem. Prefers `git ls-files` (tracked + untracked-not-ignored)
+//! and falls back to a bounded filesystem walk when git is unavailable.
 
 use std::collections::BTreeSet;
 use std::path::Path;

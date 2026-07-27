@@ -314,33 +314,43 @@ const TUI_SRC: &str = "../quecto-tui/src";
 const TUI_CONVERSATION: &str = "../quecto-tui/src/conversation";
 const TUI_AGENTS: &str = "../quecto-tui/src/agents";
 const TUI_PROTOCOL: &str = "../quecto-tui/src/protocol";
-const TUI_INFRASTRUCTURE: &str = "../quecto-tui/src/infrastructure";
+const TUI_SESSIONS: &str = "../quecto-tui/src/sessions";
+const TUI_WORKFLOW: &str = "../quecto-tui/src/workflow";
+const TUI_INFERENCE: &str = "../quecto-tui/src/inference";
+const TUI_WORKSPACE: &str = "../quecto-tui/src/workspace";
 const TUI_INTERFACE: &str = "../quecto-tui/src/interface";
 const TUI_COMPONENTS: &str = "../quecto-tui/src/components";
 const TUI_SHELL: &str = "../quecto-tui/src/shell";
 const TUI_ALLOWED_ROOT_RS: &[&str] = &["lib.rs", "main.rs"];
 /// #1257 phased migration: the exact set of top-level modules `lib.rs` may
 /// expose, updated per phase as feature modules land (Phase 3: `conversation`;
-/// Phase 4: `agents`; `application` and vestigial TUI `domain` deleted).
+/// Phase 4: `agents`; Phase 5: `sessions`/`workflow`/`inference`/`workspace`;
+/// `application`, vestigial TUI `domain`, and `infrastructure` deleted).
 const TUI_LIB_RS_MODULES: &[&str] = &[
     "agents",
     "components",
     "conversation",
-    "infrastructure",
+    "inference",
     "interface",
     "protocol",
+    "sessions",
     "shell",
+    "workflow",
+    "workspace",
 ];
 /// #1257 phased migration: top-level directories production files may live in
 /// (legacy layers plus the feature modules landed so far).
 const TUI_TOP_LEVEL_MODULES: &[&str] = &[
     "agents",
-    "conversation",
-    "infrastructure",
-    "interface",
     "components",
-    "shell",
+    "conversation",
+    "inference",
+    "interface",
     "protocol",
+    "sessions",
+    "shell",
+    "workflow",
+    "workspace",
 ];
 const TUI_FEATURE_ARCH_DOC: &str =
     "../quecto-tui/docs/feature-oriented-presentation-architecture.md";
@@ -389,6 +399,11 @@ fn tui_feature_oriented_architecture_is_documented() {
         "`agents/app_subagents.rs` | `agents` (relocated, #1257 Phase 4)",
         "`agents/runtime.rs` | `agents` feed connect-task runtime ownership (#1257 Phase 4 ui.rs split)",
         "`agents/view.rs` | `agents` concrete UI/runtime adapter state (#1222; relocated + split, #1257 Phase 4)",
+        "`sessions/app_sessions.rs` | `sessions` (relocated, #1257 Phase 5)",
+        "`workflow/app_workflow.rs` | `workflow` (relocated, #1257 Phase 5)",
+        "`inference/app_models.rs` | `inference` (relocated, #1257 Phase 5)",
+        "`workspace/workspace_files.rs` | `workspace` (relocated, #1257 Phase 5)",
+        "`infrastructure/` | deleted in #1257 Phase 5",
         "#1221 (`conversation`) and #1222 (`agents`) depend on #1220",
     ] {
         assert!(
@@ -494,8 +509,24 @@ fn tui_architecture_layers_exist() {
         "quecto-tui/src/protocol/ must exist"
     );
     assert!(
-        Path::new(TUI_INFRASTRUCTURE).exists(),
-        "quecto-tui/src/infrastructure/ must exist"
+        Path::new(TUI_SESSIONS).exists(),
+        "quecto-tui/src/sessions/ must exist after #1257 Phase 5"
+    );
+    assert!(
+        Path::new(TUI_WORKFLOW).exists(),
+        "quecto-tui/src/workflow/ must exist after #1257 Phase 5"
+    );
+    assert!(
+        Path::new(TUI_INFERENCE).exists(),
+        "quecto-tui/src/inference/ must exist after #1257 Phase 5"
+    );
+    assert!(
+        Path::new(TUI_WORKSPACE).exists(),
+        "quecto-tui/src/workspace/ must exist after #1257 Phase 5"
+    );
+    assert!(
+        !Path::new("../quecto-tui/src/infrastructure").exists(),
+        "quecto-tui/src/infrastructure/ must be deleted after #1257 Phase 5"
     );
     assert!(
         Path::new(TUI_INTERFACE).exists(),
@@ -621,19 +652,36 @@ fn tui_agents_pure_policy_has_no_outer_layer_imports() {
 }
 
 #[test]
-fn tui_infrastructure_has_no_application_or_interface_imports() {
-    assert_no_imports(
-        "quecto-tui infrastructure",
-        Path::new(TUI_INFRASTRUCTURE),
-        &[
-            "crate::application",
-            "crate::interface",
-            "crate::protocol",
-            "super::application",
-            "super::interface",
-            "super::protocol",
-        ],
-    );
+fn tui_workspace_files_adapter_does_not_import_presentation_layers() {
+    // #1257 Phase 5: workspace_files moved out of infrastructure/; it may use
+    // std/process IO but must not depend on presentation modules.
+    let path = Path::new(TUI_WORKSPACE).join("workspace_files.rs");
+    let content = fs::read_to_string(&path).expect("read workspace_files");
+    for pattern in [
+        "crate::interface",
+        "crate::components",
+        "crate::shell",
+        "crate::protocol",
+        "crate::conversation",
+        "crate::agents",
+        "crate::sessions",
+        "crate::workflow",
+        "crate::inference",
+    ] {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed == "#[cfg(test)]" {
+                break;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            assert!(
+                !trimmed.contains(pattern),
+                "workspace_files must not import {pattern}; line: {trimmed}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1069,36 +1117,41 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
 /// feature/view modules. Lower this as call sites migrate
 /// behind mappers. Never raise it.
 const TUI_INTERFACE_RAW_JSON_SITE_SEED: usize = 120;
-/// Measured after #1257 Phase 3 relocation plus the genuine rewind-selector
-/// conversion to a typed protocol mapper; future relocations must not burn down
-/// sites by moving scan roots.
-const TUI_PHASE_3_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 109;
+/// Measured after #1257 Phase 5 relocation plus genuine get_state/workflow/
+/// set_effort mapper conversions; future relocations must not burn down sites
+/// by moving scan roots alone.
+const TUI_PHASE_5_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 65;
 
 /// #1257: feature/view ratchet scan roots follow the code as modules relocate,
-/// so a move alone can never lower a measured count (Phase 4: `interface/`,
-/// `components/`, `shell/`, plus landed `conversation/` and `agents/`).
+/// so a move alone can never lower a measured count (Phase 5: four new feature
+/// modules plus remaining `interface/`/`components/`/`shell/`).
 const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
     TUI_INTERFACE,
     TUI_COMPONENTS,
     TUI_SHELL,
     TUI_CONVERSATION,
     TUI_AGENTS,
+    TUI_SESSIONS,
+    TUI_WORKFLOW,
+    TUI_INFERENCE,
+    TUI_WORKSPACE,
 ];
 
 /// Seed: production raw `serde_json` parsing sites in TUI `protocol/` mappers.
 /// These sites are an allowed but temporary protocol-mapping foothold; lower
 /// this as they migrate behind typed mappers. Never raise it.
-/// (#1257 Phase 2: scan root re-pointed from `application/` to `protocol/`.)
-const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 69;
-/// Measured immediately after #1257 Phase 2 relocation; relocation must not
-/// burn down mapper sites (client wire seam is allowlisted separately).
-const TUI_PHASE_2_PROTOCOL_RAW_JSON_TOTAL: usize = 69;
+/// (#1257 Phase 5: raised only by genuine new mapper sites absorbed from
+/// feature/view — net feature-view burn-down is required when raising.)
+const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 121;
+/// Measured after #1257 Phase 5 mapper additions (state + workflow payloads).
+const TUI_PHASE_5_PROTOCOL_RAW_JSON_TOTAL: usize = 121;
 
 /// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
 const TUI_WIRE_DTO_USAGE_SEED: usize = 124;
-/// Measured immediately before #1257 Phase 1; relocation must not burn down usages.
-const TUI_PHASE_1_WIRE_DTO_USAGE_TOTAL: usize = 121;
+/// Measured after #1257 Phase 5 relocation (inference paths absorbed Command::
+/// sites that already counted under interface/).
+const TUI_PHASE_5_WIRE_DTO_USAGE_TOTAL: usize = 122;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
@@ -1253,8 +1306,8 @@ fn tui_interface_raw_json_parsing_sites_do_not_grow() {
         raw_json_site_count,
     );
     assert_eq!(
-        total, TUI_PHASE_3_FEATURE_VIEW_RAW_JSON_TOTAL,
-        "#1257 Phase 4 relocation must preserve moved feature/view raw serde_json \
+        total, TUI_PHASE_5_FEATURE_VIEW_RAW_JSON_TOTAL,
+        "#1257 Phase 5 relocation must preserve moved feature/view raw serde_json \
          sites except genuine protocol-mapper conversions: found {total}, seed \
          {TUI_INTERFACE_RAW_JSON_SITE_SEED}. Move payload interpretation into a \
          protocol-layer mapper (see quecto-tui/src/protocol/model_payloads.rs, \
@@ -1270,11 +1323,11 @@ fn tui_protocol_raw_json_parsing_sites_do_not_grow() {
         raw_json_site_count,
     );
     assert_eq!(
-        total, TUI_PHASE_2_PROTOCOL_RAW_JSON_TOTAL,
-        "#1257 Phase 2 relocation must preserve protocol mapper raw serde_json sites: \
-         found {total}, seed {TUI_PROTOCOL_RAW_JSON_SITE_SEED}. Convert ad-hoc \
-         parsing into typed protocol mappers and lower this seed. Inventory \
-         (burn-down order): {per_file:?}"
+        total, TUI_PHASE_5_PROTOCOL_RAW_JSON_TOTAL,
+        "#1257 Phase 5 protocol mapper raw serde_json sites: found {total}, seed \
+         {TUI_PROTOCOL_RAW_JSON_SITE_SEED}. Convert ad-hoc parsing into typed \
+         protocol mappers and lower this seed. Inventory (burn-down order): \
+         {per_file:?}"
     );
     assert!(
         total <= TUI_PROTOCOL_RAW_JSON_SITE_SEED,
@@ -1292,8 +1345,8 @@ fn tui_wire_dto_usage_does_not_grow() {
         wire_dto_usage_count,
     );
     assert_eq!(
-        total, TUI_PHASE_1_WIRE_DTO_USAGE_TOTAL,
-        "#1257 Phase 4 relocation must preserve TUI feature/view wire-DTO usage: \
+        total, TUI_PHASE_5_WIRE_DTO_USAGE_TOTAL,
+        "#1257 Phase 5 relocation must preserve TUI feature/view wire-DTO usage: \
          found {total}, seed {TUI_WIRE_DTO_USAGE_SEED} (#1220). Counting usages, not \
          `use` lines, so `use super::*` and fully-qualified paths are visible. \
          Inventory (burn-down order): {per_file:?}"

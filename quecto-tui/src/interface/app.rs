@@ -17,12 +17,12 @@ use crate::components::notification::{Notification, NotificationStack, NotifyLev
 use crate::components::select_list::{SelectItem, SelectList};
 use crate::components::spinner::Spinner;
 use crate::components::workflow_bar;
-use crate::infrastructure::workspace_files::list_workspace_files;
 use crate::interface::kitty::KittyProtocol;
 use crate::protocol::client::{Client, Command, Event};
 use crate::shell::keys::{self, Key};
 use crate::shell::render::DiffRenderer;
 use crate::shell::terminal::Terminal;
+use crate::workspace::workspace_files::list_workspace_files;
 use app_selection::TextSelection;
 use tokio::sync::mpsc;
 
@@ -213,15 +213,19 @@ impl App {
 
 #[path = "app_disconnect.rs"]
 mod app_disconnect;
-#[path = "app_effort.rs"]
+// #1257 Phase 5: inference/workspace/sessions/workflow-owned app slices are
+// physically housed under their feature modules but remain mounted inside
+// `interface::app` until later controller-extraction phases. Intentional
+// remount only; do not infer a new dependency direction from the `#[path]`.
+#[path = "../inference/app_effort.rs"]
 mod app_effort;
 #[path = "app_event_loop.rs"]
 mod app_event_loop;
 #[path = "app_events.rs"]
 mod app_events;
-#[path = "app_git.rs"]
+#[path = "../workspace/app_git.rs"]
 mod app_git;
-#[path = "app_inference.rs"]
+#[path = "../inference/app_inference.rs"]
 mod app_inference;
 // #1257 Phase 3: conversation-owned app slices are physically housed under
 // `conversation/` but remain mounted inside `interface::app` until the issue's
@@ -229,11 +233,11 @@ mod app_inference;
 // not infer a new dependency direction from the `#[path]` target.
 #[path = "../conversation/app_rewind_state.rs"]
 mod app_rewind_state;
-#[path = "app_sessions.rs"]
+#[path = "../sessions/app_sessions.rs"]
 mod app_sessions;
-#[path = "app_workflow.rs"]
+#[path = "../workflow/app_workflow.rs"]
 mod app_workflow;
-#[path = "app_workspace.rs"]
+#[path = "../workspace/app_workspace.rs"]
 mod app_workspace;
 use app_inference::InferenceFlow;
 use app_rewind_state::RewindFlow;
@@ -254,7 +258,7 @@ mod app_ledger_sync;
 pub(crate) mod app_message_recovery;
 #[path = "app_methods.rs"]
 mod app_methods;
-#[path = "app_models.rs"]
+#[path = "../inference/app_models.rs"]
 mod app_models;
 #[path = "../conversation/app_paged_history.rs"]
 mod app_paged_history;
@@ -509,7 +513,7 @@ mod app_events_1060_lifecycle_tests;
 #[path = "app_events_1060_tests.rs"]
 mod app_events_1060_tests;
 #[cfg(test)]
-#[path = "app_git_tests.rs"]
+#[path = "../workspace/app_git_tests.rs"]
 mod app_git_tests;
 #[cfg(test)]
 #[path = "app_idle_efficiency_tests.rs"]
@@ -557,10 +561,10 @@ mod app_subagent_workflow_sticky_tests;
 #[path = "../agents/app_subagents_tests.rs"]
 mod app_subagents_tests;
 #[cfg(test)]
-#[path = "app_workflow_box_width_tests.rs"]
+#[path = "../workflow/app_workflow_box_width_tests.rs"]
 mod app_workflow_box_width_tests;
 #[cfg(test)]
-#[path = "app_workflow_flow_tests.rs"]
+#[path = "../workflow/app_workflow_flow_tests.rs"]
 mod app_workflow_flow_tests;
 #[cfg(test)]
 #[path = "app_chat_session_tests.rs"]

@@ -13,3 +13,5 @@ pub mod client;
 pub mod model_payloads;
 pub mod range_accumulator;
 pub mod session_payloads;
+pub mod state_payloads;
+pub mod workflow_payloads;

@@ -8,8 +8,8 @@ use cucumber::{given, then, when};
 use quecto_tui::components::autocomplete::AutocompleteResult;
 use quecto_tui::components::component::Component;
 use quecto_tui::components::files_autocomplete::FilesAutocomplete;
-use quecto_tui::infrastructure::workspace_files::MAX_WORKSPACE_FILES;
 use quecto_tui::shell::keys::Key;
+use quecto_tui::workspace::workspace_files::MAX_WORKSPACE_FILES;
 
 #[given(regex = r#"^a workspace with files "([^"]*)"$"#)]
 fn a_workspace_with_files(world: &mut TuiWorld, csv: String) {

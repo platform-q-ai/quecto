@@ -114,28 +114,38 @@ impl Footer {
         self.session_cost = cost;
     }
 
-    /// Apply a `get_state` payload's model + context-window to this footer.
+    /// Apply typed `get_state` footer fields (model + context-window + effort).
     /// Returns the sanitized model id when present so callers can track it.
     /// Single source of truth for the get_state→footer mapping shared by the
     /// master footer path and per-session sub-agent footers (#805).
-    pub fn apply_get_state(&mut self, data: &serde_json::Value) -> Option<String> {
-        let model = data.get("model").and_then(|m| m.as_str()).map(|m| {
-            let sanitized = crate::interface::ansi::sanitize_control(m);
-            self.set_model(&sanitized);
-            sanitized
+    ///
+    /// Wire JSON is interpreted by [`crate::protocol::state_payloads`]; this
+    /// method only applies the already-typed fields.
+    pub fn apply_get_state_fields(
+        &mut self,
+        fields: &crate::protocol::state_payloads::GetStateFooterFields,
+    ) -> Option<String> {
+        let model = fields.model.as_ref().map(|m| {
+            self.set_model(m);
+            m.clone()
         });
-        if let Some(max_ctx) = data.get("maxContextTokens").and_then(|v| v.as_u64()) {
+        if let Some(max_ctx) = fields.max_context_tokens {
             self.set_context_window(max_ctx as usize);
         }
-        // #1067: the wire shape is an explicit `"effort": null` when unset;
-        // treat a missing key identically so the footer always reflects the
-        // effective default rather than freezing a stale level.
-        self.set_effort(
-            data.get("effort")
-                .and_then(|v| v.as_str())
-                .map(crate::interface::ansi::sanitize_control),
-        );
+        // #1067: missing and explicit-null effort both arrive as None so the
+        // footer always reflects the effective default rather than freezing
+        // a stale level.
+        self.set_effort(fields.effort.clone());
         model
+    }
+
+    /// Apply a raw `get_state` payload via the protocol mapper (compat wrapper).
+    pub fn apply_get_state(&mut self, data: &serde_json::Value) -> Option<String> {
+        let fields = crate::protocol::state_payloads::parse_get_state_footer(
+            data,
+            &crate::interface::ansi::sanitize_control,
+        );
+        self.apply_get_state_fields(&fields)
     }
 
     /// Apply a parsed session-stats snapshot to the context + cost gauges.
