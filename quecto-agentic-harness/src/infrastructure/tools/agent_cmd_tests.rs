@@ -370,6 +370,7 @@ fn test_definition_lists_new_commands() {
     assert!(def.description.contains("clear_history"));
     assert!(def.description.contains("get_messages"));
     assert!(def.description.contains("get_subagents"));
+    assert!(def.description.contains("get_subagents_all"));
     assert!(def.description.contains("kill"));
 }
 
