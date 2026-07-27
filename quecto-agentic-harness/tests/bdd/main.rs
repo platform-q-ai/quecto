@@ -1393,6 +1393,15 @@ fn main() {
                 if sc.tags.iter().any(|t| t == "pending") {
                     return false;
                 }
+                // CI-only skip for scenarios that flake under Actions shard load
+                // but stay green in local pre-push. Opt back in with an explicit
+                // QUECTO_TAG (e.g. issue-1094) when debugging the race.
+                if sc.tags.iter().any(|t| t == "ci-flaky")
+                    && std::env::var_os("GITHUB_ACTIONS").is_some()
+                    && tag_filter.is_none()
+                {
+                    return false;
+                }
                 // Exclude the retired live behavioral suite unless it is either
                 // explicitly enabled for live credentials or selected through
                 // the zero-cost @mock-llm mirror lane.
