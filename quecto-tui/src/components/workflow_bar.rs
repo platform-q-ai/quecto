@@ -419,109 +419,31 @@ fn ellipsize_clean(text: &str, max_chars: usize) -> String {
 }
 
 /// Parse a `workflow_state` JSON event into `WorkflowBarState`.
+///
+/// Wire interpretation lives in [`crate::protocol::workflow_payloads`]; this
+/// converts the typed snapshot into component state.
 pub fn parse_workflow_event(data: &serde_json::Value) -> WorkflowBarState {
-    let steps: Vec<WorkflowStepInfo> = data
-        .get("steps")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| {
-                    // V2: field is "index"; V1 compat: "id"
-                    let id = s.get("index").or_else(|| s.get("id"))?.as_u64()? as u32;
-                    Some(WorkflowStepInfo {
-                        id,
-                        label: s
-                            .get("label")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        phase: s.get("phase")?.as_str()?.to_string(),
-                        done: s.get("done")?.as_bool()?,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let done = data
-        .get("progress")
-        .and_then(|p| p.get("done"))
-        .and_then(|v| v.as_u64())
-        .map(|n| n as u32)
-        .unwrap_or_else(|| steps.iter().filter(|s| s.done).count() as u32);
-    let total = data
-        .get("progress")
-        .and_then(|p| p.get("total"))
-        .and_then(|v| v.as_u64())
-        .map(|n| n as u32)
-        .unwrap_or(steps.len() as u32);
-
-    // Handle both camelCase (workflow_state event) and snake_case (get_state response).
-    let issue_number = data
-        .get("activeIssue")
-        .or_else(|| data.get("active_issue"))
-        .and_then(|i| {
-            i.get("number")
-                .or_else(|| i.as_array().and_then(|a| a.first()))
-        })
-        .and_then(|v| v.as_u64())
-        .map(|n| n as u32);
-    let issue_title = data
-        .get("activeIssue")
-        .or_else(|| data.get("active_issue"))
-        .and_then(|i| {
-            i.get("title")
-                .or_else(|| i.as_array().and_then(|a| a.get(1)))
-        })
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let mode = data
-        .get("mode")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let template_name = data
-        .get("activeTemplate")
-        .or_else(|| data.get("active_template"))
-        .and_then(|t| t.get("label"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let template_count = data
-        .get("availableTemplates")
-        .or_else(|| data.get("available_templates"))
-        .and_then(|v| v.as_array())
-        .map(|a| a.len() as u32)
-        .unwrap_or(0);
-
-    // #913: source the real automation flags from the snapshot's `automation`
-    // block when present (the `get_state` `workflow` payload and the kernel's
-    // workflow snapshot carry `automation.autoContinue`/`completionNudge`),
-    // instead of hardcoding `auto:off`. Live `workflow_state` events that omit
-    // the block still default to `false`, consistent with the prior behaviour.
-    let automation = data.get("automation");
-    let workflow_auto_continue = automation
-        .and_then(|a| a.get("autoContinue").or_else(|| a.get("auto_continue")))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let workflow_completion_nudge = automation
-        .and_then(|a| {
-            a.get("completionNudge")
-                .or_else(|| a.get("completion_nudge"))
-        })
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
+    let snap = crate::protocol::workflow_payloads::parse_workflow_snapshot(data);
     WorkflowBarState {
-        steps,
-        done,
-        total,
-        issue_number,
-        issue_title,
-        mode,
-        template_name,
-        template_count,
-        workflow_auto_continue,
-        workflow_completion_nudge,
+        steps: snap
+            .steps
+            .into_iter()
+            .map(|s| WorkflowStepInfo {
+                id: s.id,
+                label: s.label,
+                phase: s.phase,
+                done: s.done,
+            })
+            .collect(),
+        done: snap.done,
+        total: snap.total,
+        issue_number: snap.issue_number,
+        issue_title: snap.issue_title,
+        mode: snap.mode,
+        template_name: snap.template_name,
+        template_count: snap.template_count,
+        workflow_auto_continue: snap.workflow_auto_continue,
+        workflow_completion_nudge: snap.workflow_completion_nudge,
     }
 }
 
