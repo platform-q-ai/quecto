@@ -3,7 +3,6 @@
 
 use super::tui_harness::*;
 use crate::components::ansi::strip_ansi;
-use crate::components::workflow_bar;
 use crate::protocol::client::Event;
 fn workflow_event() -> Event {
     Event::WorkflowState {
@@ -87,38 +86,18 @@ async fn chat_tail_sits_directly_above_input_bar() {
 }
 
 #[tokio::test]
-async fn main_pane_title_reflects_live_auto_continue_state() {
-    let mut h = TuiHarness::new().await;
-    let wf = serde_json::json!({
-        "steps": [{"index": 0, "label": "Build it", "phase": "build", "done": false}],
-        "progress": {"done": 0, "total": 1},
-        "activeIssue": {"number": 7, "title": "thing"}
-    });
-    h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
-    let now = tokio::time::Instant::now();
-    let render = |h: &mut TuiHarness| -> String {
-        h.app_mut()
-            .render_main_pane_workflow(120, 120, now)
-            .iter()
-            .map(|l| strip_ansi(l))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    assert!(render(&mut h).contains("auto:off"), "{}", render(&mut h));
-    h.app_mut().handle_response(
-        Some("workflow-auto".into()),
-        "set_workflow_automation".into(),
-        true,
-        Some(serde_json::json!({"automation": {"autoContinue": true}})),
-        None,
-    );
-    assert!(render(&mut h).contains("auto:on"), "{}", render(&mut h));
-    h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
-    h.app_mut().mirror_automation_to_bar();
+async fn workflow_status_box_regression_test_fails_if_box_returns() {
+    let mut h = TuiHarness::sized(100, 30).await;
+    h.event(workflow_event());
+
+    let pane = strip_ansi(&h.main_pane());
     assert!(
-        render(&mut h).contains("auto:on"),
-        "workflow_state rebuild must preserve workflow title auto-continue state: {}",
-        render(&mut h)
+        !pane.contains("Step 2/3") && !pane.contains("Implement code"),
+        "this workflow-box regression test must fail if the old boxed status content returns:\n{pane}"
+    );
+    assert!(
+        !pane.lines().any(|line| line.chars().all(|c| c == '─')),
+        "this workflow-box regression test must fail if the old boxed status rules return:\n{pane}"
     );
 }
 

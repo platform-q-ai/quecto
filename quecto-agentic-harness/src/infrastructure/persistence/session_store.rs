@@ -48,7 +48,7 @@ impl FileSessionStore {
         previously_persisted: usize,
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Result<(), DomainError> {
-        if messages.is_empty() {
+        if messages.is_empty() && workflow_run.is_none() {
             return self.delete_session_file_if_present(key).await;
         }
         self.ensure_dir().await?;
@@ -116,7 +116,7 @@ impl SessionStore for FileSessionStore {
         let path = self.session_path(&session.key);
         let session = session.clone();
         Box::pin(async move {
-            if session.messages.is_empty() {
+            if session.messages.is_empty() && session.workflow_run.is_none() {
                 return self.delete_session_file_if_present(&session.key).await;
             }
             self.ensure_dir().await?;
@@ -133,7 +133,7 @@ impl SessionStore for FileSessionStore {
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         let path = self.session_path(key);
         Box::pin(async move {
-            if messages.is_empty() {
+            if messages.is_empty() && workflow_run.is_none() {
                 return self.delete_session_file_if_present(key).await;
             }
             self.ensure_dir().await?;
@@ -156,7 +156,7 @@ impl SessionStore for FileSessionStore {
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async move {
-            if messages.is_empty() {
+            if messages.is_empty() && workflow_run.is_none() {
                 return self.delete_session_file_if_present(key).await;
             }
             FileSessionStore::save_clean_delta(

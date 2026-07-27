@@ -7,7 +7,7 @@ async fn harness() -> TuiHarness {
 }
 
 #[tokio::test]
-async fn compose_bottom_spaces_active_child_indicator() {
+async fn compose_bottom_shows_active_child_indicator_in_stable_slot() {
     let mut h = harness().await;
     h.event(super::tui_harness::subagents_changed(vec![
         super::tui_harness::subagent("w1", "running", None),
@@ -15,33 +15,43 @@ async fn compose_bottom_spaces_active_child_indicator() {
 
     let bottom = h.app_mut().compose_bottom(120);
     let joined = bottom.join("\n");
-    let activity = bottom
-        .iter()
-        .position(|line| super::app_methods::strip_ansi(line).contains("working"))
-        .unwrap_or_else(|| panic!("expected activity line in bottom stack: {joined}"));
     assert!(
-        activity > 0,
-        "activity line must have a spacer above it: {joined}"
-    );
-    assert_eq!(
-        super::app_methods::strip_ansi(&bottom[activity - 1]).trim(),
-        "",
-        "activity line must have exactly one blank spacer immediately above it: {joined}"
+        bottom
+            .first()
+            .is_some_and(|line| super::app_methods::strip_ansi(line).contains("subagent working")),
+        "active child indicator must render in the stable tracked-child slot: {joined}"
     );
 }
 
 #[tokio::test]
-async fn compose_bottom_removes_idle_reserved_gap_above_input() {
-    let mut h = harness().await;
-    h.event(super::tui_harness::subagents_changed(vec![
+async fn compose_bottom_keeps_tracked_child_activity_slot_stable() {
+    let mut idle = harness().await;
+    idle.event(super::tui_harness::subagents_changed(vec![
         super::tui_harness::subagent("w1", "idle", None),
     ]));
+    let idle_bottom = idle.app_mut().compose_bottom(120);
 
-    let bottom = h.app_mut().compose_bottom(120);
+    let mut active = harness().await;
+    active.event(super::tui_harness::subagents_changed(vec![
+        super::tui_harness::subagent("w1", "running", None),
+    ]));
+    let active_bottom = active.app_mut().compose_bottom(120);
+
     assert!(
-        bottom
+        idle_bottom
             .first()
-            .is_some_and(|line| !super::app_methods::strip_ansi(line).trim().is_empty()),
-        "idle tracked subagents must not reserve a blank gap above the input: {bottom:?}"
+            .is_some_and(|line| super::app_methods::strip_ansi(line).contains("subagent idle")),
+        "idle tracked subagents should reserve the activity slot with visible status, not a blank gap: {idle_bottom:?}"
+    );
+    assert!(
+        active_bottom
+            .first()
+            .is_some_and(|line| super::app_methods::strip_ansi(line).contains("subagent working")),
+        "active tracked subagents should reuse the reserved activity slot: {active_bottom:?}"
+    );
+    assert_eq!(
+        idle_bottom.len(),
+        active_bottom.len(),
+        "tracked child idle↔active transitions must not resize the bottom stack"
     );
 }
