@@ -1,10 +1,8 @@
 @done @tui
 Feature: TUI feature-oriented architecture and executable BDD enforcement
   The quecto-tui crate is a feature-oriented presentation adapter for the
-  harness. Its remaining compatibility-bucket checks are interim guardrails
-  while production source migrates toward harness-facing capability modules, and
-  the BDD suite executes TUI standards instead of only keeping them as pending
-  documentation.
+  harness. Responsibility boundaries and final module ownership are executable
+  through BDD rather than existing only as documentation.
 
   @issue-1149
   Scenario: quecto-tui documents feature-oriented presentation boundaries
@@ -14,17 +12,20 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
     And the old quecto-tui Clean Architecture target model should be superseded
     And the quecto-tui README should point to the feature-oriented architecture document
 
-  Scenario: quecto-tui exposes Phase 5 top-level modules during migration
+  Scenario: quecto-tui exposes final feature-oriented top-level modules
     Then the quecto-tui source tree should contain layer "agents"
+    And the quecto-tui source tree should contain layer "components"
     And the quecto-tui source tree should contain layer "conversation"
+    And the quecto-tui source tree should contain layer "inference"
     And the quecto-tui source tree should contain layer "protocol"
     And the quecto-tui source tree should contain layer "sessions"
+    And the quecto-tui source tree should contain layer "shell"
     And the quecto-tui source tree should contain layer "workflow"
-    And the quecto-tui source tree should contain layer "inference"
     And the quecto-tui source tree should contain layer "workspace"
-    And the quecto-tui source tree should contain layer "interface"
+    And the quecto-tui source tree should not contain layer "application"
     And the quecto-tui source tree should not contain layer "domain"
     And the quecto-tui source tree should not contain layer "infrastructure"
+    And the quecto-tui source tree should not contain layer "interface"
 
   Scenario: quecto-tui conversation source remains free of runtime I/O
     Then the quecto-tui conversation source should not contain runtime I/O patterns
@@ -35,6 +36,10 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
     And the quecto-tui workspace files adapter should not import presentation layers
     And the quecto-tui protocol source should not import feature or shell modules
     And the quecto-tui shell should own runtime adapters
+    And the quecto-tui components should not import the protocol client
+    And the quecto-tui protocol should not import widget or terminal types
+    And the quecto-tui shell should own the App composition root
+    And the quecto-tui final presentation primitives should have their assigned owners
 
   Scenario: quecto-tui production files live inside approved top-level modules
     Then every quecto-tui production Rust file should be under an approved top-level module
@@ -49,7 +54,7 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
     And the TUI architecture feature should not contain pending scenarios
 
   @issue-741
-  Scenario: TUI session payload parsing lives outside the App interface
+  Scenario: TUI session payload parsing is delegated outside shell App methods
     Then the TUI protocol layer should parse session stats payloads into typed values
     And the TUI protocol layer should validate resumed chat payloads into typed messages
     And the TUI App methods should delegate session payload parsing to the protocol layer

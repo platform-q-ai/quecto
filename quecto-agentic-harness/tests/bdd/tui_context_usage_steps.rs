@@ -13,8 +13,8 @@ use quecto::application::context_pruning::estimate_total_tokens;
 use quecto::domain::message::UsageInfo;
 use quecto::interface::cli::protocol::SessionStats as WireSessionStats;
 use quecto::interface::cli::uds_session::{AgentSession, compute_session_stats_with_usage};
-use quecto_tui::interface::app::tui_harness::TuiHarness;
 use quecto_tui::protocol::client::Event;
+use quecto_tui::shell::app::tui_harness::TuiHarness;
 
 const WINDOW: u64 = 200_000;
 const AGENT_WINDOW: usize = 190_000;

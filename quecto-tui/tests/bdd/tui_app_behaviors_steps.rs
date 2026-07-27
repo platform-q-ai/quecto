@@ -7,10 +7,10 @@
 
 use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
-use quecto_tui::interface::ansi::strip_ansi;
-use quecto_tui::interface::app::tui_harness::TuiHarness;
-use quecto_tui::interface::utils::visible_width;
+use quecto_tui::components::ansi::strip_ansi;
+use quecto_tui::components::utils::visible_width;
 use quecto_tui::protocol::client::Event;
+use quecto_tui::shell::app::tui_harness::TuiHarness;
 use quecto_tui::shell::keys::Key;
 
 async fn build_fresh_harness() -> TuiHarness {
@@ -1015,9 +1015,9 @@ fn given_viewing_subagent_without_ready_connection(world: &mut TuiWorld, id: Str
     let mut h = rt.block_on(async {
         let mut h = TuiHarness::new().await;
         h.event(Event::AgentStart);
-        h.event(quecto_tui::interface::app::tui_harness::spawn_start(&id));
-        h.event(quecto_tui::interface::app::tui_harness::subagents_changed(
-            vec![quecto_tui::interface::app::tui_harness::subagent(
+        h.event(quecto_tui::shell::app::tui_harness::spawn_start(&id));
+        h.event(quecto_tui::shell::app::tui_harness::subagents_changed(
+            vec![quecto_tui::shell::app::tui_harness::subagent(
                 &id, "idle", None,
             )],
         ));

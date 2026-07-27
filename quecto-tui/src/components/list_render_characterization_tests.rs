@@ -14,13 +14,13 @@ use crate::components::component::Component;
 use crate::components::files_autocomplete::FilesAutocomplete;
 use crate::components::model_selector::{ModelEntry, ModelSelector, ModelSelectorResult};
 use crate::components::select_list::{SelectItem, SelectList};
-use crate::interface::utils::visible_width;
+use crate::components::utils::visible_width;
 use crate::shell::keys::Key;
 
 const ACCENT: &str = "\x1b[36m";
 const DIM: &str = "\x1b[2m";
 
-use crate::interface::ansi::strip_ansi;
+use crate::components::ansi::strip_ansi;
 
 fn stripped(lines: &[String]) -> Vec<String> {
     lines.iter().map(|l| strip_ansi(l)).collect()

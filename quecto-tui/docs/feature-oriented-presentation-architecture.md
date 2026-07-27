@@ -20,24 +20,28 @@ Production ownership should converge toward these feature-oriented modules:
 
 These are presentation modules aligned with harness capabilities. They must remain coupled to the public UDS protocol, not to private `quecto-agentic-harness` internals.
 
-## Interim compatibility map
+## Final layout (Phase 6)
 
-The current crate still uses `interface/` as an interim compatibility bucket alongside landed feature modules (`components/`, `shell/`, `protocol/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, `workspace/`). During migration, treat remaining CA folders as compatibility buckets, not as the final target model. `application/` was deleted in #1257 Phase 2 when mappers moved into `protocol/`; the vestigial TUI `domain/` bucket was deleted in #1257 Phase 3 when conversation history/recovery policy moved to `conversation/`; `interface/agents/` was promoted to top-level `agents/` in #1257 Phase 4 (with `ui.rs` split into `runtime.rs` + `view.rs`); `infrastructure/` was deleted in #1257 Phase 5 when `workspace_files` moved to `workspace/` and the remaining flow slices landed under `sessions/`, `workflow/`, `inference/`, and `workspace/`.
+#1257 Phase 6 retires the interim `interface/` compatibility bucket. Production ownership is entirely feature-oriented:
 
-| Current location | Interim role | Target direction |
-|---|---|---|
-| `interface/app*.rs` | shell plus not-yet-moved feature controllers still co-located in `App` | split by `shell` remaining composition; conversation-, agents-, sessions-, workflow-, inference-, and workspace-owned slices already mount from their feature modules |
-| `interface/components/*` | widgets and render helpers (relocated to top-level `components/`, #1257 Phase 1) | `components` |
-| `protocol/client*.rs` | UDS client and wire protocol boundary (relocated, #1257 Phase 2) | `protocol` |
-| `shell/{process,terminal,signals,render,child_watch,warn_capture}.rs` | runtime/terminal adapters (relocated, #1257 Phase 1) | `shell` |
-| `workspace/workspace_files.rs` | workspace filesystem/Git adapter (relocated, #1257 Phase 5) | `workspace` boundary adapter |
-| `protocol/model_payloads.rs` | typed mapper for `list_models` wire payloads (#1220; relocated, #1257 Phase 2) | `protocol` mapping feeding `models` |
-| `protocol/session_payloads.rs` | typed parsing foothold for session payloads (relocated, #1257 Phase 2) | `protocol` mapping feeding `sessions` |
-| `conversation/` | master history, paging, recovery, rewind state/flow and conversation-owned app slices (#1221/#1257 Phase 3) | `conversation` |
-| `domain/` | deleted in #1257 Phase 3 | do not recreate for TUI; pure invariant policy now lives under the owning feature |
-| `infrastructure/` | deleted in #1257 Phase 5 | do not recreate; workspace filesystem adapter lives under `workspace/` |
+- `shell/`: composition root (`App`), event loop, CLI entry, stdin buffer, runtime/terminal adapters
+- `protocol/`: UDS client, wire DTOs, raw framing/deserialization, DTO-to-feature mappers
+- `conversation/`, `sessions/`, `agents/`, `workflow/`, `inference/`, `workspace/`: capability controllers and pure policy
+- `components/`: reusable widgets plus presentation primitives (`ansi`, `theme`, `utils`, overlays)
 
-Each migration PR should preserve one source of truth for every moved state cluster and avoid long-lived dual writes.
+Deleted interim buckets: `application/` (Phase 2), `domain/` (Phase 3), `infrastructure/` (Phase 5), `interface/` (Phase 6). Do not recreate CA folders for TUI.
+
+
+### Deleted interim buckets
+
+| Bucket | Status |
+|---|---|
+| `application/` | deleted in #1257 Phase 2 |
+| `domain/` | deleted in #1257 Phase 3 |
+| `infrastructure/` | deleted in #1257 Phase 5 |
+| `interface/` | deleted in #1257 Phase 6 |
+
+#1221 (`conversation`) and #1222 (`agents`) depend on #1220.
 
 ## Boundary rules
 
@@ -77,9 +81,9 @@ Observable surfaces and required parity:
 | Surface | Required identical behavior | Boundary cases | Performance characteristics |
 |---|---|---|---|
 | TUI runtime behavior | No runtime behavior changes except the intentional patch-version string update required by repository release policy: no command ordering, protocol handling, event routing, terminal handling, render output other than version text, or widget behavior changes. | Not applicable to this docs/guardrail slice; no runtime call sites are changed. | Not applicable; no specialized runtime code is replaced. |
-| TUI public crate shape during migration | Current compatibility modules remain available: `interface`, plus landed feature modules `agents`, `components`, `conversation`, `inference`, `protocol`, `sessions`, `shell`, `workflow`, and `workspace`; the vestigial TUI `domain` and `infrastructure` modules are intentionally absent after #1257 Phases 3 and 5, and `main.rs` remains a thin entrypoint. | Empty/one/many module cases are not relevant because the compatibility set is exact and already pinned by existing architecture tests. | Not applicable; module exports are compile-time structure. |
+| TUI final public crate shape | Feature modules only: `agents`, `components`, `conversation`, `inference`, `protocol`, `sessions`, `shell`, `workflow`, and `workspace`; retired CA buckets `application`, `domain`, `infrastructure`, and `interface` are intentionally absent after #1257 Phases 2–6, and `main.rs` remains a thin entrypoint. | Empty/one/many module cases are not relevant because the compatibility set is exact and already pinned by existing architecture tests. | Not applicable; module exports are compile-time structure. |
 | Architecture documentation | The current architecture direction is discoverable from the TUI README; the superseded Clean Architecture target model clearly points to the feature-oriented architecture document; the new document lists all target harness-facing capability modules. | Full target set must be present: shell, protocol, conversation, sessions, agents, workflow, inference, workspace, components. | Not applicable; documentation-only surface. |
-| Executable guardrails | Architecture tests and BDD steps continue to execute, and the new feature-oriented guardrail is additive rather than weakening existing interim compatibility checks. | Existing checks cover the Phase 4 module set (`agents` + `conversation`), intentional deletion of `domain/`, root file placement, and the full capability list plus protocol and pure-policy boundary rules. | Not applicable; test/runtime cost is outside shipped TUI behavior. |
+| Executable guardrails | Architecture tests and BDD steps continue to execute, and the new feature-oriented guardrail is additive rather than weakening final responsibility checks. | Existing checks cover the Phase 4 module set (`agents` + `conversation`), intentional deletion of `domain/`, root file placement, and the full capability list plus protocol and pure-policy boundary rules. | Not applicable; test/runtime cost is outside shipped TUI behavior. |
 
 Approved parity contract: all readiness-gate items are resolved; no `__UNRESOLVED__` markers remain.
 
@@ -149,13 +153,13 @@ Coverage gaps closed before the freeze (command-emission surface, previously pin
 - `second_open_while_pending_emits_no_duplicate_list_models` (M16)
 - `selector_selection_emits_set_model_command` (M18)
 
-Mutation residue check: `git diff quecto-tui/src/interface/app_models.rs` shows only the added characterization test-module declaration; the suite is GREEN at 20 passed.
+Mutation residue check: `git diff quecto-tui/src/shell/app_models.rs` shows only the added characterization test-module declaration; the suite is GREEN at 20 passed.
 
 Freeze manifest (characterization suite is READ-ONLY from here until the parity step):
 
 | File | `git hash-object` |
 |---|---|
-| `quecto-tui/src/interface/app_models_protocol_characterization_tests.rs` | `d37d0ad0f0f19fb40bba8f14e6029a285be4d219` |
+| `quecto-tui/src/shell/app_models_protocol_characterization_tests.rs` | `d37d0ad0f0f19fb40bba8f14e6029a285be4d219` |
 
 ## Characterization mutation log for architecture-boundary slice
 
@@ -189,7 +193,7 @@ No production runtime code, rendering code, protocol code, or characterization t
 | Deleted/replaced text | Invariant it enforced | New location preserving invariant |
 |---|---|---|
 | README phrase “Clean Architecture layering” | The TUI has an explicit architecture direction before `1.0`. | README now names feature-oriented presentation boundaries and links this document. |
-| Feature title/body wording that described Clean Architecture as the target | The TUI architecture rules remain executable through BDD. | Feature now describes interim compatibility layers plus the feature-oriented target boundary scenario. |
+| Feature title/body wording that described Clean Architecture as the target | The TUI architecture rules remain executable through BDD. | Feature now describes the final feature-oriented responsibility boundaries. |
 | Old target-model note saying it would be rewritten or removed under #1219 | Readers must not implement against the abandoned four-layer target. | Superseded banner now links this current feature-oriented architecture document. |
 
 No shared helper was introduced, so consolidation completeness is not applicable for this slice.
@@ -199,9 +203,9 @@ No shared helper was introduced, so consolidation completeness is not applicable
 | Surface | Behavior | Evidence | Verdict |
 |---|---|---|---|
 | TUI runtime behavior | No command ordering, protocol handling, event routing, terminal handling, render output other than required version text, or widget behavior changes. | `git diff HEAD~1..HEAD -- quecto-tui/src` is empty; no production TUI source files changed. Patch-version surfaces changed intentionally because changed crates are versioned in this repository. `cargo check -p quecto-tui` passed. | PASS |
-| TUI public crate shape during migration | Compatibility modules and thin entrypoint remain available. | `cargo test -p quecto-agentic-harness --test architecture` passed, including existing TUI layer/root-file checks. | PASS |
+| TUI final public crate shape | Feature modules and the thin entrypoint are the only public crate shape. | `cargo test -p quecto-agentic-harness --test architecture` passed, including existing TUI layer/root-file checks. | PASS |
 | Architecture documentation | README points to current feature-oriented doc; old Clean Architecture target is superseded; all target capability modules and boundary rules are documented. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_oriented_architecture_is_documented` passed; `QUECTO_TAG=issue-1149 cargo test -p quecto-agentic-harness --features test-support --test bdd` passed. | PASS |
-| Executable guardrails | New feature-oriented guardrail is additive and existing interim compatibility checks still run. | Full architecture integration test passed; BDD target compiled with `cargo test -p quecto-agentic-harness --features test-support --test bdd --no-run`. | PASS |
+| Executable guardrails | New feature-oriented guardrail is additive and final responsibility checks still run. | Full architecture integration test passed; BDD target compiled with `cargo test -p quecto-agentic-harness --features test-support --test bdd --no-run`. | PASS |
 | Frozen characterization suite | #1219 intentionally extends the architecture guardrail, so `architecture.rs` is not claimed frozen for this slice; the unchanged BDD feature and step files remain the #1149 characterization baseline. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_oriented_architecture_is_documented` passed, including the exact production-file/map comparison added for #1219. | PASS |
 | Visual parity | No render frames or visual surfaces are touched. | No files under `quecto-tui/src` changed; this slice only changes docs, tests, Cargo metadata, and lockfile. | PASS |
 | Performance parity | No specialized runtime/rendering code is replaced, so no allocation, cache, single-pass, or complexity characteristic changes. | No production code changed. Targeted clippy passed: `cargo clippy -p quecto-agentic-harness --test architecture -- -D warnings` and `cargo clippy -p quecto-tui --all-targets -- -D warnings`. | PASS |
@@ -250,101 +254,101 @@ This issue is the characterization-readiness slice for the later code-moving iss
 
 | Current production file | Target owner |
 |---|---|
-| `protocol/agent_ledger_payloads.rs` | `protocol` mapper feeding `agents` ledger sync (#1222; relocated, #1257 Phase 2) |
-| `protocol/model_payloads.rs` | `protocol` mapper feeding `models` (relocated, #1257 Phase 2) |
-| `protocol/range_accumulator.rs` | `protocol` chunked range assembly feeding `conversation` (#1221; relocated, #1257 Phase 2) |
-| `protocol/session_payloads.rs` | `protocol` mapper feeding `sessions` (relocated, #1257 Phase 2) |
-| `protocol/client.rs` | `protocol` UDS client and wire DTOs (relocated, #1257 Phase 2) |
-| `protocol/mod.rs` | `protocol` module root (added, #1257 Phase 2) |
-| `protocol/state_payloads.rs` | `protocol` mapper for get_state / set_effort / set_model / resume ack (#1257 Phase 5) |
-| `protocol/workflow_payloads.rs` | `protocol` mapper for workflow snapshots and automation flags (#1257 Phase 5) |
-| `conversation/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221; relocated, #1257 Phase 3) |
-| `conversation/turn_recovery.rs` | `conversation` end-of-turn recovery trigger and batch atomicity (#1221; relocated, #1257 Phase 3) |
-| `conversation/app_paged_history.rs` | `conversation` master-history pagination/stub recall flow (relocated, #1257 Phase 3) |
-| `conversation/app_resumed_history.rs` | `conversation` resumed transcript projection (relocated, #1257 Phase 3) |
-| `conversation/app_message_recovery.rs` | `conversation` message-ref recovery flow (relocated, #1257 Phase 3) |
-| `conversation/app_rewind.rs` | `conversation` rewind flow owner (relocated, #1257 Phase 3) |
-| `conversation/app_rewind_state.rs` | `conversation` rewind state owner (relocated, #1257 Phase 3) |
-| `conversation/mod.rs` | `conversation` module root (#1257 Phase 3) |
-| `sessions/app_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
-| `sessions/mod.rs` | `sessions` module root (#1257 Phase 5) |
-| `workflow/app_workflow.rs` | `workflow` (relocated, #1257 Phase 5) |
-| `workflow/mod.rs` | `workflow` module root (#1257 Phase 5) |
-| `inference/app_effort.rs` | `inference` (relocated, #1257 Phase 5) |
-| `inference/app_inference.rs` | `inference` flow owner (relocated, #1257 Phase 5) |
-| `inference/app_models.rs` | `inference` (relocated, #1257 Phase 5) |
-| `inference/mod.rs` | `inference` module root (#1257 Phase 5) |
-| `workspace/app_git.rs` | `workspace` (relocated, #1257 Phase 5) |
-| `workspace/app_workspace.rs` | `workspace` flow owner (relocated, #1257 Phase 5) |
-| `workspace/workspace_files.rs` | `workspace` (relocated, #1257 Phase 5) |
-| `workspace/mod.rs` | `workspace` module root (#1257 Phase 5) |
-| `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
-| `shell/process.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
-| `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
-| `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
-| `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
-| `shell/warn_capture.rs` | `shell` diagnostics/runtime adapter (relocated, #1257 Phase 1) |
-| `interface/app.rs` | `shell` composition root plus state delegated to features |
-| `interface/app_commands.rs` | `shell` top-level command routing |
-| `interface/app_disconnect.rs` | `shell` runtime/disconnect coordination |
-| `interface/app_event_loop.rs` | `shell` event loop |
-| `interface/app_events.rs` | `shell` top-level event routing |
-| `interface/app_events_test_support.rs` | `shell` test support |
-| `interface/app_idle_efficiency.rs` | `shell` event-loop policy |
-| `agents/app_ledger_sync.rs` | `agents` (relocated, #1257 Phase 4) |
-| `interface/app_methods.rs` | `shell` composition methods until split by feature |
-| `interface/app_response.rs` | `conversation` |
-| `interface/app_selection.rs` | `shell` focus/routing until delegated to feature views |
-| `interface/app_stdin.rs` | `conversation` input coordination with `shell` stdin adapter |
-| `agents/app_subagent_feed.rs` | `agents` (relocated, #1257 Phase 4) |
-| `agents/feed.rs` | `agents` pure feed sync state (#1222; relocated, #1257 Phase 4) |
-| `agents/focus.rs` | `agents` focus constants/state (#1222; relocated, #1257 Phase 4) |
-| `agents/ledger.rs` | `agents` pure ledger transcript projection (#1222; relocated, #1257 Phase 4) |
-| `agents/mod.rs` | `agents` module root (#1222; relocated, #1257 Phase 4) |
+| `agents/controller_ledger_sync.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/controller_subagent_feed.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/controller_subagent_panel.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/controller_subagent_stream.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/controller_subagents.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/feed.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/focus.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/ledger.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/mod.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/roster.rs` | `agents` pure roster/lifecycle policy (#1222; relocated, #1257 Phase 4) |
 | `agents/runtime.rs` | `agents` feed connect-task runtime ownership (#1257 Phase 4 ui.rs split) |
 | `agents/view.rs` | `agents` concrete UI/runtime adapter state (#1222; relocated + split, #1257 Phase 4) |
-| `agents/app_subagent_panel.rs` | `agents` (relocated, #1257 Phase 4) |
-| `agents/app_subagent_stream.rs` | `agents` (relocated, #1257 Phase 4) |
-| `agents/app_subagents.rs` | `agents` (relocated, #1257 Phase 4) |
-| `interface/app_submit.rs` | `conversation` |
-| `interface/ansi.rs` | `components` rendering primitive |
-| `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
-| `components/component.rs` | `components` shared traits/primitives (relocated, #1257 Phase 1) |
+| `components/ansi.rs` | `components` rendering primitive (relocated, #1257 Phase 6) |
 | `components/autocomplete.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/chat.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/chat_render.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/chat_stub.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/editor.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/effort_selector.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/files_autocomplete.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/footer.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/list_navigator.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/list_rows.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/markdown.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/chat.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/chat_render.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/chat_stub.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/component.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/editor.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/effort_selector.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/files_autocomplete.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/footer.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/fuzzy.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/kitty.rs` | `components` terminal protocol helper used by shell (relocated, #1257 Phase 6) |
+| `components/list_navigator.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/list_rows.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/markdown.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/mod.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/model_selector.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/notification.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/select_list.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/spinner.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/suggestion_list.rs` | `components` (relocated, #1257 Phase 1) |
+| `components/model_selector.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/notification.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/overlay.rs` | `components` overlay primitive (relocated, #1257 Phase 6) |
+| `components/select_list.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/select_overlay.rs` | `components` overlay primitive (relocated, #1257 Phase 6) |
+| `components/spinner.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/suggestion_list.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/theme.rs` | `components` styling primitive (relocated, #1257 Phase 6) |
+| `components/utils.rs` | `components` shared UI helpers (relocated, #1257 Phase 6) |
 | `components/workflow_bar.rs` | `components` (relocated, #1257 Phase 1) |
-| `components/fuzzy.rs` | `components` helper used by overlays/autocomplete (relocated, #1257 Phase 1) |
-| `shell/mod.rs` | `shell` module root (added, #1257 Phase 1) |
-| `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
-| `interface/kitty.rs` | `shell` terminal integration |
-| `interface/mod.rs` | remove/split into `shell`, features, and `components` |
-| `interface/overlay.rs` | `components` overlay primitive |
-| `interface/select_overlay.rs` | `components` overlay primitive |
-| `interface/stdin_buffer.rs` | `shell` stdin adapter/policy |
-| `interface/theme.rs` | `components` styling primitive |
-| `interface/tui_harness.rs` | `shell` test harness support |
-| `interface/tui_harness_disconnect.rs` | `shell` test harness support |
-| `interface/tui_harness_events.rs` | `shell` test harness support |
-| `interface/tui_harness_probes.rs` | `shell` test harness support |
-| `interface/utils.rs` | split by caller; keep shared UI helpers in `components` |
+| `conversation/controller_message_recovery.rs` | `conversation` (relocated, #1257 Phase 3) |
+| `conversation/controller_paged_history.rs` | `conversation` (relocated, #1257 Phase 3) |
+| `conversation/controller_resumed_history.rs` | `conversation` (relocated, #1257 Phase 3) |
+| `conversation/controller_rewind.rs` | `conversation` rewind flow owner (relocated, #1257 Phase 3) |
+| `conversation/controller_rewind_state.rs` | `conversation` (relocated, #1257 Phase 3) |
+| `conversation/history_paging.rs` | `conversation` history cursors, page correlation and backfill latch (#1221; relocated, #1257 Phase 3) |
+| `conversation/mod.rs` | `conversation` (relocated, #1257 Phase 3) |
+| `conversation/turn_recovery.rs` | `conversation` end-of-turn recovery trigger and batch atomicity (#1221; relocated, #1257 Phase 3) |
+| `inference/controller_effort.rs` | `inference` (relocated, #1257 Phase 5) |
+| `inference/controller_inference.rs` | `inference` (relocated, #1257 Phase 5) |
+| `inference/controller_models.rs` | `inference` (relocated, #1257 Phase 5) |
+| `inference/mod.rs` | `inference` (relocated, #1257 Phase 5) |
 | `lib.rs` | `shell` crate composition/export root |
 | `main.rs` | `shell` thin binary entrypoint |
+| `protocol/agent_ledger_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
+| `protocol/client.rs` | `protocol` UDS client and wire DTOs (relocated, #1257 Phase 2) |
+| `protocol/mod.rs` | `protocol` (relocated, #1257 Phase 2) |
+| `protocol/model_payloads.rs` | `protocol` mapper feeding `models` (relocated, #1257 Phase 2) |
+| `protocol/presentation_payloads.rs` | `protocol` typed mapping for turn, history, spawn, and tool display payloads (#1257 Phase 6) |
+| `protocol/range_accumulator.rs` | `protocol` (relocated, #1257 Phase 2) |
+| `protocol/session_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
+| `protocol/state_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
+| `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
+| `sessions/controller_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
+| `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |
+| `shell/app.rs` | `shell` composition root (relocated, #1257 Phase 6) |
+| `shell/app_commands.rs` | `shell` top-level command routing (relocated, #1257 Phase 6) |
+| `shell/app_disconnect.rs` | `shell` runtime/disconnect coordination (relocated, #1257 Phase 6) |
+| `shell/app_event_loop.rs` | `shell` event loop (relocated, #1257 Phase 6) |
+| `shell/app_events.rs` | `shell` top-level event routing (relocated, #1257 Phase 6) |
+| `shell/app_events_test_support.rs` | `shell` test support (relocated, #1257 Phase 6) |
+| `shell/app_idle_efficiency.rs` | `shell` event-loop policy (relocated, #1257 Phase 6) |
+| `shell/app_methods.rs` | `shell` composition methods (relocated, #1257 Phase 6) |
+| `shell/app_response.rs` | `shell` response dispatch seam (relocated, #1257 Phase 6; protocol-mapper allowlist #1220) |
+| `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |
+| `shell/app_stdin.rs` | `shell` stdin coordination (relocated, #1257 Phase 6) |
+| `shell/app_submit.rs` | `shell` submit/prompt coordination (relocated, #1257 Phase 6) |
+| `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
+| `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
+| `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
+| `shell/mod.rs` | `shell` module root |
+| `shell/process.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
+| `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
+| `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
+| `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
+| `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
+| `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/tui_harness_disconnect.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/tui_harness_events.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/tui_harness_probes.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/warn_capture.rs` | `shell` diagnostics/runtime adapter (relocated, #1257 Phase 1) |
+| `workflow/controller_workflow.rs` | `workflow` (relocated, #1257 Phase 5) |
+| `workflow/mod.rs` | `workflow` (relocated, #1257 Phase 5) |
+| `workspace/controller_git.rs` | `workspace` (relocated, #1257 Phase 5) |
+| `workspace/controller_workspace.rs` | `workspace` (relocated, #1257 Phase 5) |
+| `workspace/mod.rs` | `workspace` (relocated, #1257 Phase 5) |
+| `workspace/workspace_files.rs` | `workspace` (relocated, #1257 Phase 5) |
 
 ### Parity contract for agents presentation slice (#1222)
 
@@ -385,9 +389,9 @@ Deletion ledger for #1222 refactor:
 
 | Deleted/replaced site | Invariant enforced before | New owner / evidence |
 |---|---|---|
-| `interface/app.rs` inline `SubagentUi` owner state | Sub-agent tracked rows, sessions, feeds, focused pane, direct-event fan-in, and active target live in one owner group. | `agents/view.rs` owns `SubagentUi`, `SessionView`, concrete feed runtime state, and the runtime-to-chat adapter. Existing `tui_list_render_state` BDD plus `cargo test -p quecto-tui --lib app_subagent_panel_tests` keep the owner-group/session behavior pinned. |
-| `interface/app.rs` inline `SessionView` construction | Child/master sessions use identical footer/history/chat/deferred-note initialization. | `agents/view.rs::SessionView::{new,with_footer}` carries the initializer unchanged; pinned by `app_subagent_panel_tests`, `app_paged_history_tests`, and TUI sub-agent parity BDD. |
-| `interface/app.rs` inline `Focus` and panel/retention constants | `Tab` focus model, panel width, and retained-session cap stay stable. | `agents/focus.rs` owns `Focus`, `SUBAGENT_PANEL_WIDTH`, and `MAX_RETAINED_SESSIONS`; pinned by focus parity tests, sub-agent layout BDD, and `retained_sessions_and_warm_feeds_evict_oldest_non_active_beyond_cap`. |
+| `shell/app.rs` inline `SubagentUi` owner state | Sub-agent tracked rows, sessions, feeds, focused pane, direct-event fan-in, and active target live in one owner group. | `agents/view.rs` owns `SubagentUi`, `SessionView`, concrete feed runtime state, and the runtime-to-chat adapter. Existing `tui_list_render_state` BDD plus `cargo test -p quecto-tui --lib app_subagent_panel_tests` keep the owner-group/session behavior pinned. |
+| `shell/app.rs` inline `SessionView` construction | Child/master sessions use identical footer/history/chat/deferred-note initialization. | `agents/view.rs::SessionView::{new,with_footer}` carries the initializer unchanged; pinned by `app_subagent_panel_tests`, `app_paged_history_tests`, and TUI sub-agent parity BDD. |
+| `shell/app.rs` inline `Focus` and panel/retention constants | `Tab` focus model, panel width, and retained-session cap stay stable. | `agents/focus.rs` owns `Focus`, `SUBAGENT_PANEL_WIDTH`, and `MAX_RETAINED_SESSIONS`; pinned by focus parity tests, sub-agent layout BDD, and `retained_sessions_and_warm_feeds_evict_oldest_non_active_beyond_cap`. |
 | `interface/app_subagent_state.rs` | Lifecycle status classification, elapsed timer freeze/resume, exited grace GC, optimistic marker retention, and workflow/parent stickiness. | `agents/roster.rs` owns generic `TrackedSubagent`, `RosterInfo`, lifecycle updates, GC and deadline policy. Existing subagent tests plus new characterization tests pin the same lifecycle/retention edges. |
 | `interface/app_subagents.rs` hand-rolled source-scoped snapshot merge | Master snapshots own roots; direct feeds own only their source subtree; anti-hijack and recursive descendant acceptance; parent carry-over for surviving descendants. | `agents/roster.rs::apply_roster_snapshot` owns the merge policy. `App::update_subagent_bar_from_source` sanitizes/socket-filters then delegates once. Pinned by `app_subagent_roster_authority_tests`, `app_subagents_tests`, and `active_child_removed_by_its_source_feed_falls_back_to_master_only`. |
 | `interface/feed_state.rs` flattened feed sync state | Warm feed is non-authoritative until sync delta; epoch/rev/freshness/capability/pending/transcript fields move together. | `agents/feed.rs::FeedSyncState` owns pure feed synchronization state; `agents/view.rs::FeedState` separately wraps runtime `cmd_tx`/task handle. `app_subagent_feed.rs` constructs from `FeedRuntime` + `FeedSyncState`; pinned by ledger tests and warm-start characterization. |
@@ -401,7 +405,7 @@ Parity evidence recorded during #1222 implementation:
 | Frozen characterization suite | Roster/source authority, warm-feed startup, retained feed/session cap, ledger no-op hints, caught-up sync, duplicate-id transcript upsert, active-child fallback, and authoritative ledger projection preserve behavior. | `cargo test -p quecto-tui --lib app_agents_characterization_tests` passed after refactor. Mutation evidence before freeze killed M1–M15. The ledger projection test needed a mechanical type adaptation from `ChatEntry` to pure `LedgerEntry` after extraction; follow-up mutations M16/M17 against `agents/ledger.rs` both failed the adapted test. | PASS |
 | Existing targeted unit suites | Existing subagent, ledger, workflow-stickiness, panel/session, and roster-authority behavior remains unchanged. | Passed: `cargo test -p quecto-tui --lib` (1642 tests); explicit targeted runs of `app_ledger_sync_tests`, `ledger_sync_tests`, `app_subagent_roster_authority_tests`, `app_subagents_tests`, `app_subagent_panel_tests`, and `app_subagent_workflow_sticky_tests`. Existing tests changed only for mechanical module/type moves (`feed_state`/`ledger_sync` into top-level `agents/*`, `ui` → `runtime`/`view`, plus typed `LedgerEntry` projection). | PASS |
 | Visual / rendered frames | Panel-first layout, read-only marker, and sub-agent session parity render identical user-visible surfaces. | `cd quecto-tui && QUECTO_TAG=tui cargo test --features test-harness --test bdd` passed 28 TUI features / 175 scenarios, including `tui_subagent_first_layout`, `tui_subagent_readonly_marker`, and `tui_subagent_session_parity`. | PASS |
-| Architecture policy | Raw JSON and wire DTO parsing sites do not grow; pure agents policy has no Tokio handles/channels, terminal/widget types, or concrete client; runtime feed ownership remains separated. | `cargo test -p quecto-agentic-harness --test architecture tui_interface_raw_json_parsing_sites_do_not_grow -- --exact` and `cargo test -p quecto-agentic-harness --test architecture tui_wire_dto_usage_does_not_grow -- --exact` passed. `grep` over `agents/{feed,roster,ledger,focus}.rs` found no channels, task handles, concrete client, terminal/widget types, or `serde_json`; only `tokio::time::Instant` remains in roster lifecycle timestamps. Caveat on the ratchets: both counters are heuristic — the raw-JSON counter matches literal `.get("`/`.pointer("` and accessor+`and_then` lines, so `serde_json::from_str`/`from_value` and dynamic `value.get(key)` in `protocol/agent_ledger_payloads.rs` are not counted; the wire-DTO counter matches `Command::`/`Event::`/`infrastructure::client`/`protocol::client` lines, so unqualified DTO uses after a single grouped import are not counted. They confirm no growth in the shapes they measure, not the absence of raw JSON parsing. Runtime `cmd_tx`/task handle live in `agents/runtime.rs::FeedRuntime`, separate from `FeedSyncState`, but are re-flattened into `FeedState` (see the structural-check caveat above). | PASS |
+| Architecture policy | Raw JSON and wire DTO parsing sites do not grow; pure agents policy has no Tokio handles/channels, terminal/widget types, or concrete client; runtime feed ownership remains separated. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_view_raw_json_parsing_sites_are_eliminated -- --exact` and `cargo test -p quecto-agentic-harness --test architecture tui_wire_dto_usage_does_not_grow -- --exact` passed. `grep` over `agents/{feed,roster,ledger,focus}.rs` found no channels, task handles, concrete client, terminal/widget types, or `serde_json`; only `tokio::time::Instant` remains in roster lifecycle timestamps. Caveat on the ratchets: both counters are heuristic — the raw-JSON counter matches literal `.get("`/`.pointer("` and accessor+`and_then` lines, so `serde_json::from_str`/`from_value` and dynamic `value.get(key)` in `protocol/agent_ledger_payloads.rs` are not counted; the wire-DTO counter matches `Command::`/`Event::`/`infrastructure::client`/`protocol::client` lines, so unqualified DTO uses after a single grouped import are not counted. They confirm no growth in the shapes they measure, not the absence of raw JSON parsing. Runtime `cmd_tx`/task handle live in `agents/runtime.rs::FeedRuntime`, separate from `FeedSyncState`, but are re-flattened into `FeedState` (see the structural-check caveat above). | PASS |
 | Performance parity (source inspection only; no enforcing check) | Replaced specialized code keeps the same asymptotic passes and allocation boundaries. | Roster snapshot merge still builds one `BTreeMap` of candidates/incoming/new map and one parent carry-over queue in `apply_roster_snapshot`; no render-loop work or background task moved into policy. Ledger transcript still uses one `HashMap` plus one ordered `Vec` and applies deltas in O(messages). Retention still evicts through the existing session-order vector and active-id skip. Warm feeds remain bounded by `MAX_RETAINED_SESSIONS`. | PASS |
 | Quantitative / formatting / lint | File-size cap and strict local checks remain green. | Largest agents pure-policy file is `agents/roster.rs` at 294 lines; `app.rs` dropped from 741 to 617 lines. Overall changed-file line count is +884 (1437 insertions, 553 deletions) including 310 lines of new characterization tests, 203 lines of typed ledger DTOs, and the parity/deletion documentation below. `cargo fmt --check` and `cargo clippy -p quecto-tui --lib -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines` passed. | PASS |
 
@@ -432,16 +436,16 @@ Characterization review/freeze manifest for #1224:
 - Review finders: falsifiability — source-text App owner guard was later declined/removed during conformance; coverage — accepted and fixed missing production file-autocomplete capacity pin; Gherkin — no findings (no BDD changed).
 - Mutation log after fixes: changing `FilesAutocomplete::new(8)` to `new(7)` fails `app_workspace_file_autocomplete_uses_production_visible_capacity`; prior source-text App owner guard mutations were superseded by conformance-step inspection and the guard was removed because source-text assertions are disallowed for final conformance.
 - Frozen characterization files:
-  - `quecto-tui/src/interface/app_event_loop_cov_tests.rs` — `9455924255371edce177ebbfa1351c295d50947a`
+  - `quecto-tui/src/shell/app_event_loop_cov_tests.rs` — `9455924255371edce177ebbfa1351c295d50947a`
   - Rationale for logged edit: `quecto-agentic-harness/tests/architecture.rs` was unfrozen during conformance to remove the source-text App owner guard; source-text tests are explicitly disallowed by the final conformance gate.
 
 Deletion ledger for #1224 App thinning:
 
-- Deleted inline `RewindFlow`/fields from `app.rs`: rewind selector, double-Escape timestamp, request ids, and request sequence invariants are re-established unchanged in `conversation/app_rewind_state.rs` and accessed through the existing `rewind` owner.
-- Deleted inline `SessionsFlow`: resume selector and context-stats request latch invariants are re-established unchanged in `interface/app_sessions.rs`.
-- Deleted inline `WorkflowFlow`: auto-continue and completion-nudge mirror invariants are re-established unchanged in `interface/app_workflow.rs`.
-- Deleted inline `InferenceFlow`/`ModelRegistry`: current model, selector overlays, registry cache, pending-open latch, current effort, and effort vocabulary invariants are re-established unchanged in `interface/app_inference.rs`.
-- Deleted inline `WorkspaceFlow`: file autocomplete capacity 8, Git branch footer state, and Git repo polling root invariants are re-established unchanged in `interface/app_workspace.rs`; production capacity is pinned by `app_workspace_file_autocomplete_uses_production_visible_capacity`.
+- Deleted inline `RewindFlow`/fields from `app.rs`: rewind selector, double-Escape timestamp, request ids, and request sequence invariants are re-established unchanged in `conversation/controller_rewind_state.rs` and accessed through the existing `rewind` owner.
+- Deleted inline `SessionsFlow`: resume selector and context-stats request latch invariants are re-established unchanged in former `interface/app_sessions.rs` (now `sessions/controller_sessions.rs`).
+- Deleted inline `WorkflowFlow`: auto-continue and completion-nudge mirror invariants are re-established unchanged in former `interface/app_workflow.rs` (now `workflow/controller_workflow.rs`).
+- Deleted inline `InferenceFlow`/`ModelRegistry`: current model, selector overlays, registry cache, pending-open latch, current effort, and effort vocabulary invariants are re-established unchanged in former `interface/app_inference.rs` (now `inference/controller_inference.rs`).
+- Deleted inline `WorkspaceFlow`: file autocomplete capacity 8, Git branch footer state, and Git repo polling root invariants are re-established unchanged in former `interface/app_workspace.rs` (now `workspace/controller_workspace.rs`); production capacity is pinned by `app_workspace_file_autocomplete_uses_production_visible_capacity`.
 - One source-text architecture test (`tui_app_state_is_composed_from_feature_flow_owners`) was deleted during conformance because final conformance bans source-text assertions; frozen behavioural characterization tests were not edited after freeze.
 - Consolidation completeness: no shared helper was introduced or canonicalized in this slice; moved state owners only.
 
@@ -511,7 +515,7 @@ module docs of `protocol/model_payloads.rs`):
    user-visible (as with `session_payloads::ResumeMessagesError`).
 3. **The protocol layer owns no interface types.** Mappers must not name
    `interface::` types. Where a presentation concern is genuinely needed —
-   control-character sanitization, owned by `interface/ansi.rs` — it is
+   control-character sanitization, owned by `components/ansi.rs` — it is
    *injected* by the caller rather than imported, keeping the layer rule intact
    while all derivation rules stay in the mapper.
 4. **Parity quirks live in the mapper, documented.** Legacy field fallbacks and
@@ -525,7 +529,7 @@ module docs of `protocol/model_payloads.rs`):
 - `protocol/model_payloads.rs` — `parse_model_list` → `Vec<ModelListEntry>`,
   owning the id/provider/auth derivation and the drop rules for absent,
   non-string, and sanitize-to-empty identifiers.
-- `interface/app_models.rs::parse_model_entries` — the seam: maps the DTO to the
+- `inference/controller_models.rs::parse_model_entries` — the seam: maps the DTO to the
   selector's `ModelEntry`, adding only the interface-owned `is_current: false`.
 
 Mapper fixtures in `protocol/model_payloads_tests.rs` cover valid, legacy
@@ -539,16 +543,16 @@ Four decrease-only guards live in `quecto-agentic-harness/tests/architecture.rs`
 and therefore run in the fast pre-commit guard suite (targets are enumerated
 dynamically, so they cannot be silently dropped):
 
-- `tui_interface_raw_json_parsing_sites_do_not_grow` — exact Phase 5 feature/view total `55`; scan roots include `interface/`, `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`.
-- `tui_protocol_raw_json_parsing_sites_do_not_grow` — exact Phase 5 protocol mapper total and seed `121`.
-- `tui_combined_raw_json_inventory_does_not_grow` — feature/view plus protocol sites may not exceed the historical combined ceiling `178` (current total `176`), preventing growth hidden by moving sites between buckets.
-- `tui_wire_dto_usage_does_not_grow` — seed `124`, exact Phase 5 total `122`.
+- `tui_feature_view_raw_json_parsing_sites_are_eliminated` — final feature/view total `0`; scan roots include `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`.
+- `tui_protocol_raw_json_parsing_sites_do_not_grow` — final protocol mapper total and seed `127`.
+- `tui_combined_raw_json_inventory_does_not_grow` — feature/view plus protocol sites may not exceed the historical combined ceiling `178` (current total `127`), preventing growth hidden by moving sites between buckets.
+- `tui_wire_dto_usage_does_not_grow` — import-aware inventory exact total and seed `98` with no whole-file exemptions (documented shell/runtime and agents direct-feed seams remain measured).
 
 Both were hardened after review on #1235, which proved the first drafts did not
 measure what they claimed:
 
 - **Usage, not imports.** The wire-DTO guard originally counted
-  `use ... infrastructure::client` lines and saw only 2, because `interface/app.rs`
+  `use ... infrastructure::client` lines and saw only 2, because `shell/app.rs`
   imports the DTOs and siblings reach them through `use super::*`. A probe module
   constructing `Command::Prompt` via the glob compiled and left the guard green.
   It now counts `Command::`/`Event::`/`infrastructure::client` *usages*, so globs
@@ -565,12 +569,13 @@ measure what they claimed:
   content (whole-file `#![cfg(test)]` or an actual test body); a bare
   `#[cfg(test)]` does not count, since production modules carry one on their
   trailing `mod tests;`.
-- **Per-ratchet allowlists.** `interface/app_response.rs` is exempt from the
+- **Per-ratchet allowlists.** `shell/app_response.rs` is exempt from the
   raw-JSON ratchet only — it *is* the dispatcher that routes raw responses to
   mappers — and is measured by the wire-DTO ratchet. `protocol/client.rs` is
   exempt only from the protocol raw-JSON ratchet as the wire seam.
-  `agents/runtime.rs` is narrowly allowlisted for wire-DTO usage under #1257
-  Phase 4 until `FeedRuntime` is hidden behind a non-wire channel type.
+  Wire-DTO whole-file exemptions were removed in #1257 Phase 6: seam files
+  (including `agents/runtime.rs`, `agents/view.rs`, and shell composition/runtime
+  adapters) remain in the measured inventory under a decrease-only seed of `98`.
 - **No vacuous pass.** Both ratchets assert the scan yielded a non-empty file
   list, so renaming the scan root fails them instead of silently disabling them.
 
@@ -578,9 +583,9 @@ Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-The Phase 5 feature/view raw-JSON ratchet scans `interface/`, `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`; its exact total is 55. The protocol raw-JSON ratchet has an exact total and seed of 121, with `protocol/client.rs` allowlisted as the wire seam. The combined inventory is 176 and may not exceed its historical ceiling of 178, so moving parsing between these buckets cannot conceal growth. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
+The Phase 6 feature/view raw-JSON ratchet scans `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`; its exact total is 0 (`shell/app_response.rs` is the only feature/view allowlisted raw-JSON seam as the #1220 response dispatcher). The protocol raw-JSON ratchet has an exact total and seed of 127, with `protocol/client.rs` allowlisted as the wire seam. The combined inventory is 127 and may not exceed its historical ceiling of 178, so moving parsing between these buckets cannot conceal growth. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
 
-Wire-DTO usage retains its never-raise seed of 124 and has an exact Phase 5 total of 122; `agents/runtime.rs` is narrowly allowlisted as described above.
+The import-aware wire-DTO inventory has an exact total and seed of 98 with an empty allowlist. Residual usages are concentrated in shell composition/runtime paths and agents direct-feed adapters; because those files stay measured, new DTO coupling inside a seam still fails the decrease-only ratchet.
 
 ### Deletion ledger
 
@@ -640,7 +645,7 @@ additive pin; no existing assertion was altered).
 
 | File | `git hash-object` |
 |---|---|
-| `quecto-tui/src/interface/app_models_protocol_characterization_tests.rs` | `e57d8c569df490354949ff259b450eb050e661d0` |
+| `quecto-tui/src/shell/app_models_protocol_characterization_tests.rs` | `e57d8c569df490354949ff259b450eb050e661d0` |
 
 ## Parity contract for conversation history/recovery slice (#1221)
 

@@ -1,7 +1,7 @@
 //! Steps for `tui_stdin_retry.feature`.
 //!
 //! Multi-fragment CSI escape reassembly is driven against REAL production code:
-//!  * `quecto_tui::interface::stdin_buffer::StdinBuffer` for feed/drain/force-drain
+//!  * `quecto_tui::shell::stdin_buffer::StdinBuffer` for feed/drain/force-drain
 //!    reassembly (fragment-by-fragment, exactly as the event loop feeds it), and
 //!  * the real app pending-input loop `process_stdin_bytes` (with separate
 //!    escape, bracketed-paste, and raw-paste lifetimes) via the headless harness.
@@ -9,9 +9,9 @@
 //! Emitted key identity is confirmed through the real `keys::parse_key`.
 
 use super::*;
-use quecto_tui::interface::app::tui_harness::TuiHarness;
-use quecto_tui::interface::stdin_buffer::StdinBuffer;
+use quecto_tui::shell::app::tui_harness::TuiHarness;
 use quecto_tui::shell::keys::{Key, parse_key};
+use quecto_tui::shell::stdin_buffer::StdinBuffer;
 
 // ── Background ────────────────────────────────────────────────────────────
 

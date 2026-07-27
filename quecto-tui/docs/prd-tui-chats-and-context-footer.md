@@ -23,11 +23,11 @@ same turn is ~`2246` (visible in `/session` as `↑`).
   - `../quecto-agentic-harness/src/application/agent_loop.rs` -> `finalize_text_response` (~L448) sets
     `context_tokens = context_pruning::estimate_total_tokens(messages)`.
   - same in the streaming finalize path (~L679).
-- `../quecto-agentic-harness/src/interface/cli/uds.rs` and `uds_multi.rs` call the session's context-token setter with
+- `../quecto-agentic-harness/src/shell/cli/uds.rs` and `uds_multi.rs` call the session's context-token setter with
   `estimate_total_tokens(...)` — these are **init-time seeds** (before any turn). After a turn,
   `record_agent_result` overwrites the session's context size from `AgentResult.context_tokens`.
 - The UDS `get_state` emits `contextTokens`; the TUI footer reads it
-  (`src/interface/app_methods.rs`, `app_events.rs`). A test
+  (`src/shell/app_methods.rs`, `app_events.rs`). A test
   (`session_stats_footer_uses_context_tokens_not_cumulative_input`) already pins that the footer
   must use `contextTokens`, NOT cumulative input — so the right number is the latest turn's real
   prompt tokens, not the running sum.
@@ -77,7 +77,7 @@ keys, no titles or timestamps. Result: the user can't find old chats; the list i
 - Interactive launch with no explicit `--session`: start a NEW chat with a unique key
   `chat-<unix_seconds>` (disambiguate collisions within the same second, e.g. append a short
   counter/random suffix). Where the interactive key is currently defaulted to "default":
-  `../quecto-agentic-harness/src/interface/repl/mod.rs` (the `session_name.unwrap_or("default")` path).
+  `../quecto-agentic-harness/src/shell/repl/mod.rs` (the `session_name.unwrap_or("default")` path).
 - Sub-agent / agent-manager / command sessions keep their existing keys (NOT `chat-`-prefixed),
   so they are excluded from the user-facing list. The legacy `default` session is also excluded
   (treated as legacy; not migrated).
@@ -98,7 +98,7 @@ keys, no titles or timestamps. Result: the user can't find old chats; the list i
 
 **B4. Server-side `list_sessions` (UDS)**
 - Return, per user chat, metadata: `{ key, title, updated_at, message_count }` filtered to the
-  `chat-` namespace. (`../quecto-agentic-harness/src/interface/cli/uds*.rs` + `../quecto-agentic-harness/src/infrastructure/persistence/session_store.rs`.)
+  `chat-` namespace. (`../quecto-agentic-harness/src/shell/cli/uds*.rs` + `../quecto-agentic-harness/src/infrastructure/persistence/session_store.rs`.)
 - `session_store` computes: `title` = first user message; `message_count` = count of non-system
   messages; `updated_at` = file mtime (epoch or RFC3339).
 - Prefer filtering to the user-chat namespace server-side; the TUI just renders.
@@ -133,7 +133,7 @@ feature; it should now operate on a clean single-conversation session.
 - Title derivation (first user message, truncation, untitled).
 - `/resume` selection loads the chosen session's messages.
 - Date+time present and formatted per entry.
-- Follow existing TUI harness conventions (`src/interface/tui_harness.rs`) and the
+- Follow existing TUI harness conventions (`src/shell/tui_harness.rs`) and the
   `*_tests.rs`/`#[path]` sibling-file pattern (750-line cap).
 
 ---
@@ -150,9 +150,9 @@ feature; it should now operate on a clean single-conversation session.
 
 ## Suggested file touch-list
 - `../quecto-agentic-harness/src/application/agent_loop.rs` (A: finalize + streaming finalize)
-- `../quecto-agentic-harness/src/interface/cli/uds.rs`, `uds_multi.rs` (A: drop estimate seeds; B: list_sessions metadata)
+- `../quecto-agentic-harness/src/shell/cli/uds.rs`, `uds_multi.rs` (A: drop estimate seeds; B: list_sessions metadata)
 - `../quecto-agentic-harness/src/infrastructure/persistence/session_store.rs` (B: list with title/mtime/count, namespace filter)
-- `../quecto-agentic-harness/src/interface/repl/mod.rs` (B: per-launch `chat-` key, `/new`, `/resume`)
-- `src/interface/app_methods.rs` / `app_response.rs` / resume-selector component
+- `../quecto-agentic-harness/src/shell/repl/mod.rs` (B: per-launch `chat-` key, `/new`, `/resume`)
+- `src/shell/app_methods.rs` / `app_response.rs` / resume-selector component
   (B: `/new`, `/resume` picker rendering with title · date+time · count; footer label)
 - Shared constant for `USER_CHAT_PREFIX`.

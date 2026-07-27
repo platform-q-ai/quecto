@@ -403,11 +403,11 @@ async fn idle_nested_grandchild_does_not_count_as_working() {
         "idle grandchild must remain visible in the panel: {plain_frame}"
     );
     assert!(
-        frame.contains(&crate::interface::theme::yellow("grandchild")),
+        frame.contains(&crate::components::theme::yellow("grandchild")),
         "idle grandchild name must render with idle colour, got: {frame:?}"
     );
     assert!(
-        !frame.contains(&crate::interface::theme::green("grandchild")),
+        !frame.contains(&crate::components::theme::green("grandchild")),
         "idle grandchild must not render with running colour, got: {frame:?}"
     );
 

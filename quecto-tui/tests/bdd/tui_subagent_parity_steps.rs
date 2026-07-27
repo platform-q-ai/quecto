@@ -1,17 +1,17 @@
 //! Step definitions for `tui_subagent_session_parity.feature` (#805).
 //!
 //! These drive the REAL TUI render/key path through the headless render harness
-//! (`quecto_tui::interface::app::tui_harness`), exposed to this integration
+//! (`quecto_tui::shell::app::tui_harness`), exposed to this integration
 //! target via the `test-harness` feature. Each step exercises observable
 //! behaviour — the active session, the rendered frame, or the commands the
 //! client would emit — rather than internal mechanics.
 
 use super::*;
-use quecto_tui::interface::app::tui_harness::{
+use quecto_tui::protocol::client::Event;
+use quecto_tui::shell::app::tui_harness::{
     self, TuiHarness, spawn_start, spawn_subagent_socket, spawn_subagent_socket_with_commands,
     subagent_with_socket, subagents_changed,
 };
-use quecto_tui::protocol::client::Event;
 use quecto_tui::shell::keys::Key;
 
 // ── Harness construction / driving helpers ──────────────────────────────────

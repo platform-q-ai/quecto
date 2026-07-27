@@ -7,8 +7,8 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use crate::components::component::Component;
-use crate::interface::theme;
-use crate::interface::utils::{truncate_to_width, visible_width, wrap_text};
+use crate::components::theme;
+use crate::components::utils::{truncate_to_width, visible_width, wrap_text};
 
 /// Markdown rendering component.
 pub struct Markdown {
@@ -260,7 +260,7 @@ impl Markdown {
                         // those newlines are needed to detect/strip a literal
                         // inner fence in `flush_code_block` (#799).
                         code_block_content.push_str(
-                            &crate::interface::ansi::sanitize_control_keep_newlines(&text),
+                            &crate::components::ansi::sanitize_control_keep_newlines(&text),
                         );
                     } else if in_blockquote {
                         current_line.push_str(&sanitize_for_display(&text));
@@ -659,7 +659,7 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
 /// This keeps `\n` intact so block/list structure still reaches pulldown-cmark,
 /// while removing terminal escapes before they can affect display.
 fn sanitize_markdown_source(s: &str) -> String {
-    crate::interface::ansi::sanitize_control_keep_newlines(s)
+    crate::components::ansi::sanitize_control_keep_newlines(s)
 }
 
 /// Strip ANSI escape sequences and control characters from text for safe display.
@@ -667,7 +667,7 @@ fn sanitize_markdown_source(s: &str) -> String {
 /// Removes complete CSI sequences (ESC[...letter), OSC sequences
 /// (ESC]...BEL/ST), bare ESC, and all C0/C1 control characters.
 fn sanitize_for_display(s: &str) -> String {
-    crate::interface::ansi::sanitize_control(s)
+    crate::components::ansi::sanitize_control(s)
 }
 
 fn push_wrapped_with_hanging_indent(
@@ -679,7 +679,7 @@ fn push_wrapped_with_hanging_indent(
 ) {
     let split_at = byte_index_for_visible_width(line, hanging_indent);
     let (prefix, rest) = line.split_at(split_at);
-    let plain_prefix = crate::interface::ansi::sanitize_control(prefix);
+    let plain_prefix = crate::components::ansi::sanitize_control(prefix);
     let available = content_width.saturating_sub(hanging_indent);
 
     if available == 0 {

@@ -7,7 +7,7 @@
 
 use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
-use quecto_tui::interface::app::tui_harness::TuiHarness;
+use quecto_tui::shell::app::tui_harness::TuiHarness;
 
 const ROWS: usize = 30;
 

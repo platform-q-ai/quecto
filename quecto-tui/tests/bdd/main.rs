@@ -11,7 +11,7 @@ mod feature_preprocess;
 // Opaque Debug wrapper for the headless TUI render harness (#805). The harness
 // holds a live `App` (and background tokio tasks) and isn't `Debug`, so wrap it
 // to satisfy the derived `Debug`/`Default` on `TuiWorld`.
-pub struct TuiParityHarness(pub quecto_tui::interface::app::tui_harness::TuiHarness);
+pub struct TuiParityHarness(pub quecto_tui::shell::app::tui_harness::TuiHarness);
 
 impl std::fmt::Debug for TuiParityHarness {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -22,14 +22,14 @@ impl std::fmt::Debug for TuiParityHarness {
 // Opaque Debug wrappers for TUI components that aren't `Debug` themselves, so
 // they can live in the derived-`Debug` `TuiWorld`. `DerefMut` lets step code
 // call their inherent methods directly.
-pub struct DebugStdinBuffer(pub quecto_tui::interface::stdin_buffer::StdinBuffer);
+pub struct DebugStdinBuffer(pub quecto_tui::shell::stdin_buffer::StdinBuffer);
 impl std::fmt::Debug for DebugStdinBuffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("<StdinBuffer>")
     }
 }
 impl std::ops::Deref for DebugStdinBuffer {
-    type Target = quecto_tui::interface::stdin_buffer::StdinBuffer;
+    type Target = quecto_tui::shell::stdin_buffer::StdinBuffer;
     fn deref(&self) -> &Self::Target {
         &self.0
     }

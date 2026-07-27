@@ -2,8 +2,8 @@
 
 use crate::components::component::Component;
 use crate::components::markdown::Markdown;
-use crate::interface::theme;
-use crate::interface::utils::{truncate_to_width, visible_width, wrap_text};
+use crate::components::theme;
+use crate::components::utils::{truncate_to_width, visible_width, wrap_text};
 
 /// Number of output lines shown for bash in collapsed mode (tail).
 const BASH_PREVIEW_LINES: usize = 5;

@@ -1,11 +1,11 @@
 //! Spinner component — animated activity indicator.
 
 use crate::components::component::Component;
-use crate::interface::theme;
-use crate::interface::utils::truncate_to_width;
+use crate::components::theme;
+use crate::components::utils::truncate_to_width;
 
 /// Braille spinner frames.
-use crate::interface::theme::SPINNER_FRAMES as FRAMES;
+use crate::components::theme::SPINNER_FRAMES as FRAMES;
 
 /// Animated spinner with a status message.
 pub struct Spinner {

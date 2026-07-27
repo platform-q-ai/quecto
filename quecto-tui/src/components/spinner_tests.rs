@@ -84,6 +84,6 @@ fn spinner_respects_width() {
     let mut s = Spinner::new("a very long spinner message that exceeds the width");
     let lines = s.render(20);
     for line in &lines {
-        assert!(crate::interface::utils::visible_width(line) <= 20);
+        assert!(crate::components::utils::visible_width(line) <= 20);
     }
 }

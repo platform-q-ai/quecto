@@ -1,7 +1,5 @@
 //! Sessions ownership for `quecto-tui` (#1257 Phase 5).
 //!
-//! Owns resume/new/clear/stats presentation flow state. App slices remain
-//! mounted inside `interface::app` until later controller-extraction phases.
+//! Owns resume/new/clear/stats presentation flow state. Feature-owned App extensions are composed by `shell::app`.
 
-// Flow types are mounted via `#[path]` from `interface::app` so they remain
-// sibling modules of `App` during the phased migration.
+// Shell composes these feature-owned flow types as App extensions.

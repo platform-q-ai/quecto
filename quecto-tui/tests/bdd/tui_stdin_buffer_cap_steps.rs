@@ -6,7 +6,7 @@
 
 use crate::TuiWorld;
 use cucumber::{given, then, when};
-use quecto_tui::interface::stdin_buffer::StdinBuffer;
+use quecto_tui::shell::stdin_buffer::StdinBuffer;
 
 /// The 64 KB cap the spec pins the buffer to.
 const CAP: usize = 64 * 1024;

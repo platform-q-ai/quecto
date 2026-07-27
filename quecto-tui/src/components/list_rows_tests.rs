@@ -5,7 +5,7 @@ struct RowStyle {
 }
 
 use super::*;
-use crate::interface::ansi::strip_ansi;
+use crate::components::ansi::strip_ansi;
 
 fn render_rows(
     rows: &[ListRow],

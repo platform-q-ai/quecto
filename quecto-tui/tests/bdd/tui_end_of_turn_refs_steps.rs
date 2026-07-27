@@ -9,11 +9,11 @@
 
 use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
-use quecto_tui::interface::app::tui_harness::{
+use quecto_tui::protocol::client::Event;
+use quecto_tui::shell::app::tui_harness::{
     TuiHarness, spawn_start, spawn_subagent_socket_with_commands, subagent_with_socket,
     subagents_changed,
 };
-use quecto_tui::protocol::client::Event;
 
 /// Stable refs used across master recovery scenarios.
 const TEXT_REF: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";

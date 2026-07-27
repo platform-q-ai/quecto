@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use super::*;
-use crate::interface::ansi::AnsiSegment;
+use crate::components::ansi::AnsiSegment;
 
 pub(super) struct ToolRenderArgs<'a> {
     pub tool_name: &'a str,
@@ -132,11 +132,8 @@ pub(super) fn render_bash(
     expanded: bool,
     width: usize,
 ) {
-    let command = args
-        .as_ref()
-        .and_then(|v| v.get("command").and_then(|c| c.as_str()))
-        .unwrap_or("");
-    let command = sanitize(command);
+    let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
+    let command = sanitize(display.command.unwrap_or(""));
 
     // Header: ✓ $ command  42ms
     push_header(
@@ -234,10 +231,8 @@ pub(super) fn render_write(
     let path = extract_path(args);
 
     // For write, the content is in the args, not the result.
-    let content = args
-        .as_ref()
-        .and_then(|v| v.get("content").and_then(|c| c.as_str()))
-        .unwrap_or("");
+    let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
+    let content = display.content.unwrap_or("");
 
     // Header: ✓ write path  42ms
     push_header(
@@ -328,35 +323,28 @@ pub(super) fn render_subagent(
     is_error: bool,
     width: usize,
 ) {
-    let (header_detail, _agent_label) = if let Some(v) = args {
-        match tool_name {
-            "spawn" => {
-                let agent = sanitize(
-                    v.get("agent_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("agent"),
-                );
-                let task = sanitize(v.get("task").and_then(|v| v.as_str()).unwrap_or(""));
-                let detail = if task.is_empty() {
-                    agent.clone()
-                } else {
-                    format!(
-                        "{} — {}",
-                        agent,
-                        crate::interface::utils::truncate_to_width(&task, 50, Some("..."))
-                    )
-                };
-                (detail, Some(agent))
-            }
-            "agent_cmd" => {
-                let command = sanitize(v.get("command").and_then(|v| v.as_str()).unwrap_or("?"));
-                let agent_id = sanitize(v.get("agent_id").and_then(|v| v.as_str()).unwrap_or("?"));
-                (format!("{} → {}", command, agent_id), Some(agent_id))
-            }
-            _ => (String::new(), None),
+    let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
+    let (header_detail, _agent_label) = match tool_name {
+        "spawn" => {
+            let agent = sanitize(display.agent_id.unwrap_or("agent"));
+            let task = sanitize(display.task.unwrap_or(""));
+            let detail = if task.is_empty() {
+                agent.clone()
+            } else {
+                format!(
+                    "{} — {}",
+                    agent,
+                    crate::components::utils::truncate_to_width(&task, 50, Some("..."))
+                )
+            };
+            (detail, Some(agent))
         }
-    } else {
-        (String::new(), None)
+        "agent_cmd" => {
+            let command = sanitize(display.command.unwrap_or("?"));
+            let agent_id = sanitize(display.agent_id.unwrap_or("?"));
+            (format!("{} → {}", command, agent_id), Some(agent_id))
+        }
+        _ => (String::new(), None),
     };
 
     // Header: ✓ spawn reviewer — Review PR  42ms
@@ -392,37 +380,24 @@ pub(super) fn render_workflow(
     result: Option<&str>,
     width: usize,
 ) {
-    let action = args
-        .as_ref()
-        .and_then(|v| v.get("action").and_then(|a| a.as_str()))
-        .unwrap_or("workflow");
-
+    let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
+    let action = display.action.unwrap_or("workflow");
     let detail = match action {
-        "check" | "uncheck" | "skip" => {
-            let step = args
-                .as_ref()
-                .and_then(|v| v.get("step"))
-                .and_then(|s| s.as_u64())
+        "check" | "uncheck" | "skip" => format!(
+            "{action}{}",
+            display
+                .step
                 .map(|n| format!(" step {n}"))
-                .unwrap_or_default();
-            format!("{action}{step}")
-        }
-        "select_template" => {
-            let tpl = args
-                .as_ref()
-                .and_then(|v| v.get("template").and_then(|t| t.as_str()))
-                .unwrap_or("?");
-            format!("select_template {tpl}")
-        }
-        "set_issue" => {
-            let num = args
-                .as_ref()
-                .and_then(|v| v.get("issueNumber"))
-                .and_then(|n| n.as_u64())
+                .unwrap_or_default()
+        ),
+        "select_template" => format!("select_template {}", display.template.unwrap_or("?")),
+        "set_issue" => format!(
+            "set_issue{}",
+            display
+                .issue_number
                 .map(|n| format!(" #{n}"))
-                .unwrap_or_default();
-            format!("set_issue{num}")
-        }
+                .unwrap_or_default()
+        ),
         _ => action.to_string(),
     };
 
@@ -518,7 +493,7 @@ pub(super) fn push_header(
 const TOOL_HEADER_MAX_ROWS: usize = 8;
 
 fn wrap_tool_line(line: &str, width: usize) -> Vec<String> {
-    let mut rows: Vec<String> = crate::interface::utils::wrap_text(line, width)
+    let mut rows: Vec<String> = crate::components::utils::wrap_text(line, width)
         .into_iter()
         .map(|segment| truncate_to_width(&segment, width, None))
         .collect();
@@ -537,7 +512,7 @@ const PREVIEW_ROWS_PER_LINE: usize = 4;
 
 /// Push a dimmed hint, wrapped so it stays readable at narrow widths.
 fn push_dim_wrapped(lines: &mut Vec<String>, hint: &str, width: usize) {
-    for segment in crate::interface::utils::wrap_text(hint, width) {
+    for segment in crate::components::utils::wrap_text(hint, width) {
         lines.push(theme::dim(&segment));
     }
 }
@@ -548,7 +523,7 @@ fn push_wrapped_output(
     color_fn: fn(&str) -> String,
     width: usize,
 ) {
-    for segment in crate::interface::utils::wrap_text(text, width) {
+    for segment in crate::components::utils::wrap_text(text, width) {
         lines.push(color_fn(&segment));
     }
 }
@@ -562,7 +537,7 @@ pub(super) fn push_full_output(
     width: usize,
 ) {
     for line in content_lines {
-        let sanitized = crate::interface::ansi::sanitize_control(line);
+        let sanitized = crate::components::ansi::sanitize_control(line);
         push_wrapped_output(lines, &sanitized, color_fn, width);
     }
 }
@@ -587,7 +562,7 @@ fn push_wrapped_output_limited(
     }
     let mut truncated = bounded != text;
     let mut pushed = 0;
-    for segment in crate::interface::utils::wrap_text(&bounded, width) {
+    for segment in crate::components::utils::wrap_text(&bounded, width) {
         if pushed == max_rows {
             // Word-wrap can spend fewer columns per row than the width bound
             // assumed, leaving segments beyond the row budget.
@@ -626,7 +601,7 @@ pub(super) fn push_preview(
         // the result body before colouring (#865 security review): otherwise a
         // malicious sub-agent could inject ANSI/OSC escapes (cursor control,
         // title/clipboard spoofing) into the parent operator's terminal.
-        let sanitized = crate::interface::ansi::sanitize_control(line);
+        let sanitized = crate::components::ansi::sanitize_control(line);
         let (pushed, line_truncated) =
             push_wrapped_output_limited(lines, &sanitized, color_fn, width, rows_left);
         rows_left -= pushed;
@@ -668,28 +643,32 @@ pub(super) fn render_file_preview(
 
 /// Extract the file path from tool args (tries "path", "file_path").
 pub(super) fn extract_path(args: &Option<serde_json::Value>) -> String {
-    args.as_ref()
-        .and_then(|v| {
-            v.get("path")
-                .or_else(|| v.get("file_path"))
-                .and_then(|p| p.as_str())
-        })
-        .map(sanitize)
-        .unwrap_or_default()
+    let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
+    display.path.map(sanitize).unwrap_or_default()
 }
 
 /// Extract the most informative arg value for display.
 pub(super) fn extract_best_arg(v: &serde_json::Value) -> String {
-    for key in &["command", "path", "query", "url", "content", "oldText"] {
-        if let Some(val) = v.get(key).and_then(|v| v.as_str()) {
-            return sanitize(&crate::interface::utils::truncate_to_width(
-                val,
-                60,
-                Some("..."),
-            ));
-        }
-    }
-    String::new()
+    let display = crate::protocol::presentation_payloads::tool_display_args(Some(v));
+    [
+        display.command,
+        display.path,
+        display.query,
+        display.url,
+        display.content,
+        display.old_text,
+    ]
+    .into_iter()
+    .flatten()
+    .next()
+    .map(|value| {
+        sanitize(&crate::components::utils::truncate_to_width(
+            value,
+            60,
+            Some("..."),
+        ))
+    })
+    .unwrap_or_default()
 }
 
 /// Style a diff line with color (green for +, red for -, cyan for @@).
@@ -705,12 +684,12 @@ pub(super) fn style_diff_line(line: &str) -> String {
 
 /// Sanitize a string by stripping terminal control sequences.
 pub(super) fn sanitize(s: &str) -> String {
-    crate::interface::ansi::sanitize_control(s)
+    crate::components::ansi::sanitize_control(s)
 }
 
 #[cfg(test)]
 pub(super) fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
-    crate::interface::utils::truncate_to_width(s, max_chars, Some("..."))
+    crate::components::utils::truncate_to_width(s, max_chars, Some("..."))
 }
 
 /// Expand tab characters to spaces using 8-column tab stops, ANSI-aware.
@@ -727,7 +706,7 @@ pub(super) fn expand_tabs(s: &str) -> Cow<'_, str> {
     }
     let mut out = String::with_capacity(s.len());
     let mut col = 0;
-    for seg in crate::interface::ansi::ansi_segments_legacy_csi(s) {
+    for seg in crate::components::ansi::ansi_segments_legacy_csi(s) {
         match seg {
             AnsiSegment::Escape(esc) => out.push_str(esc),
             AnsiSegment::Text(text) => {

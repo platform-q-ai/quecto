@@ -6,7 +6,7 @@
 
 use crate::TuiWorld;
 use cucumber::{given, then, when};
-use quecto_tui::interface::app::tui_harness::{TuiHarness, subagents_changed};
+use quecto_tui::shell::app::tui_harness::{TuiHarness, subagents_changed};
 use tempfile::TempDir;
 
 fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {

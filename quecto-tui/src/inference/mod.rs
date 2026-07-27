@@ -1,8 +1,7 @@
-//! Inference ownership for `quecto-tui` (#1257 Phase 5).
+//! Inference ownership for `quecto-tui` (#1257 Phase 5 / Phase 6).
 //!
 //! Owns model and effort presentation flows (registry, selectors, command
-//! routing). App slices remain mounted inside `interface::app` until later
-//! controller-extraction phases.
+//! routing). Feature-owned controllers live here; `shell::app` composes them
+//! as App extensions without taking ownership of inference policy.
 
-// Flow types are mounted via `#[path]` from `interface::app` so they remain
-// sibling modules of `App` during the phased migration.
+// Shell composes these feature-owned flow types as App extensions.

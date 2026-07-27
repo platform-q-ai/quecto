@@ -16,13 +16,13 @@ use quecto_tui::components::autocomplete::AutocompleteResult;
 use quecto_tui::components::component::Component;
 use quecto_tui::components::files_autocomplete::FilesAutocomplete;
 use quecto_tui::components::model_selector::ModelSelector;
-use quecto_tui::interface::app::tui_harness::{TuiHarness, subagent, subagents_changed};
+use quecto_tui::shell::app::tui_harness::{TuiHarness, subagent, subagents_changed};
 use quecto_tui::shell::keys::Key;
 
 const ACCENT: &str = "\x1b[36m";
 const DIM: &str = "\x1b[2m";
 
-use quecto_tui::interface::ansi::strip_ansi;
+use quecto_tui::components::ansi::strip_ansi;
 
 fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {

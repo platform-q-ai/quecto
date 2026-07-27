@@ -29,11 +29,11 @@ fn component_defaults_construct_and_render_smoke() {
     assert!(stack.render(24).is_empty());
     assert!(!stack.handle_input(&Key::Ctrl('c')));
 
-    let mut stdin = crate::interface::stdin_buffer::StdinBuffer::default();
+    let mut stdin = crate::shell::stdin_buffer::StdinBuffer::default();
     assert!(stdin.drain_all_events().is_empty());
 
     assert_eq!(
-        crate::interface::utils::sanitize_truncate_chars_with_ellipsis("abc", 2, "…"),
+        crate::components::utils::sanitize_truncate_chars_with_ellipsis("abc", 2, "…"),
         "ab…"
     );
 }
@@ -79,7 +79,7 @@ fn component_invalidate_batch_is_safe_before_and_after_render() {
         assert!(
             rerendered
                 .iter()
-                .all(|line| crate::interface::utils::visible_width(line) <= 32)
+                .all(|line| crate::components::utils::visible_width(line) <= 32)
         );
     }
 }

@@ -9,7 +9,7 @@
 //! `@pending` (needs real terminal teardown capture).
 
 use super::*;
-use quecto_tui::interface::app::tui_harness::TuiHarness;
+use quecto_tui::shell::app::tui_harness::TuiHarness;
 
 fn with_harness<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     if world.tui_parity_rt.is_none() {

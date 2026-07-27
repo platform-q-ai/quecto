@@ -1,7 +1,7 @@
 use super::*;
 use quecto_tui::components::chat::{Chat, ChatEntry};
 use quecto_tui::components::component::Component;
-use quecto_tui::interface::app::tui_harness::TuiHarness;
+use quecto_tui::shell::app::tui_harness::TuiHarness;
 
 const TUI_ROOT: &str = "../quecto-tui/src";
 const TUI_FEATURE_ARCH_DOC: &str =
@@ -268,6 +268,47 @@ fn then_tui_protocol_no_feature_or_shell(_world: &mut QuectoWorld) {
     );
 }
 
+#[then("the quecto-tui components should not import the protocol client")]
+fn then_tui_components_do_not_import_protocol_client(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("components").is_dir());
+    assert_no_tui_patterns(
+        "components",
+        &["crate::protocol::client", "super::protocol::client"],
+    );
+}
+
+#[then("the quecto-tui protocol should not import widget or terminal types")]
+fn then_tui_protocol_has_no_presentation_types(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("protocol").is_dir());
+    assert_no_tui_patterns(
+        "protocol",
+        &["ratatui", "crossterm", "crate::shell::app::App"],
+    );
+}
+
+#[then("the quecto-tui shell should own the App composition root")]
+fn then_tui_shell_owns_app(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("shell/app.rs").is_file());
+    assert!(!Path::new(TUI_ROOT).join("interface").exists());
+}
+
+#[then("the quecto-tui final presentation primitives should have their assigned owners")]
+fn then_tui_final_primitives_have_owners(_world: &mut QuectoWorld) {
+    for file in [
+        "ansi.rs",
+        "theme.rs",
+        "utils.rs",
+        "kitty.rs",
+        "overlay.rs",
+        "select_overlay.rs",
+    ] {
+        assert!(Path::new(TUI_ROOT).join("components").join(file).is_file());
+    }
+    for file in ["app.rs", "stdin_buffer.rs"] {
+        assert!(Path::new(TUI_ROOT).join("shell").join(file).is_file());
+    }
+}
+
 #[then("the quecto-tui shell should own runtime adapters")]
 fn then_tui_shell_owns_runtime_adapters(_world: &mut QuectoWorld) {
     // #1257 Phase 2: UDS client lives in `protocol/`; terminal/runtime adapters
@@ -326,14 +367,13 @@ fn then_tui_library_root_exposes_only_layers(_world: &mut QuectoWorld) {
             "components",
             "conversation",
             "inference",
-            "interface",
             "protocol",
             "sessions",
             "shell",
             "workflow",
             "workspace",
         ],
-        "../quecto-tui/src/lib.rs should expose exactly the per-phase module set (#1257 Phase 5)"
+        "../quecto-tui/src/lib.rs should expose exactly the final feature module set (#1257 Phase 6)"
     );
     assert!(
         !content.contains("#[path ="),
@@ -383,7 +423,6 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
                 | "components"
                 | "conversation"
                 | "inference"
-                | "interface"
                 | "protocol"
                 | "sessions"
                 | "shell"
@@ -497,8 +536,8 @@ fn then_tui_slash_autocomplete_includes_command(_world: &mut QuectoWorld, comman
     // The builtin command list lives in app_commands.rs since the #1067
     // file-cap split (previously app.rs); accept either home so a future
     // move within the app command modules is not a false failure.
-    let content = std::fs::read_to_string("../quecto-tui/src/interface/app_commands.rs")
-        .or_else(|_| std::fs::read_to_string("../quecto-tui/src/interface/app.rs"))
+    let content = std::fs::read_to_string("../quecto-tui/src/shell/app_commands.rs")
+        .or_else(|_| std::fs::read_to_string("../quecto-tui/src/shell/app.rs"))
         .expect("read quecto-tui app command source");
     assert!(
         content.contains(&format!("name: \"{command}\".into()")),
@@ -543,9 +582,9 @@ fn then_uds_protocol_supports_resuming_session(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui resume selector should render with a themed box border")]
 fn then_tui_resume_selector_has_themed_border(_world: &mut QuectoWorld) {
-    let overlay = std::fs::read_to_string("../quecto-tui/src/interface/select_overlay.rs")
+    let overlay = std::fs::read_to_string("../quecto-tui/src/components/select_overlay.rs")
         .expect("read quecto-tui select_overlay source");
-    let theme = std::fs::read_to_string("../quecto-tui/src/interface/theme.rs")
+    let theme = std::fs::read_to_string("../quecto-tui/src/components/theme.rs")
         .expect("read quecto-tui theme source");
     assert!(
         overlay.contains("build_resume_selector_overlay")
@@ -562,8 +601,7 @@ fn then_tui_resume_selector_has_themed_border(_world: &mut QuectoWorld) {
 
 #[then("quecto-tui should not render a separate workflow header bar")]
 fn then_tui_does_not_render_workflow_header_bar(_world: &mut QuectoWorld) {
-    let app =
-        std::fs::read_to_string("../quecto-tui/src/interface/app.rs").expect("read app source");
+    let app = std::fs::read_to_string("../quecto-tui/src/shell/app.rs").expect("read app source");
     assert!(
         !app.contains("workflow_bar::render(&workflow_bar_state"),
         "workflow UI should only render in the bottom widget area, not as a top header bar"
@@ -575,7 +613,7 @@ fn then_tui_workflow_widget_matches_quecto_plain_text(_world: &mut QuectoWorld) 
     let bar = std::fs::read_to_string("../quecto-tui/src/components/workflow_bar.rs")
         .expect("read workflow bar source");
     // The render composition lives in app_methods.rs, not app.rs.
-    let app = std::fs::read_to_string("../quecto-tui/src/interface/app_methods.rs")
+    let app = std::fs::read_to_string("../quecto-tui/src/shell/app_methods.rs")
         .expect("read app_methods source");
     assert!(
         bar.contains("render_widget")
@@ -613,8 +651,7 @@ fn then_tui_workflow_widget_shows_hotkey_hints_with_toggle_state(_world: &mut Qu
 fn then_tui_does_not_expose_ctrl_shift_w_workflow_overlay(_world: &mut QuectoWorld) {
     let bar = std::fs::read_to_string("../quecto-tui/src/components/workflow_bar.rs")
         .expect("read workflow bar source");
-    let app =
-        std::fs::read_to_string("../quecto-tui/src/interface/app.rs").expect("read app source");
+    let app = std::fs::read_to_string("../quecto-tui/src/shell/app.rs").expect("read app source");
     assert!(
         !bar.contains("Ctrl+Shift+W") && !app.contains("Key::CtrlShift('w')"),
         "workflow UI should advertise only active Ctrl+Shift+A/N toggles, not the removed Ctrl+Shift+W overlay"
@@ -627,13 +664,12 @@ fn then_tui_does_not_expose_ctrl_shift_w_workflow_overlay(_world: &mut QuectoWor
 
 #[then("quecto-tui should not retain the dead OverlayStack overlay machinery")]
 fn then_tui_drops_dead_overlay_stack(_world: &mut QuectoWorld) {
-    let overlay = std::fs::read_to_string("../quecto-tui/src/interface/overlay.rs")
+    let overlay = std::fs::read_to_string("../quecto-tui/src/components/overlay.rs")
         .expect("read quecto-tui overlay source");
-    let app =
-        std::fs::read_to_string("../quecto-tui/src/interface/app.rs").expect("read app source");
-    let app_methods = std::fs::read_to_string("../quecto-tui/src/interface/app_methods.rs")
+    let app = std::fs::read_to_string("../quecto-tui/src/shell/app.rs").expect("read app source");
+    let app_methods = std::fs::read_to_string("../quecto-tui/src/shell/app_methods.rs")
         .expect("read app_methods source");
-    let event_loop = std::fs::read_to_string("../quecto-tui/src/interface/app_event_loop.rs")
+    let event_loop = std::fs::read_to_string("../quecto-tui/src/shell/app_event_loop.rs")
         .expect("read app_event_loop source");
     for needle in [
         "struct OverlayStack",
@@ -666,7 +702,7 @@ fn then_tui_drops_dead_overlay_stack(_world: &mut QuectoWorld) {
 fn then_tui_drops_dead_overlay_stack_tests(_world: &mut QuectoWorld) {
     // The dead machinery only survived `#![deny(dead_code)]` because the
     // overlay.rs `#[cfg(test)]` module exercised it; that resurrection must go.
-    let overlay = std::fs::read_to_string("../quecto-tui/src/interface/overlay.rs")
+    let overlay = std::fs::read_to_string("../quecto-tui/src/components/overlay.rs")
         .expect("read quecto-tui overlay source");
     for needle in ["OverlayStack::new()", ".composite(", "OverlayOptions"] {
         assert!(
@@ -678,7 +714,7 @@ fn then_tui_drops_dead_overlay_stack_tests(_world: &mut QuectoWorld) {
 
 #[then("quecto-tui should keep the live splice_line overlay helpers")]
 fn then_tui_keeps_splice_line_helpers(_world: &mut QuectoWorld) {
-    let overlay = std::fs::read_to_string("../quecto-tui/src/interface/overlay.rs")
+    let overlay = std::fs::read_to_string("../quecto-tui/src/components/overlay.rs")
         .expect("read quecto-tui overlay source");
     for needle in [
         "pub fn splice_line",
@@ -759,7 +795,7 @@ fn render_footer(streaming: bool) -> Vec<String> {
 }
 
 fn streaming_glyph() -> &'static str {
-    quecto_tui::interface::theme::STREAMING_INDICATOR
+    quecto_tui::components::theme::STREAMING_INDICATOR
 }
 
 #[given("a quecto-tui footer marked as streaming")]
@@ -836,7 +872,7 @@ fn then_tui_validates_resumed_messages_before_replacing_chat(_world: &mut Quecto
         "resumed-message parser should distinguish missing and malformed messages payloads"
     );
 
-    let methods = std::fs::read_to_string("../quecto-tui/src/interface/app_methods.rs")
+    let methods = std::fs::read_to_string("../quecto-tui/src/shell/app_methods.rs")
         .expect("read TUI app methods source");
     let wrapper = rust_fn_body(&methods, "replace_chat_with_messages")
         .expect("expected replace_chat_with_messages in app_methods.rs");
@@ -862,7 +898,7 @@ fn then_tui_validates_resumed_messages_before_replacing_chat(_world: &mut Quecto
 
 #[then("the TUI App methods should delegate session payload parsing to the protocol layer")]
 fn then_tui_app_methods_delegate_session_payload_parsing(_world: &mut QuectoWorld) {
-    let content = std::fs::read_to_string("../quecto-tui/src/interface/app_methods.rs")
+    let content = std::fs::read_to_string("../quecto-tui/src/shell/app_methods.rs")
         .expect("read TUI app methods source");
     assert!(
         content.contains("session_payloads::parse_session_stats")
@@ -1012,7 +1048,7 @@ fn count_occurrences(haystack: &str, needle: &str) -> usize {
 
 #[then("the quecto-tui render compositing should expose a composite_centered helper")]
 fn then_compose_frame_has_helper(_world: &mut QuectoWorld) {
-    let content = tui_read("interface/app_methods.rs");
+    let content = tui_read("shell/app_methods.rs");
     assert!(
         content.contains("fn composite_centered"),
         "compose_frame must extract a shared composite_centered helper for overlay splicing"
@@ -1023,7 +1059,7 @@ fn then_compose_frame_has_helper(_world: &mut QuectoWorld) {
     "the quecto-tui resume, rewind, and model overlays should splice through composite_centered"
 )]
 fn then_overlays_use_composite_centered(_world: &mut QuectoWorld) {
-    let content = tui_read("interface/app_methods.rs");
+    let content = tui_read("shell/app_methods.rs");
     // One definition + at least three call sites (resume, rewind, model).
     // Match the paren form so doc-comment mentions don't inflate the count.
     assert!(
@@ -1039,7 +1075,7 @@ fn then_overlays_use_composite_centered(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui show_session_stats should delegate to update_footer_stats")]
 fn then_show_session_stats_delegates(_world: &mut QuectoWorld) {
-    let content = tui_read("interface/app_methods.rs");
+    let content = tui_read("shell/app_methods.rs");
     let body = rust_fn_body(&content, "show_session_stats")
         .expect("show_session_stats must exist in app_methods.rs");
     assert!(
@@ -1054,7 +1090,7 @@ fn then_footer_update_appears_once(_world: &mut QuectoWorld) {
     // Footer::apply_session_stats so the master and per-session sub-agent footer
     // paths share one source of truth (#805). It must not be re-inlined in
     // app_methods; the caller delegates to apply_session_stats instead.
-    let methods = tui_read("interface/app_methods.rs");
+    let methods = tui_read("shell/app_methods.rs");
     assert_eq!(
         count_occurrences(&methods, "self.footer.update_context_usage("),
         0,
@@ -1197,8 +1233,8 @@ fn then_builtin_commands_single_source(_world: &mut QuectoWorld) {
     // command modules, not which of the two files hosts it.
     let content = format!(
         "{}{}",
-        tui_read("interface/app.rs"),
-        std::fs::read_to_string("../quecto-tui/src/interface/app_commands.rs").unwrap_or_default()
+        tui_read("shell/app.rs"),
+        std::fs::read_to_string("../quecto-tui/src/shell/app_commands.rs").unwrap_or_default()
     );
     assert!(
         content.contains("fn builtin_commands"),
@@ -1207,7 +1243,7 @@ fn then_builtin_commands_single_source(_world: &mut QuectoWorld) {
     // The previous triplication hand-listed the command help text in show_help.
     // That copy must be gone: show_help must derive its listing instead of
     // re-enumerating the `  /command   description` lines.
-    let methods = tui_read("interface/app_methods.rs");
+    let methods = tui_read("shell/app_methods.rs");
     for stale in ["/quit,/exit", "/workflow-nudge Toggle", "/resume <name>"] {
         assert!(
             !methods.contains(stale),

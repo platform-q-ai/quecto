@@ -1,8 +1,7 @@
-//! Workflow ownership for `quecto-tui` (#1257 Phase 5).
+//! Workflow ownership for `quecto-tui` (#1257 Phase 5 / Phase 6).
 //!
 //! Owns workflow projection controls (auto-continue / completion-nudge mirrors).
-//! App slices remain mounted inside `interface::app` until later
-//! controller-extraction phases.
+//! Feature-owned controllers live here; `shell::app` composes them as App
+//! extensions without taking ownership of workflow policy.
 
-// Flow types are mounted via `#[path]` from `interface::app` so they remain
-// sibling modules of `App` during the phased migration.
+// Shell composes these feature-owned flow types as App extensions.

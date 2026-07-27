@@ -1,8 +1,7 @@
 //! Agents ownership for `quecto-tui` (#1222 / #1257 Phase 4).
 //!
 //! Owns subagent roster, lifecycle, feeds, ledger sync, focus, retention, and
-//! view projection. App slices remain mounted inside `interface::app` until
-//! later controller-extraction phases.
+//! view projection. Feature-owned App extensions are composed by `shell::app`; policy remains in its feature owner.
 
 pub(crate) mod feed;
 pub(crate) mod focus;
