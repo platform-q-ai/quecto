@@ -2,6 +2,7 @@ use crate::application::agent_loop_stream::{
     StreamProviderError, TurnEnd, empty_stream_error_message, is_empty_streamed_response,
 };
 use crate::application::agent_usage::UsageTotals;
+use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
 use crate::domain::agent::{
     AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
@@ -14,11 +15,9 @@ use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error}
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::ToolRegistry;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 #[path = "agent_loop_clamp.rs"]
 mod agent_loop_clamp;
-#[path = "agent_loop_context_gauge.rs"]
-mod agent_loop_context_gauge;
 #[path = "agent_loop_effort.rs"]
 mod agent_loop_effort;
 #[path = "agent_loop_errors.rs"]
@@ -32,7 +31,6 @@ mod agent_loop_session;
 mod agent_loop_spill;
 #[path = "agent_loop_tool_exec.rs"]
 mod agent_loop_tool_exec;
-use agent_loop_context_gauge::ContextGaugeCalibration;
 use agent_loop_errors::{
     append_malformed_feedback, enhance_provider_error, is_context_or_output_limit_error,
     provider_failure_audit_event,
@@ -89,12 +87,6 @@ pub struct AgentLoopImpl {
     max_tool_iterations: u32,
     spill_store: Option<Arc<dyn ContextSpillStore>>,
     session_key: String,
-    context_collapse_after_tool_calls: u32,
-    max_context_tokens: usize,
-    /// #1045: recent-turn tail-pin count for the spilling ceiling.
-    pub(super) pin_recent_turns: u32,
-    /// #1046: count-based conversation-message collapse threshold.
-    pub(super) context_collapse_after_messages: u32,
     /// #1044: the active model's known context window (None when unknown).
     pub(super) model_context_window: Option<usize>,
     /// When true, use incremental streaming for LLM calls.
@@ -113,11 +105,9 @@ pub struct AgentLoopImpl {
     /// Cancelled turn so persistence can still reconcile. Consumed via
     /// [`Self::take_durable_prefix_dirty`].
     durable_prefix_dirty: std::sync::atomic::AtomicBool,
-    /// Latest provider-truth context occupancy and the message-estimate snapshot
-    /// it corresponded to. Pruning still uses message estimates, but user-facing
-    /// gauges carry provider truth forward across estimate-only collapses until
-    /// the next LLM call reports an exact value.
-    context_gauge: Mutex<ContextGaugeCalibration>,
+    /// Context-management boundary for pruning, spilling, dirty-prefix, and
+    /// user-facing context gauge decisions.
+    context_manager: ContextManager,
 }
 impl std::fmt::Debug for AgentLoopImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -130,6 +120,15 @@ impl std::fmt::Debug for AgentLoopImpl {
 }
 impl AgentLoopImpl {
     pub fn new(config: AgentLoopConfig) -> Self {
+        let context_manager = ContextManager::new(ContextManagerConfig {
+            spill_store: config.spill_store.clone(),
+            session_key: config.session_key.clone(),
+            context_collapse_after_tool_calls: config.context_collapse_after_tool_calls,
+            max_context_tokens: config.max_context_tokens,
+            pin_recent_turns: config.pin_recent_turns,
+            context_collapse_after_messages: config.context_collapse_after_messages,
+            model_context_window: config.model_context_window,
+        });
         Self {
             provider: config.provider,
             tool_registry: config.tool_registry,
@@ -140,10 +139,6 @@ impl AgentLoopImpl {
             max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
             spill_store: config.spill_store,
             session_key: config.session_key,
-            context_collapse_after_tool_calls: config.context_collapse_after_tool_calls,
-            max_context_tokens: config.max_context_tokens,
-            pin_recent_turns: config.pin_recent_turns,
-            context_collapse_after_messages: config.context_collapse_after_messages,
             model_context_window: config.model_context_window,
             progress_callback: config.progress_callback,
             streaming: config.streaming,
@@ -151,7 +146,7 @@ impl AgentLoopImpl {
             default_effort: config.effort,
             audit_log: config.audit_log,
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
-            context_gauge: Mutex::new(ContextGaugeCalibration::default()),
+            context_manager,
         }
     }
     /// Read-and-clear the durable-prefix dirty latch (#1072).
@@ -191,41 +186,41 @@ impl AgentLoopImpl {
     /// only for wiring tests and must not ship as public API surface.
     #[cfg(test)]
     pub fn context_knob_snapshot(&self) -> (u32, u32) {
-        (self.pin_recent_turns, self.context_collapse_after_messages)
+        self.context_manager.context_knob_snapshot()
     }
     fn reconcile_context_gauge(&self, estimate: usize) -> usize {
-        self.context_gauge
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .reconcile_before_call(estimate)
+        self.context_manager.reconcile_context_gauge(estimate)
     }
 
     fn observe_provider_context_gauge(&self, reported_tokens: usize, estimate_at_call: usize) {
-        self.context_gauge
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .observe_provider_truth(reported_tokens, estimate_at_call);
+        self.context_manager
+            .observe_provider_context_gauge(reported_tokens, estimate_at_call);
     }
 
     fn observe_estimated_context_gauge(&self, estimate: usize) {
-        self.context_gauge
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .observe_estimate_only(estimate);
+        self.context_manager
+            .observe_estimated_context_gauge(estimate);
+    }
+
+    #[doc(hidden)]
+    pub fn reconcile_context_gauge_for_test(&self, estimate: usize) -> usize {
+        self.reconcile_context_gauge(estimate)
+    }
+
+    #[doc(hidden)]
+    pub fn observe_provider_context_gauge_for_test(
+        &self,
+        reported_tokens: usize,
+        estimate_at_call: usize,
+    ) {
+        self.observe_provider_context_gauge(reported_tokens, estimate_at_call);
     }
 
     /// Poison the context-gauge mutex so coverage exercises the
     /// `unwrap_or_else(|e| e.into_inner())` recovery paths (#1128).
     #[cfg(test)]
     pub(super) fn poison_context_gauge_lock_for_test(&self) {
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = self.context_gauge.lock().unwrap();
-            panic!("poison context gauge mutex for coverage");
-        }));
-        assert!(
-            self.context_gauge.is_poisoned(),
-            "context gauge mutex must be poisoned after the intentional panic"
-        );
+        self.context_manager.poison_context_gauge_lock_for_test();
     }
 
     /// Drive all three gauge entry points against a poisoned mutex.

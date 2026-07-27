@@ -66,3 +66,82 @@ fn then_workflow_docs_describe_pure_move_refactors(world: &mut QuectoWorld) {
     );
     common::assert_pure_move_refactor_guidance(&world.stdout);
 }
+
+#[when("I inspect the Phase 0 hardening documentation links")]
+fn when_inspect_phase_0_hardening_documentation_links(world: &mut QuectoWorld) {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let report = common::repo_docs::check_phase_0_hardening_links(repo);
+
+    world.stdout = report.checked.join("\n");
+    world.stderr = report.missing.join("\n");
+    world.exit_code = if report.is_clean() { 0 } else { 1 };
+}
+
+#[then("the harness architecture map should cover the Phase 0 hardening surfaces")]
+fn then_architecture_map_covers_phase_0_surfaces(world: &mut QuectoWorld) {
+    for heading in [
+        "## Turn execution",
+        "## Context management",
+        "## UDS dispatch",
+        "## Subagent lifecycle",
+        "## Persistence and session recovery",
+    ] {
+        assert!(
+            world.stdout.contains(heading),
+            "architecture map missing {heading}"
+        );
+    }
+}
+
+#[then("the harness architecture map should record baseline hardening checks")]
+fn then_architecture_map_records_baseline_checks(world: &mut QuectoWorld) {
+    for required in [
+        "## Baseline subsystem checks",
+        "## Baseline longest files",
+        "cargo test -p quecto-agentic-harness --test repo_docs",
+        "tests/bdd/uds_steps.rs",
+    ] {
+        assert!(
+            world.stdout.contains(required),
+            "architecture map missing baseline record {required}"
+        );
+    }
+}
+
+#[then("the protocol capability matrix should include the baseline UDS capabilities")]
+fn then_protocol_matrix_includes_baseline_capabilities(world: &mut QuectoWorld) {
+    for capability in [
+        "Length-prefixed JSON frames",
+        "Bounded `agent_end` / `turn_end` message references",
+        "`get_messages` newest bounded page",
+        "Child-targeted history forwarding",
+    ] {
+        assert!(
+            world.stdout.contains(capability),
+            "protocol capability matrix missing {capability}"
+        );
+    }
+}
+
+#[then("the Phase 0 hardening documentation links should resolve")]
+fn then_phase_0_hardening_documentation_links_resolve(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.exit_code, 0,
+        "Phase 0 documentation links should resolve; missing:\n{}\nchecked:\n{}",
+        world.stderr, world.stdout
+    );
+    assert!(
+        world
+            .stdout
+            .contains("docs/uds-protocol.md -> protocol-capability-matrix.md"),
+        "UDS protocol docs should link the protocol matrix; checked:\n{}",
+        world.stdout
+    );
+    assert!(
+        world.stdout.contains(
+            "docs/architecture-design-records/README.md -> ../protocol-capability-matrix.md"
+        ),
+        "ADR index should link the protocol matrix; checked:\n{}",
+        world.stdout
+    );
+}

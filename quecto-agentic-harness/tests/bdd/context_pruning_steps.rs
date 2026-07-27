@@ -2238,3 +2238,43 @@ fn then_collapsed_messages_survive_rewind(world: &mut QuectoWorld) {
         );
     }
 }
+
+#[when("the next provider context is prepared")]
+fn when_next_provider_context_is_prepared(world: &mut QuectoWorld) {
+    run_spilling_sliding_window(world);
+}
+
+#[given(expr = "provider truth reports {int} context tokens at local estimate {int}")]
+fn given_provider_truth_reports_context_tokens(
+    world: &mut QuectoWorld,
+    reported: usize,
+    estimate: usize,
+) {
+    world.context_budget_config = Some(reported);
+    world.context_original_tokens = Some(estimate);
+}
+
+#[when(expr = "the local context estimate changes to {int} tokens")]
+fn when_local_context_estimate_changes(world: &mut QuectoWorld, estimate: usize) {
+    let reported = world
+        .context_budget_config
+        .expect("provider truth should be recorded");
+    let original_estimate = world
+        .context_original_tokens
+        .expect("provider-truth estimate should be recorded");
+    let reconciled = if estimate < original_estimate {
+        reported.saturating_sub(original_estimate - estimate)
+    } else {
+        reported.saturating_add(estimate - original_estimate)
+    };
+    world.context_effective_budget = Some(reconciled);
+}
+
+#[then(expr = "the user-facing context gauge reports {int} tokens")]
+fn then_user_facing_context_gauge_reports(world: &mut QuectoWorld, expected: usize) {
+    assert_eq!(
+        world.context_effective_budget,
+        Some(expected),
+        "provider-truth context gauge should carry forward the local estimate delta"
+    );
+}

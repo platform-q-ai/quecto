@@ -8,7 +8,7 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 
 **Status vocabulary:** `Accepted` · `Proposed` (may be deferred) ·
 `Rejected — superseded by ADR-00NN`.
-**Numbering** is monotonic and may skip (0004 was never used). Next free: 0012.
+**Numbering** is monotonic and may skip (0004 was never used). Next free: 0020.
 
 | ADR | Title | Status | Decides |
 |----:|-------|--------|---------|
@@ -22,6 +22,14 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 | [0009](adr-0009-binary-payload-encoding.md) | Binary Payload Encoding for the UDS Protocol | ❌ Rejected → [0011](adr-0011-stay-json-on-the-wire.md) | Proposed MessagePack/CBOR payloads under two preconditions. Rejected: measurement trigger never fired; JSON stays. |
 | [0010](adr-0010-bdd-steps-author-json-encode-at-the-transport-boundary.md) | BDD Steps Author JSON; Encoding Happens at the Transport Boundary | ❌ Rejected → [0011](adr-0011-stay-json-on-the-wire.md) | Proposed a test-transport transcode boundary to insulate tests from a binary switch. Rejected with 0009; its test-design principles are retained by 0011. |
 | [0011](adr-0011-stay-json-on-the-wire.md) | Stay JSON on the Wire | ✅ Accepted (supersedes 0009, 0010) | JSON stays the UDS payload format; no binary encoding and no transcode boundary. Binary reopens only via a future measurement-driven ADR. |
+| [0012](adr-0012-explicit-agent-turn-state-machine.md) | Explicit Agent Turn State Machine | 🕒 Proposed | Agent turn execution becomes an explicit internal application state machine. |
+| [0013](adr-0013-uds-command-family-router.md) | UDS Command Dispatch Uses Command-Family Routers | 🕒 Proposed | UDS command handling is split by command family behind the existing protocol. |
+| [0014](adr-0014-context-management-is-a-first-class-application-subsystem.md) | Context Management Is a First-Class Application Subsystem | 🕒 Proposed | Context budget/pruning/spill/gauge/reconciliation logic gets a named application boundary. |
+| [0015](adr-0015-subagent-lifecycle-state-machine.md) | Subagent Lifecycle Is an Explicit State Machine | 🕒 Proposed | Subagent process/run/notification lifecycle transitions become explicit and testable. |
+| [0016](adr-0016-typed-identifiers-for-protocol-and-session-boundaries.md) | Typed Identifiers for Protocol and Session Boundaries | 🕒 Proposed | High-risk ids become string-serializing newtypes at protocol/session boundaries. |
+| [0017](adr-0017-protocol-evolution-matrix.md) | Protocol Evolution Is Tracked by a Capability Matrix | 🕒 Proposed | UDS protocol capabilities are tracked in a [compatibility/evolution matrix](../protocol-capability-matrix.md). |
+| [0018](adr-0018-contributor-change-cookbooks.md) | Contributor Change Cookbooks for Common Harness Extensions | 🕒 Proposed | Common harness extension paths are documented as focused cookbooks. |
+| [0019](adr-0019-role-segregated-domain-ports.md) | Domain Ports Are Segregated by Role When They Grow | 🕒 Proposed | Broad ports split into role-focused traits when caller pressure justifies it. |
 
 ## The ADR-0008 protocol series
 

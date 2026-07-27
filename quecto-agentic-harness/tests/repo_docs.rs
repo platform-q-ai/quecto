@@ -1,6 +1,8 @@
 mod common;
 
 use common::read_repo_file;
+use common::repo_docs::{PHASE_0_ADRS, check_phase_0_hardening_links};
+use std::path::Path;
 
 #[test]
 fn readme_release_metadata_matches_workspace_package() {
@@ -70,6 +72,77 @@ fn readme_uds_protocol_lists_current_commands_and_events() {
         !readme.contains("AgentCommand` enum (15 variants"),
         "README command count is stale; AgentCommand has get_subagents too"
     );
+}
+
+#[test]
+fn architecture_hardening_phase_0_docs_are_linked() {
+    let prd = read_repo_file("docs/prd-harness-architecture-hardening.md");
+    let adr_index = read_repo_file("docs/architecture-design-records/README.md");
+    let uds = read_repo_file("docs/uds-protocol.md");
+    let matrix = read_repo_file("docs/protocol-capability-matrix.md");
+    let map = read_repo_file("docs/harness-architecture-map.md");
+
+    assert!(
+        prd.contains("Phase 0")
+            && prd.contains("protocol matrix")
+            && prd.contains("architecture map"),
+        "hardening PRD should describe the Phase 0 documentation baseline"
+    );
+    for path in PHASE_0_ADRS {
+        let adr = read_repo_file(path);
+        let id = path
+            .split("adr-")
+            .nth(1)
+            .and_then(|rest| rest.get(..4))
+            .expect("phase-0 ADR path should include a numeric id");
+        assert!(
+            adr_index.contains(&format!("[{id}]"))
+                && adr_index.contains(path.rsplit('/').next().unwrap()),
+            "ADR index should link ADR-{id} at {path}"
+        );
+        assert!(adr.contains("**Status:**"), "{path} should be a real ADR");
+    }
+    assert!(
+        adr_index.contains("../protocol-capability-matrix.md"),
+        "ADR index should link the protocol capability matrix"
+    );
+    assert!(
+        uds.contains("protocol-capability-matrix.md"),
+        "UDS protocol docs should link the protocol capability matrix"
+    );
+    for heading in [
+        "## Turn execution",
+        "## Context management",
+        "## UDS dispatch",
+        "## Subagent lifecycle",
+        "## Persistence and session recovery",
+    ] {
+        assert!(map.contains(heading), "architecture map missing {heading}");
+    }
+    for baseline in [
+        "## Baseline subsystem checks",
+        "## Baseline longest files",
+        "cargo test -p quecto-agentic-harness --test repo_docs",
+        "tests/bdd/uds_steps.rs",
+    ] {
+        assert!(
+            map.contains(baseline),
+            "architecture map missing {baseline}"
+        );
+    }
+    for capability in [
+        "Length-prefixed JSON frames",
+        "Bounded `agent_end` / `turn_end` message references",
+        "`get_messages` newest bounded page",
+        "Child-targeted history forwarding",
+    ] {
+        assert!(
+            matrix.contains(capability),
+            "protocol capability matrix missing {capability}"
+        );
+    }
+
+    assert_phase_0_links_resolve();
 }
 
 #[test]
@@ -423,5 +496,30 @@ fn adr_0008_documents_the_ndjson_deprecation_window_and_end_condition() {
     assert!(
         adr.contains("quecto-agent-protocol: 2"),
         "ADR-0008 must document the protocol-version announcement line"
+    );
+}
+
+fn assert_phase_0_links_resolve() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let report = check_phase_0_hardening_links(repo);
+
+    assert!(
+        report
+            .checked
+            .iter()
+            .any(|link| link == "docs/uds-protocol.md -> protocol-capability-matrix.md"),
+        "UDS protocol docs should link the protocol matrix; checked: {:?}",
+        report.checked
+    );
+    assert!(
+        report.checked.iter().any(|link| link
+            == "docs/architecture-design-records/README.md -> ../protocol-capability-matrix.md"),
+        "ADR index should link the protocol matrix; checked: {:?}",
+        report.checked
+    );
+    assert!(
+        report.is_clean(),
+        "Phase 0 documentation links should resolve; missing: {:?}",
+        report.missing
     );
 }

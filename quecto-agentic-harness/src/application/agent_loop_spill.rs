@@ -3,7 +3,7 @@
 //! (#951/#1046). Split from `agent_loop.rs` to respect the 750-line cap.
 
 use super::*;
-use crate::domain::session::SpillEntry;
+use crate::application::context::ToolMessageBuild;
 
 /// Args for building a tool result message (avoids clippy 5-arg limit).
 pub(super) struct ToolMessageArgs<'a> {
@@ -15,14 +15,12 @@ pub(super) struct ToolMessageArgs<'a> {
 
 impl AgentLoopImpl {
     pub(super) fn build_tool_message(&self, args: ToolMessageArgs) -> Message {
-        let mut tool_msg = Message::tool(args.tc.id.clone(), args.content);
-        tool_msg.tool_name = Some(args.tc.name.clone());
-        tool_msg.input_preview =
-            Some(context_pruning::truncate_utf8_safe(&args.tc.arguments, 100).into_owned());
-        tool_msg.image_blocks = args.image_blocks;
-        tool_msg.invalidate_token_cache();
-        tool_msg.is_error = args.is_error;
-        tool_msg
+        self.context_manager.build_tool_message(ToolMessageBuild {
+            tc: args.tc,
+            content: args.content,
+            image_blocks: args.image_blocks,
+            is_error: args.is_error,
+        })
     }
 
     // NOTE: tool-output spilling has no ephemeral-session (empty key) guard —
@@ -42,33 +40,9 @@ impl AgentLoopImpl {
     // reached disk must keep `spill_id == None` so collapse never mints an
     // unresolvable recall() stub for it.
     pub(super) async fn spill_tool_message(&self, tool_msg: &mut Message, spill_id: String) {
-        let Some(ref spill_store) = self.spill_store else {
-            return;
-        };
-
-        // Move (not clone) the content into the SpillEntry for the borrowing
-        // append, then move it back — avoids copying up to 1MB of tool output.
-        let content = std::mem::take(&mut tool_msg.content);
-        let entry = SpillEntry {
-            id: spill_id,
-            tool: tool_msg
-                .tool_name
-                .clone()
-                .unwrap_or_else(|| "tool".to_string()),
-            input_preview: tool_msg.input_preview.clone().unwrap_or_default(),
-            tokens: context_pruning::estimate_tokens(&content),
-            content,
-        };
-        let result = spill_store.append(&self.session_key, &entry).await;
-        // Restore content back into the message (entry is consumed here).
-        tool_msg.content = entry.content;
-        tool_msg.invalidate_token_cache();
-        match result {
-            Ok(()) => tool_msg.spill_id = Some(entry.id),
-            Err(e) => {
-                tracing::warn!(target: "context_prune", error = %e, "failed to spill tool output");
-            }
-        }
+        self.context_manager
+            .spill_tool_message(tool_msg, spill_id)
+            .await;
     }
 
     /// Spill a conversation (assistant/user) message at creation so it is
@@ -76,13 +50,6 @@ impl AgentLoopImpl {
     /// shared writer persists for ephemeral (empty key) sessions too and
     /// stamps `spill_id` only on a successful append.
     pub(super) async fn spill_conversation_message(&self, msg: &mut Message) {
-        if let Some(ref spill_store) = self.spill_store {
-            context_pruning::messages::spill_conversation_message(
-                msg,
-                spill_store.as_ref(),
-                &self.session_key,
-            )
-            .await;
-        }
+        self.context_manager.spill_conversation_message(msg).await;
     }
 }

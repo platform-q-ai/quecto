@@ -31,7 +31,7 @@ The agent prints the socket path to stderr on startup. Options:
 - **Multi-client:** Multiple clients can connect simultaneously. Events are broadcast to all clients; commands from all clients merge into a single serial dispatch loop
 - **Shutdown:** By default the agent exits when all clients disconnect. Pass `--persist` to keep it running.  Socket file is removed on exit
 - **Security:** Socket file is created with `chmod 0600` (owner-only). Stale sockets older than 24h are reaped on startup
-- **See also:** [ADR-0008](architecture-design-records/adr-0008-length-prefixed-uds-framing-and-bounded-events.md) for version negotiation and the NDJSON deprecation window
+- **See also:** [ADR-0008](architecture-design-records/adr-0008-length-prefixed-uds-framing-and-bounded-events.md) for version negotiation and the NDJSON deprecation window, and the [protocol capability matrix](protocol-capability-matrix.md) for the current compatibility/evolution map
 
 ## Correlation IDs
 

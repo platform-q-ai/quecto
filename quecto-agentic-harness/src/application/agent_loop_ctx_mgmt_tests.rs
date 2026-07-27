@@ -501,8 +501,7 @@ fn agent_loop_config_carries_context_knobs_as_constructor_fields() {
         context_collapse_after_messages: 7,
         model_context_window: Some(48_000),
     });
-    assert_eq!(agent.pin_recent_turns, 5);
-    assert_eq!(agent.context_collapse_after_messages, 7);
+    assert_eq!(agent.context_knob_snapshot(), (5, 7));
     assert_eq!(agent.model_context_window, Some(48_000));
 }
 
