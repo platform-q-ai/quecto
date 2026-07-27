@@ -527,6 +527,9 @@ mod app_paged_history_tests;
 #[path = "app_refresh_tui_tests.rs"]
 mod app_refresh_tui_tests;
 #[cfg(test)]
+#[path = "../conversation/app_rewind_paged_load_tests.rs"]
+mod app_rewind_paged_load_tests;
+#[cfg(test)]
 #[path = "../conversation/app_rewind_response_tests.rs"]
 mod app_rewind_response_tests;
 #[cfg(test)]

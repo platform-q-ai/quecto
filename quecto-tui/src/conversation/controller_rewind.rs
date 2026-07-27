@@ -9,7 +9,7 @@ pub(super) fn rewind_preview(content: &str) -> String {
 }
 
 impl App {
-    fn next_rewind_request_id(&mut self, kind: &str) -> String {
+    pub(super) fn next_rewind_request_id(&mut self, kind: &str) -> String {
         self.rewind.request_seq = self.rewind.request_seq.wrapping_add(1);
         format!("rewind-{kind}-{}", self.rewind.request_seq)
     }
@@ -86,11 +86,18 @@ impl App {
         let Some(message_id) = route_overlay_key(&mut self.rewind.selector, key) else {
             return;
         };
-        let id = self.next_rewind_request_id("to");
-        self.rewind.pending_apply_id = Some(id.clone());
-        self.send_command(Command::RewindTo {
+        let id = self.next_rewind_request_id("load");
+        self.rewind.pending_load_id = Some(id.clone());
+        self.rewind.pending_apply_message_id = Some(message_id.clone());
+        self.rewind.pending_load_content.clear();
+        self.rewind.pending_load_offset = 0;
+        self.send_command(Command::GetMessage {
             id: Some(id),
             message_id,
+            agent_id: None,
+            tool_call_id: None,
+            offset: Some(0),
+            limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
         });
     }
 }

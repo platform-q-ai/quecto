@@ -115,15 +115,15 @@ async fn open_rewind_selector_builds_turns_in_reverse() {
     }
 
     let commands = h.drain_commands().await;
-    let rewind = commands
+    let load = commands
         .iter()
         .find_map(|line| {
             let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
-            (cmd.get("type").and_then(|v| v.as_str()) == Some("rewind_to")).then_some(cmd)
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("get_message")).then_some(cmd)
         })
-        .expect("a rewind_to command must be sent");
+        .expect("a get_message command must be sent");
     assert_eq!(
-        rewind.get("messageId").and_then(|v| v.as_str()),
+        load.get("messageId").and_then(|v| v.as_str()),
         Some("u2"),
         "the newest user turn must be selected first"
     );
@@ -163,15 +163,15 @@ async fn rewind_selector_skips_idless_user_turns() {
     }
 
     let commands = h.drain_commands().await;
-    let rewind = commands
+    let load = commands
         .iter()
         .find_map(|line| {
             let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
-            (cmd.get("type").and_then(|v| v.as_str()) == Some("rewind_to")).then_some(cmd)
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("get_message")).then_some(cmd)
         })
-        .expect("a rewind_to command must be sent");
+        .expect("a get_message command must be sent");
     assert_eq!(
-        rewind.get("messageId").and_then(|v| v.as_str()),
+        load.get("messageId").and_then(|v| v.as_str()),
         Some("stable-u1"),
         "only the stable-id user turn may be selected"
     );
@@ -185,7 +185,8 @@ async fn rewind_selector_enter_requests_rewind() {
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Enter);
     assert!(a.rewind.selector.is_none());
-    assert!(a.rewind.pending_apply_id.is_some());
+    assert!(a.rewind.pending_load_id.is_some());
+    assert_eq!(a.rewind.pending_apply_message_id.as_deref(), Some("u1"));
 }
 
 #[tokio::test]
@@ -207,9 +208,9 @@ async fn rewind_selector_enter_sends_stable_message_id_not_page_local_index() {
         .iter()
         .find_map(|line| {
             let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
-            (cmd.get("type").and_then(|v| v.as_str()) == Some("rewind_to")).then_some(cmd)
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("get_message")).then_some(cmd)
         })
-        .expect("a rewind_to command must be sent");
+        .expect("a get_message command must be sent");
     assert_eq!(
         rewind.get("messageId").and_then(|v| v.as_str()),
         Some("msg-42")
@@ -217,6 +218,11 @@ async fn rewind_selector_enter_sends_stable_message_id_not_page_local_index() {
     assert!(
         rewind.get("messageIndex").is_none(),
         "must not send a page-local index; command={rewind}"
+    );
+    assert_eq!(rewind.get("offset").and_then(|v| v.as_u64()), Some(0));
+    assert_eq!(
+        rewind.get("limit").and_then(|v| v.as_u64()),
+        Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES as u64)
     );
 }
 
@@ -263,10 +269,16 @@ async fn rewind_request_ids_are_monotonically_increasing() {
     a.rewind.pending_open_id = None; // simulate response clearing it
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Enter);
+    let load_id = a.rewind.pending_load_id.as_ref().unwrap().clone();
+    assert!(load_id.contains("rewind-load-"));
+    let seq_after_load = a.rewind.request_seq;
+    assert_eq!(seq_after_load, seq_before.wrapping_add(2));
+    let message = serde_json::json!({"role": "user", "content": "turn", "id": "u1"});
+    respond(a, Some(&load_id), "get_message", true, Some(message), None);
     let apply_id = a.rewind.pending_apply_id.as_ref().unwrap().clone();
     assert!(apply_id.contains("rewind-to-"));
     let seq_after_apply = a.rewind.request_seq;
-    assert_eq!(seq_after_apply, seq_before.wrapping_add(2));
+    assert_eq!(seq_after_apply, seq_before.wrapping_add(3));
 }
 
 #[tokio::test]
@@ -441,12 +453,72 @@ async fn response_rewind_to_success_clears_pending_and_notifies() {
 }
 
 #[tokio::test]
+async fn response_get_message_for_rewind_sends_rewind_with_full_text() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.editor.set_text("draft");
+    a.rewind.pending_load_id = Some("load".into());
+    a.rewind.pending_apply_message_id = Some("u1".into());
+    let data = serde_json::json!({
+        "id": "u1",
+        "role": "user",
+        "content": "full prompt body",
+        "contentLength": "full prompt body".len(),
+        "hasMoreContent": false,
+        "offset": 0
+    });
+    respond(a, Some("load"), "get_message", true, Some(data), None);
+    assert!(a.rewind.pending_load_id.is_none());
+    assert!(a.rewind.pending_apply_message_id.is_none());
+    assert!(a.rewind.pending_apply_id.is_some());
+    assert_eq!(
+        a.rewind.pending_apply_text.as_deref(),
+        Some("full prompt body")
+    );
+    assert_eq!(
+        a.rewind.pending_apply_editor_baseline.as_deref(),
+        Some("draft")
+    );
+}
+
+#[tokio::test]
+async fn response_rewind_to_success_moves_selected_text_into_editor() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.editor.set_text("draft");
+    a.rewind.pending_apply_id = Some("rt".into());
+    a.rewind.pending_apply_editor_baseline = Some("draft".into());
+    a.rewind.pending_apply_text = Some("original prompt\nsecond line".into());
+    respond(a, Some("rt"), "rewind_to", true, None, None);
+    assert_eq!(a.editor.text(), "original prompt\nsecond line");
+    assert!(a.rewind.pending_apply_text.is_none());
+}
+
+#[tokio::test]
+async fn response_rewind_to_success_keeps_newer_editor_draft() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.editor.set_text("newer draft");
+    a.rewind.pending_apply_id = Some("rt".into());
+    a.rewind.pending_apply_editor_baseline = Some("draft at send".into());
+    a.rewind.pending_apply_text = Some("original prompt".into());
+    respond(a, Some("rt"), "rewind_to", true, None, None);
+    assert_eq!(a.editor.text(), "newer draft");
+    assert!(a.rewind.pending_apply_text.is_none());
+}
+
+#[tokio::test]
 async fn response_rewind_to_failure_clears_pending_and_notifies_error() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.rewind.pending_apply_id = Some("rt".into());
+    a.rewind.pending_apply_editor_baseline = Some("".into());
+    a.rewind.pending_apply_text = Some("keep out of editor".into());
     respond(a, Some("rt"), "rewind_to", false, None, Some("bad"));
     assert!(a.rewind.pending_apply_id.is_none());
+    assert!(a.rewind.pending_apply_editor_baseline.is_none());
+    assert!(a.rewind.pending_apply_text.is_none());
+    assert_eq!(a.editor.text(), "");
     assert!(!a.notifications.is_empty());
 }
 

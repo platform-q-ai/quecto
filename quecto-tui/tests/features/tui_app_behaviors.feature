@@ -203,18 +203,19 @@ Feature: TUI app event routing and command behaviours
     Then the app notification includes "Effort switch failed: agent busy"
     And the footer shows effort level "medium"
 
-  Scenario: Rewind selector opens from history and applies the selected turn
+  Scenario: Rewind selector opens from history and loads the selected turn
     Given a fresh TUI app harness
     When I request rewind history with two prior user turns
     And I choose the most recent rewind target
-    Then a rewind command is sent for the most recent user turn
+    Then the selected rewind message is requested for the most recent user turn
 
-  Scenario: Successful rewind refreshes the conversation
+  Scenario: Successful rewind restores the selected prompt to the editor
     Given a fresh TUI app harness
     When I request rewind history with two prior user turns
     And I choose the most recent rewind target
     And the rewind apply response succeeds
     Then the app notification includes "Rewound conversation"
+    And the editor contains "most recent prompt"
     And a rewind refresh command is sent
 
   Scenario: Master submit while streaming queues a follow-up

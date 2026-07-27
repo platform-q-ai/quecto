@@ -26,15 +26,7 @@ impl App {
         error: Option<String>,
     ) {
         match command.as_str() {
-            // #1061 auto-recall of a demoted history stub takes precedence. The
-            // guard applies the stub recall as a side effect; only when this
-            // response is NOT a stub recall does it fall through to #1060's gated
-            // ref-based end-of-turn miss recovery (a stub recall lands in `_`).
-            "get_message"
-                if !self.handle_stub_recall_response(id.as_deref(), success, data.as_ref()) =>
-            {
-                self.handle_get_message_recovery(id.as_deref(), success, data);
-            }
+            "get_message" => self.handle_get_message_response(id, success, data, error),
             "get_state" if success => self.handle_get_state(data),
             "set_model" if success => self.handle_set_model_success(data),
             // Late master failure must not toast over a focused child (#1085).
@@ -150,6 +142,23 @@ impl App {
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id && success => {
                 self.rewind.pending_apply_id = None;
+                if let Some(text) = self.rewind.pending_apply_text.take() {
+                    let editor_unchanged = self
+                        .rewind
+                        .pending_apply_editor_baseline
+                        .take()
+                        .is_some_and(|baseline| baseline == self.editor.text());
+                    if editor_unchanged {
+                        self.editor.set_text(&text);
+                        self.autocomplete.update(&self.editor.text());
+                        self.refresh_files_autocomplete_from_editor();
+                    } else {
+                        self.notify(
+                            "Rewound conversation; editor kept your newer draft",
+                            NotifyLevel::Info,
+                        );
+                    }
+                }
                 self.clear_message_recovery();
                 self.notify("Rewound conversation", NotifyLevel::Success);
                 self.send_command(Command::GetMessages {
@@ -159,6 +168,8 @@ impl App {
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id => {
                 self.rewind.pending_apply_id = None;
+                self.rewind.pending_apply_editor_baseline = None;
+                self.rewind.pending_apply_text = None;
                 self.notify_response_error("Rewind failed", error);
             }
             "rewind_to" => {}
@@ -305,6 +316,115 @@ impl App {
     fn handle_get_subagents(&mut self, data: Option<serde_json::Value>) {
         let Some(data) = data else { return };
         self.update_subagent_bar(crate::protocol::presentation_payloads::subagents(&data));
+    }
+
+    fn handle_get_message_response(
+        &mut self,
+        id: Option<String>,
+        success: bool,
+        data: Option<serde_json::Value>,
+        error: Option<String>,
+    ) {
+        if id.is_some() && id == self.rewind.pending_load_id {
+            if success {
+                self.handle_rewind_get_message_success(data);
+            } else {
+                self.handle_rewind_get_message_failure(error);
+            }
+            return;
+        }
+
+        // #1061 auto-recall of a demoted history stub takes precedence. The
+        // guard applies the stub recall as a side effect; only when this
+        // response is NOT a stub recall does it fall through to #1060's gated
+        // ref-based end-of-turn miss recovery (a stub recall lands in `_`).
+        if !self.handle_stub_recall_response(id.as_deref(), success, data.as_ref()) {
+            self.handle_get_message_recovery(id.as_deref(), success, data);
+        }
+    }
+
+    fn handle_rewind_get_message_success(&mut self, data: Option<serde_json::Value>) {
+        self.rewind.pending_load_id = None;
+        let Some(message_id) = self.rewind.pending_apply_message_id.clone() else {
+            return;
+        };
+        let Some(data) = data else {
+            self.clear_pending_rewind_load();
+            self.notify(
+                "Rewind failed: selected message not found",
+                NotifyLevel::Error,
+            );
+            return;
+        };
+        if crate::protocol::presentation_payloads::response_identity(&data)
+            .0
+            .as_deref()
+            != Some(message_id.as_str())
+        {
+            self.clear_pending_rewind_load();
+            self.notify(
+                "Rewind failed: selected message not found",
+                NotifyLevel::Error,
+            );
+            return;
+        }
+
+        let update = crate::protocol::range_accumulator::RangeAccumulator::new(
+            std::mem::take(&mut self.rewind.pending_load_content),
+            self.rewind.pending_load_offset,
+        )
+        .apply(&data);
+        let text = match update {
+            Ok(crate::protocol::range_accumulator::RangeUpdate::Continue {
+                content,
+                next_offset,
+            }) => {
+                let id = self.next_rewind_request_id("load");
+                self.rewind.pending_load_id = Some(id.clone());
+                self.rewind.pending_load_content = content;
+                self.rewind.pending_load_offset = next_offset;
+                self.send_command(Command::GetMessage {
+                    id: Some(id),
+                    message_id,
+                    agent_id: None,
+                    tool_call_id: None,
+                    offset: Some(next_offset),
+                    limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
+                });
+                return;
+            }
+            Ok(crate::protocol::range_accumulator::RangeUpdate::Complete(text)) => text,
+            Err(_) => {
+                self.clear_pending_rewind_load();
+                self.notify(
+                    "Rewind failed: selected message not found",
+                    NotifyLevel::Error,
+                );
+                return;
+            }
+        };
+
+        self.clear_pending_rewind_load();
+        let id = self.next_rewind_request_id("to");
+        self.rewind.pending_apply_id = Some(id.clone());
+        self.rewind.pending_apply_editor_baseline = Some(self.editor.text());
+        self.rewind.pending_apply_text = Some(text);
+        self.send_command(Command::RewindTo {
+            id: Some(id),
+            message_id,
+        });
+    }
+
+    fn handle_rewind_get_message_failure(&mut self, error: Option<String>) {
+        self.clear_pending_rewind_load();
+        self.notify_response_error("Rewind failed", error);
+    }
+
+    fn clear_pending_rewind_load(&mut self) {
+        self.rewind.pending_load_id = None;
+        self.rewind.pending_apply_message_id = None;
+        self.rewind.pending_load_content.clear();
+        self.rewind.pending_load_offset = 0;
     }
 
     fn handle_agent_error(&mut self, error: Option<String>) {
