@@ -3,7 +3,6 @@
 //! This layer is the composition root for executable entry points and user-facing
 //! wiring. It may depend on all inner layers.
 
-pub(crate) mod agents;
 pub mod ansi;
 pub mod app;
 pub mod kitty;

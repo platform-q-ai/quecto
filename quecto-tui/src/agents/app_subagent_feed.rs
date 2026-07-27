@@ -6,16 +6,12 @@ impl App {
         if self.subagents.feeds.contains_key(id) {
             return;
         }
-        self.open_subagent_feed(id, crate::interface::agents::feed::FeedAuthority::WarmSync);
+        self.open_subagent_feed(id, crate::agents::feed::FeedAuthority::WarmSync);
     }
 
     /// Open a direct UDS connection to `id`'s own socket and fan its live stream
     /// into the shared `subagent_event_rx`, tagged with the agent id.
-    fn open_subagent_feed(
-        &mut self,
-        id: &str,
-        authority: crate::interface::agents::feed::FeedAuthority,
-    ) {
+    fn open_subagent_feed(&mut self, id: &str, authority: crate::agents::feed::FeedAuthority) {
         if self.subagents.feeds.contains_key(id) {
             return;
         }
@@ -65,8 +61,8 @@ impl App {
         self.subagents.feeds.insert(
             id.to_string(),
             FeedState::from_parts(
-                crate::interface::agents::ui::FeedRuntime { cmd_tx, handle },
-                crate::interface::agents::feed::FeedSyncState::new(authority),
+                crate::agents::runtime::FeedRuntime { cmd_tx, handle },
+                crate::agents::feed::FeedSyncState::new(authority),
             ),
         );
     }

@@ -10,7 +10,7 @@ Feature: Sub-agent-first default layout (#820)
   # Wired to step definitions in tests/bdd/tui_subagent_first_layout_steps.rs,
   # which drive the REAL render path through the headless render harness
   # (quecto_tui::interface::app::tui_harness). Also covered by the unit tests in
-  # quecto-tui/src/interface/app_subagent_first_tests.rs.
+  # quecto-tui/src/agents/app_subagent_first_tests.rs.
 
   Scenario: The panel is always visible with only the master
     Given a sub-agent-first TUI with no sub-agents

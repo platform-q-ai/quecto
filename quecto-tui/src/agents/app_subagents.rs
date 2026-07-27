@@ -109,7 +109,7 @@ impl App {
             candidates.insert(sanitize_agent_id(&s.agent_id), s);
         }
 
-        crate::interface::agents::roster::apply_roster_snapshot(
+        crate::agents::roster::apply_roster_snapshot(
             &mut self.subagents.tracked,
             source_agent_id.as_deref(),
             candidates,

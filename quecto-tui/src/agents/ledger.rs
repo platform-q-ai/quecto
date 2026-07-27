@@ -119,5 +119,5 @@ fn ledger_entries(refs: &[String], responses: &HashMap<String, LedgerMessage>) -
 }
 
 #[cfg(test)]
-#[path = "../ledger_sync_tests.rs"]
+#[path = "ledger_sync_tests.rs"]
 mod ledger_sync_tests;

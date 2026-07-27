@@ -14,8 +14,9 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
     And the old quecto-tui Clean Architecture target model should be superseded
     And the quecto-tui README should point to the feature-oriented architecture document
 
-  Scenario: quecto-tui exposes Phase 3 top-level modules during migration
-    Then the quecto-tui source tree should contain layer "conversation"
+  Scenario: quecto-tui exposes Phase 4 top-level modules during migration
+    Then the quecto-tui source tree should contain layer "agents"
+    And the quecto-tui source tree should contain layer "conversation"
     And the quecto-tui source tree should contain layer "protocol"
     And the quecto-tui source tree should contain layer "infrastructure"
     And the quecto-tui source tree should contain layer "interface"
@@ -26,6 +27,7 @@ Feature: TUI feature-oriented architecture and executable BDD enforcement
 
   Scenario: quecto-tui layer dependencies point inward
     Then the quecto-tui conversation pure policy should not import outer layers
+    And the quecto-tui agents pure policy should not import outer layers
     And the quecto-tui infrastructure source should not import application or interface layers
     And the quecto-tui protocol source should not import feature or shell modules
     And the quecto-tui shell should own runtime adapters

@@ -56,13 +56,13 @@ impl App {
                     since_rev: next_rev,
                 });
             }
-            feed.authority = crate::interface::agents::feed::FeedAuthority::SyncedAuthoritative;
+            feed.authority = crate::agents::feed::FeedAuthority::SyncedAuthoritative;
             if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
                 session.chat.clear();
                 for entry in entries {
-                    session.chat.add_entry(
-                        crate::interface::agents::ui::ledger_entry_to_chat_entry(entry),
-                    );
+                    session
+                        .chat
+                        .add_entry(crate::agents::view::ledger_entry_to_chat_entry(entry));
                 }
             }
         }
