@@ -61,12 +61,10 @@ pub(super) fn next_state_after_provider_response(response: &LlmResponse) -> Turn
     }
 }
 
-pub(super) fn next_state_after_provider_failure(
-    error: &DomainError,
-    malformed_retries: u32,
-    max_malformed_retries: u32,
+pub(super) fn state_for_provider_failure_transition(
+    transition: &ProviderFailureTransition,
 ) -> TurnState {
-    match classify_provider_failure(error, malformed_retries, max_malformed_retries) {
+    match transition {
         ProviderFailureTransition::RecoverMalformedRequest => TurnState::RecoverMalformedResponse,
         ProviderFailureTransition::Terminal(_) => TurnState::FailProviderRequest,
     }

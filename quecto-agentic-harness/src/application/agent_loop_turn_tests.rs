@@ -3,6 +3,15 @@ use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, ToolCall};
 use crate::domain::provider_error::ProviderErrorClass;
 
+fn next_state_after_provider_failure(
+    error: &DomainError,
+    malformed_retries: u32,
+    max_malformed_retries: u32,
+) -> TurnState {
+    let transition = classify_provider_failure(error, malformed_retries, max_malformed_retries);
+    state_for_provider_failure_transition(&transition)
+}
+
 fn text_response() -> LlmResponse {
     LlmResponse {
         content: Some("done".to_string()),

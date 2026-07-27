@@ -35,9 +35,6 @@ mod agent_loop_tool_exec;
 mod agent_loop_turn;
 #[path = "agent_loop_turn_flow.rs"]
 mod agent_loop_turn_flow;
-#[cfg(test)]
-#[path = "agent_loop_turn_tests.rs"]
-mod agent_loop_turn_tests;
 use agent_loop_errors::{
     append_malformed_feedback, enhance_provider_error, is_context_or_output_limit_error,
     provider_failure_audit_event,
@@ -45,7 +42,7 @@ use agent_loop_errors::{
 use agent_loop_spill::ToolMessageArgs;
 use agent_loop_turn::{
     ProviderFailureTransition, TurnState, classify_provider_failure,
-    next_state_after_provider_failure, next_state_after_provider_response,
+    next_state_after_provider_response, state_for_provider_failure_transition,
 };
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 const MAX_PROVIDER_ATTEMPTS: usize = 3;
@@ -508,16 +505,13 @@ impl AgentLoopImpl {
             let response = match response {
                 Ok(response) => response,
                 Err(error) => {
-                    let _state = next_state_after_provider_failure(
+                    let transition = classify_provider_failure(
                         &error,
                         malformed_retries,
                         MAX_MALFORMED_REQUEST_RETRIES,
                     );
-                    match classify_provider_failure(
-                        &error,
-                        malformed_retries,
-                        MAX_MALFORMED_REQUEST_RETRIES,
-                    ) {
+                    let _state = state_for_provider_failure_transition(&transition);
+                    match transition {
                         ProviderFailureTransition::RecoverMalformedRequest => {
                             let _state = TurnState::RecoverMalformedResponse;
                             self.recover_malformed_response(
@@ -643,3 +637,6 @@ mod swap_tests;
 #[cfg(test)]
 #[path = "agent_loop_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "agent_loop_turn_tests.rs"]
+mod turn_tests;
