@@ -11,7 +11,7 @@ use crate::domain::audit::{AuditEvent, AuditSink};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
-use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
+use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::ToolRegistry;
 use std::pin::Pin;
@@ -31,11 +31,19 @@ mod agent_loop_session;
 mod agent_loop_spill;
 #[path = "agent_loop_tool_exec.rs"]
 mod agent_loop_tool_exec;
+#[path = "agent_loop_turn.rs"]
+mod agent_loop_turn;
+#[path = "agent_loop_turn_flow.rs"]
+mod agent_loop_turn_flow;
 use agent_loop_errors::{
     append_malformed_feedback, enhance_provider_error, is_context_or_output_limit_error,
     provider_failure_audit_event,
 };
 use agent_loop_spill::ToolMessageArgs;
+use agent_loop_turn::{
+    ProviderFailureTransition, TurnState, classify_provider_failure,
+    next_state_after_provider_response, state_for_provider_failure_transition,
+};
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 const MAX_PROVIDER_ATTEMPTS: usize = 3;
 const PROVIDER_RETRY_BACKOFF_MS: u64 = 100;
@@ -434,60 +442,6 @@ impl AgentLoopImpl {
         })
     }
 
-    async fn call_provider_with_retries(
-        &self,
-        request: ChatRequest<'_>,
-    ) -> Result<LlmResponse, DomainError> {
-        // Transient-error retry is owned by the `RetryingProvider` decorator, so
-        // the non-streaming path makes a single call and passes the error
-        // through (only enhancing it); re-retrying here would double the budget.
-        if !self.streaming {
-            return self
-                .provider
-                .chat(request)
-                .await
-                .map_err(enhance_provider_error);
-        }
-
-        // Streaming initiation *is* retried here: the decorator forwards
-        // `chat_stream` without retry, so this loop owns stream re-initiation.
-        for attempt in 1..=MAX_PROVIDER_ATTEMPTS {
-            let result = match self.stream_chat_once(request.clone()).await {
-                Ok(response) => Ok(response),
-                Err(stream_error) if stream_error.emitted_event => {
-                    // Replaying after emitted content would corrupt output.
-                    return Err(enhance_provider_error(stream_error.error));
-                }
-                Err(stream_error) => Err(stream_error.error),
-            };
-
-            match result {
-                Ok(response) => return Ok(response),
-                Err(err) => {
-                    let class = classify_provider_error(&err);
-                    if attempt == MAX_PROVIDER_ATTEMPTS || !class.is_retryable() {
-                        return Err(enhance_provider_error(err));
-                    }
-                    tracing::warn!(
-                        target: "provider_retry",
-                        attempt,
-                        max_attempts = MAX_PROVIDER_ATTEMPTS,
-                        error_class = %class,
-                        "retrying stream initiation after transient failure"
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        PROVIDER_RETRY_BACKOFF_MS * attempt as u64,
-                    ))
-                    .await;
-                }
-            }
-        }
-
-        Err(DomainError::Provider(
-            "provider request failed without an error".to_string(),
-        ))
-    }
-
     /// Run the LLM-tool loop.
     async fn run_loop(&self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
         let tool_defs = self.tool_registry.definitions();
@@ -524,124 +478,88 @@ impl AgentLoopImpl {
         let mut malformed_retries: u32 = 0;
 
         loop {
+            let _state = TurnState::PrepareProviderRequest;
             let estimated_context_tokens = self
                 .apply_context_pruning(messages, current_turn, spills_dirty)
                 .await;
-            let display_context_tokens = self.reconcile_context_gauge(estimated_context_tokens);
 
-            // Emit Thinking before every LLM call so the REPL spinner activates
-            // immediately, including during multi-turn tool loops. The gauge
-            // value is provider-truth when known, calibrated across estimate-only
-            // pruning/collapse changes; pruning itself still uses the estimate.
-            self.notify(|| AgentProgressEvent::Thinking {
-                context_tokens: display_context_tokens,
-                max_context_tokens: self.effective_max_context_tokens(),
-                provider: self.provider.name().to_string(),
-                model: self.model.clone(),
-            });
-
-            let request = self.build_chat_request(messages, tool_defs);
-            // Audit: LlmTurnStart (guarded)
-            if self.audit_log.is_some() {
-                self.audit(
-                    current_turn,
-                    AuditEvent::LlmTurnStart {
-                        input_tokens_estimate: estimated_context_tokens,
-                        message_count: messages.len(),
-                    },
-                )
-                .await;
-            }
+            let request = self.prepare_provider_request_transition(
+                messages,
+                tool_defs,
+                estimated_context_tokens,
+            );
+            let _state = TurnState::AwaitProviderResponse;
+            self.audit_provider_request_start(
+                current_turn,
+                estimated_context_tokens,
+                messages.len(),
+            )
+            .await;
 
             let llm_start = std::time::Instant::now();
             // Streaming (UDS mode) forwards token events in real time; REPL/
             // one-shot use the non-streaming path.
-            let response = self.call_provider_with_retries(request).await;
+            let response = self.request_provider_response(request).await;
 
             let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
             let response = match response {
-                Ok(r) => r,
-                Err(e) => {
-                    // A model-malformed `Client`/4xx rejection must not kill the
-                    // turn: re-prompt with addressable feedback so the model
-                    // self-corrects (#931 AC2), bounded by MAX_MALFORMED_REQUEST_
-                    // RETRIES. Context/output-limit 4xx is terminal (below).
-                    let is_malformed_request = matches!(&e, DomainError::Provider(m)
-                        if classify_provider_error(&e) == ProviderErrorClass::Client
-                            && !is_context_or_output_limit_error(m));
-                    if is_malformed_request && malformed_retries < MAX_MALFORMED_REQUEST_RETRIES {
-                        malformed_retries += 1;
-                        tracing::warn!(
-                            target: "provider_retry",
-                            attempt = malformed_retries,
-                            max = MAX_MALFORMED_REQUEST_RETRIES,
-                            error = %e,
-                            "provider rejected request as malformed — re-prompting with addressable feedback"
-                        );
-                        append_malformed_feedback(messages, &e, current_turn);
-                        // The feedback user message was appended by this run,
-                        // so it belongs in the ledger (#1072 review).
-                        if let Some(feedback) = messages.last() {
-                            appended_messages.push(feedback.clone());
+                Ok(response) => response,
+                Err(error) => {
+                    let transition = classify_provider_failure(
+                        &error,
+                        malformed_retries,
+                        MAX_MALFORMED_REQUEST_RETRIES,
+                    );
+                    let _state = state_for_provider_failure_transition(&transition);
+                    match transition {
+                        ProviderFailureTransition::RecoverMalformedRequest => {
+                            let _state = TurnState::RecoverMalformedResponse;
+                            self.recover_malformed_response(
+                                messages,
+                                &error,
+                                current_turn,
+                                &mut malformed_retries,
+                                &mut appended_messages,
+                            )
+                            .await;
+                            current_turn += 1;
+                            continue;
                         }
-                        current_turn += 1;
-                        continue;
+                        ProviderFailureTransition::Terminal(_class) => {
+                            let _state = TurnState::FailProviderRequest;
+                            return self.fail_provider_request(current_turn, error).await;
+                        }
                     }
-                    // Audit: persist the FULL provider error body (redacted)
-                    // once per terminal failure, never per retry, so it survives
-                    // TUI line-truncation (#937). `provider` is the harness
-                    // adapter name (e.g. `openai`), not the upstream endpoint
-                    // (#939 review).
-                    let ev = provider_failure_audit_event(self.provider.name(), &e);
-                    self.audit(current_turn, ev).await;
-                    self.notify(|| AgentProgressEvent::Done);
-                    return Err(e);
                 }
             };
 
-            // Audit: LlmTurnEnd (guarded)
-            if self.audit_log.is_some() {
-                let (input_toks, output_toks) = response
-                    .usage
-                    .as_ref()
-                    .map(|u| (u.context_input_tokens() as _, u.completion_tokens as _))
-                    .unwrap_or((estimated_context_tokens, 0));
-                let stop = response
-                    .stop_reason
-                    .as_ref()
-                    .map_or_else(|| "unknown".to_string(), |s| s.to_string());
-                self.audit(
-                    current_turn,
-                    AuditEvent::LlmTurnEnd {
-                        input_tokens: input_toks,
-                        output_tokens: output_toks,
-                        stop_reason: stop,
-                        duration_ms: llm_duration_ms,
-                    },
-                )
-                .await;
-            }
+            self.audit_provider_response_end(
+                current_turn,
+                &response,
+                estimated_context_tokens,
+                llm_duration_ms,
+            )
+            .await;
 
             if let Some(ref usage) = response.usage {
                 usage_totals.record(usage);
             }
 
-            if response.tool_calls.is_empty() {
-                // Emit Done before finalising so the REPL can clear the spinner
-                // line before the final response is printed to stdout.
-                self.notify(|| AgentProgressEvent::Done);
-                let end = TurnEnd {
-                    iterations,
-                    usage: usage_totals,
-                    pre_response_context_tokens: estimated_context_tokens,
-                    current_turn,
-                };
-                let mut result = self.finalize_text_response(messages, response, end).await;
-                if let Some(final_message) = messages.last() {
-                    appended_messages.push(final_message.clone());
+            match next_state_after_provider_response(&response) {
+                TurnState::FinalizeAssistantResponse => {
+                    let end = TurnEnd {
+                        iterations,
+                        usage: usage_totals,
+                        pre_response_context_tokens: estimated_context_tokens,
+                        current_turn,
+                    };
+                    let result = self
+                        .finalize_turn_response(messages, response, end, &mut appended_messages)
+                        .await;
+                    return Ok(result);
                 }
-                result.appended_messages = appended_messages;
-                return Ok(result);
+                TurnState::ExecuteToolCalls => {}
+                _ => unreachable!("provider response classification returned non-response state"),
             }
 
             // #1072: this turn's appended messages are recorded in the run
@@ -670,35 +588,13 @@ impl AgentLoopImpl {
             current_turn += 1;
 
             if iterations >= self.max_tool_iterations {
-                // Emit Done so the spinner is cleared before the limit message.
-                self.notify(|| AgentProgressEvent::Done);
-                let estimated_context_tokens = context_pruning::estimate_total_tokens(messages);
-                // `context_input_tokens` is the latest call's provider-reported
-                // occupancy (assigned, not accumulated, by UsageTotals::record), so
-                // report it directly; estimate-only providers observe the estimate.
-                let context_tokens = if usage_totals.context_input_tokens > 0 {
-                    usage_totals.context_input_tokens as usize
-                } else {
-                    self.observe_estimated_context_gauge(estimated_context_tokens);
-                    estimated_context_tokens
-                };
-                return Ok(AgentResult {
-                    response: format!(
-                        "Tool iteration limit ({}) reached. Stopping.",
-                        self.max_tool_iterations
-                    ),
-                    tool_iterations: iterations,
-                    iteration_limit_reached: true,
-                    input_tokens: usage_totals.context_input_tokens,
-                    context_tokens,
-                    output_tokens: usage_totals.output_tokens,
-                    billed_input_tokens: usage_totals.billed_input_tokens,
-                    billed_output_tokens: usage_totals.billed_output_tokens,
-                    cache_read_tokens: usage_totals.cache_read_tokens,
-                    cache_write_tokens: usage_totals.cache_write_tokens,
-                    cost_micro_usd: usage_totals.cost_micro_usd,
+                let _state = TurnState::StopAtToolIterationLimit;
+                return Ok(self.tool_iteration_limit_result(
+                    messages,
+                    iterations,
+                    usage_totals,
                     appended_messages,
-                });
+                ));
             }
         }
     }
@@ -741,3 +637,6 @@ mod swap_tests;
 #[cfg(test)]
 #[path = "agent_loop_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "agent_loop_turn_tests.rs"]
+mod turn_tests;
