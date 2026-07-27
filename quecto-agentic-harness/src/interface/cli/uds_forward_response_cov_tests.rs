@@ -17,6 +17,11 @@ fn parse_forwarded_get_message_rejects_wrong_command_missing_data_and_bad_json()
         parse_forwarded_get_message(r#"{"success":true,"command":"get_message"}"#).unwrap_err(),
         "get_message response missing data"
     );
+    assert!(
+        parse_forwarded_get_message("not json")
+            .unwrap_err()
+            .contains("expected")
+    );
 }
 
 #[test]
