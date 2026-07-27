@@ -1151,9 +1151,9 @@ const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
 /// this as they migrate behind typed mappers. Never raise it.
 /// (#1257 Phase 5: raised only by genuine new mapper sites absorbed from
 /// feature/view — net feature-view burn-down is required when raising.)
-const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 86;
-/// Measured after #1257 Phase 5 mapper additions (state + workflow payloads).
-const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 86;
+const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 127;
+/// Measured with key, indexed-value, and accessor-chain parsing all counted.
+const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 127;
 /// Historical combined feature/view + protocol ceiling. This prevents moving
 /// sites between buckets (and adjusting their individual seeds) from hiding
 /// growth in the total raw-JSON inventory.
@@ -1161,10 +1161,9 @@ const TUI_RAW_JSON_COMBINED_CEILING: usize = 178;
 
 /// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
-const TUI_WIRE_DTO_USAGE_SEED: usize = 0;
-/// Measured after #1257 Phase 5 relocation (inference paths absorbed Command::
-/// sites that already counted under interface/).
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 0;
+const TUI_WIRE_DTO_USAGE_SEED: usize = 98;
+/// Measured after #1257 Phase 6, including the documented transport seams.
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 98;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
@@ -1179,37 +1178,11 @@ const TUI_FEATURE_VIEW_RAW_JSON_ALLOWLIST: &[(&str, &str)] =
 /// sites remain measured. (#1257 Phase 2)
 const TUI_PROTOCOL_RAW_JSON_ALLOWLIST: &[(&str, &str)] = &[("protocol/client.rs", "#1257")];
 
-/// Narrow, issue-linked allowlist for the WIRE-DTO ratchet only.
-///
-/// `agents/runtime.rs` exists solely because #1257 Phase 4 splits the former
-/// `ui.rs` FeedRuntime type into its own file; the `protocol::client::Command`
-/// path is the same structural site that already counted under `ui.rs`, not a
-/// new wire consumer. Keep this allowlist entry until FeedRuntime is hidden
-/// behind a non-wire channel type.
-const TUI_WIRE_DTO_ALLOWLIST: &[(&str, &str)] = &[
-    ("shell/app.rs", "#1257 shell composition/runtime seam"),
-    ("shell/app_events.rs", "#1257 shell event router seam"),
-    ("shell/cli.rs", "#1257 shell client bootstrap seam"),
-    ("shell/tui_harness.rs", "#1257 headless runtime seam"),
-    ("shell/tui_harness_events.rs", "#1257 headless event seam"),
-    (
-        "shell/tui_harness_disconnect.rs",
-        "#1257 headless client seam",
-    ),
-    (
-        "agents/view.rs",
-        "#1257 direct-feed presentation adapter seam",
-    ),
-    (
-        "agents/controller_subagent_stream.rs",
-        "#1257 direct-feed event mapper seam",
-    ),
-    (
-        "agents/controller_subagents.rs",
-        "#1257 roster DTO adapter seam",
-    ),
-    ("agents/runtime.rs", "#1257 direct-feed transport seam"),
-];
+/// Wire DTO seam files remain in the measured inventory. Keeping this
+/// allowlist empty ensures that new DTO usage inside a documented seam still
+/// increases the decrease-only ratchet rather than receiving a whole-file
+/// exemption.
+const TUI_WIRE_DTO_ALLOWLIST: &[(&str, &str)] = &[];
 
 /// Production (non-`cfg(test)`) TUI layer sources, minus `allowlist`.
 fn tui_production_layer_files(root: &str, allowlist: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -1275,9 +1248,18 @@ fn raw_json_site_count(content: &str) -> usize {
         .lines()
         .filter(|line| {
             let t = line.trim();
-            !t.starts_with("//")
-                && !t.starts_with("///")
-                && (t.contains(".get(\"") || t.contains(".pointer(\""))
+            if t.starts_with("//") || t.starts_with("///") {
+                return false;
+            }
+            let keys = t.contains(".get(\"") || t.contains(".pointer(\"");
+            let accessor = t.contains("as_array()")
+                || t.contains("as_object()")
+                || t.contains("as_str()")
+                || t.contains("as_u64()")
+                || t.contains("as_i64()")
+                || t.contains("as_bool()");
+            let indexed_value = t.contains("[\"") && accessor;
+            keys || indexed_value || (accessor && t.contains("and_then"))
         })
         .count()
 }

@@ -114,37 +114,41 @@ pub fn response_identity(value: &Value) -> (Option<String>, Option<String>) {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct ToolDisplayArgs {
-    pub command: Option<String>,
-    pub path: Option<String>,
-    pub content: Option<String>,
-    pub agent_id: Option<String>,
-    pub task: Option<String>,
-    pub action: Option<String>,
+pub struct ToolDisplayArgs<'a> {
+    pub command: Option<&'a str>,
+    pub path: Option<&'a str>,
+    pub content: Option<&'a str>,
+    pub agent_id: Option<&'a str>,
+    pub task: Option<&'a str>,
+    pub action: Option<&'a str>,
     pub step: Option<u64>,
-    pub template: Option<String>,
+    pub template: Option<&'a str>,
     pub issue_number: Option<u64>,
-    pub query: Option<String>,
-    pub url: Option<String>,
-    pub old_text: Option<String>,
+    pub query: Option<&'a str>,
+    pub url: Option<&'a str>,
+    pub old_text: Option<&'a str>,
 }
 
-pub fn tool_display_args(value: Option<&Value>) -> ToolDisplayArgs {
+fn str_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str)
+}
+
+pub fn tool_display_args(value: Option<&Value>) -> ToolDisplayArgs<'_> {
     let Some(v) = value else {
         return ToolDisplayArgs::default();
     };
     ToolDisplayArgs {
-        command: string_field(v, "command"),
-        path: string_field(v, "path").or_else(|| string_field(v, "file_path")),
-        content: string_field(v, "content"),
-        agent_id: string_field(v, "agent_id"),
-        task: string_field(v, "task"),
-        action: string_field(v, "action"),
+        command: str_field(v, "command"),
+        path: str_field(v, "path").or_else(|| str_field(v, "file_path")),
+        content: str_field(v, "content"),
+        agent_id: str_field(v, "agent_id"),
+        task: str_field(v, "task"),
+        action: str_field(v, "action"),
         step: u64_field(v, "step"),
-        template: string_field(v, "template"),
+        template: str_field(v, "template"),
         issue_number: u64_field(v, "issueNumber"),
-        query: string_field(v, "query"),
-        url: string_field(v, "url"),
-        old_text: string_field(v, "oldText"),
+        query: str_field(v, "query"),
+        url: str_field(v, "url"),
+        old_text: str_field(v, "oldText"),
     }
 }

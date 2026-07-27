@@ -133,7 +133,7 @@ pub(super) fn render_bash(
     width: usize,
 ) {
     let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
-    let command = sanitize(display.command.as_deref().unwrap_or(""));
+    let command = sanitize(display.command.unwrap_or(""));
 
     // Header: ✓ $ command  42ms
     push_header(
@@ -232,7 +232,7 @@ pub(super) fn render_write(
 
     // For write, the content is in the args, not the result.
     let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
-    let content = display.content.as_deref().unwrap_or("");
+    let content = display.content.unwrap_or("");
 
     // Header: ✓ write path  42ms
     push_header(
@@ -326,8 +326,8 @@ pub(super) fn render_subagent(
     let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
     let (header_detail, _agent_label) = match tool_name {
         "spawn" => {
-            let agent = sanitize(display.agent_id.as_deref().unwrap_or("agent"));
-            let task = sanitize(display.task.as_deref().unwrap_or(""));
+            let agent = sanitize(display.agent_id.unwrap_or("agent"));
+            let task = sanitize(display.task.unwrap_or(""));
             let detail = if task.is_empty() {
                 agent.clone()
             } else {
@@ -340,8 +340,8 @@ pub(super) fn render_subagent(
             (detail, Some(agent))
         }
         "agent_cmd" => {
-            let command = sanitize(display.command.as_deref().unwrap_or("?"));
-            let agent_id = sanitize(display.agent_id.as_deref().unwrap_or("?"));
+            let command = sanitize(display.command.unwrap_or("?"));
+            let agent_id = sanitize(display.agent_id.unwrap_or("?"));
             (format!("{} → {}", command, agent_id), Some(agent_id))
         }
         _ => (String::new(), None),
@@ -381,7 +381,7 @@ pub(super) fn render_workflow(
     width: usize,
 ) {
     let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
-    let action = display.action.as_deref().unwrap_or("workflow");
+    let action = display.action.unwrap_or("workflow");
     let detail = match action {
         "check" | "uncheck" | "skip" => format!(
             "{action}{}",
@@ -390,10 +390,7 @@ pub(super) fn render_workflow(
                 .map(|n| format!(" step {n}"))
                 .unwrap_or_default()
         ),
-        "select_template" => format!(
-            "select_template {}",
-            display.template.as_deref().unwrap_or("?")
-        ),
+        "select_template" => format!("select_template {}", display.template.unwrap_or("?")),
         "set_issue" => format!(
             "set_issue{}",
             display
@@ -647,7 +644,7 @@ pub(super) fn render_file_preview(
 /// Extract the file path from tool args (tries "path", "file_path").
 pub(super) fn extract_path(args: &Option<serde_json::Value>) -> String {
     let display = crate::protocol::presentation_payloads::tool_display_args(args.as_ref());
-    display.path.as_deref().map(sanitize).unwrap_or_default()
+    display.path.map(sanitize).unwrap_or_default()
 }
 
 /// Extract the most informative arg value for display.
@@ -666,7 +663,7 @@ pub(super) fn extract_best_arg(v: &serde_json::Value) -> String {
     .next()
     .map(|value| {
         sanitize(&crate::components::utils::truncate_to_width(
-            &value,
+            value,
             60,
             Some("..."),
         ))
