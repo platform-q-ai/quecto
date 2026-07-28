@@ -110,7 +110,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "hooks",
             "label": "Install/check local quality hooks",
             "phase": "setup",
-            "guidance": "Run `scripts/install-hooks.sh`, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code. Hook summary: `git commit` pre-commit does NOT run unit/BDD tests; it runs quality/BDD-quality gates, `cargo fmt --check`, strict clippy, and fast guard tests. `git push` pre-push runs the full new+old suite and can take minutes. Never bypass hooks with --no-verify. Done when all three hooks are installed and active."
+            "guidance": "Run `scripts/install-hooks.sh`, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code. Hook summary: `git commit` pre-commit runs staged-file hygiene, conditional BDD quality/tag checks, and `cargo fmt --check`; it does not run clippy or tests. `git push` pre-push runs fast quality rules, changed-package strict clippy, and architecture/repository invariants. Never bypass hooks with --no-verify. Done when all three hooks are installed and active."
           },
           {
             "key": "scenarios",
@@ -120,7 +120,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
           },
           {
             "key": "tests",
-            "label": "Write/update unit tests (run a quick smoke check; full suite runs on push)",
+            "label": "Write/update unit tests (run a quick smoke check; full CI runs after `merge-requested`)",
             "phase": "red",
             "guidance": "Write or update unit tests for the change. Use these crate names: kernel `cargo test -p quecto-agentic-harness --lib <name_substring>` (the package is `quecto-agentic-harness`; its lib target is named `quecto`, but `-p` takes the PACKAGE name); TUI `cargo test -p quecto-tui --lib <name_substring>`. Plain lib tests need no `--features`; render-harness-driven TUI BDD uses the integration `bdd` target with `--features test-harness`. Run a quick targeted smoke check to confirm tests compile; the full suite and coverage run on push. Write step tests and unit tests to the same discipline: assertions are BEHAVIOURAL (verify observable outcomes/contracts, not internal or private state), well-named, focused, DETERMINISTIC and ISOLATED (no cross-scenario state leakage or ambient/global mutation), and never HOLLOW/always-pass \u2014 each test must be able to fail, and must fail before the implementation exists (RED). Done when the new/modified tests compile and target the new behaviour."
           },
@@ -168,7 +168,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
           },
           {
             "key": "push",
-            "label": "Push (pre-push hook will run tests and linting)",
+            "label": "Push through the fast pre-push gate",
             "phase": "ci_cd",
             "guidance": "Push triggers the full local gate (or validate without pushing via `scripts/pre-push.sh`): fmt, strict clippy, unit/integration/architecture/contracts/repo_docs/workflow_config, the 24-shard non-real BDD suite, region coverage at or above 87% for quecto and quecto-tui, machete and deny. The zero-cost mocked `@mock-llm` e2e lane runs by default; the live LLM suite (tagged `@manual-real-llm`) is opt-in via `QUECTO_RUN_REAL_LLM=1`. The `find.feature` \"Nested .gitignore \u2026 in git repo\" scenario is load-flaky under the parallel shard wave \u2014 re-run the shard before treating it as a real failure (it passes in isolation). Push may take minutes and is not hung. Fix every failure; never use --no-verify. Done when the full gate is green. If it fails only on the flaky find.feature scenario, re-run the shard; otherwise fix the failure."
           },

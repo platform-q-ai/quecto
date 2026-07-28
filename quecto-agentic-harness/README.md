@@ -678,7 +678,7 @@ Pure-move refactors (for example file extractions, renames, or byte-identical mo
 
 1 - Install/check local quality hooks
 2 - Update Scenarios / Add new features
-3 - Write/update unit tests (run a quick smoke check; full suite runs on push)
+3 - Write/update unit tests (run a quick smoke check; full CI runs after `merge-requested`)
 4 - Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite
 5 - Despatch three BDD review finders (Gherkin discipline, Falsifiability, Coverage)
 6 - Implement code (GREEN)
@@ -686,14 +686,14 @@ Pure-move refactors (for example file extractions, renames, or byte-identical mo
 8 - Ensure tests still pass (GREEN)
 9 - Bump semver for every changed crate and sync version docs
 10 - Commit
-11 - Push (pre-push hook will run tests and linting)
+11 - Push through the fast pre-push gate
 12 - Create PR
 13 - Despatch narrow parallel review finders, verify adversarially, post one review
 14 - Fix all valid review concerns
 15 - Push changes to remote
 16 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
 17 - Verify the PR meets every issue acceptance criterion
-18 - Confirm the pre-push gate passed and report the PR (do NOT merge)
+18 - Request authoritative CI and report the PR (do not merge)
 19 - Clean up sub agents
 
 ## Quality gates
@@ -714,7 +714,7 @@ All test commands pipe through `scripts/test-filter.sh` which strips the per-tes
 
 `--no-fail-fast` ensures all failures are reported in a single run, not just the first.
 
-Two-tier hooks: pre-commit (~20-40s: quality+fmt+clippy) and pre-push (tests + 24-shard BDD + coverage + machete + deny + the zero-cost mocked e2e suite `@mock-llm`). The paid `@manual-real-llm` suite is NOT run on push by default; opt in on demand with `QUECTO_RUN_REAL_LLM=1 git push`. SHA-based caching. Install via `scripts/install-hooks.sh`.
+Two-tier local hooks: pre-commit performs lightweight staged-file hygiene and formatting; pre-push runs fast quality rules, changed-package strict Clippy, and architecture/repository invariants. Full tests, BDD, coverage, dependency policy, and mock E2E run in authoritative CI only after the `merge-requested` label is applied. A subsequent push removes that label. Install via `scripts/install-hooks.sh`.
 
 ### Sharded BDD (24-way parallel)
 

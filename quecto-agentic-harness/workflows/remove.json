@@ -50,7 +50,7 @@
       "key": "commit",
       "label": "Commit and push through the full gate",
       "phase": "ci_cd",
-      "guidance": "Branch if on master, stage only intended deletions/changes, commit citing the issue and the chosen strategy. `git push` in the FOREGROUND and WAIT for the pre-push gate (10-15+ min); fix failures and push again; never --no-verify. Done when the push exited with the gate passing."
+      "guidance": "Branch if on master, stage only intended deletions/changes, commit citing the issue and the chosen strategy. `git push` in the FOREGROUND and WAIT for the fast pre-push gate; fix failures and push again; never --no-verify. Done when the push exited with the gate passing."
     },
     {
       "key": "pr",
@@ -61,9 +61,9 @@
     "steps/shared/follow_ups",
     {
       "key": "report",
-      "label": "Report the PR ready and stop (no merge)",
+      "label": "Request authoritative CI and report the PR (no merge)",
       "phase": "ci_cd",
-      "guidance": "Confirm required CI checks are green (`gh pr checks <n>`), then report: PR number, what was removed, strategy, and any follow-up issues filed (e.g. the delete-after-deprecation-window task). Do NOT merge. Done when reported."
+      "guidance": "After all review comments are resolved and the current head is final, run `gh pr edit <n> --add-label merge-requested`. This requests authoritative CI for that exact revision. Wait with `gh pr checks <n> --watch`; if another commit is pushed, the label is removed automatically and must be reapplied only when ready. Do NOT merge or set auto-merge; report the PR and CI result for human merge."
     }
   ]
 }

@@ -38,13 +38,13 @@
       "key": "verify",
       "label": "Run targeted verification",
       "phase": "verify",
-      "guidance": "Run the narrowest checks that exercise what you touched: targeted `cargo test -p <crate> --lib <name_substring>` for code, the relevant guard tests for docs/config (e.g. repo_docs, workflow_config), or a build/lint for tooling. Do NOT run the whole suite manually — the pre-push gate does that. Done when the targeted checks pass and you can name what they proved."
+      "guidance": "Run the narrowest checks that exercise what you touched: targeted `cargo test -p <crate> --lib <name_substring>` for code, the relevant guard tests for docs/config (e.g. repo_docs, workflow_config), or a build/lint for tooling. Do not run the whole suite manually here; label-triggered authoritative CI does that after review. Done when the targeted checks pass and you can name what they proved."
     },
     {
       "key": "commit",
       "label": "Commit and push through the full gate",
       "phase": "ci_cd",
-      "guidance": "Stage only intended files and commit with a clear message. Then `git push` in the FOREGROUND and WAIT for the pre-push gate to exit — it runs the full suite and can take 10-15+ minutes. Fix any failure and push again; never use --no-verify. Done when the push has exited successfully with the gate passing."
+      "guidance": "Stage only intended files and commit with a clear message. Then `git push` in the FOREGROUND and WAIT for the pre-push gate to exit — it runs the fast local gate and should normally finish within 20 seconds. Fix any failure and push again; never use --no-verify. Done when the push has exited successfully with the gate passing."
     },
     {
       "key": "pr",
@@ -54,9 +54,9 @@
     },
     {
       "key": "report",
-      "label": "Report the PR ready and stop (no merge)",
+      "label": "Request authoritative CI and report the PR (no merge)",
       "phase": "ci_cd",
-      "guidance": "Confirm the required CI checks are green with `gh pr checks <n>`, then report the PR number and a one-line summary. Do NOT merge and do NOT set auto-merge — hand off for human review. Done when the PR is reported and no further changes are pending."
+      "guidance": "After all review comments are resolved and the current head is final, run `gh pr edit <n> --add-label merge-requested`. This requests authoritative CI for that exact revision. Wait with `gh pr checks <n> --watch`; if another commit is pushed, the label is removed automatically and must be reapplied only when ready. Do NOT merge or set auto-merge; report the PR and CI result for human merge."
     }
   ]
 }
