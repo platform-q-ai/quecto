@@ -18,6 +18,7 @@ pub mod select_list;
 pub mod select_overlay;
 pub mod spinner;
 pub mod suggestion_list;
+pub mod text_input;
 pub mod theme;
 pub mod utils;
 pub mod workflow_bar;

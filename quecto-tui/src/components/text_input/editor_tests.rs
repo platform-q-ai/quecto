@@ -1,5 +1,8 @@
-use super::*;
+use super::editor::{Editor, next_char_boundary, prev_char_boundary, render_line_with_cursor};
 use crate::components::ansi::strip_ansi;
+use crate::components::component::Component;
+use crate::components::utils::visible_width;
+use crate::shell::keys::Key;
 
 #[test]
 fn insert_characters() {
@@ -78,7 +81,10 @@ fn multiline_input() {
     e.handle_input(&Key::ShiftEnter); // Shift+Enter for newline
     e.handle_input(&Key::Char('b'));
     assert_eq!(e.text(), "a\nb");
-    assert_eq!(e.lines.len(), 2);
+    // Multi-line observable without field access: Up moves within draft.
+    e.handle_input(&Key::Up);
+    e.handle_input(&Key::Char('X'));
+    assert_eq!(e.text(), "aX\nb");
 }
 
 #[test]
@@ -284,10 +290,14 @@ fn unhandled_key_returns_false() {
 fn invalidate_clears_cache() {
     let mut e = Editor::new();
     e.set_text("hello");
-    let _ = e.render(40);
-    assert!(e.cached_lines.is_some());
+    let first = e.render(40);
+    // Cache hit: second render with same width returns identical lines without
+    // requiring field access (invalidate forces rebuild path).
+    let second = e.render(40);
+    assert_eq!(first, second);
     e.invalidate();
-    assert!(e.cached_lines.is_none());
+    // After invalidate, content is still correct (cache cleared internally).
+    assert_eq!(e.render(40), first);
 }
 
 #[test]
@@ -360,7 +370,9 @@ fn set_text_empty() {
     e.set_text("hello");
     e.set_text("");
     assert_eq!(e.text(), "");
-    assert_eq!(e.lines.len(), 1);
+    // Empty draft is a single empty line: typing stays on one line.
+    e.handle_input(&Key::Char('x'));
+    assert_eq!(e.text(), "x");
 }
 
 #[test]
@@ -479,4 +491,192 @@ fn hidden_cursor_emits_no_reverse_video() {
         e.render(40).iter().any(|l| l.contains("\x1b[7m")),
         "cursor must return when shown again"
     );
+}
+
+// ── #1277 characterization: parity-contract gaps on unmodified code ─────
+
+#[test]
+fn submit_whitespace_only_does_not_submit_or_clear() {
+    let mut e = Editor::new();
+    e.set_text("   \t  ");
+    e.handle_input(&Key::Enter);
+    assert_eq!(e.take_submit(), None, "whitespace-only must not submit");
+    assert_eq!(e.text(), "   \t  ", "draft must stay put");
+}
+
+#[test]
+fn submit_returns_untrimmed_text_and_records_trimmed_history() {
+    let mut e = Editor::new();
+    e.set_text("  hello  ");
+    e.handle_input(&Key::Enter);
+    assert_eq!(
+        e.take_submit(),
+        Some("  hello  ".to_string()),
+        "submit payload keeps surrounding whitespace"
+    );
+    assert_eq!(e.text(), "");
+    // History stores the trimmed form — Up must restore "hello", not padded.
+    e.handle_input(&Key::Up);
+    assert_eq!(e.text(), "hello");
+}
+
+#[test]
+fn empty_submit_is_noop() {
+    let mut e = Editor::new();
+    e.handle_input(&Key::Enter);
+    assert_eq!(e.take_submit(), None);
+    assert_eq!(e.text(), "");
+}
+
+#[test]
+fn history_skips_duplicate_of_last_entry() {
+    let mut e = Editor::new();
+    // Without dedupe the stack would be [a, a, b] and three Ups walk a→a→b.
+    // With dedupe the stack is [a, b] and the third Up stays on oldest `a`.
+    e.add_to_history("a");
+    e.add_to_history("a");
+    e.add_to_history("b");
+    e.handle_input(&Key::Up);
+    assert_eq!(e.text(), "b");
+    e.handle_input(&Key::Up);
+    assert_eq!(e.text(), "a");
+    // Insert a marker while parked on oldest; if a second "a" existed above
+    // the next Up would land on it and we'd edit a different entry. With
+    // dedupe we stay on the single "a" and mutate it in place via set_text path
+    // is not available — instead count entries by walking from a fresh editor
+    // after replaying history through submits is heavy. Simpler observable:
+    // after two Ups we are at oldest; one more Up must stay on "a" AND a
+    // subsequent Down must go to "b" then empty — proving only two entries.
+    e.handle_input(&Key::Up);
+    assert_eq!(e.text(), "a", "third Up stays on single oldest entry");
+    e.handle_input(&Key::Down);
+    assert_eq!(e.text(), "b", "only one step back to newest");
+    e.handle_input(&Key::Down);
+    assert_eq!(
+        e.text(),
+        "",
+        "then back to empty draft (no third history slot)"
+    );
+}
+
+#[test]
+fn history_up_saves_in_progress_draft_and_down_restores_it() {
+    let mut e = Editor::new();
+    e.add_to_history("prior");
+    e.set_text("draft in progress");
+    e.handle_input(&Key::Up);
+    assert_eq!(e.text(), "prior");
+    e.handle_input(&Key::Down);
+    assert_eq!(e.text(), "draft in progress");
+}
+
+#[test]
+fn history_cap_evicts_oldest_beyond_500() {
+    let mut e = Editor::new();
+    for i in 0..501 {
+        e.add_to_history(&format!("entry-{i}"));
+    }
+    // After 501 unique pushes with cap 500, entry-0 is gone; entry-1 is oldest.
+    e.handle_input(&Key::Up); // newest = entry-500
+    assert_eq!(e.text(), "entry-500");
+    // Walk to the oldest retained entry.
+    for _ in 0..500 {
+        e.handle_input(&Key::Up);
+    }
+    assert_eq!(
+        e.text(),
+        "entry-1",
+        "cap 500 must drop entry-0 and keep entry-1..entry-500"
+    );
+}
+
+#[test]
+fn multiline_up_does_not_navigate_history() {
+    let mut e = Editor::new();
+    e.add_to_history("from-history");
+    e.set_text("line-a\nline-b");
+    // Cursor ends on last line; Up must move within the draft, not load history.
+    e.handle_input(&Key::Up);
+    e.handle_input(&Key::Char('X'));
+    assert_eq!(e.text(), "line-aX\nline-b");
+}
+
+#[test]
+fn empty_history_up_is_noop() {
+    let mut e = Editor::new();
+    e.set_text("keep-me");
+    e.handle_input(&Key::Up);
+    assert_eq!(e.text(), "keep-me");
+}
+
+#[test]
+fn bash_mode_after_leading_whitespace_on_first_line() {
+    let mut e = Editor::new();
+    e.set_text("  !echo hi");
+    assert!(
+        e.is_bash_mode(),
+        "leading whitespace before ! still enables bash mode"
+    );
+    // Observable via border indicator as well.
+    let top = strip_ansi(&e.render(40)[0]);
+    assert!(
+        top.contains('!'),
+        "bash mode top border must show ! indicator: {top:?}"
+    );
+}
+
+#[test]
+fn normal_mode_prompt_indicator_is_gt() {
+    let mut e = Editor::new();
+    e.set_text("hello");
+    let top = strip_ansi(&e.render(40)[0]);
+    assert!(
+        top.contains('>'),
+        "normal mode top border must show > indicator: {top:?}"
+    );
+    assert!(!top.contains('!'));
+}
+
+#[test]
+fn set_text_multiline_places_cursor_at_end_of_last_line() {
+    let mut e = Editor::new();
+    e.set_text("aa\nbbb");
+    assert_eq!(e.current_line(), "bbb");
+    assert_eq!(e.cursor_col(), 3);
+    e.handle_input(&Key::Char('!'));
+    assert_eq!(e.text(), "aa\nbbb!");
+}
+
+#[test]
+fn replace_before_cursor_noop_on_non_boundary_is_safe() {
+    // Mid-char start must not panic and must leave text unchanged.
+    let mut e = Editor::new();
+    e.set_text("héllo");
+    // "é" occupies bytes 1..3; start=2 is inside the char.
+    e.replace_before_cursor(2, "X");
+    assert_eq!(e.text(), "héllo");
+}
+
+#[test]
+fn alt_carriage_return_inserts_newline() {
+    let mut e = Editor::new();
+    e.handle_input(&Key::Char('a'));
+    e.handle_input(&Key::Alt('\r'));
+    e.handle_input(&Key::Char('b'));
+    assert_eq!(e.text(), "a\nb");
+}
+
+#[test]
+fn history_cap_keeps_oldest_at_exactly_500_entries() {
+    let mut e = Editor::new();
+    for i in 0..500 {
+        e.add_to_history(&format!("entry-{i}"));
+    }
+    // At the cap, oldest (entry-0) is still retained.
+    e.handle_input(&Key::Up); // newest
+    assert_eq!(e.text(), "entry-499");
+    for _ in 0..499 {
+        e.handle_input(&Key::Up);
+    }
+    assert_eq!(e.text(), "entry-0", "exactly 500 entries keep the oldest");
 }
