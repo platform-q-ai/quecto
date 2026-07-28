@@ -21,9 +21,9 @@ use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
 
-struct Fx {
+pub(super) struct Fx {
     agent: AgentLoopImpl,
-    messages: Vec<Message>,
+    pub(super) messages: Vec<Message>,
     session: AgentSession,
     session_key: String,
     store: FileSessionStore,
@@ -32,7 +32,7 @@ struct Fx {
 }
 
 impl Fx {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
         let store = FileSessionStore::new(tmp.path());
         Self {
@@ -65,7 +65,7 @@ impl Fx {
         }
     }
 
-    fn ctx(&mut self) -> DispatchCtx<'_> {
+    pub(super) fn ctx(&mut self) -> DispatchCtx<'_> {
         let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
             &self.session_key,
             &self.messages,
@@ -111,7 +111,7 @@ impl Fx {
 
 /// A bare-bones child UDS server: records the first command line received and
 /// replies with an id-correlated `get_messages` response carrying `marker`.
-async fn spawn_recording_child(
+pub(super) async fn spawn_recording_child(
     marker: &'static str,
 ) -> (
     std::path::PathBuf,
@@ -144,14 +144,111 @@ async fn spawn_recording_child(
     (sock, received, dir, handle)
 }
 
-fn register_child(registry: &SubagentRegistry, id: &str, sock: std::path::PathBuf) {
+pub(super) fn register_child(registry: &SubagentRegistry, id: &str, sock: std::path::PathBuf) {
     registry
         .lock()
         .unwrap()
         .insert(id.to_string(), SubagentEntry::new(sock, 0));
 }
 
-async fn spawn_replying_child(
+pub(super) async fn spawn_recording_get_message_child(
+    marker: &'static str,
+) -> (
+    std::path::PathBuf,
+    std::sync::Arc<tokio::sync::Mutex<String>>,
+    tempfile::TempDir,
+    tokio::task::JoinHandle<()>,
+) {
+    use tokio::io::{AsyncWriteExt, BufReader};
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("child-get-message-dispatch.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+    let received = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
+    let recv2 = received.clone();
+    let handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        let mut reader = BufReader::new(read_half);
+        let line = crate::infrastructure::test_support::read_framed_command_async(&mut reader)
+            .await
+            .unwrap();
+        *recv2.lock().await = line.clone();
+        let req: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let id = req.get("id").and_then(|v| v.as_str()).unwrap();
+        let reply = format!(
+            "{{\"type\":\"response\",\"id\":\"{id}\",\"command\":\"get_message\",\"success\":true,\"data\":{{\"id\":\"child-message\",\"content\":\"{marker}\"}}}}\n"
+        );
+        write_half.write_all(reply.as_bytes()).await.unwrap();
+        write_half.flush().await.unwrap();
+    });
+    (sock, received, dir, handle)
+}
+
+pub(super) async fn spawn_recording_sync_child(
+    marker: &'static str,
+) -> (
+    std::path::PathBuf,
+    std::sync::Arc<tokio::sync::Mutex<String>>,
+    tempfile::TempDir,
+    tokio::task::JoinHandle<()>,
+) {
+    use tokio::io::{AsyncWriteExt, BufReader};
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("child-sync.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+    let received = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
+    let recv2 = received.clone();
+    let handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        let mut reader = BufReader::new(read_half);
+        let line = crate::infrastructure::test_support::read_framed_command_async(&mut reader)
+            .await
+            .unwrap();
+        *recv2.lock().await = line.clone();
+        let req: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let id = req.get("id").and_then(|v| v.as_str()).unwrap();
+        let reply = format!(
+            "{{\"type\":\"response\",\"id\":\"{id}\",\"command\":\"sync\",\"success\":true,\"data\":{{\"epoch\":4,\"rev\":3,\"changes\":[{{\"id\":\"{marker}\"}}]}}}}\n"
+        );
+        write_half.write_all(reply.as_bytes()).await.unwrap();
+        write_half.flush().await.unwrap();
+    });
+    (sock, received, dir, handle)
+}
+
+pub(super) async fn spawn_recording_replying_child(
+    reply: &'static str,
+) -> (
+    std::path::PathBuf,
+    std::sync::Arc<tokio::sync::Mutex<String>>,
+    tempfile::TempDir,
+    tokio::task::JoinHandle<()>,
+) {
+    use tokio::io::{AsyncWriteExt, BufReader};
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("child-recording-reply.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+    let received = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
+    let recv2 = received.clone();
+    let handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        let mut reader = BufReader::new(read_half);
+        let command = crate::infrastructure::test_support::read_framed_command_async(&mut reader)
+            .await
+            .unwrap();
+        *recv2.lock().await = command.clone();
+        let request: serde_json::Value = serde_json::from_str(&command).unwrap();
+        let request_id = request.get("id").and_then(|value| value.as_str()).unwrap();
+        let reply = reply.replace("__ID__", request_id);
+        write_half.write_all(reply.as_bytes()).await.unwrap();
+        write_half.flush().await.unwrap();
+    });
+    (sock, received, dir, handle)
+}
+
+pub(super) async fn spawn_replying_child(
     reply: &'static str,
 ) -> (
     std::path::PathBuf,
