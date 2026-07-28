@@ -502,19 +502,17 @@ impl Client {
         // announces the framing up front so the agent replies framed even
         // before the first command (#1059).
         //
-        // The bound gives comfortable headroom for a recovery/reset batch that
-        // enqueues synchronously (via `CommandSender::try_send`) before the
-        // writer is scheduled — e.g. a heavy multi-tool turn fetching one
-        // `get_message` per ref. Sized well above any realistic single-turn
-        // message count so ordered `try_send` never hits backpressure in
-        // practice.
+        // The bound gives comfortable headroom for bursty fan-in from many
+        // subagent queries/completions plus a simultaneous user follow-up. It
+        // stays bounded while being high enough that ordered `try_send` callers
+        // should not see transient backpressure during realistic bursts.
         // The explicitly captured connect-time dispatcher carries reader
         // diagnostics (#1112) into the spawned task, including when an
         // embedder installed only a thread-scoped subscriber. The TUI itself
         // installs none, so these events remain no-ops in the shipped binary.
         use tracing::instrument::WithSubscriber;
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(1024);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(4096);
         let writer_task = async move {
             if mode == WireMode::Framed
                 && write_message(&mut write_half, b"", mode, MAX_LINE_BYTES)
@@ -696,6 +694,10 @@ mod client_1060_tests;
 #[cfg(test)]
 #[path = "client_1094_tests.rs"]
 mod client_1094_tests;
+
+#[cfg(test)]
+#[path = "client_1238_tests.rs"]
+mod client_1238_tests;
 
 #[cfg(test)]
 #[path = "client_legacy_tests.rs"]
