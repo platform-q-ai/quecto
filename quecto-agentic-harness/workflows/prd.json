@@ -53,9 +53,9 @@
     },
     {
       "key": "report",
-      "label": "Open the docs PR and report (no merge)",
+      "label": "Request authoritative CI and report the PR (no merge)",
       "phase": "ci_cd",
-      "guidance": "Open the PR with `gh pr create`, body summarizing the problem and key decisions. Report the PR number plus any questions left open for the human. Do NOT merge. Terminate straggler subagents (get_subagents). Done when reported."
+      "guidance": "After all review comments are resolved and the current head is final, run `gh pr edit <n> --add-label merge-requested`. This requests authoritative CI for that exact revision. Wait with `gh pr checks <n> --watch`; if another commit is pushed, the label is removed automatically and must be reapplied only when ready. Do NOT merge or set auto-merge; report the PR and CI result for human merge."
     }
   ]
 }

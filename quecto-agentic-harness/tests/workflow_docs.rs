@@ -54,7 +54,7 @@ fn assert_reference_steps(steps: &[Value]) {
     assert_eq!(steps[17]["key"], "pre_merge");
     assert_eq!(
         steps[17]["label"],
-        "Confirm the pre-push gate passed and report the PR (do NOT merge)"
+        "Request authoritative CI and report the PR (do not merge)"
     );
     assert_eq!(steps.last().unwrap()["key"], "cleanup");
     assert_eq!(steps.last().unwrap()["label"], "Clean up sub agents");
@@ -94,7 +94,7 @@ fn readme_lists_full_19_step_reference_workflow() {
     for expected in [
         "1 - Install/check local quality hooks",
         "2 - Update Scenarios / Add new features",
-        "3 - Write/update unit tests (run a quick smoke check; full suite runs on push)",
+        "3 - Write/update unit tests (run a quick smoke check; full CI runs after `merge-requested`)",
         "4 - Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite",
         "5 - Despatch three BDD review finders (Gherkin discipline, Falsifiability, Coverage)",
         "6 - Implement code (GREEN)",
@@ -102,14 +102,14 @@ fn readme_lists_full_19_step_reference_workflow() {
         "8 - Ensure tests still pass (GREEN)",
         "9 - Bump semver for every changed crate and sync version docs",
         "10 - Commit",
-        "11 - Push (pre-push hook will run tests and linting)",
+        "11 - Push through the fast pre-push gate",
         "12 - Create PR",
         "13 - Despatch narrow parallel review finders, verify adversarially, post one review",
         "14 - Fix all valid review concerns",
         "15 - Push changes to remote",
         "16 - Reply to the reviewers comments on the PR and mark resolved (use graphql)",
         "17 - Verify the PR meets every issue acceptance criterion",
-        "18 - Confirm the pre-push gate passed and report the PR (do NOT merge)",
+        "18 - Request authoritative CI and report the PR (do not merge)",
         "19 - Clean up sub agents",
     ] {
         assert!(

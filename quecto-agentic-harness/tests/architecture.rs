@@ -874,37 +874,29 @@ fn tui_lib_rs_has_deny_attributes() {
 }
 
 #[test]
-fn pre_commit_enforces_formatting_and_complexity_lints() {
-    assert_local_hook_enforces_formatting_and_complexity("pre-commit");
-}
+fn local_hooks_enforce_formatting_while_ci_owns_strict_lints() {
+    for hook in ["pre-commit", "pre-push"] {
+        let path = format!("../scripts/{hook}.sh");
+        let content = fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {path}: {err}"));
+        assert!(
+            content.contains("cargo fmt --all -- --check"),
+            "{hook} hook must enforce rustfmt locally"
+        );
+    }
 
-#[test]
-fn pre_push_enforces_formatting_and_complexity_lints() {
-    assert_local_hook_enforces_formatting_and_complexity("pre-push");
-}
-
-fn assert_local_hook_enforces_formatting_and_complexity(hook: &str) {
-    let path = format!("../scripts/{hook}.sh");
-    let content = fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {path}: {err}"));
+    let ci = fs::read_to_string("../.github/workflows/ci.yml").expect("read CI workflow");
     assert!(
-        content.contains("cargo fmt --all -- --check"),
-        "{hook} hook must enforce rustfmt max_width locally"
-    );
-    assert!(
-        content.contains(
+        ci.contains(
             "cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings"
         ),
-        "{hook} hook must run strict workspace clippy locally"
+        "authoritative CI must run strict workspace clippy"
     );
     for lint in [
         "-W clippy::cognitive_complexity",
         "-W clippy::too_many_arguments",
         "-W clippy::too_many_lines",
     ] {
-        assert!(
-            content.contains(lint),
-            "{hook} hook must enforce complexity lint: {lint}"
-        );
+        assert!(ci.contains(lint), "CI must enforce complexity lint: {lint}");
     }
 }
 

@@ -137,5 +137,5 @@ cargo clippy -p quecto-api    # Lint
 ```
 
 BDD feature files live under `tests/features/` (`health`, `prompt`, `commands`,
-`state`, `websocket`, `architecture`). Pre-push coverage for this crate is gated
+`state`, `websocket`, `architecture`). Label-triggered authoritative CI coverage for this crate is gated
 at the same function-coverage bar as the other library crates (95%).

@@ -78,57 +78,33 @@ fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
     }
 }
 
-#[then("the pre-push script should lint with --workspace flag")]
-fn then_pre_push_lints_workspace(_world: &mut QuectoWorld) {
-    let content =
-        std::fs::read_to_string("../scripts/pre-push.sh").expect("read ../scripts/pre-push.sh");
+#[then("authoritative CI should lint with --workspace flag")]
+fn then_ci_lints_workspace(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("../.github/workflows/ci.yml")
+        .expect("read ../.github/workflows/ci.yml");
     // Find the actual clippy invocation line (not echo/comment lines).
     let has_workspace_clippy = content.lines().any(|line| {
         let trimmed = line.trim();
-        trimmed.starts_with("cargo clippy") && trimmed.contains("--workspace")
+        trimmed.starts_with("- run: cargo clippy") && trimmed.contains("--workspace")
     });
     assert!(
         has_workspace_clippy,
-        "pre-push.sh must invoke `cargo clippy --workspace` to lint all workspace members including quecto-tui"
+        "authoritative CI must invoke `cargo clippy --workspace` to lint all workspace members"
     );
 }
 
-#[then("the pre-push script should run the mocked e2e suite by default")]
-fn then_pre_push_runs_mock_e2e(_world: &mut QuectoWorld) {
-    let content =
-        std::fs::read_to_string("../scripts/pre-push.sh").expect("read ../scripts/pre-push.sh");
-
-    // (a) The default e2e lane must invoke the zero-cost mocked copy (tagged
-    //     @mock-llm) via run-bdd-shards.sh.
-    let runs_mock = content.lines().any(|line| {
-        let t = line.trim();
-        t.contains("run-bdd-shards.sh") && t.contains("mock-llm")
-    }) || content.contains("--tag \"mock-llm\"");
+#[then("authoritative CI should run the mocked e2e suite")]
+fn then_ci_runs_mock_e2e(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("../.github/workflows/ci.yml")
+        .expect("read ../.github/workflows/ci.yml");
     assert!(
-        runs_mock,
-        "pre-push.sh must run the zero-cost mocked e2e suite (@mock-llm) by default"
+        content.lines().any(|line| {
+            line.contains("run-bdd-shards.sh")
+                && line.contains("mock-llm-bdd")
+                && line.contains("--tag mock-llm")
+        }),
+        "authoritative CI must run the zero-cost mocked e2e suite"
     );
-
-    // (b) The paid real-LLM lane must NOT sit on the default path: every
-    //     `--real-llm` invocation must appear AFTER the explicit opt-in guard
-    //     (`QUECTO_RUN_REAL_LLM`), never unconditionally. Locating it by byte
-    //     offset proves the opt-in guard precedes (gates) the paid invocation
-    //     rather than merely co-existing in the file.
-    let optin_at = content.find("QUECTO_RUN_REAL_LLM");
-    for (idx, _) in content.match_indices("--real-llm") {
-        match optin_at {
-            Some(guard) => assert!(
-                idx > guard,
-                "pre-push.sh runs `--real-llm` (offset {idx}) before/without the \
-                 QUECTO_RUN_REAL_LLM opt-in guard (offset {guard}): the paid suite must \
-                 not be on the default push path"
-            ),
-            None => panic!(
-                "pre-push.sh invokes `--real-llm` with no QUECTO_RUN_REAL_LLM opt-in guard: \
-                 the paid suite must not be on the default push path"
-            ),
-        }
-    }
 }
 
 #[then("the pre-push script should not probe for a provider key to auto-run the paid suite")]
@@ -150,18 +126,6 @@ fn then_pre_push_no_key_autorun(_world: &mut QuectoWorld) {
              and let the suite/shards script load credentials)"
         );
     }
-}
-
-#[then("the pre-push script should gate the live real-LLM suite behind an explicit opt-in flag")]
-fn then_pre_push_real_llm_optin(_world: &mut QuectoWorld) {
-    let content =
-        std::fs::read_to_string("../scripts/pre-push.sh").expect("read ../scripts/pre-push.sh");
-    // The live (paid) suite must remain runnable on demand via an explicit,
-    // documented opt-in env flag.
-    assert!(
-        content.contains("QUECTO_RUN_REAL_LLM"),
-        "pre-push.sh must gate the live real-LLM suite behind an explicit opt-in (QUECTO_RUN_REAL_LLM)"
-    );
 }
 
 #[then("the mocked e2e suite should cover the curated real-LLM capability checklist")]

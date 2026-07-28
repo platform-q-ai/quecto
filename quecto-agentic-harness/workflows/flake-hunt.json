@@ -43,13 +43,13 @@
       "key": "resolve",
       "label": "Fix it or file it",
       "phase": "green",
-      "guidance": "If the mechanism is confirmed and the fix is small: fix it at the mechanism level (never just widen a timeout without justifying the new margin), prove it by looping the test, then branch/commit/push through the full gate (never --no-verify) and open a PR. Otherwise: file a gh issue carrying ALL captured evidence, the suspected mechanism, and the reproduction attempts, so the next hunter starts warm. Done when either the PR is open or the issue is filed."
+      "guidance": "If the mechanism is confirmed and the fix is small: fix it at the mechanism level (never just widen a timeout without justifying the new margin), prove it by looping the test, then branch/commit/push through the fast pre-push gate (never --no-verify) and open a PR. Otherwise: file a gh issue carrying ALL captured evidence, the suspected mechanism, and the reproduction attempts, so the next hunter starts warm. Done when either the PR is open or the issue is filed."
     },
     {
       "key": "report",
-      "label": "Report the outcome (no merge)",
+      "label": "Request authoritative CI and report the PR (no merge)",
       "phase": "ci_cd",
-      "guidance": "Report: flake confirmed or ruled out, mechanism, and the action taken (PR number or issue number). If a PR was opened, confirm CI is green (`gh pr checks <n>`) but do NOT merge. Done when reported and `git status` is clean or matches the opened PR."
+      "guidance": "After all review comments are resolved and the current head is final, run `gh pr edit <n> --add-label merge-requested`. This requests authoritative CI for that exact revision. Wait with `gh pr checks <n> --watch`; if another commit is pushed, the label is removed automatically and must be reapplied only when ready. Do NOT merge or set auto-merge; report the PR and CI result for human merge."
     }
   ]
 }

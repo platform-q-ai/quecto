@@ -678,7 +678,7 @@ Pure-move refactors (for example file extractions, renames, or byte-identical mo
 
 1 - Install/check local quality hooks
 2 - Update Scenarios / Add new features
-3 - Write/update unit tests (run a quick smoke check; full suite runs on push)
+3 - Write/update unit tests (run a quick smoke check; full CI runs after `merge-requested`)
 4 - Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite
 5 - Despatch three BDD review finders (Gherkin discipline, Falsifiability, Coverage)
 6 - Implement code (GREEN)
@@ -686,14 +686,14 @@ Pure-move refactors (for example file extractions, renames, or byte-identical mo
 8 - Ensure tests still pass (GREEN)
 9 - Bump semver for every changed crate and sync version docs
 10 - Commit
-11 - Push (pre-push hook will run tests and linting)
+11 - Push through the fast pre-push gate
 12 - Create PR
 13 - Despatch narrow parallel review finders, verify adversarially, post one review
 14 - Fix all valid review concerns
 15 - Push changes to remote
 16 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
 17 - Verify the PR meets every issue acceptance criterion
-18 - Confirm the pre-push gate passed and report the PR (do NOT merge)
+18 - Request authoritative CI and report the PR (do not merge)
 19 - Clean up sub agents
 
 ## Quality gates
@@ -714,7 +714,7 @@ All test commands pipe through `scripts/test-filter.sh` which strips the per-tes
 
 `--no-fail-fast` ensures all failures are reported in a single run, not just the first.
 
-Two-tier hooks: pre-commit (~20-40s: quality+fmt+clippy) and pre-push (tests + 24-shard BDD + coverage + machete + deny + the zero-cost mocked e2e suite `@mock-llm`). The paid `@manual-real-llm` suite is NOT run on push by default; opt in on demand with `QUECTO_RUN_REAL_LLM=1 git push`. SHA-based caching. Install via `scripts/install-hooks.sh`.
+Two-tier local hooks: pre-commit performs lightweight staged-file hygiene and formatting; pre-push runs fast quality rules, changed-package strict Clippy, and architecture/repository invariants. Full tests, BDD, coverage, dependency policy, and mock E2E run in authoritative CI only after the `merge-requested` label is applied. A subsequent push removes that label. Install via `scripts/install-hooks.sh`.
 
 ### Sharded BDD (24-way parallel)
 
@@ -752,7 +752,7 @@ cargo test -p quecto --features test-support --test bdd
 # Core suite (24-way sharded, fastest local full run)
 bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
 
-# Mocked e2e suite (free, deterministic, default pre-push e2e lane — no API key)
+# Mocked e2e suite (free, deterministic, authoritative CI lane — no API key)
 bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 12m --tag mock-llm
 
 # Provider smoke subset (paid, opt-in; filters providers without credentials)
@@ -763,8 +763,8 @@ bash scripts/run-bdd-shards.sh --suite real-llm-bdd --shards 24 --timeout 12m --
 ```
 
 The e2e suite exists in two parallel lanes that assert the same behaviours:
-- **`@mock-llm` (default, free):** WireMock-backed deterministic coverage under `tests/features/e2e_mock_llm*.feature` plus the full `@manual-real-llm` behavioral mirror. Makes zero paid provider calls and passes with no API key. This is what every `git push` runs.
-- **`@manual-real-llm` (manual, paid):** the retired live behavioral suite under `tests/features/e2e_real_llm*.feature`, retained for occasional exploratory end-to-end validation. Run it on demand with the command above, or fold it into a push via `QUECTO_RUN_REAL_LLM=1 git push`.
+- **`@mock-llm` (default, free):** WireMock-backed deterministic coverage under `tests/features/e2e_mock_llm*.feature` plus the full `@manual-real-llm` behavioral mirror. Makes zero paid provider calls and passes with no API key. This runs in authoritative CI after `merge-requested` is applied.
+- **`@manual-real-llm` (manual, paid):** the retired live behavioral suite under `tests/features/e2e_real_llm*.feature`, retained for occasional exploratory end-to-end validation. Run it on demand with the command above.
 
 Contributor rules for the live/mock e2e split:
 - Keep behavioral scenarios dual-tagged with `@manual-real-llm @mock-llm` when they should run in both lanes.
@@ -775,14 +775,10 @@ Contributor rules for the live/mock e2e split:
 - For UDS workflow scenarios, use the real multi-client socket path when asserting broadcast-only events. The test harness should read the socket while the run is active to avoid backpressure on large workflow event streams.
 - Keep `@provider-smoke` tiny and live-provider only: it validates credentials/provider availability, not tools, sessions, workflow, REPL, or UDS behavior.
 
-`scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test -p quecto-agentic-harness --lib`, plus the `architecture`, `contracts`, and `repo_docs` integration test targets, and 24-way sharded non-real BDD), then the zero-cost mocked e2e lane, caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`. A `.env` provider key alone never triggers paid calls - the paid `@manual-real-llm` lane runs only under the explicit `QUECTO_RUN_REAL_LLM=1` opt-in.
+`scripts/pre-push.sh` runs fast repository and BDD quality rules plus formatting, changed-package strict Clippy, and architecture/contract/repository invariants. It does not run the full test, BDD, coverage, dependency-policy, or mock-E2E lanes.
 
-Pre-push controls:
-- `QUECTO_E2E_TIMEOUT` timeout per BDD shard (default `12m`)
-- `QUECTO_BDD_SHARDS` shard count for non-real BDD (default `24`)
-- `QUECTO_MOCK_LLM_SHARDS` / `QUECTO_MOCK_LLM_TIMEOUT` shard count / timeout for the mocked e2e lane (defaults `24` / `12m`)
-- `QUECTO_RUN_REAL_LLM=1` opt in to also run the live paid `@manual-real-llm` suite on push
-- `QUECTO_PREPUSH_FORCE=1` to bypass cache and rerun all checks
+Pre-push control:
+- `QUECTO_PREPUSH_BASE` overrides the comparison base used to identify changed workspace packages (default `origin/master`, falling back to local `master`).
 
 Pre-merge controls (real-LLM lane):
 - `QUECTO_PROVIDER_SMOKE=1` enables `@provider-smoke` live provider checks (excluded by default)
@@ -794,7 +790,7 @@ Pre-merge controls (real-LLM lane):
 - `QUECTO_REAL_LLM_TAG` scenario tag to run (default `manual-real-llm`; use `real-llm-smoke` for the old smoke subset)
 - `QUECTO_PREMERGE_FORCE=1` to bypass cache and rerun merge-time checks
 
-Coverage runs in the full pre-push/pre-merge gate. For manual checks without pushing, use `cargo llvm-cov` (or `scripts/pre-push.sh` for the canonical full local gate); expect that path to take longer than the commit-time hook.
+Coverage runs in authoritative CI after `merge-requested` is applied. For manual coverage checks, use `cargo llvm-cov`.
 
 ## Directory Structure
 

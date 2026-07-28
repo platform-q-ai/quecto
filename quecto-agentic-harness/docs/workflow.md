@@ -110,7 +110,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "hooks",
             "label": "Install/check local quality hooks",
             "phase": "setup",
-            "guidance": "Run `scripts/install-hooks.sh`, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code. Hook summary: `git commit` pre-commit does NOT run unit/BDD tests; it runs quality/BDD-quality gates, `cargo fmt --check`, strict clippy, and fast guard tests. `git push` pre-push runs the full new+old suite and can take minutes. Never bypass hooks with --no-verify. Done when all three hooks are installed and active."
+            "guidance": "Run `scripts/install-hooks.sh`, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code. Hook summary: `git commit` pre-commit runs staged-file hygiene, conditional BDD quality/tag checks, and `cargo fmt --check`; it does not run clippy or tests. `git push` pre-push runs fast quality rules, changed-package strict clippy, and architecture/repository invariants. Never bypass hooks with --no-verify. Done when all three hooks are installed and active."
           },
           {
             "key": "scenarios",
@@ -120,7 +120,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
           },
           {
             "key": "tests",
-            "label": "Write/update unit tests (run a quick smoke check; full suite runs on push)",
+            "label": "Write/update unit tests (run a quick smoke check; full CI runs after `merge-requested`)",
             "phase": "red",
             "guidance": "Write or update unit tests for the change. Use these crate names: kernel `cargo test -p quecto-agentic-harness --lib <name_substring>` (the package is `quecto-agentic-harness`; its lib target is named `quecto`, but `-p` takes the PACKAGE name); TUI `cargo test -p quecto-tui --lib <name_substring>`. Plain lib tests need no `--features`; render-harness-driven TUI BDD uses the integration `bdd` target with `--features test-harness`. Run a quick targeted smoke check to confirm tests compile; the full suite and coverage run on push. Write step tests and unit tests to the same discipline: assertions are BEHAVIOURAL (verify observable outcomes/contracts, not internal or private state), well-named, focused, DETERMINISTIC and ISOLATED (no cross-scenario state leakage or ambient/global mutation), and never HOLLOW/always-pass \u2014 each test must be able to fail, and must fail before the implementation exists (RED). Done when the new/modified tests compile and target the new behaviour."
           },
@@ -152,7 +152,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "verify",
             "label": "Ensure tests still pass",
             "phase": "green",
-            "guidance": "Run `cargo fmt` and targeted strict clippy locally first (for kernel: `cargo clippy -p quecto --all-targets -- -D warnings`), then re-run only the targeted tests and confirm GREEN. Do not manually re-run the whole suite before commit; push/pre-push is the full-suite mechanism. Respect the 750-line file cap and strict clippy before pushing. Done when targeted tests pass and fmt/clippy are clean. If it fails, fix the code \u2014 never silence clippy \u2014 before pushing."
+            "guidance": "Run `cargo fmt` and targeted strict clippy locally first (for kernel: `cargo clippy -p quecto --all-targets -- -D warnings`), then re-run only the targeted tests and confirm GREEN. Do not manually re-run the whole suite before commit; authoritative CI after `merge-requested` is the full-suite mechanism. Respect the 750-line file cap and strict clippy before pushing. Done when targeted tests pass and fmt/clippy are clean. If it fails, fix the code \u2014 never silence clippy \u2014 before pushing."
           },
           {
             "key": "version_bump",
@@ -168,15 +168,15 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
           },
           {
             "key": "push",
-            "label": "Push (pre-push hook will run tests and linting)",
+            "label": "Push through the fast pre-push gate",
             "phase": "ci_cd",
-            "guidance": "Push triggers the full local gate (or validate without pushing via `scripts/pre-push.sh`): fmt, strict clippy, unit/integration/architecture/contracts/repo_docs/workflow_config, the 24-shard non-real BDD suite, region coverage at or above 87% for quecto and quecto-tui, machete and deny. The zero-cost mocked `@mock-llm` e2e lane runs by default; the live LLM suite (tagged `@manual-real-llm`) is opt-in via `QUECTO_RUN_REAL_LLM=1`. The `find.feature` \"Nested .gitignore \u2026 in git repo\" scenario is load-flaky under the parallel shard wave \u2014 re-run the shard before treating it as a real failure (it passes in isolation). Push may take minutes and is not hung. Fix every failure; never use --no-verify. Done when the full gate is green. If it fails only on the flaky find.feature scenario, re-run the shard; otherwise fix the failure."
+            "guidance": "Push in the foreground and wait for the fast pre-push gate: repository/BDD quality rules, formatting, strict Clippy for changed packages, and architecture/contract/repository invariants. Full tests, BDD, coverage, dependency policy, and mock E2E do not run on ordinary pushes; they run only after `merge-requested` is applied. If it fails, fix the reported issue and push again; never bypass the hook. The same gate can be run directly with `scripts/pre-push.sh`. Done when the latest push exits successfully."
           },
           {
             "key": "pr",
             "label": "Create PR",
             "phase": "ci_cd",
-            "guidance": "Open the PR against the default branch with gh, with a clear title and a body that summarizes the change. The required CI checks are \"Unit Tests\" and \"Mock LLM E2E Tests\". Do not claim to co-author it. Done when the PR is open and the required checks are running."
+            "guidance": "Open the PR against the default branch with gh, with a clear title and a body that summarizes the change. Do not claim to co-author it. Opening or updating the PR does not start full CI. Done when the PR is open; request CI only after review is complete."
           },
           {
             "key": "reviewers",
@@ -194,7 +194,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "push_fixes",
             "label": "Push changes to remote",
             "phase": "review",
-            "guidance": "Push the fixes; the full pre-push gate runs again. Wait for it to pass before resolving threads."
+            "guidance": "Push the fixes; the fast pre-push gate runs again. Wait for it to pass before resolving threads. Any push removes a stale `merge-requested` label, so reapply it only after all review work is complete."
           },
           {
             "key": "resolve_threads",
@@ -210,9 +210,9 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
           },
           {
             "key": "pre_merge",
-            "label": "Confirm the pre-push gate passed and report the PR (do NOT merge)",
+            "label": "Request authoritative CI and report the PR (do not merge)",
             "phase": "ci_cd",
-            "guidance": "Confirm the latest push's pre-push gate passed in full (coverage threshold, machete, deny, and the mocked `@mock-llm` e2e lane that runs by default; the live LLM suite is opt-in via `QUECTO_RUN_REAL_LLM=1`) and the required CI checks \"Unit Tests\" and \"Mock LLM E2E Tests\" are green. Also confirm the reviewers actually POSTED inline findings on the PR (not just a returned summary) and that all review threads are resolved. The `find.feature` \"Nested .gitignore \u2026 in git repo\" scenario is load-flaky \u2014 re-run the shard before treating it as a real failure. Do NOT run gh pr merge or git merge, and do NOT set auto-merge: this workflow never merges. Report the PR number and a short summary, then STOP \u2014 the master agent and a human own merging. For the PR to be mergeable the required \"Unit Tests\" and \"Mock LLM E2E Tests\" checks must be green and the verdict must be CONFORMANCE: PASS; if any review, fix, or conformance step ERRORED or did not actually run, or the push bypassed the local gate with --no-verify, report that too. Done when the gate and required checks are green, inline findings were posted, all threads are resolved, and the PR is reported as ready for review (NOT merged)."
+            "guidance": "Confirm the latest fast pre-push gate passed, all review comments are resolved, and the current head is final. Run `gh pr edit <n> --add-label merge-requested` to request authoritative CI for that exact revision, then wait with `gh pr checks <n> --watch`. If another commit is pushed, the label is removed automatically; finish review and reapply it only when ready. If CI fails, fix the failure, push, and request CI again. Do not merge or set auto-merge. Done when authoritative CI passes for the latest head and the PR is reported for human merge."
           },
           {
             "key": "cleanup",
