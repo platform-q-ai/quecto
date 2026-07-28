@@ -282,7 +282,9 @@ Switch the active UDS conversation to a persisted CLI session. The current sessi
 
 ### `get_state`
 
-Return the current session state.
+Return live session supervision state. This is the command to use while an
+agent is in flight: unlike transcript inspection, its execution and message
+count fields are updated during the active turn.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -294,13 +296,31 @@ Return the current session state.
 ```json
 {
   "model": "anthropic/claude-sonnet-4-6",
-  "isStreaming": false,
+  "isStreaming": true,
   "sessionKey": "cli:default",
   "messageCount": 6,
   "pendingMessageCount": 0,
   "maxContextTokens": 300000,
   "effort": "low",
-  "effortLevels": ["none", "low", "medium", "high", "xhigh", "max"]
+  "effortLevels": ["none", "low", "medium", "high", "xhigh", "max"],
+  "execution": {
+    "phase": "runningTool",
+    "activityGeneration": 27,
+    "lastActivityAt": "2026-07-27T20:14:52Z",
+    "lastActivitySecondsAgo": 7,
+    "currentTool": {
+      "name": "bash",
+      "callId": "call-abc123",
+      "startedAt": "2026-07-27T20:14:49Z",
+      "elapsedSeconds": 10
+    },
+    "tools": {"used":["bash"],"started":9,"completed":8,"failed":1},
+    "progress": {
+      "state":"advancing","reason":"4 tools completed in the last 120 seconds",
+      "windowSeconds":120,"lastProgressSecondsAgo":7,
+      "toolCallsCompleted":4,"toolCallsFailed":1
+    }
+  }
 }
 ```
 
@@ -309,18 +329,30 @@ Return the current session state.
 | `model` | string | Active model (qualified `provider/model` or bare name) |
 | `isStreaming` | boolean | `true` if the agent is currently processing a prompt |
 | `sessionKey` | string | Session identifier for persistence |
-| `messageCount` | integer | Total messages in conversation history |
+| `messageCount` | integer | Current user-visible canonical message count, including messages committed during an active turn |
 | `pendingMessageCount` | integer | Number of queued follow-up/steer messages |
 | `maxContextTokens` | integer | Active model context-window limit in tokens (`0` when unknown) |
 | `effort` | string \| null | Effective session effort (`null` means provider default / unset) |
 | `effortLevels` | string[] | Effort vocabulary valid for the active model's provider |
+| `execution` | object | Live phase, activity watermark/timestamps, current tool, run totals, and evidence-based 120-second progress summary |
 | `workflow` | object \| omitted | Workflow snapshot when workflow is enabled for the session |
+
+`execution.phase` is `idle`, `thinking`, `runningTool`, or `finalizing`.
+`currentTool` is omitted when no tool is active. Progress is based on observed
+tool completions; it is not an inferred percentage of a non-workflow task.
+Busy snapshot responses retain `snapshot: true`, but the execution fields and
+`messageCount` are live overlays.
 
 ---
 
 ### `get_messages`
 
-Return conversation history as bounded pages (#1061). Omit `count` and
+Return the stable committed conversation transcript as bounded pages (#1061).
+Use this for full/end-of-turn output inspection; use `get_state` for live
+in-flight supervision. While a turn is active, a busy snapshot may lag the
+mutable in-flight conversation and is marked `snapshot: true`.
+
+Omit `count` and
 `before` for the newest page (up to the protocol page size of 64 messages);
 pass `count: N` for the last N messages; pass `before: <messageId>` (a message
 id from a prior response's `before` field) to fetch the adjacent older page.
