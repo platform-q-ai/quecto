@@ -591,7 +591,7 @@ fn response_agent_error_sets_run_error_without_conflating_tool_errors() {
 }
 
 #[test]
-fn tool_error_does_not_set_run_error() {
+fn recoverable_tool_error_returns_to_idle_on_agent_end() {
     let mut entry = test_entry();
     entry.status = SubagentStatus::Running;
 
@@ -603,6 +603,14 @@ fn tool_error_does_not_set_run_error() {
     assert_eq!(entry.status, SubagentStatus::Error);
     assert!(entry.last_error.as_ref().unwrap().contains("bash"));
     assert!(entry.run_error.is_none());
+
+    apply_event(&mut entry, r#"{"type":"agent_end","messages":[]}"#);
+
+    assert_eq!(entry.status, SubagentStatus::Idle);
+    assert_eq!(
+        entry.lifecycle,
+        super::super::subagent_lifecycle::SubagentLifecycleState::Idle
+    );
 }
 
 #[test]

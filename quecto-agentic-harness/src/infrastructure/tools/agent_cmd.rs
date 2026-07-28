@@ -374,6 +374,16 @@ impl AgentCmdTool {
         // as untracked orphans that `shutdown_all` can no longer reach.
         let mut killed_pid = 0;
         for (id, entry) in &removed {
+            let mut lifecycle = entry.lifecycle;
+            let killed_status = super::subagent_lifecycle::apply_lifecycle_event(
+                &mut lifecycle,
+                super::subagent_lifecycle::SubagentLifecycleEvent::KillRequested,
+            );
+            debug_assert_eq!(
+                killed_status,
+                super::subagent_registry::SubagentStatus::Exited,
+                "kill must project to the existing exited status"
+            );
             if id == agent_id {
                 killed_pid = entry.pid;
             }
@@ -518,7 +528,9 @@ impl Tool for AgentCmdTool {
                 send_uds_command(&socket_path, &json_cmd).await
             };
 
-            // Send the command via UDS.
+            // Send the command via UDS. Lifecycle state comes from the child's
+            // monitor events; the transport ack alone cannot prove accepted work
+            // and must not race with `agent_end` by marking the child Busy here.
             match send {
                 Ok(response) => Ok(ToolResult {
                     content: response,
