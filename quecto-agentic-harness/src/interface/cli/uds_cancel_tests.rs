@@ -189,6 +189,7 @@ async fn cancelled_prompt_keeps_user_message_in_conversation() {
     let mut sink = EventSink::writer(&mut bytes);
 
     let outcome = run_agent_message(PromptRun {
+        execution_state: None,
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: None,

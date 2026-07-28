@@ -79,6 +79,7 @@ impl EffortFx {
             &self.messages,
         );
         DispatchCtx {
+            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,

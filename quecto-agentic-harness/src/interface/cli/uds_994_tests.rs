@@ -75,6 +75,7 @@ impl Fixture {
     fn ctx(&mut self) -> DispatchCtx<'_> {
         let initial_stats = compute_session_stats(&self.session_key, &self.messages);
         DispatchCtx {
+            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
@@ -363,6 +364,7 @@ async fn run_stub_turn_event_types_with_sink(
     let subagent_registry = None;
 
     let outcome = run_agent_message(PromptRun {
+        execution_state: None,
         agent: &mut agent,
         messages: &mut messages,
         conversation_snapshot: None,

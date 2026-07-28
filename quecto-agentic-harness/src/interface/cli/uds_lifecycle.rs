@@ -227,6 +227,7 @@ async fn single_client_loop(
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
                 agent_session.state_snapshot(0, None, max_context_tokens, initial_effort),
             )),
+            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
             extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),

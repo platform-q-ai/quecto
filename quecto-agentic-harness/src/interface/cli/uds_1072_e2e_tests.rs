@@ -220,6 +220,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
     let outcome = {
         let mut sink = EventSink::writer(&mut writer_bytes);
         run_agent_message(PromptRun {
+            execution_state: None,
             agent: &mut agent,
             messages: &mut messages,
             conversation_snapshot: None,
@@ -355,6 +356,7 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
     let outcome = {
         let mut sink = EventSink::writer(&mut writer_bytes);
         run_agent_message(PromptRun {
+            execution_state: None,
             agent: &mut agent,
             messages: &mut messages,
             conversation_snapshot: None,

@@ -191,6 +191,7 @@ impl Fixture {
             &self.messages,
         );
         DispatchCtx {
+            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,

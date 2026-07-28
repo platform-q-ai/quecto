@@ -404,6 +404,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
     let state = session.state_snapshot(0, None, 0, None);
     let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
     let mut ctx = super::super::uds::DispatchCtx {
+        execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: tmp.path(),
         agent: &mut agent,
