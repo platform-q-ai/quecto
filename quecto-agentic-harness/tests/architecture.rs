@@ -852,7 +852,7 @@ fn tui_lib_rs_exposes_only_architecture_layers() {
 }
 
 #[test]
-fn tui_main_rs_is_thin_interface_entrypoint() {
+fn tui_main_rs_is_thin_shell_entrypoint() {
     let content = fs::read_to_string("../quecto-tui/src/main.rs").expect("read quecto-tui main.rs");
     assert!(
         content.contains("quecto_tui::shell::cli") && content.lines().count() <= 10,
