@@ -42,6 +42,11 @@ impl InputHistory {
         }
     }
 
+    /// Whether any submitted entries are retained.
+    pub(super) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// Record a submitted line. Ignores empty; skips duplicate of last entry;
     /// caps at [`MAX_HISTORY`]; resets navigation index.
     pub(super) fn push(&mut self, text: &str) {

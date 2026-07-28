@@ -290,14 +290,16 @@ fn unhandled_key_returns_false() {
 fn invalidate_clears_cache() {
     let mut e = Editor::new();
     e.set_text("hello");
-    let first = e.render(40);
-    // Cache hit: second render with same width returns identical lines without
-    // requiring field access (invalidate forces rebuild path).
-    let second = e.render(40);
-    assert_eq!(first, second);
+    let _ = e.render(40);
+    assert!(
+        e.render_cache_is_populated(),
+        "render must populate the cache"
+    );
     e.invalidate();
-    // After invalidate, content is still correct (cache cleared internally).
-    assert_eq!(e.render(40), first);
+    assert!(
+        !e.render_cache_is_populated(),
+        "invalidate must clear the render cache (not merely preserve output)"
+    );
 }
 
 #[test]

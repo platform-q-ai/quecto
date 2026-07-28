@@ -305,6 +305,11 @@ impl Editor {
 
     /// Navigate history Up (also used by frozen characterization tests).
     pub(super) fn navigate_history_up(&mut self) {
+        // Peek emptiness before materializing the draft (parity with pre-#1277:
+        // empty history returned without joining lines).
+        if self.history.is_empty() {
+            return;
+        }
         let draft = self.text();
         if let Some(entry) = self.history.navigate_up(&draft) {
             self.set_text(&entry);
@@ -491,6 +496,14 @@ impl Component for Editor {
     fn invalidate(&mut self) {
         self.cached_width = None;
         self.cached_lines = None;
+    }
+}
+
+#[cfg(test)]
+impl Editor {
+    /// Test-only: whether the render cache currently holds lines.
+    pub(super) fn render_cache_is_populated(&self) -> bool {
+        self.cached_lines.is_some()
     }
 }
 
