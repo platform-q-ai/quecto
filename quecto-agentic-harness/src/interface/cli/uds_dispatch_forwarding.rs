@@ -1,6 +1,7 @@
 use super::DispatchCtx;
 use super::uds_dispatch_get_message_forward::{ForwardGetMessage, forward_subagent_get_message};
 use super::{AgentCommand, AgentEvent};
+use crate::domain::ids::{AgentId, CommandId, MessageId, ToolCallId};
 
 /// Pre-router for commands addressed to a spawned sub-agent.
 ///
@@ -21,11 +22,11 @@ pub(super) async fn try_forward_subagent_targeted_command(
         let tn = cmd.type_name();
         let ev = forward_subagent_get_messages(
             ctx,
-            id.as_deref(),
+            id.as_deref().map(CommandId::from),
             tn,
-            agent_id,
+            AgentId::from(agent_id.as_str()),
             *count,
-            before.as_deref(),
+            before.as_deref().map(MessageId::from),
         )
         .await;
         super::emit_response_or_frame_limit_error(ctx, id.as_deref(), tn, ev).await;
@@ -38,9 +39,15 @@ pub(super) async fn try_forward_subagent_targeted_command(
     } = cmd
     {
         let tn = cmd.type_name();
-        let ev =
-            forward_subagent_get_messages(ctx, id.as_deref(), tn, agent_id, Some(*count), None)
-                .await;
+        let ev = forward_subagent_get_messages(
+            ctx,
+            id.as_deref().map(CommandId::from),
+            tn,
+            AgentId::from(agent_id.as_str()),
+            Some(*count),
+            None,
+        )
+        .await;
         super::emit_response_or_frame_limit_error(ctx, id.as_deref(), tn, ev).await;
         return Some(false);
     }
@@ -54,9 +61,9 @@ pub(super) async fn try_forward_subagent_targeted_command(
         let tn = cmd.type_name();
         let ev = super::uds_dispatch_sync_forward::forward_subagent_sync(
             ctx,
-            id.as_deref(),
+            id.as_deref().map(CommandId::from),
             tn,
-            agent_id,
+            AgentId::from(agent_id.as_str()),
             *epoch,
             *since_rev,
         )
@@ -79,9 +86,9 @@ pub(super) async fn try_forward_subagent_targeted_command(
             id.as_deref(),
             tn,
             ForwardGetMessage {
-                agent_id,
-                message_id,
-                tool_call_id: tool_call_id.as_deref(),
+                agent_id: AgentId::from(agent_id.as_str()),
+                message_id: MessageId::from(message_id.as_str()),
+                tool_call_id: tool_call_id.as_deref().map(ToolCallId::from),
                 offset: *offset,
                 limit: *limit,
             },
@@ -107,21 +114,22 @@ pub(super) async fn try_forward_subagent_targeted_command(
 /// that mapping, not this function's contract — hence the name covers both.
 pub(super) async fn forward_subagent_get_messages(
     ctx: &DispatchCtx<'_>,
-    id: Option<&str>,
+    id: Option<CommandId>,
     tn: &str,
-    agent_id: &str,
+    agent_id: AgentId,
     count: Option<usize>,
-    before: Option<&str>,
+    before: Option<MessageId>,
 ) -> AgentEvent {
     use crate::infrastructure::tools::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, lookup_subagent_socket, send_subagent_uds_command_with_timeout,
     };
+    let id_ref = id.as_ref().map(CommandId::as_str);
     let Some(registry) = ctx.subagent_registry.as_ref() else {
-        return AgentEvent::err(id, tn, "no sub-agent registry available");
+        return AgentEvent::err(id_ref, tn, "no sub-agent registry available");
     };
-    let socket_path = match lookup_subagent_socket(registry, agent_id) {
+    let socket_path = match lookup_subagent_socket(registry, agent_id.as_str()) {
         Ok(path) => path,
-        Err(e) => return AgentEvent::err(id, tn, e),
+        Err(e) => return AgentEvent::err(id_ref, tn, e),
     };
     // Omit `count` entirely when None so the child returns its FULL history; a
     // present count requests just the tail (#843).
@@ -129,8 +137,8 @@ pub(super) async fn forward_subagent_get_messages(
     if let Some(count) = count {
         cmd["count"] = serde_json::json!(count);
     }
-    if let Some(before) = before {
-        cmd["before"] = serde_json::json!(before);
+    if let Some(before) = before.as_ref() {
+        cmd["before"] = serde_json::json!(before.as_str());
     }
     let cmd = cmd.to_string();
     // This forward is awaited inline in the single shared dispatch loop, so it
@@ -141,9 +149,9 @@ pub(super) async fn forward_subagent_get_messages(
     {
         // Preserve child failures instead of rewriting them as parent success.
         Ok(line) => match super::uds_forward_response::parse_forwarded_get_messages(&line) {
-            Ok(data) => AgentEvent::ok(id, tn, Some(data)),
-            Err(error) => AgentEvent::err(id, tn, error),
+            Ok(data) => AgentEvent::ok(id_ref, tn, Some(data)),
+            Err(error) => AgentEvent::err(id_ref, tn, error),
         },
-        Err(e) => AgentEvent::err(id, tn, e.to_string()),
+        Err(e) => AgentEvent::err(id_ref, tn, e.to_string()),
     }
 }

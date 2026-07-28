@@ -407,7 +407,7 @@ pub fn compute_session_stats_with_usage(
 pub(crate) mod uds_session_history;
 pub(crate) use uds_session_history::{
     HISTORY_PAGE_JSON_BUDGET, HISTORY_PAGE_SIZE, message_to_json_for_history_page,
-    position_by_wire_id,
+    messages_page_json_for_id, position_by_message_id, position_by_wire_id,
 };
 pub use uds_session_history::{messages_page_json, messages_tail_json};
 

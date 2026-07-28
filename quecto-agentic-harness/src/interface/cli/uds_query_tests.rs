@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::message::Message;
+use crate::domain::message::{Message, ToolCall};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::test_support::message_contents;
 use crate::interface::cli::protocol::AgentCommand;
@@ -437,24 +437,63 @@ fn query_get_message_hit_returns_message_by_stable_id() {
 
 #[test]
 fn query_get_message_miss_returns_none_for_structured_error() {
+    for message_id in ["00000000-0000-0000-0000-000000000000", "not-a-uuid"] {
+        let mut fx = Fx::new();
+        let ctx = fx.ctx();
+        // An unknown id must return None so dispatch emits a structured
+        // "message not found" error rather than a stale/empty hit (#1060).
+        let miss = query_response_data(
+            &AgentCommand::GetMessage {
+                id: Some("r1".into()),
+                message_id: message_id.into(),
+                agent_id: None,
+                tool_call_id: None,
+                offset: None,
+                limit: None,
+            },
+            &ctx,
+        );
+        assert!(
+            miss.is_none(),
+            "unknown message id {message_id:?} must miss (None), got {miss:?}"
+        );
+    }
+}
+
+#[test]
+fn query_get_message_tool_call_uses_tool_id_not_request_or_message_id() {
     let mut fx = Fx::new();
+    fx.messages.push(Message::assistant(
+        "call requested",
+        vec![ToolCall {
+            id: "call-target".into(),
+            name: "bash".into(),
+            arguments: "{\"command\":\"echo typed\"}".into(),
+        }],
+    ));
+    let message_id = fx.messages.last().unwrap().id().to_string();
     let ctx = fx.ctx();
-    // An unknown id must return None so dispatch emits a structured
-    // "message not found" error rather than a stale/empty hit (#1060).
-    let miss = query_response_data(
+
+    let hit = query_response_data(
         &AgentCommand::GetMessage {
-            id: Some("r1".into()),
-            message_id: "00000000-0000-0000-0000-000000000000".into(),
+            id: Some("response-correlation".into()),
+            message_id: message_id.clone(),
             agent_id: None,
-            tool_call_id: None,
+            tool_call_id: Some("call-target".into()),
             offset: None,
             limit: None,
         },
         &ctx,
-    );
+    )
+    .expect("tool-call argument lookup must resolve by the requested toolCallId");
+
+    assert_eq!(hit["id"], message_id);
+    assert_eq!(hit["toolCallId"], "call-target");
+    assert_eq!(hit["toolName"], "bash");
+    assert_eq!(hit["arguments"], "{\"command\":\"echo typed\"}");
     assert!(
-        miss.is_none(),
-        "unknown message id must miss (None), got {miss:?}"
+        hit.get("response-correlation").is_none(),
+        "request/correlation id must not be confused with message or tool-call ids"
     );
 }
 

@@ -122,7 +122,15 @@ async fn forward_sync_propagates_child_failure() {
     let mut ctx = fx.ctx();
     ctx.subagent_registry = Some(registry);
 
-    let event = forward_subagent_sync(&ctx, Some("sync-2"), "sync", "worker", 7, 3).await;
+    let event = forward_subagent_sync(
+        &ctx,
+        Some(crate::domain::ids::CommandId::from("sync-2")),
+        "sync",
+        crate::domain::ids::AgentId::from("worker"),
+        7,
+        3,
+    )
+    .await;
     handle.await.unwrap();
     let json = serde_json::to_value(event).unwrap();
 
@@ -152,8 +160,8 @@ async fn forward_get_message_propagates_child_failure() {
         Some("parent-page"),
         "get_message",
         ForwardGetMessage {
-            agent_id: "worker",
-            message_id: "child-missing",
+            agent_id: crate::domain::ids::AgentId::from("worker"),
+            message_id: crate::domain::ids::MessageId::from("child-missing"),
             tool_call_id: None,
             offset: None,
             limit: None,
@@ -183,8 +191,8 @@ async fn forward_get_message_rejects_wrong_command_child_response() {
         Some("parent-page"),
         "get_message",
         ForwardGetMessage {
-            agent_id: "worker",
-            message_id: "m1",
+            agent_id: crate::domain::ids::AgentId::from("worker"),
+            message_id: crate::domain::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
             limit: None,
@@ -214,8 +222,8 @@ async fn forward_get_message_rejects_missing_data_child_response() {
         Some("parent-page"),
         "get_message",
         ForwardGetMessage {
-            agent_id: "worker",
-            message_id: "m1",
+            agent_id: crate::domain::ids::AgentId::from("worker"),
+            message_id: crate::domain::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
             limit: None,
@@ -242,8 +250,8 @@ async fn forward_get_message_rejects_malformed_child_response() {
         Some("parent-page"),
         "get_message",
         ForwardGetMessage {
-            agent_id: "worker",
-            message_id: "m1",
+            agent_id: crate::domain::ids::AgentId::from("worker"),
+            message_id: crate::domain::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
             limit: None,

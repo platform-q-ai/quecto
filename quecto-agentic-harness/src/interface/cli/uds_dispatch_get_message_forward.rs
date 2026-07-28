@@ -1,9 +1,10 @@
 use super::{AgentEvent, DispatchCtx};
+use crate::domain::ids::{AgentId, MessageId, ToolCallId};
 
-pub(super) struct ForwardGetMessage<'a> {
-    pub(super) agent_id: &'a str,
-    pub(super) message_id: &'a str,
-    pub(super) tool_call_id: Option<&'a str>,
+pub(super) struct ForwardGetMessage {
+    pub(super) agent_id: AgentId,
+    pub(super) message_id: MessageId,
+    pub(super) tool_call_id: Option<ToolCallId>,
     pub(super) offset: Option<usize>,
     pub(super) limit: Option<usize>,
 }
@@ -13,7 +14,7 @@ pub(super) async fn forward_subagent_get_message(
     ctx: &DispatchCtx<'_>,
     id: Option<&str>,
     tn: &str,
-    req: ForwardGetMessage<'_>,
+    req: ForwardGetMessage,
 ) -> AgentEvent {
     use crate::infrastructure::tools::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, lookup_subagent_socket, send_subagent_uds_command_with_timeout,
@@ -21,16 +22,16 @@ pub(super) async fn forward_subagent_get_message(
     let Some(registry) = ctx.subagent_registry.as_ref() else {
         return AgentEvent::err(id, tn, "no sub-agent registry available");
     };
-    let socket_path = match lookup_subagent_socket(registry, req.agent_id) {
+    let socket_path = match lookup_subagent_socket(registry, req.agent_id.as_str()) {
         Ok(path) => path,
         Err(e) => return AgentEvent::err(id, tn, e),
     };
     let mut cmd = serde_json::json!({
         "type": "get_message",
-        "messageId": req.message_id,
+        "messageId": req.message_id.as_str(),
     });
-    if let Some(tool_call_id) = req.tool_call_id {
-        cmd["toolCallId"] = serde_json::json!(tool_call_id);
+    if let Some(tool_call_id) = req.tool_call_id.as_ref() {
+        cmd["toolCallId"] = serde_json::json!(tool_call_id.as_str());
     }
     if let Some(offset) = req.offset {
         cmd["offset"] = serde_json::json!(offset);
