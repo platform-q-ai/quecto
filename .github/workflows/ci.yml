@@ -1,119 +1,114 @@
-name: CI
+name: Authoritative Merge CI
 
+# Full validation runs only when a PR is submitted to GitHub's merge queue.
+# workflow_dispatch remains available for explicit diagnosis.
 on:
-  pull_request:
-    branches: [master]
-  push:
-    branches: [master]
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
-# Cancel in-progress runs for the same PR.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  group: merge-ci-${{ github.event.merge_group.head_sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
-  unit-tests:
-    name: Unit Tests
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 15
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Unit, architecture, contract, and repository-doc tests
-        run: cargo test -p quecto-agentic-harness --lib --test architecture --test contracts --test repo_docs
-
-      - name: TUI harness and unit tests
-        run: cargo test -p quecto-tui --lib
-
-      - name: TUI BDD compile check
-        run: cargo test -p quecto-tui --features test-harness --test bdd --no-run
-
-  mock-llm-e2e:
-    name: Mock LLM E2E Tests
+  static-quality:
+    name: Static Quality
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-
       - uses: Swatinem/rust-cache@v2
+      - run: scripts/check-quality.sh
+      - run: scripts/check-bdd-quality.sh
+      - run: scripts/check-bdd-tags.sh
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines
 
-      - name: Mock LLM BDD/e2e tests
-        run: bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 5m --tag mock-llm
-
-  tui-bdd:
-    name: TUI BDD Tests
+  workspace-tests:
+    name: Workspace Tests
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 20
-
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
       - uses: Swatinem/rust-cache@v2
-
-      - name: TUI BDD tests
-        run: bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --features test-harness --shards 8 --timeout 5m
+      - name: All workspace unit and integration tests except sharded BDD targets
+        run: |
+          cargo test --workspace --lib --bins
+          mapfile -t targets < <(find quecto-agentic-harness/tests -maxdepth 1 -name '*.rs' -printf '%f\n' | sed 's/\.rs$//' | sort)
+          args=()
+          for target in "${targets[@]}"; do args+=(--test "$target"); done
+          # Explicit names are retained as executable documentation and architecture guards.
+          cargo test -p quecto-agentic-harness --no-fail-fast --test architecture --test contracts
+          cargo test -p quecto-agentic-harness --no-fail-fast "${args[@]}"
+          cargo test -p quecto-api --no-fail-fast --all-targets
+          cargo test -p quecto-tui --lib
 
   non-real-bdd:
-    name: Non-Real BDD Tests
+    name: Non-Real BDD
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-
+          components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 5m --coverage --coverage-threshold 72
 
-      - name: Non-real BDD tests
-        run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 5m
+  tui-bdd:
+    name: TUI BDD
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --features test-harness --shards 8 --timeout 5m --coverage --coverage-threshold 62
 
-  # ─── TEMPORARILY DISABLED (2026-07-14) ──────────────────────────────────────
-  # Provider Smoke Tests disabled while the OpenAI account quota is topped up
-  # (real-provider calls were failing with HTTP 429 insufficient_quota).
-  # TO RESTORE: uncomment the job below AND re-add "Provider Smoke Tests" to the
-  # required status checks on the `master` branch protection rule (it was removed
-  # at the same time so PRs don't hang waiting on a check that never reports).
-  # provider-smoke:
-  #   name: Provider Smoke Tests
-  #   runs-on: blacksmith-2vcpu-ubuntu-2404
-  #   timeout-minutes: 10
-  #
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #
-  #     - uses: dtolnay/rust-toolchain@stable
-  #       with:
-  #         components: rustfmt, clippy
-  #
-  #     - uses: Swatinem/rust-cache@v2
-  #
-  #     - name: Provider smoke tests
-  #       env:
-  #         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  #         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  #       run: |
-  #         if [ -z "${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}" ]; then
-  #           echo "Skipping provider smoke tests: no provider API key secret configured"
-  #           exit 0
-  #         fi
-  #         QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test -p quecto-agentic-harness --no-fail-fast --features test-support --test bdd
+  mock-llm-e2e:
+    name: Mock LLM E2E
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 5m --tag mock-llm
+
+  coverage:
+    name: Coverage
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --lib -p quecto-agentic-harness --ignore-filename-regex '(tui_harness|test_support|warn_capture)' --fail-under-functions 93
+      - run: cargo llvm-cov --lib -p quecto-tui --ignore-filename-regex '(tui_harness|test_support|warn_capture)' --fail-under-functions 95
+      - run: cargo llvm-cov --lib -p quecto-api --ignore-filename-regex '(tui_harness|test_support|warn_capture)' --fail-under-functions 95
+
+  dependency-policy:
+    name: Dependency Policy
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-machete
+      - run: cargo machete
+      - run: cargo deny check
