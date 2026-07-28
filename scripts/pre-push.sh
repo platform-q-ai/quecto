@@ -21,7 +21,6 @@ step 3 "BDD status-tag rules"
 step 4 "Formatting"
 cargo fmt --all -- --check
 
-step 5 "Strict Clippy for changed packages"
 BASE_REF="${QUECTO_PREPUSH_BASE:-origin/master}"
 if ! git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
     BASE_REF="master"
@@ -48,25 +47,43 @@ CLIPPY_ARGS=(--all-targets -- -D warnings
     -W clippy::cognitive_complexity
     -W clippy::too_many_arguments
     -W clippy::too_many_lines)
-if (( WORKSPACE_CLIPPY == 1 )); then
-    cargo clippy --workspace --features quecto-agentic-harness/test-support "${CLIPPY_ARGS[@]}"
-elif (( ${#PACKAGES[@]} > 0 )); then
-    PACKAGE_ARGS=()
-    while IFS= read -r package; do PACKAGE_ARGS+=(-p "$package"); done < <(printf '%s\n' "${!PACKAGES[@]}" | sort)
-    echo "  Changed packages: ${!PACKAGES[*]}"
-    cargo clippy "${PACKAGE_ARGS[@]}" "${CLIPPY_ARGS[@]}"
-else
-    echo "  No Rust workspace package changed; skipped."
-fi
 
-step 6 "Architecture and repository invariants"
-cargo test -p quecto-agentic-harness --no-fail-fast \
-    --test architecture \
-    --test contracts \
-    --test repo_docs \
-    --test workflow_docs \
-    --test workflow_config_template \
-    --test workflow_config_refactor_template
+# The two compilation-based gates are independent. Run them concurrently and
+# preserve both statuses so either failure blocks the push.
+(
+    step 5 "Strict Clippy for changed packages"
+    if (( WORKSPACE_CLIPPY == 1 )); then
+        cargo clippy --workspace --features quecto-agentic-harness/test-support "${CLIPPY_ARGS[@]}"
+    elif (( ${#PACKAGES[@]} > 0 )); then
+        PACKAGE_ARGS=()
+        while IFS= read -r package; do PACKAGE_ARGS+=(-p "$package"); done < <(printf '%s\n' "${!PACKAGES[@]}" | sort)
+        echo "  Changed packages: ${!PACKAGES[*]}"
+        cargo clippy "${PACKAGE_ARGS[@]}" "${CLIPPY_ARGS[@]}"
+    else
+        echo "  No Rust workspace package changed; skipped."
+    fi
+) &
+CLIPPY_PID=$!
+
+(
+    step 6 "Architecture and repository invariants"
+    cargo test -p quecto-agentic-harness --no-fail-fast \
+        --test architecture \
+        --test contracts \
+        --test repo_docs \
+        --test workflow_docs \
+        --test workflow_config_template \
+        --test workflow_config_refactor_template
+) &
+ARCH_PID=$!
+
+FAILED=0
+wait "$CLIPPY_PID" || FAILED=1
+wait "$ARCH_PID" || FAILED=1
+if (( FAILED != 0 )); then
+    echo "Pre-push compilation gates failed." >&2
+    exit 1
+fi
 
 elapsed=$((SECONDS - start))
 printf '\nPre-push passed in %ss. Full workspace Clippy, tests, BDD, coverage and dependency policy run in authoritative merge-queue CI.\n' "$elapsed"
