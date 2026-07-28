@@ -35,11 +35,13 @@ pub enum ResumedChatMessage {
         text: String,
         id: Option<String>,
         stub: bool,
+        content_len: Option<usize>,
     },
     Assistant {
         text: String,
         id: Option<String>,
         stub: bool,
+        content_len: Option<usize>,
     },
     ToolCall {
         tool_call_id: String,
@@ -72,12 +74,15 @@ impl ResumeMessagesError {
 
 /// Parse a `get_session_stats` response payload into a typed value with the
 /// same forgiving defaults the TUI historically used.
+fn optional_usize_field(data: &serde_json::Value, key: &str) -> Option<usize> {
+    data.get(key)
+        .and_then(|v| v.as_u64())
+        .and_then(|n| usize::try_from(n).ok())
+}
+
 pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
     let context_tokens = data.get("contextTokens").and_then(|v| v.as_u64());
-    let max_context_tokens = data
-        .get("maxContextTokens")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize);
+    let max_context_tokens = optional_usize_field(data, "maxContextTokens");
 
     SessionStats {
         session_key: data
@@ -158,13 +163,17 @@ pub fn parse_resumed_messages(
                 .get("collapsed")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let content_len = optional_usize_field(message, "contentLength");
             match role {
                 "user" => vec![ResumedChatMessage::User {
                     text: content,
                     id,
                     stub,
+                    content_len,
                 }],
-                "assistant" => parse_assistant_resume_messages(message, content, id, stub),
+                "assistant" => {
+                    parse_assistant_resume_messages(message, content, id, stub, content_len)
+                }
                 "tool" => parse_tool_result_resume_message(message, content)
                     .into_iter()
                     .collect(),
@@ -179,6 +188,7 @@ fn parse_assistant_resume_messages(
     content: String,
     id: Option<String>,
     stub: bool,
+    content_len: Option<usize>,
 ) -> Vec<ResumedChatMessage> {
     let mut resumed = Vec::new();
     if !content.is_empty() {
@@ -186,6 +196,7 @@ fn parse_assistant_resume_messages(
             text: content,
             id,
             stub,
+            content_len,
         });
     }
     resumed.extend(

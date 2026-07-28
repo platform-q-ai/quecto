@@ -62,7 +62,7 @@ fn parse_resumed_messages_keeps_only_displayable_chat_messages() {
     let messages = parse_resumed_messages(&json!({
         "messages": [
             {"role": "user", "content": "hello", "id": "u1"},
-            {"role": "assistant", "content": "world", "id": "a1", "collapsed": true},
+            {"role": "assistant", "content": "world", "id": "a1", "collapsed": true, "contentLength": 42},
             {"role": "assistant", "content": ""},
             {"role": "tool", "content": "hidden"}
         ]
@@ -76,11 +76,13 @@ fn parse_resumed_messages_keeps_only_displayable_chat_messages() {
                 text: "hello".to_string(),
                 id: Some("u1".to_string()),
                 stub: false,
+                content_len: None,
             },
             ResumedChatMessage::Assistant {
                 text: "world".to_string(),
                 id: Some("a1".to_string()),
                 stub: true,
+                content_len: Some(42),
             },
         ]
     );
@@ -134,6 +136,7 @@ fn parse_resumed_messages_preserves_tool_calls_and_results() {
                 text: "after tool".to_string(),
                 id: None,
                 stub: false,
+                content_len: None,
             },
         ]
     );
@@ -197,6 +200,7 @@ fn parse_resumed_messages_keeps_assistant_text_before_tool_calls() {
                 text: "I will inspect it".to_string(),
                 id: None,
                 stub: false,
+                content_len: None,
             },
             ResumedChatMessage::ToolCall {
                 tool_call_id: "call-1".to_string(),

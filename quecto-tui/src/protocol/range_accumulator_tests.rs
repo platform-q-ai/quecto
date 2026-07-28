@@ -10,7 +10,7 @@ use super::{RangeAccumulator, RangeError, RangeUpdate};
 use serde_json::json;
 
 fn acc(content: &str, offset: usize) -> RangeAccumulator {
-    RangeAccumulator::new(content.to_string(), offset)
+    RangeAccumulator::new_with_expected_len(content.to_string(), offset, None)
 }
 
 #[test]
@@ -46,11 +46,11 @@ fn an_absent_offset_defaults_to_zero() {
 }
 
 #[test]
-fn an_absent_content_length_defaults_to_the_accumulated_length() {
+fn an_absent_content_length_final_page_completes_at_the_accumulated_length() {
     assert_eq!(
         acc("abc", 3).apply(&json!({ "content": "def", "offset": 3 })),
         Ok(RangeUpdate::Complete("abcdef".into())),
-        "an absent contentLength must default to the accumulated length and complete"
+        "an absent contentLength on a final page completes at the accumulated length"
     );
 }
 
@@ -139,6 +139,7 @@ fn a_valid_continuation_returns_the_accumulated_prefix_and_next_offset() {
         Ok(RangeUpdate::Continue {
             content: "abcdef".into(),
             next_offset: 6,
+            content_len: Some(9),
         }),
         "a valid continuation must carry the accumulated prefix forward"
     );
@@ -167,8 +168,10 @@ fn a_multi_page_body_reassembles_in_order() {
             RangeUpdate::Continue {
                 content: acc_content,
                 next_offset: next,
+                content_len,
             } => {
                 assert!(!last, "only non-final pages may continue");
+                assert_eq!(content_len, Some(total));
                 content = acc_content;
                 offset = next;
             }
@@ -233,6 +236,7 @@ fn a_next_offset_exactly_at_the_advertised_end_is_a_valid_continuation() {
         Ok(RangeUpdate::Continue {
             content: "abc".into(),
             next_offset: 3,
+            content_len: Some(3),
         }),
         "a continuation at the advertised end must carry the prefix forward, \
          not be rejected as overshoot"
@@ -258,5 +262,155 @@ fn accumulating_beyond_the_advertised_length_is_still_invalid_progress() {
         })),
         Err(RangeError::InvalidProgress),
         "eight accumulated bytes against a seven-byte total must be rejected"
+    );
+}
+
+#[test]
+fn a_next_offset_gap_after_the_accumulated_bytes_is_invalid_progress() {
+    assert_eq!(
+        acc("abc", 3).apply(&json!({
+            "content": "def",
+            "offset": 3,
+            "contentLength": 10,
+            "hasMoreContent": true,
+            "nextOffset": 8,
+        })),
+        Err(RangeError::InvalidProgress),
+        "nextOffset must equal the accumulated byte length; otherwise bytes were skipped"
+    );
+}
+
+#[test]
+fn a_next_offset_before_the_accumulated_bytes_is_invalid_progress() {
+    assert_eq!(
+        acc("abc", 3).apply(&json!({
+            "content": "def",
+            "offset": 3,
+            "contentLength": 10,
+            "hasMoreContent": true,
+            "nextOffset": 5,
+        })),
+        Err(RangeError::InvalidProgress),
+        "nextOffset must not point into the already accumulated body"
+    );
+}
+
+#[test]
+fn a_later_page_with_a_different_content_length_is_a_length_mismatch() {
+    assert_eq!(
+        RangeAccumulator::new_with_expected_len("abc".into(), 3, Some(10)).apply(&json!({
+            "content": "def",
+            "offset": 3,
+            "contentLength": 9,
+            "hasMoreContent": true,
+            "nextOffset": 6,
+        })),
+        Err(RangeError::LengthMismatch),
+        "contentLength is a stream invariant and must not change mid-assembly"
+    );
+}
+
+#[test]
+fn an_absent_content_length_uses_the_known_expected_length_for_final_validation() {
+    assert_eq!(
+        RangeAccumulator::new_with_expected_len("abc".into(), 3, Some(10)).apply(&json!({
+            "content": "def",
+            "offset": 3,
+        })),
+        Err(RangeError::LengthMismatch),
+        "a page omitting contentLength must not complete short when the expected length is known"
+    );
+}
+
+#[test]
+fn an_absent_content_length_carries_the_known_expected_length_forward() {
+    assert_eq!(
+        RangeAccumulator::new_with_expected_len("abc".into(), 3, Some(10)).apply(&json!({
+            "content": "def",
+            "offset": 3,
+            "hasMoreContent": true,
+            "nextOffset": 6,
+        })),
+        Ok(RangeUpdate::Continue {
+            content: "abcdef".into(),
+            next_offset: 6,
+            content_len: Some(10),
+        }),
+        "a page omitting contentLength must preserve the known expected length for later pages"
+    );
+}
+
+#[test]
+fn an_unknown_total_continuation_does_not_synthesize_content_length_from_prefix() {
+    assert_eq!(
+        acc("abc", 3).apply(&json!({
+            "content": "def",
+            "offset": 3,
+            "hasMoreContent": true,
+            "nextOffset": 6,
+        })),
+        Ok(RangeUpdate::Continue {
+            content: "abcdef".into(),
+            next_offset: 6,
+            content_len: None,
+        }),
+        "missing contentLength on a continuation must preserve an unknown total"
+    );
+}
+
+#[test]
+fn an_unknown_total_multi_page_body_completes_at_accumulated_length() {
+    let first = acc("", 0)
+        .apply(&json!({
+            "content": "abc",
+            "offset": 0,
+            "hasMoreContent": true,
+            "nextOffset": 3,
+        }))
+        .expect("first page should continue without a known total");
+    let RangeUpdate::Continue {
+        content,
+        next_offset,
+        content_len,
+    } = first
+    else {
+        panic!("first page should continue");
+    };
+    assert_eq!(content_len, None);
+
+    assert_eq!(
+        RangeAccumulator::new_with_expected_len(content, next_offset, content_len)
+            .apply(&json!({ "content": "def", "offset": 3 })),
+        Ok(RangeUpdate::Complete("abcdef".into())),
+        "unknown totals complete at the accumulated length of the final page"
+    );
+}
+
+#[test]
+fn a_known_total_from_advertised_content_length_is_immutable_when_later_omitted() {
+    let first = acc("", 0)
+        .apply(&json!({
+            "content": "abc",
+            "offset": 0,
+            "contentLength": 9,
+            "hasMoreContent": true,
+            "nextOffset": 3,
+        }))
+        .expect("first page should continue with advertised total");
+    let RangeUpdate::Continue {
+        content,
+        next_offset,
+        content_len,
+    } = first
+    else {
+        panic!("first page should continue");
+    };
+    assert_eq!(content_len, Some(9));
+
+    assert_eq!(
+        RangeAccumulator::new_with_expected_len(content, next_offset, content_len)
+            .apply(&json!({ "content": "def", "offset": 3 })),
+        Err(RangeError::LengthMismatch),
+        "once known, total length must be preserved even if a later final page omits contentLength"
     );
 }
