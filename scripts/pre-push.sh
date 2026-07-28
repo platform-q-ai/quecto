@@ -9,17 +9,45 @@ cd "$ROOT"
 start=$SECONDS
 step() { printf '\n[%s/6] %s\n' "$1" "$2"; }
 
-step 1 "Repository quality rules"
-"$ROOT/scripts/check-quality.sh"
+# Cheap, read-only gates are independent. Capture their output separately so
+# parallel execution stays readable, then print each result in step order.
+LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/quecto-pre-push.XXXXXX")"
+trap 'rm -rf "$LOG_DIR"' EXIT
 
-step 2 "BDD quality rules"
-"$ROOT/scripts/check-bdd-quality.sh"
+run_logged_gate() {
+    local number="$1"
+    local label="$2"
+    shift 2
+    (
+        step "$number" "$label"
+        "$@"
+    ) >"$LOG_DIR/gate-${number}.log" 2>&1
+}
 
-step 3 "BDD status-tag rules"
-"$ROOT/scripts/check-bdd-tags.sh"
+run_logged_gate 1 "Repository quality rules" "$ROOT/scripts/check-quality.sh" &
+QUALITY_PID=$!
+run_logged_gate 2 "BDD quality rules" "$ROOT/scripts/check-bdd-quality.sh" &
+BDD_QUALITY_PID=$!
+run_logged_gate 3 "BDD status-tag rules" "$ROOT/scripts/check-bdd-tags.sh" &
+BDD_TAG_PID=$!
+run_logged_gate 4 "Formatting" cargo fmt --all -- --check &
+FMT_PID=$!
 
-step 4 "Formatting"
-cargo fmt --all -- --check
+FAILED=0
+for gate in \
+    "1:$QUALITY_PID" \
+    "2:$BDD_QUALITY_PID" \
+    "3:$BDD_TAG_PID" \
+    "4:$FMT_PID"; do
+    number="${gate%%:*}"
+    pid="${gate##*:}"
+    wait "$pid" || FAILED=1
+    cat "$LOG_DIR/gate-${number}.log"
+done
+if (( FAILED != 0 )); then
+    echo "Pre-push quality gates failed." >&2
+    exit 1
+fi
 
 BASE_REF="${QUECTO_PREPUSH_BASE:-origin/master}"
 if ! git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
