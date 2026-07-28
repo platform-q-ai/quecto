@@ -58,6 +58,8 @@ A child's report is input to the parent's answer, not a substitute for the paren
 - Use `workflow_spec` when the child must follow an exact, observable, auditable sequence, whether that sequence is a known appropriate workflow or a new one not covered by existing templates. Bind the full template rather than relying on prose to enforce its steps.
 - Spawn reviewers, researchers, and other non-editing children with `read_only: true`.
 
+Available templates in this repo, at a glance: `feature` for behaviour changes, `bugfix` for repro-first fixes, `refactor` for zero-behaviour-change restructures, `remove` for staged removals, `chore` for small maintenance/docs/tooling, `adversarial-review` for read-only PR review, `investigate` for read-only diagnosis, `flake-hunt` for intermittent CI/test failures, `plan` for execution plans, and `prd` for design docs/proposals.
+
 ## Briefing children
 
 Quecto children have separate LLM contexts and do not automatically inherit the parent's conversation. Give each child the context required to work independently.
@@ -100,7 +102,7 @@ The child's final report is not automatically shown to the user. Relay the relev
 
 Use `get_state` for a targeted live progress check or debugging, not repetitive polling. Use `get_subagents` or forwarded workflow events for a point-in-time view of delegated workflow progress. Use `abort` to stop a current run and its in-flight work; use `kill` only when the child process itself must be terminated.
 
-At the end of coordinated work, inspect `get_subagents_all` for children that are still running. Children that already completed and produced passive completion notes need no cleanup; stop only genuine stragglers so no orphaned work remains.
+At the end of coordinated work, inspect `get_subagents_all` and clean up appropriately.
 
 ## General operating principles
 
