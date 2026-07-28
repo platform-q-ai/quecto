@@ -1,6 +1,6 @@
 {
   "label": "Chore",
-  "description": "Small, low-risk maintenance change (deps, docs, config, tooling, CI) with hooks and the full push gate, but without BDD/TDD ceremony; hand off the PR for human review (no auto-merge). If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
+  "description": "Small, low-risk maintenance change (deps, docs, config, tooling, CI) with hooks and the full push gate, but without BDD/TDD ceremony; hand off the PR for human review (no auto-merge). If you decide to use sub agents, always set openai-oauth/gpt-5.5 \u00b7 effort: low.",
   "when_to_use": "Use for small maintenance chores with no meaningful behaviour change and low blast radius: dependency bumps, doc fixes, config/CI/tooling tweaks, renames of non-code assets. Do NOT use when the issue's acceptance criteria describe new or altered observable behaviour (use 'feature') or a zero-behaviour-change code restructure (use 'refactor').",
   "guards": [
     {
@@ -17,7 +17,7 @@
         "gh pr merge"
       ],
       "before_step_key": "report",
-      "message": "This workflow does NOT merge — verify the pre-push gate genuinely passed (never bypassed with --no-verify), then report the PR as ready for human review and stop. Never run gh pr merge / git merge or set auto-merge."
+      "message": "This workflow does NOT merge \u2014 verify the pre-push gate genuinely passed (never bypassed with --no-verify), then report the PR as ready for human review and stop. Never run gh pr merge / git merge or set auto-merge."
     }
   ],
   "steps": [
@@ -32,7 +32,7 @@
       "key": "implement",
       "label": "Make the minimal change",
       "phase": "green",
-      "guidance": "Create a branch if on master. Make the smallest change that satisfies the definition of done — no drive-by refactors, no speculative cleanup. Keep repo conventions: if you bump a crate version or touch docs, keep Cargo.toml, README 'Current version' and any version-asserting tests in lockstep. Done when the change matches the definition of done and nothing else changed."
+      "guidance": "Create a branch if on master. Make the smallest change that satisfies the definition of done \u2014 no drive-by refactors, no speculative cleanup. Keep repo conventions: if you bump a crate version or touch docs, keep Cargo.toml, README 'Current version' and any version-asserting tests in lockstep. Done when the change matches the definition of done and nothing else changed."
     },
     {
       "key": "verify",
@@ -44,7 +44,7 @@
       "key": "commit",
       "label": "Commit and push through the full gate",
       "phase": "ci_cd",
-      "guidance": "Stage only intended files and commit with a clear message. Then `git push` in the FOREGROUND and WAIT for the pre-push gate to exit — it runs the fast local gate and should normally finish within 20 seconds. Fix any failure and push again; never use --no-verify. Done when the push has exited successfully with the gate passing."
+      "guidance": "Stage only intended files and commit with a clear message. Then `git push` in the FOREGROUND and WAIT for the pre-push gate to exit \u2014 it runs the fast local gate and should normally finish within 20 seconds. Fix any failure and push again; never use --no-verify. Done when the push has exited successfully with the gate passing."
     },
     {
       "key": "pr",
@@ -57,6 +57,7 @@
       "label": "Request authoritative CI and report the PR (no merge)",
       "phase": "ci_cd",
       "guidance": "After all review comments are resolved and the current head is final, run `gh pr edit <n> --add-label merge-requested`. This requests authoritative CI for that exact revision. Wait with `gh pr checks <n> --watch`; if another commit is pushed, the label is removed automatically and must be reapplied only when ready. Do NOT merge or set auto-merge; report the PR and CI result for human merge."
-    }
+    },
+    "steps/shared/reset_workflow"
   ]
 }

@@ -1,6 +1,6 @@
 {
   "label": "Plan",
-  "description": "Produce an execution-ready phased implementation plan (Execution Checklist + per-phase Task checklists), reviewed and attached to the issue. Plans only — no implementation. If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
+  "description": "Produce an execution-ready phased implementation plan (Execution Checklist + per-phase Task checklists), reviewed and attached to the issue. Plans only \u2014 no implementation. If you decide to use sub agents, always set openai-oauth/gpt-5.5 \u00b7 effort: low.",
   "when_to_use": "Use when the deliverable is a phased implementation plan for already-agreed work (an approved PRD slice, a large issue needing decomposition). Do NOT use to decide WHAT to build ('prd') or to implement ('feature', 'bugfix', 'refactor', 'remove').",
   "guards": [
     {
@@ -19,7 +19,7 @@
       "key": "context",
       "label": "Ground the plan in the issue and the code",
       "phase": "setup",
-      "guidance": "Resolve the linked issue (explicit number → referenced doc/PRD → ask; if none exists, create one with `gh issue create` first — every plan needs a home). Read the issue, its comments, and any PRD it references, then VERIFY every assumption about the current code with file:line citations — a plan built on a stale mental model fails at phase 1. Done when the goal, constraints, and verified starting state are written down."
+      "guidance": "Resolve the linked issue (explicit number \u2192 referenced doc/PRD \u2192 ask; if none exists, create one with `gh issue create` first \u2014 every plan needs a home). Read the issue, its comments, and any PRD it references, then VERIFY every assumption about the current code with file:line citations \u2014 a plan built on a stale mental model fails at phase 1. Done when the goal, constraints, and verified starting state are written down."
     },
     {
       "key": "draft",
@@ -45,6 +45,7 @@
       "label": "Report and hand off",
       "phase": "ci_cd",
       "guidance": "Report: the plan location, phase count, key decisions, and any open questions needing the human. Recommend which implementation template each phase should run under ('feature', 'refactor', 'remove', 'chore'). Terminate straggler subagents (get_subagents). Done when reported."
-    }
+    },
+    "steps/shared/reset_workflow"
   ]
 }

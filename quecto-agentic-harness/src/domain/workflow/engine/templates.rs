@@ -67,6 +67,10 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
             include_str!("../../../../workflows/steps/shared/resolve_threads.json"),
         ),
         (
+            "steps/shared/reset_workflow",
+            include_str!("../../../../workflows/steps/shared/reset_workflow.json"),
+        ),
+        (
             "steps/shared/write_scenarios",
             include_str!("../../../../workflows/steps/shared/write_scenarios.json"),
         ),

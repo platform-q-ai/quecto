@@ -152,7 +152,7 @@ fn select_template_starts_run() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
-    assert_eq!(engine.progress().total, 19);
+    assert_eq!(engine.progress().total, 20);
     assert_eq!(engine.current_step().unwrap().index, 1);
 }
 
@@ -301,7 +301,8 @@ fn guards_block_until_before_step_key_threshold() {
     engine.select_template("feature", None).unwrap();
     let err = engine.check_guards().unwrap_err();
     assert!(err.to_string().contains("Complete step 1"));
-    for step in 1..=19 {
+    let step_count = engine.progress().total;
+    for step in 1..=step_count {
         engine.check(step).unwrap();
     }
     assert!(engine.check_guards().is_ok());
@@ -421,9 +422,10 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
             "conformance",
             "pre_merge",
             "cleanup",
+            "reset_workflow",
         ]
     );
-    assert_eq!(snap.progress.total, 19);
+    assert_eq!(snap.progress.total, 20);
     assert_eq!(snap.steps[0].label, "Install/check local quality hooks");
     assert_eq!(
         snap.steps[4].label,

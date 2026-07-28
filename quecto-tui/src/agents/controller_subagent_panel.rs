@@ -582,11 +582,12 @@ impl App {
 
     // ── Main-pane workflow indicator (selected agent) ──────────────────
 
-    /// The main pane's top chrome for the selected agent (#820): a title line
-    /// (`agent · status · elapsed · #issue workflow`) followed by the EXISTING
-    /// yellow workflow bar rendered BOXED as a single content line
-    /// (`progress-bar PHASE n/total`) — dropping the phase-pills and hints lines.
-    /// Title always renders; the boxed bar is appended only when a workflow exists.
+    /// The main pane's top chrome for the selected agent (#820 / #1288): a title
+    /// line (`agent · status · elapsed · #issue workflow`) plus, when a workflow
+    /// is active, one compact progress line (`bar done/total · Step n/total …`).
+    /// Title always renders; the compact indicator is appended only when
+    /// `render_compact_line` has content. The multi-line rule box from #820 was
+    /// removed in #1246 for vertical space and must not return.
     pub(super) fn render_main_pane_workflow(
         &self,
         width: usize,
@@ -597,7 +598,14 @@ impl App {
             return Vec::new();
         }
         let state = self.active_workflow_bar();
-        vec![pad_cell(&self.main_pane_title(state, now), width)]
+        let mut out = vec![pad_cell(&self.main_pane_title(state, now), width)];
+        if let Some(content) = workflow_bar::render_compact_line(state) {
+            out.push(pad_cell(
+                &crate::components::utils::truncate_to_width(&content, width, Some("…")),
+                width,
+            ));
+        }
+        out
     }
 
     /// Build the main-pane title line for the active agent (#820).
