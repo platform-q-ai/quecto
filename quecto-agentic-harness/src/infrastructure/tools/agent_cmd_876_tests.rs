@@ -173,6 +173,11 @@ async fn busy_child_prompt_returns_on_acceptance() {
         r#"{"agent_id":"busy-prompt","command":"prompt","message":"do work"}"#,
     )
     .await;
+    let entry = _reg.lock().unwrap().get("busy-prompt").unwrap().clone();
+    assert_eq!(
+        entry.lifecycle,
+        super::super::subagent_lifecycle::SubagentLifecycleState::Busy
+    );
     assert!(!result.is_error, "got: {}", result.content);
     assert!(
         result.content.contains("\"success\":true"),

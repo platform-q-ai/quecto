@@ -336,6 +336,19 @@ impl AgentCmdTool {
 
     /// Kill a specific subagent by ID: SIGTERM + cascade-remove its sub-tree from
     /// the registry, then broadcast the survivor set (#559, #831).
+    fn record_forwarded_command_lifecycle(&self, agent_id: &str, command: &str) {
+        if !Self::is_control_command(command) || command == "abort" {
+            return;
+        }
+        let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = entries.get_mut(agent_id) {
+            entry.status = super::subagent_lifecycle::apply_lifecycle_event(
+                &mut entry.lifecycle,
+                super::subagent_lifecycle::SubagentLifecycleEvent::RunStarted,
+            );
+        }
+    }
+
     fn kill_agent(&self, agent_id: &str) -> ToolResult {
         // Cascade-remove the agent AND every descendant in one shot, getting back
         // the removed entries (for process cleanup) and a survivor-only
@@ -374,6 +387,16 @@ impl AgentCmdTool {
         // as untracked orphans that `shutdown_all` can no longer reach.
         let mut killed_pid = 0;
         for (id, entry) in &removed {
+            let mut lifecycle = entry.lifecycle;
+            let killed_status = super::subagent_lifecycle::apply_lifecycle_event(
+                &mut lifecycle,
+                super::subagent_lifecycle::SubagentLifecycleEvent::KillRequested,
+            );
+            debug_assert_eq!(
+                killed_status,
+                super::subagent_registry::SubagentStatus::Exited,
+                "kill must project to the existing exited status"
+            );
             if id == agent_id {
                 killed_pid = entry.pid;
             }
@@ -520,11 +543,14 @@ impl Tool for AgentCmdTool {
 
             // Send the command via UDS.
             match send {
-                Ok(response) => Ok(ToolResult {
-                    content: response,
-                    is_error: false,
-                    image_blocks: vec![],
-                }),
+                Ok(response) => {
+                    self.record_forwarded_command_lifecycle(&agent_id, &command);
+                    Ok(ToolResult {
+                        content: response,
+                        is_error: false,
+                        image_blocks: vec![],
+                    })
+                }
                 Err(e) => Ok(ToolResult {
                     content: format!("agent_cmd error: {e}"),
                     is_error: true,
