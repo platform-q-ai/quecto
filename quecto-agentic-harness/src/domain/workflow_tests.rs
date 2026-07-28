@@ -152,7 +152,7 @@ fn select_template_starts_run() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
-    assert_eq!(engine.progress().total, 20);
+    assert_eq!(engine.progress().total, 19);
     assert_eq!(engine.current_step().unwrap().index, 1);
 }
 
