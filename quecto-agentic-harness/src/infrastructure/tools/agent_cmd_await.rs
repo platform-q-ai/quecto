@@ -1,6 +1,6 @@
 use super::*;
 use crate::infrastructure::tools::subagent_lifecycle::{
-    SubagentLifecycleEvent, apply_lifecycle_event,
+    SubagentLifecycleEvent, apply_lifecycle_event_to_entry,
 };
 use crate::infrastructure::tools::subagent_registry::{
     SubagentStatus, mark_completion_consumed_by_await,
@@ -180,8 +180,8 @@ impl AgentCmdTool {
                 {
                     let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(entry) = entries.get_mut(&agent_id) {
-                        entry.status = apply_lifecycle_event(
-                            &mut entry.lifecycle,
+                        entry.status = apply_lifecycle_event_to_entry(
+                            entry,
                             SubagentLifecycleEvent::AwaitTimedOut,
                         );
                     }

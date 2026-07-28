@@ -115,6 +115,10 @@ pub struct SubagentEntry {
     /// Surfaced through `get_subagents` so the TUI can mark it as an observer
     /// (#966). Display flag only; enforcement is #957.
     pub read_only: bool,
+    /// Last lifecycle event applied to this entry. This is internal observability
+    /// for race-focused tests; parent-facing behavior continues to use `status`.
+    #[cfg(test)]
+    pub last_lifecycle_event: Option<SubagentLifecycleEvent>,
 }
 
 pub(super) fn seed_bound_workflow(
@@ -153,6 +157,8 @@ impl SubagentEntry {
             stalled_armed: true,
             pending_stall: None,
             read_only: false,
+            #[cfg(test)]
+            last_lifecycle_event: None,
         }
     }
 }

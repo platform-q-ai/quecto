@@ -37,8 +37,6 @@ pub enum SubagentLifecycleState {
 /// path, and kill path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubagentLifecycleEvent {
-    /// Registry entry was inserted for a spawned process.
-    LaunchRegistered,
     /// Monitor connected to the child socket.
     SocketConnected,
     /// Monitor failed to connect before the child exited or the retry budget was
@@ -84,12 +82,12 @@ impl SubagentLifecycleState {
             (_, Event::KillRequested) => State::Killed,
             (_, Event::ProcessExited | Event::SocketConnectFailed) => State::Exited,
             (_, Event::RunFailed) => State::Failed,
-            (State::Failed, Event::ToolStarted | Event::RunEnded) => State::Failed,
+            (State::Failed, Event::ToolStarted) => State::Failed,
             (_, Event::RunStarted | Event::ToolStarted) => State::Busy,
             (_, Event::RunEnded) => State::Idle,
 
             (State::Launched, Event::SocketConnected) => State::SocketReady,
-            (state, Event::LaunchRegistered | Event::SocketConnected) => state,
+            (state, Event::SocketConnected) => state,
             (
                 state,
                 Event::AwaitConsumedCompletion | Event::PassiveNoteEmitted | Event::AwaitTimedOut,
@@ -133,6 +131,20 @@ pub fn apply_lifecycle_event(
 ) -> SubagentStatus {
     *state = state.transition(event);
     state.status_projection()
+}
+
+/// Apply `event` to a registry entry, recording the event in tests so timeout
+/// and dedupe paths remain falsifiable even when the event is intentionally
+/// state-neutral.
+pub fn apply_lifecycle_event_to_entry(
+    entry: &mut super::subagent_registry::SubagentEntry,
+    event: SubagentLifecycleEvent,
+) -> SubagentStatus {
+    #[cfg(test)]
+    {
+        entry.last_lifecycle_event = Some(event);
+    }
+    apply_lifecycle_event(&mut entry.lifecycle, event)
 }
 
 #[cfg(test)]

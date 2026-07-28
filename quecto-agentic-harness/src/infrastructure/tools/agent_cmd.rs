@@ -336,19 +336,6 @@ impl AgentCmdTool {
 
     /// Kill a specific subagent by ID: SIGTERM + cascade-remove its sub-tree from
     /// the registry, then broadcast the survivor set (#559, #831).
-    fn record_forwarded_command_lifecycle(&self, agent_id: &str, command: &str) {
-        if !matches!(command, "prompt" | "steer" | "follow_up") {
-            return;
-        }
-        let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(entry) = entries.get_mut(agent_id) {
-            entry.status = super::subagent_lifecycle::apply_lifecycle_event(
-                &mut entry.lifecycle,
-                super::subagent_lifecycle::SubagentLifecycleEvent::RunStarted,
-            );
-        }
-    }
-
     fn kill_agent(&self, agent_id: &str) -> ToolResult {
         // Cascade-remove the agent AND every descendant in one shot, getting back
         // the removed entries (for process cleanup) and a survivor-only
@@ -541,16 +528,15 @@ impl Tool for AgentCmdTool {
                 send_uds_command(&socket_path, &json_cmd).await
             };
 
-            // Send the command via UDS.
+            // Send the command via UDS. Lifecycle state comes from the child's
+            // monitor events; the transport ack alone cannot prove accepted work
+            // and must not race with `agent_end` by marking the child Busy here.
             match send {
-                Ok(response) => {
-                    self.record_forwarded_command_lifecycle(&agent_id, &command);
-                    Ok(ToolResult {
-                        content: response,
-                        is_error: false,
-                        image_blocks: vec![],
-                    })
-                }
+                Ok(response) => Ok(ToolResult {
+                    content: response,
+                    is_error: false,
+                    image_blocks: vec![],
+                }),
                 Err(e) => Ok(ToolResult {
                     content: format!("agent_cmd error: {e}"),
                     is_error: true,

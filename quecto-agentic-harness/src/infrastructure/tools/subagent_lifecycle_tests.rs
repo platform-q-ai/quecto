@@ -64,13 +64,19 @@ fn kill_during_busy_is_terminal_and_projects_to_existing_exited_status() {
 }
 
 #[test]
-fn run_failure_stays_sticky_until_current_turn_ends() {
+fn tool_failure_stays_sticky_until_current_tool_or_run_ends() {
     let state = State::Busy.transition(Event::RunFailed);
 
     assert_eq!(state, State::Failed);
     assert_eq!(state.status_projection(), SubagentStatus::Error);
     assert_eq!(state.transition(Event::ToolStarted), State::Failed);
-    assert_eq!(state.transition(Event::RunEnded), State::Failed);
+}
+
+#[test]
+fn recoverable_tool_failure_returns_to_idle_when_run_ends() {
+    let state = State::Busy.transition(Event::RunFailed);
+
+    assert_eq!(state.transition(Event::RunEnded), State::Idle);
 }
 
 #[test]

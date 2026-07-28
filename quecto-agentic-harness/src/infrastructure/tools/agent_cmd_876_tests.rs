@@ -168,16 +168,23 @@ async fn run_with_overall_cap(tool: &AgentCmdTool, args: &str) -> ToolResult {
 
 #[tokio::test]
 async fn busy_child_prompt_returns_on_acceptance() {
-    let (tool, _reg, _tmp) = busy_fast_ack_child("busy-prompt");
+    let (tool, reg, _tmp) = busy_fast_ack_child("busy-prompt");
+    {
+        let mut guard = reg.lock().unwrap();
+        let entry = guard.get_mut("busy-prompt").unwrap();
+        entry.lifecycle = super::super::subagent_lifecycle::SubagentLifecycleState::Idle;
+        entry.status = SubagentStatus::Idle;
+    }
     let result = run_with_overall_cap(
         &tool,
         r#"{"agent_id":"busy-prompt","command":"prompt","message":"do work"}"#,
     )
     .await;
-    let entry = _reg.lock().unwrap().get("busy-prompt").unwrap().clone();
+    let entry = reg.lock().unwrap().get("busy-prompt").unwrap().clone();
     assert_eq!(
         entry.lifecycle,
-        super::super::subagent_lifecycle::SubagentLifecycleState::Busy
+        super::super::subagent_lifecycle::SubagentLifecycleState::Idle,
+        "transport acceptance alone must not mark the child run Busy"
     );
     assert!(!result.is_error, "got: {}", result.content);
     assert!(
@@ -195,9 +202,21 @@ async fn busy_child_steer_abort_follow_up_return_promptly() {
         ("abort", ""),
     ] {
         let id = format!("busy-{cmd}");
-        let (tool, _reg, _tmp) = busy_fast_ack_child(&id);
+        let (tool, reg, _tmp) = busy_fast_ack_child(&id);
+        {
+            let mut guard = reg.lock().unwrap();
+            let entry = guard.get_mut(&id).unwrap();
+            entry.lifecycle = super::super::subagent_lifecycle::SubagentLifecycleState::Idle;
+            entry.status = SubagentStatus::Idle;
+        }
         let args = format!(r#"{{"agent_id":"{id}","command":"{cmd}"{body}}}"#);
         let result = run_with_overall_cap(&tool, &args).await;
+        let entry = reg.lock().unwrap().get(&id).unwrap().clone();
+        assert_eq!(
+            entry.lifecycle,
+            super::super::subagent_lifecycle::SubagentLifecycleState::Idle,
+            "transport acceptance alone must not start {cmd} lifecycle"
+        );
         assert!(!result.is_error, "{cmd} got error: {}", result.content);
         assert!(
             result.content.contains("\"success\":true"),
