@@ -31,6 +31,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines
 
   workspace-tests:
+    needs: [static-quality, dependency-policy]
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'
     name: Workspace Tests
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -52,6 +53,7 @@ jobs:
           cargo test -p quecto-tui --lib
 
   non-real-bdd:
+    needs: [static-quality, dependency-policy]
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'
     name: Non-Real BDD
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -66,6 +68,7 @@ jobs:
       - run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 5m --coverage --coverage-threshold 72
 
   tui-bdd:
+    needs: [static-quality, dependency-policy]
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'
     name: TUI BDD
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -80,6 +83,7 @@ jobs:
       - run: bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --features test-harness --shards 8 --timeout 5m --coverage --coverage-threshold 62
 
   mock-llm-e2e:
+    needs: [static-quality, dependency-policy]
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'
     name: Mock LLM E2E
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -91,6 +95,7 @@ jobs:
       - run: bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 5m --tag mock-llm
 
   coverage:
+    needs: [static-quality, dependency-policy]
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'
     name: Coverage
     runs-on: blacksmith-2vcpu-ubuntu-2404
