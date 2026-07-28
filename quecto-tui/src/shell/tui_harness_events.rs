@@ -202,10 +202,18 @@ pub async fn assert_no_further_child_commands(rx: &mut mpsc::Receiver<String>, c
 }
 
 /// Wire `type` field of a drained command line, if present.
+///
+/// Typed deserialize (not ad-hoc `Value` key access) so this test-harness
+/// helper does not inflate the #1220 feature/view raw-JSON ratchet.
 pub fn child_command_type(line: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(line)
+    #[derive(serde::Deserialize)]
+    struct CmdType<'a> {
+        #[serde(rename = "type")]
+        kind: &'a str,
+    }
+    serde_json::from_str::<CmdType<'_>>(line)
         .ok()
-        .and_then(|v| v.get("type")?.as_str().map(str::to_string))
+        .map(|c| c.kind.to_string())
 }
 
 /// Accept connections on `listener` and forward each decoded command to
