@@ -295,6 +295,27 @@ async fn wait_for_socket_returns_ok_when_socket_is_connectable() {
         .expect("listener is bound, so the socket should be connectable");
 }
 
+#[tokio::test]
+async fn wait_for_socket_or_child_exit_reports_pre_ready_exit() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket_path = dir.path().join("never-ready.sock");
+    let mut child = tokio::process::Command::new("/usr/bin/false")
+        .spawn()
+        .expect("test helper process should spawn");
+    let tool = SpawnTool::new(vec![], true);
+
+    let err = tool
+        .wait_for_socket_or_child_exit(&socket_path, &mut child)
+        .await
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("subagent exited before socket ready"),
+        "got: {err}"
+    );
+}
+
 // --- send_initial_prompt: error when nothing is listening ---
 
 #[tokio::test]
