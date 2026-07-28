@@ -44,7 +44,7 @@
       "key": "commit",
       "label": "Commit and push through the full gate",
       "phase": "ci_cd",
-      "guidance": "Branch if on master, stage only intended files, commit with a message linking the issue. `git push` in the FOREGROUND and WAIT for the pre-push gate to exit (10-15+ min); fix failures and push again; never --no-verify. Done when the push exited with the gate passing."
+      "guidance": "Branch if on master, stage only intended files, commit with a message linking the issue. `git push` in the FOREGROUND and WAIT for the fast pre-push gate to exit; fix failures and push again; never --no-verify. Done when the push exited with the gate passing."
     },
     {
       "key": "pr",
@@ -54,9 +54,9 @@
     },
     {
       "key": "report",
-      "label": "Report the PR ready and stop (no merge)",
+      "label": "Request authoritative CI and report the PR (no merge)",
       "phase": "ci_cd",
-      "guidance": "Confirm required CI checks are green (`gh pr checks <n>`), then report the PR number, root cause, and fix summary. Do NOT merge or set auto-merge. Done when reported with nothing pending."
+      "guidance": "After all review comments are resolved and the current head is final, run `gh pr edit <n> --add-label merge-requested`. This requests authoritative CI for that exact revision. Wait with `gh pr checks <n> --watch`; if another commit is pushed, the label is removed automatically and must be reapplied only when ready. Do NOT merge or set auto-merge; report the PR and CI result for human merge."
     }
   ]
 }

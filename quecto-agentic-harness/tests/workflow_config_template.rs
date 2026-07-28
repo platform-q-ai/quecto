@@ -199,37 +199,17 @@ fn runtime_default_templates_match_canonical_folder() {
 }
 
 #[test]
-fn gate_facts_describe_mock_llm_default_and_opt_in() {
+fn workflow_separates_fast_push_from_label_triggered_ci() {
     let config = read_native_config();
+    let push = guidance(&config, "push");
+    assert!(push.contains("changed packages"));
+    assert!(push.contains("architecture/contract/repository invariants"));
+    assert!(push.contains("do not run on ordinary pushes"));
 
-    for key in ["push", "pre_merge"] {
-        let g = guidance(&config, key);
-        assert!(
-            g.contains("@mock-llm"),
-            "`{key}` guidance should describe the @mock-llm lane"
-        );
-        assert!(
-            g.contains("QUECTO_RUN_REAL_LLM"),
-            "`{key}` guidance should describe the QUECTO_RUN_REAL_LLM opt-in"
-        );
-    }
-}
-
-#[test]
-fn required_checks_reference_unit_and_mock_e2e() {
-    let config = read_native_config();
-
-    for key in ["pr", "pre_merge"] {
-        let g = guidance(&config, key);
-        assert!(
-            g.contains("Unit Tests"),
-            "`{key}` guidance should reference the Unit Tests required check"
-        );
-        assert!(
-            g.contains("Mock LLM E2E Tests"),
-            "`{key}` guidance should reference the Mock LLM E2E Tests required check"
-        );
-    }
+    let pre_merge = guidance(&config, "pre_merge");
+    assert!(pre_merge.contains("--add-label merge-requested"));
+    assert!(pre_merge.contains("another commit is pushed"));
+    assert!(pre_merge.contains("gh pr checks <n> --watch"));
 }
 
 #[test]
@@ -278,19 +258,6 @@ fn action_steps_document_failure_handling() {
             "`{key}` guidance should describe what to do on failure"
         );
     }
-}
-
-#[test]
-fn flaky_find_gotcha_documented() {
-    let config = read_native_config();
-    let documented = ["push", "pre_merge"].iter().any(|key| {
-        let g = guidance(&config, key).to_lowercase();
-        g.contains("find.feature") && (g.contains("re-run") || g.contains("rerun"))
-    });
-    assert!(
-        documented,
-        "the load-flaky find.feature scenario should be documented with a re-run instruction"
-    );
 }
 
 #[test]

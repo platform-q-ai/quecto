@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-bdd-tags.sh — Status-tag hygiene gate for BDD feature files.
 #
-# The BDD runners only run a scenario in the default pre-push wave when it (or
+# The BDD runners only run a scenario in the authoritative CI BDD wave when it (or
 # its feature) is tagged @done. Scenarios tagged @wip / @pending are deliberately
 # excluded, and — critically — an UNTAGGED scenario is silently dropped too: it
 # never runs in the gate AND is not marked as backlog, so broken/unwired

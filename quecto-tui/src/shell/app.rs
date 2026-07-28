@@ -9,7 +9,6 @@ use crate::agents::view::{SessionView, SubagentUi};
 use crate::components::autocomplete::{Autocomplete, AutocompleteResult};
 use crate::components::chat::{Chat, ChatEntry};
 use crate::components::component::Component;
-use crate::components::editor::Editor;
 use crate::components::effort_selector::EffortSelectorResult;
 use crate::components::footer::Footer;
 use crate::components::kitty::KittyProtocol;
@@ -17,6 +16,7 @@ use crate::components::model_selector::ModelSelectorResult;
 use crate::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::components::select_list::{SelectItem, SelectList};
 use crate::components::spinner::Spinner;
+use crate::components::text_input::Editor;
 use crate::components::workflow_bar;
 use crate::protocol::client::{Client, Command, Event};
 use crate::shell::keys::{self, Key};
@@ -562,6 +562,9 @@ mod app_subagent_workflow_sticky_tests;
 #[cfg(test)]
 #[path = "../agents/app_subagents_tests.rs"]
 mod app_subagents_tests;
+#[cfg(test)]
+#[path = "app_text_input_1277_tests.rs"]
+mod app_text_input_1277_tests;
 #[cfg(test)]
 #[path = "../workflow/app_workflow_box_width_tests.rs"]
 mod app_workflow_box_width_tests;
