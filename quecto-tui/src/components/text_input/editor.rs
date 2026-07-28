@@ -149,7 +149,14 @@ impl Editor {
     }
 
     fn insert_newline(&mut self) {
-        let col = self.cursor_col;
+        // Snap mid-char columns (e.g. after vertical move onto a shorter
+        // multi-byte line) before slicing — same defensive rule as insert_char.
+        let line = &self.lines[self.cursor_row];
+        let mut col = self.cursor_col.min(line.len());
+        if !line.is_char_boundary(col) {
+            col = prev_char_boundary(line, col);
+        }
+        self.cursor_col = col;
         let rest = self.lines[self.cursor_row][col..].to_string();
         self.lines[self.cursor_row].truncate(col);
         self.cursor_row += 1;
@@ -216,7 +223,7 @@ impl Editor {
     fn move_up(&mut self) {
         if self.cursor_row > 0 {
             self.cursor_row -= 1;
-            self.cursor_col = self.cursor_col.min(self.lines[self.cursor_row].len());
+            self.clamp_cursor_col_to_line();
             self.invalidate();
         }
     }
@@ -224,9 +231,24 @@ impl Editor {
     fn move_down(&mut self) {
         if self.cursor_row + 1 < self.lines.len() {
             self.cursor_row += 1;
-            self.cursor_col = self.cursor_col.min(self.lines[self.cursor_row].len());
+            self.clamp_cursor_col_to_line();
             self.invalidate();
         }
+    }
+
+    /// Clamp `cursor_col` to the current line length on a UTF-8 char boundary.
+    ///
+    /// Vertical moves used to only `min(line.len())`, which can land inside a
+    /// multi-byte character when the previous line was longer in bytes
+    /// (e.g. draft `é\\nx`, cursor at end of `x`, Up → mid-`é`). Snap forward
+    /// to the next boundary so end-of-line intent is preserved when possible.
+    fn clamp_cursor_col_to_line(&mut self) {
+        let line = &self.lines[self.cursor_row];
+        let mut col = self.cursor_col.min(line.len());
+        if !line.is_char_boundary(col) {
+            col = next_char_boundary(line, col);
+        }
+        self.cursor_col = col;
     }
 
     fn move_home(&mut self) {

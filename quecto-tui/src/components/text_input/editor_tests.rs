@@ -660,6 +660,26 @@ fn replace_before_cursor_noop_on_non_boundary_is_safe() {
 }
 
 #[test]
+fn vertical_move_onto_multibyte_line_then_newline_does_not_panic() {
+    // Regression for review finding: move_up used min(line.len()) which can
+    // land mid-char on a shorter multi-byte line; insert_newline then panicked
+    // on line[col..]. Draft "é\nx", cursor at end of "x" (col=1), Up, Shift+Enter.
+    let mut e = Editor::new();
+    e.set_text("é\nx");
+    assert_eq!(e.current_line(), "x");
+    assert_eq!(e.cursor_col(), 1);
+    e.handle_input(&Key::Up);
+    // Cursor must sit on a char boundary of "é" (bytes 0 or 2), not byte 1.
+    assert!(
+        e.current_line().is_char_boundary(e.cursor_col()),
+        "vertical move must leave cursor on a char boundary, col={}",
+        e.cursor_col()
+    );
+    e.handle_input(&Key::ShiftEnter); // must not panic
+    assert_eq!(e.text(), "é\n\nx");
+}
+
+#[test]
 fn alt_carriage_return_inserts_newline() {
     let mut e = Editor::new();
     e.handle_input(&Key::Char('a'));
