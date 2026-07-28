@@ -2,6 +2,7 @@ mod common;
 
 use common::read_repo_file;
 use common::repo_docs::{PHASE_0_ADRS, check_phase_0_hardening_links};
+use std::fs;
 use std::path::Path;
 
 #[test]
@@ -17,6 +18,11 @@ fn readme_release_metadata_matches_workspace_package() {
     assert!(
         readme.contains(&format!("Current version: **{version}**")),
         "README current version should match root package version {version}"
+    );
+    let workspace_readme = fs::read_to_string("../README.md").expect("read workspace README.md");
+    assert!(
+        workspace_readme.contains(&format!("Current version: **{version}**")),
+        "workspace README current version should match root package version {version}"
     );
     assert!(
         !readme.contains("CHANGELOG.md"),
