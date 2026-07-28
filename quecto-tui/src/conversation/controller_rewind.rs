@@ -91,6 +91,7 @@ impl App {
         self.rewind.pending_apply_message_id = Some(message_id.clone());
         self.rewind.pending_load_content.clear();
         self.rewind.pending_load_offset = 0;
+        self.rewind.pending_load_content_len = None;
         self.send_command(Command::GetMessage {
             id: Some(id),
             message_id,

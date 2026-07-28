@@ -6,6 +6,7 @@ fn stub(id: &str) -> ChatEntry {
         id: id.into(),
         text: format!("stub {id}"),
         is_user: false,
+        content_len: None,
     }
 }
 
@@ -37,6 +38,7 @@ fn stub_role_match_requires_same_message_and_role() {
         id: "user-stub".into(),
         text: "user stub".into(),
         is_user: true,
+        content_len: None,
     });
 
     assert!(chat.stub_role_matches("assistant-stub", "assistant"));

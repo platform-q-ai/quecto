@@ -8,6 +8,7 @@ pub(crate) struct StubRecall {
     pub(super) message_id: String,
     pub(super) content: String,
     pub(super) offset: usize,
+    pub(super) content_len: Option<usize>,
 }
 
 pub(super) const GET_MESSAGE_PAGE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES / 4;
@@ -81,8 +82,8 @@ impl App {
     /// the child's chat.
     pub(super) fn request_active_visible_stub_recalls(&mut self) {
         let agent_id = self.subagents.active_agent_id.clone();
-        let stub_ids = self.active_session().chat.visible_stub_message_ids();
-        for message_id in stub_ids {
+        let stub_infos = self.active_session().chat.visible_stub_message_infos();
+        for (message_id, content_len) in stub_infos {
             let recall_key = (agent_id.clone(), message_id.clone());
             if self.failed_stub_recalls.contains(&recall_key)
                 || self
@@ -100,6 +101,7 @@ impl App {
                     message_id: message_id.clone(),
                     content: String::new(),
                     offset: 0,
+                    content_len,
                 },
             );
             self.send_command(Command::GetMessage {
@@ -162,15 +164,17 @@ impl App {
             self.failed_stub_recalls.insert(recall_key);
             return true;
         }
-        let update = crate::protocol::range_accumulator::RangeAccumulator::new(
+        let update = crate::protocol::range_accumulator::RangeAccumulator::new_with_expected_len(
             recall.content,
             recall.offset,
+            recall.content_len,
         )
         .apply(data);
         let accumulated = match update {
             Ok(crate::protocol::range_accumulator::RangeUpdate::Continue {
                 content,
                 next_offset,
+                content_len,
             }) => {
                 let req_id = format!("stub-recall-{}", super::app_events::uuid_like());
                 self.pending_stub_recall.insert(
@@ -180,6 +184,7 @@ impl App {
                         message_id: recall.message_id.clone(),
                         content,
                         offset: next_offset,
+                        content_len,
                     },
                 );
                 self.send_command(Command::GetMessage {

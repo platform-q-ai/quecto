@@ -69,6 +69,10 @@ async fn response_get_message_for_rewind_pages_until_full_text_loaded() {
         assert!(a.rewind.pending_apply_id.is_none());
         assert_eq!(a.rewind.pending_load_content, "part one ");
         assert_eq!(a.rewind.pending_load_offset, "part one ".len());
+        assert_eq!(
+            a.rewind.pending_load_content_len,
+            Some("part one part two".len())
+        );
     }
 
     let commands = h.drain_commands().await;
@@ -107,4 +111,51 @@ async fn response_get_message_for_rewind_pages_until_full_text_loaded() {
         a.rewind.pending_apply_text.as_deref(),
         Some("part one part two")
     );
+}
+
+#[tokio::test]
+async fn response_get_message_for_rewind_rejects_changed_content_length_mid_load() {
+    let mut h = harness().await;
+    {
+        let a = h.app_mut();
+        a.rewind.pending_load_id = Some("load-1".into());
+        a.rewind.pending_apply_message_id = Some("u1".into());
+        let data = serde_json::json!({
+            "id": "u1",
+            "role": "user",
+            "content": "part one ",
+            "contentLength": "part one part two".len(),
+            "hasMoreContent": true,
+            "nextOffset": "part one ".len(),
+            "offset": 0
+        });
+        respond(a, Some("load-1"), "get_message", true, Some(data), None);
+    }
+
+    let commands = h.drain_commands().await;
+    let load_id = commands
+        .iter()
+        .find_map(|line| {
+            let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("get_message"))
+                .then(|| cmd.get("id").and_then(|v| v.as_str()).unwrap().to_string())
+        })
+        .expect("next get_message page must be requested");
+
+    let a = h.app_mut();
+    let data = serde_json::json!({
+        "id": "u1",
+        "role": "user",
+        "content": "part two",
+        "contentLength": "part one part two changed".len(),
+        "hasMoreContent": false,
+        "offset": "part one ".len()
+    });
+    respond(a, Some(&load_id), "get_message", true, Some(data), None);
+    assert!(a.rewind.pending_load_id.is_none());
+    assert!(a.rewind.pending_apply_message_id.is_none());
+    assert!(a.rewind.pending_apply_id.is_none());
+    assert!(a.rewind.pending_apply_text.is_none());
+    assert!(a.rewind.pending_load_content_len.is_none());
+    assert!(!a.notifications.is_empty());
 }

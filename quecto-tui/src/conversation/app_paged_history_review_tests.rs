@@ -316,3 +316,68 @@ async fn oversized_stub_recall_requests_each_page_and_reassembles_body() {
         "stub body must be gone after paged recall completes: {frame}"
     );
 }
+
+#[tokio::test]
+async fn stub_recall_rejects_first_page_content_length_that_differs_from_stub_metadata() {
+    let mut h = harness().await;
+    respond(
+        h.app_mut(),
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        serde_json::json!({
+            "messages": [{
+                "id": "length-pinned-stub",
+                "role": "assistant",
+                "content": "[assistant stub — recall available]",
+                "collapsed": true,
+                "contentLength": 26,
+            }],
+            "hasMoreBefore": false,
+            "before": null,
+        }),
+    );
+    let _ = h.drain_commands().await;
+
+    prime_active_viewport(h.app_mut());
+    h.app_mut().handle_key(Key::PageUp);
+    let first_req = h
+        .drain_commands()
+        .await
+        .iter()
+        .find_map(|line| {
+            let cmd = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            (cmd.get("type").and_then(|v| v.as_str()) == Some("get_message"))
+                .then(|| cmd.get("id").and_then(|v| v.as_str()).unwrap().to_string())
+        })
+        .expect("visible stub must issue recall");
+
+    respond(
+        h.app_mut(),
+        Some(&first_req),
+        "get_message",
+        true,
+        serde_json::json!({
+            "id": "length-pinned-stub",
+            "role": "assistant",
+            "content": "abcdefghijkl",
+            "offset": 0,
+            "nextOffset": 12,
+            "contentLength": 27,
+            "hasMoreContent": true,
+        }),
+    );
+
+    h.app_mut().active_chat_mut().scroll_down(1000);
+    let frame = chat_text(h.app_mut());
+    assert!(
+        frame.contains("recall available"),
+        "mismatched contentLength must preserve the stub: {frame}"
+    );
+    assert!(
+        h.app_mut()
+            .failed_stub_recalls
+            .contains(&(None, "length-pinned-stub".to_string())),
+        "mismatched first page must mark the stub recall failed"
+    );
+}

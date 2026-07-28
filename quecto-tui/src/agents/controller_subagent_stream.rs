@@ -486,6 +486,10 @@ impl App {
                     agent_id: Some(agent_id.to_string()),
                     content: String::new(),
                     offset: 0,
+                    content_len: (refs.len() == 1)
+                        .then_some(expected_content_len)
+                        .flatten()
+                        .and_then(|n| usize::try_from(n).ok()),
                 },
             );
             // Route via the MASTER connection; it forwards by child id and the
@@ -563,9 +567,15 @@ impl App {
         id: Option<String>,
         stub: bool,
         is_user: bool,
+        content_len: Option<usize>,
     ) -> ChatEntry {
         match (stub, id) {
-            (true, Some(id)) => ChatEntry::Stub { id, is_user, text },
+            (true, Some(id)) => ChatEntry::Stub {
+                id,
+                is_user,
+                text,
+                content_len,
+            },
             _ if is_user => ChatEntry::User { text },
             _ => ChatEntry::Assistant {
                 text,

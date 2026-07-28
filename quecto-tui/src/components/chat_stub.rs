@@ -9,6 +9,15 @@ impl Chat {
     /// Stable ids of recallable stubs intersecting the current viewport. This
     /// keeps scroll-triggered recall lazy instead of fetching every loaded stub.
     pub fn visible_stub_message_ids(&self) -> Vec<String> {
+        self.visible_stub_message_infos()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// Stable ids and advertised content lengths of recallable stubs intersecting
+    /// the current viewport.
+    pub fn visible_stub_message_infos(&self) -> Vec<(String, Option<usize>)> {
         let Some(height) = self.viewport_height else {
             return Vec::new();
         };
@@ -27,7 +36,9 @@ impl Chat {
                     return None;
                 }
                 match entry {
-                    ChatEntry::Stub { id, .. } => Some(id.clone()),
+                    ChatEntry::Stub {
+                        id, content_len, ..
+                    } => Some((id.clone(), *content_len)),
                     _ => None,
                 }
             })

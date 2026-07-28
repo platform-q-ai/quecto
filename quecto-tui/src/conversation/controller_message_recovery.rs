@@ -7,6 +7,7 @@ pub(crate) struct PendingMessageRecovery {
     pub(crate) agent_id: Option<String>,
     pub(crate) content: String,
     pub(crate) offset: usize,
+    pub(crate) content_len: Option<usize>,
 }
 
 /// A turn awaiting rebuild from its refs. The atomicity invariant lives in
@@ -85,6 +86,10 @@ impl App {
                     agent_id: None,
                     content: String::new(),
                     offset: 0,
+                    content_len: (refs.len() == 1)
+                        .then_some(expected_content_len)
+                        .flatten()
+                        .and_then(|n| usize::try_from(n).ok()),
                 },
             );
             self.send_command(Command::GetMessage {
@@ -140,15 +145,17 @@ impl App {
             self.abandon_recovery_batch(&pending.batch_id);
             return;
         }
-        let update = crate::protocol::range_accumulator::RangeAccumulator::new(
+        let update = crate::protocol::range_accumulator::RangeAccumulator::new_with_expected_len(
             pending.content,
             pending.offset,
+            pending.content_len,
         )
         .apply(&data);
         let accumulated = match update {
             Ok(crate::protocol::range_accumulator::RangeUpdate::Continue {
                 content,
                 next_offset,
+                content_len,
             }) => {
                 let req_id = format!("msg-recovery-{}", super::app_events::uuid_like());
                 let message_id = pending.message_id;
@@ -162,6 +169,7 @@ impl App {
                         agent_id: agent_id.clone(),
                         content,
                         offset: next_offset,
+                        content_len,
                     },
                 );
                 self.send_command(Command::GetMessage {

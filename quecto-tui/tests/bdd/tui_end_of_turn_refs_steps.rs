@@ -143,6 +143,10 @@ fn turn_end_miss(refs: &[&str], content_len: u64) -> Event {
     }
 }
 
+fn single_ref_content_len(body: &str) -> u64 {
+    body.len().try_into().expect("fixture length fits in u64")
+}
+
 // ── Given ───────────────────────────────────────────────────────────────────
 
 #[given("a fresh TUI app harness connected for the active turn")]
@@ -212,7 +216,10 @@ fn given_mid_turn_miss_tools(world: &mut TuiWorld) {
 #[given("a turn_end has arrived that identifies the turn messages by non-empty refs")]
 fn given_turn_end_already_arrived(world: &mut TuiWorld) {
     drive(world, |h| {
-        h.event(turn_end_miss(&[TEXT_REF], 64));
+        h.event(turn_end_miss(
+            &[TEXT_REF],
+            single_ref_content_len(RECOVERED_ASSISTANT),
+        ));
     });
     store_drain(world);
 }
@@ -306,7 +313,10 @@ fn when_turn_end_with_context(world: &mut TuiWorld, used: u64, max: u64) {
 #[when("a turn_end arrives that identifies the turn messages by non-empty refs")]
 fn when_turn_end_miss_text(world: &mut TuiWorld) {
     drive(world, |h| {
-        h.event(turn_end_miss(&[TEXT_REF], 64));
+        h.event(turn_end_miss(
+            &[TEXT_REF],
+            single_ref_content_len(RECOVERED_ASSISTANT),
+        ));
     });
     store_drain(world);
 }
@@ -486,7 +496,7 @@ fn when_child_end_miss_refs(world: &mut TuiWorld) {
                     "role": "assistant",
                     "content": "",
                     "messageRefs": [CHILD_REF],
-                    "contentLength": 64,
+                    "contentLength": single_ref_content_len(RECOVERED_CHILD),
                 }),
             },
         );

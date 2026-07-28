@@ -1,6 +1,10 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RangeUpdate {
-    Continue { content: String, next_offset: usize },
+    Continue {
+        content: String,
+        next_offset: usize,
+        content_len: Option<usize>,
+    },
     Complete(String),
 }
 
@@ -17,11 +21,20 @@ pub(crate) enum RangeError {
 pub(crate) struct RangeAccumulator {
     content: String,
     offset: usize,
+    expected_content_len: Option<usize>,
 }
 
 impl RangeAccumulator {
-    pub(crate) fn new(content: String, offset: usize) -> Self {
-        Self { content, offset }
+    pub(crate) fn new_with_expected_len(
+        content: String,
+        offset: usize,
+        expected_content_len: Option<usize>,
+    ) -> Self {
+        Self {
+            content,
+            offset,
+            expected_content_len,
+        }
     }
 
     pub(crate) fn apply(mut self, data: &serde_json::Value) -> Result<RangeUpdate, RangeError> {
@@ -38,11 +51,17 @@ impl RangeAccumulator {
             return Err(RangeError::OffsetMismatch);
         }
         self.content.push_str(content);
-        let content_len = data
+        let advertised_content_len = data
             .get("contentLength")
             .and_then(|v| v.as_u64())
-            .and_then(|n| usize::try_from(n).ok())
-            .unwrap_or(self.content.len());
+            .and_then(|n| usize::try_from(n).ok());
+        if advertised_content_len
+            .zip(self.expected_content_len)
+            .is_some_and(|(advertised, expected)| advertised != expected)
+        {
+            return Err(RangeError::LengthMismatch);
+        }
+        let content_len = self.expected_content_len.or(advertised_content_len);
         let has_more = data
             .get("hasMoreContent")
             .and_then(|v| v.as_bool())
@@ -53,17 +72,18 @@ impl RangeAccumulator {
                 .and_then(|v| v.as_u64())
                 .and_then(|n| usize::try_from(n).ok())
                 .ok_or(RangeError::MissingNextOffset)?;
-            if next_offset <= response_offset
-                || next_offset > content_len
-                || self.content.len() > content_len
-            {
+            if next_offset <= response_offset || next_offset != self.content.len() {
+                return Err(RangeError::InvalidProgress);
+            }
+            if content_len.is_some_and(|len| next_offset > len || self.content.len() > len) {
                 return Err(RangeError::InvalidProgress);
             }
             Ok(RangeUpdate::Continue {
                 content: self.content,
                 next_offset,
+                content_len,
             })
-        } else if self.content.len() == content_len {
+        } else if content_len.is_none_or(|len| self.content.len() == len) {
             Ok(RangeUpdate::Complete(self.content))
         } else {
             Err(RangeError::LengthMismatch)

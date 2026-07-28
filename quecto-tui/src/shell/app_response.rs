@@ -369,20 +369,23 @@ impl App {
             return;
         }
 
-        let update = crate::protocol::range_accumulator::RangeAccumulator::new(
+        let update = crate::protocol::range_accumulator::RangeAccumulator::new_with_expected_len(
             std::mem::take(&mut self.rewind.pending_load_content),
             self.rewind.pending_load_offset,
+            self.rewind.pending_load_content_len,
         )
         .apply(&data);
         let text = match update {
             Ok(crate::protocol::range_accumulator::RangeUpdate::Continue {
                 content,
                 next_offset,
+                content_len,
             }) => {
                 let id = self.next_rewind_request_id("load");
                 self.rewind.pending_load_id = Some(id.clone());
                 self.rewind.pending_load_content = content;
                 self.rewind.pending_load_offset = next_offset;
+                self.rewind.pending_load_content_len = content_len;
                 self.send_command(Command::GetMessage {
                     id: Some(id),
                     message_id,
@@ -425,6 +428,7 @@ impl App {
         self.rewind.pending_apply_message_id = None;
         self.rewind.pending_load_content.clear();
         self.rewind.pending_load_offset = 0;
+        self.rewind.pending_load_content_len = None;
     }
 
     fn handle_agent_error(&mut self, error: Option<String>) {
