@@ -152,7 +152,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "verify",
             "label": "Ensure tests still pass",
             "phase": "green",
-            "guidance": "Run `cargo fmt` and targeted strict clippy locally first (for kernel: `cargo clippy -p quecto --all-targets -- -D warnings`), then re-run only the targeted tests and confirm GREEN. Do not manually re-run the whole suite before commit; push/pre-push is the full-suite mechanism. Respect the 750-line file cap and strict clippy before pushing. Done when targeted tests pass and fmt/clippy are clean. If it fails, fix the code \u2014 never silence clippy \u2014 before pushing."
+            "guidance": "Run `cargo fmt` and targeted strict clippy locally first (for kernel: `cargo clippy -p quecto --all-targets -- -D warnings`), then re-run only the targeted tests and confirm GREEN. Do not manually re-run the whole suite before commit; authoritative CI after `merge-requested` is the full-suite mechanism. Respect the 750-line file cap and strict clippy before pushing. Done when targeted tests pass and fmt/clippy are clean. If it fails, fix the code \u2014 never silence clippy \u2014 before pushing."
           },
           {
             "key": "version_bump",
