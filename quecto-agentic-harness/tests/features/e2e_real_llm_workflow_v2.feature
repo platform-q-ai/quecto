@@ -110,7 +110,7 @@ Feature: E2E Real LLM Workflow V2 UDS Tests
   @done @manual-real-llm @mock-llm
   Scenario: Completing all steps reaches complete mode
     When I start the real LLM UDS workflow agent
-    And I send prompt "Using the workflow tool: 1) select_template feature 2) check every step from 1 through 20 in order. Then call status. If it says all steps complete, reply ALL_COMPLETE. Otherwise reply COMPLETE_FAIL."
+    And I send prompt "Using the workflow tool: 1) select_template feature 2) check every step from 1 through 19 in order. Then call status. If it says all steps complete, reply ALL_COMPLETE. Otherwise reply COMPLETE_FAIL."
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the agent_end messages should contain "ALL_COMPLETE"
