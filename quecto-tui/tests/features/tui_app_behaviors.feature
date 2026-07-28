@@ -254,7 +254,8 @@ Feature: TUI app event routing and command behaviours
     Given a fresh TUI app harness at width 60
     When workflow state reports issue 1028 with step 1 "A very long workflow label that must be truncated by the TUI" in phase "green" out of 1
     Then every workflow title frame row fits the terminal width
-    And the main pane workflow title shows "Step 1/1"
+    And the main pane workflow title shows "0/1"
+    And the main pane omits workflow detail "A very long workflow label that must be truncated by the TUI"
 
   # ── #1050: main chat history on --socket attach ───────────────────
   # Sub-agent panes already backfill on connect-on-select (#828). The master
