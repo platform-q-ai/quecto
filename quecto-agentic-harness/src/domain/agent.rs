@@ -65,6 +65,10 @@ pub enum AgentProgressEvent {
         /// cheap refcount bump rather than a deep copy of the turn (#993).
         messages: Arc<[crate::domain::message::Message]>,
     },
+    /// Canonical conversation changed, including pruning or a final append.
+    ConversationChanged {
+        messages: Arc<[crate::domain::message::Message]>,
+    },
     /// The agent loop has produced a final text response and is done.
     Done,
 }

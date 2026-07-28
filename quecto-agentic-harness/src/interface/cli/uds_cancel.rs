@@ -347,7 +347,9 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     messages.push(message);
     if let Some(state) = &execution_state {
         if let Ok(mut state) = state.lock() {
-            state.set_message_count(user_visible_messages(messages, system_prompt).len());
+            let visible_count = user_visible_messages(messages, system_prompt).len();
+            state.set_hidden_message_count(messages.len().saturating_sub(visible_count));
+            state.set_message_count(visible_count);
         }
     }
     if let Some(snapshot) = &conversation_snapshot {

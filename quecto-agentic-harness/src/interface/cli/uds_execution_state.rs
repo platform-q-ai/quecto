@@ -62,6 +62,7 @@ pub(crate) struct ExecutionState {
     failed: u64,
     recent: VecDeque<(Instant, bool)>,
     message_count: usize,
+    hidden_message_count: usize,
 }
 
 #[derive(Debug)]
@@ -90,6 +91,7 @@ impl Default for ExecutionState {
             failed: 0,
             recent: VecDeque::new(),
             message_count: 0,
+            hidden_message_count: 0,
         }
     }
 }
@@ -102,6 +104,10 @@ impl ExecutionState {
     }
     pub(crate) fn set_message_count(&mut self, count: usize) {
         self.message_count = count;
+    }
+
+    pub(crate) fn set_hidden_message_count(&mut self, count: usize) {
+        self.hidden_message_count = count;
     }
 
     pub(crate) fn add_messages(&mut self, count: usize) {
@@ -157,12 +163,14 @@ impl ExecutionState {
                 is_error,
                 ..
             } => {
+                if self.active_tools.remove(tool_call_id).is_none() {
+                    return;
+                }
                 self.completed = self.completed.saturating_add(1);
                 if *is_error {
                     self.failed = self.failed.saturating_add(1);
                 }
                 self.recent.push_back((Instant::now(), *is_error));
-                self.active_tools.remove(tool_call_id);
                 self.phase = if self.active_tools.is_empty() {
                     "thinking"
                 } else {
@@ -172,6 +180,10 @@ impl ExecutionState {
             }
             AgentProgressEvent::TurnCompleted { messages } => {
                 self.add_messages(messages.len());
+            }
+            AgentProgressEvent::ConversationChanged { messages } => {
+                self.set_message_count(messages.len().saturating_sub(self.hidden_message_count));
+                self.touch();
             }
             AgentProgressEvent::Done => {
                 self.phase = "finalizing";

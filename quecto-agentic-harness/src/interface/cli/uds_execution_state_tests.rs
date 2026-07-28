@@ -73,6 +73,34 @@ fn thinking_activity_does_not_replace_latest_progress_time() {
 }
 
 #[test]
+fn duplicate_or_unknown_finishes_do_not_inflate_progress() {
+    let mut state = ExecutionState::default();
+    state.start_run();
+    state.observe(&started("call-1", "read"));
+    state.observe(&finished("unknown", "read", true));
+    state.observe(&finished("call-1", "read", false));
+    state.observe(&finished("call-1", "read", true));
+    let snapshot = state.snapshot();
+    assert_eq!(snapshot.tools.completed, 1);
+    assert_eq!(snapshot.tools.failed, 0);
+    assert_eq!(snapshot.progress.tool_calls_completed, 1);
+}
+
+#[test]
+fn conversation_changes_reconcile_pruning_and_final_append_counts() {
+    let mut state = ExecutionState::default();
+    state.set_message_count(8);
+    state.observe(&AgentProgressEvent::ConversationChanged {
+        messages: Vec::from([
+            crate::domain::message::Message::user("one"),
+            crate::domain::message::Message::assistant("two", vec![]),
+        ])
+        .into(),
+    });
+    assert_eq!(state.message_count(), 2);
+}
+
+#[test]
 fn message_count_can_be_reconciled_after_lifecycle_changes() {
     let mut state = ExecutionState::default();
     state.set_message_count(8);

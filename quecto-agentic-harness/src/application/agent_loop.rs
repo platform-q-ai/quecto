@@ -482,6 +482,9 @@ impl AgentLoopImpl {
             let estimated_context_tokens = self
                 .apply_context_pruning(messages, current_turn, spills_dirty)
                 .await;
+            self.notify(|| AgentProgressEvent::ConversationChanged {
+                messages: messages.clone().into(),
+            });
 
             let request = self.prepare_provider_request_transition(
                 messages,

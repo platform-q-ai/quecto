@@ -66,12 +66,23 @@ pub(super) fn query_response_data(
             // effort (the level string when set, an explicit null when unset)
             // plus the provider's valid vocabulary, so the live-query and
             // busy-connect snapshot paths serve the same `get_state` shape.
-            let state = ctx.session.state_snapshot(
+            let mut state = ctx.session.state_snapshot(
                 user_visible_message_count(ctx.messages, ctx.system_prompt),
                 workflow,
                 ctx.agent.max_context_tokens(),
                 ctx.agent.effort().map(|l| l.as_str().to_string()),
             );
+            if let Ok(mut execution) = ctx.execution_state.lock() {
+                if ctx.session.is_streaming() {
+                    state.message_count = execution.message_count();
+                } else {
+                    execution.set_hidden_message_count(
+                        ctx.messages.len().saturating_sub(state.message_count),
+                    );
+                    execution.set_message_count(state.message_count);
+                }
+                state.execution = Some(execution.snapshot());
+            }
             Some(serde_json::to_value(&state).unwrap_or_default())
         }
         AgentCommand::GetMessages { count, before, .. } => {
