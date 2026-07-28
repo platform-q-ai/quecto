@@ -1,0 +1,6 @@
+{
+  "key": "reset_workflow",
+  "label": "Reset workflow state for the next task",
+  "phase": "ci_cd",
+  "guidance": "After this workflow has reported its result, clear the active workflow state with the workflow tool action `reset` so the next task does not keep receiving stale 'all steps complete' nudges from the previous template. Confirm with `workflow` action `status` that no active template remains (or an equivalent clean slate). Done when the workflow state is cleared."
+}

@@ -1,6 +1,6 @@
 {
   "label": "Bugfix",
-  "description": "Repro-first fix: capture the wrong behaviour in a failing test, fix it, prove the repro passes, sweep for the same defect class; hand off the PR (no auto-merge). If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
+  "description": "Repro-first fix: capture the wrong behaviour in a failing test, fix it, prove the repro passes, sweep for the same defect class; hand off the PR (no auto-merge). If you decide to use sub agents, always set openai-oauth/gpt-5.5 \u00b7 effort: low.",
   "when_to_use": "Use when existing observable behaviour is WRONG and must be corrected. Do NOT use for new/changed behaviour ('feature'), zero-behaviour-change restructures ('refactor'), or when only diagnosis is wanted ('investigate').",
   "guards": [
     {
@@ -17,7 +17,7 @@
         "gh pr merge"
       ],
       "before_step_key": "report",
-      "message": "This workflow does NOT merge — verify the pre-push gate genuinely passed (never --no-verify), report the PR as ready, and stop."
+      "message": "This workflow does NOT merge \u2014 verify the pre-push gate genuinely passed (never --no-verify), report the PR as ready, and stop."
     }
   ],
   "steps": [
@@ -32,13 +32,13 @@
       "key": "fix",
       "label": "Fix the defect (GREEN)",
       "phase": "green",
-      "guidance": "Make the smallest correct fix — mechanism over bandaid: fix at the depth where the invariant belongs, not just the reported symptom's call site. No drive-by refactors. Done when the repro test passes and no other targeted tests broke."
+      "guidance": "Make the smallest correct fix \u2014 mechanism over bandaid: fix at the depth where the invariant belongs, not just the reported symptom's call site. No drive-by refactors. Done when the repro test passes and no other targeted tests broke."
     },
     {
       "key": "sweep",
       "label": "Same-defect-class sweep",
       "phase": "green",
-      "guidance": "Grep for the same defect pattern elsewhere in the codebase (same misuse, same wrong assumption, copy-pasted siblings). Fix in-scope instances the same way with the same test discipline, or file an issue for out-of-scope ones — never silently ignore a found sibling. Done when the sweep result (clean, fixed, or filed) is recorded."
+      "guidance": "Grep for the same defect pattern elsewhere in the codebase (same misuse, same wrong assumption, copy-pasted siblings). Fix in-scope instances the same way with the same test discipline, or file an issue for out-of-scope ones \u2014 never silently ignore a found sibling. Done when the sweep result (clean, fixed, or filed) is recorded."
     },
     {
       "key": "commit",
@@ -57,6 +57,7 @@
       "label": "Request authoritative CI and report the PR (no merge)",
       "phase": "ci_cd",
       "guidance": "After all review comments are resolved and the current head is final, run `gh pr edit <n> --add-label merge-requested`. This requests authoritative CI for that exact revision. Wait with `gh pr checks <n> --watch`; if another commit is pushed, the label is removed automatically and must be reapplied only when ready. Do NOT merge or set auto-merge; report the PR and CI result for human merge."
-    }
+    },
+    "steps/shared/reset_workflow"
   ]
 }
