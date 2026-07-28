@@ -6,7 +6,6 @@
 
 use super::*;
 use serde_json::json;
-use std::time::Duration;
 
 fn subagent(id: &str, status: &str) -> crate::protocol::client::SubagentInfoEvent {
     crate::protocol::client::SubagentInfoEvent {
@@ -49,53 +48,81 @@ fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
 
 #[tokio::test]
 async fn warm_feed_startup_sends_get_state_then_initial_sync_once() {
-    let mut h = super::tui_harness::TuiHarness::new().await;
-    let (socket, mut child_commands) =
-        super::tui_harness::spawn_subagent_socket_with_commands("worker");
-    h.event(super::tui_harness::subagents_changed(vec![
-        super::tui_harness::subagent_with_socket("worker", "running", None, Some(socket)),
-    ]));
+    use super::tui_harness::{
+        TuiHarness, assert_no_further_child_commands, child_command_type,
+        drain_child_commands_until_quiet, spawn_subagent_socket_with_commands,
+        subagent_with_socket, subagents_changed,
+    };
 
-    let mut commands = Vec::new();
-    for _ in 0..20 {
-        while let Ok(line) = child_commands.try_recv() {
-            commands.push(line);
-        }
-        if commands.len() >= 2 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    while let Ok(line) = child_commands.try_recv() {
-        commands.push(line);
-    }
+    let mut h = TuiHarness::new().await;
+    let (socket, mut child_commands) = spawn_subagent_socket_with_commands("worker");
+    // Live alternate socket: a reconnect on roster path change would dial here
+    // and emit startup commands — the old receiver would stay silent either way.
+    let (alt_socket, mut alt_commands) = spawn_subagent_socket_with_commands("worker-alt");
+    h.event(subagents_changed(vec![subagent_with_socket(
+        "worker",
+        "running",
+        None,
+        Some(socket),
+    )]));
+
+    let commands = drain_child_commands_until_quiet(&mut child_commands).await;
     assert_eq!(
         commands.len(),
         2,
         "warm direct feed startup must send exactly get_state then sync once, got {commands:?}"
     );
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&commands[0]).unwrap()["type"],
-        "get_state"
+        child_command_type(&commands[0]).as_deref(),
+        Some("get_state")
     );
     let sync = serde_json::from_str::<serde_json::Value>(&commands[1]).unwrap();
     assert_eq!(sync["type"], "sync");
     assert_eq!(sync["epoch"], 0);
     assert_eq!(sync["sinceRev"], 0);
+    // Pin "exactly once" against late duplicates, not just a prefix window.
+    assert_no_further_child_commands(
+        &mut child_commands,
+        "warm startup must not emit a third startup command after settle",
+    )
+    .await;
 
-    h.event(super::tui_harness::subagents_changed(vec![
-        super::tui_harness::subagent_with_socket(
-            "worker",
-            "running",
-            None,
-            Some(std::path::PathBuf::from("/invalid/reconnect/socket")),
-        ),
-    ]));
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    let feed_cmd = h
+        .app_mut()
+        .subagents
+        .feeds
+        .get("worker")
+        .expect("warm feed opened on discovery")
+        .cmd_tx
+        .clone();
+
+    h.event(subagents_changed(vec![subagent_with_socket(
+        "worker",
+        "running",
+        None,
+        Some(alt_socket),
+    )]));
+
+    // Observable a reconnect would actually touch: the new path's listener.
+    assert_no_further_child_commands(
+        &mut alt_commands,
+        "roster socket-path change must not open a second feed to the new path",
+    )
+    .await;
+    assert_no_further_child_commands(
+        &mut child_commands,
+        "roster socket-path change must not repeat startup on the original feed",
+    )
+    .await;
+    let still = h
+        .app_mut()
+        .subagents
+        .feeds
+        .get("worker")
+        .expect("warm feed must remain registered");
     assert!(
-        child_commands.try_recv().is_err(),
-        "a later roster update for an already-warmed feed must not reconnect or repeat startup commands"
+        still.cmd_tx.same_channel(&feed_cmd),
+        "already-warmed feed must keep its runtime channel across roster path updates"
     );
 }
 

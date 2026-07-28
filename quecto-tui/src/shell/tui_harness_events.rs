@@ -156,6 +156,58 @@ pub fn forwarded_workflow(agent_id: &str, done: u32, total: u32) -> Event {
     }
 }
 
+/// Drain a child-socket command receiver until the stream is quiet (#1249).
+///
+/// Commands arrive after several async hops (connect task → framed write →
+/// reader → channel), so a multi-command batch is not all visible at once.
+/// Returning on the first arrival observes a scheduler-dependent prefix; a
+/// fixed wall-clock sleep can miss late duplicates or pass when nothing was
+/// ever going to arrive. Keep polling until no new command arrives for a
+/// short settle window after the first observation (or until the overall
+/// bound elapses on a genuinely empty stream).
+pub async fn drain_child_commands_until_quiet(rx: &mut mpsc::Receiver<String>) -> Vec<String> {
+    const SETTLE_POLLS: usize = 15;
+    const MAX_POLLS: usize = 400;
+    let mut out = Vec::new();
+    let mut idle = 0;
+    for _ in 0..MAX_POLLS {
+        let mut got = false;
+        while let Ok(line) = rx.try_recv() {
+            out.push(line);
+            got = true;
+        }
+        if got {
+            idle = 0;
+        } else if !out.is_empty() {
+            idle += 1;
+            if idle >= SETTLE_POLLS {
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+    out
+}
+
+/// Assert no further child commands arrive after the stream has already settled.
+///
+/// Unlike a one-shot `timeout(recv)`, this drains until quiet again so a delayed
+/// duplicate fails the test instead of slipping past a fixed window (#1249).
+pub async fn assert_no_further_child_commands(rx: &mut mpsc::Receiver<String>, context: &str) {
+    let late = drain_child_commands_until_quiet(rx).await;
+    assert!(
+        late.is_empty(),
+        "{context}: unexpected further child commands: {late:?}"
+    );
+}
+
+/// Wire `type` field of a drained command line, if present.
+pub fn child_command_type(line: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|v| v.get("type")?.as_str().map(str::to_string))
+}
+
 /// Accept connections on `listener` and forward each decoded command to
 /// `cmd_tx`. The accept loop keeps the listener live when a test deselects and
 /// reselects the same agent. The client speaks length-prefixed frames since
