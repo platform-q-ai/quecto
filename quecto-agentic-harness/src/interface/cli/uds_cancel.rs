@@ -307,18 +307,6 @@ pub(crate) struct PromptRun<'a, 's> {
 /// oneshot, the token-forwarding drain loop, and (on a broadcast sink) subagent
 /// notifications, so tokens/notes are emitted in real time — not buffered until
 /// completion.
-fn prompt_position(messages: &[Message], prompt_id: uuid::Uuid) -> Option<usize> {
-    messages
-        .iter()
-        .position(|message| message.id() == prompt_id)
-}
-
-fn discard_interrupted_turn_after_prompt(messages: &mut Vec<Message>, prompt_id: uuid::Uuid) {
-    if let Some(index) = prompt_position(messages, prompt_id) {
-        messages.truncate(index + 1);
-    }
-}
-
 pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome {
     let PromptRun {
         agent,
@@ -413,7 +401,17 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
 
     match result {
         None => {
-            discard_interrupted_turn_after_prompt(messages, prompt_id);
+            let finalized =
+                super::uds_cancel_history::finalize_interrupted_turn(messages, prompt_id);
+            if let Some(snapshot) = &conversation_snapshot {
+                let visible = super::uds_snapshots::user_visible_messages(messages, system_prompt);
+                let mut snap = snapshot.write().await;
+                let publish = snap.publish(&visible);
+                let full = snap.record_full(&finalized.recordable_messages());
+                drop(snap);
+                sink.emit_ledger_advanced(publish).await;
+                sink.emit_ledger_advanced(full).await;
+            }
             if let Some(state) = &execution_state {
                 if let Ok(mut state) = state.lock() {
                     state.set_message_count(user_visible_messages(messages, system_prompt).len());

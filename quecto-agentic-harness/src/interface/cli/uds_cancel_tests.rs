@@ -3,10 +3,12 @@
 
 use super::*;
 use crate::application::agent_loop::AgentLoopImpl;
+use crate::domain::message::{ThinkingBlock, ToolCall};
 use crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES as SHARED_EVENT_LINE_CAP_BYTES;
 use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentNotification, mark_completion_consumed_by_await, new_registry,
 };
+use crate::interface::cli::uds_cancel_history::finalize_interrupted_turn;
 
 #[test]
 fn cancellation_preserves_interrupted_prompt_for_next_turn_context() {
@@ -15,18 +17,22 @@ fn cancellation_preserves_interrupted_prompt_for_next_turn_context() {
     let mut messages = vec![
         Message::user("previous"),
         prompt,
-        Message::assistant("partial streamed text", vec![]),
+        Message::assistant(
+            "partial streamed text",
+            vec![tool_call("open-prompt", "grep")],
+        ),
     ];
 
-    discard_interrupted_turn_after_prompt(&mut messages, prompt_id);
+    finalize_interrupted_turn(&mut messages, prompt_id);
 
-    assert_eq!(messages.len(), 2);
+    assert_eq!(messages.len(), 4);
     assert_eq!(messages[0].content, "previous");
     assert_eq!(messages[1].content, "remember ESC_ABORT_123");
     assert!(matches!(
         messages[1].role,
         crate::domain::message::Role::User
     ));
+    assert_tool_call_aborted(&messages, "open-prompt", "grep");
 }
 
 #[test]
@@ -39,7 +45,7 @@ fn cancellation_preserves_prompt_at_its_logical_boundary_after_pruning() {
         Message::user("dropped-by-pruning"),
         Message::user("survivor"),
         prompt,
-        Message::assistant("partial output", vec![]),
+        Message::assistant("partial output", vec![tool_call("shifted-open", "find")]),
     ];
     let recorded_prompt_index = 2;
 
@@ -58,17 +64,158 @@ fn cancellation_preserves_prompt_at_its_logical_boundary_after_pruning() {
         "scenario setup: the drop must move the prompt off its recorded index"
     );
 
-    discard_interrupted_turn_after_prompt(&mut messages, prompt_id);
+    finalize_interrupted_turn(&mut messages, prompt_id);
 
     assert_eq!(
         messages.len(),
-        2,
-        "cancellation must preserve the prompt and remove only interrupted output, located by \
-         id — a stale positional truncate at index {recorded_prompt_index} \
-         would have kept interrupted assistant output"
+        4,
+        "cancellation must locate the prompt by id even after pruning shifted indices"
     );
     assert_eq!(messages[0].content, "survivor");
     assert_eq!(messages[1].content, "cancel me");
+    assert_tool_call_aborted(&messages, "shifted-open", "find");
+}
+
+fn tool_call(id: &str, name: &str) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        name: name.into(),
+        arguments: "{}".into(),
+    }
+}
+
+fn tool_results<'a>(messages: &'a [Message], call_id: &str) -> Vec<&'a Message> {
+    messages
+        .iter()
+        .filter(|message| {
+            matches!(message.role, crate::domain::message::Role::Tool)
+                && message.tool_call_id.as_deref() == Some(call_id)
+        })
+        .collect()
+}
+
+fn assert_tool_result(messages: &[Message], call_id: &str, content: &str) {
+    let results = tool_results(messages, call_id);
+    assert_eq!(
+        results.len(),
+        1,
+        "tool call {call_id} must have exactly one result"
+    );
+    assert_eq!(results[0].content, content);
+}
+
+fn assert_tool_call_aborted(messages: &[Message], call_id: &str, tool_name: &str) {
+    let results = tool_results(messages, call_id);
+    assert_eq!(
+        results.len(),
+        1,
+        "tool call {call_id} must have exactly one aborted result"
+    );
+    let result = results[0];
+    assert_eq!(result.content, "aborted by user");
+    assert!(result.is_error);
+    assert_eq!(result.tool_name.as_deref(), Some(tool_name));
+}
+
+fn assert_no_orphan_tool_pairs(messages: &[Message]) {
+    use std::collections::{HashMap, HashSet};
+
+    let mut calls = HashSet::new();
+    let mut results: HashMap<&str, usize> = HashMap::new();
+    for message in messages {
+        if matches!(message.role, crate::domain::message::Role::Assistant) {
+            for call in &message.tool_calls {
+                calls.insert(call.id.as_str());
+            }
+        }
+        if matches!(message.role, crate::domain::message::Role::Tool) {
+            if let Some(id) = message.tool_call_id.as_deref() {
+                *results.entry(id).or_insert(0) += 1;
+            }
+        }
+    }
+
+    for call_id in calls {
+        assert_eq!(
+            results.get(call_id).copied(),
+            Some(1),
+            "tool call {call_id} must have exactly one result"
+        );
+    }
+}
+
+#[test]
+fn soft_cancel_preserves_completed_tool_results() {
+    let prompt = Message::user("inspect");
+    let prompt_id = prompt.id();
+    let mut retained_assistant =
+        Message::assistant("partial narration", vec![tool_call("done-1", "read")]);
+    retained_assistant.thinking_blocks = vec![ThinkingBlock::Redacted {
+        data: "secret-reasoning".into(),
+    }];
+    let _ = retained_assistant.estimated_tokens();
+    let mut messages = vec![
+        Message::user("previous"),
+        prompt,
+        retained_assistant,
+        Message::tool("done-1", "completed result 1"),
+        Message::assistant("", vec![tool_call("done-2", "ls")]),
+        Message::tool("done-2", "completed result 2"),
+    ];
+
+    finalize_interrupted_turn(&mut messages, prompt_id);
+
+    assert!(
+        messages
+            .iter()
+            .filter(|message| matches!(message.role, crate::domain::message::Role::Assistant))
+            .all(|message| message.content.is_empty())
+    );
+    assert!(
+        messages
+            .iter()
+            .filter(|message| matches!(message.role, crate::domain::message::Role::Assistant))
+            .all(|message| message.thinking_blocks.is_empty())
+    );
+    assert!(
+        messages
+            .iter()
+            .filter(|message| matches!(message.role, crate::domain::message::Role::Assistant))
+            .all(|message| message.estimated_tokens()
+                < Message::estimate_tokens("partial narration"))
+    );
+    assert_tool_result(&messages, "done-1", "completed result 1");
+    assert_tool_result(&messages, "done-2", "completed result 2");
+    assert_no_orphan_tool_pairs(&messages[1..]);
+}
+
+#[test]
+fn soft_cancel_records_aborted_results_for_unanswered_tool_calls() {
+    let prompt = Message::user("inspect");
+    let prompt_id = prompt.id();
+    let mut messages = vec![
+        Message::user("previous"),
+        prompt,
+        Message::assistant("", vec![tool_call("done-1", "read")]),
+        Message::tool("done-1", "completed result"),
+        Message::assistant(
+            "",
+            vec![tool_call("open-1", "grep"), tool_call("open-2", "find")],
+        ),
+    ];
+
+    finalize_interrupted_turn(&mut messages, prompt_id);
+
+    assert!(
+        messages
+            .iter()
+            .filter(|message| matches!(message.role, crate::domain::message::Role::Assistant))
+            .all(|message| message.content.is_empty())
+    );
+    assert_tool_result(&messages, "done-1", "completed result");
+    assert_tool_call_aborted(&messages, "open-1", "grep");
+    assert_tool_call_aborted(&messages, "open-2", "find");
+    assert_no_orphan_tool_pairs(&messages[1..]);
 }
 
 fn make_notif(seq: u64) -> SequencedSubagentNotification {
