@@ -433,10 +433,7 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
         snap.steps[8].label,
         "Bump semver for every changed crate and sync version docs"
     );
-    assert_eq!(
-        snap.steps[10].label,
-        "Push (pre-push hook will run tests and linting)"
-    );
+    assert_eq!(snap.steps[10].label, "Push through the fast pre-push gate");
     assert_eq!(
         snap.steps[12].label,
         "Despatch narrow parallel review finders, verify adversarially, post one review"
@@ -447,7 +444,7 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
     );
     assert_eq!(
         snap.steps[17].label,
-        "Confirm the pre-push gate passed and report the PR (do NOT merge)"
+        "Request authoritative CI and report the PR (do not merge)"
     );
     assert_eq!(snap.steps[18].label, "Clean up sub agents");
 }

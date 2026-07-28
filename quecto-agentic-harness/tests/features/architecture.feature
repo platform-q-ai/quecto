@@ -7,17 +7,14 @@ Feature: Architecture boundaries and ports
   Scenario: Application layer avoids direct runtime I/O
     Then the application source should not contain runtime I/O patterns
 
-  Scenario: Pre-push clippy lints all workspace members
-    Then the pre-push script should lint with --workspace flag
+  Scenario: Authoritative CI lints all workspace members
+    Then authoritative CI should lint with --workspace flag
 
-  Scenario: Pre-push runs the zero-cost mocked e2e suite by default
-    Then the pre-push script should run the mocked e2e suite by default
+  Scenario: Authoritative CI runs the zero-cost mocked e2e suite
+    Then authoritative CI should run the mocked e2e suite
 
-  Scenario: Pre-push no longer auto-enables the paid real-LLM suite from a key
+  Scenario: Pre-push never selects a paid real-LLM lane from provider credentials
     Then the pre-push script should not probe for a provider key to auto-run the paid suite
-
-  Scenario: Pre-push exposes a documented opt-in for the live real-LLM suite
-    Then the pre-push script should gate the live real-LLM suite behind an explicit opt-in flag
 
   Scenario: The mocked e2e suite covers the curated real-LLM capability checklist
     Then the mocked e2e suite should cover the curated real-LLM capability checklist
