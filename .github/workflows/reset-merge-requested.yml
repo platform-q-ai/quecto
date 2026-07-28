@@ -1,0 +1,23 @@
+name: Reset Merge Request
+
+# A new PR revision invalidates the explicit request to validate and merge.
+on:
+  pull_request:
+    branches: [master]
+    types: [synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  remove-label:
+    name: Remove stale merge-requested label
+    if: contains(github.event.pull_request.labels.*.name, 'merge-requested')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove merge-requested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr edit "$PR_URL" --remove-label merge-requested
