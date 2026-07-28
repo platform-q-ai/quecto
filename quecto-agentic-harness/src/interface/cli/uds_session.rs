@@ -350,6 +350,7 @@ impl AgentSession {
                 .map(|l| l.as_str().to_string())
                 .collect(),
             workflow,
+            execution: None,
             sync: 1,
         }
     }

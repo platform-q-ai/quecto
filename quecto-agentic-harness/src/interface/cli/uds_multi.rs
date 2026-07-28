@@ -197,6 +197,8 @@ pub(super) async fn multi_client_loop(
     );
     let state_snapshot: StateSnapshot =
         std::sync::Arc::new(tokio::sync::RwLock::new(initial_state));
+    let execution_state: super::uds_execution_state::ExecutionStateHandle =
+        std::sync::Arc::new(std::sync::Mutex::new(Default::default()));
     let session_stats_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
         super::uds_session::compute_session_stats_with_usage(
             &session_key,
@@ -249,6 +251,7 @@ pub(super) async fn multi_client_loop(
         client_tool_registry: client_tool_registry.clone(),
         conversation_snapshot: conversation_snapshot.clone(),
         state_snapshot: state_snapshot.clone(),
+        execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),
         extension_snapshot: extension_snapshot.clone(),
         busy: busy.clone(),
@@ -270,6 +273,7 @@ pub(super) async fn multi_client_loop(
         messages: &mut messages,
         conversation_snapshot: conversation_snapshot.clone(),
         state_snapshot: state_snapshot.clone(),
+        execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),
         extension_snapshot: extension_snapshot.clone(),
         busy: busy.clone(),

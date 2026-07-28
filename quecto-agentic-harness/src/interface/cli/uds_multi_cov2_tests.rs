@@ -255,6 +255,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     let mut session_key = "cli:cov".to_string();
     let mut writer = tokio::io::sink();
     let mut ctx = super::super::uds::DispatchCtx {
+        execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         base_dir: dir.path(),
         agent: &mut agent,

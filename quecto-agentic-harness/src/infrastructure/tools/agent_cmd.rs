@@ -438,11 +438,11 @@ impl Tool for AgentCmdTool {
                 history page (count for the last N); when the response reports \
                 hasMoreBefore:true, pass its before cursor to page older history — \
                 the note/await summary is one line, not the result. \
-                get_state reports live status/model/message counts; get_session_stats \
-                reports token usage and context occupancy. While a child is BUSY mid-turn, \
-                get_messages/get_state are served from a snapshot of its last \
-                completed turn (tagged snapshot:true / isStreaming:true), so the \
-                data may lag the in-flight turn."
+                get_state is the live/in-flight supervision API: it reports execution \
+                phase, current/recent tool activity, progress, model, effort, and message \
+                count. get_messages is the stable committed transcript API, intended for \
+                full or end-of-turn output inspection. Busy responses are tagged \
+                snapshot:true; transcript data may lag the active turn."
                 .into(),
             parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_extensions","set_model","set_effort","clear_history","reload_extensions"],"description":"Command to send. get_subagents_all lists this parent agent's tracked subagents without targeting a child. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages (use count for the last N messages)."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#.into(),
         }

@@ -185,8 +185,10 @@ reports progress without polling:
 - its `workflow_state` events are forwarded onto your event stream as steps
   advance (tagged with the child's `agent_id`, so a grandchild's progress is
   attributed to the grandchild, not the child);
-- `agent_cmd get_state` returns the child's current workflow snapshot (mode,
-  current step, done/total) on demand — including while the child is mid-turn;
+- `agent_cmd get_state` is the live in-flight supervision API. It returns the
+  child's execution phase, current/recent tool activity, accurate canonical
+  message count, model/effort, and workflow snapshot (mode, current step,
+  done/total) on demand — including while the child is mid-turn;
 - in the TUI, the selected child renders its own workflow status bar.
 
 Read the child's final result the usual way — its one-line auto-note at your next
@@ -246,8 +248,8 @@ output (see [Notification model](#notification-model)).
 | `abort` | Full stop: cancel the current run, kill in-flight tool/child processes, and suppress workflow auto-continue (does not resume) | No |
 | `kill` | Terminate the subagent process (SIGTERM) | No |
 | `await` | Block until the subagent reaches a terminal state | No |
-| `get_state` | Check if the agent is idle or streaming | No |
-| `get_messages` | Read the message history (omit `count` for the newest history page; pass `count` for the last N messages; pass `before` to page older history) | No |
+| `get_state` | Inspect live/in-flight supervision state: phase, current/recent tools, progress, message count, model/effort, streaming, and workflow | No |
+| `get_messages` | Inspect the stable committed transcript, normally after the turn ends (omit `count` for the newest page; pass `count` for the last N; pass `before` to page older history). A busy snapshot can lag the active turn | No |
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List subagents spawned by this agent | No |
 | `get_extensions` | List loaded extensions | No |
@@ -323,10 +325,14 @@ full output call `get_messages` (optionally with `count` for the last N messages
 - **Workflow state changes** are forwarded onto the parent's event stream
   (identity-tagged with `agent_id` + `parent_id`). See "Observing the unit
   tree" below.
-- **Point-in-time snapshots** via `get_state` and `get_messages`
-  reflect the child's state at the moment of the call —
-  but they don't register as notifications. A single call that catches the
-  agent mid-run tells you nothing about what happens next.
+- **Live supervision** via `get_state` reports the child's current phase,
+  tool activity, evidence-based recent progress, and canonical message count.
+- **Stable transcript inspection** via `get_messages` is intended for committed
+  or end-of-turn output. A busy response is a snapshot and can lag mutable
+  in-flight transcript content.
+
+Neither command registers as a notification. A single call that catches the
+agent mid-run tells you nothing about what happens next.
 
 ### The auto-note is a summary, not the result
 

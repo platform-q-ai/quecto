@@ -1,23 +1,19 @@
-use std::collections::VecDeque;
-use std::sync::Arc;
-
-use crate::domain::message::{Message, Role};
-use crate::domain::session::ContextSpillStore;
-
 use super::protocol::{AgentEvent, SessionState};
 use super::uds::DispatchCtx;
 use super::uds_session::{
     HISTORY_PAGE_SIZE, compute_session_stats_with_usage, message_to_json_for_history_page,
     messages_page_json,
 };
-
+use crate::domain::message::{Message, Role};
+use crate::domain::session::ContextSpillStore;
+use std::collections::VecDeque;
+use std::sync::Arc;
 pub(super) fn is_injected_system_prompt(message: &Message, prompt: &str) -> bool {
     !prompt.is_empty()
         && message.role == Role::System
         && !message.is_manifest
         && message.content == prompt
 }
-
 pub(super) fn user_visible_messages(messages: &[Message], system_prompt: &str) -> Vec<Message> {
     messages
         .iter()
@@ -25,27 +21,22 @@ pub(super) fn user_visible_messages(messages: &[Message], system_prompt: &str) -
         .cloned()
         .collect()
 }
-
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
-
 /// Bounded id-addressable ledger budgets. Eviction is oldest-first and triggers
 /// on either content bytes or entry count so long-running sessions and floods of
 /// tiny messages cannot grow memory unbounded (#1060 review r4).
 const LEDGER_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const LEDGER_MAX_ENTRIES: usize = 8192;
-
 /// Fixed per-entry overhead so a zero/tiny-content message still consumes
 /// budget: it covers the id `String` stored twice (map
 /// key + order deque, ~2×UUID) plus the owned Message/ToolCall struct footprint.
 const LEDGER_ENTRY_OVERHEAD: usize = 256;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LedgerAdvance {
     pub epoch: u64,
     pub rev: u64,
     pub changed: bool,
 }
-
 impl LedgerAdvance {
     fn unchanged(epoch: u64, rev: u64) -> Self {
         Self {
@@ -55,7 +46,6 @@ impl LedgerAdvance {
         }
     }
 }
-
 /// Approximate owned in-memory size of a ledger entry for byte-budgeting.
 fn message_bytes(m: &Message) -> usize {
     LEDGER_ENTRY_OVERHEAD
@@ -67,7 +57,6 @@ fn message_bytes(m: &Message) -> usize {
         + m.tool_call_id.as_ref().map_or(0, |s| s.len())
         + m.tool_name.as_ref().map_or(0, |s| s.len())
 }
-
 /// Busy-path conversation snapshot: pruned live messages plus a bounded
 /// id→message ledger for resolving recent end-of-turn refs after pruning.
 #[derive(Default)]
@@ -97,7 +86,6 @@ pub(crate) struct ConversationSnapshotData {
     pub rev: u64,
     frontier: VecDeque<(u64, String)>,
 }
-
 impl ConversationSnapshotData {
     /// Fold one message into the ledger under the byte budget. `overwrite`
     /// replaces an existing (possibly collapsed) entry with a full copy; without
@@ -134,7 +122,6 @@ impl ConversationSnapshotData {
         }
         !already
     }
-
     fn advance_for_new_ids(&mut self, ids: Vec<String>) -> LedgerAdvance {
         if ids.is_empty() {
             return LedgerAdvance::unchanged(self.epoch, self.rev);
@@ -149,7 +136,6 @@ impl ConversationSnapshotData {
             changed: true,
         }
     }
-
     /// Replace the live view and fold its messages into the ledger WITHOUT
     /// overwriting existing entries — a full copy recorded earlier must survive
     /// a later in-place collapse of the live message.
@@ -163,7 +149,6 @@ impl ConversationSnapshotData {
         self.messages = messages.to_vec();
         self.advance_for_new_ids(new_ids)
     }
-
     pub fn record_full(&mut self, messages: &[Message]) -> LedgerAdvance {
         let mut new_ids = Vec::new();
         for m in messages {
@@ -173,7 +158,6 @@ impl ConversationSnapshotData {
         }
         self.advance_for_new_ids(new_ids)
     }
-
     /// Attach a spill store for best-effort recall of live collapsed messages
     /// whose full ledger copy is no longer available.
     pub fn set_spill_store(
@@ -196,7 +180,6 @@ impl ConversationSnapshotData {
         self.spill_store = spill_store;
         self.spill_session_key = session_key;
     }
-
     /// Look a message id up by its full copy: the ledger wins over the live
     /// conversation (which may hold only a collapsed stub). `None` when the ref
     /// is neither in the (bounded) ledger nor the live conversation. Shared by
@@ -207,7 +190,6 @@ impl ConversationSnapshotData {
                 .map(|i| &self.messages[i])
         })
     }
-
     /// Resolve a message id to its full copy. See [`Self::lookup`].
     #[cfg(test)]
     pub fn resolve(&self, message_id: &str) -> Option<&Message> {
@@ -620,21 +602,38 @@ pub(crate) fn build_get_extensions_line(extensions: &[serde_json::Value]) -> Str
     line
 }
 
-pub(crate) async fn busy_connect_snapshot_lines(
-    state_snapshot: &StateSnapshot,
-    conversation_snapshot: &ConversationSnapshot,
-    session_stats_snapshot: &SessionStatsSnapshot,
-    extension_snapshot: &crate::interface::cli::uds_extensions::ExtensionSnapshot,
-    subagent_registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    workflow_state: &Option<crate::interface::shared::WorkflowStateHandle>,
-) -> [String; 5] {
+pub(crate) struct BusySnapshotSources<'a> {
+    pub state: &'a StateSnapshot,
+    pub conversation: &'a ConversationSnapshot,
+    pub session_stats: &'a SessionStatsSnapshot,
+    pub extensions: &'a crate::interface::cli::uds_extensions::ExtensionSnapshot,
+    pub subagents: &'a Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub workflow: &'a Option<crate::interface::shared::WorkflowStateHandle>,
+    pub execution: &'a super::uds_execution_state::ExecutionStateHandle,
+}
+
+pub(crate) async fn busy_connect_snapshot_lines(sources: BusySnapshotSources<'_>) -> [String; 5] {
+    let BusySnapshotSources {
+        state: state_snapshot,
+        conversation: conversation_snapshot,
+        session_stats: session_stats_snapshot,
+        extensions: extension_snapshot,
+        subagents: subagent_registry,
+        workflow: workflow_state,
+        execution: execution_state,
+    } = sources;
     let state_line = {
         let snap = state_snapshot.read().await;
         // #914: overlay the LIVE workflow engine onto the (turn-boundary) frozen
         // snapshot so a busy `get_state` reports mid-turn step progress, not just
         // 0/N (pre-turn) or N/N (post-turn). The engine `Mutex` is independent of
         // the dispatch loop's `&mut messages`, so this is safe to read mid-turn.
-        build_get_state_line_live(&snap, workflow_state, true)
+        let mut live = snap.clone();
+        if let Ok(mut execution) = execution_state.lock() {
+            live.message_count = execution.message_count();
+            live.execution = Some(execution.snapshot());
+        }
+        build_get_state_line_live(&live, workflow_state, true)
     };
     let messages_line = {
         let snap = conversation_snapshot.read().await;

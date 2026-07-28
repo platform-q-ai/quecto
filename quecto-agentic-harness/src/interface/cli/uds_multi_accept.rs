@@ -17,6 +17,7 @@ pub(super) struct AcceptLoopArgs {
     pub(super) client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
     pub(super) conversation_snapshot: ConversationSnapshot,
     pub(super) state_snapshot: StateSnapshot,
+    pub(super) execution_state: super::uds_execution_state::ExecutionStateHandle,
     pub(super) session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot,
     pub(super) extension_snapshot: super::uds_extensions::ExtensionSnapshot,
     pub(super) busy: BusyFlag,
@@ -39,6 +40,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
         client_tool_registry,
         conversation_snapshot,
         state_snapshot,
+        execution_state,
         session_stats_snapshot,
         extension_snapshot,
         busy,
@@ -83,12 +85,15 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                     if busy.load(std::sync::atomic::Ordering::SeqCst) {
                         use tokio::io::AsyncWriteExt;
                         let snapshot_lines = super::uds_snapshots::busy_connect_snapshot_lines(
-                            &state_snapshot,
-                            &conversation_snapshot,
-                            &session_stats_snapshot,
-                            &extension_snapshot,
-                            &subagent_registry,
-                            &workflow_state,
+                            super::uds_snapshots::BusySnapshotSources {
+                                state: &state_snapshot,
+                                conversation: &conversation_snapshot,
+                                session_stats: &session_stats_snapshot,
+                                extensions: &extension_snapshot,
+                                subagents: &subagent_registry,
+                                workflow: &workflow_state,
+                                execution: &execution_state,
+                            },
                         )
                         .await;
                         for line in snapshot_lines {

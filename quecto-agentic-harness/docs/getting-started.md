@@ -214,7 +214,8 @@ send(sock, {"type": "prompt", "id": "p2", "message": "Explain this code"})
 ```python
 send(sock, {"type": "get_state", "id": "gs1"})
 # Response: {"type":"response","id":"gs1","command":"get_state","success":true,
-#   "data":{"model":"...","isStreaming":false,"messageCount":6,...}}
+#   "data":{"model":"...","isStreaming":true,"messageCount":6,
+#   "execution":{"phase":"runningTool","currentTool":{"name":"bash",...}},...}}
 
 send(sock, {"type": "get_session_stats", "id": "st1"})
 # Response includes token usage, message counts, estimated cost

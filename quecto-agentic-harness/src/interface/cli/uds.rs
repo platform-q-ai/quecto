@@ -21,21 +21,16 @@ use crate::domain::message::Message;
 use crate::domain::message::Role;
 use crate::domain::session::SessionStore;
 use crate::domain::workflow::WorkflowRunPersisted;
-
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;
-
 pub use super::uds_lifecycle::{UdsLoopArgs, run_uds_loop};
 pub(crate) use super::uds_lifecycle::{inject_system_prompt, remove_injected_system_prompt};
 pub(crate) use super::uds_socket::reap_stale_sockets;
-
 pub(super) const MAX_FRAME_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
-
 pub(super) fn is_cancel_command(trimmed: &str) -> bool {
     is_abort_command(trimmed) || is_steer_command(trimmed)
 }
-
 /// Reader-side classification so the eager cancel and the abort/steer control
 /// flag are set together, before the command is dispatched (#895/#896).
 pub(super) fn is_abort_command(trimmed: &str) -> bool {
@@ -114,9 +109,10 @@ pub(crate) struct DispatchCtx<'a> {
     pub messages: &'a mut Vec<Message>,
     pub conversation_snapshot: super::uds_multi::ConversationSnapshot, // #828
     pub state_snapshot: super::uds_multi::StateSnapshot,               // #837
+    pub execution_state: super::uds_execution_state::ExecutionStateHandle,
     pub session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot, // #880
-    pub extension_snapshot: super::uds_extensions::ExtensionSnapshot,  // #880
-    pub busy: super::uds_multi::BusyFlag,                              // #828
+    pub extension_snapshot: super::uds_extensions::ExtensionSnapshot,       // #880
+    pub busy: super::uds_multi::BusyFlag,                                   // #828
     pub session: &'a mut AgentSession,
     /// Direct writer for the single-client / test path. `None` on the
     /// multi-client server, which streams via `broadcast_tx` instead — so the
@@ -478,6 +474,7 @@ async fn run_prompt_dispatch(
         agent: ctx.agent,
         messages: ctx.messages,
         conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
+        execution_state: Some(ctx.execution_state.clone()),
         session: ctx.session,
         sink: &mut sink,
         message,
@@ -532,6 +529,7 @@ async fn run_drained_message(ctx: &mut DispatchCtx<'_>, msg: Message) {
         agent: ctx.agent,
         messages: ctx.messages,
         conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
+        execution_state: Some(ctx.execution_state.clone()),
         session: ctx.session,
         sink: &mut sink,
         message: msg,

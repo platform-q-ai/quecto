@@ -4,6 +4,7 @@
 //! race-free: whether the cancel signal arrives before or during a prompt run,
 //! the correct outcome (skipped or interrupted) is guaranteed.
 
+use super::uds_snapshots::user_visible_messages;
 use std::sync::Arc;
 
 use crate::application::agent_loop::AgentLoopImpl;
@@ -280,6 +281,7 @@ pub(crate) struct PromptRun<'a, 's> {
     pub messages: &'a mut Vec<Message>,
     /// Shared live ledger used by busy-path get_message readers.
     pub conversation_snapshot: Option<super::uds_multi::ConversationSnapshot>,
+    pub execution_state: Option<super::uds_execution_state::ExecutionStateHandle>,
     pub session: &'a mut AgentSession,
     /// Sink the streamed events are delivered to (writer XOR broadcast).
     pub sink: &'a mut EventSink<'s>,
@@ -322,6 +324,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         agent,
         messages,
         conversation_snapshot,
+        execution_state,
         session: agent_session,
         sink,
         message,
@@ -332,11 +335,23 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     } = args;
 
     agent_session.set_streaming(true);
+    if let Some(state) = &execution_state {
+        if let Ok(mut state) = state.lock() {
+            state.start_run();
+        }
+    }
     sink.emit(&AgentEvent::AgentStart).await;
     sink.emit(&AgentEvent::TurnStart).await;
 
     let prompt_id = message.id();
     messages.push(message);
+    if let Some(state) = &execution_state {
+        if let Ok(mut state) = state.lock() {
+            let visible_count = user_visible_messages(messages, system_prompt).len();
+            state.set_hidden_message_count(messages.len().saturating_sub(visible_count));
+            state.set_message_count(visible_count);
+        }
+    }
     if let Some(snapshot) = &conversation_snapshot {
         let visible = super::uds_snapshots::user_visible_messages(messages, system_prompt);
         let advance = snapshot.write().await.publish(&visible);
@@ -347,10 +362,17 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     // Capacity 256 limits back-pressure from a slow UDS consumer while being
     // large enough to never block under normal streaming throughput.
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<AgentProgressEvent>(256);
+    let live_execution = execution_state.clone();
     agent.set_progress_callback(Some(Arc::new(move |ev| {
+        // Operational telemetry is recorded synchronously before the lossy UI
+        // channel, so a saturated event stream cannot hide tool/message progress.
+        if let Some(state) = &live_execution {
+            if let Ok(mut state) = state.lock() {
+                state.observe(&ev);
+            }
+        }
         // try_send: drop event if the channel is full rather than blocking
-        // the synchronous callback.  Dropped tokens are acceptable — the
-        // full text is recovered via messageRefs + get_message when contentLength exceeds held text (#1060).
+        // the synchronous callback. Dropped presentation events are acceptable.
         let _ = progress_tx.try_send(ev);
     })));
 
@@ -363,12 +385,18 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         cancel_rx,
         notification_rx,
         subagent_registry,
+        conversation_snapshot: conversation_snapshot.as_ref(),
     })
     .await;
 
     // Clear the callback so it doesn't hold the closed sender.
     agent.set_progress_callback(None);
     agent_session.set_streaming(false);
+    if let Some(state) = &execution_state {
+        if let Ok(mut state) = state.lock() {
+            state.finish_run();
+        }
+    }
 
     // Auto-await (#816): completions that arrived mid-turn are buffered here as
     // pending notes — NOT injected into the turn that just ran. They surface at
@@ -386,6 +414,11 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     match result {
         None => {
             discard_interrupted_turn_after_prompt(messages, prompt_id);
+            if let Some(state) = &execution_state {
+                if let Ok(mut state) = state.lock() {
+                    state.set_message_count(user_visible_messages(messages, system_prompt).len());
+                }
+            }
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
@@ -475,6 +508,7 @@ struct TokenDrainArgs<'a, 's> {
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
     notification_rx: &'a mut Option<NotificationRx>,
     subagent_registry: &'a Option<SubagentRegistry>,
+    conversation_snapshot: Option<&'a super::uds_multi::ConversationSnapshot>,
 }
 
 /// Run `agent.process()` while draining progress events (especially tokens)
@@ -498,6 +532,7 @@ async fn run_with_token_drain(
         cancel_rx,
         notification_rx,
         subagent_registry,
+        conversation_snapshot,
     } = args;
     // We can't run process() and drain the channel truly concurrently because
     // process() takes &mut messages (exclusive borrow).  Instead we poll
@@ -526,6 +561,7 @@ async fn run_with_token_drain(
                 if matches!(ev, AgentProgressEvent::Token(_)) {
                     tokens_emitted = true;
                 }
+                publish_turn_progress(&ev, conversation_snapshot).await;
                 forward_progress_event_sink(ev, sink).await;
             }
             Some(notif) = notif_recv => {
@@ -538,6 +574,7 @@ async fn run_with_token_drain(
                     if matches!(ev, AgentProgressEvent::Token(_)) {
                         tokens_emitted = true;
                     }
+                    publish_turn_progress(&ev, conversation_snapshot).await;
                     forward_progress_event_sink(ev, sink).await;
                 }
                 if let Some(rx) = notification_rx.as_mut() {
@@ -551,6 +588,24 @@ async fn run_with_token_drain(
     };
 
     (result, notifications, tokens_emitted)
+}
+
+async fn publish_turn_progress(
+    event: &AgentProgressEvent,
+    snapshot: Option<&super::uds_multi::ConversationSnapshot>,
+) {
+    let (Some(snapshot), AgentProgressEvent::TurnCompleted { messages }) = (snapshot, event) else {
+        return;
+    };
+    let mut snap = snapshot.write().await;
+    let mut live = snap.messages.clone();
+    for message in messages.iter() {
+        if !live.iter().any(|existing| existing.id() == message.id()) {
+            live.push(message.clone());
+        }
+    }
+    snap.publish(&live);
+    snap.record_full(messages);
 }
 
 /// Handle one subagent notification received mid-turn: broadcast it to clients

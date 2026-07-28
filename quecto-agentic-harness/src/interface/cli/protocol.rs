@@ -3,16 +3,13 @@
 /// Length-prefixed UTF-8 JSON protocol over a Unix domain socket.
 /// All commands carry an optional `id` field for request/response correlation.
 use serde::{Deserialize, Serialize};
-
 /// Authoritative protocol page size for paged conversation history (#1061).
 ///
 /// The single definition every producer, consumer, and test suite shares —
 /// per-call-site literals are forbidden by the #1061 constraint. `pub` (not
 /// crate-private) so the BDD integration targets assert against the same value.
 pub const HISTORY_PAGE_SIZE: usize = 64;
-
 // ─── Public parse helper ──────────────────────────────────────────────────────
-
 /// Parse a single JSON line into an [`AgentCommand`].
 /// Returns `Err` for invalid JSON or an unrecognised command type.
 pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
@@ -21,7 +18,6 @@ pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
     }
     serde_json::from_str(line).map_err(|e| format!("parse error: {e}"))
 }
-
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
 
 /// A command received over the UDS socket.
@@ -702,6 +698,8 @@ pub struct SessionState {
     pub effort_levels: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<super::uds_execution_state::ExecutionSnapshot>,
     #[serde(default)]
     pub sync: u8,
 }

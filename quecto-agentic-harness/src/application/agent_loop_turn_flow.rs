@@ -175,6 +175,9 @@ impl AgentLoopImpl {
         // before the final response is printed to stdout.
         self.notify(|| AgentProgressEvent::Done);
         let mut result = self.finalize_text_response(messages, response, end).await;
+        self.notify(|| AgentProgressEvent::ConversationChanged {
+            messages: messages.clone().into(),
+        });
         if let Some(final_message) = messages.last() {
             appended_messages.push(final_message.clone());
         }
