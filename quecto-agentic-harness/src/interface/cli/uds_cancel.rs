@@ -412,6 +412,11 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     match result {
         None => {
             discard_interrupted_turn_after_prompt(messages, prompt_id);
+            if let Some(state) = &execution_state {
+                if let Ok(mut state) = state.lock() {
+                    state.set_message_count(user_visible_messages(messages, system_prompt).len());
+                }
+            }
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {

@@ -8,6 +8,15 @@ use super::{
 };
 use crate::domain::session::Session;
 
+fn sync_message_count(ctx: &DispatchCtx<'_>) {
+    if let Ok(mut state) = ctx.execution_state.lock() {
+        state.set_message_count(
+            super::super::uds_snapshots::user_visible_messages(ctx.messages, ctx.system_prompt)
+                .len(),
+        );
+    }
+}
+
 pub(super) fn set_workflow_run(
     ctx: &mut DispatchCtx<'_>,
     workflow_run: Option<crate::domain::workflow::WorkflowRunPersisted>,
@@ -92,6 +101,7 @@ pub(super) async fn handle_new_session(
         return false;
     }
     clear_conversation(ctx.messages);
+    sync_message_count(ctx);
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.drain_pending();
@@ -199,6 +209,7 @@ pub(super) async fn handle_resume_session(
     ctx.last_persisted_message_index = ctx.messages.len();
     set_workflow_run(ctx, workflow_run);
     inject_system_prompt(ctx.messages, ctx.system_prompt);
+    sync_message_count(ctx);
     // Atomically reset history AND spill namespace to the resumed session so
     // refs from the previous session cannot resolve and collapsed refs from the
     // resumed session never query the previous session key.
@@ -236,6 +247,7 @@ pub(super) async fn handle_clear_history(
         return false;
     }
     clear_conversation(ctx.messages);
+    sync_message_count(ctx);
     let advance = ctx.conversation_snapshot.write().await.clear();
     emit_ledger_advanced(ctx, advance).await;
     ctx.last_persisted_message_index = 0;
@@ -286,6 +298,7 @@ pub(super) async fn handle_rewind_to(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
+    sync_message_count(ctx);
 
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
