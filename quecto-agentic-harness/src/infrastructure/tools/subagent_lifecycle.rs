@@ -44,8 +44,10 @@ pub enum SubagentLifecycleEvent {
     /// Monitor failed to connect before the child exited or the retry budget was
     /// exhausted.
     SocketConnectFailed,
-    /// A turn or tool started.
+    /// A new agent turn started or was accepted by the child queue.
     RunStarted,
+    /// A tool started inside the current turn.
+    ToolStarted,
     /// A turn ended successfully or with only recoverable tool errors.
     RunEnded,
     /// A run-level failure was observed.
@@ -82,7 +84,8 @@ impl SubagentLifecycleState {
             (_, Event::KillRequested) => State::Killed,
             (_, Event::ProcessExited | Event::SocketConnectFailed) => State::Exited,
             (_, Event::RunFailed) => State::Failed,
-            (_, Event::RunStarted) => State::Busy,
+            (State::Failed, Event::ToolStarted | Event::RunEnded) => State::Failed,
+            (_, Event::RunStarted | Event::ToolStarted) => State::Busy,
             (_, Event::RunEnded) => State::Idle,
 
             (State::Launched, Event::SocketConnected) => State::SocketReady,

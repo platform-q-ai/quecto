@@ -13,7 +13,7 @@ mod spawn_binary;
 mod spawn_launch_args;
 mod spawn_registry;
 pub mod subagent_cascade;
-pub mod subagent_lifecycle;
+mod subagent_lifecycle;
 pub mod subagent_monitor;
 pub mod subagent_monitor_merge;
 mod subagent_monitor_registry;

@@ -8,6 +8,7 @@
 //! turn-completion response) unblocks the parent fast. #880 extends the
 //! same queue-and-accept semantic to set_model/clear_history/reload_extensions.
 
+use super::super::subagent_registry::SubagentStatus;
 use super::*;
 use std::io::Write;
 
@@ -207,16 +208,30 @@ async fn busy_child_steer_abort_follow_up_return_promptly() {
 }
 
 #[tokio::test]
-async fn busy_child_set_model_clear_history_reload_extensions_return_promptly() {
+async fn busy_child_set_model_clear_history_reload_extensions_return_promptly_without_starting_run()
+{
     for (cmd, body) in [
         ("set_model", r#","model":"anthropic/claude-sonnet-4-6""#),
         ("clear_history", ""),
         ("reload_extensions", ""),
     ] {
         let id = format!("busy-{cmd}");
-        let (tool, _reg, _tmp) = busy_fast_ack_child(&id);
+        let (tool, reg, _tmp) = busy_fast_ack_child(&id);
+        {
+            let mut guard = reg.lock().unwrap();
+            let entry = guard.get_mut(&id).unwrap();
+            entry.lifecycle = super::super::subagent_lifecycle::SubagentLifecycleState::Idle;
+            entry.status = SubagentStatus::Idle;
+        }
         let args = format!(r#"{{"agent_id":"{id}","command":"{cmd}"{body}}}"#);
         let result = run_with_overall_cap(&tool, &args).await;
+        let entry = reg.lock().unwrap().get(&id).unwrap().clone();
+        assert_eq!(
+            entry.lifecycle,
+            super::super::subagent_lifecycle::SubagentLifecycleState::Idle,
+            "{cmd} must not start a child run lifecycle"
+        );
+        assert_eq!(entry.status, SubagentStatus::Idle);
         assert!(!result.is_error, "{cmd} got error: {}", result.content);
         assert!(
             result.content.contains("\"success\":true"),

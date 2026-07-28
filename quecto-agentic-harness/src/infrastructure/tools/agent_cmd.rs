@@ -337,7 +337,7 @@ impl AgentCmdTool {
     /// Kill a specific subagent by ID: SIGTERM + cascade-remove its sub-tree from
     /// the registry, then broadcast the survivor set (#559, #831).
     fn record_forwarded_command_lifecycle(&self, agent_id: &str, command: &str) {
-        if !Self::is_control_command(command) || command == "abort" {
+        if !matches!(command, "prompt" | "steer" | "follow_up") {
             return;
         }
         let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());

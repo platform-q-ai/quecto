@@ -5,6 +5,7 @@
 
 use std::time::Instant;
 
+use super::subagent_lifecycle::SubagentLifecycleState;
 use super::subagent_registry::{SubagentEntry, SubagentRegistry, SubagentStatus};
 
 /// Maximum number of descendant entries accepted from a single child's
@@ -93,6 +94,7 @@ fn merge_descendants(
             .and_then(|v| v.as_str())
             .map(SubagentStatus::from_wire_str)
         {
+            entry.lifecycle = SubagentLifecycleState::from_status(&status);
             entry.status = status;
         }
         entry.last_tool = d

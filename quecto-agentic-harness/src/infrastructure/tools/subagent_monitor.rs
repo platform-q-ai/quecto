@@ -10,7 +10,7 @@ pub use super::subagent_monitor_registry::update_entry_next_sequence;
 use super::subagent_monitor_stall::{
     classify_workflow_idle_stall, retry_pending_stalls, take_completion_armed,
 };
-pub use super::subagent_monitor_truncate::truncate_string;
+use super::subagent_monitor_truncate::truncate_string;
 #[cfg(test)]
 pub use super::subagent_registry::SubagentStatus;
 use super::subagent_registry::{
@@ -75,7 +75,7 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
         }
         "tool_execution_start" => {
             entry.status =
-                apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::RunStarted);
+                apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::ToolStarted);
             if let Some(tool_name) = value.get("toolName").and_then(|v| v.as_str()) {
                 entry.last_tool = Some(truncate_string(tool_name, MAX_STORED_STRING));
             }

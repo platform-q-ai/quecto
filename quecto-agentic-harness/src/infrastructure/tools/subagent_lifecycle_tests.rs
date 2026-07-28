@@ -64,11 +64,19 @@ fn kill_during_busy_is_terminal_and_projects_to_existing_exited_status() {
 }
 
 #[test]
-fn run_failure_is_explicit_and_recoverable_by_new_run() {
+fn run_failure_stays_sticky_until_current_turn_ends() {
     let state = State::Busy.transition(Event::RunFailed);
 
     assert_eq!(state, State::Failed);
     assert_eq!(state.status_projection(), SubagentStatus::Error);
+    assert_eq!(state.transition(Event::ToolStarted), State::Failed);
+    assert_eq!(state.transition(Event::RunEnded), State::Failed);
+}
+
+#[test]
+fn failed_child_can_recover_when_a_new_agent_run_starts() {
+    let state = State::Busy.transition(Event::RunFailed);
+
     assert_eq!(state.transition(Event::RunStarted), State::Busy);
 }
 

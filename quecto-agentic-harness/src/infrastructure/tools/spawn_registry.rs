@@ -1,5 +1,4 @@
-use super::spawn::SubagentEntry;
-use super::subagent_registry::{ExitSignal, SubagentRegistry};
+use super::subagent_registry::{ExitSignal, SubagentEntry, SubagentRegistry};
 
 /// Insert a freshly-spawned child entry into the registry and immediately
 /// broadcast the full survivor set, so connected TUIs learn of the new agent at
