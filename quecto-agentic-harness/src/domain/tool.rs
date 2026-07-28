@@ -92,10 +92,11 @@ pub trait ToolGuard: Send + Sync {
     fn check(&self, tool_name: &str, arguments: &str) -> Result<(), String>;
 }
 
-/// Port: a registry of tools that can be queried and executed.
+/// Port: a read-only catalog of tools available to the model.
 ///
-/// Uses `Pin<Box<dyn Future>>` for dyn-compatibility.
-pub trait ToolRegistry: Send + Sync {
+/// Use this role when callers only need schema/name visibility and should not
+/// execute or mutate the registry.
+pub trait ToolCatalog: Send + Sync {
     /// Return all tool definitions (for injection into LLM prompts).
     fn definitions(&self) -> &[ToolDefinition];
 
@@ -105,17 +106,30 @@ pub trait ToolRegistry: Send + Sync {
     fn tool_count(&self) -> usize {
         self.definitions().len()
     }
+}
 
+/// Port: execution-only access to registered tools.
+///
+/// Uses `Pin<Box<dyn Future>>` for dyn-compatibility.
+pub trait ToolExecutor: Send + Sync {
+    /// Execute a tool by name with JSON arguments.
+    fn execute(
+        &self,
+        name: &str,
+        arguments: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>>;
+}
+
+/// Port: extension-tool lifecycle management.
+///
+/// Registries that do not support dynamic extension tools may keep the default
+/// inert behaviour; UDS extension handling depends on the concrete adapter
+/// overriding these methods.
+pub trait ExtensionToolRegistry: Send + Sync {
     /// Return names of tools registered from extensions (not core tools).
-    ///
-    /// Default: empty (no extension tracking). Override in registries that
-    /// track extension tools separately (e.g. `ToolRegistryImpl`).
     fn extension_names(&self) -> Vec<String> {
         vec![]
     }
-
-    /// Notify stateful tools that the active session key changed.
-    fn set_session_key(&self, _session_key: &str) {}
 
     /// Register a single extension tool.
     ///
@@ -126,13 +140,23 @@ pub trait ToolRegistry: Send + Sync {
     ///
     /// No-op if the name is not an extension tool. Default: no-op.
     fn unregister_extension(&mut self, _name: &str) {}
+}
 
-    /// Execute a tool by name with JSON arguments.
-    fn execute(
-        &self,
-        name: &str,
-        arguments: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>>;
+/// Port: session-key propagation for stateful tools.
+pub trait SessionAwareTools: Send + Sync {
+    /// Notify stateful tools that the active session key changed.
+    fn set_session_key(&self, _session_key: &str) {}
+}
+
+/// Port: full tool registry capability used at composition boundaries.
+///
+/// Most application call sites should prefer one of the role-specific ports
+/// above when they need only catalog, execution, extension lifecycle, or
+/// session propagation behaviour. The full registry remains as the ergonomic
+/// bundle owned by `AgentLoopImpl`.
+pub trait ToolRegistry:
+    ToolCatalog + ToolExecutor + ExtensionToolRegistry + SessionAwareTools
+{
 }
 
 #[cfg(test)]

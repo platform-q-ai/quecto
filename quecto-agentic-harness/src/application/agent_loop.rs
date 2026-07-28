@@ -13,7 +13,9 @@ use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
 use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::ContextSpillStore;
-use crate::domain::tool::ToolRegistry;
+use crate::domain::tool::{
+    ExtensionToolRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
+};
 use std::pin::Pin;
 use std::sync::Arc;
 #[path = "agent_loop_clamp.rs"]
@@ -273,19 +275,40 @@ impl AgentLoopImpl {
     /// Return names of tools registered from extensions (UDS `get_extensions`
     /// reports only actually-available tools; shadows are rejected earlier).
     pub fn tool_registry_extension_names(&self) -> Vec<String> {
-        self.tool_registry.extension_names()
+        self.extension_tool_registry().extension_names()
     }
     /// Register a single extension tool (e.g. from a UDS client).
     pub fn register_extension_tool(&mut self, tool: std::sync::Arc<dyn crate::domain::tool::Tool>) {
-        crate::domain::tool::ToolRegistry::register_extension(&mut *self.tool_registry, tool);
+        self.extension_tool_registry_mut().register_extension(tool);
     }
     /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
     pub fn unregister_extension_tool(&mut self, name: &str) {
-        crate::domain::tool::ToolRegistry::unregister_extension(&mut *self.tool_registry, name);
+        self.extension_tool_registry_mut()
+            .unregister_extension(name);
     }
     /// Return all tool definitions (for core name lookups).
     pub fn tool_definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
-        self.tool_registry.definitions()
+        self.tool_catalog().definitions()
+    }
+
+    fn tool_catalog(&self) -> &dyn ToolCatalog {
+        &*self.tool_registry
+    }
+
+    fn tool_executor(&self) -> &dyn ToolExecutor {
+        &*self.tool_registry
+    }
+
+    fn extension_tool_registry(&self) -> &dyn ExtensionToolRegistry {
+        &*self.tool_registry
+    }
+
+    fn extension_tool_registry_mut(&mut self) -> &mut dyn ExtensionToolRegistry {
+        &mut *self.tool_registry
+    }
+
+    fn session_aware_tools(&self) -> &dyn SessionAwareTools {
+        &*self.tool_registry
     }
     /// Enable or disable incremental streaming for LLM calls.
     pub fn set_streaming(&mut self, enabled: bool) {
@@ -444,7 +467,7 @@ impl AgentLoopImpl {
 
     /// Run the LLM-tool loop.
     async fn run_loop(&self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
-        let tool_defs = self.tool_registry.definitions();
+        let tool_defs = self.tool_catalog().definitions();
         let mut iterations: u32 = 0;
         let mut current_turn: u32 = 1;
         // True when the manifest needs a rebuild; starts true for prior spills.
@@ -614,7 +637,7 @@ impl AgentLoop for AgentLoopImpl {
 
     fn info(&self) -> AgentInfo {
         AgentInfo {
-            tool_count: self.tool_registry.tool_count(),
+            tool_count: self.tool_catalog().tool_count(),
         }
     }
 }

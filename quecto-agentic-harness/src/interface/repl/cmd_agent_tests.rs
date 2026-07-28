@@ -7,7 +7,10 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
-use crate::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
+use crate::domain::tool::{
+    ExtensionToolRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition, ToolExecutor,
+    ToolResult,
+};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::test_support::StubProvider;
 
@@ -42,11 +45,13 @@ impl Tool for NoopTool {
     }
 }
 
-impl ToolRegistry for EmptyRegistry {
+impl ToolCatalog for EmptyRegistry {
     fn definitions(&self) -> &[ToolDefinition] {
         &[]
     }
+}
 
+impl ToolExecutor for EmptyRegistry {
     fn execute(
         &self,
         _name: &str,
@@ -55,6 +60,12 @@ impl ToolRegistry for EmptyRegistry {
         Box::pin(async { Err(DomainError::Tool("no tools".into())) })
     }
 }
+
+impl ExtensionToolRegistry for EmptyRegistry {}
+
+impl SessionAwareTools for EmptyRegistry {}
+
+impl crate::domain::tool::ToolRegistry for EmptyRegistry {}
 
 #[tokio::test]
 async fn empty_registry_trait_methods_are_invoked() {

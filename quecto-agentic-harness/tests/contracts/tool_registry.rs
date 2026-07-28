@@ -1,11 +1,9 @@
-//! Contract tests for the `ToolRegistry` port.
+//! Contract tests for the composed `ToolRegistry` bundle port.
 //!
-//! Contract:
-//! - `definitions()` lists every registered tool.
-//! - `tool_count()` matches `definitions().len()` for core tools.
-//! - `execute(name, args)` dispatches to the registered tool.
-//! - Calling `execute` with an unknown name returns `Err` (or an error
-//!   result — whichever the registry chooses, the error must be surfaced).
+//! Role-specific contracts live in `tool_catalog`, `tool_executor`,
+//! `extension_tool_registry`, and `session_aware_tools`. This module proves
+//! the composition-root bundle still exposes the combined capability expected by
+//! `AgentLoopImpl`.
 
 use quecto::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
@@ -18,6 +16,7 @@ use std::sync::Arc;
 /// through the port rather than depending on any specific production tool.
 struct Echo {
     name: Cow<'static, str>,
+    seen_sessions: Option<Arc<std::sync::Mutex<Vec<String>>>>,
 }
 impl Tool for Echo {
     fn definition(&self) -> ToolDefinition {
@@ -27,6 +26,13 @@ impl Tool for Echo {
             parameters_schema: Cow::Borrowed(r#"{"type":"object"}"#),
         }
     }
+
+    fn set_session_key(&self, session_key: String) {
+        if let Some(seen) = &self.seen_sessions {
+            seen.lock().unwrap().push(session_key);
+        }
+    }
+
     fn execute(
         &self,
         arguments: &str,
@@ -51,9 +57,32 @@ fn new_registry_with(tools: Vec<(&'static str,)>) -> Arc<dyn ToolRegistry> {
     for (n,) in tools {
         reg.register(Arc::new(Echo {
             name: Cow::Borrowed(n),
+            seen_sessions: None,
         }));
     }
     Arc::new(reg)
+}
+
+#[test]
+fn full_registry_bundle_exposes_extension_and_session_roles() {
+    let seen_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut reg: Box<dyn ToolRegistry> = Box::new(ToolRegistryImpl::new());
+
+    reg.register_extension(Arc::new(Echo {
+        name: Cow::Borrowed("extension"),
+        seen_sessions: Some(seen_sessions.clone()),
+    }));
+    assert_eq!(reg.extension_names(), vec!["extension"]);
+
+    reg.set_session_key("session-a");
+    assert_eq!(
+        *seen_sessions.lock().unwrap(),
+        vec!["session-a".to_string()]
+    );
+
+    reg.unregister_extension("extension");
+    assert!(reg.extension_names().is_empty());
+    assert_eq!(reg.tool_count(), 0);
 }
 
 #[test]
