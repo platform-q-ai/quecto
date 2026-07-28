@@ -15,4 +15,5 @@ quecto --version >/dev/null 2>&1 || true
 exec quecto-tui \
   --no-sandbox \
   --system-file "$REPO_ROOT/quecto-agentic-harness/docs/coordinator-system-prompt.md" \
-  "$@"
+  "$@" \
+  --no-workflow

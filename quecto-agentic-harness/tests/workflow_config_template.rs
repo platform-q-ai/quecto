@@ -199,9 +199,9 @@ fn runtime_default_templates_match_canonical_folder() {
 }
 
 #[test]
-fn every_template_ends_with_reset_workflow_step() {
-    // #1290: after a workflow reports its result, clear active workflow state
-    // so the next task does not keep receiving stale completion nudges.
+fn no_template_contains_reset_workflow_step() {
+    // Workflow-driven prompting is reserved for subagents; a terminal reset step
+    // makes bound children keep working instead of reporting and stopping.
     let config = read_native_config();
     let templates = config["workflow"]["templates"]
         .as_array()
@@ -215,19 +215,9 @@ fn every_template_ends_with_reset_workflow_step() {
         let steps = template["steps"]
             .as_array()
             .unwrap_or_else(|| panic!("template `{id}` should have steps"));
-        let last = steps
-            .last()
-            .unwrap_or_else(|| panic!("template `{id}` should have a last step"));
-        assert_eq!(
-            last["key"], "reset_workflow",
-            "template `{id}` must end with reset_workflow"
-        );
-        let g = last["guidance"]
-            .as_str()
-            .unwrap_or_else(|| panic!("template `{id}` reset_workflow guidance"));
         assert!(
-            g.contains("reset") && g.contains("stale"),
-            "template `{id}` reset_workflow guidance should clear stale workflow state: {g}"
+            steps.iter().all(|step| step["key"] != "reset_workflow"),
+            "template `{id}` must not include reset_workflow"
         );
     }
 }

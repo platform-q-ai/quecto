@@ -32,9 +32,8 @@ fn workflow_guards(config: &Value) -> &[Value] {
 }
 
 fn assert_reference_steps(steps: &[Value]) {
-    // #950 added a `version_bump` step (after `verify`, before `commit`);
-    // #1290 adds a terminal `reset_workflow` step after `cleanup` (20 steps).
-    assert_eq!(steps.len(), 20);
+    // #950 added a `version_bump` step (after `verify`, before `commit`).
+    assert_eq!(steps.len(), 19);
     assert_eq!(steps.first().unwrap()["key"], "hooks");
     assert_eq!(
         steps.first().unwrap()["label"],
@@ -48,10 +47,10 @@ fn assert_reference_steps(steps: &[Value]) {
     assert_eq!(steps[8]["key"], "version_bump");
     assert_eq!(steps[9]["key"], "commit");
     // #886: the `merge` and `pull` hand-off steps are removed; the workflow now
-    // ends at `pre_merge` (report the PR, do NOT merge) then `cleanup`, then
-    // #1290 `reset_workflow`.
+    // ends at `pre_merge` (report the PR, do NOT merge) then `cleanup`.
     assert!(steps.iter().all(|s| s["key"] != "merge"));
     assert!(steps.iter().all(|s| s["key"] != "pull"));
+    assert!(steps.iter().all(|s| s["key"] != "reset_workflow"));
     assert_eq!(steps[17]["key"], "pre_merge");
     assert_eq!(
         steps[17]["label"],
@@ -59,11 +58,6 @@ fn assert_reference_steps(steps: &[Value]) {
     );
     assert_eq!(steps[18]["key"], "cleanup");
     assert_eq!(steps[18]["label"], "Clean up sub agents");
-    assert_eq!(steps.last().unwrap()["key"], "reset_workflow");
-    assert_eq!(
-        steps.last().unwrap()["label"],
-        "Reset workflow state for the next task"
-    );
 }
 
 fn assert_reference_guards(guards: &[Value]) {
@@ -94,7 +88,7 @@ fn readme_documents_pure_move_refactor_pr_boundary() {
 }
 
 #[test]
-fn readme_lists_full_20_step_reference_workflow() {
+fn readme_lists_full_19_step_reference_workflow() {
     let readme = read_repo_file("README.md");
 
     for expected in [
@@ -117,7 +111,6 @@ fn readme_lists_full_20_step_reference_workflow() {
         "17 - Verify the PR meets every issue acceptance criterion",
         "18 - Request authoritative CI and report the PR (do not merge)",
         "19 - Clean up sub agents",
-        "20 - Reset workflow state for the next task",
     ] {
         assert!(
             readme.contains(expected),

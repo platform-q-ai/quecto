@@ -695,7 +695,6 @@ Pure-move refactors (for example file extractions, renames, or byte-identical mo
 17 - Verify the PR meets every issue acceptance criterion
 18 - Request authoritative CI and report the PR (do not merge)
 19 - Clean up sub agents
-20 - Reset workflow state for the next task
 
 ## Quality gates
 

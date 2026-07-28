@@ -128,7 +128,6 @@ fn refactor_pipeline_steps_are_exactly_ordered() {
         "conformance",
         "pre_merge",
         "cleanup",
-        "reset_workflow",
     ];
     let actual: Vec<&str> = steps(&config)
         .iter()
