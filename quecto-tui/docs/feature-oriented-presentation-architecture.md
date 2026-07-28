@@ -272,7 +272,10 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `components/chat_render.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/chat_stub.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/component.rs` | `components` (relocated, #1257 Phase 1/6) |
-| `components/editor.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/editor.rs` | `components` compat re-export of text-input Editor (#1277) |
+| `components/text_input/editor.rs` | `components` text-input system core (#1277) |
+| `components/text_input/history.rs` | `components` submitted-input history (#1277) |
+| `components/text_input/mod.rs` | `components` text-input system root (#1277) |
 | `components/effort_selector.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/files_autocomplete.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/footer.rs` | `components` (relocated, #1257 Phase 1/6) |
