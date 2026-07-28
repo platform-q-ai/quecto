@@ -388,6 +388,8 @@ pub struct QuectoWorld {
     pub agent_cmd_tool: Option<quecto::infrastructure::tools::agent_cmd::AgentCmdTool>,
     /// AgentCmdTool result for BDD (#421)
     pub agent_cmd_result: Option<ToolResult>,
+    /// Live execution state observed by issue #1282 BDD scenarios.
+    pub live_execution_state: Option<serde_json::Value>,
     /// Shared subagent registry for BDD (#421)
     pub agent_cmd_registry: Option<quecto::infrastructure::tools::agent_cmd::SubagentRegistry>,
     /// Mock UDS server temp dir for agent_cmd BDD (kept alive)
@@ -1341,6 +1343,7 @@ mod tui_context_usage_steps;
 mod uds_1093_steps;
 mod uds_bounded_events_steps;
 mod uds_framing_steps;
+mod uds_live_execution_state_steps;
 mod uds_paged_history_steps;
 mod uds_steps;
 mod web_fetch_steps;

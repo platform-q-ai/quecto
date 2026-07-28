@@ -15,6 +15,31 @@ pub mod uds_cancel;
 mod uds_control_forward;
 mod uds_delete_all_subagents;
 mod uds_execution_state;
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn live_execution_state_for_events(
+    events: &[crate::domain::agent::AgentProgressEvent],
+) -> serde_json::Value {
+    let mut state = uds_execution_state::ExecutionState::default();
+    state.start_run();
+    for event in events {
+        state.observe(event);
+    }
+    serde_json::json!({ "messageCount": state.message_count(), "execution": state.snapshot() })
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn completed_live_execution_state(
+    events: &[crate::domain::agent::AgentProgressEvent],
+) -> serde_json::Value {
+    let mut state = uds_execution_state::ExecutionState::default();
+    state.start_run();
+    for event in events {
+        state.observe(event);
+    }
+    state.finish_run();
+    serde_json::json!({ "messageCount": state.message_count(), "execution": state.snapshot() })
+}
 #[cfg(test)]
 mod uds_execution_state_tests;
 mod uds_ext_protocol;
