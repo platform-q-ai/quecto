@@ -469,6 +469,12 @@ Review concern disposition for #1224:
 
 - Accepted during conformance: the source-text App owner guard was not an acceptable final conformance mechanism. It was removed rather than generalized. App composition is verified by code inspection in the conformance step; behavior remains pinned by existing TUI suites and the workspace capacity characterization test.
 
+Follow-up investigation for #1255:
+
+- Decision: no executable non-source-text App composition guard is currently feasible enough to add.
+- Rationale: Rust tests cannot reflect over `App`'s private field ownership or constructor expressions without either scanning source text, weakening encapsulation with test-only production APIs, or adding production marker interfaces whose only purpose is to satisfy the guard. Those options would make the guard brittle or couple production code to tests instead of checking user-visible behavior.
+- Accepted mechanism: keep App composition ownership as conformance/code-review evidence, while behavior and performance remain pinned by executable contract tests for the owned feature flows (model/effort/session/workflow/rewind/workspace paths, workspace autocomplete capacity, architecture dependency/documentation ratchets, and TUI render/interaction suites).
+
 ### Inter-issue sequencing
 
 1. #1220 establishes protocol mapper conventions and typed feature inputs.
