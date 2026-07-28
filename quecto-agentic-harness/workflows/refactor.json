@@ -95,8 +95,7 @@
       "label": "Clean up sub agents",
       "phase": "ci_cd",
       "guidance": "Reviewers that have already reported completion have exited and need no cleanup. Check `get_subagents` for any sub agent still running, and only then terminate the stragglers (abort or kill each) so no orphaned sub agents remain."
-    },
-    "steps/shared/reset_workflow"
+    }
   ],
   "guards": [
     {

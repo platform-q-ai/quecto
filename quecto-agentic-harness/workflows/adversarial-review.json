@@ -44,7 +44,6 @@
       "label": "Report findings summary and clean up",
       "phase": "review",
       "guidance": "Report the posted review: findings by severity, what was refuted and why, and any PLAUSIBLE items needing human judgement. Subagents that already reported completion have exited and need no cleanup; check `get_subagents` and terminate only still-running stragglers. Confirm the working tree is untouched (`git status` clean). Done when the summary is reported and no subagents or local changes remain."
-    },
-    "steps/shared/reset_workflow"
+    }
   ]
 }

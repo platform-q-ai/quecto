@@ -422,10 +422,9 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
             "conformance",
             "pre_merge",
             "cleanup",
-            "reset_workflow",
         ]
     );
-    assert_eq!(snap.progress.total, 20);
+    assert_eq!(snap.progress.total, 19);
     assert_eq!(snap.steps[0].label, "Install/check local quality hooks");
     assert_eq!(
         snap.steps[4].label,

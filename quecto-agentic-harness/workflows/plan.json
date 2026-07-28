@@ -45,7 +45,6 @@
       "label": "Report and hand off",
       "phase": "ci_cd",
       "guidance": "Report: the plan location, phase count, key decisions, and any open questions needing the human. Recommend which implementation template each phase should run under ('feature', 'refactor', 'remove', 'chore'). Terminate straggler subagents (get_subagents). Done when reported."
-    },
-    "steps/shared/reset_workflow"
+    }
   ]
 }
