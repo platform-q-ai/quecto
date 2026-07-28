@@ -441,6 +441,6 @@ agent ids, and tool-call ids.
 - [ ] Phase 2: agent turn state machine extraction.
 - [ ] Phase 3: UDS command-family routing.
 - [ ] Phase 4: subagent lifecycle state machine.
-- [ ] Phase 5: typed identifiers at high-risk boundaries.
+- [x] Phase 5: typed identifiers at high-risk boundaries.
 - [ ] Phase 6: role-segregated ports where needed.
 - [ ] Phase 7: contributor cookbooks and focused local checks.

@@ -1,23 +1,25 @@
 use super::super::protocol::AgentEvent;
 use super::DispatchCtx;
+use crate::domain::ids::{AgentId, CommandId};
 
 pub(super) async fn forward_subagent_sync(
     ctx: &DispatchCtx<'_>,
-    id: Option<&str>,
+    id: Option<CommandId>,
     tn: &str,
-    agent_id: &str,
+    agent_id: AgentId,
     epoch: u64,
     since_rev: u64,
 ) -> AgentEvent {
     use crate::infrastructure::tools::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, lookup_subagent_socket, send_subagent_uds_command_with_timeout,
     };
+    let id_ref = id.as_ref().map(CommandId::as_str);
     let Some(registry) = ctx.subagent_registry.as_ref() else {
-        return AgentEvent::err(id, tn, "no sub-agent registry available");
+        return AgentEvent::err(id_ref, tn, "no sub-agent registry available");
     };
-    let socket_path = match lookup_subagent_socket(registry, agent_id) {
+    let socket_path = match lookup_subagent_socket(registry, agent_id.as_str()) {
         Ok(path) => path,
-        Err(e) => return AgentEvent::err(id, tn, e),
+        Err(e) => return AgentEvent::err(id_ref, tn, e),
     };
     let cmd =
         serde_json::json!({ "type": "sync", "epoch": epoch, "sinceRev": since_rev }).to_string();
@@ -25,9 +27,9 @@ pub(super) async fn forward_subagent_sync(
         .await
     {
         Ok(line) => match super::uds_forward_response::parse_forwarded_response(&line, "sync") {
-            Ok(data) => AgentEvent::ok(id, tn, Some(data)),
-            Err(error) => AgentEvent::err(id, tn, error),
+            Ok(data) => AgentEvent::ok(id_ref, tn, Some(data)),
+            Err(error) => AgentEvent::err(id_ref, tn, error),
         },
-        Err(e) => AgentEvent::err(id, tn, e.to_string()),
+        Err(e) => AgentEvent::err(id_ref, tn, e.to_string()),
     }
 }

@@ -411,11 +411,11 @@ async fn forward_get_messages_propagates_child_failure() {
 
     let event = forward_subagent_get_messages(
         &ctx,
-        Some("page-2"),
+        Some(crate::domain::ids::CommandId::from("page-2")),
         "get_messages",
-        "worker",
+        crate::domain::ids::AgentId::from("worker"),
         None,
-        Some("stale"),
+        Some(crate::domain::ids::MessageId::from("stale")),
     )
     .await;
     handle.await.unwrap();
@@ -434,9 +434,15 @@ async fn forward_get_messages_rejects_malformed_child_response() {
     let mut ctx = fx.ctx();
     ctx.subagent_registry = Some(registry);
 
-    let event =
-        forward_subagent_get_messages(&ctx, Some("page-2"), "get_messages", "worker", None, None)
-            .await;
+    let event = forward_subagent_get_messages(
+        &ctx,
+        Some(crate::domain::ids::CommandId::from("page-2")),
+        "get_messages",
+        crate::domain::ids::AgentId::from("worker"),
+        None,
+        None,
+    )
+    .await;
     handle.await.unwrap();
     let json = serde_json::to_value(event).unwrap();
 
@@ -453,8 +459,15 @@ async fn forward_get_messages_rejects_malformed_child_response() {
 async fn forward_uncounted_no_registry_is_error_event() {
     let mut fx = Fx::new();
     let ctx = fx.ctx(); // subagent_registry: None
-    let ev = forward_subagent_get_messages(&ctx, Some("id1"), "get_messages", "worker", None, None)
-        .await;
+    let ev = forward_subagent_get_messages(
+        &ctx,
+        Some(crate::domain::ids::CommandId::from("id1")),
+        "get_messages",
+        crate::domain::ids::AgentId::from("worker"),
+        None,
+        None,
+    )
+    .await;
     let json = serde_json::to_value(&ev).unwrap();
     assert!(
         json.get("error").is_some(),
@@ -469,9 +482,9 @@ async fn forward_tail_unknown_agent_is_error_event() {
     ctx.subagent_registry = Some(new_registry());
     let ev = forward_subagent_get_messages(
         &ctx,
-        Some("id1"),
+        Some(crate::domain::ids::CommandId::from("id1")),
         "get_messages_tail",
-        "ghost",
+        crate::domain::ids::AgentId::from("ghost"),
         Some(3),
         None,
     )
@@ -520,9 +533,9 @@ async fn forward_get_message_preserves_id_and_range_on_child_wire() {
         Some("parent-page"),
         "get_message",
         ForwardGetMessage {
-            agent_id: "worker",
-            message_id: "m1",
-            tool_call_id: Some("call-large"),
+            agent_id: crate::domain::ids::AgentId::from("worker"),
+            message_id: crate::domain::ids::MessageId::from("m1"),
+            tool_call_id: Some(crate::domain::ids::ToolCallId::from("call-large")),
             offset: Some(4096),
             limit: Some(8192),
         },
@@ -553,8 +566,8 @@ async fn forward_get_message_no_registry_is_error_event() {
         Some("id1"),
         "get_message",
         ForwardGetMessage {
-            agent_id: "worker",
-            message_id: "m1",
+            agent_id: crate::domain::ids::AgentId::from("worker"),
+            message_id: crate::domain::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
             limit: None,
@@ -578,8 +591,8 @@ async fn forward_get_message_unknown_agent_is_error_event() {
         Some("id1"),
         "get_message",
         ForwardGetMessage {
-            agent_id: "ghost",
-            message_id: "m1",
+            agent_id: crate::domain::ids::AgentId::from("ghost"),
+            message_id: crate::domain::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
             limit: None,

@@ -1,3 +1,4 @@
+use crate::domain::ids::MessageId;
 use crate::domain::message::Message;
 
 use super::{message_to_json, role_wire_name};
@@ -11,22 +12,29 @@ pub(super) const HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES: usize = 2048;
 /// Locate a message by its stable wire id (a stringified UUID). Parses the id
 /// ONCE and compares typed UUIDs instead of allocating a `to_string` per
 /// candidate (#1061 review). A non-UUID id matches nothing, so `None`.
-pub(crate) fn position_by_wire_id(messages: &[Message], wire_id: &str) -> Option<usize> {
-    let target = uuid::Uuid::parse_str(wire_id).ok()?;
+pub(crate) fn position_by_message_id(
+    messages: &[Message],
+    message_id: &MessageId,
+) -> Option<usize> {
+    let target = uuid::Uuid::parse_str(message_id.as_str()).ok()?;
     messages.iter().position(|m| m.id() == target)
+}
+
+pub(crate) fn position_by_wire_id(messages: &[Message], wire_id: &str) -> Option<usize> {
+    position_by_message_id(messages, &MessageId::from(wire_id))
 }
 
 /// Return a JSON value containing the selected history window in chronological order.
 ///
 /// `count: 0` keeps the legacy empty-page contract and reports no cursor (the
 /// cursor names the oldest INCLUDED message, which an empty window lacks).
-pub fn messages_page_json(
+pub(crate) fn messages_page_json_for_id(
     messages: &[Message],
     count: usize,
-    before: Option<&str>,
+    before: Option<&MessageId>,
 ) -> serde_json::Value {
     let end = before
-        .and_then(|cursor| position_by_wire_id(messages, cursor))
+        .and_then(|cursor| position_by_message_id(messages, cursor))
         .unwrap_or(messages.len());
     // Default callers supply HISTORY_PAGE_SIZE; an explicit `count` retains the
     // legacy "last N" contract (including counts above one page), subject to the
@@ -63,7 +71,16 @@ pub fn messages_page_json(
 
 /// Return a JSON value containing the last `count` messages in chronological order.
 pub fn messages_tail_json(messages: &[Message], count: usize) -> serde_json::Value {
-    messages_page_json(messages, count, None)
+    messages_page_json_for_id(messages, count, None)
+}
+
+pub fn messages_page_json(
+    messages: &[Message],
+    count: usize,
+    before: Option<&str>,
+) -> serde_json::Value {
+    let before = before.map(MessageId::from);
+    messages_page_json_for_id(messages, count, before.as_ref())
 }
 
 pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Value {

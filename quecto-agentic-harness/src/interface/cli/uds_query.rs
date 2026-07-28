@@ -1,9 +1,10 @@
 use super::protocol::AgentCommand;
 use super::uds::DispatchCtx;
 use super::uds_session::{
-    HISTORY_PAGE_SIZE, compute_session_stats_with_usage, messages_page_json, messages_tail_json,
-    position_by_wire_id,
+    HISTORY_PAGE_SIZE, compute_session_stats_with_usage, messages_page_json_for_id,
+    messages_tail_json, position_by_message_id,
 };
+use crate::domain::ids::{CommandId, MessageId, ToolCallId};
 use crate::domain::message::Message;
 
 fn user_visible_messages(messages: &[Message], system_prompt: &str) -> Vec<Message> {
@@ -21,25 +22,32 @@ fn user_visible_message_count(messages: &[Message], system_prompt: &str) -> usiz
         .count()
 }
 
+pub(super) struct GetMessageLookup<'ctx, 'data> {
+    pub(super) message_id: MessageId,
+    pub(super) tool_call_id: Option<ToolCallId>,
+    pub(super) offset: Option<usize>,
+    pub(super) limit: Option<usize>,
+    pub(super) request_id: Option<CommandId>,
+    pub(super) ctx: &'ctx DispatchCtx<'data>,
+}
+
 pub(super) fn get_message_response_data(
-    message_id: &str,
-    tool_call_id: Option<&str>,
-    offset: Option<usize>,
-    limit: Option<usize>,
-    request_id: Option<&str>,
-    ctx: &DispatchCtx<'_>,
+    req: GetMessageLookup<'_, '_>,
 ) -> Option<serde_json::Value> {
-    let message = &ctx.messages[position_by_wire_id(ctx.messages, message_id)?];
-    match tool_call_id {
+    let message = &req.ctx.messages[position_by_message_id(req.ctx.messages, &req.message_id)?];
+    match req.tool_call_id.as_ref() {
         Some(tool_call_id) => super::uds_session::tool_call_arguments_to_json_range_for_response(
             message,
-            tool_call_id,
-            offset,
-            limit,
-            request_id,
+            tool_call_id.as_str(),
+            req.offset,
+            req.limit,
+            req.request_id.as_ref().map(CommandId::as_str),
         ),
         None => Some(super::uds_session::message_to_json_range_for_response(
-            message, offset, limit, request_id,
+            message,
+            req.offset,
+            req.limit,
+            req.request_id.as_ref().map(CommandId::as_str),
         )),
     }
 }
@@ -87,10 +95,11 @@ pub(super) fn query_response_data(
         }
         AgentCommand::GetMessages { count, before, .. } => {
             let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
-            Some(messages_page_json(
+            let before = before.as_deref().map(MessageId::from);
+            Some(messages_page_json_for_id(
                 &visible_messages,
                 count.unwrap_or(HISTORY_PAGE_SIZE),
-                before.as_deref(),
+                before.as_ref(),
             ))
         }
         AgentCommand::GetMessagesTail { count, .. } => {
@@ -128,14 +137,14 @@ pub(super) fn query_response_data(
             offset,
             limit,
             ..
-        } => get_message_response_data(
-            message_id,
-            tool_call_id.as_deref(),
-            *offset,
-            *limit,
-            id.as_deref(),
+        } => get_message_response_data(GetMessageLookup {
+            message_id: MessageId::from(message_id.as_str()),
+            tool_call_id: tool_call_id.as_deref().map(ToolCallId::from),
+            offset: *offset,
+            limit: *limit,
+            request_id: id.as_deref().map(CommandId::from),
             ctx,
-        ),
+        }),
         AgentCommand::ReloadExtensions { .. } => None,
         _ => None,
     }

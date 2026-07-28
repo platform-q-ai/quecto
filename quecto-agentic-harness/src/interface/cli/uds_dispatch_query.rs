@@ -1,8 +1,9 @@
-use super::super::uds_query::query_response_data;
+use super::super::uds_query::{GetMessageLookup, query_response_data};
 use super::{
     AgentCommand, AgentEvent, DispatchCtx, emit_event_to_broadcast_or_writer,
     emit_response_or_frame_limit_error, emit_response_or_frame_limit_error_with_message,
 };
+use crate::domain::ids::{CommandId, MessageId, ToolCallId};
 
 pub(super) fn session_summary_to_json(
     summary: &crate::domain::session::SessionSummary,
@@ -78,14 +79,14 @@ pub(super) async fn dispatch_fieldless_command(
             ),
         });
         let ev = match resolved.or_else(|| {
-            super::super::uds_query::get_message_response_data(
-                message_id,
-                tool_call_id.as_deref(),
-                *offset,
-                *limit,
-                id,
+            super::super::uds_query::get_message_response_data(GetMessageLookup {
+                message_id: MessageId::from(message_id.as_str()),
+                tool_call_id: tool_call_id.as_deref().map(ToolCallId::from),
+                offset: *offset,
+                limit: *limit,
+                request_id: id.map(CommandId::from),
                 ctx,
-            )
+            })
         }) {
             Some(data) => AgentEvent::ok(id, tn, Some(data)),
             None => AgentEvent::err(id, tn, format!("message not found: {message_id}")),
