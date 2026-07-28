@@ -66,7 +66,7 @@
       "key": "pr",
       "label": "Create PR",
       "phase": "ci_cd",
-      "guidance": "Open the PR against the default branch with gh, with a clear title and a body that summarizes the change. The required CI checks are \"Unit Tests\" and \"Mock LLM E2E Tests\". Do not claim to co-author it. Opening or updating the PR does not start full CI. Done when the PR is open; request CI only after review is complete."
+      "guidance": "Open the PR against the default branch with gh, with a clear title and a body that summarizes the change. Do not claim to co-author it. Opening or updating the PR does not start full CI. Done when the PR is open; request CI only after review is complete."
     },
     {
       "key": "reviewers",
