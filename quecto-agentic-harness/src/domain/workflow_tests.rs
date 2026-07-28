@@ -301,7 +301,8 @@ fn guards_block_until_before_step_key_threshold() {
     engine.select_template("feature", None).unwrap();
     let err = engine.check_guards().unwrap_err();
     assert!(err.to_string().contains("Complete step 1"));
-    for step in 1..=19 {
+    let step_count = engine.progress().total;
+    for step in 1..=step_count {
         engine.check(step).unwrap();
     }
     assert!(engine.check_guards().is_ok());
