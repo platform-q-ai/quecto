@@ -539,9 +539,15 @@ mod workflow_display_regression {
         )]));
         h.select(Some("wfsub"));
         let pane = h.main_pane();
+        // #913/#1288: snapshot seeds compact progress (done/total + Step), not
+        // the multi-line rule box. Title chrome alone is not enough.
         assert!(
-            pane.contains("wfsub · running") && !pane.contains("2/6") && !pane.contains("Step"),
-            "#913: selecting a sub-agent with a workflow snapshot must show only compact title chrome, got:\n{pane}"
+            pane.contains("wfsub · running") && (pane.contains("2/6") || pane.contains("Step 3/6")),
+            "#913: selecting a sub-agent with a workflow snapshot must show compact progress, got:\n{pane}"
+        );
+        assert!(
+            !pane.contains("Ctrl+Shift+A") && !pane.contains("nudge:"),
+            "#913: snapshot seed must not restore multi-line pills/hints:\n{pane}"
         );
     }
 
@@ -562,9 +568,12 @@ mod workflow_display_regression {
         h.route("wfsub", wf_state(None, 2, 6, true, true)); // 2/6 advanced bar
         h.route("wfsub", wf_state(None, 0, 0, false, true)); // transient 0/0 WITH issue
         let pane = h.main_pane();
+        // Sticky progress + issue chrome must survive; must not collapse to starting…
         assert!(
-            pane.contains("#42 workflow") && !pane.contains("2/6") && !pane.contains("starting"),
-            "#915: a 0/0-with-issue event must not reintroduce workflow detail text, got:\n{pane}"
+            pane.contains("#42 workflow")
+                && (pane.contains("2/6") || pane.contains("Step 3/6"))
+                && !pane.contains("starting"),
+            "#915: a 0/0-with-issue event must keep sticky progress, got:\n{pane}"
         );
     }
 
@@ -599,13 +608,12 @@ mod workflow_display_regression {
             h.flashes(),
             h.dump()
         );
-        // select a workflow child -> bar shows immediately from snapshot (#913)
+        // select a workflow child -> compact progress shows immediately from snapshot (#913/#1288)
         h.select(Some("wf-2"));
         assert!(
             h.main_pane().contains("wf-2 · running")
-                && !h.main_pane().contains("2/18")
-                && !h.main_pane().contains("Step"),
-            "fleet: selected wf-2 must show only compact title chrome from the snapshot:\n{}",
+                && (h.main_pane().contains("2/18") || h.main_pane().contains("Step")),
+            "fleet: selected wf-2 must show compact progress from the snapshot:\n{}",
             h.main_pane()
         );
         // completion-note coalescing (deferred then flushed)

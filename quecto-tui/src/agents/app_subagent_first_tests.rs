@@ -314,10 +314,18 @@ async fn selection_uses_left_accent_bar_one_line_tall() {
     );
 }
 
-// ── Main pane: title without workflow status box for the selected agent ──────
+// ── Main pane: title + compact progress (no multi-line box) ──────────────────
+
+fn has_rule_box_row(text: &str) -> bool {
+    text.lines().any(|line| {
+        let segment = line.rsplit_once("│ ").map(|(_, s)| s).unwrap_or(line);
+        let t = segment.trim();
+        !t.is_empty() && t.chars().all(|c| c == '─')
+    })
+}
 
 #[tokio::test]
-async fn main_pane_omits_workflow_status_box_for_selected_agent() {
+async fn main_pane_shows_compact_progress_without_rule_box_for_selected_agent() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![subagent(
@@ -330,67 +338,33 @@ async fn main_pane_omits_workflow_status_box_for_selected_agent() {
         .route_subagent_event("worker", workflow_event(Some("worker")));
     let top = top_region(&mut h);
     let stripped = strip_ansi(&top);
+    // #1288: compact progress; #1246: no multi-line rule box / pills / hints.
+    assert!(!has_rule_box_row(&stripped), "no rule box:\n{top}");
     assert!(
-        !stripped.lines().any(|line| {
-            line.rsplit_once("│ ").is_some_and(|(_, segment)| {
-                !segment.is_empty() && segment.chars().all(|c| c == '─')
-            })
-        }),
-        "the main pane must not render the old workflow status box rules:\n{top}"
+        stripped.contains("Step 4/5") || stripped.contains("3/5"),
+        "live progress required:\n{top}"
     );
+    assert!(top.contains("#820"), "issue in title:\n{top}");
     assert!(
-        !top.contains("Step 4/5") && !top.contains('░') && !top.contains('█'),
-        "the old boxed workflow progress line must be omitted so chat can use the space:\n{top}"
-    );
-    assert!(
-        top.contains("#820"),
-        "the compact title line still shows the selected agent's #issue:\n{top}"
+        !top.contains("Ctrl+Shift+A")
+            && !top.contains("nudge:")
+            && !top.contains('○')
+            && !top.contains('●'),
+        "no pills/hints:\n{top}"
     );
 }
 
 #[tokio::test]
 async fn main_pane_title_renders_when_agent_has_no_workflow() {
-    // The title line must always render; only workflow details are optional.
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![subagent("worker", "running", None)]));
     h.app_mut().select_agent(Some("worker"));
-    // No workflow_state routed → compact line is None.
     let top = strip_ansi(&top_region(&mut h));
-    assert!(
-        top.contains("worker"),
-        "the main-pane TITLE must render for the selected agent even with no workflow:\n{top}"
-    );
+    assert!(top.contains("worker"), "title without workflow:\n{top}");
     assert!(
         !top.contains('┌') && !top.contains('╭'),
-        "no boxed workflow bar should render when the agent has no workflow:\n{top}"
-    );
-}
-
-#[tokio::test]
-async fn main_pane_drops_workflow_pills_hints_and_box() {
-    let mut h = TuiHarness::new().await;
-    h.event(Event::AgentStart);
-    h.event(subagents_changed(vec![subagent(
-        "worker",
-        "running",
-        Some(("active", 3, 5)),
-    )]));
-    h.app_mut().select_agent(Some("worker"));
-    h.app_mut()
-        .route_subagent_event("worker", workflow_event(Some("worker")));
-    let top = top_region(&mut h);
-    assert!(
-        !top.contains("Ctrl+Shift+A") && !top.contains("nudge:"),
-        "the main pane must not spend space on workflow hints:\n{top}"
-    );
-    assert!(
-        !top.contains('○') && !top.contains('●'),
-        "the main pane must not spend space on workflow phase pills:\n{top}"
-    );
-    assert!(
-        !top.contains('─') && !top.contains("Step 4/5"),
-        "the main pane must not render the old workflow status box:\n{top}"
+        "no box chrome:\n{top}"
     );
 }
 

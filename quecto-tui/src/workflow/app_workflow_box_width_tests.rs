@@ -30,9 +30,57 @@ async fn workflow_status_box_no_longer_renders_in_main_pane() {
         !pane.lines().any(|line| line.chars().all(|c| c == '─')),
         "the old workflow status rule rows must not render:\n{pane}"
     );
+}
+
+/// #1288: active workflow must surface live progress at the main-pane top
+/// (compact single-line indicator), not only issue title chrome.
+#[tokio::test]
+async fn active_workflow_shows_compact_progress_in_main_pane() {
+    let mut h = TuiHarness::sized(100, 30).await;
+    h.event(Event::AgentStart);
+    h.event(workflow_event());
+
+    let pane = strip_ansi(&h.main_pane());
     assert!(
-        !pane.contains("Step 2/3") && !pane.contains("Implement code"),
-        "the old workflow status content line must not render above the chat:\n{pane}"
+        pane.contains("Step 2/3") || (pane.contains("1/3") && pane.contains("Implement")),
+        "main-pane top must show live workflow progress for an active run:\n{pane}"
+    );
+    assert!(
+        !pane.lines().any(|line| {
+            let t = line.trim();
+            !t.is_empty() && t.chars().all(|c| c == '─')
+        }),
+        "compact progress must not restore the old multi-line rule box:\n{pane}"
+    );
+}
+
+/// #1288: progress must still render when no issue is bound (title alone is not enough).
+#[tokio::test]
+async fn active_workflow_without_issue_still_shows_main_pane_progress() {
+    let mut h = TuiHarness::sized(100, 30).await;
+    h.event(Event::AgentStart);
+    h.event(Event::WorkflowState {
+        agent_id: None,
+        steps: vec![
+            serde_json::json!({"index":1,"label":"Spec","phase":"red","done":true}),
+            serde_json::json!({"index":2,"label":"Implement code","phase":"green","done":false}),
+            serde_json::json!({"index":3,"label":"Review","phase":"review","done":false}),
+        ],
+        progress: serde_json::json!({"done":1,"total":3,"percent":33}),
+        active_issue: None,
+        mode: Some("active".to_string()),
+        active_template: Some(serde_json::json!({"id":"feature","label":"Feature"})),
+        available_templates: None,
+    });
+
+    let pane = strip_ansi(&h.main_pane());
+    assert!(
+        pane.contains("Step 2/3") || pane.contains("1/3"),
+        "main-pane must show progress even without a bound issue:\n{pane}"
+    );
+    assert!(
+        !pane.contains("#882"),
+        "no-issue run must not invent an issue number:\n{pane}"
     );
 }
 
@@ -91,13 +139,17 @@ async fn workflow_status_box_regression_test_fails_if_box_returns() {
     h.event(workflow_event());
 
     let pane = strip_ansi(&h.main_pane());
+    // Multi-line rule box must stay gone (#1246); compact Step n/total is intentional (#1288).
     assert!(
-        !pane.contains("Step 2/3") && !pane.contains("Implement code"),
-        "this workflow-box regression test must fail if the old boxed status content returns:\n{pane}"
+        !pane.lines().any(|line| {
+            let t = line.trim();
+            !t.is_empty() && t.chars().all(|c| c == '─')
+        }),
+        "this workflow-box regression test must fail if the old boxed status rules return:\n{pane}"
     );
     assert!(
-        !pane.lines().any(|line| line.chars().all(|c| c == '─')),
-        "this workflow-box regression test must fail if the old boxed status rules return:\n{pane}"
+        !pane.contains("Ctrl+Shift+A") && !pane.contains("nudge:"),
+        "phase-pills/hints multi-line widget must not return to the main pane:\n{pane}"
     );
 }
 

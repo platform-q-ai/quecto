@@ -238,14 +238,15 @@ Feature: TUI app event routing and command behaviours
     Then the footer shows the sub-agent model "child-model" and context "12k"
 
   @workflow-bar
-  Scenario: Workflow state renders only compact title context in the main pane
+  Scenario: Workflow state renders compact progress in the main pane
     Given a fresh TUI app harness at width 120
     When workflow state reports issue 1028 with step 2 "Add BDD coverage" in phase "red" out of 3
     Then the main pane workflow title shows "#1028"
     And the main pane workflow title shows "workflow"
-    And the main pane omits workflow detail "Step 2/3"
-    And the main pane omits workflow detail "RED"
-    And the main pane omits workflow detail "Add BDD coverage"
+    And the main pane workflow title shows "Step 2/3"
+    And the main pane workflow title shows "RED"
+    And the main pane workflow title shows "Add BDD coverage"
+    And the main pane omits workflow detail "Ctrl+Shift+A"
     And the bottom stack does not show workflow text "Step 2/3"
 
   @workflow-bar
@@ -253,6 +254,7 @@ Feature: TUI app event routing and command behaviours
     Given a fresh TUI app harness at width 60
     When workflow state reports issue 1028 with step 1 "A very long workflow label that must be truncated by the TUI" in phase "green" out of 1
     Then every workflow title frame row fits the terminal width
+    And the main pane workflow title shows "0/1"
     And the main pane omits workflow detail "A very long workflow label that must be truncated by the TUI"
 
   # ── #1050: main chat history on --socket attach ───────────────────
