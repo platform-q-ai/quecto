@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use super::subagent_lifecycle::{SubagentLifecycleEvent, SubagentLifecycleState};
+
 /// Live status of a spawned subagent, updated by the monitor task (#522).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum SubagentStatus {
@@ -70,6 +72,10 @@ pub struct SubagentEntry {
     pub socket_path: PathBuf,
     /// Child process PID (0 in stub mode).
     pub pid: u32,
+    /// Explicit internal lifecycle state. Parent-facing status is projected from
+    /// this richer state so lifecycle races can be tested without changing the
+    /// existing UDS status vocabulary.
+    pub lifecycle: SubagentLifecycleState,
     /// Live status updated by the monitor task (#522).
     pub status: SubagentStatus,
     /// Name of the last tool being executed (from tool_execution_start).
@@ -109,6 +115,10 @@ pub struct SubagentEntry {
     /// Surfaced through `get_subagents` so the TUI can mark it as an observer
     /// (#966). Display flag only; enforcement is #957.
     pub read_only: bool,
+    /// Last lifecycle event applied to this entry. This is internal observability
+    /// for race-focused tests; parent-facing behavior continues to use `status`.
+    #[cfg(test)]
+    pub last_lifecycle_event: Option<SubagentLifecycleEvent>,
 }
 
 pub(super) fn seed_bound_workflow(
@@ -131,6 +141,7 @@ impl SubagentEntry {
         Self {
             socket_path,
             pid,
+            lifecycle: SubagentLifecycleState::Launched,
             status: SubagentStatus::Starting,
             last_tool: None,
             last_error: None,
@@ -146,6 +157,8 @@ impl SubagentEntry {
             stalled_armed: true,
             pending_stall: None,
             read_only: false,
+            #[cfg(test)]
+            last_lifecycle_event: None,
         }
     }
 }
@@ -157,6 +170,10 @@ pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_id: 
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(entry) = entries.get_mut(agent_id) {
         entry.completion_consumed_by_await = true;
+        entry.status = super::subagent_lifecycle::apply_lifecycle_event(
+            &mut entry.lifecycle,
+            SubagentLifecycleEvent::AwaitConsumedCompletion,
+        );
     }
 }
 
@@ -171,6 +188,10 @@ pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_id: 
     if let Some(entry) = entries.get_mut(agent_id) {
         if entry.completion_consumed_by_await {
             entry.completion_consumed_by_await = false;
+            entry.status = super::subagent_lifecycle::apply_lifecycle_event(
+                &mut entry.lifecycle,
+                SubagentLifecycleEvent::PassiveNoteEmitted,
+            );
             return true;
         }
     }

@@ -1,13 +1,20 @@
 use std::time::Instant;
 
+use super::subagent_lifecycle::{SubagentLifecycleEvent, apply_lifecycle_event};
 pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
 };
+#[cfg(test)]
+pub use super::subagent_monitor_registry::update_entry;
+pub use super::subagent_monitor_registry::update_entry_next_sequence;
 use super::subagent_monitor_stall::{
     classify_workflow_idle_stall, retry_pending_stalls, take_completion_armed,
 };
+use super::subagent_monitor_truncate::truncate_string;
+#[cfg(test)]
+pub use super::subagent_registry::SubagentStatus;
 use super::subagent_registry::{
-    NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
+    NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry,
 };
 
 const MAX_EVENT_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
@@ -44,7 +51,8 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
     };
     match event_type {
         "agent_start" => {
-            entry.status = SubagentStatus::Running;
+            entry.status =
+                apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::RunStarted);
             entry.last_error = None;
             entry.run_error = None;
             // #1082 review round 2: a new run supersedes any stall alert
@@ -60,12 +68,14 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
         }
         "agent_end" => {
             if entry.run_error.is_none() {
-                entry.status = SubagentStatus::Idle;
+                entry.status =
+                    apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::RunEnded);
             }
             entry.updated_at = Instant::now();
         }
         "tool_execution_start" => {
-            entry.status = SubagentStatus::Running;
+            entry.status =
+                apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::ToolStarted);
             if let Some(tool_name) = value.get("toolName").and_then(|v| v.as_str()) {
                 entry.last_tool = Some(truncate_string(tool_name, MAX_STORED_STRING));
             }
@@ -81,7 +91,8 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
             if is_error {
-                entry.status = SubagentStatus::Error;
+                entry.status =
+                    apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::RunFailed);
                 entry.last_error = Some(truncate_string(
                     &format!("tool '{}' returned error", tool_name),
                     MAX_STORED_STRING,
@@ -137,7 +148,8 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             entry.updated_at = Instant::now();
         }
         "response" if value.get("command").and_then(|v| v.as_str()) == Some("agent_error") => {
-            entry.status = SubagentStatus::Error;
+            entry.status =
+                apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::RunFailed);
             let error = truncate_string(
                 value
                     .get("error")
@@ -158,7 +170,8 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
 
 /// Mark a SubagentEntry as Exited (connection closed or process reaped).
 pub fn mark_exited(entry: &mut SubagentEntry) {
-    entry.status = SubagentStatus::Exited;
+    entry.status =
+        apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::ProcessExited);
     // #1082 review round 3: exit supersedes a retained stall — the child is
     // gone, so an obsolete Stalled alert must not be claimable by the
     // capacity backstop or the event-driven retry after this point.
@@ -223,9 +236,23 @@ async fn monitor_loop(
     // Retry connection with increasing backoff — the socket should already be
     // ready because spawn waits for it, but there's a tiny race window.
     let stream = match connect_with_retry(socket_path, 10).await {
-        Some(s) => s,
+        Some(s) => {
+            update_entry_next_sequence(registry, agent_id, |entry| {
+                entry.status = apply_lifecycle_event(
+                    &mut entry.lifecycle,
+                    SubagentLifecycleEvent::SocketConnected,
+                );
+            });
+            s
+        }
         None => {
             tracing::warn!(agent = %agent_id, "monitor: failed to connect to child socket");
+            update_entry_next_sequence(registry, agent_id, |entry| {
+                entry.status = apply_lifecycle_event(
+                    &mut entry.lifecycle,
+                    SubagentLifecycleEvent::SocketConnectFailed,
+                );
+            });
             notify_child_exited(registry, agent_id, notify_tx);
             return;
         }
@@ -690,42 +717,8 @@ async fn connect_with_retry(
 }
 
 #[cfg(test)]
-fn update_entry(registry: &SubagentRegistry, agent_id: &str, f: impl FnOnce(&mut SubagentEntry)) {
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(entry) = entries.get_mut(agent_id) {
-        f(entry);
-    }
-}
-
-/// Update an entry and allocate the next monotonic notification sequence.
-fn update_entry_next_sequence(
-    registry: &SubagentRegistry,
-    agent_id: &str,
-    f: impl FnOnce(&mut SubagentEntry),
-) -> u64 {
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(entry) = entries.get_mut(agent_id) {
-        f(entry);
-        entry.notification_sequence = entry.notification_sequence.saturating_add(1);
-        entry.notification_sequence
-    } else {
-        0
-    }
-}
-
-/// Truncate a string to at most `max_len` characters, appending "…" if truncated.
-/// Uses char-boundary-safe slicing so multibyte UTF-8 does not panic.
-fn truncate_string(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        let end = s.char_indices().nth(max_len).map_or(s.len(), |(i, _)| i);
-        let mut truncated = s[..end].to_string();
-        truncated.push('…');
-        truncated
-    }
-}
-
+#[path = "subagent_monitor_lifecycle_tests.rs"]
+mod lifecycle_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_tests.rs"]
 mod tests;

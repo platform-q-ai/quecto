@@ -32,6 +32,10 @@ fn merge_descendants_upserts_updates_and_scoped_prunes_omitted_descendants() {
     assert!(guard.contains_key("sibling"));
     assert!(!guard.contains_key("old-grand"));
     assert_eq!(guard["grand"].status, SubagentStatus::Running);
+    assert_eq!(
+        guard["grand"].lifecycle,
+        crate::infrastructure::tools::subagent_lifecycle::SubagentLifecycleState::Busy
+    );
     assert_eq!(guard["grand"].pid, 42);
     assert_eq!(guard["grand"].workflow.as_ref().unwrap().steps_total, 2);
 }

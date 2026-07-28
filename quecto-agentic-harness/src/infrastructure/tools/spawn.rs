@@ -10,9 +10,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::spawn_launch_args::write_private_new;
-use super::subagent_registry::{
-    ExitSignal, ExitSignalTx, NotificationTx, SubagentStatus, new_exit_signal_channel,
-};
+pub use super::spawn_registry::{register_and_broadcast, shutdown_all, shutdown_all_with_count};
+use super::subagent_lifecycle::{SubagentLifecycleEvent, apply_lifecycle_event};
+#[cfg(test)]
+pub use super::subagent_registry::SubagentStatus;
+use super::subagent_registry::{ExitSignal, ExitSignalTx, NotificationTx, new_exit_signal_channel};
 
 /// Build the registry entry used at spawn registration (production after socket
 /// ready, and stub mode). Shared so the task-dependent initial status (#1049)
@@ -32,7 +34,8 @@ fn initial_registry_entry(
     entry.read_only = config.read_only;
     if config.task.is_none() {
         // #1049: task-less → Idle (cascade/TUI); with-task stays Starting.
-        entry.status = SubagentStatus::Idle;
+        entry.status =
+            apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::RunEnded);
     }
     super::subagent_registry::seed_bound_workflow(&mut entry, config.workflow_spec.as_ref());
     entry
@@ -381,9 +384,13 @@ impl SpawnTool {
 
         let pid = child.id().unwrap_or(0);
 
-        // Wait for socket readiness.
-        if let Err(e) = self.wait_for_socket(&socket_path).await {
-            // Socket never became ready — kill the child and report failure.
+        // Wait for socket readiness while also observing premature child exit.
+        if let Err(e) = self
+            .wait_for_socket_or_child_exit(&socket_path, &mut child)
+            .await
+        {
+            // Socket never became ready — kill the child if it is still alive and
+            // report failure. If the child already exited, kill/wait are benign.
             let _ = child.kill().await;
             let _ = child.wait().await;
             return Err(e);
@@ -572,6 +579,28 @@ impl SpawnTool {
         }
     }
 
+    /// Poll until the UDS socket is connectable, but return a specific error if
+    /// the child process exits before its socket becomes ready.
+    async fn wait_for_socket_or_child_exit(
+        &self,
+        path: &std::path::Path,
+        child: &mut tokio::process::Child,
+    ) -> Result<(), DomainError> {
+        tokio::select! {
+            socket_result = self.wait_for_socket(path) => socket_result,
+            child_status = child.wait() => {
+                let detail = match child_status {
+                    Ok(status) => format!(" with status {status}"),
+                    Err(error) => format!(": failed to observe exit status: {error}"),
+                };
+                Err(DomainError::Tool(format!(
+                    "subagent exited before socket ready{}",
+                    detail
+                )))
+            }
+        }
+    }
+
     /// Send the initial task as a UDS prompt after the socket is ready.
     /// Fire-and-forget: writes the prompt and closes the connection.
     async fn send_initial_prompt(
@@ -668,65 +697,6 @@ impl Tool for SpawnTool {
             }
         })
     }
-}
-
-/// Insert a freshly-spawned child entry into the registry and immediately
-/// broadcast the full survivor set, so connected TUIs learn of the new agent at
-/// once instead of waiting for the next GetSubagents poll or a terminal event
-/// (#866). The broadcast is best-effort: a missing/closed channel just means no
-/// client is listening, which is fine.
-fn register_and_broadcast(
-    registry: &SubagentRegistry,
-    broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
-    session_name: &str,
-    entry: SubagentEntry,
-) {
-    // Insert and serialize the survivor set in ONE critical section. Locking
-    // twice (insert, then re-lock inside build_state_changed_event) leaves a gap
-    // in which a concurrent reaper/cascade-removal could mutate or drop the
-    // just-inserted child and broadcast a survivor set that omits it — defeating
-    // the immediate-visibility guarantee #866 adds (review).
-    let event = {
-        let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
-        guard.insert(session_name.to_string(), entry);
-        broadcast_tx.map(|_| {
-            crate::infrastructure::tools::subagent_cascade::build_state_changed_event_locked(&guard)
-        })
-    };
-    if let (Some(tx), Some(event)) = (broadcast_tx, event) {
-        let _ = tx.send(event);
-    }
-}
-
-/// Send SIGTERM to all tracked subagent processes and clear the registry.
-/// Also aborts all monitor tasks (#522).
-pub fn shutdown_all(registry: &SubagentRegistry) {
-    let _ = shutdown_all_with_count(registry);
-}
-
-/// Like [`shutdown_all`], returning the number of registry entries removed.
-pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let removed = entries.len();
-    for (name, entry) in entries.iter() {
-        if let Some(ref tx) = entry.exit_signal_tx {
-            let _ = tx.send(Some(ExitSignal {
-                exit_code: None,
-                signal: Some(15), // SIGTERM
-            }));
-        }
-        // Abort monitor task if running (#522).
-        if let Some(ref handle) = entry.monitor_handle {
-            handle.abort();
-            tracing::info!(agent = %name, "aborted monitor task");
-        }
-        if entry.pid != 0 {
-            crate::infrastructure::tools::subagent_cascade::sigterm_pid(entry.pid);
-            tracing::info!(agent = %name, pid = entry.pid, "sent SIGTERM to subagent");
-        }
-    }
-    entries.clear();
-    removed
 }
 
 #[cfg(test)]

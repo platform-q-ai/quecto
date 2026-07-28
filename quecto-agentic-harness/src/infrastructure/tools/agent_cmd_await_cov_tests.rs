@@ -10,6 +10,9 @@ fn poison_registry(registry: &SubagentRegistry) {
     assert!(registry.lock().is_err(), "registry should be poisoned");
 }
 use crate::infrastructure::test_support::read_framed_command_async;
+use crate::infrastructure::tools::subagent_lifecycle::{
+    SubagentLifecycleEvent, SubagentLifecycleState,
+};
 use crate::infrastructure::tools::subagent_registry::{ExitSignal, new_exit_signal_channel};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -39,6 +42,7 @@ fn tool_with_entry(
 ) -> (AgentCmdTool, SubagentRegistry) {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(socket_path, 123);
+    entry.lifecycle = SubagentLifecycleState::from_status(&status);
     entry.status = status;
     entry.exit_signal_tx = exit_tx;
     registry.lock().unwrap().insert(agent_id.to_string(), entry);
@@ -236,6 +240,29 @@ async fn execute_await_duplicate_active_awaiter_is_rejected() {
     );
     assert_eq!(got.status, "error");
     assert_eq!(got.reason.as_deref(), Some("another_await_active"));
+}
+
+#[tokio::test]
+async fn await_timeout_preserves_busy_child_lifecycle() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("busy.sock");
+    let _listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let (tool, registry) = tool_with_entry("busy", socket, SubagentStatus::Running, None);
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"busy","timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+
+    assert_eq!(got.status, "timeout");
+    let entry = registry.lock().unwrap().get("busy").unwrap().clone();
+    assert_eq!(
+        entry.last_lifecycle_event,
+        Some(SubagentLifecycleEvent::AwaitTimedOut)
+    );
+    assert_eq!(entry.lifecycle, SubagentLifecycleState::Busy);
+    assert_eq!(entry.status, SubagentStatus::Running);
 }
 
 #[tokio::test]
