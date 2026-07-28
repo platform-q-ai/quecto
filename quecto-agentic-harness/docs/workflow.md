@@ -219,6 +219,12 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "label": "Clean up sub agents",
             "phase": "ci_cd",
             "guidance": "Reviewers that have already reported completion (you received their one-line completion notes) have exited and need no cleanup. Check `get_subagents` for any sub agent still running, and only then terminate the stragglers (use agent_cmd to abort, or kill each) so no orphaned sub agents remain."
+          },
+          {
+            "key": "reset_workflow",
+            "label": "Reset workflow state for the next task",
+            "phase": "ci_cd",
+            "guidance": "After this workflow has reported its result, clear the active workflow state with the workflow tool action `reset` so the next task does not keep receiving stale 'all steps complete' nudges from the previous template. Confirm with `workflow` action `status` that no active template remains (or an equivalent clean slate). Done when the workflow state is cleared."
           }
         ],
         "guards": [

@@ -128,6 +128,7 @@ fn refactor_pipeline_steps_are_exactly_ordered() {
         "conformance",
         "pre_merge",
         "cleanup",
+        "reset_workflow",
     ];
     let actual: Vec<&str> = steps(&config)
         .iter()
@@ -197,13 +198,24 @@ fn characterize_step_is_green_first_on_unmodified_code() {
 fn characterize_step_bans_source_text_assertions() {
     let config = read_native_config();
     let g = guidance(&config, "characterize");
+    // #1290: behavioural tests still must not grep private implementation
+    // detail, but architecture/repository-policy/docs-lockstep/build-policy/
+    // migration-invariant checks may use source/document text as the contract.
     assert!(
-        g.contains("HARD BAN") && g.contains("read production source files"),
-        "source-text assertions must be banned outright"
+        g.contains(
+            "architecture, repository-policy, docs-lockstep, build-policy, or migration-invariant"
+        ) && g.contains("source/document text may be the observable contract"),
+        "characterization must allow source/document text for architecture and policy invariants"
     );
     assert!(
-        g.contains("verifies the diff, not the behaviour"),
-        "the ban should state the rationale"
+        g.contains("Behavioural product tests must NOT read production source")
+            && g.contains("private helper names")
+            && g.contains("verifies the diff, not the behaviour"),
+        "behavioural source-text assertions on incidental implementation detail remain banned"
+    );
+    assert!(
+        !g.contains("HARD BAN"),
+        "the absolute HARD BAN wording must not remain after #1290"
     );
     assert!(
         g.contains("step body MUST perform that action"),
@@ -378,13 +390,27 @@ fn conformance_verifies_structural_goals_and_greps_for_source_text_tests() {
         g.contains("verified HERE by code inspection"),
         "structural goals are verified at conformance, not by tests"
     );
+    // #1290: source-text assertions fail only when inappropriate for behavioural
+    // tests or incidental; architecture/policy/docs/build/migration invariants OK.
     assert!(
-        g.contains("NO test asserts on production source text"),
-        "conformance must ban source-text-asserting tests"
+        g.contains("FAIL only when they are inappropriate behavioural tests")
+            && g.contains("incidental implementation details"),
+        "conformance must fail only inappropriate behavioural/incidental source-text assertions"
     );
     assert!(
-        g.contains("grep the test tree") && g.contains("treat any hit as a FAIL"),
-        "conformance must mandate the mechanical grep audit, not just the ban phrase"
+        g.contains(
+            "architecture, repository-policy, docs-lockstep, build-policy, and migration-invariant"
+        ) && g.contains("text is the observable contract"),
+        "conformance must allow source/document text where it is the contract"
+    );
+    assert!(
+        !g.contains("NO test asserts on production source text"),
+        "the absolute production-source-text ban must not remain after #1290"
+    );
+    assert!(
+        g.contains("grep the test tree")
+            && g.contains("treat behavioural/incidental hits as a FAIL"),
+        "conformance must mandate the mechanical grep audit with the nuanced fail rule"
     );
     // PR #1036 review retro: speculative pub API and test-only production
     // paths are verified mechanically at conformance.
