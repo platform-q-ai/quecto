@@ -604,13 +604,16 @@ impl App {
         if let Some(content) = workflow_bar::render_compact_line(state) {
             let rule_width = box_width.max(1);
             let inner = rule_width.saturating_sub(2);
-            out.push(theme::dim(&"─".repeat(rule_width)));
-            out.push(crate::components::utils::truncate_to_width(
-                &format!(" {} ", pad_cell(&content, inner)),
-                rule_width,
-                None,
-            ));
-            out.push(theme::dim(&"─".repeat(rule_width)));
+            let rule = theme::dim(&"─".repeat(rule_width));
+            // Truncate the label with ellipsis (#1288), then pad the framed row
+            // to the same width as the separator rules so framing stays flush.
+            let framed = format!(
+                " {} ",
+                crate::components::utils::truncate_to_width(&content, inner, Some("…")),
+            );
+            out.push(rule.clone());
+            out.push(pad_cell(&framed, rule_width));
+            out.push(rule);
         }
         out
     }
