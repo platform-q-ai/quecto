@@ -123,10 +123,13 @@ impl Tool for CovNoopTool {
 
 struct CovEmptyRegistry;
 
-impl ToolRegistry for CovEmptyRegistry {
+impl ToolCatalog for CovEmptyRegistry {
     fn definitions(&self) -> &[ToolDefinition] {
         &[]
     }
+}
+
+impl ToolExecutor for CovEmptyRegistry {
     fn execute(
         &self,
         _name: &str,
@@ -135,6 +138,12 @@ impl ToolRegistry for CovEmptyRegistry {
         Box::pin(async { Err(DomainError::Tool("missing".into())) })
     }
 }
+
+impl ExtensionToolRegistry for CovEmptyRegistry {}
+
+impl SessionAwareTools for CovEmptyRegistry {}
+
+impl ToolRegistry for CovEmptyRegistry {}
 
 #[tokio::test]
 async fn local_tool_and_registry_execute_trait_surface() {

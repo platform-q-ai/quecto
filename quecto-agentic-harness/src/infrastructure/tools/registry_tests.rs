@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::tool::ToolRegistry;
 use crate::infrastructure::security::sandbox::Sandbox;
 use tempfile::TempDir;
 

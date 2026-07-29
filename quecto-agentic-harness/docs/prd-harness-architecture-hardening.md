@@ -442,5 +442,5 @@ agent ids, and tool-call ids.
 - [ ] Phase 3: UDS command-family routing.
 - [ ] Phase 4: subagent lifecycle state machine.
 - [x] Phase 5: typed identifiers at high-risk boundaries.
-- [ ] Phase 6: role-segregated ports where needed.
+- [x] Phase 6: role-segregated ports where needed.
 - [ ] Phase 7: contributor cookbooks and focused local checks.

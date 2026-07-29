@@ -1,6 +1,9 @@
 use super::*;
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
-use crate::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
+use crate::domain::tool::{
+    ExtensionToolRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition, ToolExecutor,
+    ToolRegistry, ToolResult,
+};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
@@ -166,11 +169,13 @@ impl MockRegistry {
     }
 }
 
-impl ToolRegistry for MockRegistry {
+impl ToolCatalog for MockRegistry {
     fn definitions(&self) -> &[ToolDefinition] {
         &self.cached_definitions
     }
+}
 
+impl ToolExecutor for MockRegistry {
     fn execute(
         &self,
         name: &str,
@@ -188,6 +193,10 @@ impl ToolRegistry for MockRegistry {
         Box::pin(async move { Err(err) })
     }
 }
+
+impl ExtensionToolRegistry for MockRegistry {}
+impl SessionAwareTools for MockRegistry {}
+impl ToolRegistry for MockRegistry {}
 
 pub(super) struct MockTool {
     def: ToolDefinition,
