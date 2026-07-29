@@ -17,7 +17,9 @@ use quecto::domain::audit::{AuditEvent, AuditSink};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, StopReason};
 use quecto::domain::provider::{ChatRequest, LlmProvider};
-use quecto::domain::tool::{ToolDefinition, ToolRegistry, ToolResult};
+use quecto::domain::tool::{
+    ExtensionToolRegistry, SessionAwareTools, ToolCatalog, ToolDefinition, ToolExecutor, ToolResult,
+};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -48,10 +50,13 @@ impl LlmProvider for TextProvider {
 }
 
 struct EmptyRegistry;
-impl ToolRegistry for EmptyRegistry {
+impl ToolCatalog for EmptyRegistry {
     fn definitions(&self) -> &[ToolDefinition] {
         &[]
     }
+}
+
+impl ToolExecutor for EmptyRegistry {
     fn execute(
         &self,
         name: &str,
@@ -61,6 +66,12 @@ impl ToolRegistry for EmptyRegistry {
         Box::pin(async move { Err(DomainError::Tool(format!("no tool: {n}"))) })
     }
 }
+
+impl ExtensionToolRegistry for EmptyRegistry {}
+
+impl SessionAwareTools for EmptyRegistry {}
+
+impl quecto::domain::tool::ToolRegistry for EmptyRegistry {}
 
 fn agent_loop(reply: &str) -> Arc<dyn AgentLoop> {
     Arc::new(AgentLoopImpl::new(AgentLoopConfig {

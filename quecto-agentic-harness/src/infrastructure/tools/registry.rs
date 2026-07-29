@@ -7,7 +7,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::domain::error::DomainError;
-use crate::domain::tool::{Tool, ToolDefinition, ToolGuard, ToolRegistry, ToolResult};
+use crate::domain::tool::{
+    ExtensionToolRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition, ToolExecutor,
+    ToolGuard, ToolResult,
+};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;
 
@@ -269,27 +272,13 @@ impl ToolRegistryImpl {
     }
 }
 
-impl ToolRegistry for ToolRegistryImpl {
+impl ToolCatalog for ToolRegistryImpl {
     fn definitions(&self) -> &[ToolDefinition] {
         self.definitions()
     }
+}
 
-    fn extension_names(&self) -> Vec<String> {
-        self.extension_names()
-    }
-
-    fn set_session_key(&self, session_key: &str) {
-        self.set_session_key(session_key);
-    }
-
-    fn register_extension(&mut self, tool: Arc<dyn Tool>) {
-        self.register_extension(tool);
-    }
-
-    fn unregister_extension(&mut self, name: &str) {
-        self.unregister_extension(name);
-    }
-
+impl ToolExecutor for ToolRegistryImpl {
     fn execute(
         &self,
         name: &str,
@@ -300,6 +289,28 @@ impl ToolRegistry for ToolRegistryImpl {
         Box::pin(async move { self.execute(&name, &arguments).await })
     }
 }
+
+impl ExtensionToolRegistry for ToolRegistryImpl {
+    fn extension_names(&self) -> Vec<String> {
+        self.extension_names()
+    }
+
+    fn register_extension(&mut self, tool: Arc<dyn Tool>) {
+        self.register_extension(tool);
+    }
+
+    fn unregister_extension(&mut self, name: &str) {
+        self.unregister_extension(name);
+    }
+}
+
+impl SessionAwareTools for ToolRegistryImpl {
+    fn set_session_key(&self, session_key: &str) {
+        self.set_session_key(session_key);
+    }
+}
+
+impl crate::domain::tool::ToolRegistry for ToolRegistryImpl {}
 
 #[cfg(test)]
 #[path = "registry_tests.rs"]

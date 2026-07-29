@@ -94,7 +94,7 @@ impl AgentLoopImpl {
         });
 
         let start = std::time::Instant::now();
-        let tool_result = self.tool_registry.execute(&tc.name, &tc.arguments).await;
+        let tool_result = self.tool_executor().execute(&tc.name, &tc.arguments).await;
         let duration_ms = start.elapsed().as_millis() as u64;
 
         let is_err = tool_result.is_err();

@@ -5,10 +5,13 @@ struct EmptyRegistry {
     defs: Vec<ToolDefinition>,
 }
 
-impl ToolRegistry for EmptyRegistry {
+impl ToolCatalog for EmptyRegistry {
     fn definitions(&self) -> &[ToolDefinition] {
         &self.defs
     }
+}
+
+impl ToolExecutor for EmptyRegistry {
     fn execute(
         &self,
         _name: &str,
@@ -23,6 +26,12 @@ impl ToolRegistry for EmptyRegistry {
         })
     }
 }
+
+impl ExtensionToolRegistry for EmptyRegistry {}
+
+impl SessionAwareTools for EmptyRegistry {}
+
+impl ToolRegistry for EmptyRegistry {}
 
 fn def(name: &'static str) -> ToolDefinition {
     ToolDefinition {
