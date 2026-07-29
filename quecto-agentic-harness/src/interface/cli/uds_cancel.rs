@@ -588,7 +588,7 @@ async fn run_with_token_drain(
     (result, notifications, tokens_emitted)
 }
 
-async fn publish_turn_progress(
+pub(crate) async fn publish_turn_progress(
     event: &AgentProgressEvent,
     snapshot: Option<&super::uds_multi::ConversationSnapshot>,
     sink: &mut EventSink<'_>,

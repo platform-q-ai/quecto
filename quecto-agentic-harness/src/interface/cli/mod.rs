@@ -9,6 +9,8 @@ mod provider_reload_tests;
 pub mod uds;
 mod uds_busy_get_message;
 mod uds_busy_subagents;
+#[cfg(test)]
+mod uds_busy_subagents_tests;
 mod uds_busy_sync;
 #[cfg(test)]
 mod uds_busy_sync_tests;
@@ -42,6 +44,50 @@ pub fn completed_live_execution_state(
     state.finish_run();
     serde_json::json!({ "messageCount": state.message_count(), "execution": state.snapshot() })
 }
+/// Test-support: run a sequence of progress events through the mid-turn
+/// publish path (`publish_turn_progress`) against a fresh conversation
+/// snapshot, returning every event line emitted to the sink. BDD scenarios use
+/// this to pin that mid-turn `TurnCompleted` events emit `ledger_advanced`
+/// hints (the child-progress-freeze fix, 2026-07-29).
+#[cfg(any(test, feature = "test-support"))]
+pub async fn ledger_hint_lines_for_turn_events(
+    events: &[crate::domain::agent::AgentProgressEvent],
+) -> Vec<serde_json::Value> {
+    let snapshot: uds_multi::ConversationSnapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
+        uds_snapshots::ConversationSnapshotData::default(),
+    ));
+    let mut buf: Vec<u8> = Vec::new();
+    let mut sink = uds_cancel::EventSink::writer(&mut buf);
+    for event in events {
+        uds_cancel::publish_turn_progress(event, Some(&snapshot), &mut sink).await;
+    }
+    String::from_utf8_lossy(&buf)
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+/// Test-support: run one raw command line through the reader-task busy
+/// interceptor for sub-agent liveness commands, with no sub-agent registry.
+/// Returns whether it was handled off the dispatch loop and, when handled,
+/// the correlated response written to the client's channel.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn busy_reader_intercept(line: &str) -> (bool, Option<serde_json::Value>) {
+    let clients = uds_ext_protocol::new_client_tool_registry();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
+    uds_ext_protocol::register_client_writer(&clients, 1, tx);
+    let handled = uds_busy_subagents::intercept(line, &None, &clients, 1).await;
+    if !handled {
+        return (false, None);
+    }
+    let response = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .ok()
+        .flatten()
+        .and_then(|l| serde_json::from_str(&l).ok());
+    (true, response)
+}
+
 #[cfg(test)]
 mod uds_execution_state_tests;
 mod uds_ext_protocol;
