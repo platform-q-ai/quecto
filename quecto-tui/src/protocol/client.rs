@@ -23,6 +23,22 @@ use tokio::sync::mpsc;
 /// frames against the real cap instead of a duplicated literal.
 pub const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 
+/// Bound on the ordered outbound command writer FIFO (`Client::connect`).
+///
+/// Sized for bursty fan-in (subagent polls, recovery `get_message` batches)
+/// while staying bounded. Entries are owned serialized `String`s; the wire
+/// per-message cap is still [`MAX_LINE_BYTES`] at write time (#1238).
+pub const COMMAND_WRITER_QUEUE_CAPACITY: usize = 4096;
+
+/// Slots reserved so interactive user commands can still enqueue when
+/// background fan-in has filled most of the ordered writer FIFO (#1238).
+///
+/// Background / housekeeping commands refuse to consume these last permits;
+/// [`Command::is_interactive_user`] commands may use them. This does not
+/// await capacity or reorder the FIFO — it only stops background traffic
+/// from monopolizing the bound under sustained load.
+pub const COMMAND_WRITER_USER_RESERVED: usize = 64;
+
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
 
 /// A command sent from the TUI to the agent.
@@ -407,6 +423,15 @@ impl Command {
             Self::Sync { .. } => "sync",
         }
     }
+
+    /// Interactive user actions that must not lose to background fan-in on
+    /// the shared ordered writer queue (#1238).
+    pub fn is_interactive_user(&self) -> bool {
+        matches!(
+            self,
+            Self::Prompt { .. } | Self::Steer { .. } | Self::FollowUp { .. } | Self::Abort { .. }
+        )
+    }
 }
 
 /// Serialize a command to its JSON-lines wire form (JSON + trailing newline).
@@ -442,8 +467,26 @@ impl CommandSender {
     /// Returns [`ClientError::Backpressure`] if the channel is momentarily
     /// full (the command was not enqueued) or [`ClientError::Disconnected`]
     /// if the writer has gone away.
+    ///
+    /// Background commands also refuse the last
+    /// [`COMMAND_WRITER_USER_RESERVED`] free slots so a burst of polls /
+    /// recovery fetches cannot exhaust capacity needed for a concurrent
+    /// user follow-up (#1238). Interactive user commands may consume those
+    /// reserved slots; they still fail with backpressure only when the
+    /// queue is completely full.
     pub fn try_send(&self, cmd: &Command) -> Result<(), ClientError> {
         use mpsc::error::TrySendError;
+        // `capacity()` is free permits remaining. Background traffic must leave
+        // the reserved headroom for interactive user commands — but only on
+        // production-sized queues. Tiny test/disconnect stubs (e.g. capacity 1)
+        // cannot host the reserve; skip the gate so closed channels still
+        // surface as Disconnected rather than a false Backpressure (#1238).
+        if !cmd.is_interactive_user()
+            && self.tx.max_capacity() > COMMAND_WRITER_USER_RESERVED
+            && self.tx.capacity() <= COMMAND_WRITER_USER_RESERVED
+        {
+            return Err(ClientError::Backpressure);
+        }
         self.tx
             .try_send(serialize_command(cmd)?)
             .map_err(|e| match e {
@@ -502,19 +545,19 @@ impl Client {
         // announces the framing up front so the agent replies framed even
         // before the first command (#1059).
         //
-        // The bound gives comfortable headroom for a recovery/reset batch that
-        // enqueues synchronously (via `CommandSender::try_send`) before the
-        // writer is scheduled — e.g. a heavy multi-tool turn fetching one
-        // `get_message` per ref. Sized well above any realistic single-turn
-        // message count so ordered `try_send` never hits backpressure in
-        // practice.
+        // Ordered writer FIFO bound: see [`COMMAND_WRITER_QUEUE_CAPACITY`] and
+        // [`COMMAND_WRITER_USER_RESERVED`]. Capacity absorbs realistic bursts;
+        // `try_send` reserves the last slots for interactive user commands so
+        // background fan-in cannot monopolize the queue (#1238). Residual risk
+        // if user traffic alone fills the bound remains intentional backpressure
+        // (still bounded; no await on the ordered path).
         // The explicitly captured connect-time dispatcher carries reader
         // diagnostics (#1112) into the spawned task, including when an
         // embedder installed only a thread-scoped subscriber. The TUI itself
         // installs none, so these events remain no-ops in the shipped binary.
         use tracing::instrument::WithSubscriber;
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(1024);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(COMMAND_WRITER_QUEUE_CAPACITY);
         let writer_task = async move {
             if mode == WireMode::Framed
                 && write_message(&mut write_half, b"", mode, MAX_LINE_BYTES)
@@ -696,6 +739,10 @@ mod client_1060_tests;
 #[cfg(test)]
 #[path = "client_1094_tests.rs"]
 mod client_1094_tests;
+
+#[cfg(test)]
+#[path = "client_1238_tests.rs"]
+mod client_1238_tests;
 
 #[cfg(test)]
 #[path = "client_legacy_tests.rs"]
