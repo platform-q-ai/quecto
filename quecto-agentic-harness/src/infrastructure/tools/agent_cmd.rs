@@ -6,6 +6,11 @@
 //
 // Extended with `await` command (#612) that blocks until a sub-agent reaches a
 // terminal state (idle, exited, timeout, or error).
+//
+// Short-term: `await` stays implemented and dispatchable, but is **hidden from
+// the model-facing tool schema/description** so agents default to passive
+// completion notes + get_messages. Flip [`AWAIT_VISIBLE_IN_SCHEMA`] to `true`
+// (and restore the await wording in `definition` / `spawn`) to re-advertise it.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -22,6 +27,11 @@ pub use super::subagent_registry::{
 
 #[path = "agent_cmd_await.rs"]
 mod agent_cmd_await;
+
+/// When `false`, `await` is omitted from the `agent_cmd` tool schema and
+/// description (model cannot discover it). Implementation and dispatch remain.
+/// Set to `true` to re-advertise blocking await to the LLM.
+const AWAIT_VISIBLE_IN_SCHEMA: bool = false;
 
 /// Supported commands for interacting with a subagent.
 const SUPPORTED_COMMANDS: &[&str] = &[
@@ -431,9 +441,11 @@ use super::subagent_registry::send_subagent_uds_command_with_timeout as send_uds
 
 impl Tool for AgentCmdTool {
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: "agent_cmd".into(),
-            description: "Send a command to a spawned subagent. \
+        // Schema/description only — see AWAIT_VISIBLE_IN_SCHEMA. Dispatch still
+        // accepts await when the model invents the command name.
+        let (description, parameters_schema) = if AWAIT_VISIBLE_IN_SCHEMA {
+            (
+                "Send a command to a spawned subagent. \
                 Supported commands: prompt, steer, follow_up, abort, kill, await, \
                 get_state, get_messages, get_session_stats, \
                 get_subagents, get_subagents_all, get_extensions, set_model, clear_history, \
@@ -452,9 +464,34 @@ impl Tool for AgentCmdTool {
                 phase, current/recent tool activity, progress, model, effort, and message \
                 count. get_messages is the stable committed transcript API, intended for \
                 full or end-of-turn output inspection. Busy responses are tagged \
-                snapshot:true; transcript data may lag the active turn."
-                .into(),
-            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_extensions","set_model","set_effort","clear_history","reload_extensions"],"description":"Command to send. get_subagents_all lists this parent agent's tracked subagents without targeting a child. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages (use count for the last N messages)."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#.into(),
+                snapshot:true; transcript data may lag the active turn.",
+                r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_extensions","set_model","set_effort","clear_history","reload_extensions"],"description":"Command to send. get_subagents_all lists this parent agent's tracked subagents without targeting a child. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages (use count for the last N messages)."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#,
+            )
+        } else {
+            (
+                "Send a command to a spawned subagent. \
+                Supported commands: prompt, steer, follow_up, abort, kill, \
+                get_state, get_messages, get_session_stats, \
+                get_subagents, get_subagents_all, get_extensions, set_model, clear_history, \
+                reload_extensions. \
+                COMPLETION SEQUENCE (required): (1) spawn returns when the socket is ready — \
+                do not wait in this turn. (2) End your turn or do other non-blocking parent \
+                work; do NOT poll get_subagents/get_subagents_all/get_state in a loop, do NOT \
+                sleep/bash-wait for the child. (3) On your NEXT turn a passive one-line \
+                completion note arrives automatically. (4) Then agent_cmd get_messages \
+                (count 1-5) for the child's report — the note is not the report. \
+                get_subagents_all is for inventory/cleanup after work, not completion waiting. \
+                get_state is the live/in-flight supervision API (occasional progress/debug, \
+                not a wait loop). get_messages is the stable committed transcript API \
+                (newest bounded history page; count for last N; hasMoreBefore/before pages \
+                older). Busy get_messages may be snapshot:true and lag.",
+                r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_extensions","set_model","set_effort","clear_history","reload_extensions"],"description":"Command to send. After spawn, wait for the passive completion note on a later turn — do not poll get_subagents* or sleep. Then get_messages (count 1-5) for the report. get_subagents_all is inventory/cleanup (agent_id '*'), not a wait loop. kill terminates the child process."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"}},"required":["agent_id","command"]}"#,
+            )
+        };
+        ToolDefinition {
+            name: "agent_cmd".into(),
+            description: description.into(),
+            parameters_schema: parameters_schema.into(),
         }
     }
 

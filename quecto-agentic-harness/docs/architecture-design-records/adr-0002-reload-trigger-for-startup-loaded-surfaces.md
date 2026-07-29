@@ -68,6 +68,6 @@ the ADR-0002 trigger.
 
 ## Related
 
-- [Kernel boundary](../kernel-boundary.md)
-- [Runtime reload phase 2 design](../design-runtime-reload-phase2.md)
-- [Models runtime extensible PRD](../prd-models-runtime-extensible.md)
+- [Kernel boundary](../architecture/kernel-boundary.md)
+- [Models runtime extensible PRD](../prd/prd-models-runtime-extensible.md)
+- Implementation: `src/infrastructure/reload.rs`, `src/interface/cli/provider_reload.rs`

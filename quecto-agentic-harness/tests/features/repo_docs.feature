@@ -36,13 +36,13 @@ Feature: Repository documentation
 
   @docs
   Scenario: Harness architecture map covers Phase 0 hardening surfaces
-    When I read the repository file "docs/harness-architecture-map.md"
+    When I read the repository file "docs/architecture/harness-architecture-map.md"
     Then the harness architecture map should cover the Phase 0 hardening surfaces
     And the harness architecture map should record baseline hardening checks
 
   @docs
   Scenario: Protocol capability matrix lists baseline UDS capabilities
-    When I read the repository file "docs/protocol-capability-matrix.md"
+    When I read the repository file "docs/architecture/protocol-capability-matrix.md"
     Then the protocol capability matrix should include the baseline UDS capabilities
 
   @docs

@@ -193,6 +193,5 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 
 ## See also
 
-- Getting Started (`docs {"name":"getting-started"}`) — quickstart guide for UDS agent integration
 - UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — `get_state`, `get_messages`, `get_session_stats`, `clear_history`
 - Subagents (`docs {"name":"subagents"}`) — each subagent gets its own session

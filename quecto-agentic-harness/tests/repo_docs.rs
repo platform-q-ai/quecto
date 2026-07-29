@@ -82,11 +82,11 @@ fn readme_uds_protocol_lists_current_commands_and_events() {
 
 #[test]
 fn architecture_hardening_phase_0_docs_are_linked() {
-    let prd = read_repo_file("docs/prd-harness-architecture-hardening.md");
+    let prd = read_repo_file("docs/prd/prd-harness-architecture-hardening.md");
     let adr_index = read_repo_file("docs/architecture-design-records/README.md");
     let uds = read_repo_file("docs/uds-protocol.md");
-    let matrix = read_repo_file("docs/protocol-capability-matrix.md");
-    let map = read_repo_file("docs/harness-architecture-map.md");
+    let matrix = read_repo_file("docs/architecture/protocol-capability-matrix.md");
+    let map = read_repo_file("docs/architecture/harness-architecture-map.md");
     let cookbooks = read_repo_file("docs/contributor-cookbooks.md");
 
     assert!(
@@ -110,7 +110,7 @@ fn architecture_hardening_phase_0_docs_are_linked() {
         assert!(adr.contains("**Status:**"), "{path} should be a real ADR");
     }
     assert!(
-        adr_index.contains("../protocol-capability-matrix.md"),
+        adr_index.contains("../architecture/protocol-capability-matrix.md"),
         "ADR index should link the protocol capability matrix"
     );
     assert!(
@@ -121,11 +121,6 @@ fn architecture_hardening_phase_0_docs_are_linked() {
     assert!(
         readme.contains("docs/contributor-cookbooks.md"),
         "README should link the contributor cookbooks"
-    );
-    let capability_guide = read_repo_file("docs/quecto.md");
-    assert!(
-        capability_guide.contains("contributor-cookbooks"),
-        "agent capability guide should make contributor cookbooks discoverable"
     );
     for heading in [
         "## Turn execution",
@@ -206,16 +201,6 @@ fn uds_docs_document_paged_history_not_unbounded() {
     assert!(
         !protocol.to_lowercase().contains("return the full history"),
         "docs/uds-protocol.md must not promise unbounded history (#1061 paging)"
-    );
-
-    let getting_started = read_repo_file("docs/getting-started.md");
-    assert!(
-        !getting_started.contains("Full history returned"),
-        "getting-started re-sync example must not promise full history (#1061 paging)"
-    );
-    assert!(
-        getting_started.contains("hasMoreBefore"),
-        "getting-started re-sync example should point at the paging cursor"
     );
 
     // sessions.md documents the same command surface; its UDS inspection
@@ -397,11 +382,11 @@ fn subagent_docs_document_readonly_and_disable_tools_spawn() {
     // #960: the agent-facing docs served by the docs tool must document the
     // spawn `disable_tools` / `read_only` capability (#957) so a coordinator can
     // discover it, including the not-a-hard-sandbox caveat and a spawn example.
+    // CLI `--disable-tool` detail lives in the README (user-facing); agents get
+    // the spawn path from subagents.md.
     let subagents = read_repo_file("docs/subagents.md");
-    let disable = read_repo_file("docs/disable-tools.md");
+    let readme = read_repo_file("README.md");
 
-    // At least one of the two served docs must describe the spawn options; assert
-    // on both so each stays coherent with the capability.
     assert!(
         subagents.contains("read_only") && subagents.contains("disable_tools"),
         "docs/subagents.md should document the spawn read_only / disable_tools options"
@@ -429,21 +414,20 @@ fn subagent_docs_document_readonly_and_disable_tools_spawn() {
             || subagents_lower.contains("mutate via `bash`"),
         "docs/subagents.md should note a child can still mutate via bash"
     );
+    assert!(
+        subagents.contains("--disable-tool"),
+        "docs/subagents.md should mention the CLI --disable-tool equivalent"
+    );
 
-    // The disable-tools doc must cross-reference the spawn read_only path so the
-    // CLI --disable-tool flag and the spawn path are documented together.
-    let disable_lower = disable.to_lowercase();
+    // User-facing CLI flag detail lives in the README.
+    let readme_lower = readme.to_lowercase();
     assert!(
-        disable.contains("read_only"),
-        "docs/disable-tools.md should cross-reference the spawn read_only convenience"
+        readme.contains("--disable-tool"),
+        "README should document the --disable-tool flag"
     );
     assert!(
-        disable_lower.contains("not a hard sandbox"),
-        "docs/disable-tools.md should carry the not-a-hard-sandbox caveat"
-    );
-    assert!(
-        disable.contains("--disable-tool"),
-        "docs/disable-tools.md should keep referencing the CLI --disable-tool flag"
+        readme_lower.contains("not a hard sandbox"),
+        "README --disable-tool docs should carry the not-a-hard-sandbox caveat"
     );
 }
 
@@ -549,16 +533,15 @@ fn assert_phase_0_links_resolve() {
     let report = check_phase_0_hardening_links(repo);
 
     assert!(
-        report
-            .checked
-            .iter()
-            .any(|link| link == "docs/uds-protocol.md -> protocol-capability-matrix.md"),
+        report.checked.iter().any(
+            |link| link == "docs/uds-protocol.md -> architecture/protocol-capability-matrix.md"
+        ),
         "UDS protocol docs should link the protocol matrix; checked: {:?}",
         report.checked
     );
     assert!(
         report.checked.iter().any(|link| link
-            == "docs/architecture-design-records/README.md -> ../protocol-capability-matrix.md"),
+            == "docs/architecture-design-records/README.md -> ../architecture/protocol-capability-matrix.md"),
         "ADR index should link the protocol matrix; checked: {:?}",
         report.checked
     );

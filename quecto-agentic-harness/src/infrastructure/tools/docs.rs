@@ -1,59 +1,71 @@
-// DocsTool: serves quecto's own capability docs, embedded in the binary.
+// DocsTool: Quecto's operating manual, embedded in the binary.
 //
-// The capability docs (docs/*.md) are baked in at compile time via include_str!
-// so they are reachable from ANY working directory — the prior guidance to
-// `read docs/quecto.md` broke whenever quecto ran outside its own checkout
-// (the path resolved relative to the agent's workspace/CWD).
+// Agent-facing guides live under `docs/docs-tool-embeds/` and are baked in at
+// compile time via `include_str!` so they are reachable from ANY working
+// directory — reading docs from disk breaks whenever quecto runs outside its
+// own checkout (paths resolve relative to the agent's CWD).
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;
 
-/// The embedded capability docs, keyed by short name (no `docs/` prefix, no
-/// `.md` suffix). These are the agent-facing guides the docs-retrieval policy
-/// points at; design PRDs are intentionally not embedded.
+/// The embedded operating-manual pages, keyed by short name (no path prefix,
+/// no `.md` suffix). Human-only docs (UDS protocol, sessions, cookbooks,
+/// PRDs, ADRs, full reference manuals under `docs/`) are intentionally not
+/// embedded.
 ///
 /// `include_str!` paths are relative to this source file
-/// (`src/infrastructure/tools/`), so `../../../docs/` is the package `docs` dir.
-/// A renamed/removed doc fails the build — the embed cannot silently drift.
+/// (`src/infrastructure/tools/`), so `../../../docs/docs-tool-embeds/` is the
+/// package embed folder. A renamed/removed doc fails the build — the embed
+/// cannot silently drift.
 const EMBEDDED_DOCS: &[(&str, &str)] = &[
-    ("quecto", include_str!("../../../docs/quecto.md")),
-    ("subagents", include_str!("../../../docs/subagents.md")),
-    ("workflow", include_str!("../../../docs/workflow.md")),
-    ("extensions", include_str!("../../../docs/extensions.md")),
-    ("sessions", include_str!("../../../docs/sessions.md")),
     (
-        "disable-tools",
-        include_str!("../../../docs/disable-tools.md"),
+        "quick-start",
+        include_str!("../../../docs/docs-tool-embeds/quick-start.md"),
     ),
     (
-        "uds-protocol",
-        include_str!("../../../docs/uds-protocol.md"),
+        "subagents",
+        include_str!("../../../docs/docs-tool-embeds/subagents.md"),
     ),
     (
-        "getting-started",
-        include_str!("../../../docs/getting-started.md"),
+        "workflow",
+        include_str!("../../../docs/docs-tool-embeds/workflow.md"),
     ),
     (
-        "models-providers",
-        include_str!("../../../docs/runtime-models-providers.md"),
+        "extensions",
+        include_str!("../../../docs/docs-tool-embeds/extensions.md"),
     ),
     (
-        "contributor-cookbooks",
-        include_str!("../../../docs/contributor-cookbooks.md"),
+        "models",
+        include_str!("../../../docs/docs-tool-embeds/models.md"),
     ),
-    ("readme", include_str!("../../../README.md")),
 ];
 
-/// Normalize a requested doc name: strip a leading `docs/` and a trailing
-/// `.md`, lowercase, trim. So `quecto`, `quecto.md`, and `docs/quecto.md` all
-/// resolve to the same doc.
+/// Normalize a requested doc name: strip a leading `docs/` or
+/// `docs-tool-embeds/`, a trailing `.md`, lowercase, trim. So `subagents`,
+/// `subagents.md`, and `docs/subagents.md` all resolve to the same doc.
 fn normalize_name(raw: &str) -> String {
     raw.trim()
+        .trim_start_matches("docs/docs-tool-embeds/")
+        .trim_start_matches("docs-tool-embeds/")
         .trim_start_matches("docs/")
         .trim_end_matches(".md")
         .to_ascii_lowercase()
+}
+
+/// First markdown H1 title in `body`, or `None` if missing.
+fn doc_title(body: &str) -> Option<&str> {
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("# ") {
+            let title = rest.trim();
+            if !title.is_empty() {
+                return Some(title);
+            }
+        }
+    }
+    None
 }
 
 /// Look up an embedded doc by (normalized) name.
@@ -69,19 +81,27 @@ fn lookup_embedded_doc(key: &str) -> Option<&'static str> {
         .map(|(_, body)| *body)
 }
 
-/// A markdown bullet list of the available doc names, for listing / errors.
+/// Table of contents: each embed's short name plus its markdown H1 title.
 fn available_listing() -> String {
-    let mut out = String::from("Available quecto capability docs:\n");
-    for (name, _) in EMBEDDED_DOCS {
+    let mut out = String::from(
+        "Quecto operating manual (`docs` tool).\n\
+         Call with no name to list pages; pass a name to read one.\n\
+         Start with `quick-start` for parent coordination; open other pages only when needed.\n\n\
+         Table of contents:\n",
+    );
+    for (name, body) in EMBEDDED_DOCS {
+        let title = doc_title(body).unwrap_or(name);
         out.push_str("- ");
         out.push_str(name);
+        out.push_str(" — ");
+        out.push_str(title);
         out.push('\n');
     }
-    out.push_str("\nRead one with: docs {\"name\": \"quecto\"}");
+    out.push_str("\nRead one with: docs {\"name\": \"quick-start\"}");
     out
 }
 
-/// Tool that serves the embedded capability docs by name (CWD-independent).
+/// Tool that serves the embedded operating manual by name (CWD-independent).
 #[derive(Debug, Default)]
 pub struct DocsTool;
 
@@ -95,12 +115,13 @@ impl Tool for DocsTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "docs".into(),
-            description: "Read quecto's own capability docs, embedded in the binary and \
-                available from any directory. Call with no name (or {}) to list \
-                docs; pass a name to read one. Start with \"quecto\". Use this instead \
-                of reading docs/*.md from disk. Example: docs {\"name\": \"subagents\"}"
+            description: "Quecto operating manual (embedded in the binary, CWD-independent). \
+                Call with no name (or {}) for the table of contents (name + title per page). \
+                Pass a name to read one page. Start with \"quick-start\" for parent-agent \
+                coordination; open deep-dive pages only when needed. Do not read docs from \
+                the filesystem. Example: docs {\"name\": \"quick-start\"}"
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"name":{"type":"string","description":"Doc to read, e.g. \"quecto\" or \"subagents\" (a docs/ prefix or .md suffix is accepted). Omit to list all available docs."}}}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"name":{"type":"string","description":"Manual page to read, e.g. \"quick-start\" or \"workflow\" (a docs/ prefix or .md suffix is accepted). Omit to list the table of contents."}}}"#.into(),
         }
     }
 
@@ -115,7 +136,6 @@ impl Tool for DocsTool {
 
         Box::pin(async move {
             let Some(name) = name else {
-                // No name → list available docs.
                 return Ok(ToolResult {
                     content: available_listing(),
                     is_error: false,

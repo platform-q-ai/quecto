@@ -242,7 +242,7 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
 
-    // Build system prompt: datetime preamble + docs policy + extensions + user prompt.
+    // Build system prompt: docs policy + extensions + user prompt.
     let mut system = crate::interface::shared::build_system_prompt(&flags.system_prompt);
     crate::interface::shared::append_extension_prompt(
         &mut system,

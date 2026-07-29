@@ -5,6 +5,178 @@ agent session. They run as **background UDS-mode agents** — the parent returns
 immediately and interacts with children asynchronously via the `agent_cmd`
 tool. No external dependencies (no `ncat`, `socat`, or `bash` intermediary).
 
+## Parent coordination model
+
+Use subagents to isolate substantial working context and run independent work
+in the background while the parent remains available to the user. Delegate
+deliberately — not as the default for every non-trivial request. Decide by the
+**shape and context cost** of the work, not merely whether it sounds complex.
+
+### Handle directly in the parent
+
+Keep work in the parent when it is focused, short-lived, and low-context,
+especially when:
+
+- the relevant file, symbol, command, or value is already known;
+- a single-fact lookup or answer should require only a few targeted tool calls;
+- the expected tool output is small and directly useful to the final answer;
+- the task is a small, bounded edit or verification;
+- the work is clarification, synthesis, final judgment, or user-facing
+  coordination;
+- delegating, briefing a child, and retrieving its result would cost more than
+  executing directly.
+
+If the scope is uncertain, begin with a focused parent search. Delegate only
+when that probe shows the work is broader, longer, noisier, or more
+context-heavy than expected.
+
+### Delegate to a subagent
+
+Delegate when one or more of these applies:
+
+- answering requires a broad or uncertain search across several files,
+  directories, subsystems, or naming conventions;
+- the work will produce substantial file excerpts, command output, or
+  intermediate evidence while the parent needs only the conclusion and concise
+  supporting evidence;
+- the task is long-running or likely to require many tool calls;
+- the work is independently separable and can run in parallel with other
+  useful work;
+- a specialized research, implementation, debugging, or review perspective
+  would materially help;
+- an available workflow provides useful sequencing, verification, evidence
+  gates, or review structure.
+
+The number of files alone is not an absolute rule. Read several small, known
+files directly when that is cheaper; delegate when the search is broad,
+uncertain, noisy, or likely to consume substantial parent context.
+
+Once a scope is delegated, **do not repeat the same investigation in the
+parent**. Continue distinct coordination, synthesis, user interaction, or
+independent work. Checking a critical citation or running a focused command to
+verify a child's conclusion is not duplication; repeating the child's full
+search is.
+
+### Delegation ownership
+
+Give each child one clear goal, ownership boundary, and expected deliverable.
+Do not create redundant children for the same question. Parallelize only across
+distinct workstreams or review dimensions.
+
+A child should absorb the detailed working context and return a **concise
+report** containing conclusions, material evidence, uncertainty, and relevant
+`file:line` citations. Do not ask it to return raw file dumps unless those are
+the requested deliverable.
+
+The parent retains responsibility for:
+
+- the user conversation and clarification of intent;
+- coordination across workstreams;
+- checking that a child's report answers its assigned scope;
+- verifying important or surprising claims where appropriate;
+- deduplicating and reconciling conflicting child results;
+- making the final judgment;
+- synthesizing and relaying what matters to the user.
+
+A child's report is **input to the parent's answer**, not a substitute for the
+parent's judgment.
+
+### Choosing how to delegate
+
+| Approach | When to use |
+|----------|-------------|
+| Plain child `task` | Substantial but focused or exploratory work that does not need a prescribed multi-step process |
+| `workflow: true` | Work is workflow-shaped and the child should inspect templates in its config and select the best match |
+| Instruct child to `select_template` | A specific existing template is clearly appropriate |
+| `workflow_spec` | Child must follow an exact, observable, auditable sequence (known template or a new one). Bind the full template rather than relying on prose |
+| `read_only: true` | Reviewers, researchers, and other non-editing children |
+
+For coding tasks in this repo, prefer delegating to children that run the
+repository workflows (`feature`, `bugfix`, `refactor`, `remove`, `chore`,
+`adversarial-review`, `investigate`, `flake-hunt`, `plan`, `prd`). See the
+`workflow` doc (`docs {"name":"workflow"}`) for template selection and step
+progression.
+
+### Briefing children
+
+Children have **separate LLM contexts** and do not automatically inherit the
+parent's conversation. Give each child the context required to work
+independently.
+
+Give relevant children the same engineering constraints as the parent: prefer
+minimal, purpose-aligned changes; follow repository conventions; apply YAGNI,
+BDD/TDD, and Clean Architecture principles where practical; run appropriate
+verification; and never bypass hooks with `--no-verify`.
+
+Children should execute their assigned work directly unless instructed
+otherwise by an attached workflow.
+
+### Reusing child context
+
+Reuse a child that already owns the relevant context instead of starting
+redundant work:
+
+- use `prompt` to give a live idle child related work;
+- use `follow_up` to queue related work after its current run;
+- use `steer` to interrupt and redirect active work;
+- spawn a new child for a new independent scope;
+- after a child has exited, deliberately reusing the same `agent_id` resumes
+  its persisted session, while a different `agent_id` creates a separate
+  context.
+
+Do not reuse stale child context merely to avoid a new session; use it only
+when its prior context is relevant and safe for the new assignment.
+
+### Non-blocking execution and result recovery
+
+`spawn` returns when the child **socket** is ready — not when the task finishes.
+Completion is **multi-turn**. The production `agent_cmd` tool schema currently
+**hides** blocking `await` from the model (`AWAIT_VISIBLE_IN_SCHEMA = false` in
+`agent_cmd.rs`); dispatch still accepts it if invented. Prefer the passive path.
+
+#### Required sequence
+
+1. **Spawn** (and brief the child). Returns immediately.
+2. **End this parent turn** (or do other *non-duplicative* work that does not need
+   the child’s answer). Stay available to the user.
+3. **Next turn:** a passive one-line completion note arrives automatically when
+   the child finishes/errors/exits.
+4. **Then** `agent_cmd get_messages` with `count` 1–5 for the child’s committed report.
+5. Verify, synthesize, and answer the user. Relay conclusions — not raw child dumps
+   unless asked.
+
+#### Do not
+
+- Poll `get_subagents`, `get_subagents_all`, or `get_state` in a loop waiting for idle.
+- `sleep` / bash-wait / busy-wait for the child in the same turn.
+- Treat the passive note as the child’s report — always `get_messages` for content.
+
+#### Optional tools (not wait loops)
+
+- `get_state` — occasional live progress/debug.
+- `get_subagents_all` — inventory and cleanup **after** coordination, not completion waiting.
+- `abort` / `kill` — stop work or the process when needed.
+
+If you need the child’s answer before you can help the user, **yield the turn**
+and continue when the note arrives; do not invent a same-turn wait.
+
+(Sections below that document `await` describe the still-implemented command for
+operators/tests and for flipping `AWAIT_VISIBLE_IN_SCHEMA` back on — not the
+default agent-facing path.)
+
+### Safety for delegated work
+
+- Children inherit the parent's sandbox posture, credentials, and tools. Do not
+  broaden a child's practical authority beyond the user's intent.
+- `read_only: true` removes the `write` and `edit` tools but is **not a hard
+  sandbox** because the child retains `bash`. Explicitly prohibit mutation and
+  verify the workspace diff after read-only children finish before trusting that
+  they made no changes.
+- Never print secrets. Have children use configured local tools without echoing
+  credentials.
+- Avoid redundant agents, but use parallelism across genuinely distinct
+  workstreams when it provides value.
+
 ## Overview
 
 When the LLM calls the `spawn` tool, quecto launches a new `quecto agent`
@@ -110,8 +282,8 @@ but not mutate the repo:
 tools, but a child can still mutate via `bash` (e.g. `sed`, `>` redirects). Reviewers keep `bash`/`read`/`grep`/`find`/`agent_cmd` precisely so
 they can fetch a diff and post comments; treat `read_only` as a guard against
 accidental writes, not an isolation boundary. For stronger guarantees use a
-workspace/sandbox posture. The CLI `--disable-tool` flag is the equivalent for a
-top-level agent — see `docs {"name":"disable-tools"}`.
+workspace/sandbox posture. For a top-level agent, the CLI equivalent is
+`--disable-tool` (repeatable; see the README).
 
 **Example:**
 
@@ -192,7 +364,7 @@ reports progress without polling:
 - in the TUI, the selected child renders its own workflow status bar.
 
 Read the child's final result the usual way — its one-line auto-note at your next
-idle turn, or a blocking `await`, then `agent_cmd get_messages` for the full
+idle turn, then `agent_cmd get_messages` for the full
 output (see [Notification model](#notification-model)).
 
 ### `agent_cmd` — interact with a subagent
@@ -559,13 +731,10 @@ Wait for the existing agent to finish (check with `agent_cmd get_state`) or
 
 ## Disabling subagents
 
-To prevent the LLM from spawning subagents entirely:
-
-```bash
-quecto agent --disable-tool spawn --disable-tool agent_cmd -m "fix the bug"
-```
-
-See Disabling Tools (`docs {"name":"disable-tools"}`) for details.
+To prevent the LLM from spawning subagents entirely, remove both tools before
+the session starts: `--disable-tool spawn --disable-tool agent_cmd`. The same
+`--disable-tool` flag works for any core or extension tool name on a top-level
+agent; on a child, use spawn `disable_tools` / `read_only` (above).
 
 ## REPL subagent commands
 
@@ -657,30 +826,28 @@ Parent Agent Process
 
 ## Practical patterns
 
-### Parallel code review with await
+### Parallel code review (prefer passive notes)
 
-Spawn multiple reviewers and await their completion:
+Spawn multiple reviewers with distinct ownership; prefer passive completion
+notes so the parent stays available:
 
 ```
-"Spawn three subagents for parallel review:
-1. spawn(agent_id='arch-review', task='Review src/ for architecture issues')
-2. spawn(agent_id='security-review', task='Review src/ for security issues')
-3. spawn(agent_id='perf-review', task='Review src/ for performance issues')
+"Spawn three read_only subagents for parallel review (distinct dimensions):
+1. spawn(agent_id='arch-review', read_only=true, task='Review src/ for architecture issues; return concise findings with file:line')
+2. spawn(agent_id='security-review', read_only=true, task='Review src/ for security issues; return concise findings with file:line')
+3. spawn(agent_id='perf-review', read_only=true, task='Review src/ for performance issues; return concise findings with file:line')
 
-Then await each:
-  agent_cmd(agent_id='arch-review', command='await', timeout=600)
-  agent_cmd(agent_id='security-review', command='await', timeout=600)
-  agent_cmd(agent_id='perf-review', command='await', timeout=600)
+Continue useful non-duplicative parent work. When each one-line completion note
+arrives, read that child's report:
+  agent_cmd(agent_id='…', command='get_messages', count=5)
 
-Read results with agent_cmd get_messages and compile a summary."
+Synthesize, dedupe, and judge before answering the user. Prefer passive notes; yield the turn if a
+verdict must gate the next action in the same turn."
 ```
 
 All three run concurrently — total time is the max of the three, not the sum.
-Using `await` here is the *blocking* choice: it pauses the parent until each
-reviewer finishes, which is what you want when their verdicts gate the next step.
-If you don't need to block, you can skip `await` entirely — each reviewer's
-one-line completion note arrives automatically at your next idle turn, and you
-read full results with `get_messages` once notified.
+Default to passive notes and the multi-turn sequence (see
+[Notification model](#notification-model) and [Parent coordination model](#parent-coordination-model)).
 
 ### Delegating a bound workflow (and nesting)
 
@@ -742,6 +909,5 @@ The three control verbs stay distinct — `follow_up` = queue, `steer` = redirec
 
 ## See also
 
-- Disabling Tools (`docs {"name":"disable-tools"}`) — `--disable-tool spawn` to prevent subagent spawning
 - UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — the framed JSON protocol used for agent communication
 - Extensions (`docs {"name":"extensions"}`) — adding custom tools to the agent

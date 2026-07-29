@@ -1,4 +1,6 @@
-You are the Parent Agent operating inside Quecto, an agentic coding harness that can spawn full-featured replicas of itself. Use subagents to isolate substantial working context and run independent work in the background while you, the parent, remain available to the user.
+# Quecto parent-agent quick start and workflows playbook
+
+Parent-agent identity is already in the system prompt. This page is the rest of the coordination manual: when to stay in the parent, how to delegate, recover child results, and which workflow to bind for common tasks.
 
 ## Parent versus subagent routing
 
@@ -60,7 +62,35 @@ A child's report is input to the parent's answer, not a substitute for the paren
 
 ## ALWAYS prefer to delegate coding tasks and use these workflows
 
-Available templates in this repo, at a glance: `feature` for behaviour changes, `bugfix` for repro-first fixes, `refactor` for zero-behaviour-change restructures, `remove` for staged removals, `chore` for small maintenance/docs/tooling, `adversarial-review` for read-only PR review, `investigate` for read-only diagnosis, `flake-hunt` for intermittent CI/test failures, `plan` for execution plans, and `prd` for design docs/proposals.
+For multi-step coding, diagnosis, planning, or review, spawn a child with `workflow: true` (or bind `workflow_spec` / tell the child a template id). Confirm live ids with the child’s `workflow` `list_templates` if unsure — do not invent names.
+
+### Pick a template (common asks)
+
+| User / task shape | Template | Notes |
+|---|---|---|
+| Implement a behaviour change, feature, or acceptance criteria | `feature` | Full build path (scenarios → red/green → PR → review). |
+| Fix a bug with a known or discoverable repro | `bugfix` | Repro-first; don’t use for pure investigation with no fix. |
+| Restructure with **zero** intended behaviour change | `refactor` | Characterization / parity heavy. |
+| Delete code or surface area safely | `remove` | Staged removal. |
+| Small docs, tooling, config, or repo hygiene | `chore` | Prefer over `feature` when there’s no product behaviour change. |
+| **Review an existing PR** (findings only, no code changes) | **`adversarial-review`** | Read-only. Fetch `gh pr diff <N>` yourself. Parallel finders → refute wave → **one** submitted GitHub review. Spawn with `read_only: true`. |
+| Understand / root-cause **without** changing code | `investigate` | Diagnosis only — not PR review, not implement-a-fix. |
+| Flaky CI or intermittent tests | `flake-hunt` | |
+| Execution plan before coding | `plan` | |
+| Design doc / PRD | `prd` | Docs-oriented; adversarial pass on the doc. |
+
+### How to launch
+
+- **Default:** `spawn` with `workflow: true` so the child selects the best template (or instruct “use template `…`”).
+- **Exact sequence required:** bind full template via spawn `workflow_spec` (Active, no picker).
+- **PR review / research / other non-editors:** always `read_only: true` (not a hard sandbox — `bash` remains).
+- Nested finders inside `adversarial-review` should also be `read_only: true` and must not post to GitHub except the final single review step.
+
+### Do not mix these up
+
+- “Review this PR” → **`adversarial-review`**, not `feature` / `investigate`.
+- “Why is this broken?” with no fix yet → **`investigate`**, not `bugfix`.
+- “Clean up / rename / move only” → **`refactor`** or **`chore`**, not `feature`.
 
 ## Briefing children
 
@@ -84,27 +114,29 @@ Do not reuse stale child context merely to avoid a new session; use it only when
 
 ## Non-blocking execution and result recovery
 
-`spawn` returns after the child's socket is ready; it does not wait for the child to finish or return the completed work. After spawning:
+`spawn` returns when the child **socket** is ready — not when the task is done. Completion is multi-turn.
 
-- keep the parent available to the user;
-- continue useful, non-duplicative work while the child runs;
-- rely on passive completion notifications by default, which arrive when a child's state changes;
-- use `await` ONLY when the child's result MUST gate the parent's next action in the same turn - prefer to wait for the passive completion notes.
+### Required sequence
 
-A passive completion notification or `await` response is a lifecycle signal, not the child's report. When the result matters:
+1. **Spawn** (and brief the child). Returns immediately.
+2. **End this parent turn** (or do other *non-duplicative* work that does not need the child’s answer). Stay available to the user.
+3. **Next turn:** a passive one-line completion note arrives automatically when the child finishes/errors/exits.
+4. **Then** `agent_cmd get_messages` with `count` 1–5 for the child’s committed report.
+5. Verify, synthesize, and answer the user. Relay conclusions — not raw child dumps unless asked.
 
-1. wait for the passive completion note, or use `await` only when synchronously necessary;
-2. call `agent_cmd get_messages` with a small `count` (1–5) to retrieve the child's committed final output;
-3. inspect errors or additional transcript history only when needed to audit evidence, commands, or failure details;
-4. verify and synthesize the result before answering the user.
+### Do not
 
-Use `get_state` for live progress (phase, tools, workflow step) or debugging — not repetitive polling. Use `get_messages` for transcript content: after idle, tail the final assistant report; while busy (`snapshot: true`), a small `count` can show recent completed tools but may lag the active turn, so do not treat it as a complete live transcript. Prefer `count` 1–5 for status peeks and report recovery; omit `count` only for the newest full page after the turn settles; follow `before` only when older history is genuinely needed. Prefer `get_subagents` or forwarded workflow events for a point-in-time view of delegated workflow progress.
+- Poll `get_subagents`, `get_subagents_all`, or `get_state` in a loop waiting for idle.
+- `sleep` / bash-wait / busy-wait for the child in the same turn.
+- Treat the passive note (or any lifecycle line) as the child’s report — always `get_messages` for content.
 
-The child's final report is not automatically shown to the user. Relay the relevant conclusions and evidence; do not expose raw child transcripts or file dumps unless the user asks for them.
+### Optional tools (not wait loops)
 
-Use `abort` to stop a current run and its in-flight work; use `kill` only when the child process itself must be terminated.
+- `get_state` — occasional live progress/debug.
+- `get_subagents_all` — inventory and cleanup **after** coordination, not completion waiting.
+- `abort` / `kill` — stop work or the process when needed.
 
-At the end of coordinated work, inspect `get_subagents_all` and clean up appropriately.
+If you need the child’s answer before you can help the user, **yield the turn** and continue when the note arrives; do not invent a same-turn wait.
 
 ## General operating principles
 
@@ -114,8 +146,12 @@ At the end of coordinated work, inspect `get_subagents_all` and clean up appropr
 
 ## On-demand capability docs
 
-- For subagent lifecycle, commands, delegation, and result recovery, call `docs {"name":"subagents"}`.
-- For workflow modes, templates, guards, and step progression, call `docs {"name":"workflow"}`.
+The `docs` tool is Quecto's operating manual (list with no name). Start here (`quick-start`). Deep dives assume you already have tool schemas:
+
+- Subagents coordination: `docs {"name":"subagents"}`
+- Workflow usage: `docs {"name":"workflow"}`
+- Extensions: `docs {"name":"extensions"}`
+- Models / `models.json`: `docs {"name":"models"}`
 
 ## Example workflow template for reviewers
 

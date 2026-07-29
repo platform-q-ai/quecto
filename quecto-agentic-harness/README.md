@@ -179,7 +179,7 @@ REPL commands: `/help`, `/clear`, `/agent`, `/spawn`, `/exit`, `/quit`. Uses abs
 
 REPL progress: `ProgressRenderer` drives a braille spinner at ~12fps on stderr (TTY only). Shows thinking state, tool name, arguments preview, and execution status. Pure ANSI escape codes — no external crates.
 
-All entry points (REPL, CLI agent) prepend a datetime preamble to the system prompt via `build_system_prompt()` so the agent always knows the current date/time/timezone — critical for time-aware tasks.
+All entry points (REPL, CLI agent) inject a short docs-retrieval policy via `build_system_prompt()` so agents know to use the `docs` tool for Quecto capability guides on demand. A local datetime preamble is not injected (providers may still send their own date metadata).
 
 Headless CLI agent includes `SpawnTool` (launches UDS-mode subagents) and `AgentCmdTool` (sends commands to spawned agents). Subagent timeout: 24 hours.
 
@@ -261,7 +261,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--no-workflow` | No | UDS mode only — explicitly disable workflow tool/state/prompt |
 | `--parent-id` | No | UDS mode only — declares this agent's parent in the unit tree; stamped as `parent_id` on its `workflow_state` events. Set automatically by `spawn`; rarely passed by hand |
 | `--effort` | No | Reasoning effort level (`none`/`low`/`medium`/`high`/`xhigh`/`max`). OpenAI reasoning models take the documented OpenAI scale (`none`–`xhigh`); Anthropic 4.6 models take `low`/`medium`/`high`/`max`. Unknown values are rejected. Overrides config and env var |
-| `--disable-tool` | No | Remove a tool from the registry (repeatable). See [Disabling Tools](docs/disable-tools.md) |
+| `--disable-tool` | No | Remove a tool from the registry before the session starts (repeatable). The model never sees disabled tools. Core names include `bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `web_fetch`, `web_search`, `recall`, `spawn`, `agent_cmd`, `docs`, `workflow`; extension tools can be disabled by registered name. Unknown names warn on stderr but still start the agent. Applies for the process lifetime in UDS (clients share the restricted set; `register_tools` cannot re-add a disabled name). Not a hard sandbox: disabling `write`/`edit` still leaves `bash` able to mutate the workspace. Child agents use spawn `disable_tools` / `read_only` instead (see [Subagents](docs/subagents.md)). |
 | `--config` | No | Override config file path |
 
 **Sessions** persist conversation history so the agent remembers context across runs:
@@ -621,7 +621,7 @@ External tool binaries (`rg`, `fd`) are resolved from `PATH`; missing binaries r
 | `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
 | `recall` | Retrieve a spilled tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 | `spawn` | Spawn a background UDS-mode subagent for long-running tasks |
-| `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `await`, `get_state`, `get_messages` (optional `count`/`before` — omit both for the newest history page, N for last N, `before` pages backward), `get_session_stats`, `get_subagents`, `get_subagents_all`, `get_extensions`, `set_model`, `set_effort`, `clear_history`, `reload_extensions` |
+| `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `await`, `get_state`, `get_messages` (optional `count`/`before` — omit both for the newest history page, N for last N, `before` pages backward), `get_session_stats`, `get_subagents`, `get_subagents_all`, `get_extensions`, `set_model`, `set_effort`, `clear_history`, `reload_extensions`. **Model-facing schema:** `await` is currently hidden from the tool enum/description; prefer spawn → end turn → passive completion note → `get_messages`. Do not poll `get_subagents` / `get_subagents_all` or sleep as a wait loop. |
 
 For `agent_cmd` command `get_subagents_all`, pass `agent_id` as `*` to list the current parent agent's tracked subagent registry instead of targeting a child agent.
 
@@ -806,16 +806,17 @@ Coverage runs in authoritative CI after `merge-requested` is applied. For manual
 
 ## Documentation
 
+Human guides (full reference). The agent `docs` tool embeds a short **operating manual** from `docs/docs-tool-embeds/` (`quick-start` plus concise deep dives) — not these full files.
+
 | Guide | Description |
 |---|---|
-| [Quecto Agent Capability Guide](docs/quecto.md) | Compact retrieval map for agents using Quecto capabilities on demand |
-| [Getting Started](docs/getting-started.md) | Quickstart guide for UDS agent integration |
+| [Getting Started](docs/getting-started.md) | Install, auth, and first run |
 | [UDS Protocol](docs/uds-protocol.md) | Complete UDS command and event specification |
 | [Sessions](docs/sessions.md) | Conversation persistence, context management, spill/recall |
 | [Extensions](docs/extensions.md) | Add custom tools via native extensions (config-gated) or UDS extensions (external processes) |
 | [Subagents](docs/subagents.md) | Spawning and controlling UDS-mode subagents with `spawn` and `agent_cmd` tools |
-| [Disabling Tools](docs/disable-tools.md) | Restricting which tools the agent can access via `--disable-tool` |
 | [Workflow](docs/workflow.md) | UDS-only template-based workflow engine with default dormant tool availability, selector mode, guards, and live prompt injection |
+| [Models & providers](docs/runtime-models-providers.md) | `models.json` registry and provider setup |
 | [Contributor Cookbooks](docs/contributor-cookbooks.md) | Change maps for common harness work: tools, UDS commands, providers, events, persistence, subagents, and context policy |
 
 ## Tech stack

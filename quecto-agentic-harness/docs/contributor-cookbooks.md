@@ -6,8 +6,8 @@ starting point, not a substitute for reading the local code and preserving the
 Clean Architecture dependency rule.
 
 For a subsystem overview, start with the
-[Harness Architecture Map](harness-architecture-map.md). For the hardening plan,
-see the [architecture-hardening PRD](prd-harness-architecture-hardening.md) and
+[Harness Architecture Map](architecture/harness-architecture-map.md). For the hardening plan,
+see the [architecture-hardening PRD](prd/prd-harness-architecture-hardening.md) and
 [ADR-0018](architecture-design-records/adr-0018-contributor-change-cookbooks.md).
 
 ## Local check command index
@@ -56,8 +56,8 @@ Do not run live provider lanes unless the task explicitly requires them.
 
 **Docs and compatibility:**
 
-- Update `README.md`, `docs/extensions.md`, or `docs/disable-tools.md` when the
-  user-facing tool surface changes.
+- Update `README.md` or `docs/extensions.md` when the user-facing tool surface
+  changes (including `--disable-tool` names).
 - Keep tool names stable once shipped; changing a name can break prompts,
   extensions, and recorded sessions.
 - Avoid production code paths that exist only for tests. Prefer injected test
@@ -97,7 +97,7 @@ that owns the command.
 **Docs and compatibility:**
 
 - Update `docs/uds-protocol.md` and, for protocol-affecting work,
-  `docs/protocol-capability-matrix.md`.
+  `docs/architecture/protocol-capability-matrix.md`.
 - Keep JSON wire shapes string-compatible unless a separate ADR/PRD approves a
   breaking change.
 - Preserve legacy aliases during documented deprecation windows.
@@ -279,7 +279,7 @@ or `agent_cmd` surface that exposes it.
 
 **Docs and compatibility:**
 
-- Update `docs/sessions.md`, `docs/harness-architecture-map.md`, and the PRD/ADR
+- Update `docs/sessions.md`, `docs/architecture/harness-architecture-map.md`, and the PRD/ADR
   links when policy or invariants change.
 - Preserve session file format unless a separate ADR/PRD approves migration.
 - Recall IDs and collapsed content promises are user-visible contracts.

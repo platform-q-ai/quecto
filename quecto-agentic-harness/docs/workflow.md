@@ -6,6 +6,130 @@ mid-conversation. With `--workflow`, it actively guides agents through
 structured development cycles using configurable template libraries from the
 first turn.
 
+## Parent coordination with workflows
+
+Workflows give children (and, when useful, the parent) structured sequencing,
+verification, evidence gates, and review structure. Prefer attaching a workflow
+when the work is multi-step and process-shaped — especially coding tasks —
+rather than relying on free-form prose instructions alone.
+
+### When workflow helps
+
+Delegate with a workflow when one or more of these apply:
+
+- the task benefits from ordered steps (RED → GREEN → review → PR, investigate
+  → report, etc.);
+- verification, evidence gates, or review structure should be observable;
+- an available template already encodes the right process for the work shape;
+- the parent needs auditable progress (`workflow_state`, `get_state` workflow
+  snapshot) without repeating the child's investigation.
+
+Keep pure clarification, synthesis, final judgment, and short low-context work
+in the parent without a workflow. See the `subagents` doc
+(`docs {"name":"subagents"}`) for parent-vs-child routing and non-blocking
+result recovery.
+
+### Choosing how to attach a workflow
+
+| Approach | When to use |
+|----------|-------------|
+| Plain child `task` (no workflow) | Substantial but focused or exploratory work that does not need a prescribed multi-step process |
+| `spawn` with `workflow: true` | Work is workflow-shaped; the child inspects templates in its configuration and selects the best match |
+| Instruct the child to `select_template` | A specific existing template is clearly appropriate |
+| `spawn` with `workflow_spec` | Child must follow an **exact**, observable, auditable sequence — bind the full template rather than relying on prose to enforce steps |
+| Parent `workflow` tool (dormant or `--workflow`) | The current session itself should track steps (user asked for a checklist, or the parent is the executor) |
+
+For coding tasks, **prefer delegating** to a child that runs one of the
+repository templates rather than improvising the full process in the parent:
+
+| Template id | Shape |
+|-------------|--------|
+| `feature` | Behaviour-adding or behaviour-changing work |
+| `bugfix` | Repro-first fixes |
+| `refactor` | Zero-behaviour-change restructures |
+| `remove` | Staged removals |
+| `chore` | Small maintenance, docs, tooling |
+| `adversarial-review` | Read-only PR review |
+| `investigate` | Read-only diagnosis |
+| `flake-hunt` | Intermittent CI/test failures |
+| `plan` | Execution plans |
+| `prd` | Design docs / proposals |
+
+Classify by **issue shape**, not by how large the change feels: zero
+behaviour-change restructures → `refactor`; new or altered observable behaviour
+(and most maintenance) → `feature` (or the more specific ids above when they
+fit). If behaviour change is mixed with a pure refactor, split the work — do
+not run a mixed issue on a single mismatched template.
+
+### Binding vs free selection
+
+- **`workflow: true`** — workflow tool available; child picks a template from
+  its library (selector mode). Good when the parent wants process structure but
+  trusts the child to choose.
+- **`workflow_spec`** — parent hands a fully inlined template by value; child
+  starts **bound** in Active mode and cannot select another template. Use when
+  exact step adherence matters (review finders, fixed checklists, custom
+  sequences not in the library).
+- **Instruct `select_template`** — middle ground: child has the library, parent
+  names the template in the task briefing.
+
+### Parent responsibilities while a workflowed child runs
+
+- Keep the parent available; do not re-run the child's investigation.
+- Prefer **passive completion notes** over `await`; use `await` only when the
+  child's result must gate the parent's next action in the same turn.
+- Recover the report with `agent_cmd get_messages` (`count` 1–5), then verify
+  and synthesize — a child's workflow completion is input to the parent's
+  judgment, not a substitute for it.
+- Track progress via forwarded `workflow_state` events, `get_subagents`
+  workflow snapshots, or occasional `get_state` — not tight polling loops.
+- Spawn reviewers and other non-editing children with `read_only: true`.
+- At the end of coordinated work, inspect `get_subagents_all` and clean up
+  stragglers.
+
+### Example: focused read-only review workflow (`workflow_spec`)
+
+Parents can bind a small review template when a full library template is heavier
+than needed:
+
+```json
+{
+  "id": "focused-review",
+  "label": "Focused Review",
+  "description": "Read-only single-dimension review with evidence-backed findings.",
+  "steps": [
+    {
+      "key": "scope",
+      "label": "Confirm assigned scope and review dimension",
+      "phase": "review",
+      "guidance": "Identify files, diff, commands, or documents in scope. Do not expand scope without evidence. Confirm this is a read-only review."
+    },
+    {
+      "key": "inspect",
+      "label": "Inspect the relevant code, tests, and docs",
+      "phase": "review",
+      "guidance": "Gather concrete evidence. Prefer file:line citations. Do not modify files or mutate local/remote state."
+    },
+    {
+      "key": "analyze",
+      "label": "Analyze only the assigned dimension",
+      "phase": "review",
+      "guidance": "Be skeptical. Report real, actionable issues only. Avoid style nitpicks unless they affect maintainability, correctness, security, or user outcomes."
+    },
+    {
+      "key": "report",
+      "label": "Return findings and confidence",
+      "phase": "review",
+      "guidance": "For each finding include severity, file:line when possible, problem, evidence, and a concrete fix. If no findings, say so explicitly and summarize what was checked."
+    }
+  ]
+}
+```
+
+Spawn with `read_only: true` and `workflow_spec: { "template": { ... } }` so the
+reviewer cannot use `write`/`edit` and must follow those steps. Remember
+`read_only` is not a hard sandbox (`bash` remains).
+
 ## Architecture
 
 - **UDS-only**: workflow availability requires `quecto agent --mode uds`

@@ -13,7 +13,7 @@ pub fn unix_timestamp_secs() -> i64 {
         .as_secs() as i64
 }
 
-/// Format the current local date and time for the agent datetime preamble.
+/// Format the current local date and time (e.g. for human-facing displays).
 ///
 /// Output example: `"Saturday, March 1, 2026 at 10:30:15 AM GMT"`
 ///

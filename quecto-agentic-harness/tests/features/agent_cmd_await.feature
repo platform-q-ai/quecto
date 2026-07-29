@@ -160,16 +160,18 @@ Feature: agent_cmd await — block until sub-agent reaches terminal state
   # to avoid adding 7+ seconds to the test suite.
 
   # --- Tool definition ---
+  # Short-term (#1312 / #1313): await remains dispatchable but is hidden from the
+  # model-facing tool schema while AWAIT_VISIBLE_IN_SCHEMA is false.
 
-  Scenario: tool definition includes await in supported commands
+  Scenario: tool definition hides await from model-facing schema
     Given an AgentCmdTool with an empty registry
-    Then the agent_cmd tool definition description should contain "await"
-    And the agent_cmd tool definition schema should include "await" in command enum
+    Then the agent_cmd tool definition description should not contain "await"
+    And the agent_cmd tool definition schema should not include "await" in command enum
 
-  Scenario: tool definition schema includes timeout and idle_timeout
+  Scenario: tool definition schema hides await-only timeout parameters
     Given an AgentCmdTool with an empty registry
-    Then the agent_cmd tool definition schema should include property "timeout"
-    And the agent_cmd tool definition schema should include property "idle_timeout"
+    Then the agent_cmd tool definition schema should not include property "timeout"
+    And the agent_cmd tool definition schema should not include property "idle_timeout"
 
   # --- Audit event ---
 

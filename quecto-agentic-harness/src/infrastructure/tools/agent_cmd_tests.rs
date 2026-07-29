@@ -709,40 +709,6 @@ async fn test_await_idle_resets_on_running() {
     assert_eq!(parsed["reason"], "idle");
 }
 
-#[test]
-fn test_definition_includes_await() {
-    let tool = empty_tool();
-    let def = tool.definition();
-    assert!(def.description.contains("await"));
-}
-
-#[test]
-fn test_definition_schema_includes_await() {
-    let tool = empty_tool();
-    let def = tool.definition();
-    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
-    let command_enum = schema["properties"]["command"]["enum"].as_array().unwrap();
-    assert!(
-        command_enum.iter().any(|v| v.as_str() == Some("await")),
-        "await should be in command enum"
-    );
-}
-
-#[test]
-fn test_definition_schema_includes_timeout_and_idle_timeout() {
-    let tool = empty_tool();
-    let def = tool.definition();
-    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
-    assert!(
-        schema["properties"]["timeout"].is_object(),
-        "timeout should be in schema properties"
-    );
-    assert!(
-        schema["properties"]["idle_timeout"].is_object(),
-        "idle_timeout should be in schema properties"
-    );
-}
-
 #[path = "agent_cmd_await_extra_tests.rs"]
 mod await_extra_tests;
 

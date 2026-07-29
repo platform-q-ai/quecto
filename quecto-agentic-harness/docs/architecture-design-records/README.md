@@ -27,7 +27,7 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 | [0014](adr-0014-context-management-is-a-first-class-application-subsystem.md) | Context Management Is a First-Class Application Subsystem | 🕒 Proposed | Context budget/pruning/spill/gauge/reconciliation logic gets a named application boundary. |
 | [0015](adr-0015-subagent-lifecycle-state-machine.md) | Subagent Lifecycle Is an Explicit State Machine | 🕒 Proposed | Subagent process/run/notification lifecycle transitions become explicit and testable. |
 | [0016](adr-0016-typed-identifiers-for-protocol-and-session-boundaries.md) | Typed Identifiers for Protocol and Session Boundaries | 🕒 Proposed | High-risk ids become string-serializing newtypes at protocol/session boundaries. |
-| [0017](adr-0017-protocol-evolution-matrix.md) | Protocol Evolution Is Tracked by a Capability Matrix | 🕒 Proposed | UDS protocol capabilities are tracked in a [compatibility/evolution matrix](../protocol-capability-matrix.md). |
+| [0017](adr-0017-protocol-evolution-matrix.md) | Protocol Evolution Is Tracked by a Capability Matrix | 🕒 Proposed | UDS protocol capabilities are tracked in a [compatibility/evolution matrix](../architecture/protocol-capability-matrix.md). |
 | [0018](adr-0018-contributor-change-cookbooks.md) | Contributor Change Cookbooks for Common Harness Extensions | 🕒 Proposed | Common harness extension paths are documented as focused cookbooks. |
 | [0019](adr-0019-role-segregated-domain-ports.md) | Domain Ports Are Segregated by Role When They Grow | 🕒 Proposed | Broad ports split into role-focused traits when caller pressure justifies it. |
 
