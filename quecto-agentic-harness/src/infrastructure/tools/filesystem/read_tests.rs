@@ -51,6 +51,196 @@ async fn test_read_offset_pagination() {
     assert!(!result.content.contains("line8"));
 }
 
+/// #1316: models often emit integral floats (`370.0`) for schema `"number"`.
+/// Those must honor the requested window — never silently fall back to default head.
+#[tokio::test]
+async fn test_read_float_offset_limit_does_not_return_default_head() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+
+    let content: String = (1..=3000).map(|i| format!("line{}\n", i)).collect();
+    std::fs::write(tmp.path().join("big.txt"), &content).unwrap();
+
+    let result = tool
+        .execute(r#"{"path": "big.txt", "offset": 100.0, "limit": 5.0}"#)
+        .await
+        .expect("integral float offset/limit must succeed");
+    assert!(
+        !result.is_error,
+        "unexpected tool error: {}",
+        result.content
+    );
+    let first_lines: Vec<&str> = result.content.lines().take(5).collect();
+    assert_eq!(
+        first_lines,
+        ["line100", "line101", "line102", "line103", "line104"],
+        "expected exact 5-line window starting at line100"
+    );
+    assert!(
+        !result.content.lines().any(|l| l == "line1"),
+        "must not return default head from line1; got prefix: {}",
+        first_lines.join("\n")
+    );
+    assert!(!result.content.lines().any(|l| l == "line99"));
+    assert!(!result.content.lines().any(|l| l == "line105"));
+}
+
+#[tokio::test]
+async fn test_read_fractional_offset_is_error() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    std::fs::write(tmp.path().join("f.txt"), "a\nb\nc\nd\ne\n").unwrap();
+
+    let result = tool
+        .execute(r#"{"path": "f.txt", "offset": 3.5, "limit": 10}"#)
+        .await;
+    assert!(
+        result.is_err(),
+        "fractional offset must error, not default-head"
+    );
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("offset"),
+        "error should name the field, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_read_negative_limit_is_error() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    std::fs::write(tmp.path().join("f.txt"), "a\nb\nc\n").unwrap();
+
+    let result = tool
+        .execute(r#"{"path": "f.txt", "offset": 1, "limit": -1}"#)
+        .await;
+    assert!(result.is_err(), "negative limit must error");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("limit"),
+        "error should name the field, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_read_string_offset_is_error() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    std::fs::write(tmp.path().join("f.txt"), "a\nb\nc\n").unwrap();
+
+    let result = tool
+        .execute(r#"{"path": "f.txt", "offset": "5", "limit": 1}"#)
+        .await;
+    assert!(
+        result.is_err(),
+        "string offset must error, no string coerce"
+    );
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("offset"),
+        "error should name the field, got: {msg}"
+    );
+}
+
+/// Direct parser boundary: values above `usize::MAX` must Err, never truncate via `as usize`.
+/// On 64-bit, construct a JSON integer u64 that cannot fit in usize only when usize < u64;
+/// always exercise a value that fails the fit check via `serde_json::Number`.
+#[test]
+fn test_parse_optional_usize_arg_rejects_above_usize_max() {
+    // Build a Number from u64::MAX. On 32-bit platforms usize::try_from fails.
+    // On 64-bit, u64::MAX == usize::MAX so try_from succeeds — also test a float
+    // path value larger than usize::MAX when representable, and the integer path
+    // with an explicit value known to exceed via cfg.
+    #[cfg(target_pointer_width = "32")]
+    {
+        let v = serde_json::Value::Number(serde_json::Number::from(u64::MAX));
+        let err = parse_optional_usize_arg(&v, "offset").unwrap_err();
+        assert!(
+            err.contains("offset") && err.contains("out of range"),
+            "expected out-of-range error, got: {err}"
+        );
+    }
+
+    // Exact 2^64 boundary: f64 can represent 18446744073709551616.0 exactly.
+    // On 64-bit, `usize::MAX as f64` rounds UP to this same value, so a naive
+    // `f > (usize::MAX as f64)` bound incorrectly accepts 2^64 and saturates
+    // via `f as u64` → u64::MAX. Must Err, never Ok(Some(usize::MAX)).
+    {
+        const TWO_POW_64: f64 = 18446744073709551616.0; // 2^64, exact in f64
+        assert_eq!(TWO_POW_64, (u64::MAX as f64) + 1.0); // sanity: exact power of two
+        let n = serde_json::Number::from_f64(TWO_POW_64).expect("2^64 is a finite JSON number");
+        let v = serde_json::Value::Number(n);
+        let err = parse_optional_usize_arg(&v, "limit").expect_err(
+            "2^64 float must be rejected (outside usize); must not saturate to usize::MAX",
+        );
+        assert!(
+            err.contains("limit") && err.contains("out of range"),
+            "expected out-of-range error for 2^64, got: {err}"
+        );
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    {
+        // Still probe a value well above the bound (2 * rounded usize::MAX).
+        let above = (usize::MAX as f64) * 2.0;
+        assert!(above.is_finite());
+        let n = serde_json::Number::from_f64(above).expect("finite f64 should be a JSON number");
+        let v = serde_json::Value::Number(n);
+        let err = parse_optional_usize_arg(&v, "limit").unwrap_err();
+        assert!(
+            err.contains("limit") && err.contains("out of range"),
+            "expected out-of-range error, got: {err}"
+        );
+    }
+
+    // Sanity: in-range zero and integral float still parse (0 allowed at parser layer).
+    assert_eq!(
+        parse_optional_usize_arg(&serde_json::json!(0), "offset").unwrap(),
+        Some(0)
+    );
+    assert_eq!(
+        parse_optional_usize_arg(&serde_json::json!(50.0), "limit").unwrap(),
+        Some(50)
+    );
+    // Negative integer path (i64), negative float, wrong type, and -0.0.
+    let err = parse_optional_usize_arg(&serde_json::json!(-3), "offset").unwrap_err();
+    assert!(
+        err.contains("offset") && err.contains("non-negative"),
+        "{err}"
+    );
+    let err = parse_optional_usize_arg(&serde_json::json!(-1.5), "limit").unwrap_err();
+    assert!(
+        err.contains("limit") && err.contains("non-negative"),
+        "{err}"
+    );
+    let err = parse_optional_usize_arg(&serde_json::json!(true), "offset").unwrap_err();
+    assert!(
+        err.contains("offset") && err.contains("expected a number"),
+        "{err}"
+    );
+    assert_eq!(
+        parse_optional_usize_arg(&serde_json::json!(-0.0), "offset").unwrap(),
+        Some(0)
+    );
+    let err = parse_optional_usize_arg(&serde_json::json!(3.5), "limit").unwrap_err();
+    assert!(err.contains("limit") && err.contains("integer"), "{err}");
+}
+
+#[tokio::test]
+async fn test_read_null_offset_and_limit_use_defaults() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    std::fs::write(tmp.path().join("f.txt"), "hello\nworld\n").unwrap();
+
+    let result = tool
+        .execute(r#"{"path": "f.txt", "offset": null, "limit": null}"#)
+        .await
+        .expect("null paging args are treated as absent");
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.contains("hello"));
+    assert!(result.content.contains("world"));
+}
+
 #[tokio::test]
 async fn test_read_offset_beyond_eof_error() {
     let (ws, sb, tmp) = test_tools();

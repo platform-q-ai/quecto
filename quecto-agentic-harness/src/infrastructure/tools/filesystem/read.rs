@@ -74,9 +74,19 @@ impl Tool for ReadTool {
                 .validate_path(&validated_str)
                 .map_err(|e| DomainError::Security(e.to_string()))?;
 
-            // Parse optional offset (1-indexed) and limit
-            let offset: Option<usize> = args["offset"].as_u64().map(|v| v as usize);
-            let limit: Option<usize> = args["limit"].as_u64().map(|v| v as usize);
+            // Parse optional offset (1-indexed) and limit. Models often emit integral
+            // JSON floats (e.g. 370.0) for schema "number"; honor those and
+            // hard-error on invalid paging args instead of silent default-head.
+            let offset = match args.get("offset") {
+                None => None,
+                Some(v) if v.is_null() => None,
+                Some(v) => parse_optional_usize_arg(v, "offset").map_err(DomainError::Tool)?,
+            };
+            let limit = match args.get("limit") {
+                None => None,
+                Some(v) if v.is_null() => None,
+                Some(v) => parse_optional_usize_arg(v, "limit").map_err(DomainError::Tool)?,
+            };
 
             // Safety cap: reject reads > 10 MiB before loading into memory.
             const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
@@ -148,6 +158,79 @@ impl Tool for ReadTool {
 /// Wrap a path in single quotes for use in a shell command hint.
 fn shell_escape_single(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
+}
+
+/// Parse optional line-count tool arg from an already-decoded JSON value.
+///
+/// - missing / null is handled by the caller (not passed here)
+/// - finite, non-negative, integral, in 0..=usize::MAX → Ok(Some(n))
+///   (0 still allowed here; apply_read_truncation rejects offset/limit 0)
+/// - anything else → Err(message)
+///
+/// Never truncates via unchecked `as usize`.
+fn parse_optional_usize_arg(
+    value: &serde_json::Value,
+    name: &str,
+) -> Result<Option<usize>, String> {
+    match value {
+        serde_json::Value::Number(n) => {
+            // Integer fast path with explicit usize fit check (no u64→usize truncation).
+            if let Some(u) = n.as_u64() {
+                return match usize::try_from(u) {
+                    Ok(v) => Ok(Some(v)),
+                    // Unreachable on 64-bit hosts; required on 32-bit where u64 can exceed usize.
+                    Err(_) => Err(format!(
+                        "invalid '{name}': value {u} is out of range for this platform (max {})",
+                        usize::MAX
+                    )),
+                };
+            }
+            // Reject negative integers early with a clear message.
+            if let Some(i) = n.as_i64() {
+                return Err(format!(
+                    "invalid '{name}': expected a non-negative integer, got {i}"
+                ));
+            }
+            // Remaining JSON numbers are floats (serde_json only stores finite f64 here).
+            // as_u64/as_i64 already failed, so as_f64 must succeed for a Number.
+            let f = n.as_f64().expect("JSON Number without u64/i64 must be f64");
+            if f < 0.0 {
+                return Err(format!(
+                    "invalid '{name}': expected a non-negative integer, got {f}"
+                ));
+            }
+            // Reject anything outside the exact u64 domain before casting.
+            // `usize::MAX as f64` rounds UP to 2^64 on 64-bit hosts, so a bound
+            // of `f > (usize::MAX as f64)` would accept 2^64 and then saturate
+            // via `f as u64` → u64::MAX. 2^64 is exact in f64; every finite f64
+            // ≥ 2^64 is outside both u64 and usize.
+            const U64_MAX_PLUS_ONE: f64 = 18446744073709551616.0; // 2^64, exact
+            if f >= U64_MAX_PLUS_ONE {
+                return Err(format!(
+                    "invalid '{name}': value {f} is out of range for this platform (max {})",
+                    usize::MAX
+                ));
+            }
+            // Integral relative to the already-parsed float — no rounding.
+            // After the 2^64 gate, `f as u64` is a non-saturating conversion for
+            // integral values (non-integral still fail the equality check).
+            let as_u = f as u64;
+            if f != as_u as f64 {
+                return Err(format!(
+                    "invalid '{name}': expected an integer line count, got {f}"
+                ));
+            }
+            // Explicit usize fit (required on 32-bit; identity on 64-bit).
+            match usize::try_from(as_u) {
+                Ok(v) => Ok(Some(v)),
+                Err(_) => Err(format!(
+                    "invalid '{name}': value {as_u} is out of range for this platform (max {})",
+                    usize::MAX
+                )),
+            }
+        }
+        other => Err(format!("invalid '{name}': expected a number, got {other}")),
+    }
 }
 
 /// Detect supported image MIME type by file magic bytes.
