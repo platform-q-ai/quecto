@@ -1,18 +1,140 @@
 use super::*;
 
-/// Request id for the master attach-time history backfill (#1050). Distinct from
-/// resume (`resume-messages`) and rewind (`rewind-open-*` / `rewind-refresh`) so
-/// `handle_response` can reconcile (prepend + guard) rather than wholesale-replace.
+/// Family prefix for the master attach-time history backfill (#1050 / #1237).
+/// Minted ids are `attach-backfill-{uuid_like}-{seq}`; bare legacy literals are
+/// dropped unless they exactly match a pending id (they never will after minting).
+pub(super) const ATTACH_BACKFILL_ID_PREFIX: &str = "attach-backfill";
+
+/// Test-facing bare attach id. Production mints unique ids; unit helpers may
+/// arm [`App::test_arm_attach_backfill`] with this token so exact-pending match
+/// still exercises the reconcile path without going through the socket emit.
+/// BDD steps use the literal `"attach-backfill"` string directly.
+#[cfg(test)]
 pub(super) const ATTACH_BACKFILL_ID: &str = "attach-backfill";
 
+/// Family prefixes for solicited master `get_messages` that must never fall
+/// through to the legacy wholesale-replace arm when they are not this client's
+/// exact pending id (#1237). Readable prefixes are diagnostics only.
+const RESUME_MESSAGES_ID_PREFIX: &str = "resume-messages";
+const REWIND_REFRESH_ID_PREFIX: &str = "rewind-refresh";
+
+/// Kind of a matched own-client solicited transcript response (#1237).
+/// Status text is derived from kind, never from literal id equality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SolicitedGetMessagesKind {
+    Resume,
+    RewindRefresh,
+    Attach,
+}
+
+impl SolicitedGetMessagesKind {
+    fn id_prefix(self) -> &'static str {
+        match self {
+            Self::Resume => RESUME_MESSAGES_ID_PREFIX,
+            Self::RewindRefresh => REWIND_REFRESH_ID_PREFIX,
+            Self::Attach => ATTACH_BACKFILL_ID_PREFIX,
+        }
+    }
+
+    fn replace_status(self) -> &'static str {
+        match self {
+            Self::Resume => "Session resumed",
+            Self::RewindRefresh => "Conversation rewound",
+            // Attach never wholesale-replaces; status is unused.
+            Self::Attach => "",
+        }
+    }
+}
+
 impl App {
+    /// Mint a process-unique solicited `get_messages` id and store it as the
+    /// exact pending correlation token for `kind` (#1237). Overwrites any prior
+    /// same-kind pending so a stale late response can no longer match.
+    fn mint_pending_solicited_get_messages(&mut self, kind: SolicitedGetMessagesKind) -> String {
+        self.solicited_get_messages_seq = self.solicited_get_messages_seq.wrapping_add(1);
+        let id = format!(
+            "{}-{}-{}",
+            kind.id_prefix(),
+            super::app_events::uuid_like(),
+            self.solicited_get_messages_seq
+        );
+        match kind {
+            SolicitedGetMessagesKind::Resume => {
+                self.pending_resume_messages_id = Some(id.clone());
+            }
+            SolicitedGetMessagesKind::RewindRefresh => {
+                self.pending_rewind_refresh_id = Some(id.clone());
+            }
+            SolicitedGetMessagesKind::Attach => {
+                self.pending_attach_backfill_id = Some(id.clone());
+            }
+        }
+        id
+    }
+
+    /// Drop all solicited resume/rewind/attach pending ids (lifecycle boundary).
+    pub(super) fn clear_pending_solicited_get_messages(&mut self) {
+        self.pending_resume_messages_id = None;
+        self.pending_rewind_refresh_id = None;
+        self.pending_attach_backfill_id = None;
+    }
+
+    /// Roll back a failed enqueue of a solicited get_messages when the id still
+    /// matches the pending slot for that family.
+    pub(super) fn rollback_pending_solicited_get_messages(&mut self, id: &str) {
+        if self.pending_resume_messages_id.as_deref() == Some(id) {
+            self.pending_resume_messages_id = None;
+        }
+        if self.pending_rewind_refresh_id.as_deref() == Some(id) {
+            self.pending_rewind_refresh_id = None;
+        }
+        if self.pending_attach_backfill_id.as_deref() == Some(id) {
+            self.pending_attach_backfill_id = None;
+        }
+    }
+
+    fn take_pending_resume_or_rewind(
+        &mut self,
+        id: Option<&str>,
+    ) -> Option<SolicitedGetMessagesKind> {
+        let id = id?;
+        if self.pending_resume_messages_id.as_deref() == Some(id) {
+            self.pending_resume_messages_id = None;
+            return Some(SolicitedGetMessagesKind::Resume);
+        }
+        if self.pending_rewind_refresh_id.as_deref() == Some(id) {
+            self.pending_rewind_refresh_id = None;
+            return Some(SolicitedGetMessagesKind::RewindRefresh);
+        }
+        None
+    }
+
+    fn is_pending_attach_backfill(&self, id: Option<&str>) -> bool {
+        matches!(
+            (id, self.pending_attach_backfill_id.as_deref()),
+            (Some(got), Some(pending)) if got == pending
+        )
+    }
+
+    /// Known solicited families that must never hit the legacy replace fallback
+    /// when they are not this client's exact pending id (#1237).
+    fn is_foreign_solicited_get_messages_family(id: &str) -> bool {
+        fn matches_family(id: &str, prefix: &str) -> bool {
+            id == prefix
+                || (id.starts_with(prefix) && id.as_bytes().get(prefix.len()) == Some(&b'-'))
+        }
+        matches_family(id, RESUME_MESSAGES_ID_PREFIX)
+            || matches_family(id, REWIND_REFRESH_ID_PREFIX)
+            || matches_family(id, ATTACH_BACKFILL_ID_PREFIX)
+    }
+
     /// Request durable master session history after connecting (including
-    /// `--socket` attach). Uses [`ATTACH_BACKFILL_ID`] so the response path
-    /// reuses the same prepend + `history_backfilled` reconcile as sub-agent
-    /// panes (#828 / #1050).
+    /// `--socket` attach). Mints a unique id so only this client reconciles the
+    /// solicited reply; id-less busy-connect snapshots still reconcile (#1050).
     pub(crate) fn request_master_attach_backfill(&mut self) {
+        let id = self.mint_pending_solicited_get_messages(SolicitedGetMessagesKind::Attach);
         self.send_command(Command::GetMessages {
-            id: Some(ATTACH_BACKFILL_ID.into()),
+            id: Some(id),
             before: None,
         });
     }
@@ -74,71 +196,15 @@ impl App {
             }
             "resume_session" => self.notify_response_error("Resume failed", error),
             "get_messages" if success => {
-                let own_page = self.master_session.is_pending_history_page(id.as_deref());
-                if let Some(data) = data {
-                    if id.is_some() && id == self.rewind.pending_open_id {
-                        self.rewind.pending_open_id = None;
-                        self.open_rewind_selector(&data);
-                    } else if matches!(
-                        id.as_deref(),
-                        Some("resume-messages") | Some("rewind-refresh")
-                    ) {
-                        // Resume/rewind swapped or truncated the server-side
-                        // conversation: replace the transcript. Newer servers
-                        // include paged-history cursors; legacy payloads do not,
-                        // but must still clear any live transcript and show the
-                        // status marker (#1050/#1061).
-                        let status = if id.as_deref() == Some("rewind-refresh") {
-                            "Conversation rewound"
-                        } else {
-                            "Session resumed"
-                        };
-                        if Self::is_history_page_payload(&data) {
-                            self.replace_master_chat_with_history_page(&data, status);
-                        } else {
-                            self.clear_message_recovery();
-                            if self.replace_chat_with_messages_with_empty_status(&data, status) {
-                                self.master_session.chat.add_entry(ChatEntry::Status {
-                                    text: status.to_string(),
-                                });
-                            }
-                        }
-                    } else if own_page {
-                        // This client's own older page extends the loaded prefix.
-                        Self::reconcile_master_backfill_history(
-                            &mut self.master_session,
-                            &data,
-                            true,
-                        );
-                    } else if id
-                        .as_deref()
-                        .is_some_and(|id| id.starts_with("history-page-"))
-                    {
-                        // Another client's older page (get_messages responses
-                        // are broadcast to every client) or one orphaned by a
-                        // resume: it is paged from a DIFFERENT depth, so
-                        // prepending it would create an interior gap. Drop it.
-                    } else if id.as_deref() == Some(ATTACH_BACKFILL_ID) || id.is_none() {
-                        // Attach backfill OR unsolicited busy-connect snapshot
-                        // (id-less, see uds_snapshots): replace any loaded
-                        // partial prefix (or prepend) + cursor reconciliation.
-                        Self::reconcile_master_backfill_history(
-                            &mut self.master_session,
-                            &data,
-                            false,
-                        );
-                    } else {
-                        self.replace_chat_with_messages(&data);
-                    }
-                } else if own_page {
-                    // Success but no data: clear the in-flight request so the same
-                    // older page can be retried on the next scroll (#1061 review).
-                    self.master_session.clear_pending_history_page();
-                }
+                self.handle_get_messages_success(id.as_deref(), data);
             }
             // Failed page fetch: same retry-unblock as the no-data case above.
             "get_messages" if self.master_session.is_pending_history_page(id.as_deref()) => {
                 self.master_session.clear_pending_history_page();
+            }
+            "get_messages" if self.take_pending_resume_or_rewind(id.as_deref()).is_some() => {}
+            "get_messages" if self.is_pending_attach_backfill(id.as_deref()) => {
+                self.pending_attach_backfill_id = None;
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id && success => {
                 self.rewind.pending_apply_id = None;
@@ -161,8 +227,10 @@ impl App {
                 }
                 self.clear_message_recovery();
                 self.notify("Rewound conversation", NotifyLevel::Success);
+                let refresh_id = self
+                    .mint_pending_solicited_get_messages(SolicitedGetMessagesKind::RewindRefresh);
                 self.send_command(Command::GetMessages {
-                    id: Some("rewind-refresh".into()),
+                    id: Some(refresh_id),
                     before: None,
                 });
             }
@@ -190,6 +258,78 @@ impl App {
             "agent_error" => self.handle_agent_error(error),
             _ => {}
         }
+    }
+
+    /// Correlate a successful master `get_messages` response (#1061 / #1237).
+    /// Order is load-bearing: exact own solicited ids first, then history pages,
+    /// attach/id-less reconcile, foreign-family drop, and only then legacy replace.
+    fn handle_get_messages_success(&mut self, id: Option<&str>, data: Option<serde_json::Value>) {
+        let own_page = self.master_session.is_pending_history_page(id);
+        let Some(data) = data else {
+            if own_page {
+                // Success but no data: clear the in-flight request so the same
+                // older page can be retried on the next scroll (#1061 review).
+                self.master_session.clear_pending_history_page();
+            } else if self.take_pending_resume_or_rewind(id).is_some() {
+                // Exact pending matched but no payload — still clear pending
+                // so a later foreign id of the same family cannot apply.
+            } else if self.is_pending_attach_backfill(id) {
+                self.pending_attach_backfill_id = None;
+            }
+            return;
+        };
+
+        if id.is_some() && id == self.rewind.pending_open_id.as_deref() {
+            self.rewind.pending_open_id = None;
+            self.open_rewind_selector(&data);
+            return;
+        }
+        if let Some(kind) = self.take_pending_resume_or_rewind(id) {
+            // Own resume/rewind swapped or truncated the server-side
+            // conversation: replace the transcript. Status comes from
+            // the matched kind, never literal id equality (#1237).
+            let status = kind.replace_status();
+            if Self::is_history_page_payload(&data) {
+                self.replace_master_chat_with_history_page(&data, status);
+            } else {
+                self.clear_message_recovery();
+                if self.replace_chat_with_messages_with_empty_status(&data, status) {
+                    self.master_session.chat.add_entry(ChatEntry::Status {
+                        text: status.to_string(),
+                    });
+                }
+            }
+            return;
+        }
+        if own_page {
+            // This client's own older page extends the loaded prefix.
+            Self::reconcile_master_backfill_history(&mut self.master_session, &data, true);
+            return;
+        }
+        if id.is_some_and(|id| id.starts_with("history-page-")) {
+            // Another client's older page (get_messages responses are broadcast
+            // to every client) or one orphaned by a resume: it is paged from a
+            // DIFFERENT depth, so prepending it would create an interior gap.
+            return;
+        }
+        if self.is_pending_attach_backfill(id) || id.is_none() {
+            // Exact own attach backfill OR unsolicited busy-connect snapshot
+            // (id-less, see uds_snapshots). Do NOT clear attach pending on an
+            // id-less snapshot — a trimmed snapshot must leave the later full
+            // attach able to restore omitted history (#1050 / #1237).
+            if self.is_pending_attach_backfill(id) {
+                self.pending_attach_backfill_id = None;
+            }
+            Self::reconcile_master_backfill_history(&mut self.master_session, &data, false);
+            return;
+        }
+        if id.is_some_and(Self::is_foreign_solicited_get_messages_family) {
+            // Foreign (or stale bare-literal) resume/rewind/attach family id:
+            // drop. Must not fall through to legacy replace — that is the
+            // multi-client clobber (#1237).
+            return;
+        }
+        self.replace_chat_with_messages(&data);
     }
 
     /// Apply a successful master-stream `set_model` response. When a child is
@@ -303,8 +443,11 @@ impl App {
             .map(crate::protocol::state_payloads::parse_resume_session_name)
             .unwrap_or_else(|| "session".to_string());
         self.notify(&format!("Resumed session {session}"), NotifyLevel::Success);
+        // clear_message_recovery already ran in the resume_session arm; mint
+        // AFTER that clear so the new pending survives (#1237).
+        let id = self.mint_pending_solicited_get_messages(SolicitedGetMessagesKind::Resume);
         self.send_command(Command::GetMessages {
-            id: Some("resume-messages".into()),
+            id: Some(id),
             before: None,
         });
         self.send_session_stats();
@@ -445,5 +588,38 @@ impl App {
     fn notify_response_error(&mut self, prefix: &str, error: Option<String>) {
         let msg = error.unwrap_or_else(|| "unknown error".into());
         self.notify(&format!("{prefix}: {msg}"), NotifyLevel::Error);
+    }
+}
+
+#[cfg(any(test, feature = "test-harness"))]
+impl App {
+    /// Arm exact-pending attach correlation for a synthetic response delivery.
+    pub fn test_arm_attach_backfill(&mut self, id: &str) {
+        self.pending_attach_backfill_id = Some(id.to_string());
+    }
+
+    /// Arm exact-pending resume correlation for a synthetic response delivery.
+    pub fn test_arm_resume_messages(&mut self, id: &str) {
+        self.pending_resume_messages_id = Some(id.to_string());
+    }
+
+    /// Arm exact-pending rewind-refresh correlation for a synthetic response delivery.
+    pub fn test_arm_rewind_refresh(&mut self, id: &str) {
+        self.pending_rewind_refresh_id = Some(id.to_string());
+    }
+
+    /// Pending attach id (test inspection / capture after real mint).
+    pub fn test_pending_attach_backfill_id(&self) -> Option<&str> {
+        self.pending_attach_backfill_id.as_deref()
+    }
+
+    /// Pending resume id (test inspection / capture after real mint).
+    pub fn test_pending_resume_messages_id(&self) -> Option<&str> {
+        self.pending_resume_messages_id.as_deref()
+    }
+
+    /// Pending rewind-refresh id (test inspection / capture after real mint).
+    pub fn test_pending_rewind_refresh_id(&self) -> Option<&str> {
+        self.pending_rewind_refresh_id.as_deref()
     }
 }

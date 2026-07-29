@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::tui_paged_history_steps::{
-    PagedHistoryState, active_chat_text, drain, drive, get_messages_response, init_harness,
+    PagedHistoryState, active_chat_text, arm_own_get_messages_if_needed, drain, drive,
+    get_messages_response, init_harness,
 };
 
 #[given("the TUI is attached to a session containing an oversized history message")]
@@ -34,6 +35,7 @@ fn given_attached_oversized_stub(world: &mut TuiWorld) {
         "hasMoreBefore": false,
     });
     drive(world, |h| {
+        arm_own_get_messages_if_needed(h, "attach-backfill");
         h.event(get_messages_response("attach-backfill", page));
     });
 }

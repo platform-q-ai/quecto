@@ -107,6 +107,19 @@ pub(super) fn get_messages_response(id: &str, data: serde_json::Value) -> Event 
     }
 }
 
+/// Arm exact-pending correlation before delivering a synthetic own-client
+/// solicited `get_messages` response (#1237). Older-page ids are already exact-
+/// pending from the emit path and need no arming.
+pub(super) fn arm_own_get_messages_if_needed(h: &mut TuiHarness, id: &str) {
+    if id == "attach-backfill" || id.starts_with("attach-backfill-") {
+        h.app_mut().test_arm_attach_backfill(id);
+    } else if id == "resume-messages" || id.starts_with("resume-messages-") {
+        h.app_mut().test_arm_resume_messages(id);
+    } else if id == "rewind-refresh" || id.starts_with("rewind-refresh-") {
+        h.app_mut().test_arm_rewind_refresh(id);
+    }
+}
+
 /// Latest older-page request as (correlation id, before cursor). The reply must
 /// echo the request's OWN id: the client applies a page only when the response
 /// id matches its in-flight request exactly (#1061 review).
@@ -125,6 +138,7 @@ fn find_older_request(cmds: &[String]) -> Option<(String, String)> {
 fn deliver_master_page(world: &mut TuiWorld, id: &str, before: Option<&str>) {
     let page = page_json(&world.tui_paged.messages, world.tui_paged.page_size, before);
     drive(world, |h| {
+        arm_own_get_messages_if_needed(h, id);
         h.event(get_messages_response(id, page));
     });
 }
@@ -216,6 +230,7 @@ fn given_attached_stub(world: &mut TuiWorld) {
         "hasMoreBefore": false,
     });
     drive(world, |h| {
+        arm_own_get_messages_if_needed(h, "attach-backfill");
         h.event(get_messages_response("attach-backfill", page));
     });
 }
@@ -231,6 +246,7 @@ fn given_disconnected_with_older_history(world: &mut TuiWorld) {
     init_harness(world);
     let page = page_json(&world.tui_paged.messages, 1, None);
     drive(world, |h| {
+        arm_own_get_messages_if_needed(h, "attach-backfill");
         h.event(get_messages_response("attach-backfill", page));
         h.disconnect_master_commands();
     });
@@ -259,6 +275,7 @@ fn given_disconnected_with_stub(world: &mut TuiWorld) {
     };
     init_harness(world);
     drive(world, |h| {
+        arm_own_get_messages_if_needed(h, "attach-backfill");
         h.event(get_messages_response(
             "attach-backfill",
             serde_json::json!({

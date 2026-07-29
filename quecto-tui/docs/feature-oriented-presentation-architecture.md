@@ -797,15 +797,14 @@ Five findings survived and are fixed:
 | MED | The parity-evidence row claimed `ordered_responses()` replaced "an equivalent walk"; it replaced nothing. | Row corrected to state what actually changed. Also fixed two stale doc lines from the move ("Seeded at 130", the old `interface/` path). | n/a (documentation). |
 | LOW | The refactor lost a `&&` short-circuit: `latest_assistant_text()` (which clones the whole assistant body) became unconditional at the master site. Only the master site regressed — the sub-agent site was already unconditional. | Added `TurnOutcome::forced_without_text`, so the text is materialised lazily and the force rule stays INSIDE the policy rather than being re-duplicated at the call site. | Dropping the empty-refs guard from the fast path FAILS `the_text_free_fast_path_never_disagrees_with_the_full_policy`. |
 
-One finding was raised as HIGH and declined as out of scope: `app_response.rs`
-correlates resume/rewind responses by FIXED literal ids (`resume-messages`,
-`rewind-refresh`), which are broadcast to every connected client, so a second
-TUI can have its transcript replaced by a resume it never issued. The verifier
-confirmed the transport fan-out is real (`uds.rs:168` selects
-`EventSink::Broadcast` in multi-client mode) — but also confirmed it is
-PRE-EXISTING and identical at the parent commit. Fixing it would be a
-behavioural change, which this zero-behaviour-change slice forbids. Filed as
-follow-up rather than smuggled in here.
+One finding was raised as HIGH during #1221 and filed as #1237: `app_response.rs`
+correlated resume/rewind/attach responses by FIXED literal ids (`resume-messages`,
+`rewind-refresh`, `attach-backfill`), which are broadcast to every connected client,
+so a second TUI could have its transcript replaced by a resume it never issued.
+**Fixed in #1237:** those families now mint `family-{uuid_like}-{seq}` ids and
+correlate on exact pending only (parity with `history-page-*`). Foreign same-family
+ids are dropped before the legacy replace fallback; id-less busy-connect snapshots
+still reconcile.
 
 ## Adversarial review round for conversation history/recovery slice (#1221)
 

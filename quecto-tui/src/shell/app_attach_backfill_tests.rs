@@ -26,6 +26,16 @@ fn respond(
     data: Option<serde_json::Value>,
     error: Option<&str>,
 ) {
+    // Tests that deliver synthetic own-client responses arm exact pending so
+    // correlation matches production minting (#1237).
+    if command == "get_messages" {
+        match id {
+            Some(ATTACH_BACKFILL_ID) => app.test_arm_attach_backfill(ATTACH_BACKFILL_ID),
+            Some("resume-messages") => app.test_arm_resume_messages("resume-messages"),
+            Some("rewind-refresh") => app.test_arm_rewind_refresh("rewind-refresh"),
+            _ => {}
+        }
+    }
     app.handle_response(
         id.map(String::from),
         command.to_string(),
@@ -53,8 +63,12 @@ fn is_attach_backfill_get_messages(line: &str) -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
         return false;
     };
-    v.get("type").and_then(|t| t.as_str()) == Some("get_messages")
-        && v.get("id").and_then(|i| i.as_str()) == Some(ATTACH_BACKFILL_ID)
+    if v.get("type").and_then(|t| t.as_str()) != Some("get_messages") {
+        return false;
+    }
+    v.get("id")
+        .and_then(|i| i.as_str())
+        .is_some_and(|id| id == ATTACH_BACKFILL_ID || id.starts_with("attach-backfill-"))
 }
 
 #[tokio::test]
@@ -67,7 +81,23 @@ async fn request_master_attach_backfill_sends_get_messages_with_dedicated_id() {
     assert!(
         cmds.iter()
             .any(|line| is_attach_backfill_get_messages(line)),
-        "attach must request get_messages with id {ATTACH_BACKFILL_ID}, got: {cmds:?}"
+        "attach must request get_messages with an attach-backfill family id, got: {cmds:?}"
+    );
+    let id = cmds
+        .iter()
+        .find_map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).ok()?;
+            let id = v.get("id")?.as_str()?;
+            (id == ATTACH_BACKFILL_ID || id.starts_with("attach-backfill-")).then(|| id.to_string())
+        })
+        .expect("attach id");
+    assert!(
+        id.starts_with("attach-backfill-") && id != ATTACH_BACKFILL_ID,
+        "attach id must be uniquely minted, got {id}"
+    );
+    assert_eq!(
+        h.app_mut().test_pending_attach_backfill_id(),
+        Some(id.as_str())
     );
 }
 
@@ -83,7 +113,7 @@ async fn run_startup_requests_master_attach_backfill() {
     assert!(
         cmds.iter()
             .any(|line| is_attach_backfill_get_messages(line)),
-        "run() startup must send get_messages id={ATTACH_BACKFILL_ID}, got: {cmds:?}"
+        "run() startup must send get_messages with attach-backfill family id, got: {cmds:?}"
     );
 }
 
