@@ -185,6 +185,43 @@ fn test_parse_optional_usize_arg_rejects_above_usize_max() {
         parse_optional_usize_arg(&serde_json::json!(50.0), "limit").unwrap(),
         Some(50)
     );
+    // Negative integer path (i64), negative float, wrong type, and -0.0.
+    let err = parse_optional_usize_arg(&serde_json::json!(-3), "offset").unwrap_err();
+    assert!(
+        err.contains("offset") && err.contains("non-negative"),
+        "{err}"
+    );
+    let err = parse_optional_usize_arg(&serde_json::json!(-1.5), "limit").unwrap_err();
+    assert!(
+        err.contains("limit") && err.contains("non-negative"),
+        "{err}"
+    );
+    let err = parse_optional_usize_arg(&serde_json::json!(true), "offset").unwrap_err();
+    assert!(
+        err.contains("offset") && err.contains("expected a number"),
+        "{err}"
+    );
+    assert_eq!(
+        parse_optional_usize_arg(&serde_json::json!(-0.0), "offset").unwrap(),
+        Some(0)
+    );
+    let err = parse_optional_usize_arg(&serde_json::json!(3.5), "limit").unwrap_err();
+    assert!(err.contains("limit") && err.contains("integer"), "{err}");
+}
+
+#[tokio::test]
+async fn test_read_null_offset_and_limit_use_defaults() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    std::fs::write(tmp.path().join("f.txt"), "hello\nworld\n").unwrap();
+
+    let result = tool
+        .execute(r#"{"path": "f.txt", "offset": null, "limit": null}"#)
+        .await
+        .expect("null paging args are treated as absent");
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.contains("hello"));
+    assert!(result.content.contains("world"));
 }
 
 #[tokio::test]

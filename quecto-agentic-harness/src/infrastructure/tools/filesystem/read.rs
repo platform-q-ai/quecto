@@ -176,12 +176,14 @@ fn parse_optional_usize_arg(
         serde_json::Value::Number(n) => {
             // Integer fast path with explicit usize fit check (no u64→usize truncation).
             if let Some(u) = n.as_u64() {
-                return usize::try_from(u).map(Some).map_err(|_| {
-                    format!(
+                return match usize::try_from(u) {
+                    Ok(v) => Ok(Some(v)),
+                    // Unreachable on 64-bit hosts; required on 32-bit where u64 can exceed usize.
+                    Err(_) => Err(format!(
                         "invalid '{name}': value {u} is out of range for this platform (max {})",
                         usize::MAX
-                    )
-                });
+                    )),
+                };
             }
             // Reject negative integers early with a clear message.
             if let Some(i) = n.as_i64() {
@@ -189,16 +191,9 @@ fn parse_optional_usize_arg(
                     "invalid '{name}': expected a non-negative integer, got {i}"
                 ));
             }
-            let Some(f) = n.as_f64() else {
-                return Err(format!(
-                    "invalid '{name}': expected a finite non-negative integer number"
-                ));
-            };
-            if !f.is_finite() {
-                return Err(format!(
-                    "invalid '{name}': expected a finite non-negative integer number, got {f}"
-                ));
-            }
+            // Remaining JSON numbers are floats (serde_json only stores finite f64 here).
+            // as_u64/as_i64 already failed, so as_f64 must succeed for a Number.
+            let f = n.as_f64().expect("JSON Number without u64/i64 must be f64");
             if f < 0.0 {
                 return Err(format!(
                     "invalid '{name}': expected a non-negative integer, got {f}"
@@ -215,18 +210,14 @@ fn parse_optional_usize_arg(
                 ));
             }
             // Integral relative to the already-parsed float — no rounding.
+            // After the range check, `f as u64` fits `usize` on this platform.
             let as_u = f as u64;
             if f != as_u as f64 {
                 return Err(format!(
                     "invalid '{name}': expected an integer line count, got {f}"
                 ));
             }
-            usize::try_from(as_u).map(Some).map_err(|_| {
-                format!(
-                    "invalid '{name}': value {as_u} is out of range for this platform (max {})",
-                    usize::MAX
-                )
-            })
+            Ok(Some(as_u as usize))
         }
         other => Err(format!("invalid '{name}': expected a number, got {other}")),
     }
