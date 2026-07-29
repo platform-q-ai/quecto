@@ -86,27 +86,29 @@ Do not reuse stale child context merely to avoid a new session; use it only when
 
 ## Non-blocking execution and result recovery
 
-`spawn` returns after the child's socket is ready; it does not wait for the child to finish or return the completed work. After spawning:
+`spawn` returns when the child **socket** is ready — not when the task is done. Completion is multi-turn.
 
-- keep the parent available to the user;
-- continue useful, non-duplicative work while the child runs;
-- rely on passive completion notifications by default, which arrive when a child's state changes;
-- use `await` ONLY when the child's result MUST gate the parent's next action in the same turn - prefer to wait for the passive completion notes.
+### Required sequence
 
-A passive completion notification or `await` response is a lifecycle signal, not the child's report. When the result matters:
+1. **Spawn** (and brief the child). Returns immediately.
+2. **End this parent turn** (or do other *non-duplicative* work that does not need the child’s answer). Stay available to the user.
+3. **Next turn:** a passive one-line completion note arrives automatically when the child finishes/errors/exits.
+4. **Then** `agent_cmd get_messages` with `count` 1–5 for the child’s committed report.
+5. Verify, synthesize, and answer the user. Relay conclusions — not raw child dumps unless asked.
 
-1. wait for the passive completion note, or use `await` only when synchronously necessary;
-2. call `agent_cmd get_messages` with a small `count` (1–5) to retrieve the child's committed final output;
-3. inspect errors or additional transcript history only when needed to audit evidence, commands, or failure details;
-4. verify and synthesize the result before answering the user.
+### Do not
 
-Use `get_state` for live progress (phase, tools, workflow step) or debugging — not repetitive polling. Use `get_messages` for transcript content: after idle, tail the final assistant report; while busy (`snapshot: true`), a small `count` can show recent completed tools but may lag the active turn, so do not treat it as a complete live transcript. Prefer `count` 1–5 for status peeks and report recovery; omit `count` only for the newest full page after the turn settles; follow `before` only when older history is genuinely needed. Prefer `get_subagents` or forwarded workflow events for a point-in-time view of delegated workflow progress.
+- Poll `get_subagents`, `get_subagents_all`, or `get_state` in a loop waiting for idle.
+- `sleep` / bash-wait / busy-wait for the child in the same turn.
+- Treat the passive note (or any lifecycle line) as the child’s report — always `get_messages` for content.
 
-The child's final report is not automatically shown to the user. Relay the relevant conclusions and evidence; do not expose raw child transcripts or file dumps unless the user asks for them.
+### Optional tools (not wait loops)
 
-Use `abort` to stop a current run and its in-flight work; use `kill` only when the child process itself must be terminated.
+- `get_state` — occasional live progress/debug.
+- `get_subagents_all` — inventory and cleanup **after** coordination, not completion waiting.
+- `abort` / `kill` — stop work or the process when needed.
 
-At the end of coordinated work, inspect `get_subagents_all` and clean up appropriately.
+If you need the child’s answer before you can help the user, **yield the turn** and continue when the note arrives; do not invent a same-turn wait.
 
 ## General operating principles
 
