@@ -161,12 +161,29 @@ fn test_parse_optional_usize_arg_rejects_above_usize_max() {
         );
     }
 
+    // Exact 2^64 boundary: f64 can represent 18446744073709551616.0 exactly.
+    // On 64-bit, `usize::MAX as f64` rounds UP to this same value, so a naive
+    // `f > (usize::MAX as f64)` bound incorrectly accepts 2^64 and saturates
+    // via `f as u64` → u64::MAX. Must Err, never Ok(Some(usize::MAX)).
+    {
+        const TWO_POW_64: f64 = 18446744073709551616.0; // 2^64, exact in f64
+        assert_eq!(TWO_POW_64, (u64::MAX as f64) + 1.0); // sanity: exact power of two
+        let n = serde_json::Number::from_f64(TWO_POW_64).expect("2^64 is a finite JSON number");
+        let v = serde_json::Value::Number(n);
+        let err = parse_optional_usize_arg(&v, "limit").expect_err(
+            "2^64 float must be rejected (outside usize); must not saturate to usize::MAX",
+        );
+        assert!(
+            err.contains("limit") && err.contains("out of range"),
+            "expected out-of-range error for 2^64, got: {err}"
+        );
+    }
+
     #[cfg(target_pointer_width = "64")]
     {
-        // usize::MAX fits in u64 on 64-bit; use a JSON float above usize::MAX.
-        // 2f64.powi(64) is finite and greater than usize::MAX as f64 on this platform.
+        // Still probe a value well above the bound (2 * rounded usize::MAX).
         let above = (usize::MAX as f64) * 2.0;
-        assert!(above.is_finite() && above > usize::MAX as f64);
+        assert!(above.is_finite());
         let n = serde_json::Number::from_f64(above).expect("finite f64 should be a JSON number");
         let v = serde_json::Value::Number(n);
         let err = parse_optional_usize_arg(&v, "limit").unwrap_err();

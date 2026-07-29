@@ -199,25 +199,35 @@ fn parse_optional_usize_arg(
                     "invalid '{name}': expected a non-negative integer, got {f}"
                 ));
             }
-            // Prove range before any cast. `usize::MAX as f64` is exact for 32-bit
-            // and is the largest finite bound we accept on 64-bit (mantissa limits
-            // make every integer above 2^53 non-integral in f64 anyway).
-            let max = usize::MAX as f64;
-            if f > max {
+            // Reject anything outside the exact u64 domain before casting.
+            // `usize::MAX as f64` rounds UP to 2^64 on 64-bit hosts, so a bound
+            // of `f > (usize::MAX as f64)` would accept 2^64 and then saturate
+            // via `f as u64` → u64::MAX. 2^64 is exact in f64; every finite f64
+            // ≥ 2^64 is outside both u64 and usize.
+            const U64_MAX_PLUS_ONE: f64 = 18446744073709551616.0; // 2^64, exact
+            if f >= U64_MAX_PLUS_ONE {
                 return Err(format!(
                     "invalid '{name}': value {f} is out of range for this platform (max {})",
                     usize::MAX
                 ));
             }
             // Integral relative to the already-parsed float — no rounding.
-            // After the range check, `f as u64` fits `usize` on this platform.
+            // After the 2^64 gate, `f as u64` is a non-saturating conversion for
+            // integral values (non-integral still fail the equality check).
             let as_u = f as u64;
             if f != as_u as f64 {
                 return Err(format!(
                     "invalid '{name}': expected an integer line count, got {f}"
                 ));
             }
-            Ok(Some(as_u as usize))
+            // Explicit usize fit (required on 32-bit; identity on 64-bit).
+            match usize::try_from(as_u) {
+                Ok(v) => Ok(Some(v)),
+                Err(_) => Err(format!(
+                    "invalid '{name}': value {as_u} is out of range for this platform (max {})",
+                    usize::MAX
+                )),
+            }
         }
         other => Err(format!("invalid '{name}': expected a number, got {other}")),
     }
