@@ -314,18 +314,31 @@ async fn selection_uses_left_accent_bar_one_line_tall() {
     );
 }
 
-// ── Main pane: title + compact progress (no multi-line box) ──────────────────
+// ── Main pane: title + compact progress with separator rules (#1309) ──────────
 
-fn has_rule_box_row(text: &str) -> bool {
-    text.lines().any(|line| {
-        let segment = line.rsplit_once("│ ").map(|(_, s)| s).unwrap_or(line);
-        let t = segment.trim();
-        !t.is_empty() && t.chars().all(|c| c == '─')
-    })
+fn is_rule_row(line: &str) -> bool {
+    let segment = line.rsplit_once("│ ").map(|(_, s)| s).unwrap_or(line);
+    let t = segment.trim();
+    !t.is_empty() && t.chars().all(|c| c == '─')
+}
+
+fn compact_progress_has_separators(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    let Some(idx) = lines
+        .iter()
+        .position(|l| l.contains("Step 4/5") || l.contains("3/5"))
+    else {
+        return false;
+    };
+    idx > 0
+        && is_rule_row(lines[idx - 1])
+        && idx + 1 < lines.len()
+        && is_rule_row(lines[idx + 1])
+        && lines.iter().filter(|l| is_rule_row(l)).count() == 2
 }
 
 #[tokio::test]
-async fn main_pane_shows_compact_progress_without_rule_box_for_selected_agent() {
+async fn main_pane_shows_compact_progress_with_separators_for_selected_agent() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event(subagents_changed(vec![subagent(
@@ -338,13 +351,20 @@ async fn main_pane_shows_compact_progress_without_rule_box_for_selected_agent() 
         .route_subagent_event("worker", workflow_event(Some("worker")));
     let top = top_region(&mut h);
     let stripped = strip_ansi(&top);
-    // #1288: compact progress; #1246: no multi-line rule box / pills / hints.
-    assert!(!has_rule_box_row(&stripped), "no rule box:\n{top}");
+    // #1288: compact progress; #1309: top/bottom separator rules; #1246: no pills/hints.
+    assert!(
+        compact_progress_has_separators(&stripped),
+        "compact progress must be framed by separator rules:\n{top}"
+    );
     assert!(
         stripped.contains("Step 4/5") || stripped.contains("3/5"),
         "live progress required:\n{top}"
     );
     assert!(top.contains("#820"), "issue in title:\n{top}");
+    assert!(
+        stripped.contains("worker · running"),
+        "selected-agent title must remain visible:\n{top}"
+    );
     assert!(
         !top.contains("Ctrl+Shift+A")
             && !top.contains("nudge:")

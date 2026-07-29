@@ -20,6 +20,7 @@ Feature: Sub-agent-first default layout (#820)
     Given a sub-agent-first TUI tracking sub-agent "a1" with its own workflow
     When I select sub-agent "a1"
     Then the main pane title shows compact workflow context for sub-agent "a1"
+    And the main pane compact workflow progress is framed above and below
     And the main pane no longer shows the workflow status box
     And the bottom stack no longer shows the workflow bar
 

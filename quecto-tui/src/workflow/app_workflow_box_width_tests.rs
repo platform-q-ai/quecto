@@ -20,20 +20,51 @@ fn workflow_event() -> Event {
     }
 }
 
+fn is_rule_row(line: &str) -> bool {
+    let segment = line.rsplit_once("│ ").map(|(_, s)| s).unwrap_or(line);
+    let t = segment.trim();
+    !t.is_empty() && t.chars().all(|c| c == '─')
+}
+
+/// #1309: compact progress is framed by exactly two separator rules (above +
+/// below). Not the old multi-line status box (#1246): no pills/hints.
+fn compact_progress_framed(pane: &str) -> bool {
+    let lines: Vec<&str> = pane.lines().collect();
+    let Some(idx) = lines
+        .iter()
+        .position(|l| l.contains("Step 2/3") || (l.contains("1/3") && l.contains("Implement")))
+    else {
+        return false;
+    };
+    idx > 0
+        && is_rule_row(lines[idx - 1])
+        && idx + 1 < lines.len()
+        && is_rule_row(lines[idx + 1])
+        && lines.iter().filter(|l| is_rule_row(l)).count() == 2
+}
+
 #[tokio::test]
-async fn workflow_status_box_no_longer_renders_in_main_pane() {
+async fn workflow_status_box_pills_and_hints_no_longer_render_in_main_pane() {
     let mut h = TuiHarness::sized(100, 30).await;
+    h.event(Event::AgentStart);
     h.event(workflow_event());
 
     let pane = strip_ansi(&h.main_pane());
     assert!(
-        !pane.lines().any(|line| line.chars().all(|c| c == '─')),
-        "the old workflow status rule rows must not render:\n{pane}"
+        compact_progress_framed(&pane),
+        "compact progress must remain framed while pills/hints stay gone:\n{pane}"
+    );
+    assert!(
+        !pane.contains("Ctrl+Shift+A") && !pane.contains("nudge:"),
+        "phase-pills/hints multi-line widget must not return to the main pane:\n{pane}"
+    );
+    assert!(
+        !pane.contains('○') && !pane.contains('●'),
+        "phase-pill markers must not return to the main pane:\n{pane}"
     );
 }
 
-/// #1288: active workflow must surface live progress at the main-pane top
-/// (compact single-line indicator), not only issue title chrome.
+/// #1288 / #1309: active workflow surfaces live progress framed by separators.
 #[tokio::test]
 async fn active_workflow_shows_compact_progress_in_main_pane() {
     let mut h = TuiHarness::sized(100, 30).await;
@@ -46,11 +77,12 @@ async fn active_workflow_shows_compact_progress_in_main_pane() {
         "main-pane top must show live workflow progress for an active run:\n{pane}"
     );
     assert!(
-        !pane.lines().any(|line| {
-            let t = line.trim();
-            !t.is_empty() && t.chars().all(|c| c == '─')
-        }),
-        "compact progress must not restore the old multi-line rule box:\n{pane}"
+        compact_progress_framed(&pane),
+        "compact progress must have separator rules above and below:\n{pane}"
+    );
+    assert!(
+        !pane.contains("Ctrl+Shift+A") && !pane.contains("nudge:"),
+        "compact progress must not restore phase pills / shortcut hints:\n{pane}"
     );
 }
 
@@ -77,6 +109,10 @@ async fn active_workflow_without_issue_still_shows_main_pane_progress() {
     assert!(
         pane.contains("Step 2/3") || pane.contains("1/3"),
         "main-pane must show progress even without a bound issue:\n{pane}"
+    );
+    assert!(
+        compact_progress_framed(&pane),
+        "no-issue progress must still be framed by separator rules:\n{pane}"
     );
     assert!(
         !pane.contains("#882"),
@@ -134,18 +170,16 @@ async fn chat_tail_sits_directly_above_input_bar() {
 }
 
 #[tokio::test]
-async fn workflow_status_box_regression_test_fails_if_box_returns() {
+async fn workflow_status_box_regression_test_fails_if_pills_hints_return() {
     let mut h = TuiHarness::sized(100, 30).await;
     h.event(workflow_event());
 
     let pane = strip_ansi(&h.main_pane());
-    // Multi-line rule box must stay gone (#1246); compact Step n/total is intentional (#1288).
+    // Separator rules around the compact line are intentional (#1309).
+    // Phase pills / shortcut hints from the multi-line widget must stay gone (#1246).
     assert!(
-        !pane.lines().any(|line| {
-            let t = line.trim();
-            !t.is_empty() && t.chars().all(|c| c == '─')
-        }),
-        "this workflow-box regression test must fail if the old boxed status rules return:\n{pane}"
+        compact_progress_framed(&pane),
+        "compact progress must keep top/bottom separator rules:\n{pane}"
     );
     assert!(
         !pane.contains("Ctrl+Shift+A") && !pane.contains("nudge:"),
@@ -172,6 +206,28 @@ async fn workflow_title_respects_minimum_width_boundary() {
             .len(),
         1,
         "width 4 is the first width that renders the title chrome"
+    );
+
+    // With an active workflow the compact line adds rule + content + rule (#1309).
+    minimum_width.event(workflow_event());
+    let with_progress =
+        minimum_width
+            .app_mut()
+            .render_main_pane_workflow(40, 40, tokio::time::Instant::now());
+    assert_eq!(
+        with_progress.len(),
+        4,
+        "title + top rule + compact line + bottom rule: {with_progress:?}"
+    );
+    let stripped: Vec<String> = with_progress.iter().map(|l| strip_ansi(l)).collect();
+    assert!(
+        is_rule_row(&stripped[1]) && is_rule_row(&stripped[3]),
+        "progress must be framed by separator rules: {stripped:?}"
+    );
+    assert!(
+        stripped[2].contains("Step 2/3")
+            || (stripped[2].contains("1/3") && stripped[2].contains("Implement")),
+        "middle line must be the compact progress content: {stripped:?}"
     );
 }
 

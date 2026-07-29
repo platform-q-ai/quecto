@@ -89,20 +89,20 @@ Do not reuse stale child context merely to avoid a new session; use it only when
 - keep the parent available to the user;
 - continue useful, non-duplicative work while the child runs;
 - rely on passive completion notifications by default, which arrive when a child's state changes;
-- use `await` ONLY when the child's result must gate the parent's next action in the same turn.
+- use `await` ONLY when the child's result MUST gate the parent's next action in the same turn - prefer to wait for the passive completion notes.
 
 A passive completion notification or `await` response is a lifecycle signal, not the child's report. When the result matters:
 
 1. wait for the passive completion note, or use `await` only when synchronously necessary;
-2. call `agent_cmd get_messages`, normally with a small `count`, to retrieve the child's committed final output;
+2. call `agent_cmd get_messages` with a small `count` (1–5) to retrieve the child's committed final output;
 3. inspect errors or additional transcript history only when needed to audit evidence, commands, or failure details;
 4. verify and synthesize the result before answering the user.
 
-`get_messages` is intended for stable committed or end-of-turn output. A busy snapshot can lag the active turn, so do not treat it as a complete live transcript. Omit `count` for the newest page, use a small `count` to tail the final messages, and follow the returned `before` cursor only when older history is genuinely needed.
+Use `get_state` for live progress (phase, tools, workflow step) or debugging — not repetitive polling. Use `get_messages` for transcript content: after idle, tail the final assistant report; while busy (`snapshot: true`), a small `count` can show recent completed tools but may lag the active turn, so do not treat it as a complete live transcript. Prefer `count` 1–5 for status peeks and report recovery; omit `count` only for the newest full page after the turn settles; follow `before` only when older history is genuinely needed. Prefer `get_subagents` or forwarded workflow events for a point-in-time view of delegated workflow progress.
 
 The child's final report is not automatically shown to the user. Relay the relevant conclusions and evidence; do not expose raw child transcripts or file dumps unless the user asks for them.
 
-Use `get_state` for a targeted live progress check or debugging, not repetitive polling. Use `get_subagents` or forwarded workflow events for a point-in-time view of delegated workflow progress. Use `abort` to stop a current run and its in-flight work; use `kill` only when the child process itself must be terminated.
+Use `abort` to stop a current run and its in-flight work; use `kill` only when the child process itself must be terminated.
 
 At the end of coordinated work, inspect `get_subagents_all` and clean up appropriately.
 

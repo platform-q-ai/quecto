@@ -428,9 +428,9 @@ impl App {
             version
         )));
 
-        // Sub-agent-first main pane (#820 / #1288): title + optional single-line
-        // compact workflow progress above the chat. Multi-line rule box stays
-        // omitted (#1246) so the conversation keeps most of the reclaimed height.
+        // Sub-agent-first main pane (#820 / #1288 / #1309): title + optional
+        // compact workflow progress framed by separator rules above the chat.
+        // Phase pills / shortcut hints stay omitted (#1246).
         let main_box_width = width;
         let main_pane_workflow = self.render_main_pane_workflow(width, main_box_width, now);
         lines.extend(main_pane_workflow);
