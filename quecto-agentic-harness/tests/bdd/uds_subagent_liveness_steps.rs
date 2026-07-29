@@ -167,3 +167,48 @@ fn left_alone(world: &mut QuectoWorld) {
     );
     assert!(response.is_none());
 }
+
+#[given("the child dispatch loop is occupied by a turn")]
+fn child_dispatch_busy(world: &mut QuectoWorld) {
+    // Like the parent case: the fast path never touches the dispatch loop, so
+    // the assertion is that the sync is answered without queuing behind it.
+    world.subagent_liveness_intercept = None;
+}
+
+#[when("its feed client sends a plain sync for the committed ledger")]
+fn send_direct_feed_sync(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let (served_inline, response) = rt.block_on(cli::busy_reader_dispatch(
+        r#"{"type":"sync","id":"feed-1","epoch":1,"sinceRev":0}"#,
+    ));
+    world.subagent_liveness_intercept = Some((served_inline, response));
+}
+
+#[then("the sync should be answered inline without queuing behind the turn")]
+fn sync_answered_inline(world: &mut QuectoWorld) {
+    let (served_inline, _) = world
+        .subagent_liveness_intercept
+        .as_ref()
+        .expect("dispatch result");
+    assert!(
+        served_inline,
+        "the direct child-feed sync must never queue behind the dispatch loop"
+    );
+}
+
+#[then("the sync response should carry the committed messages")]
+fn sync_carries_committed(world: &mut QuectoWorld) {
+    let (_, response) = world
+        .subagent_liveness_intercept
+        .as_ref()
+        .expect("dispatch result");
+    let response = response.as_ref().expect("a response line");
+    assert_eq!(response["command"], "sync");
+    assert_eq!(response["id"], "feed-1");
+    assert_eq!(response["success"], true);
+    let messages = response["data"]["messages"].as_array().expect("messages");
+    assert!(
+        messages.iter().any(|m| m["content"] == "committed"),
+        "committed ledger content must be served while busy, got: {response}"
+    );
+}

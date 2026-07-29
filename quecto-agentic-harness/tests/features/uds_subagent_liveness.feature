@@ -48,3 +48,14 @@ Feature: Sub-agent liveness while the parent is busy
     Given the parent dispatch loop is occupied by a turn
     When a client sends a sync without a child address
     Then the liveness interceptor should leave the command alone
+
+  # The TUI child feed connects DIRECTLY to the child's socket and sends a
+  # plain sync (no agent_id). That path is served by the child-local ledger
+  # fast path (#1197) even while the child's own dispatch loop is occupied —
+  # pinned end-to-end through the full reader dispatch (PR #1307 review).
+  @done
+  Scenario: A busy child answers its direct feed sync from the ledger fast path
+    Given the child dispatch loop is occupied by a turn
+    When its feed client sends a plain sync for the committed ledger
+    Then the sync should be answered inline without queuing behind the turn
+    And the sync response should carry the committed messages

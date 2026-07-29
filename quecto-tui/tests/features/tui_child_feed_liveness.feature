@@ -5,21 +5,24 @@ Feature: Child feed liveness under command backpressure
   So that the child's main-panel feed never freezes while the parent is busy
 
   # The child-progress-freeze fix (2026-07-29), TUI half:
-  # 1. `Command::Sync` is feed-liveness traffic and bypasses the #1238/#1305
-  #    background reserve (it was refused exactly when the parent was busy).
+  # 1. `Command::Sync` is feed-liveness traffic admitted into the OUTER half
+  #    of the #1238/#1305 background reserve (it was refused exactly when the
+  #    parent was busy) — but never past the interactive floor, so a sync
+  #    burst cannot starve prompt/steer/abort (PR #1307 review).
   # 2. A refused Sync send must not be recorded as in-flight — that phantom
   #    sync stranded the feed until the parent went idle.
 
   @done
-  Scenario: Sync bypasses the background reserve on a pressured queue
+  Scenario: Sync may use the outer reserve on a pressured queue
     Given a production writer queue filled to the background reserve
     Then a further background command should be refused with backpressure
     And a sync command should still be accepted
 
   @done
-  Scenario: A truly full queue still refuses sync
-    Given a production writer queue completely full of sync commands
+  Scenario: Sync never enters the interactive floor
+    Given a production writer queue where sync has filled the outer reserve
     Then a further sync command should be refused with backpressure
+    And an interactive command should still be accepted
 
   @done
   Scenario: A refused sync is not recorded as in-flight

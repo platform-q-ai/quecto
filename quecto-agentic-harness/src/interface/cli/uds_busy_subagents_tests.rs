@@ -163,3 +163,23 @@ async fn unrelated_commands_and_junk_fall_through() {
     }
     assert!(rx.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn direct_feed_sync_is_served_inline_by_the_child_local_fast_path() {
+    // The TUI child feed sends a PLAIN sync (no agent_id) on the child's own
+    // socket. Through the full reader dispatch it must be answered inline by
+    // uds_busy_sync — never queued behind the dispatch loop (PR #1307 review).
+    let (served_inline, response) = crate::interface::cli::busy_reader_dispatch(
+        r#"{"type":"sync","id":"feed-9","epoch":1,"sinceRev":0}"#,
+    )
+    .await;
+
+    assert!(
+        served_inline,
+        "plain sync must be served on the reader task"
+    );
+    let response = response.expect("a response line");
+    assert_eq!(response["command"], "sync");
+    assert_eq!(response["id"], "feed-9");
+    assert_eq!(response["success"], true);
+}

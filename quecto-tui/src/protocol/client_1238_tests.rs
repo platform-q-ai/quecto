@@ -156,7 +156,7 @@ fn interactive_user_command_kinds() {
 // while remaining subject to true full-queue backpressure.
 
 #[tokio::test]
-async fn sync_bypasses_the_user_reserve() {
+async fn sync_may_use_the_outer_reserve_but_not_the_interactive_floor() {
     let (sender, _rx) = production_queue_sender();
     let background = Command::GetState { id: None };
     let sync = Command::Sync {
@@ -174,31 +174,62 @@ async fn sync_bypasses_the_user_reserve() {
         sender.try_send(&background),
         Err(ClientError::Backpressure)
     ));
-    // …but a feed-liveness Sync still goes through.
+    // …a feed-liveness Sync may use the OUTER half of the reserve…
+    for _ in 0..(COMMAND_WRITER_USER_RESERVED - COMMAND_WRITER_INTERACTIVE_FLOOR) {
+        sender
+            .try_send(&sync)
+            .expect("Sync may use the outer reserve — refusing it freezes the child feed");
+    }
+    // …but never the interactive floor (PR #1307 review: an unthrottled sync
+    // burst must not consume the slots protecting prompt/steer/abort).
+    assert!(matches!(
+        sender.try_send(&sync),
+        Err(ClientError::Backpressure)
+    ));
+    // Interactive commands still enqueue from the protected floor.
     sender
-        .try_send(&sync)
-        .expect("Sync must bypass the background reserve — a refused Sync freezes the child feed");
+        .try_send(&Command::Abort { id: None })
+        .expect("the interactive floor belongs to user commands");
+}
+
+#[test]
+fn interactive_floor_is_strictly_inside_the_reserve() {
+    const {
+        assert!(COMMAND_WRITER_INTERACTIVE_FLOOR > 0);
+        assert!(COMMAND_WRITER_INTERACTIVE_FLOOR < COMMAND_WRITER_USER_RESERVED);
+    }
 }
 
 #[tokio::test]
-async fn truly_full_queue_still_backpressures_sync() {
+async fn sync_alone_can_never_fill_past_the_interactive_floor() {
     let (sender, _rx) = production_queue_sender();
     let sync = Command::Sync {
         id: None,
         epoch: 1,
         since_rev: 0,
     };
+    let sync_budget = COMMAND_WRITER_QUEUE_CAPACITY - COMMAND_WRITER_INTERACTIVE_FLOOR;
 
-    for index in 0..COMMAND_WRITER_QUEUE_CAPACITY {
+    for index in 0..sync_budget {
         sender
             .try_send(&sync)
-            .unwrap_or_else(|err| panic!("sync {index} should fill full capacity: {err}"));
+            .unwrap_or_else(|err| panic!("sync {index} should fill to the floor: {err}"));
     }
 
     assert!(
         matches!(sender.try_send(&sync), Err(ClientError::Backpressure)),
-        "the bypass is reserve-only; a full queue must still refuse Sync"
+        "sync stops at the interactive floor even with the queue otherwise unbounded"
     );
+    // The floor still admits interactive commands to true fullness.
+    for _ in 0..COMMAND_WRITER_INTERACTIVE_FLOOR {
+        sender
+            .try_send(&Command::Abort { id: None })
+            .expect("interactive fills the protected floor");
+    }
+    assert!(matches!(
+        sender.try_send(&Command::Abort { id: None }),
+        Err(ClientError::Backpressure)
+    ));
 }
 
 #[test]

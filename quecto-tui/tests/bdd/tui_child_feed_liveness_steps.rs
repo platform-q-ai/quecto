@@ -5,8 +5,8 @@
 use crate::{DebugFeedSender, TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
 use quecto_tui::protocol::client::{
-    COMMAND_WRITER_QUEUE_CAPACITY, COMMAND_WRITER_USER_RESERVED, ClientError, Command,
-    CommandSender,
+    COMMAND_WRITER_INTERACTIVE_FLOOR, COMMAND_WRITER_QUEUE_CAPACITY, COMMAND_WRITER_USER_RESERVED,
+    ClientError, Command, CommandSender,
 };
 use quecto_tui::shell::app::tui_harness::TuiHarness;
 
@@ -53,13 +53,22 @@ fn queue_filled_to_reserve(world: &mut TuiWorld) {
     world.tui_feed_liveness_sender = Some(DebugFeedSender(sender, rx));
 }
 
-#[given("a production writer queue completely full of sync commands")]
-fn queue_completely_full(world: &mut TuiWorld) {
+#[given("a production writer queue where sync has filled the outer reserve")]
+fn queue_sync_filled_to_floor(world: &mut TuiWorld) {
     let (sender, rx) = CommandSender::production_queue_for_tests();
-    for _ in 0..COMMAND_WRITER_QUEUE_CAPACITY {
-        sender.try_send(&sync()).expect("fills full capacity");
+    for _ in 0..(COMMAND_WRITER_QUEUE_CAPACITY - COMMAND_WRITER_INTERACTIVE_FLOOR) {
+        sender
+            .try_send(&sync())
+            .expect("fills to the interactive floor");
     }
     world.tui_feed_liveness_sender = Some(DebugFeedSender(sender, rx));
+}
+
+#[then("an interactive command should still be accepted")]
+fn interactive_accepted(world: &mut TuiWorld) {
+    sender(world)
+        .try_send(&Command::Abort { id: None })
+        .expect("the interactive floor belongs to user commands");
 }
 
 #[then("a further background command should be refused with backpressure")]
@@ -84,7 +93,7 @@ fn sync_refused_when_full(world: &mut TuiWorld) {
             sender(world).try_send(&sync()),
             Err(ClientError::Backpressure)
         ),
-        "the bypass is reserve-only; a full queue must still refuse Sync"
+        "sync must stop at the interactive floor"
     );
 }
 

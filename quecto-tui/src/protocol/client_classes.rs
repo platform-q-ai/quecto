@@ -4,7 +4,9 @@
 //! classes (#1238 reserve, feed-liveness bypass) and the test-harness queue
 //! constructor. A submodule of `client` so it can touch private fields.
 
-use super::{COMMAND_WRITER_QUEUE_CAPACITY, Command, CommandSender, mpsc};
+use super::Command;
+#[cfg(feature = "test-harness")]
+use super::{COMMAND_WRITER_QUEUE_CAPACITY, CommandSender, mpsc};
 
 impl Command {
     /// Interactive user actions that must not lose to background fan-in on

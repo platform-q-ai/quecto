@@ -39,6 +39,15 @@ pub const COMMAND_WRITER_QUEUE_CAPACITY: usize = 4096;
 /// from monopolizing the bound under sustained load.
 pub const COMMAND_WRITER_USER_RESERVED: usize = 64;
 
+/// The inner core of the user reserve that ONLY interactive commands may use.
+///
+/// Feed-liveness traffic ([`Command::is_feed_liveness`], i.e. `Sync`) is
+/// admitted into the outer half of the reserve — refusing it under pressure
+/// froze child feeds exactly while the parent was busy — but never past this
+/// floor, so an unthrottled sync burst can not consume the slots protecting
+/// prompt/steer/follow_up/abort (#1238, PR #1307 review).
+pub const COMMAND_WRITER_INTERACTIVE_FLOOR: usize = 32;
+
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
 
 /// A command sent from the TUI to the agent.
@@ -472,12 +481,20 @@ impl CommandSender {
         // production-sized queues. Tiny test/disconnect stubs (e.g. capacity 1)
         // cannot host the reserve; skip the gate so closed channels still
         // surface as Disconnected rather than a false Backpressure (#1238).
-        if !cmd.is_interactive_user()
-            && !cmd.is_feed_liveness()
-            && self.tx.max_capacity() > COMMAND_WRITER_USER_RESERVED
-            && self.tx.capacity() <= COMMAND_WRITER_USER_RESERVED
-        {
-            return Err(ClientError::Backpressure);
+        // Feed-liveness traffic (Sync) may use the OUTER half of the reserve —
+        // refusing it exactly when the queue is pressured froze child feeds —
+        // but never the interactive floor, so an unthrottled sync burst cannot
+        // consume the slots protecting prompt/steer/follow_up/abort (#1238,
+        // PR #1307 review).
+        if !cmd.is_interactive_user() && self.tx.max_capacity() > COMMAND_WRITER_USER_RESERVED {
+            let floor = if cmd.is_feed_liveness() {
+                COMMAND_WRITER_INTERACTIVE_FLOOR
+            } else {
+                COMMAND_WRITER_USER_RESERVED
+            };
+            if self.tx.capacity() <= floor {
+                return Err(ClientError::Backpressure);
+            }
         }
         self.tx
             .try_send(serialize_command(cmd)?)

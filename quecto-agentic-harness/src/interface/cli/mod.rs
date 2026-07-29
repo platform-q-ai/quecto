@@ -67,6 +67,48 @@ pub async fn ledger_hint_lines_for_turn_events(
         .collect()
 }
 
+/// Test-support: run one raw command line through the FULL per-connection
+/// reader dispatch (`uds_reader_dispatch::dispatch`) against a snapshot with
+/// one committed message. Returns `(served_inline, response)`: `served_inline`
+/// is true when the command was answered on the reader task and never queued
+/// behind the dispatch loop. Covers the TUI's DIRECT child-feed path — a
+/// plain `sync` with no `agent_id` on the child's own socket — which is
+/// served by the child-local `uds_busy_sync` fast path even while the child's
+/// dispatch loop is occupied (PR #1307 review).
+#[cfg(any(test, feature = "test-support"))]
+pub async fn busy_reader_dispatch(line: &str) -> (bool, Option<serde_json::Value>) {
+    let snapshot: uds_multi::ConversationSnapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
+        uds_snapshots::ConversationSnapshotData::from_messages(vec![
+            crate::domain::message::Message::user("committed"),
+        ]),
+    ));
+    let clients = uds_ext_protocol::new_client_tool_registry();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
+    uds_ext_protocol::register_client_writer(&clients, 1, tx);
+    // The dispatch-loop channel: anything landing here would have queued
+    // behind an in-flight parent/child turn.
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(8);
+    uds_reader_dispatch::dispatch(uds_reader_dispatch::ReaderDispatchCtx {
+        line: line.to_string(),
+        snapshot: &snapshot,
+        registry: &clients,
+        subagent_registry: &None,
+        client_id: 1,
+        cmd_tx: &cmd_tx,
+    })
+    .await;
+    let served_inline = cmd_rx.try_recv().is_err();
+    if !served_inline {
+        return (false, None);
+    }
+    let response = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .ok()
+        .flatten()
+        .and_then(|l| serde_json::from_str(&l).ok());
+    (true, response)
+}
+
 /// Test-support: run one raw command line through the reader-task busy
 /// interceptor for sub-agent liveness commands, with no sub-agent registry.
 /// Returns whether it was handled off the dispatch loop and, when handled,
