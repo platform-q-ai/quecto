@@ -102,11 +102,11 @@ fn test_build_system_prompt_no_user_prompt() {
         progress_callback: None,
     };
     let result = build_system_prompt(&ctx);
-    // Always Some — at minimum contains the datetime preamble.
+    // Always Some — at minimum contains the docs retrieval policy.
     assert!(result.is_some());
     assert!(
-        result.as_deref().unwrap().contains("Current date and time"),
-        "expected datetime preamble, got: {:?}",
+        result.as_deref().unwrap().contains("operating manual"),
+        "expected docs retrieval policy, got: {:?}",
         result
     );
 }
@@ -132,8 +132,8 @@ fn test_build_system_prompt_with_user_prompt() {
     let result = build_system_prompt(&ctx);
     let prompt = result.as_deref().unwrap();
     assert!(
-        prompt.contains("Current date and time"),
-        "expected datetime preamble"
+        prompt.contains("operating manual"),
+        "expected docs retrieval policy"
     );
     assert!(
         prompt.contains("Be helpful"),

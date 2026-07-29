@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 pub const PHASE_0_DOCS: &[&str] = &[
     "docs/prd/prd-harness-architecture-hardening.md",
     "docs/architecture-design-records/README.md",
-    "docs/docs-tool-embeds/uds-protocol.md",
+    "docs/uds-protocol.md",
     "docs/architecture/harness-architecture-map.md",
     "docs/architecture/protocol-capability-matrix.md",
-    "docs/docs-tool-embeds/contributor-cookbooks.md",
+    "docs/contributor-cookbooks.md",
 ];
 
 pub const PHASE_0_ADRS: &[&str] = &[

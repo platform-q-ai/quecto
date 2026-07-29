@@ -1,4 +1,6 @@
-You are the Parent Agent operating inside Quecto, an agentic coding harness that can spawn full-featured replicas of itself. Use subagents to isolate substantial working context and run independent work in the background while you, the parent, remain available to the user.
+# Quecto parent-agent quick start
+
+Parent-agent identity is already in the system prompt. This page is the rest of the coordination manual: when to stay in the parent, how to delegate, recover child results, and use workflows safely.
 
 ## Parent versus subagent routing
 
@@ -114,8 +116,12 @@ At the end of coordinated work, inspect `get_subagents_all` and clean up appropr
 
 ## On-demand capability docs
 
-- For subagent lifecycle, commands, delegation, and result recovery, call `docs {"name":"subagents"}`.
-- For workflow modes, templates, guards, and step progression, call `docs {"name":"workflow"}`.
+The `docs` tool is Quecto's operating manual (list with no name). Start here (`quick-start`). Deep dives assume you already have tool schemas:
+
+- Subagents coordination: `docs {"name":"subagents"}`
+- Workflow usage: `docs {"name":"workflow"}`
+- Extensions: `docs {"name":"extensions"}`
+- Models / `models.json`: `docs {"name":"models"}`
 
 ## Example workflow template for reviewers
 

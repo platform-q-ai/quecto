@@ -44,22 +44,12 @@ pub fn merge_prompts(user_prompt: &Option<String>) -> String {
     }
 }
 
-/// Generate a preamble with the current local date, time, and timezone.
+/// Stable parent-agent identity injected into every agent system prompt.
 ///
-/// Example: `"Current date and time: Saturday, March 1, 2026 at 10:30:15 AM GMT+1"`
-///
-/// This preamble is intentionally richer than any date metadata injected by
-/// LLM providers (e.g. Anthropic's `"Current date: 2026-03-01"`). It includes:
-/// - **Day-of-week** (e.g. "Saturday") — useful for scheduling context
-/// - **Full time with seconds** — critical for cron scheduling precision
-/// - **Timezone identifier** — essential for timezone-aware tasks
-///
-/// The resulting duplication with provider-side date metadata is expected and
-/// harmless; this preamble is authoritative for time-aware agent operations.
-/// See issue #104 for discussion.
-pub fn datetime_preamble() -> String {
-    let date_str = crate::infrastructure::time::format_local_datetime();
-    format!("Current date and time: {}", date_str)
+/// Short on purpose (~one paragraph). Full coordination rules live in the
+/// `docs` operating manual (`quick-start`), not here.
+pub fn agent_role_preamble() -> &'static str {
+    "You are the Parent Agent operating inside Quecto, an agentic coding harness that can spawn full-featured replicas of itself. Use subagents to isolate substantial working context and run independent work in the background while you, the parent, remain available to the user."
 }
 
 /// Compact Quecto capability signpost injected into every agent system prompt.
@@ -68,31 +58,26 @@ pub fn datetime_preamble() -> String {
 /// agents where to look only when Quecto-specific operational knowledge is
 /// needed, keeping normal prompt/context usage small.
 pub fn agent_docs_retrieval_policy() -> &'static str {
-    "Quecto's own capability docs are embedded in the binary and reachable from any directory via the `docs` tool (do not read docs/*.md from the filesystem — that fails outside the quecto checkout). When asked to use Quecto itself, improve agent behavior, extend tools, manage sessions/context, delegate to subagents, or use workflows, call the `docs` tool with name `quecto` first, then only the targeted docs it references — fetch any `docs/NAME.md` reference via the `docs` tool with that NAME (call `docs` with no name to list them). Keep context lean: do not load full docs until that knowledge is needed."
+    "The `docs` tool is Quecto's operating manual - your definitive source for how Quecto works. For parent coordination, delegation, workflows, or Quecto-specific behavior, start with `docs {\"name\": \"quick-start\"}`; open other manual pages only when that knowledge is needed. Keep context lean."
 }
 
-/// Build a complete system prompt with datetime preamble, Quecto docs policy,
-/// and user prompt.
+/// Build a complete system prompt from role, docs policy, and optional user prompt.
 ///
-/// Always prepends the current date/time/timezone so the agent knows
-/// what "today" and "now" mean — critical for cron scheduling and
-/// time-aware tasks. Combines:
-/// 1. Datetime preamble (always present, see [`datetime_preamble`])
-/// 2. Quecto capability docs retrieval policy
+/// Combines:
+/// 1. Parent-agent role preamble ([`agent_role_preamble`])
+/// 2. Quecto operating-manual retrieval policy ([`agent_docs_retrieval_policy`])
 /// 3. User-provided system prompt (if any)
 ///
-/// Note: Some LLM providers inject their own date metadata (e.g. "Current
-/// date: 2026-03-01"). The quecto preamble is richer (day-of-week, full
-/// time, timezone) and takes precedence for time-aware operations.
-/// This duplication is intentional — see issue #104.
+/// Providers may still inject their own date metadata; Quecto no longer
+/// prepends a local datetime preamble.
 pub fn build_system_prompt(user_prompt: &Option<String>) -> String {
-    let preamble = datetime_preamble();
+    let role = agent_role_preamble();
     let docs_policy = agent_docs_retrieval_policy();
     let merged = merge_prompts(user_prompt);
     if merged.is_empty() {
-        format!("{}\n\n{}", preamble, docs_policy)
+        format!("{}\n\n{}", role, docs_policy)
     } else {
-        format!("{}\n\n{}\n\n{}", preamble, docs_policy, merged)
+        format!("{}\n\n{}\n\n{}", role, docs_policy, merged)
     }
 }
 

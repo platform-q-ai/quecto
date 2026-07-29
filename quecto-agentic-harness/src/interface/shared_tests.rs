@@ -57,34 +57,16 @@ fn test_merge_prompts_empty_user() {
 }
 
 #[test]
-fn test_datetime_preamble_contains_current_date() {
-    let preamble = datetime_preamble();
-    assert!(
-        preamble.starts_with("Current date and time:"),
-        "expected preamble to start with 'Current date and time:', got: {}",
-        preamble
-    );
-    // Should contain a year (4 digits)
-    // Approximate current year from epoch seconds
-    let ts = crate::infrastructure::time::unix_timestamp_secs();
-    let year = (1970 + ts / 31_557_600).to_string();
-    assert!(
-        preamble.contains(&year),
-        "expected preamble to contain current year {}, got: {}",
-        year,
-        preamble
-    );
-}
-
-#[test]
-fn test_build_system_prompt_datetime_only() {
+fn test_build_system_prompt_docs_policy_only() {
     let result = build_system_prompt(&None);
-    assert!(result.starts_with("Current date and time:"));
+    assert!(!result.contains("Current date and time:"));
+    assert!(result.starts_with(agent_role_preamble()));
+    assert!(result.contains("Parent Agent"));
     assert!(result.contains("`docs` tool"));
-    assert!(result.contains("name `quecto`"));
-    assert!(result.contains("extend tools"));
-    assert!(result.contains("subagents"));
-    assert!(result.contains("workflows"));
+    assert!(result.contains("operating manual"));
+    assert!(result.contains("quick-start"));
+    assert!(result.contains("definitive source"));
+    assert!(!result.contains("name `quecto`"));
     assert!(!result.contains("quecto-tui"));
     assert!(!result.contains("quecto-api"));
     assert!(!result.contains("quecto-mcp"));
@@ -93,7 +75,9 @@ fn test_build_system_prompt_datetime_only() {
 #[test]
 fn test_build_system_prompt_with_user_only() {
     let result = build_system_prompt(&Some("Be helpful".to_string()));
-    assert!(result.starts_with("Current date and time:"));
+    assert!(!result.contains("Current date and time:"));
+    assert!(result.starts_with(agent_role_preamble()));
+    assert!(result.contains(agent_docs_retrieval_policy()));
     assert!(result.contains("Be helpful"));
 }
 
@@ -159,57 +143,6 @@ fn workflow_guard_not_registered_when_guards_disabled() {
         0,
         "no guard should be registered when guards_enabled=false"
     );
-}
-
-/// Issue #104: The quecto datetime preamble is intentionally richer than
-/// provider-injected "Current date:" metadata. It includes day-of-week,
-/// full time with seconds, and timezone — critical for cron scheduling
-/// and time-aware tasks.
-#[test]
-fn test_datetime_preamble_includes_day_of_week_time_and_timezone() {
-    let preamble = datetime_preamble();
-
-    // Must include a day-of-week name
-    let days = [
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-        "Sunday",
-    ];
-    assert!(
-        days.iter().any(|d| preamble.contains(d)),
-        "preamble should include day-of-week, got: {}",
-        preamble
-    );
-
-    // Must include AM/PM time with seconds (e.g. "06:55:58 PM")
-    assert!(
-        preamble.contains("AM") || preamble.contains("PM"),
-        "preamble should include AM/PM time, got: {}",
-        preamble
-    );
-
-    // Must include colons in the time portion (HH:MM:SS)
-    let colon_count = preamble.chars().filter(|c| *c == ':').count();
-    assert!(
-        colon_count >= 2,
-        "preamble should include HH:MM:SS (at least 2 colons), got: {}",
-        preamble
-    );
-
-    // After AM/PM, there should be a timezone identifier
-    let ampm_pos = preamble.find("AM").or(preamble.find("PM"));
-    if let Some(pos) = ampm_pos {
-        let after = &preamble[pos + 2..];
-        assert!(
-            !after.trim().is_empty(),
-            "preamble should have timezone after AM/PM, got: {}",
-            preamble
-        );
-    }
 }
 
 // --- resolve_api_key_with_refresh_async tests (issue #254, #257) ---

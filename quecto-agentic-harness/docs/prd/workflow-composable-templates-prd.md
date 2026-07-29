@@ -2,7 +2,7 @@
 
 **Status:** Draft for review
 **Scope:** `quecto-agentic-harness` workflow subsystem
-**Related:** [`docs/docs-tool-embeds/workflow.md`](../docs-tool-embeds/workflow.md)
+**Related:** [`docs/workflow.md`](../workflow.md)
 
 ---
 

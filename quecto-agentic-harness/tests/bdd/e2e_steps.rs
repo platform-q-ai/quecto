@@ -2897,8 +2897,8 @@ fn then_llm_no_system_message(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the LLM system message should only contain the datetime preamble")]
-fn then_llm_system_message_only_preamble(world: &mut QuectoWorld) {
+#[then("the LLM system message should only contain the docs retrieval policy")]
+fn then_llm_system_message_only_docs_policy(world: &mut QuectoWorld) {
     let server = world
         .wiremock_server_ref
         .expect("no capturing mock LLM configured");
@@ -2919,99 +2919,20 @@ fn then_llm_system_message_only_preamble(world: &mut QuectoWorld) {
         .collect();
     assert!(
         !system_contents.is_empty(),
-        "expected a system message with datetime preamble, but none found"
+        "expected a system message with docs retrieval policy, but none found"
     );
     for content in &system_contents {
         assert!(
-            content.starts_with("Current date and time: "),
-            "system message should start with datetime preamble, got: {}",
-            &content[..content.len().min(100)]
+            content.contains("operating manual"),
+            "system message should contain the docs retrieval policy, got: {}",
+            &content[..content.len().min(120)]
         );
-        // Beyond the datetime line, the only standard content is the Quecto
-        // capability-docs retrieval preamble (always appended by
-        // build_system_prompt). User prompts should not leak into the
-        // system message.
-        let extra = content.lines().skip(1).collect::<Vec<_>>().join("\n");
-        let extra = extra.trim();
         assert!(
-            extra.is_empty() || extra.contains("Quecto's own capability docs are embedded"),
-            "system message should contain only the standard preamble, got: {:?}",
-            content.lines().collect::<Vec<_>>()
+            !content.contains("Current date and time:"),
+            "system message must not contain a datetime preamble, got: {}",
+            &content[..content.len().min(120)]
         );
     }
-}
-
-#[then("the LLM system message datetime preamble should include day-of-week, time, and timezone")]
-fn then_llm_system_message_preamble_rich_format(world: &mut QuectoWorld) {
-    let server = world
-        .wiremock_server_ref
-        .expect("no capturing mock LLM configured");
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let requests = rt.block_on(async { server.received_requests().await });
-    std::mem::forget(rt);
-    let requests = requests.expect("request recording not enabled");
-    let system_contents: Vec<String> = requests
-        .iter()
-        .filter_map(|req| {
-            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
-            body["messages"].as_array().and_then(|msgs| {
-                msgs.iter()
-                    .find(|m| m["role"] == "system")
-                    .and_then(|m| m["content"].as_str().map(String::from))
-            })
-        })
-        .collect();
-    assert!(
-        !system_contents.is_empty(),
-        "expected a system message with datetime preamble, but none found"
-    );
-    let preamble = &system_contents[0];
-    assert!(
-        preamble.starts_with("Current date and time: "),
-        "preamble should start with 'Current date and time: ', got: {}",
-        preamble
-    );
-    // The quecto preamble is intentionally richer than provider-injected dates.
-    // It includes day-of-week (e.g. "Saturday"), full time with seconds,
-    // and timezone — critical for cron scheduling and time-aware tasks.
-    // Duplication with provider-side "Current date:" metadata is expected
-    // and documented (issue #104).
-    let days = [
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-        "Sunday",
-    ];
-    let has_day = days.iter().any(|d| preamble.contains(d));
-    assert!(
-        has_day,
-        "preamble should include day-of-week (e.g. 'Saturday'), got: {}",
-        preamble
-    );
-
-    // Should contain a time component with AM/PM (e.g. "06:55:58 PM")
-    let time_pattern = regex::Regex::new(r"\d{1,2}:\d{2}:\d{2}\s+(AM|PM)").unwrap();
-    assert!(
-        time_pattern.is_match(preamble),
-        "preamble should include time with seconds and AM/PM, got: {}",
-        preamble
-    );
-
-    // Should contain a timezone identifier (e.g. "GMT", "UTC", "+00:00", "EST")
-    // The format uses %Z which produces timezone abbreviations.
-    let after_ampm = preamble
-        .find("AM")
-        .or_else(|| preamble.find("PM"))
-        .map(|pos| &preamble[pos..])
-        .unwrap_or("");
-    assert!(
-        after_ampm.len() > 3,
-        "preamble should include timezone after AM/PM, got: {}",
-        preamble
-    );
 }
 
 // ===========================================================================

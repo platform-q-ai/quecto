@@ -1,7 +1,7 @@
 //! Per-agent await mutual exclusion (#612): only one awaiter per agent at a
 //! time. A second *concurrent* awaiter is rejected with `another_await_active`.
 //! (Sibling tool calls in one turn serialize via the agent loop and so never
-//! overlap — see `docs/docs-tool-embeds/subagents.md`.)
+//! overlap — see `docs/subagents.md`.)
 
 use super::*;
 

@@ -70,7 +70,7 @@ Important invariants before Phase 3:
 - child-targeted history/sync commands are answered by the child, not by the
   parent session.
 
-See also the [UDS protocol reference](../docs-tool-embeds/uds-protocol.md) and
+See also the [UDS protocol reference](../uds-protocol.md) and
 [protocol capability matrix](protocol-capability-matrix.md).
 
 ## Subagent lifecycle

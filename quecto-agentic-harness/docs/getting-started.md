@@ -55,7 +55,7 @@ quecto-tui
 | Need | Where |
 |---|---|
 | Flags, config, tools, security | [README](../README.md) |
-| Models / `models.json` | [Runtime models & providers](docs-tool-embeds/runtime-models-providers.md) |
-| UDS protocol for custom clients | [UDS protocol](docs-tool-embeds/uds-protocol.md) |
-| Subagents | [Subagents](docs-tool-embeds/subagents.md) |
-| Workflows | [Workflow](docs-tool-embeds/workflow.md) |
+| Models / `models.json` | [Runtime models & providers](runtime-models-providers.md) |
+| UDS protocol for custom clients | [UDS protocol](uds-protocol.md) |
+| Subagents | [Subagents](subagents.md) |
+| Workflows | [Workflow](workflow.md) |

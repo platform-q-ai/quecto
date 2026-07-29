@@ -131,9 +131,9 @@ fn then_phase_0_hardening_documentation_links_resolve(world: &mut QuectoWorld) {
         world.stderr, world.stdout
     );
     assert!(
-        world.stdout.contains(
-            "docs/docs-tool-embeds/uds-protocol.md -> ../architecture/protocol-capability-matrix.md"
-        ),
+        world
+            .stdout
+            .contains("docs/uds-protocol.md -> architecture/protocol-capability-matrix.md"),
         "UDS protocol docs should link the protocol matrix; checked:\n{}",
         world.stdout
     );

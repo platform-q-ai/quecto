@@ -84,10 +84,10 @@ fn readme_uds_protocol_lists_current_commands_and_events() {
 fn architecture_hardening_phase_0_docs_are_linked() {
     let prd = read_repo_file("docs/prd/prd-harness-architecture-hardening.md");
     let adr_index = read_repo_file("docs/architecture-design-records/README.md");
-    let uds = read_repo_file("docs/docs-tool-embeds/uds-protocol.md");
+    let uds = read_repo_file("docs/uds-protocol.md");
     let matrix = read_repo_file("docs/architecture/protocol-capability-matrix.md");
     let map = read_repo_file("docs/architecture/harness-architecture-map.md");
-    let cookbooks = read_repo_file("docs/docs-tool-embeds/contributor-cookbooks.md");
+    let cookbooks = read_repo_file("docs/contributor-cookbooks.md");
 
     assert!(
         prd.contains("Phase 0")
@@ -119,7 +119,7 @@ fn architecture_hardening_phase_0_docs_are_linked() {
     );
     let readme = read_repo_file("README.md");
     assert!(
-        readme.contains("docs/docs-tool-embeds/contributor-cookbooks.md"),
+        readme.contains("docs/contributor-cookbooks.md"),
         "README should link the contributor cookbooks"
     );
     for heading in [
@@ -191,21 +191,21 @@ fn uds_docs_document_paged_history_not_unbounded() {
     // bounded page, never the full history. The user-facing UDS docs must
     // describe the paging contract (`before`/`hasMoreBefore`) and must not
     // resurrect the pre-paging "full history" promise.
-    let protocol = read_repo_file("docs/docs-tool-embeds/uds-protocol.md");
+    let protocol = read_repo_file("docs/uds-protocol.md");
     for field in ["`before`", "`hasMoreBefore`"] {
         assert!(
             protocol.contains(field),
-            "docs/docs-tool-embeds/uds-protocol.md must document the {field} paging field"
+            "docs/uds-protocol.md must document the {field} paging field"
         );
     }
     assert!(
         !protocol.to_lowercase().contains("return the full history"),
-        "docs/docs-tool-embeds/uds-protocol.md must not promise unbounded history (#1061 paging)"
+        "docs/uds-protocol.md must not promise unbounded history (#1061 paging)"
     );
 
     // sessions.md documents the same command surface; its UDS inspection
     // examples must not promise unbounded history either.
-    let sessions = read_repo_file("docs/docs-tool-embeds/sessions.md");
+    let sessions = read_repo_file("docs/sessions.md");
     assert!(
         !sessions.contains("Returns the full conversation history"),
         "sessions.md must not promise unbounded get_messages history (#1061 paging)"
@@ -290,23 +290,23 @@ fn agent_cmd_docs_match_tool_schema() {
         );
     }
 
-    // docs/docs-tool-embeds/subagents.md documents the agent_cmd tool surface only — it must not
+    // docs/subagents.md documents the agent_cmd tool surface only — it must not
     // reference get_messages_tail at all; use get_messages with optional count.
-    let subagents = read_repo_file("docs/docs-tool-embeds/subagents.md");
+    let subagents = read_repo_file("docs/subagents.md");
     assert!(
         !subagents.contains("get_messages_tail"),
-        "docs/docs-tool-embeds/subagents.md must not reference get_messages_tail (use get_messages with count)"
+        "docs/subagents.md must not reference get_messages_tail (use get_messages with count)"
     );
     assert!(
         subagents.contains("get_messages"),
-        "docs/docs-tool-embeds/subagents.md should document get_messages"
+        "docs/subagents.md should document get_messages"
     );
     // The AC requires documenting the optional `count` semantics (omit = newest
     // page post-#1061, N = last N), not merely the command name.
     let subagents_lower = subagents.to_lowercase();
     assert!(
         subagents.contains("count"),
-        "docs/docs-tool-embeds/subagents.md must document the optional `count` parameter of get_messages"
+        "docs/subagents.md must document the optional `count` parameter of get_messages"
     );
     // Anchor on the documented phrasing rather than bare substrings (which occur
     // inside common words), so removing the semantics sentence actually fails
@@ -315,27 +315,27 @@ fn agent_cmd_docs_match_tool_schema() {
     // page; pass `count` for the last N messages".
     assert!(
         subagents_lower.contains("omit") && subagents_lower.contains("newest history page"),
-        "docs/docs-tool-embeds/subagents.md must explain that omitting count returns the newest history page"
+        "docs/subagents.md must explain that omitting count returns the newest history page"
     );
     assert!(
         subagents_lower.contains("last n"),
-        "docs/docs-tool-embeds/subagents.md must explain that count returns the last N messages"
+        "docs/subagents.md must explain that count returns the last N messages"
     );
 
-    // docs/docs-tool-embeds/sessions.md UDS inspection examples must not present get_messages_tail.
-    let sessions = read_repo_file("docs/docs-tool-embeds/sessions.md");
+    // docs/sessions.md UDS inspection examples must not present get_messages_tail.
+    let sessions = read_repo_file("docs/sessions.md");
     assert!(
         !sessions.contains("get_messages_tail"),
-        "docs/docs-tool-embeds/sessions.md must not present get_messages_tail (use get_messages with count)"
+        "docs/sessions.md must not present get_messages_tail (use get_messages with count)"
     );
 
     // get_messages_tail is intentionally NOT mentioned in any docs — the
     // deprecated-alias labelling was clutter. Neither the UDS protocol docs nor
     // the README may reference it; clients use `get_messages` with `count`.
-    let uds = read_repo_file("docs/docs-tool-embeds/uds-protocol.md");
+    let uds = read_repo_file("docs/uds-protocol.md");
     assert!(
         !uds.contains("get_messages_tail"),
-        "docs/docs-tool-embeds/uds-protocol.md must not reference get_messages_tail (use get_messages with count)"
+        "docs/uds-protocol.md must not reference get_messages_tail (use get_messages with count)"
     );
     assert!(
         !readme.contains("get_messages_tail"),
@@ -354,7 +354,7 @@ fn agent_cmd_docs_match_tool_schema() {
 
 #[test]
 fn subagent_docs_distinguish_bound_specs_from_directory_templates() {
-    let subagents = read_repo_file("docs/docs-tool-embeds/subagents.md");
+    let subagents = read_repo_file("docs/subagents.md");
     let relevant = subagents
         .split("- The `template` is")
         .nth(1)
@@ -384,39 +384,39 @@ fn subagent_docs_document_readonly_and_disable_tools_spawn() {
     // discover it, including the not-a-hard-sandbox caveat and a spawn example.
     // CLI `--disable-tool` detail lives in the README (user-facing); agents get
     // the spawn path from subagents.md.
-    let subagents = read_repo_file("docs/docs-tool-embeds/subagents.md");
+    let subagents = read_repo_file("docs/subagents.md");
     let readme = read_repo_file("README.md");
 
     assert!(
         subagents.contains("read_only") && subagents.contains("disable_tools"),
-        "docs/docs-tool-embeds/subagents.md should document the spawn read_only / disable_tools options"
+        "docs/subagents.md should document the spawn read_only / disable_tools options"
     );
     // read_only is the convenience that expands to disabling write + edit.
     let subagents_lower = subagents.to_lowercase();
     assert!(
         subagents.contains("\"write\"") && subagents.contains("\"edit\""),
-        "docs/docs-tool-embeds/subagents.md should note read_only expands to disabling write + edit"
+        "docs/subagents.md should note read_only expands to disabling write + edit"
     );
     // Removed from the child registry before its session starts (defense-in-depth).
     // Anchor on the claim phrase, not two stray single-word substrings.
     assert!(
         subagents_lower.contains("removed from the child registry")
             && subagents_lower.contains("before its session"),
-        "docs/docs-tool-embeds/subagents.md should explain the tools are removed from the child registry before its session starts"
+        "docs/subagents.md should explain the tools are removed from the child registry before its session starts"
     );
     // The NOT-a-hard-sandbox caveat: a child can still mutate via bash.
     assert!(
         subagents_lower.contains("not a hard sandbox"),
-        "docs/docs-tool-embeds/subagents.md should carry the not-a-hard-sandbox caveat"
+        "docs/subagents.md should carry the not-a-hard-sandbox caveat"
     );
     assert!(
         subagents_lower.contains("mutate via bash")
             || subagents_lower.contains("mutate via `bash`"),
-        "docs/docs-tool-embeds/subagents.md should note a child can still mutate via bash"
+        "docs/subagents.md should note a child can still mutate via bash"
     );
     assert!(
         subagents.contains("--disable-tool"),
-        "docs/docs-tool-embeds/subagents.md should mention the CLI --disable-tool equivalent"
+        "docs/subagents.md should mention the CLI --disable-tool equivalent"
     );
 
     // User-facing CLI flag detail lives in the README.
@@ -533,10 +533,9 @@ fn assert_phase_0_links_resolve() {
     let report = check_phase_0_hardening_links(repo);
 
     assert!(
-        report
-            .checked
-            .iter()
-            .any(|link| link == "docs/docs-tool-embeds/uds-protocol.md -> ../architecture/protocol-capability-matrix.md"),
+        report.checked.iter().any(
+            |link| link == "docs/uds-protocol.md -> architecture/protocol-capability-matrix.md"
+        ),
         "UDS protocol docs should link the protocol matrix; checked: {:?}",
         report.checked
     );
