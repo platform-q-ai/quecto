@@ -250,6 +250,17 @@ Feature: TUI app event routing and command behaviours
     And the bottom stack does not show workflow text "Step 2/3"
 
   @workflow-bar
+  Scenario: Compact main-pane workflow progress is framed above and below
+    Given a fresh TUI app harness at width 120
+    When workflow state reports issue 1309 with step 2 "Restore separators" in phase "red" out of 3
+    Then the main pane workflow title shows "Master"
+    And the main pane compact workflow progress "Restore separators" is framed above and below
+    And the main pane omits workflow detail "Ctrl+Shift+A"
+    And the main pane omits workflow detail "nudge:"
+    And the main pane omits workflow detail "○"
+    And the main pane omits workflow detail "●"
+
+  @workflow-bar
   Scenario: Narrow workflow title stays inside the terminal
     Given a fresh TUI app harness at width 60
     When workflow state reports issue 1028 with step 1 "A very long workflow label that must be truncated by the TUI" in phase "green" out of 1

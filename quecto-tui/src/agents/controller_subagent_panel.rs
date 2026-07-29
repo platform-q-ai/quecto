@@ -582,16 +582,18 @@ impl App {
 
     // ── Main-pane workflow indicator (selected agent) ──────────────────
 
-    /// The main pane's top chrome for the selected agent (#820 / #1288): a title
-    /// line (`agent · status · elapsed · #issue workflow`) plus, when a workflow
-    /// is active, one compact progress line (`bar done/total · Step n/total …`).
-    /// Title always renders; the compact indicator is appended only when
-    /// `render_compact_line` has content. The multi-line rule box from #820 was
-    /// removed in #1246 for vertical space and must not return.
+    /// The main pane's top chrome for the selected agent (#820 / #1288 / #1309):
+    /// a title line (`agent · status · elapsed · #issue workflow`) plus, when a
+    /// workflow is active, one compact progress line framed by separator rules
+    /// above and below (`────` / content / `────`). Title always renders; the
+    /// compact indicator is appended only when `render_compact_line` has content.
+    /// Phase pills and shortcut hints from the old multi-line status box (#1246)
+    /// must not return — only the top/bottom rule separators around the single
+    /// compact line.
     pub(super) fn render_main_pane_workflow(
         &self,
         width: usize,
-        _box_width: usize,
+        box_width: usize,
         now: tokio::time::Instant,
     ) -> Vec<String> {
         if width < 4 {
@@ -600,10 +602,15 @@ impl App {
         let state = self.active_workflow_bar();
         let mut out = vec![pad_cell(&self.main_pane_title(state, now), width)];
         if let Some(content) = workflow_bar::render_compact_line(state) {
-            out.push(pad_cell(
-                &crate::components::utils::truncate_to_width(&content, width, Some("…")),
-                width,
+            let rule_width = box_width.max(1);
+            let inner = rule_width.saturating_sub(2);
+            out.push(theme::dim(&"─".repeat(rule_width)));
+            out.push(crate::components::utils::truncate_to_width(
+                &format!(" {} ", pad_cell(&content, inner)),
+                rule_width,
+                None,
             ));
+            out.push(theme::dim(&"─".repeat(rule_width)));
         }
         out
     }

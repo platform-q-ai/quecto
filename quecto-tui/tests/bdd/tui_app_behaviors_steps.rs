@@ -1548,6 +1548,78 @@ fn then_main_pane_omits_workflow_detail(world: &mut TuiWorld, unexpected: String
     );
 }
 
+/// True when a main-pane body segment is a full horizontal rule (`─` only).
+fn is_main_pane_rule_row(line: &str) -> bool {
+    let segment = line.rsplit_once("│ ").map(|(_, s)| s).unwrap_or(line);
+    let t = segment.trim();
+    !t.is_empty() && t.chars().all(|c| c == '─')
+}
+
+#[then(expr = "the main pane compact workflow progress {string} is framed above and below")]
+fn then_main_pane_compact_workflow_marker_framed(world: &mut TuiWorld, marker: String) {
+    let pane = drive(world, |h| h.main_pane());
+    let lines: Vec<&str> = pane.lines().collect();
+    let progress_idx = lines
+        .iter()
+        .position(|line| line.contains(&marker))
+        .unwrap_or_else(|| {
+            panic!(
+                "compact workflow progress containing {marker:?} missing from main pane:\n{pane}"
+            )
+        });
+    assert!(
+        progress_idx > 0 && is_main_pane_rule_row(lines[progress_idx - 1]),
+        "compact progress must have a separator rule above it:\n{pane}"
+    );
+    assert!(
+        progress_idx + 1 < lines.len() && is_main_pane_rule_row(lines[progress_idx + 1]),
+        "compact progress must have a separator rule below it:\n{pane}"
+    );
+    let rule_count = lines
+        .iter()
+        .filter(|line| is_main_pane_rule_row(line))
+        .count();
+    assert_eq!(
+        rule_count, 2,
+        "exactly two separator rules frame the compact indicator (not a multi-line status box):\n{pane}"
+    );
+}
+
+#[then("the main pane compact workflow progress is framed above and below")]
+fn then_main_pane_compact_workflow_has_separators(world: &mut TuiWorld) {
+    let pane = drive(world, |h| h.main_pane());
+    // Prefer distinctive fixtures from the scenarios that reuse this step.
+    let marker = ["Restore separators", "layoutwork", "Step 4/5", "Step 2/3"]
+        .into_iter()
+        .find(|m| pane.contains(m))
+        .unwrap_or_else(|| panic!("compact workflow progress missing from main pane:\n{pane}"));
+    let lines: Vec<&str> = pane.lines().collect();
+    let progress_idx = lines
+        .iter()
+        .position(|line| line.contains(marker))
+        .unwrap_or_else(|| {
+            panic!(
+                "compact workflow progress containing {marker:?} missing from main pane:\n{pane}"
+            )
+        });
+    assert!(
+        progress_idx > 0 && is_main_pane_rule_row(lines[progress_idx - 1]),
+        "compact progress must have a separator rule above it:\n{pane}"
+    );
+    assert!(
+        progress_idx + 1 < lines.len() && is_main_pane_rule_row(lines[progress_idx + 1]),
+        "compact progress must have a separator rule below it:\n{pane}"
+    );
+    let rule_count = lines
+        .iter()
+        .filter(|line| is_main_pane_rule_row(line))
+        .count();
+    assert_eq!(
+        rule_count, 2,
+        "exactly two separator rules frame the compact indicator (not a multi-line status box):\n{pane}"
+    );
+}
+
 #[then(expr = "the bottom stack does not show workflow text {string}")]
 fn then_bottom_stack_hides_workflow_text(world: &mut TuiWorld, unexpected: String) {
     let bottom = drive(world, |h| h.bottom_stack());

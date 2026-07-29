@@ -114,15 +114,14 @@ fn then_main_pane_title_shows_workflow_context(world: &mut TuiWorld, id: String)
 #[then("the main pane no longer shows the workflow status box")]
 fn then_main_pane_no_workflow_status_box(world: &mut TuiWorld) {
     let top = top(world);
-    // Multi-line rule box stays gone (#1246); compact Step n/total is required (#1288).
+    // Separator rules around compact progress are intentional (#1309).
+    // Phase pills / shortcut hints from the multi-line widget stay gone (#1246).
     assert!(
-        !top.lines().any(|line| {
-            line.rsplit_once("│ ").is_some_and(|(_, segment)| {
-                let t = segment.trim();
-                !t.is_empty() && t.chars().all(|c| c == '─')
-            })
-        }),
-        "the main pane must omit the separate multi-line workflow status box, got:\n{top}"
+        !top.contains("Ctrl+Shift+A")
+            && !top.contains("nudge:")
+            && !top.contains('○')
+            && !top.contains('●'),
+        "the main pane must omit phase pills / shortcut hints from the old status box, got:\n{top}"
     );
     assert!(
         top.contains("Step 4/5") || top.contains("3/5"),
