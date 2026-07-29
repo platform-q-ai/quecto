@@ -481,9 +481,10 @@ impl Tool for AgentCmdTool {
                 completion note arrives automatically. (4) Then agent_cmd get_messages \
                 (count 1-5) for the child's report — the note is not the report. \
                 get_subagents_all is for inventory/cleanup after work, not completion waiting. \
-                get_state is occasional live supervision/debug, not a wait loop. \
-                get_messages returns the NEWEST bounded history page (count for last N; \
-                hasMoreBefore/before pages older). Busy get_messages may be snapshot:true and lag.",
+                get_state is the live/in-flight supervision API (occasional progress/debug, \
+                not a wait loop). get_messages is the stable committed transcript API \
+                (newest bounded history page; count for last N; hasMoreBefore/before pages \
+                older). Busy get_messages may be snapshot:true and lag.",
                 r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_extensions","set_model","set_effort","clear_history","reload_extensions"],"description":"Command to send. After spawn, wait for the passive completion note on a later turn — do not poll get_subagents* or sleep. Then get_messages (count 1-5) for the report. get_subagents_all is inventory/cleanup (agent_id '*'), not a wait loop. kill terminates the child process."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"}},"required":["agent_id","command"]}"#,
             )
         };

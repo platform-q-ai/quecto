@@ -509,6 +509,25 @@ fn then_agent_cmd_schema_includes_command(world: &mut QuectoWorld, expected: Str
     );
 }
 
+#[then(expr = "the agent_cmd tool definition schema should not include {string} in command enum")]
+fn then_agent_cmd_schema_excludes_command(world: &mut QuectoWorld, unexpected: String) {
+    let tool = world
+        .agent_cmd_tool
+        .as_ref()
+        .expect("agent_cmd_tool not set");
+    let def = tool.definition();
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    let command_enum = schema["properties"]["command"]["enum"]
+        .as_array()
+        .expect("command enum not found");
+    assert!(
+        !command_enum.iter().any(|v| v.as_str() == Some(&unexpected)),
+        "expected '{}' not in command enum: {:?}",
+        unexpected,
+        command_enum
+    );
+}
+
 #[then(expr = "the agent_cmd tool definition schema should include property {string}")]
 fn then_agent_cmd_schema_includes_property(world: &mut QuectoWorld, expected: String) {
     let tool = world
@@ -521,6 +540,22 @@ fn then_agent_cmd_schema_includes_property(world: &mut QuectoWorld, expected: St
         schema["properties"][&expected].is_object(),
         "expected property '{}' in schema, got: {}",
         expected,
+        schema["properties"]
+    );
+}
+
+#[then(expr = "the agent_cmd tool definition schema should not include property {string}")]
+fn then_agent_cmd_schema_excludes_property(world: &mut QuectoWorld, unexpected: String) {
+    let tool = world
+        .agent_cmd_tool
+        .as_ref()
+        .expect("agent_cmd_tool not set");
+    let def = tool.definition();
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    assert!(
+        schema["properties"].get(&unexpected).is_none(),
+        "expected property '{}' absent from schema, got: {}",
+        unexpected,
         schema["properties"]
     );
 }
