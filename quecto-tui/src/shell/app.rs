@@ -95,6 +95,16 @@ pub struct App {
     message_recovery_batches: HashMap<String, MessageRecoveryBatch>,
     pending_stub_recall: HashMap<String, app_paged_history::StubRecall>,
     failed_stub_recalls: HashSet<(Option<String>, String)>,
+    /// Exact correlation id for this client's in-flight resume transcript fetch (#1237).
+    /// `get_messages` responses are broadcast; fixed literals would clobber peers.
+    pending_resume_messages_id: Option<String>,
+    /// Exact correlation id for this client's post-rewind transcript refresh (#1237).
+    pending_rewind_refresh_id: Option<String>,
+    /// Exact correlation id for this client's solicited attach backfill (#1237).
+    /// Id-less busy-connect snapshots must not clear this pending.
+    pending_attach_backfill_id: Option<String>,
+    /// Local sequence suffix for minted solicited `get_messages` ids (#1237).
+    solicited_get_messages_seq: u64,
     /// Tool boxes observed since the current master AgentStart (#1060 recovery).
     tools_this_turn: usize,
     /// Tool starts not yet matched by an end; > 0 forces recovery on a dropped end.
@@ -154,6 +164,10 @@ impl App {
             message_recovery_batches: HashMap::new(),
             pending_stub_recall: HashMap::new(),
             failed_stub_recalls: HashSet::new(),
+            pending_resume_messages_id: None,
+            pending_rewind_refresh_id: None,
+            pending_attach_backfill_id: None,
+            solicited_get_messages_seq: 0,
             tools_this_turn: 0,
             open_tool_calls: 0,
             active_turn_start: 0,
@@ -532,6 +546,9 @@ mod app_paged_history_tests;
 #[cfg(test)]
 #[path = "app_refresh_tui_tests.rs"]
 mod app_refresh_tui_tests;
+#[cfg(test)]
+#[path = "app_response_multiclient_tests.rs"]
+mod app_response_multiclient_tests;
 #[cfg(test)]
 #[path = "../conversation/app_rewind_paged_load_tests.rs"]
 mod app_rewind_paged_load_tests;

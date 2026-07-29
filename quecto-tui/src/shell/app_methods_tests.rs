@@ -424,10 +424,20 @@ async fn successful_resume_requests_full_messages_before_stats() {
         "expected get_messages, stats, and state resync: {cmds:?}"
     );
     assert!(
-        cmds[0].contains("\"type\":\"get_messages\"")
-            && cmds[0].contains("\"id\":\"resume-messages\"")
-            && !cmds[0].contains("\"count\""),
+        cmds[0].contains("\"type\":\"get_messages\"") && !cmds[0].contains("\"count\""),
         "resume should request the full restored transcript, not a tail: {cmds:?}"
+    );
+    let resume_id = serde_json::from_str::<serde_json::Value>(&cmds[0])
+        .ok()
+        .and_then(|v| v.get("id")?.as_str().map(str::to_string))
+        .expect("resume get_messages id");
+    assert!(
+        resume_id.starts_with("resume-messages-") && resume_id != "resume-messages",
+        "resume id must be uniquely minted, got {resume_id}"
+    );
+    assert_eq!(
+        h.app_mut().test_pending_resume_messages_id(),
+        Some(resume_id.as_str())
     );
     assert!(
         cmds[1].contains("\"type\":\"get_session_stats\""),
@@ -451,8 +461,12 @@ async fn successful_resume_with_one_message_response_displays_first_message() {
         Some(serde_json::json!({"session": "chat-1"})),
         None,
     );
+    let resume_id = a
+        .test_pending_resume_messages_id()
+        .expect("resume mints a pending id")
+        .to_string();
     a.handle_response(
-        Some("resume-messages".into()),
+        Some(resume_id),
         "get_messages".into(),
         true,
         Some(serde_json::json!({
@@ -471,6 +485,7 @@ async fn successful_resume_restores_tool_calls_and_results_as_tool_cards() {
     let mut h = resume_harness().await;
     let a = h.app_mut();
 
+    a.test_arm_resume_messages("resume-messages");
     a.handle_response(
         Some("resume-messages".into()),
         "get_messages".into(),
@@ -525,6 +540,7 @@ async fn successful_resume_restores_pending_and_failed_tool_cards() {
     let mut h = resume_harness().await;
     let a = h.app_mut();
 
+    a.test_arm_resume_messages("resume-messages");
     a.handle_response(
         Some("resume-messages".into()),
         "get_messages".into(),
@@ -611,6 +627,7 @@ async fn replace_chat_with_no_displayable_messages_shows_resume_status() {
 async fn resume_empty_legacy_rewind_uses_rewind_status_once() {
     let mut h = resume_harness().await;
     let a = h.app_mut();
+    a.test_arm_rewind_refresh("rewind-refresh");
     a.handle_response(
         Some("rewind-refresh".into()),
         "get_messages".into(),
@@ -628,6 +645,7 @@ async fn resume_empty_legacy_rewind_uses_rewind_status_once() {
 async fn resumed_spawn_tool_call_is_suppressed_like_live_spawn() {
     let mut h = resume_harness().await;
     let a = h.app_mut();
+    a.test_arm_resume_messages("resume-messages");
     a.handle_response(
         Some("resume-messages".into()),
         "get_messages".into(),
@@ -648,6 +666,7 @@ async fn resumed_spawn_tool_call_is_suppressed_like_live_spawn() {
 async fn resumed_tool_name_strips_terminal_control_sequences() {
     let mut h = resume_harness().await;
     let a = h.app_mut();
+    a.test_arm_resume_messages("resume-messages");
     a.handle_response(
         Some("resume-messages".into()),
         "get_messages".into(),
@@ -667,6 +686,7 @@ async fn resumed_tool_name_strips_terminal_control_sequences() {
 async fn resumed_duplicate_tool_ids_attach_results_chronologically() {
     let mut h = resume_harness().await;
     let a = h.app_mut();
+    a.test_arm_resume_messages("resume-messages");
     a.handle_response(
         Some("resume-messages".into()),
         "get_messages".into(),

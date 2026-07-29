@@ -312,6 +312,14 @@ fn respond(
     data: Option<serde_json::Value>,
     error: Option<&str>,
 ) {
+    if command == "get_messages" {
+        match id {
+            Some("attach-backfill") => app.test_arm_attach_backfill("attach-backfill"),
+            Some("resume-messages") => app.test_arm_resume_messages("resume-messages"),
+            Some("rewind-refresh") => app.test_arm_rewind_refresh("rewind-refresh"),
+            _ => {}
+        }
+    }
     app.handle_response(
         id.map(String::from),
         command.to_string(),
@@ -640,9 +648,14 @@ async fn rewind_refresh_replaces_transcript_and_resets_paging_state() {
 
     h.app_mut().rewind.pending_apply_id = Some("rw".into());
     respond(h.app_mut(), Some("rw"), "rewind_to", true, None, None);
+    let refresh_id = h
+        .app_mut()
+        .test_pending_rewind_refresh_id()
+        .expect("rewind_to mints a refresh id")
+        .to_string();
     respond(
         h.app_mut(),
-        Some("rewind-refresh"),
+        Some(&refresh_id),
         "get_messages",
         true,
         Some(history_page(&[("m2", "kept turn")], Some("m2"))),

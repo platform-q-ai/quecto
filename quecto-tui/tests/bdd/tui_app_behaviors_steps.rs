@@ -25,6 +25,16 @@ fn init_fresh(world: &mut TuiWorld) {
     world.tui_last_commands.clear();
 }
 
+fn arm_own_solicited_get_messages(h: &mut TuiHarness, id: &str) {
+    if id == "attach-backfill" || id.starts_with("attach-backfill-") {
+        h.app_mut().test_arm_attach_backfill(id);
+    } else if id == "resume-messages" || id.starts_with("resume-messages-") {
+        h.app_mut().test_arm_resume_messages(id);
+    } else if id == "rewind-refresh" || id.starts_with("rewind-refresh-") {
+        h.app_mut().test_arm_rewind_refresh(id);
+    }
+}
+
 fn drive<R>(world: &mut TuiWorld, f: impl FnOnce(&mut TuiHarness) -> R) -> R {
     let handle = world
         .tui_parity_rt
@@ -183,6 +193,7 @@ fn given_master_chat_already_contains(world: &mut TuiWorld, text: String) {
 #[when("a resumed messages response arrives with a non-array messages field")]
 fn when_resumed_messages_non_array(world: &mut TuiWorld) {
     drive(world, |h| {
+        arm_own_solicited_get_messages(h, "resume-messages");
         h.event(Event::Response {
             id: Some("resume-messages".into()),
             command: "get_messages".into(),
@@ -200,6 +211,7 @@ fn when_resumed_conversation_with_completed_command(
     output: String,
 ) {
     drive(world, |h| {
+        arm_own_solicited_get_messages(h, "resume-messages");
         h.event(Event::Response {
             id: Some("resume-messages".into()),
             command: "get_messages".into(),
@@ -864,7 +876,9 @@ fn then_rewind_message_requested(world: &mut TuiWorld) {
 fn then_rewind_refresh_sent(world: &mut TuiWorld) {
     let refresh = world.tui_last_commands.iter().any(|line| {
         json_field(line, "type").as_deref() == Some("get_messages")
-            && json_field(line, "id").as_deref() == Some("rewind-refresh")
+            && json_field(line, "id")
+                .as_deref()
+                .is_some_and(|id| id == "rewind-refresh" || id.starts_with("rewind-refresh-"))
     });
     assert!(
         refresh,
@@ -1654,6 +1668,7 @@ fn deliver_master_backfill(world: &mut TuiWorld, user: &str, assistant: &str) {
         ]
     });
     drive(world, |h| {
+        arm_own_solicited_get_messages(h, "attach-backfill");
         h.event(Event::Response {
             id: Some("attach-backfill".into()),
             command: "get_messages".into(),
@@ -1667,6 +1682,7 @@ fn deliver_master_backfill(world: &mut TuiWorld, user: &str, assistant: &str) {
 
 fn deliver_empty_master_backfill(world: &mut TuiWorld) {
     drive(world, |h| {
+        arm_own_solicited_get_messages(h, "attach-backfill");
         h.event(Event::Response {
             id: Some("attach-backfill".into()),
             command: "get_messages".into(),

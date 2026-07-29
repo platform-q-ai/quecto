@@ -13,6 +13,15 @@ pub(super) fn respond(
     success: bool,
     data: serde_json::Value,
 ) {
+    // Synthetic own-client deliveries arm exact pending (#1237).
+    if command == "get_messages" {
+        match id {
+            Some(ATTACH_BACKFILL_ID) => app.test_arm_attach_backfill(ATTACH_BACKFILL_ID),
+            Some("resume-messages") => app.test_arm_resume_messages("resume-messages"),
+            Some("rewind-refresh") => app.test_arm_rewind_refresh("rewind-refresh"),
+            _ => {}
+        }
+    }
     app.handle_response(
         id.map(String::from),
         command.to_string(),

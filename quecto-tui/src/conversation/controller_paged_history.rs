@@ -36,6 +36,7 @@ impl App {
         match command {
             Command::GetMessages { id: Some(id), .. } => {
                 self.master_session.history.rollback_pending_page(id);
+                self.rollback_pending_solicited_get_messages(id);
             }
             Command::GetMessage { id: Some(id), .. } => {
                 self.pending_stub_recall.remove(id);
@@ -230,6 +231,11 @@ impl App {
         // cannot prepend into the replacement transcript, and the new
         // conversation cannot request the prior cursor.
         self.master_session.history.reset();
+        // Drop solicited resume/rewind/attach correlation too (#1237): a late
+        // response from the prior boundary must not replace the new transcript.
+        // Callers that mint a new id (resume success, rewind_to success) do so
+        // AFTER this clear.
+        self.clear_pending_solicited_get_messages();
     }
 
     /// Whether a `get_messages` payload carries paged-history metadata. #1061
