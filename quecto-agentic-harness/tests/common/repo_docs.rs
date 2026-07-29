@@ -7,6 +7,7 @@ pub const PHASE_0_DOCS: &[&str] = &[
     "docs/uds-protocol.md",
     "docs/harness-architecture-map.md",
     "docs/protocol-capability-matrix.md",
+    "docs/contributor-cookbooks.md",
 ];
 
 pub const PHASE_0_ADRS: &[&str] = &[

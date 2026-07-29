@@ -39,6 +39,10 @@ const EMBEDDED_DOCS: &[(&str, &str)] = &[
         "models-providers",
         include_str!("../../../docs/runtime-models-providers.md"),
     ),
+    (
+        "contributor-cookbooks",
+        include_str!("../../../docs/contributor-cookbooks.md"),
+    ),
     ("readme", include_str!("../../../README.md")),
 ];
 

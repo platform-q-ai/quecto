@@ -87,6 +87,7 @@ fn architecture_hardening_phase_0_docs_are_linked() {
     let uds = read_repo_file("docs/uds-protocol.md");
     let matrix = read_repo_file("docs/protocol-capability-matrix.md");
     let map = read_repo_file("docs/harness-architecture-map.md");
+    let cookbooks = read_repo_file("docs/contributor-cookbooks.md");
 
     assert!(
         prd.contains("Phase 0")
@@ -116,6 +117,16 @@ fn architecture_hardening_phase_0_docs_are_linked() {
         uds.contains("protocol-capability-matrix.md"),
         "UDS protocol docs should link the protocol capability matrix"
     );
+    let readme = read_repo_file("README.md");
+    assert!(
+        readme.contains("docs/contributor-cookbooks.md"),
+        "README should link the contributor cookbooks"
+    );
+    let capability_guide = read_repo_file("docs/quecto.md");
+    assert!(
+        capability_guide.contains("contributor-cookbooks"),
+        "agent capability guide should make contributor cookbooks discoverable"
+    );
     for heading in [
         "## Turn execution",
         "## Context management",
@@ -134,6 +145,34 @@ fn architecture_hardening_phase_0_docs_are_linked() {
         assert!(
             map.contains(baseline),
             "architecture map missing {baseline}"
+        );
+    }
+    for cookbook_topic in [
+        "## Add a built-in tool",
+        "## Add or change a UDS command",
+        "## Add provider/model runtime capability",
+        "## Add a progress or audit event",
+        "## Change session persistence safely",
+        "## Add subagent behaviour",
+        "## Change context policy",
+        "## Local check command index",
+    ] {
+        assert!(
+            cookbooks.contains(cookbook_topic),
+            "contributor cookbooks missing {cookbook_topic}"
+        );
+    }
+    for local_check in [
+        "cargo test -p quecto-agentic-harness --lib agent_loop",
+        "cargo test -p quecto-agentic-harness --lib context_pruning",
+        "cargo test -p quecto-agentic-harness --lib uds",
+        "cargo test -p quecto-agentic-harness --lib subagent",
+        "cargo test -p quecto-agentic-harness --test repo_docs",
+        "cargo test -p quecto-agentic-harness --test architecture",
+    ] {
+        assert!(
+            cookbooks.contains(local_check),
+            "contributor cookbooks missing local check {local_check}"
         );
     }
     for capability in [
