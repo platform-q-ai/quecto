@@ -121,7 +121,7 @@ fn readme_lists_full_19_step_reference_workflow() {
 
 #[test]
 fn workflow_guide_reference_example_matches_reference_tail() {
-    let guide = read_repo_file("docs/workflow.md");
+    let guide = read_repo_file("docs/docs-tool-embeds/workflow.md");
 
     assert!(guide.contains("\"key\": \"commit\""));
     assert!(guide.contains("\"label\": \"Commit\""));
@@ -132,7 +132,7 @@ fn workflow_guide_reference_example_matches_reference_tail() {
 
 #[test]
 fn workflow_guide_persistence_notes_match_runtime_behavior() {
-    let guide = read_repo_file("docs/workflow.md");
+    let guide = read_repo_file("docs/docs-tool-embeds/workflow.md");
 
     assert!(guide.contains("WorkflowRun` is persisted as first-class session metadata"));
     assert!(guide.contains("template_id`, `done` vector, and `active_issue` survive restarts"));
@@ -199,13 +199,13 @@ fn assert_reviewer_pr_number_hardening(g: &str, source: &str) {
 }
 
 /// Extract the `reviewers` step's `guidance` value out of the embedded config in
-/// `docs/workflow.md`, so dimension assertions are scoped to the reviewers
+/// `docs/docs-tool-embeds/workflow.md`, so dimension assertions are scoped to the reviewers
 /// guidance block rather than matching a word anywhere in the document (which
 /// would be a false-pass guard — the file embeds the whole config plus prose).
 fn doc_reviewers_guidance(guide: &str) -> &str {
     let after_key = guide
         .split_once("\"key\": \"reviewers\"")
-        .expect("docs/workflow.md should embed the reviewers step")
+        .expect("docs/docs-tool-embeds/workflow.md should embed the reviewers step")
         .1;
     let after_guidance = after_key
         .split_once("\"guidance\": \"")
@@ -306,8 +306,8 @@ fn examples_config_mirrors_bdd_finders_and_per_assertion_red() {
 
 #[test]
 fn workflow_guide_mirrors_finder_waves_and_per_assertion_red() {
-    // docs/workflow.md must embed the #1004 wording too.
-    let guide = read_repo_file("docs/workflow.md");
+    // docs/docs-tool-embeds/workflow.md must embed the #1004 wording too.
+    let guide = read_repo_file("docs/docs-tool-embeds/workflow.md");
     for token in [
         "Gherkin discipline",
         "Removed-behavior audit",
@@ -316,46 +316,46 @@ fn workflow_guide_mirrors_finder_waves_and_per_assertion_red() {
     ] {
         assert!(
             guide.contains(token),
-            "docs/workflow.md should embed the #1004 token `{token}`"
+            "docs/docs-tool-embeds/workflow.md should embed the #1004 token `{token}`"
         );
     }
     // "individually" alone is a common English word matched against the whole
     // guide; pin the distinctive per-assertion RED gate phrase instead.
     assert!(
         guide.contains("individually be shown to fail"),
-        "docs/workflow.md should embed the per-assertion RED evidence gate"
+        "docs/docs-tool-embeds/workflow.md should embed the per-assertion RED evidence gate"
     );
 }
 
 #[test]
 fn workflow_guide_mirrors_version_bump_and_strict_bdd() {
-    // docs/workflow.md embeds the same config; it must show the version_bump step
+    // docs/docs-tool-embeds/workflow.md embeds the same config; it must show the version_bump step
     // and the strict BDD wording (#953/#950).
-    let guide = read_repo_file("docs/workflow.md");
+    let guide = read_repo_file("docs/docs-tool-embeds/workflow.md");
     assert!(
         guide.contains("\"key\": \"version_bump\""),
-        "docs/workflow.md should embed the version_bump step"
+        "docs/docs-tool-embeds/workflow.md should embed the version_bump step"
     );
     assert!(
         guide.contains("one behaviour per scenario"),
-        "docs/workflow.md should embed the best-practice Gherkin checklist"
+        "docs/docs-tool-embeds/workflow.md should embed the best-practice Gherkin checklist"
     );
     assert!(
         guide.contains("regardless of severity"),
-        "docs/workflow.md should embed the all-valid-concerns rule"
+        "docs/docs-tool-embeds/workflow.md should embed the all-valid-concerns rule"
     );
 }
 
 #[test]
 fn workflow_guide_reviewers_describe_finder_waves() {
-    // docs/workflow.md mirrors the native config and must stay in sync (#1004).
-    let guide = read_repo_file("docs/workflow.md");
+    // docs/docs-tool-embeds/workflow.md mirrors the native config and must stay in sync (#1004).
+    let guide = read_repo_file("docs/docs-tool-embeds/workflow.md");
     let g = doc_reviewers_guidance(&guide);
-    assert_reviewer_finder_waves(g, "docs/workflow.md");
+    assert_reviewer_finder_waves(g, "docs/docs-tool-embeds/workflow.md");
     // #862 review (Low): keep the single parallel batch invariant phrasing aligned.
     assert!(
         g.contains("SINGLE parallel batch"),
-        "docs/workflow.md reviewers guidance should keep the SINGLE parallel batch invariant"
+        "docs/docs-tool-embeds/workflow.md reviewers guidance should keep the SINGLE parallel batch invariant"
     );
-    assert_reviewer_pr_number_hardening(g, "docs/workflow.md");
+    assert_reviewer_pr_number_hardening(g, "docs/docs-tool-embeds/workflow.md");
 }

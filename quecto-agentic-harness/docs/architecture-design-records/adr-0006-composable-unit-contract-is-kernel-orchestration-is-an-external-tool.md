@@ -62,7 +62,7 @@ orchestration** as an external tool.
 
 ## Related
 
-- [Kernel boundary](../kernel-boundary.md)
+- [Kernel boundary](../architecture/kernel-boundary.md)
 - Surface #4: tools/extensions
 - Workflow surface #3
 - ADR-0002: reload trigger for startup-loaded surfaces

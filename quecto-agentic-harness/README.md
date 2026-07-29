@@ -151,7 +151,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 | `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native exec), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `spawn.rs` (background UDS-mode subagent spawning), `agent_cmd.rs` (send commands to spawned UDS agents — `steer`, `follow_up`, `abort`, `get_state`), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping, per-host SSRF allowlist for tests), `recall.rs` (spill retrieval), `docs.rs` (`DocsTool` — quecto's capability docs embedded via `include_str!`, served by the `docs` tool from any directory), `workflow_tool.rs` (`WorkflowTool` thin façade over `WorkflowEngine`, available by default in UDS unless `--no-workflow`; `WorkflowGuard` template-aware `ToolGuard` impl — mutating actions emit `workflow_state` events, guard registration gated by `--workflow-guards`), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields including `thinking_blocks` for multi-turn thinking replay), `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
-| `extensions/` | `ExtensionRegistry` (register extensions, aggregate tools + system prompt snippets), `NativeExtension` (compiled-in config-gated tools, e.g. `web_search`, `web_fetch`), `UdsExtensionTool` (routes tool execution to connected UDS clients via mpsc/oneshot channels). See [Extensions guide](docs/extensions.md) |
+| `extensions/` | `ExtensionRegistry` (register extensions, aggregate tools + system prompt snippets), `NativeExtension` (compiled-in config-gated tools, e.g. `web_search`, `web_fetch`), `UdsExtensionTool` (routes tool execution to connected UDS clients via mpsc/oneshot channels). See [Extensions guide](docs/docs-tool-embeds/extensions.md) |
 | `auth/` | `CredentialStore` (file-based, `AuthMethod::Token`/`OAuth`), `oauth.rs` (browser + device code flows, Anthropic OAuth, OpenAI account ID extraction from JWT) |
 | `logging.rs` | `redact_api_keys()` — pattern-based secret redaction |
 
@@ -261,7 +261,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--no-workflow` | No | UDS mode only — explicitly disable workflow tool/state/prompt |
 | `--parent-id` | No | UDS mode only — declares this agent's parent in the unit tree; stamped as `parent_id` on its `workflow_state` events. Set automatically by `spawn`; rarely passed by hand |
 | `--effort` | No | Reasoning effort level (`none`/`low`/`medium`/`high`/`xhigh`/`max`). OpenAI reasoning models take the documented OpenAI scale (`none`–`xhigh`); Anthropic 4.6 models take `low`/`medium`/`high`/`max`. Unknown values are rejected. Overrides config and env var |
-| `--disable-tool` | No | Remove a tool from the registry (repeatable). See [Disabling Tools](docs/disable-tools.md) |
+| `--disable-tool` | No | Remove a tool from the registry before the session starts (repeatable). The model never sees disabled tools. Core names include `bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `web_fetch`, `web_search`, `recall`, `spawn`, `agent_cmd`, `docs`, `workflow`; extension tools can be disabled by registered name. Unknown names warn on stderr but still start the agent. Applies for the process lifetime in UDS (clients share the restricted set; `register_tools` cannot re-add a disabled name). Not a hard sandbox: disabling `write`/`edit` still leaves `bash` able to mutate the workspace. Child agents use spawn `disable_tools` / `read_only` instead (see [Subagents](docs/docs-tool-embeds/subagents.md)). |
 | `--config` | No | Override config file path |
 
 **Sessions** persist conversation history so the agent remembers context across runs:
@@ -627,7 +627,7 @@ For `agent_cmd` command `get_subagents_all`, pass `agent_id` as `*` to list the 
 
 | `web_search` | Optional: search the web via Brave Search or DuckDuckGo when `tools.web.brave.enabled` or `tools.web.duckduckgo.enabled` is true |
 | `web_fetch` | Optional: fetch a URL and return readable text when `tools.web.fetch.enabled` is true (HTML stripped by default; `raw: true` returns the original body) |
-| `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards with command). Available by default in UDS as a dormant tool unless `--no-workflow`; `--workflow` starts prompt-driven mode immediately. See [Workflow docs](docs/workflow.md) |
+| `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards with command). Available by default in UDS as a dormant tool unless `--no-workflow`; `--workflow` starts prompt-driven mode immediately. See [Workflow docs](docs/docs-tool-embeds/workflow.md) |
 
 Filesystem tools (`read`, `write`, `edit`, `ls`) run on async `tokio::fs` adapters.
 
@@ -808,15 +808,13 @@ Coverage runs in authoritative CI after `merge-requested` is applied. For manual
 
 | Guide | Description |
 |---|---|
-| [Quecto Agent Capability Guide](docs/quecto.md) | Compact retrieval map for agents using Quecto capabilities on demand |
-| [Getting Started](docs/getting-started.md) | Quickstart guide for UDS agent integration |
-| [UDS Protocol](docs/uds-protocol.md) | Complete UDS command and event specification |
-| [Sessions](docs/sessions.md) | Conversation persistence, context management, spill/recall |
-| [Extensions](docs/extensions.md) | Add custom tools via native extensions (config-gated) or UDS extensions (external processes) |
-| [Subagents](docs/subagents.md) | Spawning and controlling UDS-mode subagents with `spawn` and `agent_cmd` tools |
-| [Disabling Tools](docs/disable-tools.md) | Restricting which tools the agent can access via `--disable-tool` |
-| [Workflow](docs/workflow.md) | UDS-only template-based workflow engine with default dormant tool availability, selector mode, guards, and live prompt injection |
-| [Contributor Cookbooks](docs/contributor-cookbooks.md) | Change maps for common harness work: tools, UDS commands, providers, events, persistence, subagents, and context policy |
+| [Getting Started](docs/getting-started.md) | Install, auth, and first run |
+| [UDS Protocol](docs/docs-tool-embeds/uds-protocol.md) | Complete UDS command and event specification |
+| [Sessions](docs/docs-tool-embeds/sessions.md) | Conversation persistence, context management, spill/recall |
+| [Extensions](docs/docs-tool-embeds/extensions.md) | Add custom tools via native extensions (config-gated) or UDS extensions (external processes) |
+| [Subagents](docs/docs-tool-embeds/subagents.md) | Spawning and controlling UDS-mode subagents with `spawn` and `agent_cmd` tools |
+| [Workflow](docs/docs-tool-embeds/workflow.md) | UDS-only template-based workflow engine with default dormant tool availability, selector mode, guards, and live prompt injection |
+| [Contributor Cookbooks](docs/docs-tool-embeds/contributor-cookbooks.md) | Change maps for common harness work: tools, UDS commands, providers, events, persistence, subagents, and context policy |
 
 ## Tech stack
 Rust 2024, Tokio, reqwest+rustls, serde/serde_json, uuid, tracing, dirs, thiserror, similar, base64, sha2, rand, urlencoding, macOS unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.

@@ -74,6 +74,6 @@ models per protocol; the registry overrides/extends them.
 
 ## Related
 
-- [Kernel boundary](../kernel-boundary.md)
-- [Runtime models/providers](../runtime-models-providers.md)
-- [Models runtime extensible PRD](../prd-models-runtime-extensible.md)
+- [Kernel boundary](../architecture/kernel-boundary.md)
+- [Runtime models/providers](../docs-tool-embeds/runtime-models-providers.md)
+- [Models runtime extensible PRD](../prd/prd-models-runtime-extensible.md)

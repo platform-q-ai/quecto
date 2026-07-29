@@ -28,7 +28,7 @@ refuting findings or with proving each assertion can fail.
 ## Decision
 
 Restructure both review stages in `workflow-config.json` (mirrored in
-`examples/config.json`, `docs/workflow.md`, and guarded by
+`examples/config.json`, `docs/docs-tool-embeds/workflow.md`, and guarded by
 `tests/workflow_config_template.rs` / `tests/workflow_docs.rs`):
 
 1. **PR `reviewers` step becomes three waves — find → verify → single-post.**

@@ -161,8 +161,8 @@ They are append-only: supersede rather than rewrite.
 
 ## Architecture Decision Records
 
-- [ADR-0001 — Wire protocols stay kernel-owned](architecture-design-records/adr-0001-wire-protocols-stay-kernel-owned.md)
-- [ADR-0002 — Reload trigger for startup-loaded surfaces](architecture-design-records/adr-0002-reload-trigger-for-startup-loaded-surfaces.md)
-- [ADR-0003 — UDS `register_provider` for dynamic model/provider registration](architecture-design-records/adr-0003-uds-register-provider-for-dynamic-model-provider-registration.md)
-- [ADR-0005 — Knowledge as a retrieval surface](architecture-design-records/adr-0005-knowledge-as-a-retrieval-surface.md)
-- [ADR-0006 — Composable unit contract is kernel; orchestration is an external tool](architecture-design-records/adr-0006-composable-unit-contract-is-kernel-orchestration-is-an-external-tool.md)
+- [ADR-0001 — Wire protocols stay kernel-owned](../architecture-design-records/adr-0001-wire-protocols-stay-kernel-owned.md)
+- [ADR-0002 — Reload trigger for startup-loaded surfaces](../architecture-design-records/adr-0002-reload-trigger-for-startup-loaded-surfaces.md)
+- [ADR-0003 — UDS `register_provider` for dynamic model/provider registration](../architecture-design-records/adr-0003-uds-register-provider-for-dynamic-model-provider-registration.md)
+- [ADR-0005 — Knowledge as a retrieval surface](../architecture-design-records/adr-0005-knowledge-as-a-retrieval-surface.md)
+- [ADR-0006 — Composable unit contract is kernel; orchestration is an external tool](../architecture-design-records/adr-0006-composable-unit-contract-is-kernel-orchestration-is-an-external-tool.md)

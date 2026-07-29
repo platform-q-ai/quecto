@@ -1,6 +1,12 @@
 # Extensions
 
-Extensions add custom tools to Quecto beyond the built-in set (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `spawn`, `recall`, `workflow`). There are two extension mechanisms:
+Extensions add custom tools to Quecto beyond the built-in set. Core tools always
+present in a normal agent session include:
+
+`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `docs`, `recall`,
+`spawn`, `agent_cmd`, and (in UDS, unless `--no-workflow`) `workflow`.
+
+There are two extension mechanisms:
 
 | Type | What it is | When to use |
 |------|-----------|-------------|
@@ -53,9 +59,11 @@ Or use DuckDuckGo (no API key required):
 }
 ```
 
-When both are enabled with a Brave API key, Brave is preferred. If Brave is enabled but no API key is set, DuckDuckGo is used as a fallback.
+When both are enabled with a Brave API key, Brave is preferred. If Brave is
+enabled but no API key is set, DuckDuckGo is used as a fallback.
 
-The API key can also be provided via the `BRAVE_API_KEY` environment variable.
+The API key can also be provided via the `QUECTO_TOOLS_WEB_BRAVE_API_KEY`
+environment variable (overrides `tools.web.brave.api_key` in config).
 
 ### Enabling web_fetch
 
@@ -98,14 +106,18 @@ Safety limits:
 }
 ```
 
-This registers a single `"web"` extension with both `web_search` and `web_fetch` tools. The agent can search for information and then fetch full page content from the results.
+This registers a single native extension package named `"web"` that contributes
+both `web_search` and `web_fetch` tools. The LLM and `get_extensions` see the
+individual tool names; the package name `"web"` is an internal
+`ExtensionRegistry` label.
 
 ### Behavior
 
 - Native extensions are loaded once at agent startup
 - They share the process's HTTP client and connection pool
-- Child agents (via `spawn`) inherit the same config, so they get the same native extensions
-- Native extensions cannot be added or removed at runtime — changes require restarting the agent
+- Child agents (via `spawn`) re-read the same config from `QUECTO_BASE_DIR`, so they get the same native extensions
+- Native extensions cannot be added or removed at runtime — changes require restarting the agent (or a process that reloads config and rebuilds the tool registry)
+- Tools removed with `--disable-tool` are denylisted for the process lifetime; neither native registration nor UDS `register_tools` can re-add those names
 
 ## UDS extensions
 
@@ -122,7 +134,10 @@ UDS extensions are external processes that connect to the agent's Unix domain so
 
 ### Protocol
 
-All communication uses length-prefixed UTF-8 JSON frames over a Unix domain socket.
+All communication uses length-prefixed UTF-8 JSON frames over a Unix domain
+socket (preferred). Readers still accept legacy newline-delimited JSON during
+the dual-mode window — the examples below use one JSON object per line for
+simplicity.
 
 #### Registering tools
 
@@ -152,7 +167,13 @@ On failure (e.g. shadowing a core tool):
 {"type":"response","id":"rt-1","command":"register_tools","success":false,"error":"tool 'bash' shadows a core tool"}
 ```
 
-**Side effect:** An `extensions_changed` event is broadcast to all connected clients.
+Other rejection cases (whole batch fails; nothing is registered):
+
+- Duplicate name in the same request: `"tool 'X' is registered more than once in this request"`
+- Name already owned by another connected client: `"tool 'X' is already registered by client <id>"`
+- Name on the process denylist (`--disable-tool`): the name cannot be reintroduced into the tool registry (registry `register_extension` no-ops / warns). Prefer not registering disabled names; they will not appear to the LLM
+
+**Side effect (on success):** An `extensions_changed` event is broadcast to all connected clients. The event lists **tool** names currently registered as extensions (e.g. `web_search`, `weather`), not the internal native package name `"web"`.
 
 #### Receiving execution requests
 
@@ -207,13 +228,18 @@ The extension process responds with `tool_result`:
 - **Connect = available:** Tools are available as soon as `register_tools` succeeds
 - **Disconnect = auto-unregister:** When a client disconnects, all its tools are immediately removed and an `extensions_changed` event is broadcast
 - **Disconnect during execution:** If a client disconnects while a tool call is pending, the agent receives an error result: `"Extension disconnected during execution of tool '<name>'"`
-- **Timeout:** If a tool doesn't respond within 30 seconds, the agent returns: `"Extension timed out after 30s executing tool '<name>'"`
-- **Re-registration:** Sending `register_tools` for an already-registered tool updates its definition (idempotent)
+- **Timeout:** If a tool doesn't respond within **30 seconds**, the agent returns: `"Extension timed out after 30s executing tool '<name>'"`
+- **Re-registration:** Sending `register_tools` for a tool already owned by **this** client updates its definition (idempotent). Ownership by another client is rejected (see above)
 - **Multiple clients:** Multiple extension processes can connect simultaneously, each registering different tools
 
 ### Shadow protection
 
-Extension tools (both native and UDS) cannot shadow built-in tools. If an extension tries to register a tool with the same name as a built-in (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `spawn`, `recall`, `workflow`), the registration is rejected.
+Extension tools (both native and UDS) cannot shadow tools that are already in the
+registry as non-extension (core) tools. At `register_tools` time the server
+treats every currently registered non-extension name as core — typically
+`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `docs`, `recall`,
+`spawn`, `agent_cmd`, and `workflow` when present. Shadowing any of those names
+returns `"tool '<name>' shadows a core tool"` and registers nothing from the batch.
 
 ### Example: Rust UDS extension
 
@@ -303,11 +329,18 @@ Response:
 }
 ```
 
-This includes both native and UDS-registered extensions.
+This lists **extension tool** entries (name + description from the tool
+definition), including both native-contributed tools (e.g. `web_search`,
+`web_fetch`) and UDS-registered tools. It does not return the internal native
+package label `"web"`.
 
 ## System prompt injection
 
-Native extensions can contribute text to the agent's system prompt. This is configured in the extension implementation (not via config). Currently no native extensions use this feature, but the mechanism exists for future extensions that need to influence LLM behavior.
+Native extensions can contribute text to the agent's system prompt via
+`Extension::system_prompt_snippet()` (aggregated at agent startup into the
+system prompt). This is set in the extension implementation (not via config).
+The shipped `"web"` native package does not set a snippet today; the hook
+exists for future or custom native extensions.
 
 ## Choosing between native and UDS extensions
 
@@ -323,9 +356,7 @@ Native extensions can contribute text to the agent's system prompt. This is conf
 
 ## See also
 
-- Getting Started (`docs {"name":"getting-started"}`) — quickstart guide for UDS agent integration
 - UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — full protocol specification
 - Subagents (`docs {"name":"subagents"}`) — spawning child agent processes
 - Workflow Automation (`docs {"name":"workflow"}`) — structured development process
-- Disabling Tools (`docs {"name":"disable-tools"}`) — restricting which tools the agent can access
-- [Configuration](../README.md) — `config.json` reference
+- [Configuration](../../README.md) — `config.json` reference (includes `--disable-tool`)

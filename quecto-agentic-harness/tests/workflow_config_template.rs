@@ -314,7 +314,7 @@ fn reviewers_step_describes_finder_waves() {
     // self-judging dimensions into narrow mechanical finder angles with
     // find -> verify -> single-post waves. The full token set lives in the
     // shared helper so this native copy, examples/config.json and
-    // docs/workflow.md are pinned identically and none can silently drift.
+    // docs/docs-tool-embeds/workflow.md are pinned identically and none can silently drift.
     let config = read_native_config();
     let g = guidance(&config, "reviewers");
     common::assert_reviewer_finder_waves(g, "workflow-config.json");

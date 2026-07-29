@@ -2,13 +2,12 @@
 Feature: Embedded capability docs reachable from any directory
   Quecto's own capability docs are embedded in the binary and served by the
   `docs` tool, so an agent can read them regardless of its working directory
-  (the previous `read docs/quecto.md` guidance broke whenever quecto ran
-  outside its own checkout).
+  (reading docs from disk breaks whenever quecto runs outside its own checkout).
 
   Scenario: the docs tool lists the embedded capability docs
     When I list the embedded docs
-    Then the docs listing should include "quecto"
-    And the docs listing should include "subagents"
+    Then the docs listing should include "subagents"
+    And the docs listing should include "workflow"
     And the docs listing should include "contributor-cookbooks"
 
   Scenario: the docs tool returns an embedded doc by name
@@ -27,14 +26,14 @@ Feature: Embedded capability docs reachable from any directory
   Scenario: an unknown doc name reports the available docs
     When I read the embedded doc "nonexistent"
     Then reading the embedded doc should fail
-    And the embedded doc content should contain "quecto"
+    And the embedded doc content should contain "subagents"
 
   Scenario: the subagents doc documents the read-only spawn option
     When I read the embedded doc "subagents"
     Then the embedded doc content should contain "read_only"
     And the embedded doc content should contain "disable_tools"
 
-  Scenario: the disable-tools doc documents the spawn read-only convenience and its caveat
-    When I read the embedded doc "disable-tools"
+  Scenario: the subagents doc documents the read-only spawn caveat
+    When I read the embedded doc "subagents"
     Then the embedded doc content should contain "read_only"
     And the embedded doc content should contain "not a hard sandbox"

@@ -6,9 +6,9 @@ starting point, not a substitute for reading the local code and preserving the
 Clean Architecture dependency rule.
 
 For a subsystem overview, start with the
-[Harness Architecture Map](harness-architecture-map.md). For the hardening plan,
-see the [architecture-hardening PRD](prd-harness-architecture-hardening.md) and
-[ADR-0018](architecture-design-records/adr-0018-contributor-change-cookbooks.md).
+[Harness Architecture Map](../architecture/harness-architecture-map.md). For the hardening plan,
+see the [architecture-hardening PRD](../prd/prd-harness-architecture-hardening.md) and
+[ADR-0018](../architecture-design-records/adr-0018-contributor-change-cookbooks.md).
 
 ## Local check command index
 
@@ -56,8 +56,8 @@ Do not run live provider lanes unless the task explicitly requires them.
 
 **Docs and compatibility:**
 
-- Update `README.md`, `docs/extensions.md`, or `docs/disable-tools.md` when the
-  user-facing tool surface changes.
+- Update `README.md` or `docs/docs-tool-embeds/extensions.md` when the user-facing tool surface
+  changes (including `--disable-tool` names).
 - Keep tool names stable once shipped; changing a name can break prompts,
   extensions, and recorded sessions.
 - Avoid production code paths that exist only for tests. Prefer injected test
@@ -96,8 +96,8 @@ that owns the command.
 
 **Docs and compatibility:**
 
-- Update `docs/uds-protocol.md` and, for protocol-affecting work,
-  `docs/protocol-capability-matrix.md`.
+- Update `docs/docs-tool-embeds/uds-protocol.md` and, for protocol-affecting work,
+  `docs/architecture/protocol-capability-matrix.md`.
 - Keep JSON wire shapes string-compatible unless a separate ADR/PRD approves a
   breaking change.
 - Preserve legacy aliases during documented deprecation windows.
@@ -135,7 +135,7 @@ that owns the command.
 
 **Docs and compatibility:**
 
-- Update `docs/runtime-models-providers.md` and embedded capability docs when
+- Update `docs/docs-tool-embeds/runtime-models-providers.md` and embedded capability docs when
   user configuration changes.
 - Do not print API keys, OAuth tokens, or raw credential payloads in failures.
 - Keep provider wire protocols in infrastructure; domain/application should use
@@ -170,7 +170,7 @@ serialization for UDS-visible events.
 
 **Docs and compatibility:**
 
-- Update `docs/uds-protocol.md` for new UDS events or fields.
+- Update `docs/docs-tool-embeds/uds-protocol.md` for new UDS events or fields.
 - Add matrix notes when event compatibility or client recovery semantics change.
 - Keep existing event names and fields stable; prefer additive fields.
 
@@ -203,7 +203,7 @@ paths.
 
 **Docs and compatibility:**
 
-- Update `docs/sessions.md` and `docs/uds-protocol.md` for observable changes.
+- Update `docs/docs-tool-embeds/sessions.md` and `docs/docs-tool-embeds/uds-protocol.md` for observable changes.
 - Preserve existing session file compatibility. New fields should be optional or
   defaultable unless a separate migration plan is approved.
 - Stable message ids and tool-call ids must remain string-compatible at JSON
@@ -241,7 +241,7 @@ or `agent_cmd` surface that exposes it.
 
 **Docs and compatibility:**
 
-- Update `docs/subagents.md` and `docs/uds-protocol.md` when commands, events,
+- Update `docs/docs-tool-embeds/subagents.md` and `docs/docs-tool-embeds/uds-protocol.md` when commands, events,
   or notification semantics change.
 - Preserve passive completion-note and explicit-await deduplication semantics.
 - `get_subagents` must continue to expose enough identity/state for the unit
@@ -279,7 +279,7 @@ or `agent_cmd` surface that exposes it.
 
 **Docs and compatibility:**
 
-- Update `docs/sessions.md`, `docs/harness-architecture-map.md`, and the PRD/ADR
+- Update `docs/docs-tool-embeds/sessions.md`, `docs/architecture/harness-architecture-map.md`, and the PRD/ADR
   links when policy or invariants change.
 - Preserve session file format unless a separate ADR/PRD approves migration.
 - Recall IDs and collapsed content promises are user-visible contracts.

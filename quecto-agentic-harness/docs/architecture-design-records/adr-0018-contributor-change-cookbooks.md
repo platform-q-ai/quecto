@@ -2,7 +2,7 @@
 
 **Status:** Proposed.
 
-**Implementation status:** Implemented by [Contributor Cookbooks](../contributor-cookbooks.md).
+**Implementation status:** Implemented by [Contributor Cookbooks](../docs-tool-embeds/contributor-cookbooks.md).
 
 ## Context
 

@@ -4,14 +4,14 @@
 **Scope:** `quecto-agentic-harness`
 **Related ADRs:**
 
-- [ADR-0012 — Explicit Agent Turn State Machine](architecture-design-records/adr-0012-explicit-agent-turn-state-machine.md)
-- [ADR-0013 — UDS Command Dispatch Uses Command-Family Routers](architecture-design-records/adr-0013-uds-command-family-router.md)
-- [ADR-0014 — Context Management Is a First-Class Application Subsystem](architecture-design-records/adr-0014-context-management-is-a-first-class-application-subsystem.md)
-- [ADR-0015 — Subagent Lifecycle Is an Explicit State Machine](architecture-design-records/adr-0015-subagent-lifecycle-state-machine.md)
-- [ADR-0016 — Typed Identifiers for Protocol and Session Boundaries](architecture-design-records/adr-0016-typed-identifiers-for-protocol-and-session-boundaries.md)
-- [ADR-0017 — Protocol Evolution Is Tracked by a Capability Matrix](architecture-design-records/adr-0017-protocol-evolution-matrix.md)
-- [ADR-0018 — Contributor Change Cookbooks for Common Harness Extensions](architecture-design-records/adr-0018-contributor-change-cookbooks.md)
-- [ADR-0019 — Domain Ports Are Segregated by Role When They Grow](architecture-design-records/adr-0019-role-segregated-domain-ports.md)
+- [ADR-0012 — Explicit Agent Turn State Machine](../architecture-design-records/adr-0012-explicit-agent-turn-state-machine.md)
+- [ADR-0013 — UDS Command Dispatch Uses Command-Family Routers](../architecture-design-records/adr-0013-uds-command-family-router.md)
+- [ADR-0014 — Context Management Is a First-Class Application Subsystem](../architecture-design-records/adr-0014-context-management-is-a-first-class-application-subsystem.md)
+- [ADR-0015 — Subagent Lifecycle Is an Explicit State Machine](../architecture-design-records/adr-0015-subagent-lifecycle-state-machine.md)
+- [ADR-0016 — Typed Identifiers for Protocol and Session Boundaries](../architecture-design-records/adr-0016-typed-identifiers-for-protocol-and-session-boundaries.md)
+- [ADR-0017 — Protocol Evolution Is Tracked by a Capability Matrix](../architecture-design-records/adr-0017-protocol-evolution-matrix.md)
+- [ADR-0018 — Contributor Change Cookbooks for Common Harness Extensions](../architecture-design-records/adr-0018-contributor-change-cookbooks.md)
+- [ADR-0019 — Domain Ports Are Segregated by Role When They Grow](../architecture-design-records/adr-0019-role-segregated-domain-ports.md)
 
 ---
 

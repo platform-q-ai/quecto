@@ -2,10 +2,13 @@ use super::*;
 
 #[test]
 fn lookup_doc_resolves_plain_md_and_prefixed_names() {
-    assert!(lookup_doc("quecto").is_some());
-    assert!(lookup_doc("quecto.md").is_some());
-    assert!(lookup_doc("docs/quecto.md").is_some());
-    assert!(lookup_doc("  SUBAGENTS  ").is_some());
+    assert!(lookup_doc("subagents").is_some());
+    assert!(lookup_doc("subagents.md").is_some());
+    assert!(lookup_doc("docs/subagents.md").is_some());
+    assert!(lookup_doc("docs/docs-tool-embeds/subagents.md").is_some());
+    assert!(lookup_doc("  WORKFLOW  ").is_some());
+    assert!(lookup_doc("quecto").is_none());
+    assert!(lookup_doc("readme").is_none());
     assert!(lookup_doc("nope").is_none());
 }
 
@@ -14,9 +17,11 @@ async fn execute_without_name_lists_available_docs() {
     let tool = DocsTool::new();
     let result = tool.execute("{}").await.unwrap();
     assert!(!result.is_error);
-    assert!(result.content.contains("quecto"));
     assert!(result.content.contains("subagents"));
+    assert!(result.content.contains("workflow"));
     assert!(result.content.contains("contributor-cookbooks"));
+    assert!(!result.content.contains("- quecto\n"));
+    assert!(!result.content.contains("- readme\n"));
 }
 
 #[tokio::test]
@@ -55,7 +60,7 @@ async fn execute_unknown_doc_is_error_and_lists_available() {
     let tool = DocsTool::new();
     let result = tool.execute(r#"{"name":"nonexistent"}"#).await.unwrap();
     assert!(result.is_error);
-    assert!(result.content.contains("quecto"));
+    assert!(result.content.contains("subagents"));
 }
 
 #[tokio::test]

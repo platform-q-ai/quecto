@@ -5,8 +5,8 @@ This map gives contributors a short orientation to the main
 Phase 0 of the architecture-hardening PRD does not change runtime behaviour.
 
 For the hardening plan, see
-[PRD: Agentic Harness Architecture Hardening](prd-harness-architecture-hardening.md).
-For the related decisions, see the [ADR index](architecture-design-records/README.md).
+[PRD: Agentic Harness Architecture Hardening](../prd/prd-harness-architecture-hardening.md).
+For the related decisions, see the [ADR index](../architecture-design-records/README.md).
 
 ## Turn execution
 
@@ -70,7 +70,7 @@ Important invariants before Phase 3:
 - child-targeted history/sync commands are answered by the child, not by the
   parent session.
 
-See also the [UDS protocol reference](uds-protocol.md) and
+See also the [UDS protocol reference](../docs-tool-embeds/uds-protocol.md) and
 [protocol capability matrix](protocol-capability-matrix.md).
 
 ## Subagent lifecycle

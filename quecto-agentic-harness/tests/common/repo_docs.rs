@@ -2,12 +2,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const PHASE_0_DOCS: &[&str] = &[
-    "docs/prd-harness-architecture-hardening.md",
+    "docs/prd/prd-harness-architecture-hardening.md",
     "docs/architecture-design-records/README.md",
-    "docs/uds-protocol.md",
-    "docs/harness-architecture-map.md",
-    "docs/protocol-capability-matrix.md",
-    "docs/contributor-cookbooks.md",
+    "docs/docs-tool-embeds/uds-protocol.md",
+    "docs/architecture/harness-architecture-map.md",
+    "docs/architecture/protocol-capability-matrix.md",
+    "docs/docs-tool-embeds/contributor-cookbooks.md",
 ];
 
 pub const PHASE_0_ADRS: &[&str] = &[

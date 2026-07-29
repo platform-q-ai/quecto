@@ -50,5 +50,5 @@ stores live outside the kernel.
 
 ## Related
 
-- [Kernel boundary](../kernel-boundary.md)
+- [Kernel boundary](../architecture/kernel-boundary.md)
 - [ADR-0002](adr-0002-reload-trigger-for-startup-loaded-surfaces.md)

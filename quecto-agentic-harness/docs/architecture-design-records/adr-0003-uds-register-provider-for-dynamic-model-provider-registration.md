@@ -46,6 +46,6 @@ verb in v1. Gate promotion on a concrete dynamic-discovery consumer.
 
 ## Related
 
-- [Kernel boundary](../kernel-boundary.md)
-- [Models runtime extensible PRD](../prd-models-runtime-extensible.md)
-- [UDS protocol](../uds-protocol.md)
+- [Kernel boundary](../architecture/kernel-boundary.md)
+- [Models runtime extensible PRD](../prd/prd-models-runtime-extensible.md)
+- [UDS protocol](../docs-tool-embeds/uds-protocol.md)
