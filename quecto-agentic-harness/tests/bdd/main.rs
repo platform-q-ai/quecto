@@ -140,11 +140,6 @@ impl MockBddTool {
         self.calls = calls;
         self
     }
-
-    #[allow(dead_code)]
-    fn set_response(&self, response: &str) {
-        *self.response.lock().unwrap() = response.to_string();
-    }
 }
 
 impl std::fmt::Debug for MockBddTool {
@@ -390,6 +385,10 @@ pub struct QuectoWorld {
     pub agent_cmd_result: Option<ToolResult>,
     /// Live execution state observed by issue #1282 BDD scenarios.
     pub live_execution_state: Option<serde_json::Value>,
+    /// Sub-agent liveness BDD: event lines from the mid-turn publish path.
+    pub subagent_liveness_lines: Option<Vec<serde_json::Value>>,
+    /// Sub-agent liveness BDD: (handled, response) from the reader-task interceptor.
+    pub subagent_liveness_intercept: Option<(bool, Option<serde_json::Value>)>,
     /// Shared subagent registry for BDD (#421)
     pub agent_cmd_registry: Option<quecto::infrastructure::tools::agent_cmd::SubagentRegistry>,
     /// Mock UDS server temp dir for agent_cmd BDD (kept alive)
@@ -1346,6 +1345,7 @@ mod uds_framing_steps;
 mod uds_live_execution_state_steps;
 mod uds_paged_history_steps;
 mod uds_steps;
+mod uds_subagent_liveness_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;
 mod workflow_nudge_steps;

@@ -153,6 +153,7 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
         client_id: 77,
         client_tool_registry: registry,
         conversation_snapshot: snapshot,
+        subagent_registry: None,
         _guard: ClientGuard {
             live_clients: live.clone(),
             cmd_tx: guard_tx,
@@ -229,6 +230,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
         client_id: 88,
         client_tool_registry: registry,
         conversation_snapshot: snapshot,
+        subagent_registry: None,
         _guard: ClientGuard {
             live_clients: live.clone(),
             cmd_tx,

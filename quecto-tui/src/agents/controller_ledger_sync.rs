@@ -8,12 +8,20 @@ impl App {
     fn request_sync(feed: &mut FeedState, epoch: u64, target_rev: u64) {
         let since_rev = if feed.epoch == epoch { feed.rev } else { 0 };
         if target_rev > since_rev {
-            let _ = feed.cmd_tx.try_send(Command::Sync {
-                id: Some("subagent-sync".into()),
-                epoch,
-                since_rev,
-            });
-            feed.pending_rev = Some(target_rev);
+            // Only mark the sync as in-flight if the send was accepted; a
+            // refused send with pending_rev set would strand the feed with a
+            // phantom sync that never gets answered or retried.
+            if feed
+                .cmd_tx
+                .try_send(Command::Sync {
+                    id: Some("subagent-sync".into()),
+                    epoch,
+                    since_rev,
+                })
+                .is_ok()
+            {
+                feed.pending_rev = Some(target_rev);
+            }
         }
     }
 

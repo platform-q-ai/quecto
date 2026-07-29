@@ -4,6 +4,8 @@ pub(super) struct ReaderDispatchCtx<'a> {
     pub line: String,
     pub snapshot: &'a ConversationSnapshot,
     pub registry: &'a super::uds_ext_protocol::ClientToolRegistry,
+    pub subagent_registry:
+        &'a Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     pub client_id: u64,
     pub cmd_tx: &'a tokio::sync::mpsc::Sender<ClientMessage>,
 }
@@ -11,6 +13,16 @@ pub(super) struct ReaderDispatchCtx<'a> {
 /// Dispatch one decoded client command. Returns false when the command channel closed.
 pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     if super::uds_busy_sync::intercept(&ctx.line, ctx.snapshot, ctx.registry, ctx.client_id).await {
+        return true;
+    }
+    if super::uds_busy_subagents::intercept(
+        &ctx.line,
+        ctx.subagent_registry,
+        ctx.registry,
+        ctx.client_id,
+    )
+    .await
+    {
         return true;
     }
     if super::uds_busy_get_message::intercept(super::uds_busy_get_message::BusyCommandCtx {

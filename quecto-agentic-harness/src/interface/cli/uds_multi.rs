@@ -512,6 +512,10 @@ pub(super) struct ClientHandlerArgs {
     /// Live conversation ledger. Updated as messages are appended during a turn,
     /// allowing read-only get_message lookups to bypass the blocked dispatcher.
     pub(super) conversation_snapshot: ConversationSnapshot,
+    /// Sub-agent registry, read mid-turn to serve `get_subagents` and forward
+    /// child-targeted `sync` off the blocked dispatcher (spike).
+    pub(super) subagent_registry:
+        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     pub(super) _guard: ClientGuard,
 }
@@ -527,6 +531,7 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
         client_id,
         client_tool_registry,
         conversation_snapshot,
+        subagent_registry,
         _guard,
     } = args;
     use tokio::io::BufReader;
@@ -637,6 +642,7 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
             line,
             snapshot: &conversation_snapshot,
             registry: &client_tool_registry,
+            subagent_registry: &subagent_registry,
             client_id,
             cmd_tx: &cmd_tx,
         })

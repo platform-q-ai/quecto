@@ -645,3 +645,93 @@ async fn event_just_over_the_cap_is_rejected_without_partial_delivery() {
         "a boundary-crossing event must be rejected rather than tailed into a partial event"
     );
 }
+
+// ── Mid-turn ledger advance hints (child-progress freeze fix) ────────────────
+//
+// `publish_turn_progress` advances the conversation snapshot on each inner
+// `TurnCompleted`, and must EMIT the resulting `ledger_advanced` hints: the
+// TUI feed re-syncs only on that event, so a silent advance freezes a running
+// agent's transcript until the whole prompt finishes (#1283 regression).
+
+fn mid_turn_snapshot() -> crate::interface::cli::uds_multi::ConversationSnapshot {
+    std::sync::Arc::new(tokio::sync::RwLock::new(
+        crate::interface::cli::uds_snapshots::ConversationSnapshotData::default(),
+    ))
+}
+
+fn turn_completed(messages: Vec<Message>) -> AgentProgressEvent {
+    AgentProgressEvent::TurnCompleted {
+        messages: messages.into(),
+    }
+}
+
+fn ledger_advanced_lines(raw: &[u8]) -> Vec<serde_json::Value> {
+    String::from_utf8_lossy(raw)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["type"] == "ledger_advanced")
+        .collect()
+}
+
+#[tokio::test]
+async fn mid_turn_completed_turn_emits_ledger_advanced_hint() {
+    let snapshot = mid_turn_snapshot();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut sink = EventSink::writer(&mut buf);
+
+    let event = turn_completed(vec![
+        Message::user("question"),
+        Message::assistant("inner-turn answer", vec![]),
+    ]);
+    publish_turn_progress(&event, Some(&snapshot), &mut sink).await;
+
+    let hints = ledger_advanced_lines(&buf);
+    assert!(
+        !hints.is_empty(),
+        "a changed mid-turn publish must emit ledger_advanced, got: {}",
+        String::from_utf8_lossy(&buf)
+    );
+    assert!(hints.iter().all(|h| h["rev"].as_u64().is_some()));
+}
+
+#[tokio::test]
+async fn unchanged_mid_turn_publish_emits_no_hint() {
+    let snapshot = mid_turn_snapshot();
+    let messages = vec![
+        Message::user("question"),
+        Message::assistant("answer", vec![]),
+    ];
+    let event = turn_completed(messages);
+
+    let mut first: Vec<u8> = Vec::new();
+    let mut sink = EventSink::writer(&mut first);
+    publish_turn_progress(&event, Some(&snapshot), &mut sink).await;
+    assert!(!ledger_advanced_lines(&first).is_empty());
+
+    // Re-publishing the identical turn advances nothing — and must not spam.
+    let mut second: Vec<u8> = Vec::new();
+    let mut sink = EventSink::writer(&mut second);
+    publish_turn_progress(&event, Some(&snapshot), &mut sink).await;
+    assert!(
+        ledger_advanced_lines(&second).is_empty(),
+        "an unchanged publish must not emit ledger_advanced, got: {}",
+        String::from_utf8_lossy(&second)
+    );
+}
+
+#[tokio::test]
+async fn non_turn_events_do_not_touch_the_ledger() {
+    let snapshot = mid_turn_snapshot();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut sink = EventSink::writer(&mut buf);
+
+    publish_turn_progress(
+        &AgentProgressEvent::Token("tok".into()),
+        Some(&snapshot),
+        &mut sink,
+    )
+    .await;
+
+    assert!(buf.is_empty(), "tokens must not publish or emit");
+    assert_eq!(snapshot.read().await.rev, 0);
+}

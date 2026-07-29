@@ -11,6 +11,16 @@ mod feature_preprocess;
 // Opaque Debug wrapper for the headless TUI render harness (#805). The harness
 // holds a live `App` (and background tokio tasks) and isn't `Debug`, so wrap it
 // to satisfy the derived `Debug`/`Default` on `TuiWorld`.
+pub struct DebugFeedSender(
+    pub quecto_tui::protocol::client::CommandSender,
+    pub tokio::sync::mpsc::Receiver<String>,
+);
+impl std::fmt::Debug for DebugFeedSender {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<DebugFeedSender>")
+    }
+}
+
 pub struct TuiParityHarness(pub quecto_tui::shell::app::tui_harness::TuiHarness);
 
 impl std::fmt::Debug for TuiParityHarness {
@@ -95,6 +105,11 @@ pub struct TuiWorld {
     pub tui_parity_rt: Option<tokio::runtime::Runtime>,
     /// TUI sub-agent session-parity BDD (#805): the headless render harness.
     pub tui_parity: Option<TuiParityHarness>,
+    /// TUI child-feed liveness BDD (2026-07-29): writer queue under test.
+    pub tui_feed_liveness_sender: Option<DebugFeedSender>,
+    /// TUI child-feed liveness BDD: drain side of the child feed channel.
+    pub tui_feed_liveness_child_rx:
+        Option<tokio::sync::mpsc::Receiver<quecto_tui::protocol::client::Command>>,
     /// TUI observer-marker BDD (#966): currently tracked sub-agents and whether
     /// each is read-only, used to exercise selective departure.
     pub tui_expected_subagents: Vec<(String, bool)>,
@@ -318,6 +333,7 @@ mod tui_autocomplete_steps;
 mod tui_border_replication_steps;
 mod tui_chat_render_cache_steps;
 mod tui_chat_spacing_steps;
+mod tui_child_feed_liveness_steps;
 mod tui_cold_start_steps;
 mod tui_ctrl_c_clear_steps;
 mod tui_ctrl_d_exit_steps;

@@ -559,7 +559,7 @@ async fn run_with_token_drain(
                 if matches!(ev, AgentProgressEvent::Token(_)) {
                     tokens_emitted = true;
                 }
-                publish_turn_progress(&ev, conversation_snapshot).await;
+                publish_turn_progress(&ev, conversation_snapshot, sink).await;
                 forward_progress_event_sink(ev, sink).await;
             }
             Some(notif) = notif_recv => {
@@ -572,7 +572,7 @@ async fn run_with_token_drain(
                     if matches!(ev, AgentProgressEvent::Token(_)) {
                         tokens_emitted = true;
                     }
-                    publish_turn_progress(&ev, conversation_snapshot).await;
+                    publish_turn_progress(&ev, conversation_snapshot, sink).await;
                     forward_progress_event_sink(ev, sink).await;
                 }
                 if let Some(rx) = notification_rx.as_mut() {
@@ -588,23 +588,9 @@ async fn run_with_token_drain(
     (result, notifications, tokens_emitted)
 }
 
-async fn publish_turn_progress(
-    event: &AgentProgressEvent,
-    snapshot: Option<&super::uds_multi::ConversationSnapshot>,
-) {
-    let (Some(snapshot), AgentProgressEvent::TurnCompleted { messages }) = (snapshot, event) else {
-        return;
-    };
-    let mut snap = snapshot.write().await;
-    let mut live = snap.messages.clone();
-    for message in messages.iter() {
-        if !live.iter().any(|existing| existing.id() == message.id()) {
-            live.push(message.clone());
-        }
-    }
-    snap.publish(&live);
-    snap.record_full(messages);
-}
+#[path = "uds_turn_progress.rs"]
+mod uds_turn_progress;
+pub(crate) use uds_turn_progress::publish_turn_progress;
 
 /// Handle one subagent notification received mid-turn: broadcast it to clients
 /// when the sink is `Broadcast`, and collect it for LLM injection unless the

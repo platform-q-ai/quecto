@@ -1,5 +1,5 @@
 /// Validate and unwrap a forwarded child's command response.
-pub(super) fn parse_forwarded_response(
+pub(in crate::interface::cli) fn parse_forwarded_response(
     line: &str,
     command: &str,
 ) -> Result<serde_json::Value, String> {

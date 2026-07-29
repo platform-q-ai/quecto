@@ -30,14 +30,7 @@ pub const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 /// per-message cap is still [`MAX_LINE_BYTES`] at write time (#1238).
 pub const COMMAND_WRITER_QUEUE_CAPACITY: usize = 4096;
 
-/// Slots reserved so interactive user commands can still enqueue when
-/// background fan-in has filled most of the ordered writer FIFO (#1238).
-///
-/// Background / housekeeping commands refuse to consume these last permits;
-/// [`Command::is_interactive_user`] commands may use them. This does not
-/// await capacity or reorder the FIFO — it only stops background traffic
-/// from monopolizing the bound under sustained load.
-pub const COMMAND_WRITER_USER_RESERVED: usize = 64;
+pub use client_classes::{COMMAND_WRITER_INTERACTIVE_FLOOR, COMMAND_WRITER_USER_RESERVED};
 
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
 
@@ -423,15 +416,6 @@ impl Command {
             Self::Sync { .. } => "sync",
         }
     }
-
-    /// Interactive user actions that must not lose to background fan-in on
-    /// the shared ordered writer queue (#1238).
-    pub fn is_interactive_user(&self) -> bool {
-        matches!(
-            self,
-            Self::Prompt { .. } | Self::Steer { .. } | Self::FollowUp { .. } | Self::Abort { .. }
-        )
-    }
 }
 
 /// Serialize a command to its JSON-lines wire form (JSON + trailing newline).
@@ -481,11 +465,20 @@ impl CommandSender {
         // production-sized queues. Tiny test/disconnect stubs (e.g. capacity 1)
         // cannot host the reserve; skip the gate so closed channels still
         // surface as Disconnected rather than a false Backpressure (#1238).
-        if !cmd.is_interactive_user()
-            && self.tx.max_capacity() > COMMAND_WRITER_USER_RESERVED
-            && self.tx.capacity() <= COMMAND_WRITER_USER_RESERVED
-        {
-            return Err(ClientError::Backpressure);
+        // Feed-liveness traffic (Sync) may use the OUTER half of the reserve —
+        // refusing it exactly when the queue is pressured froze child feeds —
+        // but never the interactive floor, so an unthrottled sync burst cannot
+        // consume the slots protecting prompt/steer/follow_up/abort (#1238,
+        // PR #1307 review).
+        if !cmd.is_interactive_user() && self.tx.max_capacity() > COMMAND_WRITER_USER_RESERVED {
+            let floor = if cmd.is_feed_liveness() {
+                COMMAND_WRITER_INTERACTIVE_FLOOR
+            } else {
+                COMMAND_WRITER_USER_RESERVED
+            };
+            if self.tx.capacity() <= floor {
+                return Err(ClientError::Backpressure);
+            }
         }
         self.tx
             .try_send(serialize_command(cmd)?)
@@ -739,6 +732,9 @@ mod client_1060_tests;
 #[cfg(test)]
 #[path = "client_1094_tests.rs"]
 mod client_1094_tests;
+
+#[path = "client_classes.rs"]
+mod client_classes;
 
 #[cfg(test)]
 #[path = "client_1238_tests.rs"]

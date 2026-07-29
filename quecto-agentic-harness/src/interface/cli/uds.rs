@@ -253,7 +253,7 @@ mod uds_dispatch_session;
 #[path = "uds_dispatch_sync_forward.rs"]
 mod uds_dispatch_sync_forward;
 #[path = "uds_forward_response.rs"]
-mod uds_forward_response;
+pub(super) mod uds_forward_response;
 pub(crate) use uds_dispatch::dispatch_command;
 #[cfg(test)]
 use uds_dispatch_query::session_summary_to_json;
