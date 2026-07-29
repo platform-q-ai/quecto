@@ -432,6 +432,13 @@ impl Command {
             Self::Prompt { .. } | Self::Steer { .. } | Self::FollowUp { .. } | Self::Abort { .. }
         )
     }
+
+    /// Commands that keep a feed live and must not be refused by the
+    /// background reserve: a dropped `Sync` freezes the child feed until the
+    /// next `ledger_advanced` (which may not come until the parent goes idle).
+    pub fn is_feed_liveness(&self) -> bool {
+        matches!(self, Self::Sync { .. })
+    }
 }
 
 /// Serialize a command to its JSON-lines wire form (JSON + trailing newline).
@@ -482,6 +489,7 @@ impl CommandSender {
         // cannot host the reserve; skip the gate so closed channels still
         // surface as Disconnected rather than a false Backpressure (#1238).
         if !cmd.is_interactive_user()
+            && !cmd.is_feed_liveness()
             && self.tx.max_capacity() > COMMAND_WRITER_USER_RESERVED
             && self.tx.capacity() <= COMMAND_WRITER_USER_RESERVED
         {
