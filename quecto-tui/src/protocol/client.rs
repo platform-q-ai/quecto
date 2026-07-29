@@ -423,22 +423,6 @@ impl Command {
             Self::Sync { .. } => "sync",
         }
     }
-
-    /// Interactive user actions that must not lose to background fan-in on
-    /// the shared ordered writer queue (#1238).
-    pub fn is_interactive_user(&self) -> bool {
-        matches!(
-            self,
-            Self::Prompt { .. } | Self::Steer { .. } | Self::FollowUp { .. } | Self::Abort { .. }
-        )
-    }
-
-    /// Commands that keep a feed live and must not be refused by the
-    /// background reserve: a dropped `Sync` freezes the child feed until the
-    /// next `ledger_advanced` (which may not come until the parent goes idle).
-    pub fn is_feed_liveness(&self) -> bool {
-        matches!(self, Self::Sync { .. })
-    }
 }
 
 /// Serialize a command to its JSON-lines wire form (JSON + trailing newline).
@@ -449,16 +433,6 @@ fn serialize_command(cmd: &Command) -> Result<String, ClientError> {
     let mut json = serde_json::to_string(cmd)?;
     json.push('\n');
     Ok(json)
-}
-
-#[cfg(feature = "test-harness")]
-impl CommandSender {
-    /// A sender over a production-sized writer queue, plus its receiver, for
-    /// BDD/harness tests that pin the backpressure-reserve semantics.
-    pub fn production_queue_for_tests() -> (Self, mpsc::Receiver<String>) {
-        let (tx, rx) = mpsc::channel::<String>(COMMAND_WRITER_QUEUE_CAPACITY);
-        (Self { tx }, rx)
-    }
 }
 
 impl CommandSender {
@@ -757,6 +731,9 @@ mod client_1060_tests;
 #[cfg(test)]
 #[path = "client_1094_tests.rs"]
 mod client_1094_tests;
+
+#[path = "client_classes.rs"]
+mod client_classes;
 
 #[cfg(test)]
 #[path = "client_1238_tests.rs"]

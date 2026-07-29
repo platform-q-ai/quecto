@@ -588,30 +588,9 @@ async fn run_with_token_drain(
     (result, notifications, tokens_emitted)
 }
 
-pub(crate) async fn publish_turn_progress(
-    event: &AgentProgressEvent,
-    snapshot: Option<&super::uds_multi::ConversationSnapshot>,
-    sink: &mut EventSink<'_>,
-) {
-    let (Some(snapshot), AgentProgressEvent::TurnCompleted { messages }) = (snapshot, event) else {
-        return;
-    };
-    let mut snap = snapshot.write().await;
-    let mut live = snap.messages.clone();
-    for message in messages.iter() {
-        if !live.iter().any(|existing| existing.id() == message.id()) {
-            live.push(message.clone());
-        }
-    }
-    let publish = snap.publish(&live);
-    let full = snap.record_full(messages);
-    drop(snap);
-    // Mid-turn ledger advances must reach clients: the TUI child feed syncs
-    // only on ledger_advanced, so swallowing these freezes the feed until the
-    // parent turn ends.
-    sink.emit_ledger_advanced(publish).await;
-    sink.emit_ledger_advanced(full).await;
-}
+#[path = "uds_turn_progress.rs"]
+mod uds_turn_progress;
+pub(crate) use uds_turn_progress::publish_turn_progress;
 
 /// Handle one subagent notification received mid-turn: broadcast it to clients
 /// when the sink is `Broadcast`, and collect it for LLM injection unless the
