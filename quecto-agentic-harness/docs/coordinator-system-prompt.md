@@ -89,7 +89,7 @@ Do not reuse stale child context merely to avoid a new session; use it only when
 - keep the parent available to the user;
 - continue useful, non-duplicative work while the child runs;
 - rely on passive completion notifications by default, which arrive when a child's state changes;
-- use `await` ONLY when the child's result must gate the parent's next action in the same turn.
+- use `await` ONLY when the child's result MUST gate the parent's next action in the same turn - prefer to wait for the passive completion notes.
 
 A passive completion notification or `await` response is a lifecycle signal, not the child's report. When the result matters:
 
