@@ -10,6 +10,10 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;
 
+/// Parent-coordination page. Visible only to top-level parent agents; omitted
+/// for processes launched with the internal `--spawned` flag (#1319).
+const PARENT_ONLY_DOC: &str = "quick-start";
+
 /// The embedded operating-manual pages, keyed by short name (no path prefix,
 /// no `.md` suffix). Human-only docs (UDS protocol, sessions, cookbooks,
 /// PRDs, ADRs, full reference manuals under `docs/`) are intentionally not
@@ -68,7 +72,13 @@ fn doc_title(body: &str) -> Option<&str> {
     None
 }
 
-/// Look up an embedded doc by (normalized) name.
+/// Whether `key` is a parent-only page that spawned children must not see.
+fn is_parent_only_doc(key: &str) -> bool {
+    key == PARENT_ONLY_DOC
+}
+
+/// Look up an embedded doc by (normalized) name. Does not apply spawned
+/// visibility filtering — use [`DocsTool`] for agent-facing access.
 pub fn lookup_doc(name: &str) -> Option<&'static str> {
     let key = normalize_name(name);
     lookup_embedded_doc(&key)
@@ -81,15 +91,24 @@ fn lookup_embedded_doc(key: &str) -> Option<&'static str> {
         .map(|(_, body)| *body)
 }
 
-/// Table of contents: each embed's short name plus its markdown H1 title.
-fn available_listing() -> String {
-    let mut out = String::from(
+/// Table of contents for the given visibility mode.
+fn available_listing(spawned: bool) -> String {
+    let intro = if spawned {
+        "Quecto operating manual (`docs` tool).\n\
+         Call with no name to list pages; pass a name to read one.\n\
+         Open manual pages only when that knowledge is needed. Keep context lean.\n\n\
+         Table of contents:\n"
+    } else {
         "Quecto operating manual (`docs` tool).\n\
          Call with no name to list pages; pass a name to read one.\n\
          Start with `quick-start` for parent coordination; open other pages only when needed.\n\n\
-         Table of contents:\n",
-    );
+         Table of contents:\n"
+    };
+    let mut out = String::from(intro);
     for (name, body) in EMBEDDED_DOCS {
+        if spawned && is_parent_only_doc(name) {
+            continue;
+        }
         let title = doc_title(body).unwrap_or(name);
         out.push_str("- ");
         out.push_str(name);
@@ -97,30 +116,60 @@ fn available_listing() -> String {
         out.push_str(title);
         out.push('\n');
     }
-    out.push_str("\nRead one with: docs {\"name\": \"quick-start\"}");
+    if spawned {
+        out.push_str("\nRead one with: docs {\"name\": \"workflow\"}");
+    } else {
+        out.push_str("\nRead one with: docs {\"name\": \"quick-start\"}");
+    }
     out
 }
 
 /// Tool that serves the embedded operating manual by name (CWD-independent).
+///
+/// When constructed with `spawned = true` (internal `--spawned` CLI flag), the
+/// parent-only `quick-start` page is omitted from the TOC and rejected on
+/// direct lookup — including aliases like `docs/quick-start.md` (#1319).
 #[derive(Debug, Default)]
-pub struct DocsTool;
+pub struct DocsTool {
+    spawned: bool,
+}
 
 impl DocsTool {
+    /// Top-level (parent) docs tool: full manual including `quick-start`.
     pub fn new() -> Self {
-        Self
+        Self { spawned: false }
+    }
+
+    /// Docs tool for a process launched with the internal `--spawned` flag.
+    pub fn for_spawned() -> Self {
+        Self { spawned: true }
+    }
+
+    /// Construct with an explicit spawned-visibility bit (#1319).
+    pub fn with_spawned(spawned: bool) -> Self {
+        Self { spawned }
     }
 }
 
 impl Tool for DocsTool {
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: "docs".into(),
-            description: "Quecto operating manual (embedded in the binary, CWD-independent). \
+        let description = if self.spawned {
+            "Quecto operating manual (embedded in the binary, CWD-independent). \
+                Call with no name (or {}) for the table of contents (name + title per page). \
+                Pass a name to read one page. Open deep-dive pages only when needed. \
+                Do not read docs from the filesystem. Example: docs {\"name\": \"workflow\"}"
+                .into()
+        } else {
+            "Quecto operating manual (embedded in the binary, CWD-independent). \
                 Call with no name (or {}) for the table of contents (name + title per page). \
                 Pass a name to read one page. Start with \"quick-start\" for parent-agent \
                 coordination; open deep-dive pages only when needed. Do not read docs from \
                 the filesystem. Example: docs {\"name\": \"quick-start\"}"
-                .into(),
+                .into()
+        };
+        ToolDefinition {
+            name: "docs".into(),
+            description,
             parameters_schema: r#"{"type":"object","properties":{"name":{"type":"string","description":"Manual page to read, e.g. \"quick-start\" or \"workflow\" (a docs/ prefix or .md suffix is accepted). Omit to list the table of contents."}}}"#.into(),
         }
     }
@@ -129,6 +178,7 @@ impl Tool for DocsTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+        let spawned = self.spawned;
         let name = serde_json::from_str::<serde_json::Value>(arguments)
             .ok()
             .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
@@ -137,12 +187,22 @@ impl Tool for DocsTool {
         Box::pin(async move {
             let Some(name) = name else {
                 return Ok(ToolResult {
-                    content: available_listing(),
+                    content: available_listing(spawned),
                     is_error: false,
                     image_blocks: vec![],
                 });
             };
             let key = normalize_name(&name);
+            if spawned && is_parent_only_doc(&key) {
+                return Ok(ToolResult {
+                    content: format!(
+                        "No embedded doc named '{name}'.\n\n{}",
+                        available_listing(true)
+                    ),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            }
             if let Some(body) = lookup_embedded_doc(&key) {
                 return Ok(ToolResult {
                     content: body.to_string(),
@@ -151,7 +211,10 @@ impl Tool for DocsTool {
                 });
             }
             Ok(ToolResult {
-                content: format!("No embedded doc named '{name}'.\n\n{}", available_listing()),
+                content: format!(
+                    "No embedded doc named '{name}'.\n\n{}",
+                    available_listing(spawned)
+                ),
                 is_error: true,
                 image_blocks: vec![],
             })

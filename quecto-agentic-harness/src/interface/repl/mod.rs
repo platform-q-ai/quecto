@@ -465,7 +465,11 @@ fn resolve_effort_from_config(config: &Config) -> Option<crate::domain::provider
 
 /// Build the system prompt from the docs retrieval policy plus optional user prompt.
 fn build_system_prompt(ctx: &ReplContext<'_>) -> Option<String> {
-    Some(super::shared::build_system_prompt(&ctx.flags.system_prompt))
+    // REPL is always a top-level interactive parent agent (#1319).
+    Some(super::shared::build_system_prompt(
+        &ctx.flags.system_prompt,
+        false,
+    ))
 }
 
 /// Context for constructing a REPL session.

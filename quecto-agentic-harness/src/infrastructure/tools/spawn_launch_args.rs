@@ -126,6 +126,9 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         "--socket".into(),
         socket_path.into(),
         "--persist".into(),
+        // Explicit internal provenance flag (#1319). Always set for SpawnTool
+        // children; never inferred from --parent-id / session / env / UDS.
+        "--spawned".into(),
     ];
 
     if let Some(ref system) = config.system {

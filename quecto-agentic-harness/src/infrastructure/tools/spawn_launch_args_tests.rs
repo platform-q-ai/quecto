@@ -142,10 +142,34 @@ fn forwards_existing_flags_alongside_model() {
         "--workflow-guards",
         "--workflow-spec",
         "--no-sandbox",
+        "--spawned",
     ] {
         assert!(
             strs.iter().any(|a| a == expected),
             "expected {expected} in {strs:?}"
         );
     }
+}
+
+/// #1319: every SpawnTool child launch must carry the explicit internal flag.
+#[test]
+fn always_emits_spawned_flag() {
+    let cfg = base_config();
+    let args = build_child_cli_args(&spec(&cfg));
+    let strs = as_strings(&args);
+    assert!(
+        strs.iter().any(|a| a == "--spawned"),
+        "SpawnTool children must always receive --spawned; got {strs:?}"
+    );
+}
+
+/// #1319: --spawned is independent of --parent-id (present or absent).
+#[test]
+fn emits_spawned_without_parent_id() {
+    let cfg = base_config();
+    let mut s = spec(&cfg);
+    s.parent_id = None;
+    let strs = as_strings(&build_child_cli_args(&s));
+    assert!(strs.iter().any(|a| a == "--spawned"));
+    assert!(!strs.iter().any(|a| a == "--parent-id"));
 }

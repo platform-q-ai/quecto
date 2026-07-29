@@ -24,6 +24,10 @@ pub(crate) struct AgentFlags {
     /// events so consumers can reconstruct the unit tree (PRD Stage B). `None`
     /// at the root.
     pub(crate) parent_id: Option<String>,
+    /// Internal `--spawned`: set only by SpawnTool child launches. Selects the
+    /// minimal child system prompt and parent-only docs filtering. Never inferred
+    /// from `--parent-id`, session naming, env, or UDS mode (#1319).
+    pub(crate) spawned: bool,
 }
 
 /// Return `args[i+1]` or push `err_msg` to stderr and return `None`.

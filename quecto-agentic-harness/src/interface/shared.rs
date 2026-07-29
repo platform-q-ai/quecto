@@ -44,36 +44,46 @@ pub fn merge_prompts(user_prompt: &Option<String>) -> String {
     }
 }
 
-/// Stable parent-agent identity injected into every agent system prompt.
+/// Stable parent-agent identity injected into top-level agent system prompts.
 ///
 /// Short on purpose (~one paragraph). Full coordination rules live in the
-/// `docs` operating manual (`quick-start`), not here.
+/// `docs` operating manual (`quick-start`), not here. Spawned children omit this
+/// (#1319) so they do not re-delegate under parent guidance.
 pub fn agent_role_preamble() -> &'static str {
     "You are the Parent Agent operating inside Quecto, an agentic coding harness that can spawn full-featured replicas of itself. Use subagents to isolate substantial working context and run independent work in the background while you, the parent, remain available to the user."
 }
 
-/// Compact Quecto capability signpost injected into every agent system prompt.
+/// Compact Quecto capability signpost injected into top-level agent system prompts.
 ///
 /// This is intentionally a retrieval policy, not full documentation. It tells
-/// agents where to look only when Quecto-specific operational knowledge is
-/// needed, keeping normal prompt/context usage small.
+/// parent agents where to look only when Quecto-specific operational knowledge is
+/// needed, keeping normal prompt/context usage small. Spawned children omit this
+/// parent-oriented policy (#1319).
 pub fn agent_docs_retrieval_policy() -> &'static str {
     "The `docs` tool is Quecto's operating manual - your definitive source for how Quecto works. For parent coordination, delegation, workflows, or Quecto-specific behavior, start with `docs {\"name\": \"quick-start\"}`; open other manual pages only when that knowledge is needed. Keep context lean."
 }
 
-/// Build a complete system prompt from role, docs policy, and optional user prompt.
+/// Build a complete system prompt for a top-level or spawned agent (#1319).
 ///
-/// Combines:
+/// Top-level (`spawned = false`) combines:
 /// 1. Parent-agent role preamble ([`agent_role_preamble`])
 /// 2. Quecto operating-manual retrieval policy ([`agent_docs_retrieval_policy`])
 /// 3. User-provided system prompt (if any)
 ///
+/// Spawned children (`spawned = true`) omit parent identity and parent
+/// coordination/docs policy, retaining only the optional explicit system
+/// prompt (e.g. `spawn.system`). Tool schemas, the initial task, and workflow
+/// guidance are supplied separately by the runtime.
+///
 /// Providers may still inject their own date metadata; Quecto no longer
 /// prepends a local datetime preamble.
-pub fn build_system_prompt(user_prompt: &Option<String>) -> String {
+pub fn build_system_prompt(user_prompt: &Option<String>, spawned: bool) -> String {
+    let merged = merge_prompts(user_prompt);
+    if spawned {
+        return merged;
+    }
     let role = agent_role_preamble();
     let docs_policy = agent_docs_retrieval_policy();
-    let merged = merge_prompts(user_prompt);
     if merged.is_empty() {
         format!("{}\n\n{}", role, docs_policy)
     } else {

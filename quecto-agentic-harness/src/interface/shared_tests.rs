@@ -58,7 +58,7 @@ fn test_merge_prompts_empty_user() {
 
 #[test]
 fn test_build_system_prompt_docs_policy_only() {
-    let result = build_system_prompt(&None);
+    let result = build_system_prompt(&None, false);
     assert!(!result.contains("Current date and time:"));
     assert!(result.starts_with(agent_role_preamble()));
     assert!(result.contains("Parent Agent"));
@@ -74,11 +74,35 @@ fn test_build_system_prompt_docs_policy_only() {
 
 #[test]
 fn test_build_system_prompt_with_user_only() {
-    let result = build_system_prompt(&Some("Be helpful".to_string()));
+    let result = build_system_prompt(&Some("Be helpful".to_string()), false);
     assert!(!result.contains("Current date and time:"));
     assert!(result.starts_with(agent_role_preamble()));
     assert!(result.contains(agent_docs_retrieval_policy()));
     assert!(result.contains("Be helpful"));
+}
+
+/// #1319: spawned children omit Parent Agent preamble and parent docs policy.
+#[test]
+fn test_build_system_prompt_spawned_omits_parent_guidance() {
+    let result = build_system_prompt(&None, true);
+    assert!(
+        result.is_empty(),
+        "minimal child prompt should be empty without system text"
+    );
+    assert!(!result.contains("Parent Agent"));
+    assert!(!result.contains("quick-start"));
+    assert!(!result.contains(agent_role_preamble()));
+    assert!(!result.contains(agent_docs_retrieval_policy()));
+}
+
+/// #1319: explicit spawn.system is retained without parent coordination text.
+#[test]
+fn test_build_system_prompt_spawned_retains_explicit_system() {
+    let result = build_system_prompt(&Some("Focus on the assigned task only.".into()), true);
+    assert_eq!(result, "Focus on the assigned task only.");
+    assert!(!result.contains("Parent Agent"));
+    assert!(!result.contains("quick-start"));
+    assert!(!result.contains(agent_docs_retrieval_policy()));
 }
 
 #[tokio::test]

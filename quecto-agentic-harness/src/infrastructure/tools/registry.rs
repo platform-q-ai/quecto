@@ -102,6 +102,17 @@ impl ToolRegistryImpl {
         sandbox: Sandbox,
         exec_options: ExecOptions,
     ) -> Self {
+        Self::with_core_tools_and_exec_options_spawned(workspace, sandbox, exec_options, false)
+    }
+
+    /// Create a registry with core tools, exec options, and docs visibility for
+    /// top-level vs spawned agents (#1319).
+    pub fn with_core_tools_and_exec_options_spawned(
+        workspace: PathBuf,
+        sandbox: Sandbox,
+        exec_options: ExecOptions,
+        spawned: bool,
+    ) -> Self {
         let sandbox = Arc::new(sandbox);
         let workspace = Arc::new(workspace);
         let mut reg = Self::new();
@@ -117,8 +128,9 @@ impl ToolRegistryImpl {
         reg.register(Arc::new(LsTool::new(workspace.clone(), sandbox.clone())));
         reg.register(Arc::new(GrepTool::new(workspace.clone(), sandbox.clone())));
         reg.register(Arc::new(FindTool::new(workspace.clone(), sandbox.clone())));
-        // Quecto operating manual, embedded in the binary.
-        reg.register(Arc::new(DocsTool::new()));
+        // Quecto operating manual, embedded in the binary. Spawned children omit
+        // the parent-only quick-start page (#1319).
+        reg.register(Arc::new(DocsTool::with_spawned(spawned)));
 
         reg
     }

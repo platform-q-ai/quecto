@@ -427,6 +427,7 @@ fn test_build_agent_from_config_no_config_file() {
         workflow_disabled: false,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -475,6 +476,7 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         workflow_disabled: false,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     };
     let mut stderr = String::new();
     // An explicit --config (config_explicit = true) pointing at a missing file
@@ -508,6 +510,7 @@ fn test_build_agent_from_config_invalid_json() {
         workflow_disabled: false,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -543,6 +546,7 @@ fn test_build_agent_from_config_no_providers() {
         workflow_disabled: false,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -578,6 +582,7 @@ fn test_build_agent_from_config_with_model_override() {
         workflow_disabled: false,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");

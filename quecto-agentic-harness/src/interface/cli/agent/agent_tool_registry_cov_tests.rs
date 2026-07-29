@@ -21,6 +21,7 @@ fn flags() -> AgentFlags {
         workflow_disabled: true,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     }
 }
 
