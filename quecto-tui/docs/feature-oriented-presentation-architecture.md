@@ -92,7 +92,7 @@ Approved parity contract: all readiness-gate items are resolved; no `__UNRESOLVE
 Readiness gate for #1220:
 
 - Zero behavior change mandate: passed. #1220 states “Existing behavior and command ordering remain unchanged”, and the parent epic forbids user-visible behavior changes.
-- Touched observable surfaces: enumerated below. The slice moves `list_models` payload interpretation from `interface/app_models.rs` into an application-layer mapper, documents the mapper convention, and adds two decrease-only guard ratchets. No command is added, removed, or reordered.
+- Touched observable surfaces: enumerated below. Historical note: at the time of #1220, the slice moved `list_models` payload interpretation from `interface/app_models.rs` into an application-layer mapper. After the #1257 feature relocation, the active owner is `quecto-tui/src/inference/controller_models.rs`; this record is preserved as the original parity note rather than a current path inventory. The slice documents the mapper convention and adds two decrease-only guard ratchets. No command is added, removed, or reordered.
 - Existing harnesses: passed. `app_models_tests.rs` pins the current model-list parsing behavior, `session_payloads_tests.rs` pins the existing mapper style, and `tests/architecture.rs` runs in the fast pre-commit guard suite.
 - Behavioral/refactoring split: passed. Every acceptance criterion is structural (mapper convention, mapper tests, ratchets, inventory) or explicitly parity-only.
 - Performance warning: accepted. The replaced parsing code is a single-pass `filter_map` over the `models` array allocating one `Vec<ModelEntry>` plus per-entry sanitized `String`s. Consequence if unrecorded: allocation/complexity regressions would be undetectable; the mapper therefore keeps the same single pass and the same allocation count.
@@ -110,7 +110,7 @@ Approved parity contract: all readiness-gate items are resolved; no `__UNRESOLVE
 
 ## Characterization mutation log for protocol-boundary slice (#1220)
 
-Every mutation was applied to production parsing/dispatch code in `interface/app_models.rs`, verified to fail the named characterization test, then reverted from a pristine baseline copy.
+Every mutation was applied to the then-current production parsing/dispatch code in `interface/app_models.rs`, verified to fail the named characterization test, then reverted from a pristine baseline copy. That path is historical; after the #1257 feature relocation, the equivalent production owner is `quecto-tui/src/inference/controller_models.rs`.
 
 | Mutation | Observed failure |
 |---|---|
@@ -153,13 +153,13 @@ Coverage gaps closed before the freeze (command-emission surface, previously pin
 - `second_open_while_pending_emits_no_duplicate_list_models` (M16)
 - `selector_selection_emits_set_model_command` (M18)
 
-Mutation residue check: `git diff quecto-tui/src/shell/app_models.rs` shows only the added characterization test-module declaration; the suite is GREEN at 20 passed.
+Mutation residue check (historical #1220 location): `git diff quecto-tui/src/shell/app_models.rs` showed only the added characterization test-module declaration; the suite was GREEN at 20 passed. After the #1257 feature relocation, this module-level test declaration moved with the inference feature rather than remaining under `shell/`.
 
 Freeze manifest (characterization suite is READ-ONLY from here until the parity step):
 
 | File | `git hash-object` |
 |---|---|
-| `quecto-tui/src/shell/app_models_protocol_characterization_tests.rs` | `d37d0ad0f0f19fb40bba8f14e6029a285be4d219` |
+| `quecto-tui/src/shell/app_models_protocol_characterization_tests.rs` (historical path; after #1257 this suite lives at `quecto-tui/src/inference/app_models_protocol_characterization_tests.rs`) | `d37d0ad0f0f19fb40bba8f14e6029a285be4d219` |
 
 ## Characterization mutation log for architecture-boundary slice
 
@@ -469,6 +469,12 @@ Review concern disposition for #1224:
 
 - Accepted during conformance: the source-text App owner guard was not an acceptable final conformance mechanism. It was removed rather than generalized. App composition is verified by code inspection in the conformance step; behavior remains pinned by existing TUI suites and the workspace capacity characterization test.
 
+Follow-up investigation for #1255:
+
+- Decision: no executable non-source-text App composition guard is currently feasible enough to add.
+- Rationale: Rust tests cannot reflect over `App`'s private field ownership or constructor expressions without either scanning source text, weakening encapsulation with test-only production APIs, or adding production marker interfaces whose only purpose is to satisfy the guard. Those options would make the guard brittle or couple production code to tests instead of checking user-visible behavior.
+- Accepted mechanism: keep App composition ownership as conformance/code-review evidence, while behavior and performance remain pinned by executable contract tests for the owned feature flows (model/effort/session/workflow/rewind/workspace paths, workspace autocomplete capacity, architecture dependency/documentation ratchets, and TUI render/interaction suites).
+
 ### Inter-issue sequencing
 
 1. #1220 establishes protocol mapper conventions and typed feature inputs.
@@ -533,7 +539,7 @@ module docs of `protocol/model_payloads.rs`):
   owning the id/provider/auth derivation and the drop rules for absent,
   non-string, and sanitize-to-empty identifiers.
 - `inference/controller_models.rs::parse_model_entries` — the seam: maps the DTO to the
-  selector's `ModelEntry`, adding only the interface-owned `is_current: false`.
+  selector's `ModelEntry`, adding only the presentation-owned `is_current: false`.
 
 Mapper fixtures in `protocol/model_payloads_tests.rs` cover valid, legacy
 (`id` vs `model`), and malformed (missing key, non-array, non-object entries,
@@ -599,14 +605,16 @@ The import-aware wire-DTO inventory has an exact total and seed of 98 with an em
 | Inline `id.is_empty()` skip | blank rows never render | `parse_model_list_entry` skip, pinned by `identifier_empty_after_sanitization_is_dropped` |
 | Inline provider `or_else` slash inference + `"Model"` default | provider grouping label | `parse_model_list_entry`, pinned by mapper tests and M14 |
 | Inline auth sanitize + `filter(!is_empty)` | empty auth renders no label | `parse_model_list_entry`, pinned by `empty_auth_is_dropped` |
-| `is_current: false` literal | freshly parsed entries are never marked current | retained at the interface seam (interface-owned view concern), pinned by M15 |
+| `is_current: false` literal | freshly parsed entries are never marked current | retained at the inference/presentation seam (controller/view-owned presentation concern), pinned by M15 |
 
 No tests were deleted. `app_models_tests.rs` retains its fast pure-function
 coverage against the unchanged `parse_model_entries` signature.
 
 Consolidation completeness: `parse_model_list` is the only `list_models` payload
-interpreter in the crate — `grep` for `"models"` in production interface code
-returns no other hand-rolled parser. The remaining raw-JSON sites in the
+interpreter in the crate — at the time of #1220, `grep` for `"models"` in the
+then-current production interface code returned no other hand-rolled parser;
+after the #1257 feature relocation, the active parsing owner is the inference
+feature. The remaining raw-JSON sites in the
 inventory above parse *different* payloads and are recorded for burn-down rather
 than forced through this mapper.
 
@@ -622,7 +630,7 @@ than forced through this mapper.
 | Command ordering | `list_models` / `set_model` | `open_model_selector_emits_exactly_one_list_models`, `second_open_while_pending_emits_no_duplicate_list_models`, `selector_selection_emits_set_model_command` all GREEN; `open_model_selector`/`send_set_model` bodies untouched by the refactor | PASS |
 | Performance | payload parsing | Old code: one `filter_map` pass over `models`, one output `Vec`, `sanitize_control` allocating per field. New code: identical single `filter_map` pass, one output `Vec`, same per-field sanitization. The seam adds one `into_iter().map()` that moves `String` fields into `ModelEntry` — no clones, no second parse. Parsing runs once per `list_models` response, not per keystroke or per frame. | PASS (no regression) |
 | Performance | dispatch | `sanitize` is passed as `&dyn Fn`, adding one indirect call per field on a response-rate path (a few dozen calls per selector open). Chosen over a generic parameter to keep the mapper object-safe and non-monomorphized; cost is immeasurable at this call rate. | PASS (accepted, documented) |
-| Quantitative | `app_models.rs` | 33 lines deleted, 18 added → net −15 lines at the interface call site; raw-JSON parsing sites in that file drop to 0 | RECORDED |
+| Quantitative | `app_models.rs` | 33 lines deleted, 18 added → net −15 lines at the then-current interface call site; raw-JSON parsing sites in that file dropped to 0. After the #1257 feature relocation, the corresponding owner is `quecto-tui/src/inference/controller_models.rs`. | RECORDED |
 | Quantitative | ratchet seeds | raw-JSON sites `173`, wire-DTO imports `2` — both measured, not estimated | RECORDED |
 
 Mutation re-verification after the refactor confirms the pins still bind to the
@@ -648,7 +656,7 @@ additive pin; no existing assertion was altered).
 
 | File | `git hash-object` |
 |---|---|
-| `quecto-tui/src/shell/app_models_protocol_characterization_tests.rs` | `e57d8c569df490354949ff259b450eb050e661d0` |
+| `quecto-tui/src/shell/app_models_protocol_characterization_tests.rs` (historical path; after #1257 this suite lives at `quecto-tui/src/inference/app_models_protocol_characterization_tests.rs`) | `e57d8c569df490354949ff259b450eb050e661d0` |
 
 ## Parity contract for conversation history/recovery slice (#1221)
 

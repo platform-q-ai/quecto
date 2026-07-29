@@ -38,7 +38,6 @@
       "label": "Report findings and clean up",
       "phase": "review",
       "guidance": "Deliver the diagnosis: question, conclusion, evidence, confidence, and recommended next action (e.g. file a gh issue with the evidence, or start a 'bugfix' workflow). Terminate any straggler subagents (get_subagents) and confirm `git status` is clean. Done when the report is delivered and nothing was modified."
-    },
-    "steps/shared/reset_workflow"
+    }
   ]
 }

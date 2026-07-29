@@ -28,6 +28,7 @@ pub enum ChatEntry {
         id: String,
         is_user: bool,
         text: String,
+        content_len: Option<usize>,
     },
     /// Unified tool execution — created on ToolStart, updated in place on ToolEnd.
     ToolExecution {

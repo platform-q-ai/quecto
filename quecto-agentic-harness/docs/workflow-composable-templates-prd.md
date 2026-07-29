@@ -29,7 +29,7 @@ worst-case interaction.
 ### P2 — Templates are monolithic and steps are copy-pasted
 
 All templates live inline in one 44 KB `workflow-config.json`. The two
-shipped templates (`feature`: 20 steps, `refactor`: 19 steps) share many
+shipped templates (`feature`: 19 steps, `refactor`: 18 steps) share many
 byte-identical steps maintained by copy-paste. There is no step library and
 no way to reuse a step (e.g. "adversarial reviewers") across templates.
 

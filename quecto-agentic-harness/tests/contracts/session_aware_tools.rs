@@ -55,7 +55,7 @@ fn set_session_key_reaches_registered_tools() {
         name: "first",
         seen: first_seen.clone(),
     }));
-    registry.register(Arc::new(SessionRecordingTool {
+    registry.register_extension(Arc::new(SessionRecordingTool {
         name: "second",
         seen: second_seen.clone(),
     }));

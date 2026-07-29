@@ -64,13 +64,23 @@ impl Tool for Echo {
 }
 
 #[test]
-fn extension_names_track_only_extension_tools() {
+fn extension_names_track_lifecycle_for_multiple_extensions_only() {
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::new(Echo::new("core")));
-    registry.register_extension(Arc::new(Echo::new("extension")));
+    registry.register_extension(Arc::new(Echo::new("extension_a")));
+    registry.register_extension(Arc::new(Echo::new("extension_b")));
 
-    let extension_registry: &dyn ExtensionToolRegistry = &registry;
-    assert_eq!(extension_registry.extension_names(), vec!["extension"]);
+    {
+        let extension_registry: &mut dyn ExtensionToolRegistry = &mut registry;
+        extension_registry.unregister_extension("extension_a");
+    }
+
+    let mut extension_names = registry.extension_names();
+    extension_names.sort();
+    assert_eq!(extension_names, vec!["extension_b"]);
+    assert!(registry.names().contains(&"core".to_string()));
+    assert!(!registry.names().contains(&"extension_a".to_string()));
+    assert!(registry.names().contains(&"extension_b".to_string()));
 }
 
 #[test]

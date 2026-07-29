@@ -13,6 +13,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Complements branch-protection `required_conversation_resolution` with a
+  # visible merge-CI check so unresolved review threads fail next to other jobs.
+  review-threads-resolved:
+    if: github.event_name == 'pull_request' && github.event.label.name == 'merge-requested'
+    name: Review Threads Resolved
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require all PR review threads resolved
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/check-pr-review-threads-resolved.sh "${{ github.event.pull_request.number }}"
+
   static-quality:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'
     name: Static Quality

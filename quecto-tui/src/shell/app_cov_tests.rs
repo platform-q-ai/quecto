@@ -20,6 +20,16 @@ fn chat_text(app: &mut App) -> String {
         .join("\n")
 }
 
+fn command_has_string_fields(command: &str, expected: &[(&str, &str)]) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(command) else {
+        return false;
+    };
+
+    expected.iter().all(|(field, expected_value)| {
+        value.get(*field).and_then(|v| v.as_str()) == Some(*expected_value)
+    })
+}
+
 // ── app_methods: slash-command handlers ──────────────────────────────
 
 #[tokio::test]
@@ -255,9 +265,10 @@ async fn handle_resume_selector_key_enter_selects_and_closes() {
     assert!(a.sessions.resume_selector.is_none());
     let cmds = h.drain_commands().await;
     assert!(
-        cmds.iter()
-            .any(|c| c.contains("\"type\":\"resume_session\"")
-                && c.contains("\"session\":\"alpha\"")),
+        cmds.iter().any(|c| command_has_string_fields(
+            c,
+            &[("type", "resume_session"), ("session", "alpha")]
+        )),
         "Enter should send resume_session for selected session: {cmds:?}"
     );
 }
@@ -376,8 +387,10 @@ async fn model_selector_enter_selects_and_sets_model() {
     );
     let cmds = h.drain_commands().await;
     assert!(
-        cmds.iter().any(|c| c.contains("\"type\":\"set_model\"")
-            && c.contains("\"model\":\"openai-api/gpt-5.5\"")),
+        cmds.iter().any(|c| command_has_string_fields(
+            c,
+            &[("type", "set_model"), ("model", "openai-api/gpt-5.5")]
+        )),
         "Enter should send set_model for selected model: {cmds:?}"
     );
 }

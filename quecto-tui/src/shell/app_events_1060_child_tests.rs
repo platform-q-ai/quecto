@@ -93,7 +93,9 @@ async fn child_mid_turn_miss_recovers_via_master_and_reconciles() {
         command: "get_message".into(),
         success: true,
         data: Some(serde_json::json!({
-            "id": ref_id, "role": "assistant", "content": "FULL_CHILD_BODY"
+            "id": ref_id,
+            "role": "assistant",
+            "content": "FULL_CHILD_BODYxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         })),
         error: None,
     });

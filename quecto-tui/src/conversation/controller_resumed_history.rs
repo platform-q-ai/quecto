@@ -8,20 +8,30 @@ impl App {
         let mut suppressed_tools = std::collections::HashSet::<String>::new();
         for message in messages {
             match message {
-                ResumedChatMessage::User { text, id, stub } => entries.push(Self::history_entry(
+                ResumedChatMessage::User {
+                    text,
+                    id,
+                    stub,
+                    content_len,
+                } => entries.push(Self::history_entry(
                     crate::components::ansi::sanitize_control_keep_newlines(&text),
                     id,
                     stub,
                     true,
+                    content_len,
                 )),
-                ResumedChatMessage::Assistant { text, id, stub } => {
-                    entries.push(Self::history_entry(
-                        crate::components::ansi::sanitize_control_keep_newlines(&text),
-                        id,
-                        stub,
-                        false,
-                    ))
-                }
+                ResumedChatMessage::Assistant {
+                    text,
+                    id,
+                    stub,
+                    content_len,
+                } => entries.push(Self::history_entry(
+                    crate::components::ansi::sanitize_control_keep_newlines(&text),
+                    id,
+                    stub,
+                    false,
+                    content_len,
+                )),
                 ResumedChatMessage::ToolCall {
                     tool_call_id,
                     tool_name,
