@@ -113,6 +113,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         client_id,
                         client_tool_registry: client_tool_registry.clone(),
                         conversation_snapshot: conversation_snapshot.clone(),
+                        subagent_registry: subagent_registry.clone(),
                         _guard: guard,
                     };
                     tokio::spawn(async move { handle_client(args).await });

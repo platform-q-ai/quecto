@@ -8,6 +8,7 @@ pub mod provider_reload;
 mod provider_reload_tests;
 pub mod uds;
 mod uds_busy_get_message;
+mod uds_busy_subagents;
 mod uds_busy_sync;
 #[cfg(test)]
 mod uds_busy_sync_tests;
