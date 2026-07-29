@@ -559,7 +559,7 @@ async fn run_with_token_drain(
                 if matches!(ev, AgentProgressEvent::Token(_)) {
                     tokens_emitted = true;
                 }
-                publish_turn_progress(&ev, conversation_snapshot).await;
+                publish_turn_progress(&ev, conversation_snapshot, sink).await;
                 forward_progress_event_sink(ev, sink).await;
             }
             Some(notif) = notif_recv => {
@@ -572,7 +572,7 @@ async fn run_with_token_drain(
                     if matches!(ev, AgentProgressEvent::Token(_)) {
                         tokens_emitted = true;
                     }
-                    publish_turn_progress(&ev, conversation_snapshot).await;
+                    publish_turn_progress(&ev, conversation_snapshot, sink).await;
                     forward_progress_event_sink(ev, sink).await;
                 }
                 if let Some(rx) = notification_rx.as_mut() {
@@ -591,6 +591,7 @@ async fn run_with_token_drain(
 async fn publish_turn_progress(
     event: &AgentProgressEvent,
     snapshot: Option<&super::uds_multi::ConversationSnapshot>,
+    sink: &mut EventSink<'_>,
 ) {
     let (Some(snapshot), AgentProgressEvent::TurnCompleted { messages }) = (snapshot, event) else {
         return;
@@ -602,8 +603,14 @@ async fn publish_turn_progress(
             live.push(message.clone());
         }
     }
-    snap.publish(&live);
-    snap.record_full(messages);
+    let publish = snap.publish(&live);
+    let full = snap.record_full(messages);
+    drop(snap);
+    // Mid-turn ledger advances must reach clients: the TUI child feed syncs
+    // only on ledger_advanced, so swallowing these freezes the feed until the
+    // parent turn ends.
+    sink.emit_ledger_advanced(publish).await;
+    sink.emit_ledger_advanced(full).await;
 }
 
 /// Handle one subagent notification received mid-turn: broadcast it to clients
