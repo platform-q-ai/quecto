@@ -2,7 +2,7 @@
 
 **Status:** Proposed.
 
-**Implementation status:** Not started.
+**Implementation status:** Implemented by [Contributor Cookbooks](../contributor-cookbooks.md).
 
 ## Context
 

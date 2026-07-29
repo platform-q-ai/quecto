@@ -9,10 +9,16 @@ Feature: Embedded capability docs reachable from any directory
     When I list the embedded docs
     Then the docs listing should include "quecto"
     And the docs listing should include "subagents"
+    And the docs listing should include "contributor-cookbooks"
 
   Scenario: the docs tool returns an embedded doc by name
     When I read the embedded doc "subagents"
     Then the embedded doc content should contain "agent_cmd"
+
+  Scenario: the docs tool returns contributor cookbooks
+    When I read the embedded doc "contributor-cookbooks"
+    Then the embedded doc content should contain "Add a built-in tool"
+    And the embedded doc content should contain "Local check command index"
 
   Scenario: the docs tool tolerates a .md suffix and docs/ prefix
     When I read the embedded doc "docs/subagents.md"
