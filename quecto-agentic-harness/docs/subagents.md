@@ -129,46 +129,40 @@ when its prior context is relevant and safe for the new assignment.
 
 ### Non-blocking execution and result recovery
 
-`spawn` returns after the child's socket is ready; it does **not** wait for the
-child to finish or return the completed work. After spawning:
+`spawn` returns when the child **socket** is ready — not when the task finishes.
+Completion is **multi-turn**. The production `agent_cmd` tool schema currently
+**hides** blocking `await` from the model (`AWAIT_VISIBLE_IN_SCHEMA = false` in
+`agent_cmd.rs`); dispatch still accepts it if invented. Prefer the passive path.
 
-- keep the parent available to the user;
-- continue useful, non-duplicative work while the child runs;
-- **rely on passive completion notifications by default** — they arrive when a
-  child's state changes and surface at the parent's next idle/turn boundary;
-- use `await` **only** when the child's result **must** gate the parent's next
-  action **in the same turn**. Prefer waiting for passive completion notes.
+#### Required sequence
 
-A passive completion notification or `await` response is a **lifecycle signal,
-not the child's report**. When the result matters:
+1. **Spawn** (and brief the child). Returns immediately.
+2. **End this parent turn** (or do other *non-duplicative* work that does not need
+   the child’s answer). Stay available to the user.
+3. **Next turn:** a passive one-line completion note arrives automatically when
+   the child finishes/errors/exits.
+4. **Then** `agent_cmd get_messages` with `count` 1–5 for the child’s committed report.
+5. Verify, synthesize, and answer the user. Relay conclusions — not raw child dumps
+   unless asked.
 
-1. wait for the passive completion note, or use `await` only when synchronously
-   necessary;
-2. call `agent_cmd get_messages` with a small `count` (1–5) to retrieve the
-   child's committed final output;
-3. inspect errors or additional transcript history only when needed to audit
-   evidence, commands, or failure details;
-4. verify and synthesize the result before answering the user.
+#### Do not
 
-Use `get_state` for live progress (phase, tools, workflow step) or debugging —
-not repetitive polling. Use `get_messages` for transcript content: after idle,
-tail the final assistant report; while busy (`snapshot: true`), a small `count`
-can show recent completed tools but may lag the active turn, so do not treat it
-as a complete live transcript. Prefer `count` 1–5 for status peeks and report
-recovery; omit `count` only for the newest full page after the turn settles;
-follow `before` only when older history is genuinely needed. Prefer
-`get_subagents` or forwarded workflow events for a point-in-time view of
-delegated workflow progress.
+- Poll `get_subagents`, `get_subagents_all`, or `get_state` in a loop waiting for idle.
+- `sleep` / bash-wait / busy-wait for the child in the same turn.
+- Treat the passive note as the child’s report — always `get_messages` for content.
 
-The child's final report is **not** automatically shown to the user. Relay the
-relevant conclusions and evidence; do not expose raw child transcripts or file
-dumps unless the user asks for them.
+#### Optional tools (not wait loops)
 
-Use `abort` to stop a current run and its in-flight work; use `kill` only when
-the child process itself must be terminated.
+- `get_state` — occasional live progress/debug.
+- `get_subagents_all` — inventory and cleanup **after** coordination, not completion waiting.
+- `abort` / `kill` — stop work or the process when needed.
 
-At the end of coordinated work, inspect `get_subagents_all` and clean up
-appropriately.
+If you need the child’s answer before you can help the user, **yield the turn**
+and continue when the note arrives; do not invent a same-turn wait.
+
+(Sections below that document `await` describe the still-implemented command for
+operators/tests and for flipping `AWAIT_VISIBLE_IN_SCHEMA` back on — not the
+default agent-facing path.)
 
 ### Safety for delegated work
 
@@ -370,7 +364,7 @@ reports progress without polling:
 - in the TUI, the selected child renders its own workflow status bar.
 
 Read the child's final result the usual way — its one-line auto-note at your next
-idle turn, or a blocking `await`, then `agent_cmd get_messages` for the full
+idle turn, then `agent_cmd get_messages` for the full
 output (see [Notification model](#notification-model)).
 
 ### `agent_cmd` — interact with a subagent
@@ -847,12 +841,12 @@ Continue useful non-duplicative parent work. When each one-line completion note
 arrives, read that child's report:
   agent_cmd(agent_id='…', command='get_messages', count=5)
 
-Synthesize, dedupe, and judge before answering the user. Use await only if a
+Synthesize, dedupe, and judge before answering the user. Prefer passive notes; yield the turn if a
 verdict must gate the next action in the same turn."
 ```
 
 All three run concurrently — total time is the max of the three, not the sum.
-Default to passive notes; reserve `await` for same-turn gating (see
+Default to passive notes and the multi-turn sequence (see
 [Notification model](#notification-model) and [Parent coordination model](#parent-coordination-model)).
 
 ### Delegating a bound workflow (and nesting)

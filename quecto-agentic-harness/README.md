@@ -621,7 +621,7 @@ External tool binaries (`rg`, `fd`) are resolved from `PATH`; missing binaries r
 | `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
 | `recall` | Retrieve a spilled tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 | `spawn` | Spawn a background UDS-mode subagent for long-running tasks |
-| `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `await`, `get_state`, `get_messages` (optional `count`/`before` — omit both for the newest history page, N for last N, `before` pages backward), `get_session_stats`, `get_subagents`, `get_subagents_all`, `get_extensions`, `set_model`, `set_effort`, `clear_history`, `reload_extensions` |
+| `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `await`, `get_state`, `get_messages` (optional `count`/`before` — omit both for the newest history page, N for last N, `before` pages backward), `get_session_stats`, `get_subagents`, `get_subagents_all`, `get_extensions`, `set_model`, `set_effort`, `clear_history`, `reload_extensions`. **Model-facing schema:** `await` is currently hidden from the tool enum/description; prefer spawn → end turn → passive completion note → `get_messages`. Do not poll `get_subagents` / `get_subagents_all` or sleep as a wait loop. |
 
 For `agent_cmd` command `get_subagents_all`, pass `agent_id` as `*` to list the current parent agent's tracked subagent registry instead of targeting a child agent.
 
