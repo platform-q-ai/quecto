@@ -94,6 +94,23 @@ fn user_reserve_is_strictly_inside_capacity() {
     }
 }
 
+#[tokio::test]
+async fn small_closed_channel_still_reports_disconnected_not_false_backpressure() {
+    // Mirrors Client::disconnected_for_tests (capacity 1, rx dropped). The
+    // user-reserve gate must not fire on undersized queues or send failures
+    // mis-report as "command queue full" instead of disconnected.
+    let (tx, rx) = mpsc::channel::<String>(1);
+    drop(rx);
+    let sender = CommandSender { tx };
+    let err = sender
+        .try_send(&Command::GetState { id: None })
+        .expect_err("closed channel must fail");
+    assert!(
+        matches!(err, ClientError::Disconnected),
+        "expected Disconnected, got {err}"
+    );
+}
+
 #[test]
 fn interactive_user_command_kinds() {
     assert!(

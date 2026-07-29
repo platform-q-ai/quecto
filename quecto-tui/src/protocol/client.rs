@@ -477,8 +477,14 @@ impl CommandSender {
     pub fn try_send(&self, cmd: &Command) -> Result<(), ClientError> {
         use mpsc::error::TrySendError;
         // `capacity()` is free permits remaining. Background traffic must leave
-        // the reserved headroom for interactive user commands.
-        if !cmd.is_interactive_user() && self.tx.capacity() <= COMMAND_WRITER_USER_RESERVED {
+        // the reserved headroom for interactive user commands — but only on
+        // production-sized queues. Tiny test/disconnect stubs (e.g. capacity 1)
+        // cannot host the reserve; skip the gate so closed channels still
+        // surface as Disconnected rather than a false Backpressure (#1238).
+        if !cmd.is_interactive_user()
+            && self.tx.max_capacity() > COMMAND_WRITER_USER_RESERVED
+            && self.tx.capacity() <= COMMAND_WRITER_USER_RESERVED
+        {
             return Err(ClientError::Backpressure);
         }
         self.tx
