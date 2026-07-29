@@ -30,23 +30,7 @@ pub const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 /// per-message cap is still [`MAX_LINE_BYTES`] at write time (#1238).
 pub const COMMAND_WRITER_QUEUE_CAPACITY: usize = 4096;
 
-/// Slots reserved so interactive user commands can still enqueue when
-/// background fan-in has filled most of the ordered writer FIFO (#1238).
-///
-/// Background / housekeeping commands refuse to consume these last permits;
-/// [`Command::is_interactive_user`] commands may use them. This does not
-/// await capacity or reorder the FIFO — it only stops background traffic
-/// from monopolizing the bound under sustained load.
-pub const COMMAND_WRITER_USER_RESERVED: usize = 64;
-
-/// The inner core of the user reserve that ONLY interactive commands may use.
-///
-/// Feed-liveness traffic ([`Command::is_feed_liveness`], i.e. `Sync`) is
-/// admitted into the outer half of the reserve — refusing it under pressure
-/// froze child feeds exactly while the parent was busy — but never past this
-/// floor, so an unthrottled sync burst can not consume the slots protecting
-/// prompt/steer/follow_up/abort (#1238, PR #1307 review).
-pub const COMMAND_WRITER_INTERACTIVE_FLOOR: usize = 32;
+pub use client_classes::{COMMAND_WRITER_INTERACTIVE_FLOOR, COMMAND_WRITER_USER_RESERVED};
 
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
 
