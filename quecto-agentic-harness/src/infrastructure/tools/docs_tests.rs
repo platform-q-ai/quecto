@@ -16,6 +16,7 @@ async fn execute_without_name_lists_available_docs() {
     assert!(!result.is_error);
     assert!(result.content.contains("quecto"));
     assert!(result.content.contains("subagents"));
+    assert!(result.content.contains("contributor-cookbooks"));
 }
 
 #[tokio::test]
@@ -24,6 +25,18 @@ async fn execute_with_name_returns_doc_body() {
     let result = tool.execute(r#"{"name":"subagents"}"#).await.unwrap();
     assert!(!result.is_error);
     assert!(result.content.contains("agent_cmd"));
+}
+
+#[tokio::test]
+async fn execute_returns_contributor_cookbooks() {
+    let tool = DocsTool::new();
+    let result = tool
+        .execute(r#"{"name":"contributor-cookbooks"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    assert!(result.content.contains("## Add a built-in tool"));
+    assert!(result.content.contains("## Local check command index"));
 }
 
 #[tokio::test]
