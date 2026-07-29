@@ -451,6 +451,16 @@ fn serialize_command(cmd: &Command) -> Result<String, ClientError> {
     Ok(json)
 }
 
+#[cfg(feature = "test-harness")]
+impl CommandSender {
+    /// A sender over a production-sized writer queue, plus its receiver, for
+    /// BDD/harness tests that pin the backpressure-reserve semantics.
+    pub fn production_queue_for_tests() -> (Self, mpsc::Receiver<String>) {
+        let (tx, rx) = mpsc::channel::<String>(COMMAND_WRITER_QUEUE_CAPACITY);
+        (Self { tx }, rx)
+    }
+}
+
 impl CommandSender {
     /// Send a command to the agent.
     pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {

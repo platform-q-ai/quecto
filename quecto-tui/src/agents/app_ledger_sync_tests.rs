@@ -174,3 +174,84 @@ async fn epoch_mismatch_resync_replaces_stale_synced_transcript() {
     let entries = app.subagents.sessions["a1"].chat.entries();
     assert!(matches!(entries, [ChatEntry::User { text }] if text == "fresh session"));
 }
+
+// ── Refused sync must not strand the feed (child-progress freeze fix) ────────
+
+fn full_channel_feed() -> (FeedState, mpsc::Receiver<Command>) {
+    // Capacity-1 channel, prefilled: the next try_send is refused.
+    let (cmd_tx, cmd_rx) = mpsc::channel(1);
+    cmd_tx
+        .try_send(Command::GetState { id: None })
+        .expect("prefill");
+    let handle = tokio::spawn(async {});
+    (
+        FeedState {
+            cmd_tx,
+            handle,
+            epoch: 0,
+            rev: 0,
+            last_fresh_at: None,
+            supports_sync: true,
+            pending_rev: None,
+            transcript: crate::agents::ledger::LedgerTranscript::default(),
+            authority: crate::agents::feed::FeedAuthority::WarmSync,
+        },
+        cmd_rx,
+    )
+}
+
+#[tokio::test]
+async fn refused_sync_send_leaves_no_phantom_pending_rev() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (feed, _rx) = full_channel_feed();
+    app.subagents.feeds.insert("a1".into(), feed);
+
+    app.note_ledger_advanced("a1", 1, 9);
+
+    assert_eq!(
+        app.subagents.feeds["a1"].pending_rev, None,
+        "a refused Sync marked in-flight is a phantom sync that never resolves"
+    );
+}
+
+#[tokio::test]
+async fn next_ledger_hint_retries_after_a_refused_sync() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (feed, mut rx) = full_channel_feed();
+    app.subagents.feeds.insert("a1".into(), feed);
+
+    // First hint: channel full, refused, nothing recorded in-flight.
+    app.note_ledger_advanced("a1", 1, 9);
+    assert_eq!(app.subagents.feeds["a1"].pending_rev, None);
+
+    // Channel drains (the prefill pops), then the next hint must retry.
+    let _ = rx.try_recv().expect("drain prefill");
+    app.note_ledger_advanced("a1", 1, 10);
+
+    let cmd = rx.try_recv().expect("retry sync after refusal");
+    assert!(matches!(
+        cmd,
+        Command::Sync {
+            epoch: 1,
+            since_rev: 0,
+            ..
+        }
+    ));
+    assert_eq!(app.subagents.feeds["a1"].pending_rev, Some(10));
+}
+
+#[tokio::test]
+async fn accepted_sync_still_records_pending_rev() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (mut feed, mut rx) = feed_with_rx();
+    feed.supports_sync = true;
+    app.subagents.feeds.insert("a1".into(), feed);
+
+    app.note_ledger_advanced("a1", 1, 9);
+
+    assert!(rx.try_recv().is_ok(), "sync sent on open channel");
+    assert_eq!(app.subagents.feeds["a1"].pending_rev, Some(9));
+}

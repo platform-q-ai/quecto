@@ -147,3 +147,78 @@ fn interactive_user_command_kinds() {
         .is_interactive_user()
     );
 }
+
+// ── Feed-liveness exemption (child-progress freeze fix, 2026-07-29) ──────────
+//
+// `Command::Sync` is the child-feed refresh path. Refusing it under the
+// background reserve froze child feeds exactly when the parent was busy (the
+// only time the queue approaches the reserve), so Sync bypasses the reserve —
+// while remaining subject to true full-queue backpressure.
+
+#[tokio::test]
+async fn sync_bypasses_the_user_reserve() {
+    let (sender, _rx) = production_queue_sender();
+    let background = Command::GetState { id: None };
+    let sync = Command::Sync {
+        id: None,
+        epoch: 1,
+        since_rev: 0,
+    };
+    let background_budget = COMMAND_WRITER_QUEUE_CAPACITY - COMMAND_WRITER_USER_RESERVED;
+
+    for _ in 0..background_budget {
+        sender.try_send(&background).expect("within budget");
+    }
+    // Background traffic is refused at the reserve…
+    assert!(matches!(
+        sender.try_send(&background),
+        Err(ClientError::Backpressure)
+    ));
+    // …but a feed-liveness Sync still goes through.
+    sender
+        .try_send(&sync)
+        .expect("Sync must bypass the background reserve — a refused Sync freezes the child feed");
+}
+
+#[tokio::test]
+async fn truly_full_queue_still_backpressures_sync() {
+    let (sender, _rx) = production_queue_sender();
+    let sync = Command::Sync {
+        id: None,
+        epoch: 1,
+        since_rev: 0,
+    };
+
+    for index in 0..COMMAND_WRITER_QUEUE_CAPACITY {
+        sender
+            .try_send(&sync)
+            .unwrap_or_else(|err| panic!("sync {index} should fill full capacity: {err}"));
+    }
+
+    assert!(
+        matches!(sender.try_send(&sync), Err(ClientError::Backpressure)),
+        "the bypass is reserve-only; a full queue must still refuse Sync"
+    );
+}
+
+#[test]
+fn feed_liveness_command_kinds() {
+    assert!(
+        Command::Sync {
+            id: None,
+            epoch: 0,
+            since_rev: 0,
+        }
+        .is_feed_liveness()
+    );
+    assert!(!Command::GetState { id: None }.is_feed_liveness());
+    assert!(!Command::GetSubagents { id: None }.is_feed_liveness());
+    assert!(
+        !Command::Prompt {
+            id: None,
+            message: "hi".into(),
+            streaming_behavior: None,
+        }
+        .is_feed_liveness()
+    );
+}

@@ -132,3 +132,45 @@ impl TuiHarness {
             .collect()
     }
 }
+
+// ── Child-feed liveness probes (child-progress freeze fix, 2026-07-29) ───────
+
+impl TuiHarness {
+    /// Insert a tracked child feed whose command channel is already FULL, so
+    /// the next `Sync` send is refused. Returns the drain side so scenarios
+    /// can free a slot and assert the retry.
+    pub fn insert_full_channel_feed(
+        &mut self,
+        id: &str,
+    ) -> tokio::sync::mpsc::Receiver<crate::protocol::client::Command> {
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel(1);
+        cmd_tx
+            .try_send(crate::protocol::client::Command::GetState { id: None })
+            .expect("prefill");
+        self.app.subagents.feeds.insert(
+            id.to_string(),
+            crate::agents::view::FeedState {
+                cmd_tx,
+                handle: tokio::spawn(async {}),
+                epoch: 0,
+                rev: 0,
+                last_fresh_at: None,
+                supports_sync: true,
+                pending_rev: None,
+                transcript: crate::agents::ledger::LedgerTranscript::default(),
+                authority: crate::agents::feed::FeedAuthority::WarmSync,
+            },
+        );
+        cmd_rx
+    }
+
+    /// Deliver a `ledger_advanced` hint for a tracked child feed.
+    pub fn note_child_ledger_advanced(&mut self, id: &str, epoch: u64, rev: u64) {
+        self.app.note_ledger_advanced(id, epoch, rev);
+    }
+
+    /// The child feed's recorded in-flight sync target, if any.
+    pub fn child_feed_pending_rev(&self, id: &str) -> Option<u64> {
+        self.app.subagents.feeds.get(id).and_then(|f| f.pending_rev)
+    }
+}
