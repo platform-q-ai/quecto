@@ -1,0 +1,43 @@
+# Keep Docker build contexts small and deterministic.
+# Without this, `docker build .` sends target/ and .git/; local Rust targets can
+# be hundreds of GB.
+
+# Rust/build outputs
+target/
+**/target/
+
+# VCS and editor state
+.git/
+.gitignore
+.gitattributes
+.github/
+.claude/
+
+# Local env/secrets/session files
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Coverage/test artifacts
+coverage/
+tarpaulin-report.html
+*.profraw
+*.profdata
+
+# Logs/temp
+*.log
+tmp/
+temp/
