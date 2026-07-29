@@ -74,9 +74,19 @@ impl Tool for ReadTool {
                 .validate_path(&validated_str)
                 .map_err(|e| DomainError::Security(e.to_string()))?;
 
-            // Parse optional offset (1-indexed) and limit
-            let offset: Option<usize> = args["offset"].as_u64().map(|v| v as usize);
-            let limit: Option<usize> = args["limit"].as_u64().map(|v| v as usize);
+            // Parse optional offset (1-indexed) and limit. Models often emit integral
+            // JSON floats (e.g. 370.0) for schema "number"; honor those and
+            // hard-error on invalid paging args instead of silent default-head.
+            let offset = match args.get("offset") {
+                None => None,
+                Some(v) if v.is_null() => None,
+                Some(v) => parse_optional_usize_arg(v, "offset").map_err(DomainError::Tool)?,
+            };
+            let limit = match args.get("limit") {
+                None => None,
+                Some(v) if v.is_null() => None,
+                Some(v) => parse_optional_usize_arg(v, "limit").map_err(DomainError::Tool)?,
+            };
 
             // Safety cap: reject reads > 10 MiB before loading into memory.
             const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
@@ -148,6 +158,76 @@ impl Tool for ReadTool {
 /// Wrap a path in single quotes for use in a shell command hint.
 fn shell_escape_single(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
+}
+
+/// Parse optional line-count tool arg from an already-decoded JSON value.
+/// - missing / null is handled by the caller (not passed here)
+/// - finite, non-negative, integral, in 0..=usize::MAX → Ok(Some(n))
+///   (0 still allowed here; apply_read_truncation rejects offset/limit 0)
+/// - anything else → Err(message)
+/// Never truncates via unchecked `as usize`.
+fn parse_optional_usize_arg(
+    value: &serde_json::Value,
+    name: &str,
+) -> Result<Option<usize>, String> {
+    match value {
+        serde_json::Value::Number(n) => {
+            // Integer fast path with explicit usize fit check (no u64→usize truncation).
+            if let Some(u) = n.as_u64() {
+                return usize::try_from(u).map(Some).map_err(|_| {
+                    format!(
+                        "invalid '{name}': value {u} is out of range for this platform (max {})",
+                        usize::MAX
+                    )
+                });
+            }
+            // Reject negative integers early with a clear message.
+            if let Some(i) = n.as_i64() {
+                return Err(format!(
+                    "invalid '{name}': expected a non-negative integer, got {i}"
+                ));
+            }
+            let Some(f) = n.as_f64() else {
+                return Err(format!(
+                    "invalid '{name}': expected a finite non-negative integer number"
+                ));
+            };
+            if !f.is_finite() {
+                return Err(format!(
+                    "invalid '{name}': expected a finite non-negative integer number, got {f}"
+                ));
+            }
+            if f < 0.0 {
+                return Err(format!(
+                    "invalid '{name}': expected a non-negative integer, got {f}"
+                ));
+            }
+            // Prove range before any cast. `usize::MAX as f64` is exact for 32-bit
+            // and is the largest finite bound we accept on 64-bit (mantissa limits
+            // make every integer above 2^53 non-integral in f64 anyway).
+            let max = usize::MAX as f64;
+            if f > max {
+                return Err(format!(
+                    "invalid '{name}': value {f} is out of range for this platform (max {})",
+                    usize::MAX
+                ));
+            }
+            // Integral relative to the already-parsed float — no rounding.
+            let as_u = f as u64;
+            if f != as_u as f64 {
+                return Err(format!(
+                    "invalid '{name}': expected an integer line count, got {f}"
+                ));
+            }
+            usize::try_from(as_u).map(Some).map_err(|_| {
+                format!(
+                    "invalid '{name}': value {as_u} is out of range for this platform (max {})",
+                    usize::MAX
+                )
+            })
+        }
+        other => Err(format!("invalid '{name}': expected a number, got {other}")),
+    }
 }
 
 /// Detect supported image MIME type by file magic bytes.
