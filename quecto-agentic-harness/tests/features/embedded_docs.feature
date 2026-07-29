@@ -9,7 +9,7 @@ Feature: Embedded operating manual reachable from any directory
     Then the docs listing should include "quick-start"
     And the docs listing should include "subagents"
     And the docs listing should include "workflow"
-    And the docs listing should include "Quecto parent-agent quick start"
+    And the docs listing should include "Quecto parent-agent quick start and workflows playbook"
 
   Scenario: the docs tool returns the quick-start entry page
     When I read the embedded doc "quick-start"

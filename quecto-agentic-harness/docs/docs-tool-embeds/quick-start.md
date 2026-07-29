@@ -1,6 +1,6 @@
-# Quecto parent-agent quick start
+# Quecto parent-agent quick start and workflows playbook
 
-Parent-agent identity is already in the system prompt. This page is the rest of the coordination manual: when to stay in the parent, how to delegate, recover child results, and use workflows safely.
+Parent-agent identity is already in the system prompt. This page is the rest of the coordination manual: when to stay in the parent, how to delegate, recover child results, and which workflow to bind for common tasks.
 
 ## Parent versus subagent routing
 
@@ -62,7 +62,35 @@ A child's report is input to the parent's answer, not a substitute for the paren
 
 ## ALWAYS prefer to delegate coding tasks and use these workflows
 
-Available templates in this repo, at a glance: `feature` for behaviour changes, `bugfix` for repro-first fixes, `refactor` for zero-behaviour-change restructures, `remove` for staged removals, `chore` for small maintenance/docs/tooling, `adversarial-review` for read-only PR review, `investigate` for read-only diagnosis, `flake-hunt` for intermittent CI/test failures, `plan` for execution plans, and `prd` for design docs/proposals.
+For multi-step coding, diagnosis, planning, or review, spawn a child with `workflow: true` (or bind `workflow_spec` / tell the child a template id). Confirm live ids with the child’s `workflow` `list_templates` if unsure — do not invent names.
+
+### Pick a template (common asks)
+
+| User / task shape | Template | Notes |
+|---|---|---|
+| Implement a behaviour change, feature, or acceptance criteria | `feature` | Full build path (scenarios → red/green → PR → review). |
+| Fix a bug with a known or discoverable repro | `bugfix` | Repro-first; don’t use for pure investigation with no fix. |
+| Restructure with **zero** intended behaviour change | `refactor` | Characterization / parity heavy. |
+| Delete code or surface area safely | `remove` | Staged removal. |
+| Small docs, tooling, config, or repo hygiene | `chore` | Prefer over `feature` when there’s no product behaviour change. |
+| **Review an existing PR** (findings only, no code changes) | **`adversarial-review`** | Read-only. Fetch `gh pr diff <N>` yourself. Parallel finders → refute wave → **one** submitted GitHub review. Spawn with `read_only: true`. |
+| Understand / root-cause **without** changing code | `investigate` | Diagnosis only — not PR review, not implement-a-fix. |
+| Flaky CI or intermittent tests | `flake-hunt` | |
+| Execution plan before coding | `plan` | |
+| Design doc / PRD | `prd` | Docs-oriented; adversarial pass on the doc. |
+
+### How to launch
+
+- **Default:** `spawn` with `workflow: true` so the child selects the best template (or instruct “use template `…`”).
+- **Exact sequence required:** bind full template via spawn `workflow_spec` (Active, no picker).
+- **PR review / research / other non-editors:** always `read_only: true` (not a hard sandbox — `bash` remains).
+- Nested finders inside `adversarial-review` should also be `read_only: true` and must not post to GitHub except the final single review step.
+
+### Do not mix these up
+
+- “Review this PR” → **`adversarial-review`**, not `feature` / `investigate`.
+- “Why is this broken?” with no fix yet → **`investigate`**, not `bugfix`.
+- “Clean up / rename / move only” → **`refactor`** or **`chore`**, not `feature`.
 
 ## Briefing children
 

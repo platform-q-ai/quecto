@@ -30,7 +30,11 @@ async fn execute_without_name_lists_toc_with_titles() {
     assert!(result.content.contains("operating manual"));
     assert!(result.content.contains("Table of contents:"));
     assert!(result.content.contains("quick-start — "));
-    assert!(result.content.contains("Quecto parent-agent quick start"));
+    assert!(
+        result
+            .content
+            .contains("Quecto parent-agent quick start and workflows playbook")
+    );
     assert!(result.content.contains("subagents — "));
     assert!(result.content.contains("workflow — "));
     assert!(result.content.contains("extensions — "));
