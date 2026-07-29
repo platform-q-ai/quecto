@@ -710,21 +710,31 @@ async fn test_await_idle_resets_on_running() {
 }
 
 #[test]
-fn test_definition_includes_await() {
+fn test_definition_hides_await_when_not_visible_in_schema() {
+    // Short-term: AWAIT_VISIBLE_IN_SCHEMA=false hides await from the model.
+    // Flip the flag (and restore these asserts) to re-advertise await.
     let tool = empty_tool();
     let def = tool.definition();
-    assert!(def.description.contains("await"));
+    if AWAIT_VISIBLE_IN_SCHEMA {
+        assert!(def.description.contains("await"));
+    } else {
+        assert!(
+            !def.description.contains("await"),
+            "await must stay out of the tool description while hidden"
+        );
+    }
 }
 
 #[test]
-fn test_definition_schema_includes_await() {
+fn test_definition_schema_await_visibility_matches_flag() {
     let tool = empty_tool();
     let def = tool.definition();
     let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
     let command_enum = schema["properties"]["command"]["enum"].as_array().unwrap();
-    assert!(
-        command_enum.iter().any(|v| v.as_str() == Some("await")),
-        "await should be in command enum"
+    let has_await = command_enum.iter().any(|v| v.as_str() == Some("await"));
+    assert_eq!(
+        has_await, AWAIT_VISIBLE_IN_SCHEMA,
+        "command enum await presence must match AWAIT_VISIBLE_IN_SCHEMA"
     );
 }
 
@@ -733,6 +743,17 @@ fn test_definition_schema_includes_timeout_and_idle_timeout() {
     let tool = empty_tool();
     let def = tool.definition();
     let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    if !AWAIT_VISIBLE_IN_SCHEMA {
+        assert!(
+            schema["properties"].get("timeout").is_none(),
+            "timeout is await-only and should be hidden with await"
+        );
+        assert!(
+            schema["properties"].get("idle_timeout").is_none(),
+            "idle_timeout is await-only and should be hidden with await"
+        );
+        return;
+    }
     assert!(
         schema["properties"]["timeout"].is_object(),
         "timeout should be in schema properties"
