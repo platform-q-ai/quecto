@@ -161,10 +161,12 @@ fn shell_escape_single(path: &str) -> String {
 }
 
 /// Parse optional line-count tool arg from an already-decoded JSON value.
+///
 /// - missing / null is handled by the caller (not passed here)
 /// - finite, non-negative, integral, in 0..=usize::MAX → Ok(Some(n))
 ///   (0 still allowed here; apply_read_truncation rejects offset/limit 0)
 /// - anything else → Err(message)
+///
 /// Never truncates via unchecked `as usize`.
 fn parse_optional_usize_arg(
     value: &serde_json::Value,
