@@ -613,6 +613,28 @@ pub fn build_http_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
+/// Build the shared official-tool catalogue/registry root used by CLI, REPL,
+/// and UDS-backed agent sessions.
+///
+/// Entrypoints pass their intentional defaults (for example spawned-docs
+/// visibility and exec capture limits) as policy inputs here instead of
+/// constructing a separate production tool set. Native lifecycle remains
+/// in-process/bundled; UDS lifecycle continues to register dynamic proxy tools
+/// later through the runtime-loadable path.
+pub fn build_official_tool_registry(
+    workspace: std::path::PathBuf,
+    sandbox: crate::infrastructure::security::sandbox::Sandbox,
+    exec_options: crate::infrastructure::tools::bash::ExecOptions,
+    spawned: bool,
+) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
+    crate::infrastructure::extensions::native::build_official_tool_registry(
+        workspace,
+        sandbox,
+        exec_options,
+        spawned,
+    )
+}
+
 /// Build and register native (config-gated) extensions.
 ///
 /// Returns an `ExtensionRegistry` containing native extensions.
