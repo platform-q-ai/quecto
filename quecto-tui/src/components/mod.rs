@@ -16,6 +16,7 @@ pub mod notification;
 pub mod overlay;
 pub mod select_list;
 pub mod select_overlay;
+pub mod selectable_item_modal;
 pub mod spinner;
 pub mod suggestion_list;
 pub mod text_input;
