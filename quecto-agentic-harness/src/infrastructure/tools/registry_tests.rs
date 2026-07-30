@@ -370,3 +370,86 @@ async fn dummy_test_tool_trait_surface_defaults_are_exercised() {
     assert_eq!(result.content, "ok");
     assert!(!result.is_error);
 }
+
+#[test]
+fn descriptors_include_source_and_availability_for_native_and_uds_tools() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(reg.descriptors().iter().any(|d| {
+        d.definition.name.as_ref() == "bash"
+            && matches!(
+                d.source,
+                crate::domain::tool_descriptor::ToolSource::BundledNative
+            )
+            && d.availability.is_enabled()
+    }));
+
+    let ok = reg.register_uds_extension(Arc::new(DummyTestTool::new("weather")));
+    assert!(ok);
+    let weather = reg.descriptor("weather").expect("weather descriptor");
+    assert!(matches!(
+        weather.source,
+        crate::domain::tool_descriptor::ToolSource::Uds
+    ));
+    assert!(weather.availability.is_enabled());
+}
+
+#[test]
+fn disable_and_enable_tool_toggle_model_visible_definitions_without_unregister() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(reg.get("bash").is_some());
+    assert!(reg.definitions().iter().any(|d| d.name.as_ref() == "bash"));
+
+    assert!(reg.disable_tool("bash"));
+    assert!(
+        reg.get("bash").is_some(),
+        "disabled tool remains registered"
+    );
+    assert!(
+        !reg.definitions().iter().any(|d| d.name.as_ref() == "bash"),
+        "disabled tool is hidden from model-visible definitions"
+    );
+    let disabled = reg.descriptor("bash").expect("bash still has descriptor");
+    assert!(!disabled.availability.is_enabled());
+
+    assert!(reg.enable_tool("bash"));
+    assert!(reg.definitions().iter().any(|d| d.name.as_ref() == "bash"));
+    assert!(reg.descriptor("bash").unwrap().availability.is_enabled());
+}
+
+#[tokio::test]
+async fn disabled_tool_execute_is_rejected_and_enable_restores_execution() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(reg.disable_tool("ls"));
+    let disabled = reg.execute("ls", "{}").await;
+    assert!(
+        disabled.is_err() || disabled.as_ref().map(|r| r.is_error).unwrap_or(false),
+        "disabled tool must not execute successfully"
+    );
+
+    assert!(reg.enable_tool("ls"));
+    let enabled = reg
+        .execute("ls", "{}")
+        .await
+        .expect("ls executes when enabled");
+    assert!(
+        !enabled.is_error,
+        "enabled tool should execute: {}",
+        enabled.content
+    );
+}
+
+#[test]
+fn register_uds_extension_rejects_core_shadow_and_denylist() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(!reg.register_uds_extension(Arc::new(DummyTestTool::new("bash"))));
+    assert!(reg.remove("bash"));
+    assert!(!reg.register_uds_extension(Arc::new(DummyTestTool::new("bash"))));
+    assert!(reg.get("bash").is_none());
+}
+
+#[test]
+fn disable_or_enable_unknown_tool_returns_false() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(!reg.disable_tool("no_such_tool"));
+    assert!(!reg.enable_tool("no_such_tool"));
+}
