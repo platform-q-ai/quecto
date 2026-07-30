@@ -151,7 +151,9 @@ pub trait ExtensionToolRegistry: Send + Sync {
     /// Register a single extension tool.
     ///
     /// Rejects tools that shadow core tool names. Default: no-op.
-    fn register_extension(&mut self, _tool: std::sync::Arc<dyn Tool>) {}
+    fn register_extension(&mut self, _tool: std::sync::Arc<dyn Tool>) -> bool {
+        false
+    }
 
     /// Unregister a single extension tool by name.
     ///
@@ -159,8 +161,8 @@ pub trait ExtensionToolRegistry: Send + Sync {
     fn unregister_extension(&mut self, _name: &str) {}
 
     /// Register a UDS-delivered extension tool.
-    fn register_uds_extension(&mut self, tool: std::sync::Arc<dyn Tool>) {
-        self.register_extension(tool);
+    fn register_uds_extension(&mut self, tool: std::sync::Arc<dyn Tool>) -> bool {
+        self.register_extension(tool)
     }
 
     /// Runtime-enable a registered tool. Default: unsupported.

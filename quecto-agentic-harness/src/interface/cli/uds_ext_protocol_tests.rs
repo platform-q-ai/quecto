@@ -112,6 +112,56 @@ fn test_register_tools_idempotent() {
 }
 
 #[test]
+fn re_registering_tool_resolves_old_generation_pending_calls() {
+    let r = new_client_tool_registry();
+    let c = core_names();
+    let (ok, _, _) = reg(&r, &c, 1, &[tool_reg("weather", "Old desc")]);
+    assert!(ok);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    r.lock().unwrap().entry(1).or_default().insert_pending(
+        "old-call".into(),
+        "weather".into(),
+        tx,
+        std::time::Duration::from_secs(30),
+    );
+
+    let (ok, _, tools) = reg(&r, &c, 1, &[tool_reg("weather", "New desc")]);
+
+    assert!(ok);
+    assert_eq!(tools[0].definition().description.as_ref(), "New desc");
+    let result = rx.blocking_recv().expect("old pending call resolved");
+    assert!(result.is_error);
+    assert_eq!(result.content, "Tool re-registered");
+    assert!(r.lock().unwrap()[&1].pending_results.is_empty());
+}
+
+#[test]
+fn resolve_pending_for_tool_only_resolves_matching_tool_generation() {
+    let mut state = ClientToolState::default();
+    let (weather_tx, weather_rx) = tokio::sync::oneshot::channel();
+    let (other_tx, other_rx) = tokio::sync::oneshot::channel();
+    state.insert_pending(
+        "call-a".into(),
+        "weather".into(),
+        weather_tx,
+        std::time::Duration::from_secs(30),
+    );
+    state.insert_pending(
+        "call-b".into(),
+        "translate".into(),
+        other_tx,
+        std::time::Duration::from_secs(30),
+    );
+
+    resolve_pending_for_tool(&mut state, "weather", "Tool re-registered");
+
+    assert!(weather_rx.blocking_recv().unwrap().is_error);
+    assert!(state.pending_results.contains_key("call-b"));
+    drop(state);
+    assert!(other_rx.blocking_recv().is_err());
+}
+
+#[test]
 fn test_register_tools_rejects_duplicate_owner() {
     let r = new_client_tool_registry();
     let c = core_names();
@@ -135,7 +185,9 @@ fn test_unregister_tools() {
     let (ev, removed) = handle_unregister_tools(1, Some("ut-1"), &["weather".into()], &r);
     assert_eq!(removed, vec!["weather"]);
     assert!(ev.to_json_line().contains("\"success\":true"));
-    assert!(r.lock().unwrap()[&1].tool_names.is_empty());
+    // Empty client ownership records are dropped so failed/rolled-back
+    // registrations do not leave zombie entries behind.
+    assert!(!r.lock().unwrap().contains_key(&1));
 }
 
 #[test]
@@ -163,6 +215,7 @@ fn test_client_disconnect_cancels_pending() {
     {
         r.lock().unwrap().entry(1).or_default().insert_pending(
             "call-1".into(),
+            "tool".into(),
             tx,
             std::time::Duration::from_secs(30),
         );
@@ -180,6 +233,7 @@ fn test_handle_tool_result_delivers() {
     {
         r.lock().unwrap().entry(1).or_default().insert_pending(
             "call-1".into(),
+            "tool".into(),
             tx,
             std::time::Duration::from_secs(30),
         );
@@ -271,6 +325,7 @@ fn insert_pending_sweeps_expired_entries() {
             "stale-call".into(),
             PendingResult {
                 reply: stale_tx,
+                tool_name: "tool".to_string(),
                 deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
             },
         );
@@ -279,6 +334,7 @@ fn insert_pending_sweeps_expired_entries() {
         let (fresh_tx, _fresh_rx) = tokio::sync::oneshot::channel();
         state.insert_pending(
             "fresh-call".into(),
+            "tool".into(),
             fresh_tx,
             std::time::Duration::from_secs(30),
         );
@@ -317,6 +373,7 @@ fn tool_result_sweeps_expired_entries_on_idle_client() {
             "timed-out-call".into(),
             PendingResult {
                 reply: timed_out_tx,
+                tool_name: "tool".to_string(),
                 deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
             },
         );

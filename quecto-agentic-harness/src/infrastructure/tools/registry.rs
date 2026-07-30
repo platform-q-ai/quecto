@@ -189,52 +189,54 @@ impl ToolRegistryImpl {
     }
 
     /// Register a tool. No-op if the name is on the denylist.
-    pub fn register(&mut self, tool: Arc<dyn Tool>) {
+    pub fn register(&mut self, tool: Arc<dyn Tool>) -> bool {
         let def = tool.definition();
         let name = def.name.clone().into_owned();
         if self.denied_names.contains(&name) {
             tracing::debug!(tool = %name, "register rejected: tool is on the denylist");
-            return;
+            return false;
         }
         self.metadata
             .insert(name.clone(), ToolRegistrationMetadata::official_native());
         self.tools.insert(name, tool);
 
         self.rebuild_definitions();
+        true
     }
 
     /// Register a tool as an extension tool (tracked for reload).
     ///
     /// Extension tools can be removed via `unregister_extension`.
     /// Rejects tools that shadow core tool names.
-    pub fn register_extension(&mut self, tool: Arc<dyn Tool>) {
-        self.register_extension_with_metadata(tool, ToolRegistrationMetadata::official_native());
+    pub fn register_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
+        self.register_extension_with_metadata(tool, ToolRegistrationMetadata::official_native())
     }
 
     /// Register a UDS-delivered extension tool.
-    pub fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) {
-        self.register_extension_with_metadata(tool, ToolRegistrationMetadata::uds());
+    pub fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
+        self.register_extension_with_metadata(tool, ToolRegistrationMetadata::uds())
     }
 
     fn register_extension_with_metadata(
         &mut self,
         tool: Arc<dyn Tool>,
         metadata: ToolRegistrationMetadata,
-    ) {
+    ) -> bool {
         let name = tool.definition().name.to_string();
         if self.denied_names.contains(&name) {
             tracing::warn!(tool = %name, "register_extension rejected: tool is on the denylist");
-            return;
+            return false;
         }
         // Reject if name exists and is NOT already an extension tool (i.e. it's core)
         if self.tools.contains_key(&name) && !self.extension_tool_names.contains(&name) {
             tracing::warn!(tool = %name, "register_extension rejected: shadows core tool");
-            return;
+            return false;
         }
         self.extension_tool_names.insert(name.clone());
         self.metadata.insert(name.clone(), metadata);
         self.tools.insert(name, tool);
         self.rebuild_definitions();
+        true
     }
 
     /// Remove an extension tool by name.
@@ -436,16 +438,16 @@ impl ExtensionToolRegistry for ToolRegistryImpl {
         self.extension_names()
     }
 
-    fn register_extension(&mut self, tool: Arc<dyn Tool>) {
-        self.register_extension(tool);
+    fn register_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
+        self.register_extension(tool)
     }
 
     fn unregister_extension(&mut self, name: &str) {
         self.unregister_extension(name);
     }
 
-    fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) {
-        self.register_uds_extension(tool);
+    fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
+        self.register_uds_extension(tool)
     }
 
     fn enable_tool(&mut self, name: &str) -> bool {
