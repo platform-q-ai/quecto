@@ -108,6 +108,7 @@ fn test_build_agent_no_sandbox_emits_warning() {
         workflow_disabled: false,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     };
 
     let mut stderr = String::new();
@@ -189,6 +190,7 @@ fn test_build_agent_with_sandbox_enabled_no_warning() {
         workflow_disabled: false,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     };
 
     let mut stderr = String::new();

@@ -90,3 +90,85 @@ async fn execute_with_invalid_json_lists_docs() {
     assert!(!result.is_error);
     assert!(result.content.contains("operating manual"));
 }
+
+/// #1319: top-level TOC still lists quick-start.
+#[tokio::test]
+async fn top_level_toc_includes_quick_start() {
+    let tool = DocsTool::new();
+    let result = tool.execute("{}").await.unwrap();
+    assert!(!result.is_error);
+    assert!(result.content.contains("quick-start — "));
+}
+
+/// #1319: spawned children omit quick-start from the TOC.
+#[tokio::test]
+async fn spawned_toc_omits_quick_start() {
+    let tool = DocsTool::for_spawned();
+    let result = tool.execute("{}").await.unwrap();
+    assert!(!result.is_error);
+    assert!(
+        !result.content.contains("quick-start"),
+        "spawned TOC must omit quick-start; got:\n{}",
+        result.content
+    );
+    // Other pages remain available.
+    assert!(result.content.contains("subagents — "));
+    assert!(result.content.contains("workflow — "));
+    assert!(result.content.contains("extensions — "));
+    assert!(result.content.contains("models — "));
+}
+
+/// #1319: direct retrieval of quick-start is rejected for spawned children.
+#[tokio::test]
+async fn spawned_rejects_direct_quick_start() {
+    let tool = DocsTool::for_spawned();
+    let result = tool.execute(r#"{"name":"quick-start"}"#).await.unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("No embedded doc named"));
+    assert!(
+        !result.content.contains("Parent versus subagent"),
+        "must not return quick-start body"
+    );
+}
+
+/// #1319: aliases like docs/quick-start.md are also rejected when spawned.
+#[tokio::test]
+async fn spawned_rejects_quick_start_aliases() {
+    let tool = DocsTool::for_spawned();
+    for name in [
+        "quick-start.md",
+        "docs/quick-start.md",
+        "docs/docs-tool-embeds/quick-start.md",
+        "QUICK-START",
+    ] {
+        let args = format!(r#"{{"name":"{name}"}}"#);
+        let result = tool.execute(&args).await.unwrap();
+        assert!(
+            result.is_error,
+            "spawned must reject alias {name}; got ok content:\n{}",
+            result.content
+        );
+        assert!(
+            !result.content.contains("Parent versus subagent"),
+            "alias {name} must not return quick-start body"
+        );
+    }
+}
+
+/// #1319: non-parent pages remain readable for spawned children.
+#[tokio::test]
+async fn spawned_can_read_other_manual_pages() {
+    let tool = DocsTool::for_spawned();
+    let result = tool.execute(r#"{"name":"workflow"}"#).await.unwrap();
+    assert!(!result.is_error);
+    assert!(!result.content.is_empty());
+}
+
+/// #1319: top-level direct retrieval of quick-start is unchanged.
+#[tokio::test]
+async fn top_level_quick_start_still_available() {
+    let tool = DocsTool::with_spawned(false);
+    let result = tool.execute(r#"{"name":"quick-start"}"#).await.unwrap();
+    assert!(!result.is_error);
+    assert!(result.content.contains("Parent versus subagent"));
+}

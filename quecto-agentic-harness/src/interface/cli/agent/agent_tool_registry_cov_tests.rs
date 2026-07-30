@@ -21,6 +21,7 @@ fn flags() -> AgentFlags {
         workflow_disabled: true,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     }
 }
 
@@ -97,6 +98,97 @@ fn build_tool_registry_uses_cli_session_name_and_model_override() {
     assert_eq!(built.session_key, Session::build_key("cli", "named"));
     assert_eq!(built.model, "openai-api/gpt-5.6-sol");
     assert!(!built.extension_prompt_snippets.contains("failed"));
+}
+
+/// #1319 glue: `flags.spawned` must reach the docs tool installed by
+/// `build_tool_registry`. Unit tests on `DocsTool` alone cannot catch a
+/// hard-coded `false` at this call site.
+#[tokio::test]
+async fn build_tool_registry_forwards_spawned_flag_to_docs_tool() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config::default();
+    let http = reqwest::Client::new();
+
+    // Spawned child path: parent-only quick-start is rejected / omitted.
+    let mut spawned_flags = flags();
+    spawned_flags.spawned = true;
+    let mut stderr = String::new();
+    let spawned = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        config: &config,
+        http_client: &http,
+        flags: &spawned_flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    assert!(
+        spawned.registry.get("docs").is_some(),
+        "docs tool must remain registered for spawned agents"
+    );
+    assert!(
+        spawned.registry.get("spawn").is_some(),
+        "spawn tool must remain available for spawned agents (#1319 non-goal)"
+    );
+
+    let toc = spawned.registry.execute("docs", "{}").await.unwrap();
+    assert!(!toc.is_error, "spawned TOC must succeed: {}", toc.content);
+    assert!(
+        !toc.content.contains("quick-start"),
+        "spawned registry docs TOC must omit quick-start; got:\n{}",
+        toc.content
+    );
+
+    let direct = spawned
+        .registry
+        .execute("docs", r#"{"name":"quick-start"}"#)
+        .await
+        .unwrap();
+    assert!(
+        direct.is_error,
+        "spawned registry must reject quick-start; got ok:\n{}",
+        direct.content
+    );
+    assert!(
+        !direct.content.contains("Parent versus subagent"),
+        "spawned registry must not return quick-start body"
+    );
+
+    // Top-level path: same glue must keep quick-start available.
+    let top_flags = flags(); // spawned: false
+    stderr.clear();
+    let top = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        config: &config,
+        http_client: &http,
+        flags: &top_flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    let top_toc = top.registry.execute("docs", "{}").await.unwrap();
+    assert!(!top_toc.is_error);
+    assert!(
+        top_toc.content.contains("quick-start — "),
+        "top-level registry docs TOC must list quick-start; got:\n{}",
+        top_toc.content
+    );
+    let top_direct = top
+        .registry
+        .execute("docs", r#"{"name":"quick-start"}"#)
+        .await
+        .unwrap();
+    assert!(!top_direct.is_error);
+    assert!(
+        top_direct.content.contains("Parent versus subagent"),
+        "top-level registry must still serve quick-start body"
+    );
 }
 
 #[test]

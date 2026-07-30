@@ -99,6 +99,7 @@ fn spawned_model_flag_parses_into_model_override() {
         "-s".into(),
         "child-session".into(),
         "--persist".into(),
+        "--spawned".into(),
         "--model".into(),
         "openai/spawned-model".into(),
         "--config".into(),
@@ -109,6 +110,10 @@ fn spawned_model_flag_parses_into_model_override() {
         flags.model_override.as_deref(),
         Some("openai/spawned-model"),
         "child must parse the spawned --model into model_override; stderr={stderr}"
+    );
+    assert!(
+        flags.spawned,
+        "child argv from SpawnTool must set spawned; stderr={stderr}"
     );
 }
 
@@ -148,10 +153,12 @@ fn spawned_model_end_to_end_overrides_config_default() {
         "-s".into(),
         "child-session".into(),
         "--persist".into(),
+        "--spawned".into(),
         "--model".into(),
         "openai/spawned-model".into(),
     ];
     let flags = parse_agent_flags(&argv, &mut stderr).unwrap();
+    assert!(flags.spawned);
     let effective = super::agent_tool_registry::resolve_agent_model(
         flags.model_override.as_deref(),
         "anthropic/config-default",

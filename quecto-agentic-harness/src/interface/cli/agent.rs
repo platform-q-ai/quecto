@@ -55,17 +55,19 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut workflow_guards = false;
     let mut workflow_spec_path: Option<std::path::PathBuf> = None;
     let mut parent_id: Option<String> = None;
+    let mut spawned = false;
     let mut i = 0;
 
     while i < args.len() {
         match args[i].as_str() {
             f @ ("--no-session" | "--no-sandbox" | "--persist" | "--workflow"
-            | "--workflow-guards") => {
+            | "--workflow-guards" | "--spawned") => {
                 *match f {
                     "--no-session" => &mut no_session,
                     "--no-sandbox" => &mut no_sandbox,
                     "--persist" => &mut persist,
                     "--workflow" => &mut workflow,
+                    "--spawned" => &mut spawned,
                     _ => &mut workflow_guards,
                 } = true;
                 if f == "--workflow" {
@@ -181,6 +183,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         workflow_disabled: no_workflow_requested,
         workflow_spec_path,
         parent_id,
+        spawned,
     };
     validate_agent_flags(flags, stderr)
 }
@@ -242,8 +245,9 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
 
-    // Build system prompt: docs policy + extensions + user prompt.
-    let mut system = crate::interface::shared::build_system_prompt(&flags.system_prompt);
+    // Build system prompt: top-level parent guidance, or minimal child prompt (#1319).
+    let mut system =
+        crate::interface::shared::build_system_prompt(&flags.system_prompt, flags.spawned);
     crate::interface::shared::append_extension_prompt(
         &mut system,
         &build.extension_prompt_snippets,
@@ -653,7 +657,8 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     // session (#1113): workflow state is never appended, so the provider-side
     // cached prefix survives every workflow step. Dynamic workflow state
     // reaches the model through tool results and idle-boundary nudges.
-    let mut system_prompt = crate::interface::shared::build_system_prompt(&flags.system_prompt);
+    let mut system_prompt =
+        crate::interface::shared::build_system_prompt(&flags.system_prompt, flags.spawned);
     crate::interface::shared::append_extension_prompt(
         &mut system_prompt,
         &build.extension_prompt_snippets,

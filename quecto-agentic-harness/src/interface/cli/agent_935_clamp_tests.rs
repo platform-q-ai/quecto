@@ -41,6 +41,7 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
         workflow_disabled: false,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");

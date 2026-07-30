@@ -157,12 +157,54 @@ fn parent_id_sets_value() {
     let mut e = String::new();
     let f = parse_agent_flags(&argv(&["--parent-id", "root-1"]), &mut e).unwrap();
     assert_eq!(f.parent_id.as_deref(), Some("root-1"));
+    // #1319: parent_id alone must not imply spawned.
+    assert!(!f.spawned);
 }
 
 #[test]
 fn parent_id_missing_value_none() {
     let mut e = String::new();
     assert!(parse_agent_flags(&argv(&["--parent-id"]), &mut e).is_none());
+}
+
+/// #1319: internal `--spawned` parses as an explicit flag, independent of parent-id.
+#[test]
+fn spawned_flag_sets_value() {
+    let mut e = String::new();
+    let f = parse_agent_flags(&argv(&["--spawned"]), &mut e).unwrap();
+    assert!(f.spawned);
+    assert!(f.parent_id.is_none());
+}
+
+/// #1319: default (top-level) agents are not spawned.
+#[test]
+fn spawned_defaults_false() {
+    let mut e = String::new();
+    let f = parse_agent_flags(&argv(&["--mode", "uds"]), &mut e).unwrap();
+    assert!(!f.spawned);
+}
+
+/// #1319: child argv shape from SpawnTool parses both flags independently.
+#[test]
+fn spawned_and_parent_id_parse_together() {
+    let mut e = String::new();
+    let f = parse_agent_flags(
+        &argv(&[
+            "--mode",
+            "uds",
+            "-s",
+            "child",
+            "--persist",
+            "--spawned",
+            "--parent-id",
+            "parent-7",
+        ]),
+        &mut e,
+    )
+    .unwrap();
+    assert!(f.spawned);
+    assert_eq!(f.parent_id.as_deref(), Some("parent-7"));
+    assert!(f.uds_mode);
 }
 
 #[test]
@@ -292,6 +334,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         workflow_disabled: true,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     };
     let ctx = CliContext::default();
     let mut stderr = String::new();
@@ -320,6 +363,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         workflow_disabled: true,
         workflow_spec_path: None,
         parent_id: None,
+        spawned: false,
     };
     flags.persist = true;
     stderr.clear();
