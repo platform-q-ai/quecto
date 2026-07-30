@@ -181,10 +181,11 @@ fn selectable_item_modal_rejects_duplicate_ids() {
 }
 
 #[test]
-fn selectable_item_modal_sanitizes_control_characters() {
+fn selectable_item_modal_sanitizes_display_text_without_changing_canonical_ids() {
+    let raw_id = "bad\x1b[31m-id";
     let mut modal = SelectableItemModal::builder()
         .items(vec![FixtureItem {
-            id: "bad\x1b[31m-id",
+            id: raw_id,
             label: "Bad\x1b[31m Label",
             description: Some("Desc\nLine"),
             metadata: vec!["meta\x07data"],
@@ -205,6 +206,25 @@ fn selectable_item_modal_sanitizes_control_characters() {
     let rendered = strip_ansi(&raw_rendered);
     assert!(rendered.contains("Bad Label"), "{rendered}");
     assert!(rendered.contains("DescLine"), "{rendered}");
+
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert!(modal.handle_input(&Key::Enter));
+    assert_eq!(
+        modal.take_result(),
+        SelectableItemModalResult::Applied(set(&[raw_id]))
+    );
+}
+
+#[test]
+fn selectable_item_modal_rejects_duplicate_raw_ids_without_collapsing_sanitized_ids() {
+    let result = SelectableItemModal::builder()
+        .items(vec!["ab", "a\u{202E}b"])
+        .id(|item| (*item).to_string())
+        .label(|item| (*item).to_string())
+        .build()
+        .unwrap();
+
+    assert_eq!(result.visible_count(), 2);
 }
 
 #[test]

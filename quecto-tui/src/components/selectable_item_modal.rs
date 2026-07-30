@@ -140,10 +140,11 @@ impl<T> SelectableItemModalBuilder<T> {
         let mut rows = Vec::with_capacity(self.items.len());
 
         for item in &self.items {
-            let id = sanitize_control(&id(item));
+            let id = id(item);
             if !seen.insert(id.clone()) {
                 return Err(SelectableItemModalError::DuplicateId(id));
             }
+            let sanitized_id = sanitize_control(&id);
             let label = sanitize_control(&label(item));
             let description = self
                 .description
@@ -158,7 +159,7 @@ impl<T> SelectableItemModalBuilder<T> {
                 .into_iter()
                 .map(|s| sanitize_control(&s))
                 .collect();
-            let mut search_parts = vec![id.clone(), label.clone()];
+            let mut search_parts = vec![sanitized_id, label.clone()];
             if let Some(desc) = &description {
                 search_parts.push(desc.clone());
             }
@@ -174,7 +175,6 @@ impl<T> SelectableItemModalBuilder<T> {
         let enabled_ids = self
             .enabled_ids
             .into_iter()
-            .map(|id| sanitize_control(&id))
             .filter(|id| seen.contains(id))
             .collect::<BTreeSet<_>>();
 
