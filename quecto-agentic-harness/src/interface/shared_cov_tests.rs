@@ -154,6 +154,62 @@ async fn sync_credentials_to_manager_noop_when_env_unset() {
 
 // --- native extension build + registration ---
 
+#[tokio::test]
+async fn build_official_tool_registry_registers_common_bundled_native_surface() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = crate::infrastructure::config::Config::default();
+    let sandbox = crate::infrastructure::security::sandbox::Sandbox::for_agent_workspace(
+        &config,
+        tmp.path().to_path_buf(),
+        false,
+    );
+    let mut registry = build_official_tool_registry(
+        tmp.path().to_path_buf(),
+        sandbox,
+        crate::infrastructure::tools::bash::ExecOptions {
+            max_capture_bytes: 4,
+            ..crate::infrastructure::tools::bash::ExecOptions::default()
+        },
+        false,
+    );
+
+    let names: std::collections::BTreeSet<_> = registry
+        .definitions()
+        .iter()
+        .map(|definition| definition.name.as_ref())
+        .collect();
+    for required in [
+        "bash", "docs", "edit", "find", "grep", "ls", "read", "write",
+    ] {
+        assert!(names.contains(required), "missing official tool {required}");
+    }
+    assert!(registry.extension_names().is_empty());
+    for name in names {
+        let descriptor = registry.descriptor(name).expect("descriptor");
+        assert!(matches!(
+            descriptor.source,
+            crate::domain::tool_descriptor::ToolSource::BundledNative
+        ));
+        assert_eq!(descriptor.owner, "quecto:official-tools");
+        assert!(matches!(
+            descriptor.availability,
+            crate::domain::tool_descriptor::ToolAvailability::Enabled
+        ));
+    }
+    registry.unregister_extension("docs");
+    assert!(registry.descriptor("docs").is_some());
+
+    let output = registry
+        .execute("bash", r#"{"command":"printf abcdef"}"#)
+        .await
+        .expect("bash executes")
+        .content;
+    assert_eq!(
+        output, "abcd",
+        "custom exec capture limit should be applied"
+    );
+}
+
 #[test]
 fn build_and_register_native_extensions_registers_web_fetch() {
     let mut config = crate::infrastructure::config::Config::default();

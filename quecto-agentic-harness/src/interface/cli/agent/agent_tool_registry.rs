@@ -81,7 +81,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         max_capture_bytes: exec_settings,
         ..crate::infrastructure::tools::bash::ExecOptions::default()
     };
-    let mut registry = ToolRegistryImpl::with_core_tools_and_exec_options_spawned(
+    let mut registry = crate::interface::shared::build_official_tool_registry(
         workspace,
         sandbox,
         exec_options,

@@ -161,20 +161,12 @@ impl ToolRegistryImpl {
         exec_options: ExecOptions,
         spawned: bool,
     ) -> Self {
-        let mut reg = Self::new();
-        for tool in crate::infrastructure::extensions::native::build_official_tool_extensions(
+        crate::infrastructure::extensions::native::build_official_tool_registry(
             workspace,
             sandbox,
             exec_options,
             spawned,
         )
-        .into_iter()
-        .flat_map(|extension| extension.tools())
-        {
-            reg.register(tool);
-        }
-
-        reg
     }
 
     /// Remove a tool by name and permanently block re-registration.

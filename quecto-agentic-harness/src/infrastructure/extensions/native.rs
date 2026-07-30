@@ -239,6 +239,20 @@ pub fn register_bundled_native_tools(
     }
 }
 
+pub fn build_official_tool_registry(
+    workspace: PathBuf,
+    sandbox: crate::infrastructure::security::sandbox::Sandbox,
+    exec_options: crate::infrastructure::tools::bash::ExecOptions,
+    spawned: bool,
+) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    register_bundled_native_tools(
+        &mut registry,
+        build_official_tool_extensions(workspace, sandbox, exec_options, spawned),
+    );
+    registry
+}
+
 /// Build native extensions from web tool config.
 ///
 /// Builds a single `"web"` extension containing whichever web tools are

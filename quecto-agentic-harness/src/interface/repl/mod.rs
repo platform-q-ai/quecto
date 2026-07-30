@@ -291,8 +291,16 @@ pub fn run_repl<R: BufRead, W: Write>(
     }
     let sandbox = Sandbox::for_agent_workspace(ctx.config, workspace.clone(), ctx.flags.no_sandbox);
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(ctx.config);
-    let mut registry =
-        ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
+    let exec_options = crate::infrastructure::tools::bash::ExecOptions {
+        max_capture_bytes: exec_settings,
+        ..crate::infrastructure::tools::bash::ExecOptions::default()
+    };
+    let mut registry = crate::interface::shared::build_official_tool_registry(
+        workspace,
+        sandbox,
+        exec_options,
+        false,
+    );
     let ephemeral = ctx.flags.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {
         String::new()
