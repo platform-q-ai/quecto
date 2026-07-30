@@ -226,3 +226,108 @@ fn has_tool(exts: &[Arc<dyn Extension>], name: &str) -> bool {
         .flat_map(|e| e.tools())
         .any(|t| t.definition().name.as_ref() == name)
 }
+
+/// #1276 Phase 3 characterization: the official provider always supplies the
+/// workspace/search/docs surface under the stable extension owner id.
+#[test]
+fn build_official_tool_extensions_lists_core_workspace_tools() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sandbox = crate::infrastructure::security::sandbox::Sandbox::new(
+        Some(tmp.path().to_path_buf()),
+        true,
+    );
+    let exts = build_official_tool_extensions(
+        tmp.path().to_path_buf(),
+        sandbox,
+        crate::infrastructure::tools::bash::ExecOptions::default(),
+        false,
+    );
+    assert_eq!(exts.len(), 1);
+    assert_eq!(exts[0].name(), "quecto:official-tools");
+    for name in [
+        "bash", "read", "write", "edit", "ls", "grep", "find", "docs",
+    ] {
+        assert!(has_tool(&exts, name), "missing official tool {name}");
+    }
+}
+
+/// #1276 Phase 3: session-scoped provider supplies recall with the expected name.
+#[test]
+fn build_session_tool_extensions_supplies_recall() {
+    use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
+    use std::sync::Arc;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let exts = build_session_tool_extensions(SessionToolDeps {
+        spill_store: Arc::new(FileContextSpillStore::new(tmp.path().to_path_buf())),
+        session_key: "cli:test".into(),
+    });
+    assert_eq!(exts.len(), 1);
+    assert_eq!(exts[0].name(), "quecto:session-tools");
+    assert!(has_tool(&exts, "recall"));
+}
+
+/// #1276 Phase 3: agent-control provider supplies spawn + agent_cmd and live handles.
+#[test]
+fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let built = build_agent_control_tool_extensions(AgentControlToolDeps {
+        base_dir: tmp.path().to_path_buf(),
+        socket_dir: tmp.path().to_path_buf(),
+        restrict_to_workspace: true,
+        broadcast_tx: None,
+        parent_session_name: Some("parent".into()),
+    });
+    assert_eq!(built.extensions.len(), 1);
+    assert_eq!(built.extensions[0].name(), "quecto:agent-control");
+    assert!(has_tool(&built.extensions, "spawn"));
+    assert!(has_tool(&built.extensions, "agent_cmd"));
+    // Handles must remain live for composition-root wiring (#926).
+    let _ = built.subagent_registry;
+    let _ = built.notification_tx;
+    let _ = built.notification_rx;
+}
+
+/// #1276 Phase 3: workflow provider wraps an existing engine handle.
+#[test]
+fn build_workflow_tool_extension_supplies_workflow() {
+    let engine = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::domain::workflow::WorkflowEngine::new(
+            crate::domain::workflow::WorkflowConfig::default(),
+            false,
+        )
+        .unwrap(),
+    ));
+    let ext = build_workflow_tool_extension(WorkflowToolDeps {
+        engine,
+        event_emitter: None,
+    });
+    assert_eq!(ext.name(), "quecto:workflow");
+    assert!(has_tool(&[ext], "workflow"));
+}
+
+/// #1276 Phase 3: register_bundled_native_tools uses official (non-extension) path.
+#[test]
+fn register_bundled_native_tools_marks_official_not_extension_tracked() {
+    use crate::domain::tool_descriptor::ToolSource;
+    use crate::infrastructure::security::sandbox::Sandbox;
+    use crate::infrastructure::tools::registry::ToolRegistryImpl;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), true);
+    let mut registry = ToolRegistryImpl::new();
+    register_bundled_native_tools(
+        &mut registry,
+        build_official_tool_extensions(
+            tmp.path().to_path_buf(),
+            sandbox,
+            crate::infrastructure::tools::bash::ExecOptions::default(),
+            false,
+        ),
+    );
+    assert!(registry.get("bash").is_some());
+    let d = registry.descriptor("bash").unwrap();
+    assert!(matches!(d.source, ToolSource::BundledNative));
+    assert_eq!(d.owner.as_ref(), "quecto:official-tools");
+    assert!(!registry.extension_names().iter().any(|n| n == "bash"));
+}

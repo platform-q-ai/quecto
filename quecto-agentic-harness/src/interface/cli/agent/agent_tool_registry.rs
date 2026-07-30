@@ -1,10 +1,11 @@
 use super::*;
+use crate::infrastructure::extensions::native::{
+    AgentControlToolDeps, SessionToolDeps, build_agent_control_tool_extensions,
+    build_session_tool_extensions, register_bundled_native_tools,
+};
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
-use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
-use crate::infrastructure::tools::spawn::SpawnTool;
 
 pub(super) struct ToolRegistryBuild {
     pub(super) registry: ToolRegistryImpl,
@@ -93,27 +94,31 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         Session::build_key("cli", name)
     };
     let spill_store = Arc::new(FileContextSpillStore::new(base_dir.to_path_buf()));
-    registry.register(Arc::new(RecallTool::new(
-        spill_store.clone(),
-        session_key.clone(),
-    )));
-    let subagent_registry = AgentCmdTool::new_registry();
+    // Session + agent-control tools are supplied via the bundled native provider
+    // seam (#1276 Phase 3). Registration still uses `register` (not
+    // `register_extension`) so these tools stay non-unloadable official tools.
+    register_bundled_native_tools(
+        &mut registry,
+        build_session_tool_extensions(SessionToolDeps {
+            spill_store: spill_store.clone(),
+            session_key: session_key.clone(),
+        }),
+    );
     let socket_dir = crate::interface::shared::xdg_runtime_dir_or_temp();
-    let (notify_tx, notify_rx) =
-        crate::infrastructure::tools::subagent_registry::new_notification_channel();
-    registry.register(Arc::new(
-        SpawnTool::with_base_dir(vec![], restrict_to_workspace, base_dir.to_path_buf())
-            .with_socket_dir(socket_dir)
-            .with_registry(subagent_registry.clone())
-            .with_notify_tx(notify_tx)
-            // Forward spawned children's workflow_state events onto this agent's
-            // stream, tagged with the child id + this agent's id (PRD Stage B).
-            .with_event_forwarding(broadcast_tx.clone(), flags.session_name.clone()),
-    ));
-    let subagent_registry_for_protocol = subagent_registry.clone();
-    registry.register(Arc::new(
-        AgentCmdTool::new(subagent_registry).with_broadcast(broadcast_tx.clone()),
-    ));
+    let agent_control = build_agent_control_tool_extensions(AgentControlToolDeps {
+        base_dir: base_dir.to_path_buf(),
+        socket_dir,
+        restrict_to_workspace,
+        broadcast_tx: broadcast_tx.clone(),
+        // Forward spawned children's workflow_state events onto this agent's
+        // stream, tagged with the child id + this agent's id (PRD Stage B).
+        parent_session_name: flags.session_name.clone(),
+    });
+    register_bundled_native_tools(&mut registry, agent_control.extensions);
+    let notify_rx = agent_control.notification_rx;
+    // notify_tx is retained by SpawnTool inside the provider-built extension.
+    let _ = agent_control.notification_tx;
+    let subagent_registry_for_protocol = agent_control.subagent_registry;
     // Build a workflow event emitter from the broadcast channel (#598).
     // Stamp emitted workflow_state events with this agent's identity (its
     // session name) and its parent (PRD Stage B), so consumers can rebuild the

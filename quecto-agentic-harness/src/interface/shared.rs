@@ -113,25 +113,30 @@ pub type WorkflowStateHandle =
     std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>>;
 
 /// Register the workflow tool and optional guard in a tool registry.
+///
+/// Tool construction goes through the bundled native provider seam (#1276 Phase 3)
+/// while engine-handle sharing and optional guard registration stay identical.
 pub fn register_workflow_tool(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     wf_config: crate::domain::workflow::WorkflowConfig,
     guards_enabled: bool,
     event_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter>,
 ) -> Result<WorkflowStateHandle, crate::domain::workflow::WorkflowError> {
+    use crate::infrastructure::extensions::native::{
+        WorkflowToolDeps, build_workflow_tool_extension, register_bundled_native_tools,
+    };
+
     let engine: WorkflowStateHandle = std::sync::Arc::new(std::sync::Mutex::new(
         crate::domain::workflow::WorkflowEngine::new(wf_config, guards_enabled)?,
     ));
 
-    let tool = if let Some(emitter) = event_emitter {
-        crate::infrastructure::tools::workflow_tool::WorkflowTool::with_event_emitter(
-            engine.clone(),
-            emitter,
-        )
-    } else {
-        crate::infrastructure::tools::workflow_tool::WorkflowTool::new(engine.clone())
-    };
-    registry.register(std::sync::Arc::new(tool));
+    register_bundled_native_tools(
+        registry,
+        vec![build_workflow_tool_extension(WorkflowToolDeps {
+            engine: engine.clone(),
+            event_emitter,
+        })],
+    );
 
     if guards_enabled {
         let guard = crate::infrastructure::tools::workflow_tool::WorkflowGuard::new(engine.clone());

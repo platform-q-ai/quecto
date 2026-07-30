@@ -282,3 +282,152 @@ fn load_workflow_spec_consumes_the_file_on_success() {
     // Single-use: the spec must not linger beside the socket after being read.
     assert!(!path.exists(), "spec file was not consumed after loading");
 }
+
+/// #1276 Phase 3 characterization: agent-control tools are always present on
+/// the CLI composition root with official-native descriptors and are not
+/// unloadable via the extension lifecycle path.
+#[test]
+fn build_tool_registry_registers_agent_control_tools_as_official_native() {
+    use crate::domain::tool_descriptor::{ToolAvailability, ToolSource};
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config::default();
+    let http = reqwest::Client::new();
+    let flags = flags();
+    let mut stderr = String::new();
+
+    let built = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        config: &config,
+        http_client: &http,
+        flags: &flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    for name in ["recall", "spawn", "agent_cmd"] {
+        assert!(
+            built.registry.get(name).is_some(),
+            "{name} must be registered"
+        );
+        let descriptor = built
+            .registry
+            .descriptor(name)
+            .unwrap_or_else(|| panic!("missing descriptor for {name}"));
+        assert!(
+            matches!(descriptor.source, ToolSource::BundledNative),
+            "{name} source"
+        );
+        assert_eq!(descriptor.owner.as_ref(), "quecto:official-tools");
+        assert!(matches!(descriptor.availability, ToolAvailability::Enabled));
+        assert!(
+            !built.registry.extension_names().iter().any(|n| n == name),
+            "{name} must not be unloadable via unregister_extension"
+        );
+        assert!(
+            built
+                .registry
+                .definitions()
+                .iter()
+                .any(|d| d.name.as_ref() == name),
+            "{name} must be model-visible"
+        );
+    }
+
+    assert!(
+        built.registry.get("workflow").is_none(),
+        "workflow stays off when not uds / disabled"
+    );
+    assert!(built.notification_rx.is_some());
+    assert!(built.subagent_registry.is_some());
+    assert!(built.workflow_state.is_none());
+}
+
+/// #1276 Phase 3 characterization: UDS + workflow flag wires the workflow tool
+/// and keeps the shared engine handle live for guards/binding.
+#[test]
+fn build_tool_registry_registers_workflow_when_uds_and_enabled() {
+    use crate::domain::tool_descriptor::ToolSource;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config::default();
+    let http = reqwest::Client::new();
+    let mut flags = flags();
+    flags.uds_mode = true;
+    flags.workflow_disabled = false;
+    flags.workflow = true;
+    flags.workflow_guards = true;
+    let mut stderr = String::new();
+
+    let built = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        config: &config,
+        http_client: &http,
+        flags: &flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    assert!(built.registry.get("workflow").is_some());
+    let descriptor = built.registry.descriptor("workflow").unwrap();
+    assert!(matches!(descriptor.source, ToolSource::BundledNative));
+    assert_eq!(descriptor.owner.as_ref(), "quecto:official-tools");
+    assert!(
+        !built
+            .registry
+            .extension_names()
+            .iter()
+            .any(|n| n == "workflow")
+    );
+    assert!(built.workflow_state.is_some());
+    assert_eq!(
+        built.registry.guard_count(),
+        1,
+        "workflow_guards must register the guard"
+    );
+}
+
+/// #1276 Phase 3 characterization: config-gated web tools remain extension-
+/// tracked (unloadable) while still advertising official-native ownership.
+#[test]
+fn build_tool_registry_registers_web_tools_as_extension_owned_official_native() {
+    use crate::domain::tool_descriptor::ToolSource;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.tools.web.fetch.enabled = true;
+    config.tools.web.brave.enabled = true;
+    config.tools.web.brave.api_key = "test-key".into();
+    let http = reqwest::Client::new();
+    let flags = flags();
+    let mut stderr = String::new();
+
+    let built = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        config: &config,
+        http_client: &http,
+        flags: &flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    for name in ["web_search", "web_fetch"] {
+        assert!(built.registry.get(name).is_some(), "{name} registered");
+        let descriptor = built.registry.descriptor(name).unwrap();
+        assert!(matches!(descriptor.source, ToolSource::BundledNative));
+        assert_eq!(descriptor.owner.as_ref(), "quecto:official-tools");
+        assert!(
+            built.registry.extension_names().iter().any(|n| n == name),
+            "{name} stays extension-tracked for unload semantics"
+        );
+    }
+}
