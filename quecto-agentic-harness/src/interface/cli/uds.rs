@@ -332,9 +332,11 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     let message = Message::user(message);
     if let Err(err) = persist_user_prompt_before_run(ctx, &message).await {
         tracing::warn!("failed to persist user prompt before turn: {err}");
-    } else {
-        ctx.last_persisted_message_index = ctx.messages.len() + 1;
     }
+    // On success, persist_user_prompt_before_run already set last_persisted_message_index
+    // to the durable (system-stripped) length. Do not overwrite with live len+1: live
+    // messages may include an injected system prompt, which skews clean-delta appends
+    // and freezes load()/resume history (#1322).
     let outcome = run_prompt_dispatch(ctx, message, cancel_rx).await;
     disarm_cancel(&ctx.cancel_handle);
     // #1072: persist_current_session drains the durable-prefix dirty latch after every outcome.
