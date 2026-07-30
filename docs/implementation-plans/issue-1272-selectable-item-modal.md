@@ -57,6 +57,52 @@ Proposed API shape:
 - Public methods should make semantics unambiguous and follow existing naming/accessor style: `take_result`, `selected_item`, `visible_count`, `toggle_selected`, `enable_visible`, `disable_visible`, and only add `enable_all_items`/`disable_all_items` if those all-item operations are needed and explicitly named.
 - Add a modal helper such as `build_selectable_item_modal_overlay(title, footer, modal, terminal_width, terminal_height)` that delegates to the existing `build_select_overlay` closure API; keep it `pub(crate)` unless a real external crate boundary requires `pub`.
 
+Provider/consumer API shape:
+- Introduce a small adapter trait or builder-facing provider contract so callers expose domain items without coupling the modal to models/tools/workflows. The modal should own its normalized rows after construction, while providers remain responsible for loading domain data and persisting the applied enabled IDs.
+- Recommended contract shape, naming to be finalized during implementation:
+
+  ```rust
+  pub(crate) trait SelectableItemProvider {
+      type Item;
+
+      fn items(&self) -> Vec<Self::Item>;
+      fn enabled_ids(&self) -> BTreeSet<String>;
+      fn id(&self, item: &Self::Item) -> String;
+      fn label(&self, item: &Self::Item) -> String;
+      fn description(&self, item: &Self::Item) -> Option<String> {
+          None
+      }
+      fn search_metadata(&self, item: &Self::Item) -> Vec<String> {
+          Vec::new()
+      }
+      fn apply_enabled_ids(&mut self, enabled_ids: BTreeSet<String>);
+      fn dismiss(&mut self) {}
+  }
+  ```
+
+- Also support closure/builder construction for lightweight call sites that do not need a named provider type:
+
+  ```rust
+  let modal = SelectableItemModal::builder()
+      .items(provider.items())
+      .enabled_ids(provider.enabled_ids())
+      .id(|item| item.id.clone())
+      .label(|item| item.display_name.clone())
+      .description(|item| item.summary.clone())
+      .search_metadata(|item| vec![item.kind.clone(), item.provider.clone()])
+      .build()?;
+  ```
+
+- Provider integration should be explicit and two-phase:
+  - providers pass the original enabled set into the modal;
+  - the modal mutates only its working set while open;
+  - callers inspect `take_result()`;
+  - callers invoke `provider.apply_enabled_ids(ids)` only for `Applied(ids)`;
+  - callers invoke `provider.dismiss()` or no-op cleanup for `Dismissed`.
+- Provider-owned domain item types should never leak into the modal's public result. Results should be stable IDs only, keeping persistence and side effects in the provider layer.
+- Provider tests should include model/tool/workflow-shaped fixtures that implement the same provider contract and assert that each can construct the modal without duplicating filter/toggle/apply logic.
+- Keep provider contract visibility `pub(crate)` unless a concrete external crate needs to consume it. If only tests need polymorphism, prefer the builder API plus fixture helpers over a trait that would be unused by production code.
+
 ### Task checklist
 
 - [ ] Add focused tests first for fuzzy filtering across label + metadata, empty state after no matches, clear-search behavior, per-item toggle, visible bulk enable/disable, apply result, dismissed result, and `take_result` resetting to `Pending`.
