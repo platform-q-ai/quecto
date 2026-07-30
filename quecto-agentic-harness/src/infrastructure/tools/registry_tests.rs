@@ -453,3 +453,39 @@ fn disable_or_enable_unknown_tool_returns_false() {
     assert!(!reg.disable_tool("no_such_tool"));
     assert!(!reg.enable_tool("no_such_tool"));
 }
+
+#[test]
+fn trait_paths_expose_descriptors_and_runtime_policy() {
+    use crate::domain::tool::{ExtensionToolRegistry, ToolCatalog};
+
+    let (mut reg, _tmp) = test_registry();
+    {
+        let catalog: &dyn ToolCatalog = &reg;
+        assert!(
+            catalog
+                .descriptors()
+                .iter()
+                .any(|d| d.definition.name.as_ref() == "bash")
+        );
+    }
+
+    {
+        let ext: &mut dyn ExtensionToolRegistry = &mut reg;
+        assert!(ext.disable_tool("bash"));
+        assert!(ext.enable_tool("bash"));
+        // no-op when already enabled
+        assert!(ext.enable_tool("bash"));
+        assert!(ext.register_uds_extension(std::sync::Arc::new(DummyTestTool::new("wx"))));
+        assert!(ext.extension_names().iter().any(|n| n == "wx"));
+    }
+}
+
+#[test]
+fn disable_then_disable_again_is_idempotent() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(reg.disable_tool("read"));
+    assert!(reg.disable_tool("read"));
+    assert!(!reg.definitions().iter().any(|d| d.name.as_ref() == "read"));
+    assert!(reg.enable_tool("read"));
+    assert!(reg.enable_tool("read"));
+}
