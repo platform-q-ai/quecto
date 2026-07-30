@@ -2,7 +2,24 @@
 
 **Status:** Proposed.
 
-**Implementation status:** Initial migration seam in progress for issue #1276.
+**Implementation status (issue #1276):**
+
+- **Phase 1–2 (landed):** `ToolDescriptor` / `ToolSource` / `ToolAvailability`,
+  runtime enable/disable, and core FS/exec/search/docs construction via
+  `build_official_tool_extensions`. UDS tools share the descriptor/policy path.
+- **Phase 3 (this slice):** Remaining official/default model-callable tools are
+  supplied through bundled native provider seams:
+  - `build_session_tool_extensions` → `recall`
+  - `build_agent_control_tool_extensions` → `spawn` + `agent_cmd` (+ live handles)
+  - `build_workflow_tool_extension` / `register_workflow_tool` → `workflow`
+  - `build_native_extensions` → config-gated web tools (still
+    `register_extension` for unload/shadow parity)
+  - `register_bundled_native_tools` for non-unloadable official registration
+  Composition roots (CLI agent, REPL, shared workflow helper) consume these
+  providers instead of constructing concrete production tool types ad hoc.
+  `DocsTool::with_spawned` remains transitional.
+- **Still open (not this PR):** full parent/child profile policy rewrite, TUI
+  modal, intentional behaviour changes, WASM.
 
 ## Context
 
