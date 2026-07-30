@@ -137,30 +137,38 @@ pub trait ToolExecutor: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>>;
 }
 
-/// Port: extension-tool lifecycle management.
+/// Port: runtime-loadable tool lifecycle management.
 ///
-/// Registries that do not support dynamic extension tools may keep the default
-/// inert behaviour; UDS extension handling depends on the concrete adapter
-/// overriding these methods.
+/// This port is about provider lifecycle, not the common catalogue meaning of
+/// "extension" in #1276. Bundled native extension tools are compiled into Quecto
+/// and should remain registered while policy enables/disables them. UDS tools are
+/// runtime-loadable: they may be registered, unregistered, or removed on client
+/// disconnect.
 pub trait ExtensionToolRegistry: Send + Sync {
-    /// Return names of tools registered from extensions (not core tools).
+    /// Return names of runtime-loadable tools currently owned by dynamic providers.
+    ///
+    /// Historical name retained for compatibility; this is not the complete
+    /// native+UDS extension catalogue.
     fn extension_names(&self) -> Vec<String> {
         vec![]
     }
 
-    /// Register a single extension tool.
+    /// Register a runtime-loadable extension tool.
     ///
-    /// Rejects tools that shadow core tool names. Default: no-op.
+    /// Historical compatibility API. Bundled native extension tools should use
+    /// the catalogue/registry registration path with bundled-native metadata,
+    /// not this UDS/runtime lifecycle path. Default: no-op.
     fn register_extension(&mut self, _tool: std::sync::Arc<dyn Tool>) -> bool {
         false
     }
 
-    /// Unregister a single extension tool by name.
+    /// Unregister a runtime-loadable tool by name.
     ///
-    /// No-op if the name is not an extension tool. Default: no-op.
+    /// No-op if the name is not owned by a dynamic provider. Bundled native tools
+    /// are disabled/enabled by policy rather than unloaded. Default: no-op.
     fn unregister_extension(&mut self, _name: &str) {}
 
-    /// Register a UDS-delivered extension tool.
+    /// Register a UDS-delivered runtime-loadable extension tool.
     fn register_uds_extension(&mut self, tool: std::sync::Arc<dyn Tool>) -> bool {
         self.register_extension(tool)
     }

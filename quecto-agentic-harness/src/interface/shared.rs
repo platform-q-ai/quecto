@@ -632,15 +632,19 @@ pub fn build_and_register_native_extensions(
     ext_registry
 }
 
-/// Register extension tools, rejecting any that shadow core tools.
+/// Register config-gated bundled native provider tools into the official tool surface.
+///
+/// This compatibility helper is currently used for web search/fetch. These tools
+/// are native extensions in the #1276 sense: compiled into Quecto, directly
+/// invoked in-process, and governed by catalogue/policy enablement. They are not
+/// UDS/runtime-loadable tools, so they must use the bundled-native registration
+/// path rather than the historical `register_extension` lifecycle API.
 pub fn register_extension_tools(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     ext_registry: &crate::infrastructure::extensions::registry::ExtensionRegistry,
 ) {
     for tool in ext_registry.all_tools() {
-        // `register_extension` tracks the tool as an extension and rejects
-        // shadows of core tools automatically.
-        registry.register_extension(tool);
+        registry.register(tool);
     }
 }
 

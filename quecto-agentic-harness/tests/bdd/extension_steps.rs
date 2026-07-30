@@ -300,15 +300,15 @@ fn given_native_ext_in_registry(world: &mut QuectoWorld, name: String) {
     reg.register(ext);
 }
 
-#[given(expr = "a native extension {string} registered as an extension tool")]
-#[when(expr = "a native extension {string} is registered as an extension tool")]
+#[given(expr = "a native extension {string} registered as a bundled native tool")]
+#[when(expr = "a native extension {string} is registered as a bundled native tool")]
 fn given_native_ext_in_tool_registry(world: &mut QuectoWorld, name: String) {
     let tool: Arc<dyn Tool> = Arc::new(DummyTool {
         name: name.clone(),
         description: format!("Native {}", name),
     });
     let reg = world.tool_registry.as_mut().expect("need tool registry");
-    reg.register_extension(tool);
+    reg.register(tool);
 }
 
 #[then(expr = "the tool registry extension names should include {string}")]

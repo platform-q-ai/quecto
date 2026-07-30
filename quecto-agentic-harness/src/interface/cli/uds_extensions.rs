@@ -7,10 +7,12 @@ use super::uds::{DispatchCtx, emit_event_to_broadcast_or_writer};
 
 pub(super) type ExtensionSnapshot = std::sync::Arc<tokio::sync::RwLock<Vec<serde_json::Value>>>;
 
-/// Build the list of registered extension tools for `get_extensions` responses.
+/// Build the list of runtime-loadable UDS tools for `get_extensions` responses.
 ///
-/// Includes tools from both the `ExtensionRegistry` (native) and
-/// UDS-registered tools (from `register_tools` protocol commands).
+/// Historical UDS protocol name retained for compatibility. This is not the
+/// complete #1276 native+UDS tool catalogue: bundled native extension tools are
+/// reported through tool descriptors/catalogue state and are not governed by UDS
+/// load/unload lifecycle.
 pub(super) fn build_extension_list(ctx: &DispatchCtx<'_>) -> Vec<serde_json::Value> {
     let ext_names: std::collections::HashSet<String> = ctx
         .agent

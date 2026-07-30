@@ -246,9 +246,10 @@ pub fn register_bundled_native_tools(
 /// - `web_search` — registered when `brave.enabled` or `duckduckgo.enabled`
 /// - `web_fetch` — registered when `fetch.enabled`
 ///
-/// Returns a list of extensions to register. Caller is responsible for
-/// registering them via `ExtensionRegistry::register()` and/or
-/// `ToolRegistryImpl::register_extension()`.
+/// Returns bundled native extension providers. Caller is responsible for
+/// preserving prompt snippets in `ExtensionRegistry` if needed and registering
+/// their tools through the bundled-native registry path, not the UDS/runtime
+/// lifecycle path.
 pub fn build_native_extensions(
     web_config: &crate::infrastructure::config::WebToolConfig,
     http_client: &reqwest::Client,

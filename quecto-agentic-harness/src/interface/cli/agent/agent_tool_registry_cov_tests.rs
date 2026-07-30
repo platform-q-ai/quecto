@@ -393,10 +393,10 @@ fn build_tool_registry_registers_workflow_when_uds_and_enabled() {
     );
 }
 
-/// #1276 Phase 3 characterization: config-gated web tools remain extension-
-/// tracked (unloadable) while still advertising official-native ownership.
+/// #1276 Phase 3 characterization: config-gated web tools are bundled native
+/// official tools, not runtime-unloadable extension tools.
 #[test]
-fn build_tool_registry_registers_web_tools_as_extension_owned_official_native() {
+fn build_tool_registry_registers_web_tools_as_bundled_native_official_tools() {
     use crate::domain::tool_descriptor::ToolSource;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -426,8 +426,16 @@ fn build_tool_registry_registers_web_tools_as_extension_owned_official_native() 
         assert!(matches!(descriptor.source, ToolSource::BundledNative));
         assert_eq!(descriptor.owner.as_ref(), "quecto:official-tools");
         assert!(
-            built.registry.extension_names().iter().any(|n| n == name),
-            "{name} stays extension-tracked for unload semantics"
+            !built.registry.extension_names().iter().any(|n| n == name),
+            "{name} must not be runtime-unloadable"
+        );
+        assert!(
+            built
+                .registry
+                .definitions()
+                .iter()
+                .any(|d| d.name.as_ref() == name),
+            "{name} must remain model-visible"
         );
     }
 }
