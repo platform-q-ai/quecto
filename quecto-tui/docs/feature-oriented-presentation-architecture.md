@@ -290,6 +290,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `components/overlay.rs` | `components` overlay primitive (relocated, #1257 Phase 6) |
 | `components/select_list.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/select_overlay.rs` | `components` overlay primitive (relocated, #1257 Phase 6) |
+| `components/selectable_item_modal.rs` | `components` reusable selectable item modal (#1272) |
 | `components/spinner.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/suggestion_list.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/theme.rs` | `components` styling primitive (relocated, #1257 Phase 6) |
