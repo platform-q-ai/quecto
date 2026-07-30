@@ -416,10 +416,10 @@ pub(super) async fn dispatch_register_tools(
     let ext_names = ctx.agent.tool_registry_extension_names();
     let core_names: std::collections::HashSet<String> = ctx
         .agent
-        .tool_definitions()
+        .tool_descriptors()
         .iter()
-        .filter(|d| !ext_names.contains(&d.name.to_string()))
-        .map(|d| d.name.to_string())
+        .filter(|d| !ext_names.contains(&d.name().to_string()))
+        .map(|d| d.name().to_string())
         .collect();
 
     let (ok, ev, new_tools) = handle_register_tools(RegisterToolsArgs {
