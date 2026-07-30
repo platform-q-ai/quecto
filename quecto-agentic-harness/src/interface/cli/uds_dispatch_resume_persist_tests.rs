@@ -1,10 +1,18 @@
 //! Resume/prompt persistence dispatch regression tests split from
 //! `uds_dispatch_cov_tests.rs` to keep coverage files below the line-count gate.
 
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+
 use super::cov_tests::Fixture;
 use super::{dispatch_command, handle_resume_session, persist_current_session};
-use crate::domain::message::{Message, Role};
+use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::context_pruning::build_manifest_text;
+use crate::domain::error::DomainError;
+use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
+use crate::domain::provider::{ChatRequest, LlmProvider};
 use crate::domain::session::{Session, SessionStore};
+use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{inject_system_prompt, remove_injected_system_prompt};
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
@@ -306,6 +314,348 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
         assert_eq!(
             durable_contents(&loaded.messages),
             ["user-0", "stub response", "user-1", "stub response"]
+        );
+    }
+}
+
+/// Provider returning a scripted FIFO of responses (local copy; 1072 helpers
+/// are module-private).
+#[derive(Debug)]
+struct ScriptedProvider {
+    responses: Mutex<Vec<LlmResponse>>,
+}
+
+impl LlmProvider for ScriptedProvider {
+    fn name(&self) -> &str {
+        "scripted"
+    }
+
+    fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + '_>>
+    {
+        let response = self.responses.lock().unwrap().remove(0);
+        Box::pin(async move { Ok(response) })
+    }
+}
+
+struct FixedTool {
+    def: ToolDefinition,
+    output: String,
+}
+
+impl Tool for FixedTool {
+    fn definition(&self) -> ToolDefinition {
+        self.def.clone()
+    }
+
+    fn execute(
+        &self,
+        _arguments: &str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>>
+    {
+        let output = self.output.clone();
+        Box::pin(async move {
+            Ok(ToolResult {
+                content: output,
+                is_error: false,
+                image_blocks: vec![],
+            })
+        })
+    }
+}
+
+fn tool_call_response(name: &str) -> LlmResponse {
+    LlmResponse {
+        content: None,
+        tool_calls: vec![ToolCall {
+            id: format!("call_{name}"),
+            name: name.to_string(),
+            arguments: "{}".to_string(),
+        }],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    }
+}
+
+fn text_response(content: &str) -> LlmResponse {
+    LlmResponse {
+        content: Some(content.to_string()),
+        tool_calls: vec![],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    }
+}
+
+/// Reconstruct messages while asserting every append's `start_index` equals
+/// the reconstructed length *before* apply. Returns reconstructed messages.
+///
+/// After `min_appends` is observed (callers pass the expected floor for the
+/// turn under test), fails if the file collapsed to a single snapshot — that
+/// hides `start_index` bugs via dirty-path compaction.
+fn assert_jsonl_start_index_chain(raw: &str, min_appends: usize) -> Vec<serde_json::Value> {
+    let mut reconstructed: Vec<serde_json::Value> = Vec::new();
+    let mut cur = 0usize;
+    let mut append_count = 0usize;
+    let mut saw_snapshot = false;
+
+    for (line_no, line) in raw
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+    {
+        let record: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|err| panic!("line {}: invalid JSON ({err}): {line}", line_no + 1));
+        let ty = record
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| panic!("line {}: missing type: {line}", line_no + 1));
+        match ty {
+            "snapshot" => {
+                let messages = record
+                    .get("messages")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        panic!("line {}: snapshot missing messages: {line}", line_no + 1)
+                    });
+                reconstructed = messages;
+                cur = reconstructed.len();
+                saw_snapshot = true;
+                // A later compacting snapshot resets the chain; append_count
+                // stays cumulative so multi-turn clean path can still prove
+                // appends happened earlier — but a sole final snapshot after
+                // multi-turn is rejected via min_appends below.
+            }
+            "append" => {
+                assert!(
+                    saw_snapshot,
+                    "line {}: append before any snapshot: {line}",
+                    line_no + 1
+                );
+                let start_index = record
+                    .get("start_index")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or_else(|| {
+                        panic!("line {}: append missing start_index: {line}", line_no + 1)
+                    }) as usize;
+                assert_eq!(
+                    start_index,
+                    cur,
+                    "line {}: start_index {start_index} != reconstructed len {cur}: {line}",
+                    line_no + 1
+                );
+                let added = record
+                    .get("messages")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        panic!("line {}: append missing messages: {line}", line_no + 1)
+                    });
+                cur += added.len();
+                reconstructed.extend(added);
+                append_count += 1;
+            }
+            other => panic!(
+                "line {}: unknown record type {other:?}: {line}",
+                line_no + 1
+            ),
+        }
+    }
+
+    assert!(
+        saw_snapshot,
+        "JSONL must contain at least one snapshot record"
+    );
+    assert!(
+        append_count >= min_appends,
+        "anti-false-green: expected ≥{min_appends} append records after multi-turn clean \
+         path (got {append_count}); a single compacted snapshot hides start_index bugs. \
+         raw=\n{raw}"
+    );
+    reconstructed
+}
+
+/// #1326: multi-turn clean-path persist (tools + durable manifest) must keep
+/// the on-disk JSONL `start_index` chain contiguous. Content/watermark-only
+/// coverage in #1324 does not read raw append coordinates.
+#[tokio::test]
+async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest() {
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    registry.register(Arc::new(FixedTool {
+        def: ToolDefinition {
+            name: "echo_tool".to_string().into(),
+            description: "fixed tool for start_index continuity".to_string().into(),
+            parameters_schema: r#"{"type":"object"}"#.to_string().into(),
+        },
+        output: "tool-result-payload".to_string(),
+    }));
+
+    // Turn 0: plain text. Turn 1: tool-call then final text. Turn 2: plain text.
+    let provider = Arc::new(ScriptedProvider {
+        responses: Mutex::new(vec![
+            text_response("assistant-0"),
+            tool_call_response("echo_tool"),
+            text_response("assistant-1-final"),
+            text_response("assistant-2"),
+        ]),
+    });
+
+    let mut fx = Fixture::new().with_system_prompt("be helpful");
+    fx.agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(registry),
+        model: "stub".into(),
+        max_tokens: 100,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "cli:test".into(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+    });
+
+    // Durable index 0: non-stripped spill manifest (survives inject/strip).
+    let mut manifest = Message::system(build_manifest_text());
+    manifest.is_manifest = true;
+    manifest.is_pinned = true;
+    fx.messages.push(manifest);
+
+    let users = ["user-0", "user-1-tools", "user-2"];
+    let session_path = {
+        let mut ctx = fx.ctx();
+        let path = ctx.base_dir.join("sessions/cli_test.json");
+        inject_system_prompt(ctx.messages, ctx.system_prompt);
+        // Live: [injected system, manifest, …]; durable-on-disk: [manifest, …].
+        assert_eq!(ctx.messages.len(), 2);
+        assert!(!ctx.messages[0].is_manifest);
+        assert!(ctx.messages[1].is_manifest);
+
+        for (turn, user) in users.iter().enumerate() {
+            assert!(
+                !dispatch_command(prompt(user), &mut ctx).await,
+                "prompt dispatch should keep the connection open (turn {turn})"
+            );
+            let raw = std::fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("session JSONL missing after turn {turn}: {err}"));
+            // After ≥2 turns the clean path must have produced append records;
+            // require at least one append once turn index ≥ 1.
+            let min_appends = if turn >= 1 { 1 } else { 0 };
+            let chain = assert_jsonl_start_index_chain(&raw, min_appends);
+            assert!(
+                !chain.is_empty(),
+                "reconstructed chain empty after turn {turn}"
+            );
+            assert_eq!(
+                chain[0].get("is_manifest").and_then(|v| v.as_bool()),
+                Some(true),
+                "durable index 0 must remain the manifest after turn {turn}"
+            );
+            // Injected system prompt must not appear on disk.
+            assert!(
+                chain.iter().all(|m| {
+                    m.get("is_manifest")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                        || m.get("role").and_then(|v| v.as_str()) != Some("system")
+                        || m.get("content").and_then(|v| v.as_str()) != Some("be helpful")
+                }),
+                "injected system must not be durable after turn {turn}"
+            );
+        }
+
+        path
+    };
+
+    // End-state: load agrees with raw chain; tool turn landed; tip matches.
+    let raw = std::fs::read_to_string(&session_path).expect("final session JSONL");
+    let chain = assert_jsonl_start_index_chain(&raw, 1);
+    let loaded = fx
+        .store
+        .load("cli:test")
+        .await
+        .unwrap()
+        .expect("session must be on disk after multi-turn prompts");
+    assert_eq!(
+        loaded.messages.len(),
+        chain.len(),
+        "load() len must equal reconstructed JSONL chain len"
+    );
+    assert!(
+        loaded.messages[0].is_manifest,
+        "loaded durable[0] must be the seeded manifest"
+    );
+    assert!(
+        loaded
+            .messages
+            .iter()
+            .any(|m| m.role == Role::Tool && m.content == "tool-result-payload"),
+        "tool result must be durable after the tool-bearing turn"
+    );
+    assert!(
+        loaded.messages.iter().any(|m| {
+            m.role == Role::Assistant
+                && !m.tool_calls.is_empty()
+                && m.tool_calls[0].name == "echo_tool"
+        }),
+        "tool-call assistant must be durable after the tool-bearing turn"
+    );
+
+    let tip = loaded
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role != Role::System)
+        .expect("loaded tip");
+    assert_eq!(tip.role, Role::Assistant);
+    assert_eq!(tip.content, "assistant-2");
+
+    // Optional resume path (mirrors #1324): full chain survives resume.
+    fx.store
+        .save(&Session {
+            key: Session::build_key("cli", "saved-jsonl-chain"),
+            messages: loaded.messages.clone(),
+            workflow_run: None,
+        })
+        .await
+        .unwrap();
+    {
+        let mut ctx = fx.ctx();
+        assert!(
+            !handle_resume_session(
+                &mut ctx,
+                Some("rs"),
+                "resume_session",
+                "saved-jsonl-chain".into(),
+            )
+            .await
+        );
+        assert!(
+            ctx.messages.iter().any(|m| m.is_manifest),
+            "resume must keep the durable manifest"
+        );
+        let resumed_tip = ctx
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role != Role::System)
+            .expect("resumed tip");
+        assert_eq!(resumed_tip.role, Role::Assistant);
+        assert_eq!(resumed_tip.content, "assistant-2");
+        assert!(
+            ctx.messages
+                .iter()
+                .any(|m| m.role == Role::Tool && m.content == "tool-result-payload"),
+            "resume must keep the tool result"
         );
     }
 }
