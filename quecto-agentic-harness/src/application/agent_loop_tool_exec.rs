@@ -97,10 +97,9 @@ impl AgentLoopImpl {
         let tool_result = self.tool_executor().execute(&tc.name, &tc.arguments).await;
         let duration_ms = start.elapsed().as_millis() as u64;
 
-        let is_err = tool_result.is_err();
-        let (content, image_blocks) = match tool_result {
-            Ok(tr) => (tr.content, tr.image_blocks),
-            Err(e) => (format!("Error: {}", e), vec![]),
+        let (content, image_blocks, is_err) = match tool_result {
+            Ok(tr) => (tr.content, tr.image_blocks, tr.is_error),
+            Err(e) => (format!("Error: {}", e), vec![], true),
         };
 
         // Emit ToolFinished so the REPL can replace the spinner line.
