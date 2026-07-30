@@ -18,43 +18,68 @@ use crate::infrastructure::security::sandbox::Sandbox;
 
 use super::bash::ExecOptions;
 
+/// Ownership and lifecycle metadata supplied when a tool enters the common
+/// registry. Delivery adapters (bundled native, UDS, future sources) differ only
+/// in this metadata and in the concrete `Tool` implementation/proxy they supply.
 #[derive(Debug, Clone)]
-struct ToolRegistrationMetadata {
-    source: ToolSource,
-    owner: Cow<'static, str>,
-    availability: ToolAvailability,
+pub struct ToolRegistration {
+    pub source: ToolSource,
+    pub owner: Cow<'static, str>,
+    pub availability: ToolAvailability,
+    /// Whether lifecycle APIs may unregister this concrete registration without
+    /// removing/denying the stable tool name. UDS tools are unloadable when their
+    /// connection unregisters or disconnects; bundled native tools are not.
+    pub unloadable: bool,
 }
 
-impl ToolRegistrationMetadata {
-    fn official_native() -> Self {
+impl ToolRegistration {
+    pub fn official_native() -> Self {
         Self {
             source: ToolSource::BundledNative,
             owner: Cow::Borrowed("quecto:official-tools"),
             availability: ToolAvailability::Enabled,
+            unloadable: false,
         }
     }
 
-    fn uds() -> Self {
+    pub fn uds() -> Self {
         Self {
             source: ToolSource::Uds,
             owner: Cow::Borrowed("uds:runtime"),
             availability: ToolAvailability::Enabled,
+            unloadable: true,
         }
+    }
+
+    pub fn runtime(owner: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            source: ToolSource::Runtime,
+            owner: owner.into(),
+            availability: ToolAvailability::Enabled,
+            unloadable: true,
+        }
+    }
+
+    pub fn with_availability(mut self, availability: ToolAvailability) -> Self {
+        self.availability = availability;
+        self
+    }
+
+    pub fn unloadable(mut self, unloadable: bool) -> Self {
+        self.unloadable = unloadable;
+        self
     }
 }
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
     tools: HashMap<String, Arc<dyn Tool>>,
-    metadata: HashMap<String, ToolRegistrationMetadata>,
+    metadata: HashMap<String, ToolRegistration>,
     definitions: Vec<ToolDefinition>,
     guards: Vec<Arc<dyn ToolGuard>>,
-    /// Names of tools that came from extensions (not core).
-    /// Tracks which tools `unregister_extension` may remove (vs core tools).
-    extension_tool_names: std::collections::HashSet<String>,
     /// Names explicitly removed via `remove()` or `remove_all()`.
-    /// These are permanently blocked from re-registration via
-    /// `register()` and `register_extension()`.
+    /// These are permanently blocked from re-registration through both bundled
+    /// native and runtime-loadable paths.
     denied_names: std::collections::HashSet<String>,
 }
 
@@ -85,7 +110,6 @@ impl ToolRegistryImpl {
             metadata: HashMap::new(),
             definitions: Vec::new(),
             guards: Vec::new(),
-            extension_tool_names: std::collections::HashSet::new(),
             denied_names: std::collections::HashSet::new(),
         }
     }
@@ -156,13 +180,12 @@ impl ToolRegistryImpl {
     /// Remove a tool by name and permanently block re-registration.
     ///
     /// Returns `true` if the tool was found and removed, `false` otherwise.
-    /// The name is added to the denylist so `register()` and
-    /// `register_extension()` will reject it.
+    /// The name is added to the denylist so bundled native and runtime-loadable
+    /// registration paths will reject it.
     pub fn remove(&mut self, name: &str) -> bool {
         self.denied_names.insert(name.to_string());
         if self.tools.remove(name).is_some() {
             self.metadata.remove(name);
-            self.extension_tool_names.remove(name);
             self.rebuild_definitions();
             true
         } else {
@@ -179,7 +202,6 @@ impl ToolRegistryImpl {
                 warnings.push(name.clone());
             }
             self.metadata.remove(name.as_str());
-            self.extension_tool_names.remove(name.as_str());
         }
         if warnings.len() < names.len() {
             // At least one tool was actually removed
@@ -188,73 +210,82 @@ impl ToolRegistryImpl {
         warnings
     }
 
-    /// Register a tool. No-op if the name is on the denylist.
-    pub fn register(&mut self, tool: Arc<dyn Tool>) -> bool {
+    /// Register a tool with explicit source/owner/lifecycle metadata.
+    ///
+    /// This is the common registration seam for bundled native providers and UDS
+    /// proxies. Compatibility wrappers below preserve the older public API while
+    /// routing through this single path.
+    pub fn register_with_metadata(
+        &mut self,
+        tool: Arc<dyn Tool>,
+        metadata: ToolRegistration,
+    ) -> bool {
         let def = tool.definition();
         let name = def.name.clone().into_owned();
         if self.denied_names.contains(&name) {
-            tracing::debug!(tool = %name, "register rejected: tool is on the denylist");
+            tracing::warn!(tool = %name, "register rejected: tool is on the denylist");
             return false;
         }
-        self.metadata
-            .insert(name.clone(), ToolRegistrationMetadata::official_native());
-        self.tools.insert(name, tool);
-
-        self.rebuild_definitions();
-        true
-    }
-
-    /// Register a tool as an extension tool (tracked for reload).
-    ///
-    /// Extension tools can be removed via `unregister_extension`.
-    /// Rejects tools that shadow core tool names.
-    pub fn register_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
-        self.register_extension_with_metadata(tool, ToolRegistrationMetadata::official_native())
-    }
-
-    /// Register a UDS-delivered extension tool.
-    pub fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
-        self.register_extension_with_metadata(tool, ToolRegistrationMetadata::uds())
-    }
-
-    fn register_extension_with_metadata(
-        &mut self,
-        tool: Arc<dyn Tool>,
-        metadata: ToolRegistrationMetadata,
-    ) -> bool {
-        let name = tool.definition().name.to_string();
-        if self.denied_names.contains(&name) {
-            tracing::warn!(tool = %name, "register_extension rejected: tool is on the denylist");
-            return false;
+        if let Some(existing) = self.metadata.get(&name) {
+            if !existing.unloadable {
+                tracing::warn!(tool = %name, "register rejected: shadows non-unloadable tool");
+                return false;
+            }
         }
-        // Reject if name exists and is NOT already an extension tool (i.e. it's core)
-        if self.tools.contains_key(&name) && !self.extension_tool_names.contains(&name) {
-            tracing::warn!(tool = %name, "register_extension rejected: shadows core tool");
-            return false;
-        }
-        self.extension_tool_names.insert(name.clone());
         self.metadata.insert(name.clone(), metadata);
         self.tools.insert(name, tool);
         self.rebuild_definitions();
         true
     }
 
-    /// Remove an extension tool by name.
+    /// Register a bundled native official tool. No-op if the name is denied.
+    pub fn register(&mut self, tool: Arc<dyn Tool>) -> bool {
+        self.register_with_metadata(tool, ToolRegistration::official_native())
+    }
+
+    /// Register a runtime-loadable extension tool.
     ///
-    /// No-op if `name` is not in the extension set (prevents removing core tools).
+    /// Kept as a compatibility API for UDS/runtime lifecycle callers and tests.
+    /// Bundled native extension tools must not use this path; they should use
+    /// `register`/`register_with_metadata` with `ToolSource::BundledNative` and
+    /// `unloadable: false`.
+    pub fn register_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
+        self.register_with_metadata(tool, ToolRegistration::runtime("runtime:extension"))
+    }
+
+    /// Register a UDS-delivered extension tool.
+    pub fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
+        self.register_with_metadata(tool, ToolRegistration::uds())
+    }
+
+    /// Remove an unloadable tool by name.
+    ///
+    /// No-op if `name` is not unloadable, preventing runtime lifecycle events
+    /// from removing bundled native official tools.
     pub fn unregister_extension(&mut self, name: &str) {
-        if !self.extension_tool_names.contains(name) {
+        if !self
+            .metadata
+            .get(name)
+            .map(|metadata| metadata.unloadable)
+            .unwrap_or(false)
+        {
             return;
         }
-        self.extension_tool_names.remove(name);
         self.metadata.remove(name);
         self.tools.remove(name);
         self.rebuild_definitions();
     }
 
-    /// Return the names of currently registered extension tools.
+    /// Return the names of currently unloadable runtime tools.
     pub fn extension_names(&self) -> Vec<String> {
-        self.extension_tool_names.iter().cloned().collect()
+        let mut names: Vec<_> = self
+            .metadata
+            .iter()
+            .filter(|(_, metadata)| metadata.unloadable)
+            .map(|(name, _)| name.clone())
+            .collect();
+        names.sort();
+        names
     }
 
     /// Return descriptors for all registered tools.
@@ -267,7 +298,7 @@ impl ToolRegistryImpl {
                     .metadata
                     .get(name)
                     .cloned()
-                    .unwrap_or_else(ToolRegistrationMetadata::official_native);
+                    .unwrap_or_else(ToolRegistration::official_native);
                 ToolDescriptor::new(
                     tool.definition(),
                     metadata.source,
@@ -287,7 +318,7 @@ impl ToolRegistryImpl {
             .metadata
             .get(name)
             .cloned()
-            .unwrap_or_else(ToolRegistrationMetadata::official_native);
+            .unwrap_or_else(ToolRegistration::official_native);
         Some(ToolDescriptor::new(
             tool.definition(),
             metadata.source,
@@ -313,7 +344,7 @@ impl ToolRegistryImpl {
         let metadata = self
             .metadata
             .entry(name.to_string())
-            .or_insert_with(ToolRegistrationMetadata::official_native);
+            .or_insert_with(ToolRegistration::official_native);
         if metadata.availability == availability {
             return true;
         }

@@ -170,9 +170,23 @@ fn build_and_register_native_extensions_registers_web_fetch() {
     let mut tool_registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     register_extension_tools(&mut tool_registry, &ext_registry);
     assert!(
-        !tool_registry.extension_names().is_empty(),
-        "extension tools should be registered"
+        tool_registry
+            .definitions()
+            .iter()
+            .any(|d| d.name == "web_fetch"),
+        "config-gated bundled native web_fetch should be model-visible"
     );
+    assert!(
+        tool_registry.extension_names().is_empty(),
+        "bundled native web tools should not be runtime-unloadable extension tools"
+    );
+    let descriptor = tool_registry
+        .descriptor("web_fetch")
+        .expect("web_fetch descriptor");
+    assert!(matches!(
+        descriptor.source,
+        crate::domain::tool_descriptor::ToolSource::BundledNative
+    ));
 }
 
 #[test]

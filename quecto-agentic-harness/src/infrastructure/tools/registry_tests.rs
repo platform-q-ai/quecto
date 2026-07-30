@@ -172,7 +172,60 @@ fn test_tool_count_empty_registry() {
 
 // --- #215: rebuild_definitions works without HashSet ---
 
-// --- #318: Extension tool tracking ---
+// --- #1276 Phase 2: unified metadata registration with unloadable lifecycle ---
+
+#[test]
+fn register_with_metadata_controls_descriptor_and_unloadability() {
+    let mut reg = ToolRegistryImpl::new();
+    assert!(reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("phase2_tool")),
+        ToolRegistration::runtime("test:owner").with_availability(ToolAvailability::Disabled)
+    ));
+
+    let descriptor = reg.descriptor("phase2_tool").expect("descriptor");
+    assert_eq!(descriptor.owner.as_ref(), "test:owner");
+    assert!(matches!(descriptor.source, ToolSource::Runtime));
+    assert!(!descriptor.availability.is_enabled());
+    assert!(!reg.definitions().iter().any(|d| d.name == "phase2_tool"));
+    assert_eq!(reg.extension_names(), vec!["phase2_tool".to_string()]);
+
+    assert!(reg.enable_tool("phase2_tool"));
+    assert!(reg.definitions().iter().any(|d| d.name == "phase2_tool"));
+    reg.unregister_extension("phase2_tool");
+    assert!(reg.get("phase2_tool").is_none());
+}
+
+#[test]
+fn register_with_metadata_prevents_shadowing_non_unloadable_tools() {
+    let mut reg = ToolRegistryImpl::new();
+    assert!(reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("stable")),
+        ToolRegistration::official_native()
+    ));
+    assert!(!reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("stable")),
+        ToolRegistration::uds()
+    ));
+    let descriptor = reg.descriptor("stable").expect("descriptor");
+    assert!(matches!(descriptor.source, ToolSource::BundledNative));
+    assert!(reg.extension_names().is_empty());
+}
+
+#[test]
+fn register_with_metadata_allows_unloadable_owner_replacement() {
+    let mut reg = ToolRegistryImpl::new();
+    assert!(reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("dynamic")),
+        ToolRegistration::runtime("owner:one")
+    ));
+    assert!(reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("dynamic")),
+        ToolRegistration::uds()
+    ));
+    let descriptor = reg.descriptor("dynamic").expect("descriptor");
+    assert!(matches!(descriptor.source, ToolSource::Uds));
+    assert_eq!(reg.extension_names(), vec!["dynamic".to_string()]);
+}
 
 #[test]
 fn test_register_extension_tool() {
