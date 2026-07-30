@@ -164,6 +164,9 @@ pub(super) struct Fixture {
     registry: ClientToolRegistry,
     ephemeral: bool,
     pub(super) last_persisted_message_index: usize,
+    /// Injected system prompt mirrored into `DispatchCtx::system_prompt`.
+    /// Default `""` keeps existing callers free of live/durable skew.
+    pub(super) system_prompt: String,
 }
 
 impl Fixture {
@@ -182,7 +185,13 @@ impl Fixture {
             registry: new_client_tool_registry(),
             ephemeral: false,
             last_persisted_message_index: 0,
+            system_prompt: String::new(),
         }
+    }
+
+    pub(super) fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.system_prompt = prompt.into();
+        self
     }
 
     pub(super) fn ctx(&mut self) -> DispatchCtx<'_> {
@@ -210,7 +219,7 @@ impl Fixture {
             session_key: &mut self.session_key,
             session_store: &self.store,
             ephemeral: self.ephemeral,
-            system_prompt: "",
+            system_prompt: self.system_prompt.as_str(),
             cancel_handle: self.cancel.clone(),
             turn_control: std::sync::Arc::default(),
             broadcast_tx: None,

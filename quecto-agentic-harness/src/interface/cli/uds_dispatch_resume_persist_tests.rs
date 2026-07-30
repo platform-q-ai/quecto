@@ -2,9 +2,28 @@
 //! `uds_dispatch_cov_tests.rs` to keep coverage files below the line-count gate.
 
 use super::cov_tests::Fixture;
-use super::{dispatch_command, handle_resume_session};
+use super::{dispatch_command, handle_resume_session, persist_current_session};
+use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionStore};
 use crate::interface::cli::protocol::AgentCommand;
+use crate::interface::cli::uds::{inject_system_prompt, remove_injected_system_prompt};
+use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
+
+fn prompt(message: &str) -> AgentCommand {
+    AgentCommand::Prompt {
+        id: None,
+        message: message.into(),
+        streaming_behavior: None,
+    }
+}
+
+fn durable_contents(messages: &[Message]) -> Vec<&str> {
+    messages
+        .iter()
+        .filter(|m| m.role != Role::System)
+        .map(|m| m.content.as_str())
+        .collect()
+}
 
 #[tokio::test]
 async fn prompt_persists_user_message_before_assistant_reply() {
@@ -92,4 +111,201 @@ async fn refresh_conversation_snapshot_clones_current_messages() {
     assert_eq!(snap.messages.len(), 2, "snapshot mirrors current messages");
     crate::interface::cli::uds_snapshots::refresh_state_snapshot(&ctx).await;
     assert_eq!(ctx.state_snapshot.read().await.message_count, 2);
+}
+
+/// #1322: multi-turn clean-path persist through real `handle_prompt` must keep
+/// the full durable history when a non-empty system prompt is injected. Empty
+/// system is a control that stays green even with the live/durable skew bug.
+#[tokio::test]
+async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
+    const TURNS: usize = 5;
+    for system in ["be helpful", ""] {
+        let mut fx = Fixture::new().with_system_prompt(system);
+        let users: Vec<String> = (0..TURNS).map(|i| format!("user-{i}")).collect();
+        // One long-lived ctx so the durable watermark survives across turns
+        // (Fixture copies the watermark by value into each `ctx()`).
+        {
+            let mut ctx = fx.ctx();
+            inject_system_prompt(ctx.messages, ctx.system_prompt);
+            for user in &users {
+                assert!(
+                    !dispatch_command(prompt(user), &mut ctx).await,
+                    "prompt dispatch should keep the connection open"
+                );
+            }
+
+            let loaded = ctx
+                .session_store
+                .load(ctx.session_key)
+                .await
+                .unwrap()
+                .expect("session must be on disk after multi-turn prompts");
+            let durable = durable_contents(&loaded.messages);
+            let expected: Vec<&str> = users
+                .iter()
+                .flat_map(|u| [u.as_str(), "stub response"])
+                .collect();
+            assert_eq!(
+                durable, expected,
+                "durable load must keep all {TURNS} turns with system_prompt={system:?}; \
+                 truncated tip u0,a0,u1 is the #1322 failure mode"
+            );
+            assert!(
+                durable.len() > 3,
+                "history must not end at the second user when later turns exist"
+            );
+            assert_ne!(
+                durable.last().copied(),
+                Some(users[1].as_str()),
+                "second user turn must not be EOF when later assistants exist"
+            );
+
+            // Resume into the same live session key via a saved alias, then
+            // check tip/content (messageCount is post-inject live len).
+            let resume_name = if system.is_empty() {
+                "saved-empty-sys"
+            } else {
+                "saved-with-sys"
+            };
+            ctx.session_store
+                .save(&Session {
+                    key: Session::build_key("cli", resume_name),
+                    messages: loaded.messages.clone(),
+                    workflow_run: None,
+                })
+                .await
+                .unwrap();
+            assert!(
+                !handle_resume_session(&mut ctx, Some("rs"), "resume_session", resume_name.into(),)
+                    .await
+            );
+
+            let resumed_durable = durable_contents(ctx.messages);
+            assert_eq!(
+                resumed_durable, expected,
+                "resume must restore full durable content (modulo re-injected system)"
+            );
+            let tip = ctx
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.role != Role::System)
+                .expect("resumed tip");
+            assert_eq!(tip.role, Role::Assistant);
+            assert_eq!(tip.content, "stub response");
+            assert_eq!(
+                resumed_durable[resumed_durable.len() - 2],
+                users[TURNS - 1].as_str(),
+                "last user turn must be present before the final assistant"
+            );
+
+            let page = messages_page_json(ctx.messages, HISTORY_PAGE_SIZE, None);
+            let page_msgs = page["messages"].as_array().expect("messages array");
+            let page_tip = page_msgs.last().expect("newest page has a tip");
+            assert_eq!(page_tip["role"], "assistant");
+            assert_eq!(page_tip["content"], "stub response");
+        }
+    }
+}
+
+/// #1322: `last_persisted_message_index` is a durable (system-stripped) coordinate.
+/// After pre-persist it must equal durable len, never live_len+1 while system is
+/// injected and the user is not yet pushed into live history.
+#[tokio::test]
+async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
+    let system = "be helpful";
+    let mut fx = Fixture::new().with_system_prompt(system);
+    {
+        let mut ctx = fx.ctx();
+        inject_system_prompt(ctx.messages, ctx.system_prompt);
+        // Seed one completed turn so live includes system and durable is non-empty.
+        assert!(!dispatch_command(prompt("user-0"), &mut ctx).await);
+        let durable_after_turn = {
+            let mut stripped = ctx.messages.clone();
+            remove_injected_system_prompt(&mut stripped, ctx.system_prompt);
+            stripped.len()
+        };
+        assert_eq!(
+            ctx.last_persisted_message_index, durable_after_turn,
+            "end-of-turn watermark must match stripped durable len"
+        );
+
+        // Mid-turn pre-persist: production must leave watermark in durable space.
+        let next = Message::user("user-1");
+        let live_len_before_push = ctx.messages.len();
+        assert!(
+            live_len_before_push > durable_after_turn,
+            "scenario setup: injected system must create live/durable skew"
+        );
+        super::persist_user_prompt_before_run(&mut ctx, &next)
+            .await
+            .unwrap();
+        let expected_durable_wm = durable_after_turn + 1; // prior durable + new user
+        assert_eq!(
+            ctx.last_persisted_message_index, expected_durable_wm,
+            "persist_user_prompt_before_run must set durable watermark"
+        );
+        assert_ne!(
+            ctx.last_persisted_message_index,
+            live_len_before_push + 1,
+            "watermark must not use live_len+1 while system is injected and user \
+             is not yet pushed into live history"
+        );
+
+        // Drive the real handle_prompt path (includes the post-before-run
+        // watermark assign under test) and require the durable invariant holds
+        // after the full turn — wm == load len == stripped live len.
+        assert!(!dispatch_command(prompt("user-1"), &mut ctx).await);
+        let loaded = ctx
+            .session_store
+            .load(ctx.session_key)
+            .await
+            .unwrap()
+            .expect("session on disk");
+        let mut stripped_live = ctx.messages.clone();
+        remove_injected_system_prompt(&mut stripped_live, ctx.system_prompt);
+        assert_eq!(
+            ctx.last_persisted_message_index,
+            stripped_live.len(),
+            "after handle_prompt, watermark must equal stripped durable len"
+        );
+        assert_eq!(
+            ctx.last_persisted_message_index,
+            loaded.messages.len(),
+            "watermark must agree with what load() reconstructs (no doomed append freeze)"
+        );
+        assert_eq!(
+            durable_contents(&loaded.messages),
+            ["user-0", "stub response", "user-1", "stub response"],
+            "clean-path turn 2 must append assistant; freeze at u0,a0,u1 is #1322"
+        );
+
+        // End-of-turn persist is idempotent and keeps the durable coordinate.
+        persist_current_session(&mut ctx).await.unwrap();
+        assert_eq!(
+            ctx.last_persisted_message_index,
+            stripped_live.len(),
+            "persist_current_session must keep durable watermark"
+        );
+    }
+
+    // Empty-system control: live == durable, so len()+1 is numerically less
+    // dangerous — still require watermark == load len after two turns.
+    let mut fx = Fixture::new();
+    {
+        let mut ctx = fx.ctx();
+        assert!(!dispatch_command(prompt("user-0"), &mut ctx).await);
+        assert!(!dispatch_command(prompt("user-1"), &mut ctx).await);
+        let loaded = ctx
+            .session_store
+            .load(ctx.session_key)
+            .await
+            .unwrap()
+            .expect("session on disk");
+        assert_eq!(ctx.last_persisted_message_index, loaded.messages.len());
+        assert_eq!(
+            durable_contents(&loaded.messages),
+            ["user-0", "stub response", "user-1", "stub response"]
+        );
+    }
 }
