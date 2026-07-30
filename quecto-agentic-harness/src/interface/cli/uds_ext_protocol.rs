@@ -287,6 +287,10 @@ pub fn handle_unregister_tools(
                     // waiting out the UdsTool timeout).
                     handle.shutdown("Tool unregistered");
                 }
+                // Also fail already-dispatched pending oneshots for this
+                // tool so late tool_result cannot complete after unregister
+                // and callers do not wait out the full timeout.
+                resolve_pending_for_tool(state, name, "Tool unregistered");
                 removed.push(name.clone());
             }
         }

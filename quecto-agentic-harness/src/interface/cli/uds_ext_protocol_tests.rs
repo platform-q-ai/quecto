@@ -191,6 +191,32 @@ fn test_unregister_tools() {
 }
 
 #[test]
+fn unregistering_tool_resolves_already_dispatched_pending_calls() {
+    let r = new_client_tool_registry();
+    let c = core_names();
+    let (ok, _, _) = reg(&r, &c, 1, &[tool_reg("weather", "Get weather")]);
+    assert!(ok);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    r.lock().unwrap().entry(1).or_default().insert_pending(
+        "in-flight".into(),
+        "weather".into(),
+        tx,
+        std::time::Duration::from_secs(30),
+    );
+
+    let (ev, removed) = handle_unregister_tools(1, Some("ut-pending"), &["weather".into()], &r);
+
+    assert_eq!(removed, vec!["weather"]);
+    assert!(ev.to_json_line().contains("\"success\":true"));
+    let result = rx
+        .blocking_recv()
+        .expect("pending call resolved on unregister");
+    assert!(result.is_error);
+    assert_eq!(result.content, "Tool unregistered");
+    assert!(!r.lock().unwrap().contains_key(&1));
+}
+
+#[test]
 fn test_unregister_tools_unknown_name_is_noop() {
     let r = new_client_tool_registry();
     let (_, removed) = handle_unregister_tools(1, None, &["nonexistent".into()], &r);
