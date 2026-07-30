@@ -42,10 +42,21 @@ Files touched:
 - `quecto-tui/src/components/mod.rs` (add `pub mod selectable_item_modal;`).
 - Optionally `quecto-tui/src/components/select_overlay.rs` only if the modal-frame helper should live beside existing overlay helpers instead of inside the new module.
 
+Finalized API naming:
+- Module: `quecto_tui::components::selectable_item_modal` backed by `quecto-tui/src/components/selectable_item_modal.rs`.
+- Primary component type: `SelectableItemModal`.
+- Builder type: `SelectableItemModalBuilder`.
+- Provider trait: `SelectableItemProvider`.
+- Result enum: `SelectableItemModalResult`.
+- Construction error type: `SelectableItemModalError`.
+- Internal normalized row type: `SelectableItemRow`; keep it private unless tests or callers need a value object, in which case expose it as `pub(crate)`.
+- Overlay helper: `build_selectable_item_modal_overlay`.
+- Test module/file: `selectable_item_modal_tests.rs`; targeted test substring: `selectable_item_modal`.
+
 Proposed API shape:
-- Convert generic caller data into owned internal rows at construction to avoid lifetime-heavy UI state. A builder/config should accept `items`, `get_id`, `get_label`, optional `get_description`, and optional `get_search_text`/metadata hook.
-- `SelectableItemModal` (or similarly named type) should implement `Component: Send`, so it renders with `render(&mut self, width) -> Vec<String>`, consumes keys through `handle_input(&mut self, &Key) -> bool`, and keeps every rendered line within the requested visible width.
-- Follow existing result conventions: define `SelectableItemModalResult` (or `SelectableItemResult`) with `Applied(BTreeSet<String>)`, `Dismissed`, and `Pending`; expose `take_result(&mut self)` that resets to `Pending`. Avoid introducing a separate `Cancelled` result name because existing list/select surfaces use `Dismissed`.
+- Convert generic caller data into owned internal `SelectableItemRow` values at construction to avoid lifetime-heavy UI state. `SelectableItemModalBuilder` should accept `items`, `id`, `label`, optional `description`, and optional `search_metadata` accessors.
+- `SelectableItemModal` should implement `Component: Send`, so it renders with `render(&mut self, width) -> Vec<String>`, consumes keys through `handle_input(&mut self, &Key) -> bool`, and keeps every rendered line within the requested visible width.
+- Follow existing result conventions: define `SelectableItemModalResult` with `Applied(BTreeSet<String>)`, `Dismissed`, and `Pending`; expose `take_result(&mut self)` that resets to `Pending`. Avoid introducing a separate `Cancelled` result name because existing list/select surfaces use `Dismissed`.
 - `SelectableItemModal` keeps:
   - all rows in stable order;
   - filtered visible row IDs/indices;
@@ -59,24 +70,24 @@ Proposed API shape:
 
 Provider/consumer API shape:
 - Introduce a small adapter trait or builder-facing provider contract so callers expose domain items without coupling the modal to models/tools/workflows. The modal should own its normalized rows after construction, while providers remain responsible for loading domain data and persisting the applied enabled IDs.
-- Recommended contract shape, naming to be finalized during implementation:
+- Final provider contract shape:
 
   ```rust
   pub(crate) trait SelectableItemProvider {
       type Item;
 
-      fn items(&self) -> Vec<Self::Item>;
-      fn enabled_ids(&self) -> BTreeSet<String>;
-      fn id(&self, item: &Self::Item) -> String;
-      fn label(&self, item: &Self::Item) -> String;
-      fn description(&self, item: &Self::Item) -> Option<String> {
+      fn selectable_items(&self) -> Vec<Self::Item>;
+      fn enabled_item_ids(&self) -> BTreeSet<String>;
+      fn item_id(&self, item: &Self::Item) -> String;
+      fn item_label(&self, item: &Self::Item) -> String;
+      fn item_description(&self, item: &Self::Item) -> Option<String> {
           None
       }
-      fn search_metadata(&self, item: &Self::Item) -> Vec<String> {
+      fn item_search_metadata(&self, item: &Self::Item) -> Vec<String> {
           Vec::new()
       }
-      fn apply_enabled_ids(&mut self, enabled_ids: BTreeSet<String>);
-      fn dismiss(&mut self) {}
+      fn apply_enabled_item_ids(&mut self, enabled_ids: BTreeSet<String>);
+      fn dismiss_selectable_items(&mut self) {}
   }
   ```
 
@@ -84,8 +95,8 @@ Provider/consumer API shape:
 
   ```rust
   let modal = SelectableItemModal::builder()
-      .items(provider.items())
-      .enabled_ids(provider.enabled_ids())
+      .items(provider.selectable_items())
+      .enabled_ids(provider.enabled_item_ids())
       .id(|item| item.id.clone())
       .label(|item| item.display_name.clone())
       .description(|item| item.summary.clone())
@@ -97,8 +108,8 @@ Provider/consumer API shape:
   - providers pass the original enabled set into the modal;
   - the modal mutates only its working set while open;
   - callers inspect `take_result()`;
-  - callers invoke `provider.apply_enabled_ids(ids)` only for `Applied(ids)`;
-  - callers invoke `provider.dismiss()` or no-op cleanup for `Dismissed`.
+  - callers invoke `provider.apply_enabled_item_ids(ids)` only for `Applied(ids)`;
+  - callers invoke `provider.dismiss_selectable_items()` or no-op cleanup for `Dismissed`.
 - Provider-owned domain item types should never leak into the modal's public result. Results should be stable IDs only, keeping persistence and side effects in the provider layer.
 - Provider tests should include model/tool/workflow-shaped fixtures that implement the same provider contract and assert that each can construct the modal without duplicating filter/toggle/apply logic.
 - Keep provider contract visibility `pub(crate)` unless a concrete external crate needs to consume it. If only tests need polymorphism, prefer the builder API plus fixture helpers over a trait that would be unused by production code.
@@ -188,7 +199,7 @@ Verification:
 - Citation review: accepted. The plan now cites concrete file:line evidence, calls out lockstep `quecto-tui` dependency version pins, and labels visible-bulk behavior as an explicit design decision.
 - Regression/API-standard review: accepted. The plan now requires `Component`/`take_result`/`Pending`-reset conventions, width-bounded rendering, control-character sanitization, non-`Char` bulk shortcuts that avoid app-global `Ctrl+D` and editor `Ctrl+A`, clamping semantics, max-query-length coverage, duplicate-ID handling, and regression tests for existing list/selector/autocomplete surfaces.
 
-## Open decisions for the implementer
+## Final naming decisions
 
-- Use `Space` for selected-item toggle, `CtrlShift('a')`/`CtrlShift('d')` for visible bulk actions, and `Enter` for apply unless implementation review finds an existing TUI convention that strongly prefers another mapping; whatever mapping is chosen must be pinned in tests and footer text before GREEN.
-- Visible bulk actions are the primary rendered actions for this slice. This is a design decision because issue 1272 does not specify visible-vs-all semantics; all-item operations may exist only with explicit names and separate tests.
+- Final keymap names for tests/footer: `Space` toggles selected item, `CtrlShift('a')` enables visible items, `CtrlShift('d')` disables visible items, `Enter` applies, and `Esc` dismisses.
+- Final bulk-action naming: visible actions are `enable_visible` and `disable_visible`; optional all-item actions, if implemented, must be named `enable_all_items` and `disable_all_items`. This is a design decision because issue 1272 does not specify visible-vs-all semantics.
