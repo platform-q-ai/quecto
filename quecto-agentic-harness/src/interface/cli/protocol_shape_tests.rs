@@ -2,9 +2,6 @@
 // Loaded from protocol.rs via #[path = "protocol_shape_tests.rs"].
 #![allow(unused_imports)]
 use super::*;
-
-use super::*;
-
 fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(v: &T) -> serde_json::Value {
     let s = serde_json::to_string(v).unwrap();
     serde_json::from_str(&s).unwrap()
@@ -79,7 +76,6 @@ fn turn_end_matches_spec_shape() {
     assert!(j.get("stop_reason").is_none());
     assert!(j["toolResults"].is_array()); // camelCase
 }
-
 #[test]
 fn response_with_id_matches_spec() {
     let ev = AgentEvent::ok(Some("req-1"), "prompt", None);
@@ -92,7 +88,6 @@ fn response_with_id_matches_spec() {
     assert!(j.get("data").is_none());
     assert!(j.get("error").is_none());
 }
-
 #[test]
 fn response_error_matches_spec() {
     let ev = AgentEvent::Response {
@@ -109,7 +104,6 @@ fn response_error_matches_spec() {
     assert_eq!(j["error"], "Model not found");
     assert!(j.get("id").is_none()); // absent when None
 }
-
 #[test]
 fn get_state_data_matches_spec_shape() {
     let state = crate::interface::cli::uds_session::AgentSession::new(
@@ -125,7 +119,6 @@ fn get_state_data_matches_spec_shape() {
     assert_eq!(j["pendingMessageCount"], 0); // camelCase // camelCase
     assert!(j.get("is_streaming").is_none());
 }
-
 fn make_test_stats() -> SessionStats {
     SessionStats {
         session_key: "cli:my-session".into(),
@@ -156,7 +149,6 @@ fn get_session_stats_message_counts_camel_case() {
     assert_eq!(j["toolResults"], 12);
     assert_eq!(j["totalMessages"], 22);
 }
-
 #[test]
 fn get_session_stats_tokens_camel_case() {
     let j = round_trip(&make_test_stats());
@@ -171,7 +163,6 @@ fn get_session_stats_tokens_camel_case() {
     );
     assert_eq!(j["maxContextTokens"], 200_000);
 }
-
 #[test]
 fn streaming_behavior_serializes_as_camel_case() {
     // Spec: "steer" and "followUp"

@@ -1,7 +1,5 @@
 /// UDS protocol types and wire-format helpers for `quecto agent --mode uds`.
-///
 /// Length-prefixed UTF-8 JSON protocol over a Unix domain socket.
-/// All commands carry an optional `id` field for request/response correlation.
 use serde::{Deserialize, Serialize};
 /// Authoritative protocol page size for paged conversation history (#1061).
 ///
@@ -19,7 +17,6 @@ pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
     serde_json::from_str(line).map_err(|e| format!("parse error: {e}"))
 }
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
-
 /// A command received over the UDS socket.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -243,7 +240,6 @@ pub enum AgentCommand {
         limit: Option<usize>,
     },
 }
-
 /// Tool registration payload for `register_tools`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ToolRegistration {
@@ -252,11 +248,9 @@ pub struct ToolRegistration {
     #[serde(rename = "parametersSchema", default = "default_params_schema")]
     pub parameters_schema: String,
 }
-
 fn default_params_schema() -> String {
     r#"{"type":"object"}"#.to_string()
 }
-
 impl AgentCommand {
     /// Return the optional correlation id.
     pub fn id(&self) -> Option<&str> {
@@ -290,7 +284,6 @@ impl AgentCommand {
             Self::GetMessage { id, .. } => id.as_deref(),
         }
     }
-
     /// Return the command name string for use in responses.
     pub fn type_name(&self) -> &'static str {
         match self {
