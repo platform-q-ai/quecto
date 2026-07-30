@@ -16,12 +16,7 @@ use crate::domain::tool_descriptor::{ToolAvailability, ToolDescriptor, ToolSourc
 use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;
 
-use super::bash::{ExecOptions, ExecTool};
-
-use super::docs::DocsTool;
-use super::filesystem::{EditTool, LsTool, ReadTool, WriteTool};
-use super::find::FindTool;
-use super::grep::GrepTool;
+use super::bash::ExecOptions;
 
 #[derive(Debug, Clone)]
 struct ToolRegistrationMetadata {
@@ -142,24 +137,18 @@ impl ToolRegistryImpl {
         exec_options: ExecOptions,
         spawned: bool,
     ) -> Self {
-        let sandbox = Arc::new(sandbox);
-        let workspace = Arc::new(workspace);
         let mut reg = Self::new();
-
-        reg.register(Arc::new(ExecTool::with_options(
-            workspace.clone(),
-            sandbox.clone(),
+        for tool in crate::infrastructure::extensions::native::build_official_tool_extensions(
+            workspace,
+            sandbox,
             exec_options,
-        )));
-        reg.register(Arc::new(ReadTool::new(workspace.clone(), sandbox.clone())));
-        reg.register(Arc::new(WriteTool::new(workspace.clone(), sandbox.clone())));
-        reg.register(Arc::new(EditTool::new(workspace.clone(), sandbox.clone())));
-        reg.register(Arc::new(LsTool::new(workspace.clone(), sandbox.clone())));
-        reg.register(Arc::new(GrepTool::new(workspace.clone(), sandbox.clone())));
-        reg.register(Arc::new(FindTool::new(workspace.clone(), sandbox.clone())));
-        // Quecto operating manual, embedded in the binary. Spawned children omit
-        // the parent-only quick-start page (#1319).
-        reg.register(Arc::new(DocsTool::with_spawned(spawned)));
+            spawned,
+        )
+        .into_iter()
+        .flat_map(|extension| extension.tools())
+        {
+            reg.register(tool);
+        }
 
         reg
     }

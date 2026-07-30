@@ -66,10 +66,11 @@ Feature: Extension system
 
   Scenario: NativeExtension registered via ToolRegistryImpl as extension tool
     Given a tool workspace
-    And a native extension "web_search" registered as an extension tool
+    When a native extension "web_search" is registered as an extension tool
     Then the tool registry should contain "web_search"
     And the tool registry extension names should include "web_search"
     And the tool registry extension names should not include "bash"
+    And the capability catalogue should describe "web_search" as a bundled native capability owned by Quecto
 
   Scenario: NativeExtension cannot shadow core tools
     Given a tool workspace
@@ -155,30 +156,81 @@ Feature: Extension system
 
   # ─── Unified tool model and runtime policy (#1276) ─────────────────────────
 
-  Scenario: Official tools are described as bundled native extension tools
+  Scenario Outline: Official tools are described as bundled native capabilities
     Given a tool workspace
-    Then the tool descriptor for "bash" should have source "bundled-native"
-    And the tool descriptor for "bash" should have owner "quecto:official-tools"
-    And the tool descriptor for "read" should have source "bundled-native"
-    And the tool descriptor for "docs" should have source "bundled-native"
+    Then the capability catalogue should describe "<tool>" as a bundled native capability owned by Quecto
 
-  Scenario: UDS-registered tools share the descriptor catalogue
+    Examples:
+      | tool  |
+      | bash  |
+      | read  |
+      | write |
+      | edit  |
+      | ls    |
+      | grep  |
+      | find  |
+      | docs  |
+
+  Scenario: A UDS runtime capability shares the capability catalogue with official tools
     Given a tool workspace
-    And a UDS extension tool "community_weather" is registered
+    When a UDS runtime capability "community_weather" is registered
     Then the tool registry should contain "community_weather"
-    And the tool descriptor for "community_weather" should have source "uds"
-    And the tool descriptor for "community_weather" should have owner "uds:runtime"
+    And the capability catalogue should describe "community_weather" as a UDS runtime capability
+    And the capability catalogue should describe "bash" as a bundled native capability owned by Quecto
 
-  Scenario: Disabling a registered tool keeps it registered but hides it from the model
+  Scenario: Disabling an official capability keeps it registered but hides it from the model
     Given a tool workspace
     When tool "bash" is disabled at runtime
-    Then the tool descriptor for "bash" should be configured disabled
-    And the model-visible tool definitions should not contain "bash"
-    And executing tool "bash" should be rejected as disabled
+    Then the tool registry should contain "bash"
+    And the capability catalogue should list "bash" as disabled
+    And the capability catalogue should list "read" as enabled
+    And the model-callable catalogue should not offer "bash"
+    And the model-callable catalogue should offer "read"
+    When executing tool "bash" is attempted
+    Then the tool execution should be rejected as disabled
 
-  Scenario: Re-enabling a registered tool restores it without restart
+  Scenario: Re-enabling an official capability restores model calls in the same registry
     Given a tool workspace
     And tool "bash" is disabled at runtime
     When tool "bash" is enabled at runtime
-    Then the tool descriptor for "bash" should be configured enabled
-    And the model-visible tool definitions should contain "bash"
+    Then the capability catalogue should list "bash" as enabled
+    And the model-callable catalogue should offer "bash"
+    When executing tool "bash" is attempted with command "echo reenabled"
+    Then the tool execution should succeed with content "reenabled"
+
+  Scenario: Disabling a UDS runtime capability uses the same policy as official capabilities
+    Given a tool workspace
+    And a UDS runtime capability "community_weather" is registered
+    When tool "community_weather" is disabled at runtime
+    Then the tool registry should contain "community_weather"
+    And the capability catalogue should list "community_weather" as disabled
+    And the capability catalogue should describe "community_weather" as a UDS runtime capability
+    And the model-callable catalogue should not offer "community_weather"
+    When executing tool "community_weather" is attempted
+    Then the tool execution should be rejected as disabled
+
+  Scenario: Re-enabling a UDS runtime capability restores model calls in the same registry
+    Given a tool workspace
+    And a UDS runtime capability "community_weather" is registered
+    And tool "community_weather" is disabled at runtime
+    When tool "community_weather" is enabled at runtime
+    Then the capability catalogue should list "community_weather" as enabled
+    And the model-callable catalogue should offer "community_weather"
+    When executing tool "community_weather" is attempted
+    Then the tool execution should succeed with content "ok"
+
+  Scenario: Runtime policy changes reject unknown capability names without creating capabilities
+    Given a tool workspace
+    When unknown tool "no_such_tool" is disabled at runtime
+    Then the runtime policy change should be rejected
+    And the tool registry should not contain "no_such_tool"
+    And the model-callable catalogue should not offer "no_such_tool"
+
+  Scenario: Runtime policy changes are idempotent for registered capabilities
+    Given a tool workspace
+    When tool "bash" is disabled at runtime
+    And tool "bash" is disabled at runtime
+    Then the capability catalogue should list "bash" as disabled
+    When tool "bash" is enabled at runtime
+    And tool "bash" is enabled at runtime
+    Then the capability catalogue should list "bash" as enabled

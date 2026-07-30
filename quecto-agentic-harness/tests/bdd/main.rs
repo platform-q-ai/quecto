@@ -317,6 +317,8 @@ pub struct QuectoWorld {
     pub tool_result: Option<Result<ToolResult, String>>,
     /// Model-visible tool definitions captured for descriptor/policy scenarios.
     pub tool_definitions_snapshot: Vec<ToolDefinition>,
+    /// Result of the last runtime tool policy mutation.
+    pub tool_policy_change_result: Option<bool>,
     /// Created LLM provider
     pub provider: Option<Arc<dyn LlmProvider>>,
     /// Mock OpenAI API server for endpoint-routing scenarios (#1066)
