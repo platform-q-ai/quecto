@@ -4148,3 +4148,37 @@ fn then_execute_tool_args_contain(world: &mut QuectoWorld, tool_name: String, ne
         "execute_tool arguments for {tool_name:?} did not contain {needle:?}\nactual: {args}",
     );
 }
+
+#[then(
+    expr = "the post-register get_extensions response should list extension {string} with source {string}"
+)]
+fn then_post_register_lists_ext_source(world: &mut QuectoWorld, name: String, source: String) {
+    execute_multi_client_uds(world);
+    let events = world.mc_client_events.get(&1).expect("no client 1 events");
+    let resp = find_ge_response(events, "ge-reg").expect("no ge-reg response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("no extensions");
+    let ext = exts
+        .iter()
+        .find(|e| e["name"].as_str() == Some(&name))
+        .unwrap_or_else(|| panic!("'{name}' not in {exts:?}"));
+    assert_eq!(ext["source"].as_str(), Some(source.as_str()));
+}
+
+#[then(
+    expr = "the post-register get_extensions response should list extension {string} with owner {string}"
+)]
+fn then_post_register_lists_ext_owner(world: &mut QuectoWorld, name: String, owner: String) {
+    execute_multi_client_uds(world);
+    let events = world.mc_client_events.get(&1).expect("no client 1 events");
+    let resp = find_ge_response(events, "ge-reg").expect("no ge-reg response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("no extensions");
+    let ext = exts
+        .iter()
+        .find(|e| e["name"].as_str() == Some(&name))
+        .unwrap_or_else(|| panic!("'{name}' not in {exts:?}"));
+    assert_eq!(ext["owner"].as_str(), Some(owner.as_str()));
+}

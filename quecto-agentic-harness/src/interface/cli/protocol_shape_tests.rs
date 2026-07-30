@@ -3,8 +3,8 @@
 #![allow(unused_imports)]
 use super::*;
 
-use super::*;
-
+#[path = "protocol_shape_extensions_tests.rs"]
+mod extension_shape_tests;
 fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(v: &T) -> serde_json::Value {
     let s = serde_json::to_string(v).unwrap();
     serde_json::from_str(&s).unwrap()
@@ -79,7 +79,6 @@ fn turn_end_matches_spec_shape() {
     assert!(j.get("stop_reason").is_none());
     assert!(j["toolResults"].is_array()); // camelCase
 }
-
 #[test]
 fn response_with_id_matches_spec() {
     let ev = AgentEvent::ok(Some("req-1"), "prompt", None);
@@ -92,7 +91,6 @@ fn response_with_id_matches_spec() {
     assert!(j.get("data").is_none());
     assert!(j.get("error").is_none());
 }
-
 #[test]
 fn response_error_matches_spec() {
     let ev = AgentEvent::Response {
@@ -109,7 +107,6 @@ fn response_error_matches_spec() {
     assert_eq!(j["error"], "Model not found");
     assert!(j.get("id").is_none()); // absent when None
 }
-
 #[test]
 fn get_state_data_matches_spec_shape() {
     let state = crate::interface::cli::uds_session::AgentSession::new(
@@ -125,7 +122,6 @@ fn get_state_data_matches_spec_shape() {
     assert_eq!(j["pendingMessageCount"], 0); // camelCase // camelCase
     assert!(j.get("is_streaming").is_none());
 }
-
 fn make_test_stats() -> SessionStats {
     SessionStats {
         session_key: "cli:my-session".into(),
@@ -156,7 +152,6 @@ fn get_session_stats_message_counts_camel_case() {
     assert_eq!(j["toolResults"], 12);
     assert_eq!(j["totalMessages"], 22);
 }
-
 #[test]
 fn get_session_stats_tokens_camel_case() {
     let j = round_trip(&make_test_stats());
@@ -171,7 +166,6 @@ fn get_session_stats_tokens_camel_case() {
     );
     assert_eq!(j["maxContextTokens"], 200_000);
 }
-
 #[test]
 fn streaming_behavior_serializes_as_camel_case() {
     // Spec: "steer" and "followUp"
@@ -197,60 +191,6 @@ fn steer_streaming_behavior_value() {
 }
 
 #[test]
-fn get_extensions_command_serializes() {
-    let cmd = AgentCommand::GetExtensions {
-        id: Some("ge-1".into()),
-    };
-    let j = round_trip(&cmd);
-    assert_eq!(j["type"], "get_extensions");
-    assert_eq!(j["id"], "ge-1");
-}
-
-#[test]
-fn reload_extensions_command_serializes() {
-    let cmd = AgentCommand::ReloadExtensions {
-        id: Some("re-1".into()),
-    };
-    let j = round_trip(&cmd);
-    assert_eq!(j["type"], "reload_extensions");
-    assert_eq!(j["id"], "re-1");
-}
-
-#[test]
-fn extensions_changed_event_matches_spec_shape() {
-    let ev = AgentEvent::ExtensionsChanged {
-        extensions: vec![ExtensionInfo {
-            name: "greet".into(),
-            description: "Say hello".into(),
-        }],
-    };
-    let j = round_trip(&ev);
-    assert_eq!(j["type"], "extensions_changed");
-    assert!(j["extensions"].is_array());
-    assert_eq!(j["extensions"][0]["name"], "greet");
-    assert_eq!(j["extensions"][0]["description"], "Say hello");
-}
-
-#[test]
-fn extensions_changed_roundtrip() {
-    let ev = AgentEvent::ExtensionsChanged {
-        extensions: vec![
-            ExtensionInfo {
-                name: "a".into(),
-                description: "desc a".into(),
-            },
-            ExtensionInfo {
-                name: "b".into(),
-                description: "desc b".into(),
-            },
-        ],
-    };
-    let json = ev.to_json_line();
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["extensions"].as_array().unwrap().len(), 2);
-}
-
-#[test]
 fn follow_up_command_serializes_type_as_follow_up() {
     // The spec uses "follow_up" (snake_case) for the type field
     let cmd = AgentCommand::FollowUp {
@@ -273,67 +213,6 @@ fn roundtrip_parse_streaming_behavior_follow_up() {
         } => {}
         _ => panic!("expected FollowUp streaming behavior"),
     }
-}
-
-// ─── Extension commands (moved from protocol.rs inline tests) ─────────────
-
-#[test]
-fn test_parse_get_extensions_command() {
-    let json = r#"{"type":"get_extensions"}"#;
-    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-    assert_eq!(cmd.type_name(), "get_extensions");
-    assert!(cmd.id().is_none());
-}
-
-#[test]
-fn test_parse_get_extensions_with_id() {
-    let json = r#"{"type":"get_extensions","id":"ge-1"}"#;
-    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-    assert_eq!(cmd.id(), Some("ge-1"));
-    assert_eq!(cmd.type_name(), "get_extensions");
-}
-
-#[test]
-fn test_parse_reload_extensions_command() {
-    let json = r#"{"type":"reload_extensions"}"#;
-    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-    assert_eq!(cmd.type_name(), "reload_extensions");
-    assert!(cmd.id().is_none());
-}
-
-#[test]
-fn test_parse_reload_extensions_with_id() {
-    let json = r#"{"type":"reload_extensions","id":"re-1"}"#;
-    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-    assert_eq!(cmd.id(), Some("re-1"));
-    assert_eq!(cmd.type_name(), "reload_extensions");
-}
-
-#[test]
-fn test_extensions_changed_event_serializes() {
-    let ev = AgentEvent::ExtensionsChanged {
-        extensions: vec![
-            ExtensionInfo {
-                name: "greet".to_string(),
-                description: "Greet the user".to_string(),
-            },
-            ExtensionInfo {
-                name: "weather".to_string(),
-                description: "Get weather".to_string(),
-            },
-        ],
-    };
-    let json = ev.to_json_line();
-    assert!(json.contains("\"type\":\"extensions_changed\""));
-    assert!(json.contains("\"greet\""));
-    assert!(json.contains("\"weather\""));
-}
-
-#[test]
-fn test_extensions_changed_event_empty_list() {
-    let ev = AgentEvent::ExtensionsChanged { extensions: vec![] };
-    let json = ev.to_json_line();
-    assert!(json.contains("\"extensions\":[]"));
 }
 
 // ─── UDS extension protocol commands (#352) ───────────────────────────────
@@ -667,43 +546,6 @@ fn core_command_type_names() {
         }
         .type_name(),
         "resume_session"
-    );
-}
-
-#[test]
-fn extension_command_type_names() {
-    assert_eq!(
-        AgentCommand::GetExtensions { id: None }.type_name(),
-        "get_extensions"
-    );
-    assert_eq!(
-        AgentCommand::ReloadExtensions { id: None }.type_name(),
-        "reload_extensions"
-    );
-    assert_eq!(
-        AgentCommand::RegisterTools {
-            id: None,
-            tools: vec![]
-        }
-        .type_name(),
-        "register_tools"
-    );
-    assert_eq!(
-        AgentCommand::UnregisterTools {
-            id: None,
-            tools: vec![]
-        }
-        .type_name(),
-        "unregister_tools"
-    );
-    assert_eq!(
-        AgentCommand::ToolResult {
-            tool_call_id: "c".into(),
-            content: "x".into(),
-            is_error: false
-        }
-        .type_name(),
-        "tool_result"
     );
 }
 

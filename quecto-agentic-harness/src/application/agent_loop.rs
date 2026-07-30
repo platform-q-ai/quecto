@@ -277,9 +277,27 @@ impl AgentLoopImpl {
     pub fn tool_registry_extension_names(&self) -> Vec<String> {
         self.extension_tool_registry().extension_names()
     }
-    /// Register a single extension tool (e.g. from a UDS client).
-    pub fn register_extension_tool(&mut self, tool: std::sync::Arc<dyn crate::domain::tool::Tool>) {
-        self.extension_tool_registry_mut().register_extension(tool);
+
+    /// Return descriptors for policy/UI callers without exposing concrete tool
+    /// implementations.
+    pub fn tool_descriptors(&self) -> Vec<crate::domain::tool_descriptor::ToolDescriptor> {
+        self.tool_catalog().descriptors()
+    }
+    /// Register a single native extension tool.
+    pub fn register_extension_tool(
+        &mut self,
+        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+    ) -> bool {
+        self.extension_tool_registry_mut().register_extension(tool)
+    }
+
+    /// Register a single UDS-delivered extension tool.
+    pub fn register_uds_extension_tool(
+        &mut self,
+        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+    ) -> bool {
+        self.extension_tool_registry_mut()
+            .register_uds_extension(tool)
     }
     /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
     pub fn unregister_extension_tool(&mut self, name: &str) {

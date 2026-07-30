@@ -13,4 +13,5 @@ pub mod session;
 pub mod subagent;
 pub mod text;
 pub mod tool;
+pub mod tool_descriptor;
 pub mod workflow;

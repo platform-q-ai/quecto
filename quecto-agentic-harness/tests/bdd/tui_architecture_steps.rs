@@ -560,10 +560,19 @@ fn then_tui_rejects_unknown_slash_commands(world: &mut QuectoWorld) {
     );
 }
 
+fn read_uds_protocol_sources() -> String {
+    // Command variants live in protocol_commands.rs; protocol.rs re-exports them.
+    // Architecture BDD must accept either location after the line-count split.
+    let protocol =
+        std::fs::read_to_string("src/interface/cli/protocol.rs").expect("read UDS protocol source");
+    let commands =
+        std::fs::read_to_string("src/interface/cli/protocol_commands.rs").unwrap_or_default();
+    format!("{protocol}\n{commands}")
+}
+
 #[then("the UDS protocol should support listing sessions")]
 fn then_uds_protocol_supports_listing_sessions(_world: &mut QuectoWorld) {
-    let content =
-        std::fs::read_to_string("src/interface/cli/protocol.rs").expect("read UDS protocol source");
+    let content = read_uds_protocol_sources();
     assert!(
         content.contains("ListSessions") && content.contains("list_sessions"),
         "UDS protocol should include list_sessions support"
@@ -572,8 +581,7 @@ fn then_uds_protocol_supports_listing_sessions(_world: &mut QuectoWorld) {
 
 #[then("the UDS protocol should support resuming a session")]
 fn then_uds_protocol_supports_resuming_session(_world: &mut QuectoWorld) {
-    let content =
-        std::fs::read_to_string("src/interface/cli/protocol.rs").expect("read UDS protocol source");
+    let content = read_uds_protocol_sources();
     assert!(
         content.contains("ResumeSession") && content.contains("resume_session"),
         "UDS protocol should include resume_session support"

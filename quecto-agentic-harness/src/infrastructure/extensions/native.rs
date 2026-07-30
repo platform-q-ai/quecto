@@ -3,6 +3,7 @@
 // Native extensions are pure Rust implementations registered conditionally
 // based on config. They have zero overhead when disabled.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::domain::extension::Extension;
@@ -83,6 +84,61 @@ impl Extension for NativeExtension {
     fn system_prompt_snippet(&self) -> Option<String> {
         self.system_prompt.clone()
     }
+}
+
+/// Build the bundled native extensions that provide Quecto's official tools.
+///
+/// This is the native-provider seam for official/default capabilities: callers
+/// consume `Extension` objects and register their tools through the same
+/// descriptor/policy registry path used by runtime UDS tools.
+pub fn build_official_tool_extensions(
+    workspace: PathBuf,
+    sandbox: crate::infrastructure::security::sandbox::Sandbox,
+    exec_options: crate::infrastructure::tools::bash::ExecOptions,
+    spawned: bool,
+) -> Vec<Arc<dyn Extension>> {
+    let sandbox = Arc::new(sandbox);
+    let workspace = Arc::new(workspace);
+
+    vec![Arc::new(NativeExtension::with_tools(
+        "quecto:official-tools",
+        "Bundled Quecto tool capabilities",
+        vec![
+            Arc::new(crate::infrastructure::tools::bash::ExecTool::with_options(
+                workspace.clone(),
+                sandbox.clone(),
+                exec_options,
+            )),
+            Arc::new(crate::infrastructure::tools::filesystem::ReadTool::new(
+                workspace.clone(),
+                sandbox.clone(),
+            )),
+            Arc::new(crate::infrastructure::tools::filesystem::WriteTool::new(
+                workspace.clone(),
+                sandbox.clone(),
+            )),
+            Arc::new(crate::infrastructure::tools::filesystem::EditTool::new(
+                workspace.clone(),
+                sandbox.clone(),
+            )),
+            Arc::new(crate::infrastructure::tools::filesystem::LsTool::new(
+                workspace.clone(),
+                sandbox.clone(),
+            )),
+            Arc::new(crate::infrastructure::tools::grep::GrepTool::new(
+                workspace.clone(),
+                sandbox.clone(),
+            )),
+            Arc::new(crate::infrastructure::tools::find::FindTool::new(
+                workspace, sandbox,
+            )),
+            // Quecto operating manual, embedded in the binary. Spawned children
+            // omit the parent-only quick-start page (#1319).
+            Arc::new(crate::infrastructure::tools::docs::DocsTool::with_spawned(
+                spawned,
+            )),
+        ],
+    ))]
 }
 
 /// Build native extensions from web tool config.

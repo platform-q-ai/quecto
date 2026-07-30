@@ -160,3 +160,56 @@ async fn local_tool_and_registry_execute_trait_surface() {
     registry.unregister_extension("cov_noop");
     assert!(registry.execute("missing", "{}").await.is_err());
 }
+
+#[test]
+fn default_catalog_and_extension_trait_methods_are_exercised() {
+    let mut registry = CovEmptyRegistry;
+    // Default catalog descriptors fall back to Runtime/enabled metadata.
+    assert!(registry.descriptors().is_empty());
+    assert!(!registry.register_uds_extension(std::sync::Arc::new(CovNoopTool)));
+    assert!(!registry.enable_tool("cov_noop"));
+    assert!(!registry.disable_tool("cov_noop"));
+}
+
+struct CovOneDefRegistry {
+    defs: Vec<ToolDefinition>,
+}
+
+impl ToolCatalog for CovOneDefRegistry {
+    fn definitions(&self) -> &[ToolDefinition] {
+        &self.defs
+    }
+}
+
+impl ToolExecutor for CovOneDefRegistry {
+    fn execute(
+        &self,
+        _name: &str,
+        _arguments: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+        Box::pin(async { Err(DomainError::Tool("missing".into())) })
+    }
+}
+
+impl ExtensionToolRegistry for CovOneDefRegistry {}
+impl SessionAwareTools for CovOneDefRegistry {}
+impl ToolRegistry for CovOneDefRegistry {}
+
+#[test]
+fn default_descriptors_map_definitions_to_runtime_source() {
+    let registry = CovOneDefRegistry {
+        defs: vec![ToolDefinition {
+            name: "one".into(),
+            description: "d".into(),
+            parameters_schema: r#"{"type":"object"}"#.into(),
+        }],
+    };
+    let descriptors = registry.descriptors();
+    assert_eq!(descriptors.len(), 1);
+    assert_eq!(descriptors[0].name(), "one");
+    assert_eq!(
+        descriptors[0].source,
+        crate::domain::tool_descriptor::ToolSource::Runtime
+    );
+    assert!(descriptors[0].availability.is_enabled());
+}

@@ -17,6 +17,7 @@ pub(super) fn build_extension_list(ctx: &DispatchCtx<'_>) -> Vec<serde_json::Val
         .tool_registry_extension_names()
         .into_iter()
         .collect();
+    let descriptors = ctx.agent.tool_descriptors();
     if ext_names.is_empty() {
         return vec![];
     }
@@ -31,9 +32,19 @@ pub(super) fn build_extension_list(ctx: &DispatchCtx<'_>) -> Vec<serde_json::Val
             let name = t.definition().name.to_string();
             if ext_names.contains(&name) {
                 let def = t.definition();
+                let descriptor = descriptors.iter().find(|d| d.name() == name);
                 result.push(serde_json::json!({
                     "name": def.name.as_ref(),
                     "description": def.description.as_ref(),
+                    "source": descriptor
+                        .map(|d| d.source.as_str())
+                        .unwrap_or("bundled-native"),
+                    "owner": descriptor
+                        .map(|d| d.owner.as_ref())
+                        .unwrap_or("quecto:official-tools"),
+                    "availability": descriptor
+                        .map(|d| d.availability.as_str())
+                        .unwrap_or("enabled"),
                 }));
                 covered.insert(name);
             }
@@ -41,12 +52,15 @@ pub(super) fn build_extension_list(ctx: &DispatchCtx<'_>) -> Vec<serde_json::Val
     }
 
     // Include UDS-registered tools not already covered.
-    for def in ctx.agent.tool_definitions() {
-        let name = def.name.to_string();
+    for descriptor in descriptors {
+        let name = descriptor.name().to_string();
         if ext_names.contains(&name) && !covered.contains(&name) {
             result.push(serde_json::json!({
-                "name": def.name.as_ref(),
-                "description": def.description.as_ref(),
+                "name": descriptor.definition.name.as_ref(),
+                "description": descriptor.definition.description.as_ref(),
+                "source": descriptor.source.as_str(),
+                "owner": descriptor.owner.as_ref(),
+                "availability": descriptor.availability.as_str(),
             }));
         }
     }

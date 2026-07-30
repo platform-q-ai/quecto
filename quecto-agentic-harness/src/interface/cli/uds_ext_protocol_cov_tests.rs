@@ -90,13 +90,17 @@ async fn cov_provider_trait_methods_are_invoked() {
     );
 }
 
-fn cov_agent() -> crate::application::agent_loop::AgentLoopImpl {
+pub(super) fn cov_agent() -> crate::application::agent_loop::AgentLoopImpl {
+    cov_agent_with_registry(crate::infrastructure::tools::registry::ToolRegistryImpl::new())
+}
+
+pub(super) fn cov_agent_with_registry(
+    registry: crate::infrastructure::tools::registry::ToolRegistryImpl,
+) -> crate::application::agent_loop::AgentLoopImpl {
     crate::application::agent_loop::AgentLoopImpl::new(
         crate::application::agent_loop::AgentLoopConfig {
             provider: std::sync::Arc::new(CovProvider),
-            tool_registry: Box::new(
-                crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
-            ),
+            tool_registry: Box::new(registry),
             model: "stub".into(),
             max_tokens: 100,
             temperature: 0.0,
@@ -115,7 +119,7 @@ fn cov_agent() -> crate::application::agent_loop::AgentLoopImpl {
     )
 }
 
-fn tool_reg(name: &str) -> ToolRegistration {
+pub(super) fn tool_reg(name: &str) -> ToolRegistration {
     ToolRegistration {
         name: name.to_string(),
         description: format!("{name} description"),
@@ -210,11 +214,17 @@ async fn tool_result_for_pending_sender_delivers_and_sweeps_expired_entries() {
     {
         let mut reg = registry.lock().unwrap();
         let state = reg.entry(5).or_default();
-        state.insert_pending("live".to_string(), tx, std::time::Duration::from_secs(30));
+        state.insert_pending(
+            "live".to_string(),
+            "tool".to_string(),
+            tx,
+            std::time::Duration::from_secs(30),
+        );
         state.pending_results.insert(
             "expired".to_string(),
             PendingResult {
                 reply: expired_tx,
+                tool_name: "tool".to_string(),
                 deadline: std::time::Instant::now() - std::time::Duration::from_millis(1),
             },
         );
@@ -304,7 +314,12 @@ fn handle_client_disconnect_removes_state_and_errors_pending_execution() {
         .unwrap()
         .get_mut(&44)
         .unwrap()
-        .insert_pending("call".to_string(), tx, std::time::Duration::from_secs(30));
+        .insert_pending(
+            "call".to_string(),
+            "tool".to_string(),
+            tx,
+            std::time::Duration::from_secs(30),
+        );
 
     let removed = handle_client_disconnect(44, &registry);
 
@@ -523,6 +538,7 @@ fn poisoned_client_tool_registry_locks_recover_across_public_handlers() {
         let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
         reg.get_mut(&501).unwrap().insert_pending(
             "poison-call".to_string(),
+            "tool".to_string(),
             reply_tx,
             std::time::Duration::from_secs(30),
         );
