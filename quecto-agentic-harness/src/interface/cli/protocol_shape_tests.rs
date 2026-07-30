@@ -222,6 +222,9 @@ fn extensions_changed_event_matches_spec_shape() {
         extensions: vec![ExtensionInfo {
             name: "greet".into(),
             description: "Say hello".into(),
+            source: None,
+            owner: None,
+            availability: None,
         }],
     };
     let j = round_trip(&ev);
@@ -238,10 +241,16 @@ fn extensions_changed_roundtrip() {
             ExtensionInfo {
                 name: "a".into(),
                 description: "desc a".into(),
+                source: None,
+                owner: None,
+                availability: None,
             },
             ExtensionInfo {
                 name: "b".into(),
                 description: "desc b".into(),
+                source: None,
+                owner: None,
+                availability: None,
             },
         ],
     };
@@ -316,10 +325,16 @@ fn test_extensions_changed_event_serializes() {
             ExtensionInfo {
                 name: "greet".to_string(),
                 description: "Greet the user".to_string(),
+                source: None,
+                owner: None,
+                availability: None,
             },
             ExtensionInfo {
                 name: "weather".to_string(),
                 description: "Get weather".to_string(),
+                source: None,
+                owner: None,
+                availability: None,
             },
         ],
     };

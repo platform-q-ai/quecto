@@ -3,13 +3,14 @@ use std::future::Future;
 use std::pin::Pin;
 
 use super::error::DomainError;
+use super::tool_descriptor::ToolDescriptor;
 
 /// Metadata describing a tool for the LLM.
 ///
 /// Fields use `Cow<'static, str>` so that static tool schemas (the common
 /// case — 11 of 12 tools) are zero-cost clones (pointer copy), while
 /// dynamic schemas (`ls` with runtime limits) use `Cow::Owned`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolDefinition {
     pub name: Cow<'static, str>,
     pub description: Cow<'static, str>,
@@ -97,8 +98,24 @@ pub trait ToolGuard: Send + Sync {
 /// Use this role when callers only need schema/name visibility and should not
 /// execute or mutate the registry.
 pub trait ToolCatalog: Send + Sync {
-    /// Return all tool definitions (for injection into LLM prompts).
+    /// Return enabled tool definitions visible to the model.
     fn definitions(&self) -> &[ToolDefinition];
+
+    /// Return descriptors for all registered tools, including disabled tools
+    /// hidden from model-visible definitions.
+    fn descriptors(&self) -> Vec<ToolDescriptor> {
+        self.definitions()
+            .iter()
+            .cloned()
+            .map(|definition| {
+                ToolDescriptor::enabled(
+                    definition,
+                    super::tool_descriptor::ToolSource::Runtime,
+                    "runtime",
+                )
+            })
+            .collect()
+    }
 
     /// Return the number of registered tools without cloning definitions.
     ///
@@ -140,6 +157,21 @@ pub trait ExtensionToolRegistry: Send + Sync {
     ///
     /// No-op if the name is not an extension tool. Default: no-op.
     fn unregister_extension(&mut self, _name: &str) {}
+
+    /// Register a UDS-delivered extension tool.
+    fn register_uds_extension(&mut self, tool: std::sync::Arc<dyn Tool>) {
+        self.register_extension(tool);
+    }
+
+    /// Runtime-enable a registered tool. Default: unsupported.
+    fn enable_tool(&mut self, _name: &str) -> bool {
+        false
+    }
+
+    /// Runtime-disable a registered tool. Default: unsupported.
+    fn disable_tool(&mut self, _name: &str) -> bool {
+        false
+    }
 }
 
 /// Port: session-key propagation for stateful tools.

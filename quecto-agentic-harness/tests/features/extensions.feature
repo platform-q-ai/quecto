@@ -152,3 +152,33 @@ Feature: Extension system
     And config with tools.web.fetch.enabled = false
     When I build native extensions from config
     Then the native extensions list should not contain "web"
+
+  # ─── Unified tool model and runtime policy (#1276) ─────────────────────────
+
+  Scenario: Official tools are described as bundled native extension tools
+    Given a tool workspace
+    Then the tool descriptor for "bash" should have source "bundled-native"
+    And the tool descriptor for "bash" should have owner "quecto:official-tools"
+    And the tool descriptor for "read" should have source "bundled-native"
+    And the tool descriptor for "docs" should have source "bundled-native"
+
+  Scenario: UDS-registered tools share the descriptor catalogue
+    Given a tool workspace
+    And a UDS extension tool "community_weather" is registered
+    Then the tool registry should contain "community_weather"
+    And the tool descriptor for "community_weather" should have source "uds"
+    And the tool descriptor for "community_weather" should have owner "uds:runtime"
+
+  Scenario: Disabling a registered tool keeps it registered but hides it from the model
+    Given a tool workspace
+    When tool "bash" is disabled at runtime
+    Then the tool descriptor for "bash" should be configured disabled
+    And the model-visible tool definitions should not contain "bash"
+    And executing tool "bash" should be rejected as disabled
+
+  Scenario: Re-enabling a registered tool restores it without restart
+    Given a tool workspace
+    And tool "bash" is disabled at runtime
+    When tool "bash" is enabled at runtime
+    Then the tool descriptor for "bash" should be configured enabled
+    And the model-visible tool definitions should contain "bash"

@@ -315,6 +315,8 @@ pub struct QuectoWorld {
     pub _tool_workspace_tmp: Option<TempDir>,
     /// Result of the last tool execution
     pub tool_result: Option<Result<ToolResult, String>>,
+    /// Model-visible tool definitions captured for descriptor/policy scenarios.
+    pub tool_definitions_snapshot: Vec<ToolDefinition>,
     /// Created LLM provider
     pub provider: Option<Arc<dyn LlmProvider>>,
     /// Mock OpenAI API server for endpoint-routing scenarios (#1066)

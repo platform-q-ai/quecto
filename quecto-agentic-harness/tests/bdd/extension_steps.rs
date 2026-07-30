@@ -552,3 +552,117 @@ fn then_no_ext_provides_tool(world: &mut QuectoWorld, tool_name: String) {
         );
     }
 }
+
+// ─── Unified tool model and runtime policy (#1276) ─────────────────────────
+
+#[given(expr = "a UDS extension tool {string} is registered")]
+fn given_uds_extension_tool_registered(world: &mut QuectoWorld, tool_name: String) {
+    let registry = world.tool_registry.as_mut().expect("tool registry not set");
+    let tool = Arc::new(DummyTool {
+        name: tool_name,
+        description: "UDS extension test tool".to_string(),
+    });
+    registry.register_uds_extension(tool);
+}
+
+#[when(expr = "tool {string} is disabled at runtime")]
+fn when_tool_disabled_at_runtime(world: &mut QuectoWorld, tool_name: String) {
+    let registry = world.tool_registry.as_mut().expect("tool registry not set");
+    assert!(
+        registry.disable_tool(&tool_name),
+        "expected registered tool '{}' to disable",
+        tool_name
+    );
+    world.tool_definitions_snapshot = registry.definitions().to_vec();
+}
+
+#[given(expr = "tool {string} is disabled at runtime")]
+fn given_tool_disabled_at_runtime(world: &mut QuectoWorld, tool_name: String) {
+    when_tool_disabled_at_runtime(world, tool_name);
+}
+
+#[when(expr = "tool {string} is enabled at runtime")]
+fn when_tool_enabled_at_runtime(world: &mut QuectoWorld, tool_name: String) {
+    let registry = world.tool_registry.as_mut().expect("tool registry not set");
+    assert!(
+        registry.enable_tool(&tool_name),
+        "expected registered tool '{}' to enable",
+        tool_name
+    );
+    world.tool_definitions_snapshot = registry.definitions().to_vec();
+}
+
+#[then(expr = "the tool descriptor for {string} should have source {string}")]
+fn then_tool_descriptor_source(world: &mut QuectoWorld, tool_name: String, source: String) {
+    let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let descriptor = registry
+        .descriptor(&tool_name)
+        .unwrap_or_else(|| panic!("missing descriptor for '{}'", tool_name));
+    assert_eq!(descriptor.source.as_str(), source);
+}
+
+#[then(expr = "the tool descriptor for {string} should have owner {string}")]
+fn then_tool_descriptor_owner(world: &mut QuectoWorld, tool_name: String, owner: String) {
+    let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let descriptor = registry
+        .descriptor(&tool_name)
+        .unwrap_or_else(|| panic!("missing descriptor for '{}'", tool_name));
+    assert_eq!(descriptor.owner.as_ref(), owner);
+}
+
+#[then(expr = "the tool descriptor for {string} should be configured disabled")]
+fn then_tool_descriptor_disabled(world: &mut QuectoWorld, tool_name: String) {
+    let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let descriptor = registry
+        .descriptor(&tool_name)
+        .unwrap_or_else(|| panic!("missing descriptor for '{}'", tool_name));
+    assert_eq!(descriptor.availability.as_str(), "disabled");
+}
+
+#[then(expr = "the tool descriptor for {string} should be configured enabled")]
+fn then_tool_descriptor_enabled(world: &mut QuectoWorld, tool_name: String) {
+    let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let descriptor = registry
+        .descriptor(&tool_name)
+        .unwrap_or_else(|| panic!("missing descriptor for '{}'", tool_name));
+    assert_eq!(descriptor.availability.as_str(), "enabled");
+}
+
+#[then(expr = "the model-visible tool definitions should not contain {string}")]
+fn then_model_visible_definitions_exclude(world: &mut QuectoWorld, tool_name: String) {
+    assert!(
+        !world
+            .tool_definitions_snapshot
+            .iter()
+            .any(|definition| definition.name.as_ref() == tool_name),
+        "model-visible definitions unexpectedly contained '{}'",
+        tool_name
+    );
+}
+
+#[then(expr = "the model-visible tool definitions should contain {string}")]
+fn then_model_visible_definitions_include(world: &mut QuectoWorld, tool_name: String) {
+    assert!(
+        world
+            .tool_definitions_snapshot
+            .iter()
+            .any(|definition| definition.name.as_ref() == tool_name),
+        "model-visible definitions did not contain '{}'",
+        tool_name
+    );
+}
+
+#[then(expr = "executing tool {string} should be rejected as disabled")]
+fn then_executing_tool_rejected_disabled(world: &mut QuectoWorld, tool_name: String) {
+    let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(registry.execute(&tool_name, "{}"))
+        .expect("tool execution should return a policy ToolResult");
+    assert!(result.is_error, "disabled tool should return is_error");
+    assert!(
+        result.content.contains("disabled"),
+        "disabled tool result should explain policy, got: {}",
+        result.content
+    );
+}

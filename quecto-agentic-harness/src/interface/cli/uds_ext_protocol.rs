@@ -395,6 +395,9 @@ pub fn build_extensions_changed_event(
                     .map(|d| ExtensionInfo {
                         name: d.name.to_string(),
                         description: d.description.to_string(),
+                        source: Some("uds".to_string()),
+                        owner: Some("uds:runtime".to_string()),
+                        availability: Some("enabled".to_string()),
                     })
             })
             .collect()
@@ -430,7 +433,7 @@ pub(super) async fn dispatch_register_tools(
 
     if ok && !new_tools.is_empty() {
         for tool in &new_tools {
-            ctx.agent.register_extension_tool(tool.clone());
+            ctx.agent.register_uds_extension_tool(tool.clone());
         }
         // Spawn a forwarder task for each newly-registered tool. These
         // drain the mpsc receiver stored in `tool_request_rxs` and are

@@ -521,6 +521,15 @@ pub struct SubagentInfo {
 pub struct ExtensionInfo {
     pub name: String,
     pub description: String,
+    /// Delivery adapter for this tool (`bundled-native`, `uds`, ...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Policy owner/profile responsible for this tool's availability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// Runtime policy state for the registered tool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub availability: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

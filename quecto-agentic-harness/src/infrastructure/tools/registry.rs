@@ -1,5 +1,6 @@
 // ToolRegistry: holds all Tool implementations, provides lookup by name.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
@@ -11,6 +12,7 @@ use crate::domain::tool::{
     ExtensionToolRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition, ToolExecutor,
     ToolGuard, ToolResult,
 };
+use crate::domain::tool_descriptor::{ToolAvailability, ToolDescriptor, ToolSource};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;
 
@@ -21,9 +23,35 @@ use super::filesystem::{EditTool, LsTool, ReadTool, WriteTool};
 use super::find::FindTool;
 use super::grep::GrepTool;
 
+#[derive(Debug, Clone)]
+struct ToolRegistrationMetadata {
+    source: ToolSource,
+    owner: Cow<'static, str>,
+    availability: ToolAvailability,
+}
+
+impl ToolRegistrationMetadata {
+    fn official_native() -> Self {
+        Self {
+            source: ToolSource::BundledNative,
+            owner: Cow::Borrowed("quecto:official-tools"),
+            availability: ToolAvailability::Enabled,
+        }
+    }
+
+    fn uds() -> Self {
+        Self {
+            source: ToolSource::Uds,
+            owner: Cow::Borrowed("uds:runtime"),
+            availability: ToolAvailability::Enabled,
+        }
+    }
+}
+
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
     tools: HashMap<String, Arc<dyn Tool>>,
+    metadata: HashMap<String, ToolRegistrationMetadata>,
     definitions: Vec<ToolDefinition>,
     guards: Vec<Arc<dyn ToolGuard>>,
     /// Names of tools that came from extensions (not core).
@@ -59,6 +87,7 @@ impl ToolRegistryImpl {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            metadata: HashMap::new(),
             definitions: Vec::new(),
             guards: Vec::new(),
             extension_tool_names: std::collections::HashSet::new(),
@@ -143,6 +172,7 @@ impl ToolRegistryImpl {
     pub fn remove(&mut self, name: &str) -> bool {
         self.denied_names.insert(name.to_string());
         if self.tools.remove(name).is_some() {
+            self.metadata.remove(name);
             self.extension_tool_names.remove(name);
             self.rebuild_definitions();
             true
@@ -159,6 +189,7 @@ impl ToolRegistryImpl {
             if self.tools.remove(name.as_str()).is_none() {
                 warnings.push(name.clone());
             }
+            self.metadata.remove(name.as_str());
             self.extension_tool_names.remove(name.as_str());
         }
         if warnings.len() < names.len() {
@@ -176,6 +207,8 @@ impl ToolRegistryImpl {
             tracing::debug!(tool = %name, "register rejected: tool is on the denylist");
             return;
         }
+        self.metadata
+            .insert(name.clone(), ToolRegistrationMetadata::official_native());
         self.tools.insert(name, tool);
 
         self.rebuild_definitions();
@@ -186,6 +219,19 @@ impl ToolRegistryImpl {
     /// Extension tools can be removed via `unregister_extension`.
     /// Rejects tools that shadow core tool names.
     pub fn register_extension(&mut self, tool: Arc<dyn Tool>) {
+        self.register_extension_with_metadata(tool, ToolRegistrationMetadata::official_native());
+    }
+
+    /// Register a UDS-delivered extension tool.
+    pub fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) {
+        self.register_extension_with_metadata(tool, ToolRegistrationMetadata::uds());
+    }
+
+    fn register_extension_with_metadata(
+        &mut self,
+        tool: Arc<dyn Tool>,
+        metadata: ToolRegistrationMetadata,
+    ) {
         let name = tool.definition().name.to_string();
         if self.denied_names.contains(&name) {
             tracing::warn!(tool = %name, "register_extension rejected: tool is on the denylist");
@@ -197,6 +243,7 @@ impl ToolRegistryImpl {
             return;
         }
         self.extension_tool_names.insert(name.clone());
+        self.metadata.insert(name.clone(), metadata);
         self.tools.insert(name, tool);
         self.rebuild_definitions();
     }
@@ -209,6 +256,7 @@ impl ToolRegistryImpl {
             return;
         }
         self.extension_tool_names.remove(name);
+        self.metadata.remove(name);
         self.tools.remove(name);
         self.rebuild_definitions();
     }
@@ -218,12 +266,87 @@ impl ToolRegistryImpl {
         self.extension_tool_names.iter().cloned().collect()
     }
 
-    /// Rebuild the cached definitions list from all registered tools.
+    /// Return descriptors for all registered tools.
+    pub fn descriptors(&self) -> Vec<ToolDescriptor> {
+        let mut descriptors: Vec<ToolDescriptor> = self
+            .tools
+            .iter()
+            .map(|(name, tool)| {
+                let metadata = self
+                    .metadata
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(ToolRegistrationMetadata::official_native);
+                ToolDescriptor::new(
+                    tool.definition(),
+                    metadata.source,
+                    metadata.owner,
+                    metadata.availability,
+                )
+            })
+            .collect();
+        descriptors.sort_by(|a, b| a.definition.name.cmp(&b.definition.name));
+        descriptors
+    }
+
+    /// Return the descriptor for a registered tool.
+    pub fn descriptor(&self, name: &str) -> Option<ToolDescriptor> {
+        let tool = self.tools.get(name)?;
+        let metadata = self
+            .metadata
+            .get(name)
+            .cloned()
+            .unwrap_or_else(ToolRegistrationMetadata::official_native);
+        Some(ToolDescriptor::new(
+            tool.definition(),
+            metadata.source,
+            metadata.owner,
+            metadata.availability,
+        ))
+    }
+
+    /// Runtime-disable a registered tool without removing its descriptor.
+    pub fn disable_tool(&mut self, name: &str) -> bool {
+        self.set_availability(name, ToolAvailability::Disabled)
+    }
+
+    /// Runtime-enable a registered tool without restart.
+    pub fn enable_tool(&mut self, name: &str) -> bool {
+        self.set_availability(name, ToolAvailability::Enabled)
+    }
+
+    fn set_availability(&mut self, name: &str, availability: ToolAvailability) -> bool {
+        if !self.tools.contains_key(name) {
+            return false;
+        }
+        let metadata = self
+            .metadata
+            .entry(name.to_string())
+            .or_insert_with(ToolRegistrationMetadata::official_native);
+        if metadata.availability == availability {
+            return true;
+        }
+        metadata.availability = availability;
+        self.rebuild_definitions();
+        true
+    }
+
+    /// Rebuild the cached definitions list from enabled registered tools.
     ///
     /// Deduplication is unnecessary: `self.tools` is a `HashMap<String, _>`
     /// keyed by `tool.definition().name`, so keys are inherently unique.
     fn rebuild_definitions(&mut self) {
-        self.definitions = self.tools.values().map(|t| t.definition()).collect();
+        self.definitions = self
+            .tools
+            .iter()
+            .filter(|(name, _)| {
+                self.metadata
+                    .get(*name)
+                    .map(|metadata| metadata.availability.is_enabled())
+                    .unwrap_or(true)
+            })
+            .map(|(_, tool)| tool.definition())
+            .collect();
         self.definitions.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
@@ -266,6 +389,19 @@ impl ToolRegistryImpl {
             arguments
         };
 
+        let availability = self
+            .metadata
+            .get(name)
+            .map(|metadata| metadata.availability)
+            .unwrap_or(ToolAvailability::Enabled);
+        if !availability.is_enabled() {
+            return Ok(ToolResult {
+                content: format!("tool '{}' is disabled by runtime policy", name),
+                is_error: true,
+                image_blocks: vec![],
+            });
+        }
+
         // Run guards before tool execution
         for guard in &self.guards {
             if let Err(reason) = guard.check(name, normalised) {
@@ -287,6 +423,10 @@ impl ToolRegistryImpl {
 impl ToolCatalog for ToolRegistryImpl {
     fn definitions(&self) -> &[ToolDefinition] {
         self.definitions()
+    }
+
+    fn descriptors(&self) -> Vec<ToolDescriptor> {
+        self.descriptors()
     }
 }
 
@@ -313,6 +453,18 @@ impl ExtensionToolRegistry for ToolRegistryImpl {
 
     fn unregister_extension(&mut self, name: &str) {
         self.unregister_extension(name);
+    }
+
+    fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) {
+        self.register_uds_extension(tool);
+    }
+
+    fn enable_tool(&mut self, name: &str) -> bool {
+        self.enable_tool(name)
+    }
+
+    fn disable_tool(&mut self, name: &str) -> bool {
+        self.disable_tool(name)
     }
 }
 
