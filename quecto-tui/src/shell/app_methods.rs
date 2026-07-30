@@ -15,7 +15,7 @@ fn format_unix_minutes(secs: u64) -> String {
 
 /// Local time via `libc::localtime_r`. Returns `None` if the conversion fails.
 fn format_local_minutes(secs: u64) -> Option<String> {
-    let t = secs as libc::time_t;
+    let t = secs.try_into().ok()?;
     // SAFETY: `libc::tm` is plain-old-data; an all-zero value is a valid initial state for libc to fill.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     // SAFETY: `&t`/`&mut tm` point to live locals; localtime_r fills `tm` and returns null on failure (checked next).
