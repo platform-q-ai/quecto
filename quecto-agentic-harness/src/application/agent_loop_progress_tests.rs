@@ -135,6 +135,128 @@ async fn test_progress_callback_tool_finished_captures_duration_and_error_flag()
     }
 }
 
+/// #1317: `Ok(ToolResult { is_error: true })` must reach model-facing tool
+/// messages and ToolFinished progress (not only `Err(DomainError)`).
+#[tokio::test]
+async fn ok_tool_result_is_error_propagates_to_message_and_progress() {
+    use crate::domain::audit::{AuditEvent, AuditSink};
+    use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+    use std::pin::Pin;
+
+    #[derive(Debug)]
+    struct ErrorTool {
+        def: ToolDefinition,
+        content: String,
+    }
+
+    impl Tool for ErrorTool {
+        fn definition(&self) -> ToolDefinition {
+            self.def.clone()
+        }
+
+        fn execute(
+            &self,
+            _arguments: &str,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>>
+        {
+            let content = self.content.clone();
+            Box::pin(async move {
+                Ok(ToolResult {
+                    content,
+                    is_error: true,
+                    image_blocks: vec![],
+                })
+            })
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingAudit {
+        events: Mutex<Vec<AuditEvent>>,
+    }
+
+    impl AuditSink for RecordingAudit {
+        fn emit(
+            &self,
+            _turn: u32,
+            event: AuditEvent,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
+        {
+            Box::pin(async move {
+                self.events.lock().unwrap().push(event);
+                Ok(())
+            })
+        }
+    }
+
+    let provider = Arc::new(MockProvider::new(vec![
+        tool_call_response("bash", r#"{"command":"bad"}"#),
+        text_response("acknowledged"),
+    ]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(ErrorTool {
+        def: ToolDefinition {
+            name: "bash".into(),
+            description: "error mock".into(),
+            parameters_schema: r#"{"type":"object"}"#.into(),
+        },
+        content: "llm-addressable failure".into(),
+    }));
+    let events: Arc<Mutex<Vec<crate::domain::agent::AgentProgressEvent>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+    let callback: crate::domain::agent::ProgressCallback =
+        Arc::new(move |ev| events_clone.lock().unwrap().push(ev));
+    let audit = Arc::new(RecordingAudit::default());
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        progress_callback: Some(callback),
+        audit_log: Some(audit.clone()),
+        ..test_config(provider, Box::new(registry))
+    });
+
+    let mut messages = vec![Message::user("run it")];
+    agent.run_loop(&mut messages).await.unwrap();
+
+    let tool_msg = messages
+        .iter()
+        .find(|m| m.role == Role::Tool)
+        .expect("expected tool message in conversation");
+    assert!(
+        tool_msg.is_error,
+        "tool Message.is_error must be true for Ok(is_error: true), got false"
+    );
+    assert_eq!(tool_msg.content, "llm-addressable failure");
+
+    let fired = events.lock().unwrap();
+    let finished = fired.iter().find(|e| {
+        matches!(
+            e,
+            crate::domain::agent::AgentProgressEvent::ToolFinished { name, .. } if name == "bash"
+        )
+    });
+    match finished {
+        Some(crate::domain::agent::AgentProgressEvent::ToolFinished { is_error, .. }) => {
+            assert!(
+                *is_error,
+                "ToolFinished.is_error must be true for Ok(is_error: true)"
+            );
+        }
+        other => panic!(
+            "expected ToolFinished(bash), got: {other:?} (all: {:?})",
+            *fired
+        ),
+    }
+
+    let audit_events = audit.events.lock().unwrap();
+    assert!(
+        audit_events.iter().any(|e| matches!(
+            e,
+            AuditEvent::ToolResult { tool, is_error: true, .. } if tool == "bash"
+        )),
+        "expected AuditEvent::ToolResult is_error=true, got: {audit_events:?}"
+    );
+}
+
 #[tokio::test]
 async fn test_progress_callback_multiple_tool_calls_all_reported() {
     let (agent, _, events) = make_agent_with_callback(
