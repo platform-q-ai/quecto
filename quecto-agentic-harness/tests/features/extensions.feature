@@ -64,17 +64,17 @@ Feature: Extension system
     Then the registry should have 1 extension tools
     And the registry should contain tool "web_search"
 
-  Scenario: NativeExtension registered via ToolRegistryImpl as extension tool
+  Scenario: NativeExtension registered via ToolRegistryImpl as bundled native tool
     Given a tool workspace
-    When a native extension "web_search" is registered as an extension tool
+    When a native extension "web_search" is registered as a bundled native tool
     Then the tool registry should contain "web_search"
-    And the tool registry extension names should include "web_search"
+    And the tool registry extension names should not include "web_search"
     And the tool registry extension names should not include "bash"
     And the capability catalogue should describe "web_search" as a bundled native capability owned by Quecto
 
-  Scenario: NativeExtension cannot shadow core tools
+  Scenario: NativeExtension cannot shadow existing bundled native tools
     Given a tool workspace
-    And a native extension "bash" registered as an extension tool
+    And a native extension "bash" registered as a bundled native tool
     Then the tool registry extension names should not include "bash"
 
   Scenario: WebSearchTool registered when config enables Brave
