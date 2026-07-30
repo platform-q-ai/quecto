@@ -160,3 +160,13 @@ async fn local_tool_and_registry_execute_trait_surface() {
     registry.unregister_extension("cov_noop");
     assert!(registry.execute("missing", "{}").await.is_err());
 }
+
+#[test]
+fn default_catalog_and_extension_trait_methods_are_exercised() {
+    let mut registry = CovEmptyRegistry;
+    // Default catalog descriptors fall back to Runtime/enabled metadata.
+    assert!(registry.descriptors().is_empty());
+    assert!(!registry.register_uds_extension(std::sync::Arc::new(CovNoopTool)));
+    assert!(!registry.enable_tool("cov_noop"));
+    assert!(!registry.disable_tool("cov_noop"));
+}

@@ -88,3 +88,7 @@ impl ToolDescriptor {
         self.definition.name.as_ref()
     }
 }
+
+#[cfg(test)]
+#[path = "tool_descriptor_tests.rs"]
+mod tests;
