@@ -320,7 +320,7 @@ pub(crate) fn load_workflow_spec(
     let max = crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES as u64;
     if len > max {
         return Err(format!(
-            "workflow spec is {len} bytes, exceeding the {max} byte limit"
+            "workflow spec too large: {len} bytes, exceeding the {max} byte limit"
         ));
     }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
