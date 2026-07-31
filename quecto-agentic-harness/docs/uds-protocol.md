@@ -646,7 +646,7 @@ Return the current list of spawned subagents and their live status (#524).
 
 ### `get_extensions`
 
-Return the list of registered extensions. Includes both native extensions (from config) and UDS-registered extensions (from connected clients). Only extensions whose tools were successfully registered (not shadowing core tools) are included.
+Return the historical compatibility list of runtime-loadable UDS extension tools registered by connected clients. This is not the complete bundled-native plus UDS tool catalogue; bundled-native tools from config such as `web_search` and `web_fetch` are intentionally omitted.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -658,13 +658,12 @@ Return the list of registered extensions. Includes both native extensions (from 
 ```json
 {
   "extensions": [
-    {"name": "web_search", "description": "Search the web using Brave Search or DuckDuckGo"},
     {"name": "weather", "description": "Get current weather for a city"}
   ]
 }
 ```
 
-Returns an empty array if no extensions are registered.
+Returns an empty array if no runtime-loadable UDS extension tools are registered.
 
 ---
 

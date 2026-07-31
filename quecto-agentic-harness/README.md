@@ -312,7 +312,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `resume_session` | `session`, optional `id` | Switch the active UDS conversation to a persisted CLI session |
 | `set_model` | `model` or `provider`+`modelId`, optional `id` | Switch model at runtime |
 | `set_effort` | `effort`, optional `id` | Set session reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the active model's provider vocabulary) |
-| `get_extensions` | optional `id` | Return list of registered extensions |
+| `get_extensions` | optional `id` | Return the compatibility list of runtime-loadable UDS extension tools, not the complete bundled-native+UDS catalogue |
 | `reload` | optional `id` | Force a provider/model config reload |
 | `reload_extensions` | optional `id` | **Deprecated no-op** (returns success immediately) |
 | `register_tools` | `tools` array, optional `id` | Register extension tools from a connected client |
