@@ -248,7 +248,10 @@ impl AgentLoopImpl {
                 }
             }
         }
-        let after = self.tool_catalogue_entries();
+        let mut after = self.tool_catalogue_entries();
+        if after.is_empty() {
+            after = before.clone();
+        }
         let results = mutations
             .iter()
             .map(|mutation| {
