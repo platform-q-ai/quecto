@@ -353,16 +353,6 @@ pub(crate) fn build_agent_from_config(
         }
     };
 
-    // Remove disabled tools before boxing the registry (#402).
-    let mut registry = registry;
-    let warnings = registry.remove_all(&flags.disabled_tools);
-    for name in &warnings {
-        stderr.push_str(&format!(
-            "WARNING: --disable-tool: no tool named '{}' in the registry\n",
-            name
-        ));
-    }
-
     let effort = flags.effort.or_else(|| {
         config.agents.defaults.effort.as_deref().and_then(|s| {
             crate::domain::provider::EffortLevel::parse(s).or_else(|| {

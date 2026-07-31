@@ -178,11 +178,13 @@ async fn build_official_tool_registry_registers_common_bundled_native_surface() 
         .iter()
         .map(|definition| definition.name.as_ref())
         .collect();
-    for required in [
+    let expected_names = std::collections::BTreeSet::from([
         "bash", "docs", "edit", "find", "grep", "ls", "read", "write",
-    ] {
-        assert!(names.contains(required), "missing official tool {required}");
-    }
+    ]);
+    assert_eq!(
+        names, expected_names,
+        "official bundled native tool surface must not drift"
+    );
     assert!(registry.extension_names().is_empty());
     for name in names {
         let descriptor = registry.descriptor(name).expect("descriptor");

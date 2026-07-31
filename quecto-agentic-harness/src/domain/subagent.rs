@@ -32,10 +32,11 @@ pub struct SubagentConfig {
     /// Optional reasoning effort override, forwarded to the child as `--effort <value>`.
     /// When `None`, the child resolves effort from config, environment, or provider default.
     pub effort: Option<String>,
-    /// Tool names to remove from the child's registry before its session starts
-    /// (forwarded as `--disable-tool <name>` per entry). Empty means no tools are
-    /// disabled. Used to launch read-only children (e.g. reviewers) with `write`
-    /// and `edit` removed so the model never sees them (#957).
+    /// Tool names to disable and hide from the child's model-visible definitions
+    /// before its session starts (forwarded as `--disable-tool <name>` per entry).
+    /// Empty means no tools are disabled. Used to launch read-only children
+    /// (e.g. reviewers) with `write` and `edit` disabled so the model never sees
+    /// them (#957/#1276).
     pub disable_tools: Vec<String>,
     /// Whether this sub-agent was spawned read-only — i.e. both `write` and
     /// `edit` are disabled (via `read_only: true` or an equivalent

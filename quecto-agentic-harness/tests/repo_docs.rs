@@ -397,12 +397,14 @@ fn subagent_docs_document_readonly_and_disable_tools_spawn() {
         subagents.contains("\"write\"") && subagents.contains("\"edit\""),
         "docs/subagents.md should note read_only expands to disabling write + edit"
     );
-    // Removed from the child registry before its session starts (defense-in-depth).
-    // Anchor on the claim phrase, not two stray single-word substrings.
+    // Disabled before the child session starts (defense-in-depth) while still
+    // preserving descriptor-catalogue visibility for policy/UI callers.
     assert!(
-        subagents_lower.contains("removed from the child registry")
-            && subagents_lower.contains("before its session"),
-        "docs/subagents.md should explain the tools are removed from the child registry before its session starts"
+        subagents_lower.contains("disabled before the child session starts")
+            && subagents_lower.contains("hidden from the")
+            && subagents_lower.contains("model-visible tool definitions")
+            && subagents_lower.contains("registered/described"),
+        "docs/subagents.md should explain disabled tools are hidden from the model while remaining described"
     );
     // The NOT-a-hard-sandbox caveat: a child can still mutate via bash.
     assert!(
