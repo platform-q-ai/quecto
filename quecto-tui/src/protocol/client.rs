@@ -735,5 +735,8 @@ mod client_policy_tests;
 #[path = "client_sync_tests.rs"]
 mod client_sync_tests;
 #[cfg(test)]
+#[path = "client_workspace_tests.rs"]
+mod client_workspace_tests;
+#[cfg(test)]
 #[path = "client_tests.rs"]
 mod tests;
