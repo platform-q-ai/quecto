@@ -436,13 +436,17 @@ fn descriptors_include_source_and_availability_for_native_and_uds_tools() {
             && d.availability.is_enabled()
     }));
 
-    let ok = reg.register_uds_extension(Arc::new(DummyTestTool::new("weather")));
+    let ok = reg.register_uds_extension_for_owner(
+        Arc::new(DummyTestTool::new("weather")),
+        "uds:client:7".into(),
+    );
     assert!(ok);
     let weather = reg.descriptor("weather").expect("weather descriptor");
     assert!(matches!(
         weather.source,
         crate::domain::tool_descriptor::ToolSource::Uds
     ));
+    assert_eq!(weather.owner.as_ref(), "uds:client:7");
     assert!(weather.availability.is_enabled());
 }
 

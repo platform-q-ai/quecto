@@ -33,8 +33,13 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
     }
 
     let mut accepted = Vec::new();
+    let owner: std::borrow::Cow<'static, str> =
+        std::borrow::Cow::Owned(format!("uds:client:{}", ctx.current_client_id));
     for (tool_reg, tool) in tools.iter().zip(new_tools.iter()) {
-        if ctx.agent.register_uds_extension_tool(tool.clone()) {
+        if ctx
+            .agent
+            .register_uds_extension_tool_for_owner(tool.clone(), owner.clone())
+        {
             accepted.push(tool_reg.name.clone());
         }
     }

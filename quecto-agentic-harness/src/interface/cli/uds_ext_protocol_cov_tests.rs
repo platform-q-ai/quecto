@@ -462,6 +462,17 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
             .tool_registry_extension_names()
             .contains(&"cov_ext".to_string())
     );
+    let descriptor = ctx
+        .agent
+        .tool_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.name() == "cov_ext")
+        .expect("cov_ext descriptor");
+    assert!(matches!(
+        descriptor.source,
+        crate::domain::tool_descriptor::ToolSource::Uds
+    ));
+    assert_eq!(descriptor.owner.as_ref(), "uds:client:123");
     let state = registry.lock().unwrap();
     let state = state.get(&123).expect("client state retained");
     assert!(

@@ -43,9 +43,13 @@ impl ToolRegistration {
     }
 
     pub fn uds() -> Self {
+        Self::uds_owner("uds:runtime")
+    }
+
+    pub fn uds_owner(owner: impl Into<Cow<'static, str>>) -> Self {
         Self {
             source: ToolSource::Uds,
-            owner: Cow::Borrowed("uds:runtime"),
+            owner: owner.into(),
             availability: ToolAvailability::Enabled,
             unloadable: true,
         }
@@ -248,6 +252,15 @@ impl ToolRegistryImpl {
     /// Register a UDS-delivered extension tool.
     pub fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
         self.register_with_metadata(tool, ToolRegistration::uds())
+    }
+
+    /// Register a UDS-delivered extension tool with per-connection ownership.
+    pub fn register_uds_extension_for_owner(
+        &mut self,
+        tool: Arc<dyn Tool>,
+        owner: Cow<'static, str>,
+    ) -> bool {
+        self.register_with_metadata(tool, ToolRegistration::uds_owner(owner))
     }
 
     /// Remove an unloadable tool by name.
@@ -471,6 +484,14 @@ impl ExtensionToolRegistry for ToolRegistryImpl {
 
     fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
         self.register_uds_extension(tool)
+    }
+
+    fn register_uds_extension_for_owner(
+        &mut self,
+        tool: Arc<dyn Tool>,
+        owner: Cow<'static, str>,
+    ) -> bool {
+        self.register_uds_extension_for_owner(tool, owner)
     }
 
     fn enable_tool(&mut self, name: &str) -> bool {

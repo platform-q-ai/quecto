@@ -173,6 +173,19 @@ pub trait ExtensionToolRegistry: Send + Sync {
         self.register_extension(tool)
     }
 
+    /// Register a UDS-delivered runtime-loadable extension tool owned by a
+    /// specific UDS client/connection.
+    ///
+    /// Default delegates to the legacy ownerless UDS path for registries that do
+    /// not yet expose per-connection ownership metadata.
+    fn register_uds_extension_for_owner(
+        &mut self,
+        tool: std::sync::Arc<dyn Tool>,
+        _owner: std::borrow::Cow<'static, str>,
+    ) -> bool {
+        self.register_uds_extension(tool)
+    }
+
     /// Runtime-enable a registered tool. Default: unsupported.
     fn enable_tool(&mut self, _name: &str) -> bool {
         false

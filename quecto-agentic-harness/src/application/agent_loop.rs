@@ -299,6 +299,17 @@ impl AgentLoopImpl {
         self.extension_tool_registry_mut()
             .register_uds_extension(tool)
     }
+
+    /// Register a UDS-delivered extension tool with per-connection ownership
+    /// metadata for catalogue/policy consumers.
+    pub fn register_uds_extension_tool_for_owner(
+        &mut self,
+        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+        owner: std::borrow::Cow<'static, str>,
+    ) -> bool {
+        self.extension_tool_registry_mut()
+            .register_uds_extension_for_owner(tool, owner)
+    }
     /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
     pub fn unregister_extension_tool(&mut self, name: &str) {
         self.extension_tool_registry_mut()
