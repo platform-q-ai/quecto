@@ -31,6 +31,9 @@ pub use protocol_commands::{
 pub enum AgentEvent {
     /// Agent begins processing a prompt.
     AgentStart,
+    /// Announces the harness workspace path to socket clients (#1350).
+    #[serde(rename_all = "camelCase")]
+    Workspace { path: String },
     /// Agent finished processing. Identifies this run's messages by stable refs
     /// (#1060 / ADR-0008 part 2). Legacy full-content `messages` is emptied;
     /// clients that already hold stream tokens need no fetch; partial observers

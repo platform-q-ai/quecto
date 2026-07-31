@@ -74,6 +74,7 @@ fn make_args(
         busy: busy_flag,
         subagent_registry,
         workflow_state: None,
+        workspace_path: std::env::current_dir().unwrap(),
     };
     (args, broadcast_tx, cmd_tx, cmd_rx)
 }

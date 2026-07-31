@@ -222,11 +222,16 @@ impl App {
         if *in_flight {
             return;
         }
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let root = self
+            .workspace
+            .root
+            .clone()
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("."));
         *in_flight = true;
         let tx = tx.clone();
         tokio::task::spawn_blocking(move || {
-            let files = list_workspace_files(&cwd);
+            let files = list_workspace_files(&root);
             let _ = tx.blocking_send(files);
         });
     }

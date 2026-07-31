@@ -78,6 +78,16 @@ impl Footer {
         self.git_branch = branch;
     }
 
+    pub fn set_pwd_path(&mut self, path: &std::path::Path) {
+        let mut pwd = path.display().to_string();
+        if let Ok(home) = std::env::var("HOME") {
+            if pwd.starts_with(&home) {
+                pwd = format!("~{}", &pwd[home.len()..]);
+            }
+        }
+        self.pwd = pwd;
+    }
+
     pub fn set_context(&mut self, percent: Option<f64>, window: usize) {
         self.context_percent = percent;
         self.context_window = window;

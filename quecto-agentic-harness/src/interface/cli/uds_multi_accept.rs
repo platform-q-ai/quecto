@@ -26,6 +26,7 @@ pub(super) struct AcceptLoopArgs {
     /// Live workflow engine (#914): read mid-turn so a busy `get_state` reports
     /// current step progress, not the turn-boundary frozen snapshot.
     pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    pub(super) workspace_path: std::path::PathBuf,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -46,6 +47,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
         busy,
         subagent_registry,
         workflow_state,
+        workspace_path,
     } = args;
     tokio::spawn(async move {
         loop {
@@ -75,6 +77,17 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         client_id,
                         targeted_tx,
                     );
+
+                    let workspace_line = super::protocol::AgentEvent::Workspace {
+                        path: workspace_path.display().to_string(),
+                    }
+                    .to_json_line()
+                        + "\n";
+                    if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut stream, workspace_line.as_bytes()).await {
+                        tracing::warn!(error = %e, "failed to write workspace announcement");
+                        drop(stream);
+                        continue;
+                    }
 
                     let broadcast_rx = broadcast_tx.subscribe();
                     // The busy-connect snapshot is pushed BEFORE the client

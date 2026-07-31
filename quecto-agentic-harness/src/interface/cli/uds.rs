@@ -471,6 +471,7 @@ async fn run_prompt_dispatch(
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> PromptOutcome {
     let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828: gates connect-time snapshot
+    let _ = emit_event_to_broadcast_or_writer(ctx, &AgentEvent::Workspace { path: ctx.base_dir.to_string_lossy().into_owned() }).await;
     let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
     run_agent_message(PromptRun {
         agent: ctx.agent,
@@ -488,6 +489,7 @@ async fn run_prompt_dispatch(
     .await
 }
 async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
+    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::Workspace { path: ctx.base_dir.to_string_lossy().into_owned() }).await;
     emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentStart).await;
     emit_event_to_broadcast_or_writer(
         ctx,

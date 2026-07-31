@@ -745,3 +745,12 @@ async fn command_sender_and_client_send_emit_identical_bytes() {
     let expected = serialize_command(&cmd).expect("serialize");
     assert_eq!(from_sender, expected);
 }
+
+#[test]
+fn workspace_event_deserializes_1350() {
+    let ev: super::Event = serde_json::from_str(r#"{"type":"workspace","path":"/tmp/ws"}"#).unwrap();
+    match ev {
+        super::Event::Workspace { path } => assert_eq!(path, "/tmp/ws"),
+        other => panic!("expected workspace event, got {other:?}"),
+    }
+}

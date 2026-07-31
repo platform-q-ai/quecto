@@ -16,6 +16,13 @@ impl App {
     pub(super) fn handle_event(&mut self, event: Event) {
         match event {
             Event::AgentStart => self.handle_agent_start(),
+            Event::Workspace { path } => {
+                let root = std::path::PathBuf::from(path);
+                self.workspace.root = Some(root.clone());
+                self.workspace.git_repo = Some(root.clone());
+                self.master_session.footer.set_pwd_path(&root);
+                self.apply_git_branch(app_git::read_git_branch_from(&root));
+            }
             Event::Token { token } => self.master_session.chat.append_token(&token),
             Event::TurnStart => {}
             Event::TurnEnd { message } => self.handle_turn_end(message),
