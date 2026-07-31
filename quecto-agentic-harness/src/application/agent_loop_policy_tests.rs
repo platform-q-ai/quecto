@@ -60,8 +60,6 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
                 .iter()
                 .any(|definition| definition.name.as_ref() == mutation.name);
             if before_enabled && !mutation.availability.is_enabled() {
-                self.cached_definitions
-                    .retain(|definition| definition.name.as_ref() != mutation.name);
             } else if !before_enabled && mutation.availability.is_enabled() {
                 self.cached_definitions
                     .push(crate::domain::tool::ToolDefinition {

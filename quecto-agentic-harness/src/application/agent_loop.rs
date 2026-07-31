@@ -121,6 +121,7 @@ pub struct AgentLoopImpl {
     context_manager: ContextManager,
     pub(super) pending_tool_policy_mutations: std::sync::Mutex<Vec<ToolPolicyMutation>>,
     pub(super) runtime_disabled_tools: std::sync::Mutex<std::collections::HashSet<String>>,
+    pub(super) runtime_enabled_tools: std::sync::Mutex<std::collections::HashSet<String>>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
 }
 impl std::fmt::Debug for AgentLoopImpl {
@@ -163,6 +164,7 @@ impl AgentLoopImpl {
             context_manager,
             pending_tool_policy_mutations: std::sync::Mutex::new(Vec::new()),
             runtime_disabled_tools: std::sync::Mutex::new(std::collections::HashSet::new()),
+            runtime_enabled_tools: std::sync::Mutex::new(std::collections::HashSet::new()),
             turn_in_flight: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -284,7 +286,6 @@ impl AgentLoopImpl {
     pub fn tool_registry_extension_names(&self) -> Vec<String> {
         self.extension_tool_registry().extension_names()
     }
-
     /// Return descriptors for policy/UI callers without exposing concrete tool
     /// implementations.
     pub fn tool_descriptors(&self) -> Vec<crate::domain::tool_descriptor::ToolDescriptor> {
