@@ -7,6 +7,7 @@ pub mod find;
 pub mod grep;
 pub mod path_utils;
 pub mod recall;
+pub mod registration;
 pub mod registry;
 pub mod spawn;
 mod spawn_binary;

@@ -40,6 +40,9 @@ pub(crate) struct ToolRuntimePolicyState {
     pub agent_control_default_enabled: bool,
     pub web_default_enabled: bool,
     pub workflow_supported: bool,
+    pub configured_enabled: Option<bool>,
+    pub profile_enabled: Option<bool>,
+    pub session_enabled: Option<bool>,
 }
 
 impl ToolRuntimePolicyState {
@@ -49,6 +52,9 @@ impl ToolRuntimePolicyState {
             agent_control_default_enabled: entrypoint.agent_control_default_enabled(),
             web_default_enabled: entrypoint.web_default_enabled(),
             workflow_supported: entrypoint.workflow_supported(),
+            configured_enabled: None,
+            profile_enabled: None,
+            session_enabled: None,
         }
     }
 }
@@ -111,6 +117,7 @@ pub(crate) struct ToolRuntimeBuild {
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     pub policy_state: ToolRuntimePolicyState,
+    pub catalogue_entries: Vec<crate::domain::tool_descriptor::ToolCatalogueEntry>,
 }
 
 /// Build the complete shared tool runtime/catalogue for CLI, UDS and REPL.
@@ -180,8 +187,8 @@ pub(crate) fn build_tool_runtime(
     let _ = agent_control.notification_tx;
     let subagent_registry_for_protocol = agent_control.subagent_registry;
     if !policy_state.agent_control_default_enabled {
-        registry.disable_tool("spawn");
-        registry.disable_tool("agent_cmd");
+        registry.disable_tool_by_entrypoint_default("spawn");
+        registry.disable_tool_by_entrypoint_default("agent_cmd");
     }
 
     let wf_state = build_workflow_runtime(&mut registry, entrypoint, config, workflow, stderr)?;
@@ -191,20 +198,26 @@ pub(crate) fn build_tool_runtime(
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
     crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);
     if !policy_state.web_default_enabled {
-        registry.disable_tool("web_search");
-        registry.disable_tool("web_fetch");
+        registry.disable_tool_by_entrypoint_default("web_search");
+        registry.disable_tool_by_entrypoint_default("web_fetch");
     }
 
     // Apply explicit startup restrictions after every startup provider has had a
     // chance to register, so descriptors remain available while model-visible
     // definitions and execution follow policy.
-    let warnings = registry.apply_startup_tool_restrictions(disabled_tools);
+    let warnings = if spawned {
+        registry.apply_spawn_tool_restrictions(disabled_tools)
+    } else {
+        registry.apply_startup_tool_restrictions(disabled_tools)
+    };
     for name in &warnings {
         stderr.push_str(&format!(
             "WARNING: --disable-tool: no tool named '{}' in the registry\n",
             name
         ));
     }
+
+    let catalogue_entries = registry.catalogue_entries();
 
     Ok(ToolRuntimeBuild {
         registry,
@@ -216,6 +229,7 @@ pub(crate) fn build_tool_runtime(
         subagent_registry: Some(subagent_registry_for_protocol),
         workflow_state: wf_state,
         policy_state,
+        catalogue_entries,
     })
 }
 
@@ -312,6 +326,10 @@ fn build_workflow_runtime(
     }
     Ok(Some(state))
 }
+
+#[cfg(test)]
+#[path = "tool_runtime_catalogue_tests.rs"]
+mod catalogue_tests;
 
 pub(crate) fn load_workflow_spec(
     path: &std::path::Path,

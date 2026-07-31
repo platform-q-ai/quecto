@@ -665,8 +665,15 @@ pub fn register_extension_tools(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     ext_registry: &crate::infrastructure::extensions::registry::ExtensionRegistry,
 ) {
-    for tool in ext_registry.all_tools() {
-        registry.register(tool);
+    for extension in ext_registry.extensions() {
+        let provider_id = extension.name().to_string();
+        for tool in extension.tools() {
+            registry.register_with_metadata(
+                tool,
+                crate::infrastructure::tools::registry::ToolRegistration::official_native()
+                    .with_provider_id(provider_id.clone()),
+            );
+        }
     }
 }
 
@@ -691,6 +698,10 @@ pub fn xdg_runtime_dir_or_temp() -> std::path::PathBuf {
     }
     std::env::temp_dir()
 }
+
+#[cfg(test)]
+#[path = "native_provider_catalogue_tests.rs"]
+mod native_provider_catalogue_tests;
 
 #[cfg(test)]
 #[path = "shared_tests.rs"]

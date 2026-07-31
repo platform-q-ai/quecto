@@ -283,6 +283,15 @@ impl AgentLoopImpl {
     pub fn tool_descriptors(&self) -> Vec<crate::domain::tool_descriptor::ToolDescriptor> {
         self.tool_catalog().descriptors()
     }
+
+    /// Return rich additive catalogue/effective-policy state from the live
+    /// registry for TUI/API callers.
+    pub fn tool_catalogue_entries(
+        &self,
+    ) -> Vec<crate::domain::tool_descriptor::ToolCatalogueEntry> {
+        self.tool_catalog().catalogue_entries()
+    }
+
     /// Register a single native extension tool.
     pub fn register_extension_tool(
         &mut self,
@@ -685,6 +694,9 @@ impl AgentLoop for AgentLoopImpl {
     }
 }
 
+#[cfg(test)]
+#[path = "agent_loop_catalogue_tests.rs"]
+mod catalogue_tests;
 #[cfg(test)]
 #[path = "agent_loop_cov_tests.rs"]
 mod cov_tests;

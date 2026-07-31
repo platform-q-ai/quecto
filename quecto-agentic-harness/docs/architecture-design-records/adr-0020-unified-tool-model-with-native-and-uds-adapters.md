@@ -21,6 +21,12 @@
   Composition roots (CLI agent, REPL, shared workflow helper) consume these
   providers instead of constructing concrete production tool types ad hoc.
   `DocsTool::with_spawned` remains transitional.
+- **Phase 3 additive catalogue state:** `ToolCatalogueEntry` records richer
+  TUI/API-ready state without adding persisted profile UX: registered versus
+  model-visible/effective availability, entrypoint/configured/profile/session
+  placeholders, explicit restriction reasons, runtime lifecycle, provider/owner,
+  availability, and coarse health. Existing descriptor and protocol surfaces stay
+  backwards-compatible while consumers migrate to catalogue state.
 - **Still open (not this PR):** full parent/child profile policy rewrite, TUI
   modal, intentional behaviour changes, WASM.
 
@@ -68,6 +74,12 @@ Each registered tool has a descriptor containing at least:
 - an `owner` identifying the profile/policy owner, for example
   `quecto:official-tools` or `uds:runtime`;
 - runtime availability, initially `enabled` or `disabled`.
+
+Additive catalogue entries extend descriptors with non-breaking state for future
+TUI/API consumers: stable id, provider id, lifecycle (`bundled` versus
+`runtime-loadable`), default/configured/profile/session placeholders,
+restriction reason, effective enabled state, and health. Placeholder profile
+fields remain `None` until the persisted profile UX lands.
 
 The descriptor is a boundary object for policy and UI. The TUI and CLI protocol
 should read descriptors rather than import concrete Rust tool types or infer

@@ -117,6 +117,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     )?;
 
     let _policy_state = runtime.policy_state;
+    let _catalogue_entries = runtime.catalogue_entries;
 
     // #926: the parent is always spawn-capable — `SpawnTool` (with `notify_tx`)
     // and `AgentCmdTool` (with the protocol registry) are constructed by the

@@ -1,5 +1,6 @@
 use super::*;
 use crate::domain::tool::ToolRegistry;
+use crate::domain::tool_descriptor::ToolSource;
 use crate::infrastructure::security::sandbox::Sandbox;
 use tempfile::TempDir;
 
@@ -286,13 +287,13 @@ fn test_extension_names_empty_by_default() {
 }
 
 /// Minimal test tool for extension tracking tests.
-struct DummyTestTool {
+pub(crate) struct DummyTestTool {
     name: String,
     description: String,
 }
 
 impl DummyTestTool {
-    fn new(name: &str) -> Self {
+    pub(crate) fn new(name: &str) -> Self {
         Self::with_desc(name, &format!("Test tool {name}"))
     }
 
