@@ -94,7 +94,20 @@ impl AgentLoopImpl {
         });
 
         let start = std::time::Instant::now();
-        let tool_result = self.tool_executor().execute(&tc.name, &tc.arguments).await;
+        let disabled_by_runtime_policy = self
+            .runtime_disabled_tools
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains(tc.name.as_str());
+        let tool_result = if disabled_by_runtime_policy {
+            Ok(crate::domain::tool::ToolResult {
+                content: format!("tool '{}' is disabled by runtime policy", tc.name),
+                image_blocks: vec![],
+                is_error: true,
+            })
+        } else {
+            self.tool_executor().execute(&tc.name, &tc.arguments).await
+        };
         let duration_ms = start.elapsed().as_millis() as u64;
 
         let (content, image_blocks, is_err) = match tool_result {

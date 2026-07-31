@@ -149,7 +149,7 @@ impl LlmProvider for MockProvider {
 
 #[derive(Default)]
 pub(super) struct MockRegistry {
-    tools: Vec<Arc<dyn Tool>>,
+    pub(super) tools: Vec<Arc<dyn Tool>>,
     pub(super) cached_definitions: Vec<ToolDefinition>,
 }
 

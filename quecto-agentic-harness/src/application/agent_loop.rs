@@ -120,6 +120,7 @@ pub struct AgentLoopImpl {
     /// user-facing context gauge decisions.
     context_manager: ContextManager,
     pub(super) pending_tool_policy_mutations: std::sync::Mutex<Vec<ToolPolicyMutation>>,
+    pub(super) runtime_disabled_tools: std::sync::Mutex<std::collections::HashSet<String>>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
 }
 impl std::fmt::Debug for AgentLoopImpl {
@@ -161,6 +162,7 @@ impl AgentLoopImpl {
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
             context_manager,
             pending_tool_policy_mutations: std::sync::Mutex::new(Vec::new()),
+            runtime_disabled_tools: std::sync::Mutex::new(std::collections::HashSet::new()),
             turn_in_flight: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -361,7 +363,7 @@ impl AgentLoopImpl {
         self.tool_catalog().definitions()
     }
 
-    fn tool_catalog(&self) -> &dyn ToolCatalog {
+    pub(super) fn tool_catalog(&self) -> &dyn ToolCatalog {
         &*self.tool_registry
     }
 
@@ -538,7 +540,7 @@ impl AgentLoopImpl {
     /// Run the LLM-tool loop.
     async fn run_loop(&self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
         self.mark_turn_in_flight();
-        let tool_defs = self.tool_catalog().definitions();
+        let mut tool_defs = self.current_tool_definitions();
         let mut iterations: u32 = 0;
         let mut current_turn: u32 = 1;
         // True when the manifest needs a rebuild; starts true for prior spills.
@@ -551,16 +553,10 @@ impl AgentLoopImpl {
         // cannot preserve as-appended content.
         //
         // Cost (#1073 review): one clone per appended message, held until run
-        // end. This is a PER-MESSAGE bound only — the aggregate is the sum of
-        // everything the run appended and is NOT bounded by the context
-        // budget; a very long tool loop with large results accumulates the
-        // full total even while the pruning ladder reclaims the conversation
-        // copies. Accepted deliberately: the ledger drops when `AgentResult`
+        // end. Accepted deliberately: the ledger drops when `AgentResult`
         // is consumed at run end, and emission is independently capped at the
-        // shared 8 MiB protocol frame cap (#1062), so an over-cap aggregate
-        // is rejected at emission rather than silently trimmed. If a real
-        // workload ever demonstrates
-        // run-lifetime ledger growth as a problem, the remedy is
+        // shared 8 MiB protocol frame cap (#1062); over-cap aggregates reject
+        // at emission. If run-lifetime ledger growth becomes a problem, use
         // clone-on-demote (move the original into the ledger only when a
         // prune pass is about to mutate it), not Arc sharing.
         let mut appended_messages = Vec::new();
@@ -572,6 +568,10 @@ impl AgentLoopImpl {
         let mut malformed_retries: u32 = 0;
 
         loop {
+            if iterations > 0 {
+                self.drain_tool_policy_mutations_at_internal_boundary();
+                tool_defs = self.current_tool_definitions();
+            }
             let _state = TurnState::PrepareProviderRequest;
             let estimated_context_tokens = self
                 .apply_context_pruning(messages, current_turn, spills_dirty)
@@ -582,7 +582,7 @@ impl AgentLoopImpl {
 
             let request = self.prepare_provider_request_transition(
                 messages,
-                tool_defs,
+                &tool_defs,
                 estimated_context_tokens,
             );
             let _state = TurnState::AwaitProviderResponse;
