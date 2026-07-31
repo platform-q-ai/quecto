@@ -670,6 +670,10 @@ pub fn register_extension_tools(
     }
 }
 
+pub(crate) use crate::interface::tool_runtime::{
+    ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeWorkflowPolicy, build_tool_runtime,
+};
+
 /// Resolve the XDG runtime directory or fall back to temp.
 ///
 /// Returns `$XDG_RUNTIME_DIR` if it exists, is a directory, and is writable.

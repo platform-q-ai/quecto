@@ -1,0 +1,89 @@
+use super::*;
+
+#[test]
+fn load_workflow_spec_reports_io_and_json_errors_and_success() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let missing = tmp.path().join("missing.json");
+    let missing_err = load_workflow_spec(&missing).unwrap_err();
+    assert!(
+        missing_err.contains("No such") || missing_err.contains("os error"),
+        "{missing_err}"
+    );
+
+    let bad = tmp.path().join("bad.json");
+    std::fs::write(&bad, "not-json").unwrap();
+    let json_err = load_workflow_spec(&bad).unwrap_err();
+    assert!(
+        json_err.contains("expected") || json_err.contains("invalid"),
+        "{json_err}"
+    );
+
+    let good = tmp.path().join("good.json");
+    std::fs::write(
+        &good,
+        serde_json::json!({
+            "template": {
+                "id": "cov-template",
+                "label": "Coverage Template",
+                "description": "test workflow spec",
+                "steps": [
+                    {"key": "one", "label": "One", "phase": "Act"}
+                ]
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let spec = load_workflow_spec(&good).unwrap();
+    assert_eq!(spec.template.id, "cov-template");
+    assert_eq!(spec.template.steps.len(), 1);
+}
+
+#[test]
+fn load_workflow_spec_reports_missing_unreadable_and_malformed_specs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    let missing = dir.path().join("absent.json");
+    let err = load_workflow_spec(&missing).expect_err("an absent spec must fail");
+    assert!(!err.is_empty(), "error message should not be empty");
+
+    let as_dir = dir.path().join("spec-dir.json");
+    std::fs::create_dir(&as_dir).expect("create dir");
+    load_workflow_spec(&as_dir).expect_err("a directory is not a readable spec");
+
+    let bad = dir.path().join("bad.json");
+    std::fs::write(&bad, b"{ not a spec").expect("write malformed spec");
+    let err = load_workflow_spec(&bad).expect_err("malformed JSON must fail");
+    assert!(
+        err.contains("expected") || err.contains("key") || err.contains("column"),
+        "expected a serde parse message, got: {err}"
+    );
+}
+
+#[test]
+fn load_workflow_spec_consumes_the_file_on_success() {
+    use crate::domain::workflow::{WorkflowSpec, WorkflowTemplate, WorkflowTemplateStep};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("spec.json");
+    let spec = WorkflowSpec {
+        template: WorkflowTemplate {
+            id: "t1".into(),
+            label: "T1".into(),
+            description: "d".into(),
+            when_to_use: None,
+            steps: vec![WorkflowTemplateStep {
+                key: "s".into(),
+                label: "S".into(),
+                phase: "p".into(),
+                guidance: None,
+            }],
+            guards: vec![],
+        },
+    };
+    std::fs::write(&path, serde_json::to_string(&spec).unwrap()).expect("write spec");
+
+    let loaded = load_workflow_spec(&path).expect("a well-formed spec loads");
+    assert_eq!(loaded.template.id, "t1");
+    assert!(!path.exists(), "spec file was not consumed after loading");
+}

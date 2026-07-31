@@ -439,3 +439,163 @@ fn make_provider_factory_retries_codex_with_default_base_for_bad_custom_base() {
     let provider = factory(&jwt_with_account_id("acct-fallback"));
     assert_eq!(provider.name(), "codex");
 }
+
+#[test]
+fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
+    use crate::domain::tool_descriptor::{ToolAvailability, ToolSource};
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = crate::infrastructure::config::Config::default();
+    config.tools.web.fetch.enabled = true;
+    let client = reqwest::Client::new();
+    let cwd = tmp.path();
+
+    let build = |entrypoint| {
+        let sandbox = crate::infrastructure::security::sandbox::Sandbox::for_agent_workspace(
+            &config,
+            tmp.path().to_path_buf(),
+            false,
+        );
+        let mut stderr = String::new();
+        crate::interface::shared::build_tool_runtime(
+            crate::interface::shared::ToolRuntimeBuildArgs {
+                entrypoint,
+                base_dir: tmp.path(),
+                config: &config,
+                http_client: &client,
+                workspace: tmp.path().to_path_buf(),
+                sandbox,
+                exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
+                session_key: "shared-runtime".into(),
+                spawned: false,
+                restrict_to_workspace: true,
+                parent_session_name: Some("parent".into()),
+                disabled_tools: &[],
+                workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy::disabled(
+                    cwd,
+                    Some(cwd),
+                ),
+                stderr: &mut stderr,
+            },
+        )
+        .expect("runtime builds")
+    };
+
+    let cli = build(crate::interface::shared::ToolEntrypoint::CliAgent);
+    let uds = build(crate::interface::shared::ToolEntrypoint::UdsAgent);
+    assert_eq!(
+        cli.policy_state.entrypoint,
+        crate::interface::shared::ToolEntrypoint::CliAgent
+    );
+    assert_eq!(
+        uds.policy_state.entrypoint,
+        crate::interface::shared::ToolEntrypoint::UdsAgent
+    );
+    for built in [&cli, &uds] {
+        for name in [
+            "bash",
+            "docs",
+            "edit",
+            "find",
+            "grep",
+            "ls",
+            "read",
+            "write",
+            "recall",
+            "spawn",
+            "agent_cmd",
+            "web_fetch",
+        ] {
+            let descriptor = built
+                .registry
+                .descriptor(name)
+                .unwrap_or_else(|| panic!("missing descriptor for {name}"));
+            assert!(matches!(descriptor.source, ToolSource::BundledNative));
+            assert_eq!(descriptor.owner.as_ref(), "quecto:official-tools");
+            assert!(matches!(descriptor.availability, ToolAvailability::Enabled));
+            assert!(
+                built
+                    .registry
+                    .definitions()
+                    .iter()
+                    .any(|d| d.name.as_ref() == name)
+            );
+        }
+        assert!(built.notification_rx.is_some());
+        assert!(built.subagent_registry.is_some());
+        assert!(built.registry.extension_names().is_empty());
+    }
+}
+
+#[test]
+fn shared_tool_runtime_builder_repl_uses_same_pipeline_with_policy_selected_surface() {
+    use crate::domain::tool_descriptor::{ToolAvailability, ToolSource};
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = crate::infrastructure::config::Config::default();
+    config.tools.web.fetch.enabled = true;
+    let client = reqwest::Client::new();
+    let sandbox = crate::infrastructure::security::sandbox::Sandbox::for_agent_workspace(
+        &config,
+        tmp.path().to_path_buf(),
+        false,
+    );
+    let mut stderr = String::new();
+    let built = crate::interface::shared::build_tool_runtime(
+        crate::interface::shared::ToolRuntimeBuildArgs {
+            entrypoint: crate::interface::shared::ToolEntrypoint::Repl,
+            base_dir: tmp.path(),
+            config: &config,
+            http_client: &client,
+            workspace: tmp.path().to_path_buf(),
+            sandbox,
+            exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
+            session_key: "repl-runtime".into(),
+            spawned: false,
+            restrict_to_workspace: true,
+            parent_session_name: None,
+            disabled_tools: &[],
+            workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy::disabled(
+                tmp.path(),
+                Some(tmp.path()),
+            ),
+            stderr: &mut stderr,
+        },
+    )
+    .expect("runtime builds");
+
+    assert_eq!(
+        built.policy_state.entrypoint,
+        crate::interface::shared::ToolEntrypoint::Repl
+    );
+    assert!(!built.policy_state.agent_control_default_enabled);
+    assert!(!built.policy_state.web_default_enabled);
+    for name in ["spawn", "agent_cmd", "web_fetch"] {
+        let descriptor = built
+            .registry
+            .descriptor(name)
+            .unwrap_or_else(|| panic!("missing descriptor for {name}"));
+        assert!(matches!(descriptor.source, ToolSource::BundledNative));
+        assert_eq!(descriptor.owner.as_ref(), "quecto:official-tools");
+        assert!(matches!(
+            descriptor.availability,
+            ToolAvailability::Disabled
+        ));
+        assert!(
+            !built
+                .registry
+                .definitions()
+                .iter()
+                .any(|d| d.name.as_ref() == name)
+        );
+    }
+    assert!(built.registry.descriptor("recall").is_some());
+    assert!(
+        built
+            .registry
+            .definitions()
+            .iter()
+            .any(|d| d.name.as_ref() == "recall")
+    );
+    assert!(built.workflow_state.is_none());
+}
