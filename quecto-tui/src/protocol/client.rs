@@ -184,7 +184,9 @@ pub enum Command {
 pub enum Event {
     AgentStart,
     /// Harness workspace path announced by the agent during socket setup (#1350).
-    Workspace { path: String },
+    Workspace {
+        path: String,
+    },
     /// Agent finished. Full message content is not re-carried (#1060); optional
     /// `messageRefs` identify this run's messages for fetch-on-miss recovery.
     AgentEnd {
