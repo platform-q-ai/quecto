@@ -7,7 +7,7 @@
 - **Phase 1–2 (landed):** `ToolDescriptor` / `ToolSource` / `ToolAvailability`,
   runtime enable/disable, and core FS/exec/search/docs construction via
   `build_official_tool_extensions`. UDS tools share the descriptor/policy path.
-- **Phase 3 (this slice):** Remaining official/default model-callable tools are
+- **Phase 3 (landed):** Remaining official/default model-callable tools are
   supplied through bundled native provider seams:
   - `build_session_tool_extensions` → `recall`
   - `build_agent_control_tool_extensions` → `spawn` + `agent_cmd` (+ live handles)
@@ -18,8 +18,10 @@
     `register_extension`
   - `register_bundled_native_tools` / bundled-native registration for
     non-unloadable official registration
-  Composition roots (CLI agent, REPL, shared workflow helper) consume these
-  providers instead of constructing concrete production tool types ad hoc.
+  Composition roots consume these providers through the shared
+  `interface::tool_runtime` builder. CLI/UDS and REPL use that common pipeline;
+  entrypoint differences such as REPL's narrower model-visible surface are
+  represented as policy state rather than provider omission.
   `DocsTool::with_spawned` remains transitional.
 - **Phase 3 additive catalogue state:** `ToolCatalogueEntry` records richer
   TUI/API-ready state without adding persisted profile UX: registered versus
@@ -27,8 +29,14 @@
   placeholders, explicit restriction reasons, runtime lifecycle, provider/owner,
   availability, and coarse health. Existing descriptor and protocol surfaces stay
   backwards-compatible while consumers migrate to catalogue state.
-- **Still open (not this PR):** full parent/child profile policy rewrite, TUI
-  modal, intentional behaviour changes, WASM.
+- **Still open / deferred follow-ups:** live policy reconciliation beyond the
+  current registry primitives/read-only catalogue accessor (safe-turn-boundary
+  application, catalogue/policy change events, defined in-flight behaviour, and
+  an application mutation API), removal of legacy concrete-construction helpers
+  such as `ToolRegistryImpl::with_core_tools*`, legacy lifecycle API naming
+  cleanup, protocol/TUI migration to consume rich catalogue state, persisted
+  profile policy UX, full parent/child profile policy rewrite, intentional
+  behaviour changes such as REPL parity, and WASM.
 
 ## Context
 

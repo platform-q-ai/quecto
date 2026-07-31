@@ -106,10 +106,11 @@ Safety limits:
 }
 ```
 
-This registers a single native extension package named `"web"` that contributes
-both `web_search` and `web_fetch` tools. The LLM and `get_extensions` see the
-individual tool names; the package name `"web"` is an internal
-`ExtensionRegistry` label.
+This registers a single bundled-native extension package named `"web"` that
+contributes both `web_search` and `web_fetch` tools. The LLM sees the individual
+tool names when policy enables them. The package name `"web"` is an internal
+`ExtensionRegistry` label, and `get_extensions` remains a compatibility view for
+runtime-loadable UDS tools rather than the complete native+UDS catalogue.
 
 ### Behavior
 
@@ -173,7 +174,7 @@ Other rejection cases (whole batch fails; nothing is registered):
 - Name already owned by another connected client: `"tool 'X' is already registered by client <id>"`
 - Name on the process denylist (`--disable-tool`): the name cannot be reintroduced into the tool registry (registry registration rejects/no-ops). Prefer not registering disabled names; they will not appear to the LLM
 
-**Side effect (on success):** An `extensions_changed` event is broadcast to all connected clients. The event lists **tool** names currently registered as extensions (e.g. `web_search`, `weather`), not the internal native package name `"web"`.
+**Side effect (on success):** An `extensions_changed` event is broadcast to all connected clients. The event lists **runtime-loadable UDS tool** names currently registered as extensions (e.g. `weather`). It is a historical compatibility view, not the complete bundled-native plus UDS catalogue.
 
 #### Receiving execution requests
 
@@ -322,17 +323,17 @@ Response:
   "success": true,
   "data": {
     "extensions": [
-      {"name": "web_search", "description": "Search the web using Brave Search or DuckDuckGo"},
       {"name": "weather", "description": "Get current weather for a city"}
     ]
   }
 }
 ```
 
-This lists **extension tool** entries (name + description from the tool
-definition), including both native-contributed tools (e.g. `web_search`,
-`web_fetch`) and UDS-registered tools. It does not return the internal native
-package label `"web"`.
+This historical command lists **runtime-loadable UDS extension tool** entries
+(name + description from the tool definition). It is not the complete tool
+catalogue: bundled-native tools such as `web_search` and `web_fetch`, and the
+internal native package label `"web"`, are intentionally omitted from this
+compatibility view.
 
 ## System prompt injection
 
