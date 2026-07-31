@@ -79,11 +79,23 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                     );
 
                     let broadcast_rx = broadcast_tx.subscribe();
-                    // The busy-connect snapshot is pushed BEFORE the client
-                    // has spoken, i.e. before its framing is negotiated, so
-                    // it is written as legacy NDJSON for the deprecation
-                    // window — framed clients sniff each incoming message
-                    // (#1059 / ADR-0008 part 1).
+                    let workspace_line = super::protocol::AgentEvent::Workspace {
+                        path: workspace_path.display().to_string(),
+                    }
+                    .to_json_line()
+                        + "\n";
+                    // Connect-time events are pushed BEFORE the client has
+                    // spoken, i.e. before its framing is negotiated, so they
+                    // are written as legacy NDJSON for the deprecation window
+                    // — framed clients sniff each incoming message (#1059 /
+                    // ADR-0008 part 1).
+                    {
+                        use tokio::io::AsyncWriteExt;
+                        if let Err(e) = stream.write_all(workspace_line.as_bytes()).await {
+                            tracing::debug!("connect-time workspace event not delivered: {e}");
+                            continue;
+                        }
+                    }
                     if busy.load(std::sync::atomic::Ordering::SeqCst) {
                         use tokio::io::AsyncWriteExt;
                         let snapshot_lines = super::uds_snapshots::busy_connect_snapshot_lines(
@@ -116,8 +128,6 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         client_tool_registry: client_tool_registry.clone(),
                         conversation_snapshot: conversation_snapshot.clone(),
                         subagent_registry: subagent_registry.clone(),
-                        workspace_path: workspace_path.clone(),
-                        workspace_tx: targeted_tx,
                         _guard: guard,
                     };
                     tokio::spawn(async move { handle_client(args).await });
