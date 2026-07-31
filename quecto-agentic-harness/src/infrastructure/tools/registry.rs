@@ -12,68 +12,15 @@ use crate::domain::tool::{
     ExtensionToolRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition, ToolExecutor,
     ToolGuard, ToolResult,
 };
-use crate::domain::tool_descriptor::{ToolAvailability, ToolDescriptor, ToolSource};
+use crate::domain::tool_descriptor::{
+    ToolAvailability, ToolCatalogueEntry, ToolDescriptor, ToolHealth, ToolLifecycleKind,
+    ToolRestrictionReason,
+};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;
 
 use super::bash::ExecOptions;
-
-/// Ownership and lifecycle metadata supplied when a tool enters the common
-/// registry. Delivery adapters (bundled native, UDS, future sources) differ only
-/// in this metadata and in the concrete `Tool` implementation/proxy they supply.
-#[derive(Debug, Clone)]
-pub struct ToolRegistration {
-    pub source: ToolSource,
-    pub owner: Cow<'static, str>,
-    pub availability: ToolAvailability,
-    /// Whether lifecycle APIs may unregister this concrete registration without
-    /// removing/denying the stable tool name. UDS tools are unloadable when their
-    /// connection unregisters or disconnects; bundled native tools are not.
-    pub unloadable: bool,
-}
-
-impl ToolRegistration {
-    pub fn official_native() -> Self {
-        Self {
-            source: ToolSource::BundledNative,
-            owner: Cow::Borrowed("quecto:official-tools"),
-            availability: ToolAvailability::Enabled,
-            unloadable: false,
-        }
-    }
-
-    pub fn uds() -> Self {
-        Self::uds_owner("uds:runtime")
-    }
-
-    pub fn uds_owner(owner: impl Into<Cow<'static, str>>) -> Self {
-        Self {
-            source: ToolSource::Uds,
-            owner: owner.into(),
-            availability: ToolAvailability::Enabled,
-            unloadable: true,
-        }
-    }
-
-    pub fn runtime(owner: impl Into<Cow<'static, str>>) -> Self {
-        Self {
-            source: ToolSource::Runtime,
-            owner: owner.into(),
-            availability: ToolAvailability::Enabled,
-            unloadable: true,
-        }
-    }
-
-    pub fn with_availability(mut self, availability: ToolAvailability) -> Self {
-        self.availability = availability;
-        self
-    }
-
-    pub fn unloadable(mut self, unloadable: bool) -> Self {
-        self.unloadable = unloadable;
-        self
-    }
-}
+pub use super::registration::ToolRegistration;
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
@@ -225,6 +172,20 @@ impl ToolRegistryImpl {
     /// UDS clients cannot reintroduce a process-disabled capability later.
     /// Returns unknown names for caller-visible warnings.
     pub fn apply_startup_tool_restrictions(&mut self, names: &[String]) -> Vec<String> {
+        self.apply_tool_restrictions(names, ToolRestrictionReason::ExplicitDisable)
+    }
+
+    /// Apply inherited spawn/read-only restrictions while keeping provenance
+    /// distinct from top-level startup disables.
+    pub fn apply_spawn_tool_restrictions(&mut self, names: &[String]) -> Vec<String> {
+        self.apply_tool_restrictions(names, ToolRestrictionReason::Spawn)
+    }
+
+    fn apply_tool_restrictions(
+        &mut self,
+        names: &[String],
+        reason: ToolRestrictionReason,
+    ) -> Vec<String> {
         let mut warnings = Vec::new();
         let mut rebuild_needed = false;
         for name in names {
@@ -241,6 +202,8 @@ impl ToolRegistryImpl {
                 metadata.availability = ToolAvailability::Disabled;
                 rebuild_needed = true;
             }
+            metadata.session_enabled = Some(false);
+            metadata.explicit_restriction = Some(reason);
         }
         if rebuild_needed {
             self.rebuild_definitions();
@@ -412,14 +375,100 @@ impl ToolRegistryImpl {
         ))
     }
 
+    /// Return rich additive catalogue/effective-policy state for all registered tools.
+    pub fn catalogue_entries(&self) -> Vec<ToolCatalogueEntry> {
+        let mut entries: Vec<ToolCatalogueEntry> = self
+            .tools
+            .iter()
+            .map(|(name, tool)| {
+                let definition = tool.definition();
+                let metadata = self
+                    .metadata
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(ToolRegistration::official_native);
+                let effective_enabled = metadata.availability.is_enabled();
+                ToolCatalogueEntry {
+                    stable_id: Cow::Owned(name.clone()),
+                    name: definition.name.clone(),
+                    label: definition.name.clone(),
+                    description: definition.description.clone(),
+                    input_schema: definition.parameters_schema.clone(),
+                    source: metadata.source,
+                    owner: metadata.owner.clone(),
+                    provider_id: metadata.provider_id.clone(),
+                    version: None,
+                    lifecycle: if metadata.unloadable {
+                        ToolLifecycleKind::RuntimeLoadable
+                    } else {
+                        ToolLifecycleKind::Bundled
+                    },
+                    configurable: true,
+                    default_enabled: metadata.default_enabled,
+                    configured_enabled: metadata.configured_enabled,
+                    profile_enabled: metadata.profile_enabled,
+                    session_enabled: metadata.session_enabled,
+                    explicit_restriction: metadata.explicit_restriction,
+                    runtime_availability: metadata.availability,
+                    effective_enabled,
+                    health: if effective_enabled {
+                        ToolHealth::Ok
+                    } else {
+                        ToolHealth::Disabled
+                    },
+                }
+            })
+            .collect();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries
+    }
+
     /// Runtime-disable a registered tool without removing its descriptor.
     pub fn disable_tool(&mut self, name: &str) -> bool {
         self.set_availability(name, ToolAvailability::Disabled)
     }
 
+    /// Mark a registered tool disabled by entrypoint defaults.
+    pub fn disable_tool_by_entrypoint_default(&mut self, name: &str) -> bool {
+        self.set_registration_metadata(name, |metadata| {
+            *metadata = metadata.clone().with_entrypoint_default_enabled(false);
+        })
+    }
+
+    /// Mark a registered tool disabled by inherited spawn policy.
+    pub fn disable_tool_by_spawn_restriction(&mut self, name: &str) -> bool {
+        self.set_registration_metadata(name, |metadata| {
+            *metadata = metadata.clone().with_spawn_restriction();
+        })
+    }
+
     /// Runtime-enable a registered tool without restart.
     pub fn enable_tool(&mut self, name: &str) -> bool {
-        self.set_availability(name, ToolAvailability::Enabled)
+        self.set_registration_metadata(name, |metadata| {
+            metadata.availability = ToolAvailability::Enabled;
+            metadata.session_enabled = None;
+            metadata.explicit_restriction = None;
+        })
+    }
+
+    fn set_registration_metadata(
+        &mut self,
+        name: &str,
+        update: impl FnOnce(&mut ToolRegistration),
+    ) -> bool {
+        if !self.tools.contains_key(name) {
+            return false;
+        }
+        let metadata = self
+            .metadata
+            .entry(name.to_string())
+            .or_insert_with(ToolRegistration::official_native);
+        let old_availability = metadata.availability;
+        update(metadata);
+        if metadata.availability != old_availability {
+            self.rebuild_definitions();
+        }
+        true
     }
 
     fn set_availability(&mut self, name: &str, availability: ToolAvailability) -> bool {
@@ -535,6 +584,10 @@ impl ToolCatalog for ToolRegistryImpl {
     fn descriptors(&self) -> Vec<ToolDescriptor> {
         self.descriptors()
     }
+
+    fn catalogue_entries(&self) -> Vec<ToolCatalogueEntry> {
+        self.catalogue_entries()
+    }
 }
 
 impl ToolExecutor for ToolRegistryImpl {
@@ -602,3 +655,7 @@ impl crate::domain::tool::ToolRegistry for ToolRegistryImpl {}
 #[cfg(test)]
 #[path = "registry_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "registry_catalogue_tests.rs"]
+mod catalogue_tests;

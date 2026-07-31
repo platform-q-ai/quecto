@@ -46,3 +46,26 @@ fn tool_descriptor_constructors_and_name() {
     let runtime = ToolDescriptor::enabled(def("custom"), ToolSource::Runtime, "runtime");
     assert_eq!(runtime.source.as_str(), "runtime");
 }
+
+#[test]
+fn rich_catalogue_state_types_have_stable_strings() {
+    assert_eq!(ToolLifecycleKind::Bundled.as_str(), "bundled");
+    assert_eq!(
+        ToolLifecycleKind::RuntimeLoadable.as_str(),
+        "runtime-loadable"
+    );
+    assert_eq!(
+        ToolRestrictionReason::EntrypointDefault.as_str(),
+        "entrypoint-default"
+    );
+    assert_eq!(ToolRestrictionReason::Session.as_str(), "session");
+    assert_eq!(ToolRestrictionReason::Spawn.as_str(), "spawn");
+    assert_eq!(
+        ToolRestrictionReason::ExplicitDisable.as_str(),
+        "explicit-disable"
+    );
+    assert_eq!(ToolHealth::Ok.as_str(), "ok");
+    assert_eq!(ToolHealth::Disabled.as_str(), "disabled");
+    assert_eq!(ToolHealth::Unavailable.as_str(), "unavailable");
+    assert_eq!(ToolHealth::Unknown.as_str(), "unknown");
+}

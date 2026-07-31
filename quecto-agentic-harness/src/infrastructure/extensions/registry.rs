@@ -41,6 +41,11 @@ impl ExtensionRegistry {
         self.extensions.push(ext);
     }
 
+    /// Registered extension providers in insertion order.
+    pub fn extensions(&self) -> &[Arc<dyn Extension>] {
+        &self.extensions
+    }
+
     /// All tools across all extensions, deduplicated by name (last wins).
     pub fn all_tools(&self) -> Vec<Arc<dyn Tool>> {
         let mut map: HashMap<String, Arc<dyn Tool>> = HashMap::new();

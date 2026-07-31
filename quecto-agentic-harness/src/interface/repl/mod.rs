@@ -332,6 +332,7 @@ pub fn run_repl<R: BufRead, W: Write>(
         tracing::warn!("{stderr}");
     }
     let _policy_state = runtime.policy_state;
+    let _catalogue_entries = runtime.catalogue_entries;
     let registry = runtime.registry;
     let spill_store = runtime.spill_store;
     let session_key = runtime.session_key;

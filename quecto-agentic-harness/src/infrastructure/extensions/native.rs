@@ -233,8 +233,13 @@ pub fn register_bundled_native_tools(
     extensions: Vec<Arc<dyn Extension>>,
 ) {
     for extension in extensions {
+        let provider_id = extension.name().to_string();
         for tool in extension.tools() {
-            registry.register(tool);
+            registry.register_with_metadata(
+                tool,
+                crate::infrastructure::tools::registry::ToolRegistration::official_native()
+                    .with_provider_id(provider_id.clone()),
+            );
         }
     }
 }

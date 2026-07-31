@@ -3,7 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use super::error::DomainError;
-use super::tool_descriptor::ToolDescriptor;
+use super::tool_descriptor::{ToolCatalogueEntry, ToolDescriptor};
 
 /// Metadata describing a tool for the LLM.
 ///
@@ -115,6 +115,13 @@ pub trait ToolCatalog: Send + Sync {
                 )
             })
             .collect()
+    }
+
+    /// Return rich additive catalogue/effective-policy state when the backing
+    /// catalogue has real metadata. The default fallback is intentionally empty:
+    /// callers that need TUI/API-ready state must use a metadata-aware registry.
+    fn catalogue_entries(&self) -> Vec<ToolCatalogueEntry> {
+        Vec::new()
     }
 
     /// Return the number of registered tools without cloning definitions.
