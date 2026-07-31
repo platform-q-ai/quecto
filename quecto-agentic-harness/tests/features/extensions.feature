@@ -178,6 +178,22 @@ Feature: Extension system
     And the capability catalogue should describe "community_weather" as a UDS runtime capability
     And the capability catalogue should describe "bash" as a bundled native capability owned by Quecto
 
+  Scenario: UDS capability names remain owned by their registering connection
+    Given a tool workspace
+    And UDS client "1" has registered runtime capability "community_weather"
+    When UDS client "2" registers runtime capability "community_weather"
+    Then the runtime capability registration should be rejected
+    And the capability catalogue should list "community_weather" as owned by UDS client "1"
+
+  Scenario: UDS lifecycle unregisters only the disconnecting client's runtime capabilities
+    Given a tool workspace
+    And UDS client "1" has registered runtime capability "community_weather"
+    And UDS client "2" has registered runtime capability "community_calendar"
+    When UDS client "1" disconnects
+    Then the tool registry should not contain "community_weather"
+    And the tool registry should contain "community_calendar"
+    And the tool registry should contain "bash"
+
   Scenario: Disabling an official capability keeps it registered but hides it from the model
     Given a tool workspace
     When tool "bash" is disabled at runtime

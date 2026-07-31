@@ -286,12 +286,18 @@ fn test_extension_names_empty_by_default() {
 /// Minimal test tool for extension tracking tests.
 struct DummyTestTool {
     name: String,
+    description: String,
 }
 
 impl DummyTestTool {
     fn new(name: &str) -> Self {
+        Self::with_desc(name, &format!("Test tool {name}"))
+    }
+
+    fn with_desc(name: &str, description: &str) -> Self {
         Self {
             name: name.to_string(),
+            description: description.to_string(),
         }
     }
 }
@@ -300,7 +306,7 @@ impl Tool for DummyTestTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: self.name.clone().into(),
-            description: format!("Test tool {}", self.name).into(),
+            description: self.description.clone().into(),
             parameters_schema: r#"{"type":"object"}"#.into(),
         }
     }
@@ -502,6 +508,57 @@ fn register_uds_extension_rejects_core_shadow_and_denylist() {
     assert!(reg.remove("bash"));
     assert!(!reg.register_uds_extension(Arc::new(DummyTestTool::new("bash"))));
     assert!(reg.get("bash").is_none());
+}
+
+#[test]
+fn unloadable_tool_names_remain_owned_by_their_registering_connection() {
+    let mut reg = ToolRegistryImpl::new();
+    assert!(reg.register_uds_extension_for_owner(
+        Arc::new(DummyTestTool::new("weather")),
+        "uds:client:1".into(),
+    ));
+
+    assert!(
+        !reg.register_uds_extension_for_owner(
+            Arc::new(DummyTestTool::new("weather")),
+            "uds:client:2".into(),
+        ),
+        "a second UDS owner must not replace another client's proxy"
+    );
+    assert_eq!(
+        reg.descriptor("weather").unwrap().owner.as_ref(),
+        "uds:client:1"
+    );
+
+    assert!(reg.register_uds_extension_for_owner(
+        Arc::new(DummyTestTool::with_desc("weather", "new generation")),
+        "uds:client:1".into(),
+    ));
+    let descriptor = reg.descriptor("weather").unwrap();
+    assert_eq!(descriptor.owner.as_ref(), "uds:client:1");
+    assert_eq!(descriptor.definition.description.as_ref(), "new generation");
+}
+
+#[test]
+fn owner_scoped_unregister_removes_only_matching_runtime_capabilities() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(reg.register_uds_extension_for_owner(
+        Arc::new(DummyTestTool::new("weather")),
+        "uds:client:1".into(),
+    ));
+    assert!(reg.register_uds_extension_for_owner(
+        Arc::new(DummyTestTool::new("calendar")),
+        "uds:client:2".into(),
+    ));
+
+    let removed = reg.unregister_extensions_for_owner("uds:client:1");
+    assert_eq!(removed, vec!["weather".to_string()]);
+    assert!(reg.get("weather").is_none());
+    assert!(reg.get("calendar").is_some());
+    assert!(
+        reg.get("bash").is_some(),
+        "native tools have separate lifecycle"
+    );
 }
 
 #[test]

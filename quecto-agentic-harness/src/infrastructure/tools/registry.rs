@@ -227,6 +227,10 @@ impl ToolRegistryImpl {
                 tracing::warn!(tool = %name, "register rejected: shadows non-unloadable tool");
                 return false;
             }
+            if existing.owner != metadata.owner {
+                tracing::warn!(tool = %name, existing_owner = %existing.owner, new_owner = %metadata.owner, "register rejected: shadows another owner");
+                return false;
+            }
         }
         self.metadata.insert(name.clone(), metadata);
         self.tools.insert(name, tool);
@@ -279,6 +283,27 @@ impl ToolRegistryImpl {
         self.metadata.remove(name);
         self.tools.remove(name);
         self.rebuild_definitions();
+    }
+
+    /// Remove unloadable runtime tools owned by a delivery/lifecycle adapter.
+    ///
+    /// This keeps UDS disconnect cleanup scoped to the disconnecting client while
+    /// preserving bundled native tools and other clients' runtime tools.
+    pub fn unregister_extensions_for_owner(&mut self, owner: &str) -> Vec<String> {
+        let names: Vec<String> = self
+            .metadata
+            .iter()
+            .filter(|(_, metadata)| metadata.unloadable && metadata.owner.as_ref() == owner)
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in &names {
+            self.metadata.remove(name);
+            self.tools.remove(name);
+        }
+        if !names.is_empty() {
+            self.rebuild_definitions();
+        }
+        names
     }
 
     /// Return the names of currently unloadable runtime tools.
@@ -480,6 +505,10 @@ impl ExtensionToolRegistry for ToolRegistryImpl {
 
     fn unregister_extension(&mut self, name: &str) {
         self.unregister_extension(name);
+    }
+
+    fn unregister_extensions_for_owner(&mut self, owner: &str) -> Vec<String> {
+        self.unregister_extensions_for_owner(owner)
     }
 
     fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {

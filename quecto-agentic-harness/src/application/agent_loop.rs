@@ -315,6 +315,13 @@ impl AgentLoopImpl {
         self.extension_tool_registry_mut()
             .unregister_extension(name);
     }
+
+    /// Unregister all UDS-delivered extension tools owned by a connection.
+    pub fn unregister_uds_extension_tools_for_client(&mut self, client_id: u64) -> Vec<String> {
+        let owner = format!("uds:client:{client_id}");
+        self.tool_registry
+            .unregister_extensions_for_owner(owner.as_str())
+    }
     /// Return all tool definitions (for core name lookups).
     pub fn tool_definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
         self.tool_catalog().definitions()

@@ -168,6 +168,11 @@ pub trait ExtensionToolRegistry: Send + Sync {
     /// are disabled/enabled by policy rather than unloaded. Default: no-op.
     fn unregister_extension(&mut self, _name: &str) {}
 
+    /// Unregister runtime-loadable tools owned by one dynamic provider/client.
+    fn unregister_extensions_for_owner(&mut self, _owner: &str) -> Vec<String> {
+        vec![]
+    }
+
     /// Register a UDS-delivered runtime-loadable extension tool.
     fn register_uds_extension(&mut self, tool: std::sync::Arc<dyn Tool>) -> bool {
         self.register_extension(tool)

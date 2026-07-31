@@ -565,7 +565,40 @@ fn given_uds_extension_tool_registered(world: &mut QuectoWorld, tool_name: Strin
         name: tool_name,
         description: "UDS extension test tool".to_string(),
     });
-    registry.register_uds_extension(tool);
+    world.tool_policy_change_result = Some(registry.register_uds_extension(tool));
+    world.tool_definitions_snapshot = registry.definitions().to_vec();
+}
+
+#[given(expr = "UDS client {string} has registered runtime capability {string}")]
+fn given_uds_client_registered_capability(
+    world: &mut QuectoWorld,
+    client_id: String,
+    tool_name: String,
+) {
+    let registry = world.tool_registry.as_mut().expect("tool registry not set");
+    let tool = Arc::new(DummyTool {
+        name: tool_name,
+        description: "UDS extension test tool".to_string(),
+    });
+    let owner = format!("uds:client:{client_id}").into();
+    world.tool_policy_change_result = Some(registry.register_uds_extension_for_owner(tool, owner));
+    world.tool_definitions_snapshot = registry.definitions().to_vec();
+}
+
+#[when(expr = "UDS client {string} registers runtime capability {string}")]
+fn when_uds_client_registers_capability(
+    world: &mut QuectoWorld,
+    client_id: String,
+    tool_name: String,
+) {
+    given_uds_client_registered_capability(world, client_id, tool_name);
+}
+
+#[when(expr = "UDS client {string} disconnects")]
+fn when_uds_client_disconnects(world: &mut QuectoWorld, client_id: String) {
+    let registry = world.tool_registry.as_mut().expect("tool registry not set");
+    let owner = format!("uds:client:{client_id}");
+    registry.unregister_extensions_for_owner(owner.as_str());
     world.tool_definitions_snapshot = registry.definitions().to_vec();
 }
 
@@ -713,6 +746,25 @@ fn then_catalogue_lists_enabled(world: &mut QuectoWorld, tool_name: String) {
         .descriptor(&tool_name)
         .unwrap_or_else(|| panic!("missing descriptor for '{}'", tool_name));
     assert_eq!(descriptor.availability.as_str(), "enabled");
+}
+
+#[then(expr = "the capability catalogue should list {string} as owned by UDS client {string}")]
+fn then_catalogue_lists_uds_client_owner(
+    world: &mut QuectoWorld,
+    tool_name: String,
+    client_id: String,
+) {
+    let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let descriptor = registry
+        .descriptor(&tool_name)
+        .unwrap_or_else(|| panic!("missing descriptor for '{}'", tool_name));
+    assert_eq!(descriptor.source.as_str(), "uds");
+    assert_eq!(descriptor.owner.as_ref(), format!("uds:client:{client_id}"));
+}
+
+#[then(expr = "the runtime capability registration should be rejected")]
+fn then_runtime_capability_registration_rejected(world: &mut QuectoWorld) {
+    assert_eq!(world.tool_policy_change_result, Some(false));
 }
 
 #[when(expr = "executing tool {string} is attempted")]
