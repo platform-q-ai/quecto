@@ -107,6 +107,11 @@ done
 echo "quecto-agent-socket: $CONTAINER_SOCKET" >&2
 
 if [[ "${API_ENABLED:-0}" == "1" ]]; then
+  if ! command -v quecto-api >/dev/null 2>&1; then
+    echo "API_ENABLED=1 but quecto-api is not installed in $QUECTO_INSTALL_ROOT/bin." >&2
+    echo "Add quecto-api to QUECTO_INSTALL_PACKAGES." >&2
+    exit 1
+  fi
   "${RUN_AS[@]}" env PATH="$PATH" quecto-api --socket "$CONTAINER_SOCKET" --host 0.0.0.0 --port "${API_PORT:-8080}" &
   echo "quecto-api: http://127.0.0.1:${API_PORT:-8080}" >&2
 fi

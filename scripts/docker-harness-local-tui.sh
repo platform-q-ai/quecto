@@ -15,15 +15,23 @@ TRANSPORT="${QUECTO_DOCKER_TRANSPORT:-auto}"
 API_ENABLED="${QUECTO_DOCKER_API:-0}"
 API_PORT="${QUECTO_DOCKER_API_PORT:-8080}"
 PROXY_PORT="${QUECTO_DOCKER_PROXY_PORT:-17777}"
+# Ports pinned by the caller are honoured exactly; unpinned ports auto-advance
+# past anything already bound so parallel instances do not collide.
+API_PORT_PINNED=0
+PROXY_PORT_PINNED=0
+[[ -n "${QUECTO_DOCKER_API_PORT:-}" ]] && API_PORT_PINNED=1
+[[ -n "${QUECTO_DOCKER_PROXY_PORT:-}" ]] && PROXY_PORT_PINNED=1
 SOCKET_TIMEOUT="${QUECTO_SOCKET_TIMEOUT:-900}"
 QUECTO_REPO_URL="${QUECTO_REPO_URL:-git@github.com:platform-q-ai/quecto.git}"
 QUECTO_REPO_REF="${QUECTO_REPO_REF:-master}"
 QUECTO_DEV_CLONE="${QUECTO_DEV_CLONE:-1}"
 QUECTO_INSTALL="${QUECTO_INSTALL:-1}"
+QUECTO_INSTALL_PACKAGES_EXPLICIT="${QUECTO_INSTALL_PACKAGES:-}"
 QUECTO_INSTALL_PACKAGES="${QUECTO_INSTALL_PACKAGES:-quecto-agentic-harness}"
 QUECTO_INSTALL_ROOT="${QUECTO_INSTALL_ROOT:-/workspace/.cargo-install}"
-QUECTO_WORKSPACE_VOLUME="${QUECTO_WORKSPACE_VOLUME:-quecto-workspace}"
-QUECTO_HOME_VOLUME="${QUECTO_HOME_VOLUME:-quecto-home}"
+QUECTO_WORKSPACE_VOLUME="${QUECTO_WORKSPACE_VOLUME:-}"
+QUECTO_HOME_VOLUME="${QUECTO_HOME_VOLUME:-}"
+QUECTO_INSTANCE="${QUECTO_INSTANCE:-}"
 QUECTO_TUI_BIN="${QUECTO_TUI_BIN:-quecto-tui}"
 BUILD_IMAGE=1
 
@@ -41,12 +49,17 @@ Examples:
   QUECTO_SSH_DIR="\$HOME/.ssh" scripts/docker-harness-local-tui.sh
   QUECTO_DOCKER_TRANSPORT=tcp-proxy scripts/docker-harness-local-tui.sh
 
+Parallel harnesses (each gets its own workspace/state volumes):
+  QUECTO_REPO_REF=feature/a scripts/docker-harness-local-tui.sh
+  QUECTO_REPO_REF=feature/b scripts/docker-harness-local-tui.sh
+  scripts/docker-harness-local-tui.sh --instance scratch
+
 Environment:
   QUECTO_DOCKER_IMAGE       Docker image tag (default: quecto-harness:local)
   QUECTO_DOCKER_TRANSPORT   auto | direct | tcp-proxy (default: auto)
   QUECTO_DOCKER_API         1 to start quecto-api in the container
-  QUECTO_DOCKER_API_PORT    host/container API port (default: 8080)
-  QUECTO_DOCKER_PROXY_PORT  host/container TCP bridge port (default: 17777)
+  QUECTO_DOCKER_API_PORT    host/container API port (pinned; default 8080 auto-advances if busy)
+  QUECTO_DOCKER_PROXY_PORT  host/container TCP bridge port (pinned; default 17777 auto-advances if busy)
   QUECTO_SOCKET_TIMEOUT     seconds to wait for harness socket (default: 900)
   QUECTO_REPO_URL           repo cloned in container (default: git@github.com:platform-q-ai/quecto.git)
   QUECTO_REPO_REF           branch/tag/SHA to check out and pull (default: master)
@@ -54,8 +67,10 @@ Environment:
   QUECTO_INSTALL            1 to install Quecto binaries in the container entrypoint (default: 1)
   QUECTO_INSTALL_PACKAGES   workspace packages to cargo-install in the container
   QUECTO_INSTALL_ROOT       container cargo-install root (default: /workspace/.cargo-install)
-  QUECTO_WORKSPACE_VOLUME   Docker volume for /workspace (default: quecto-workspace)
-  QUECTO_HOME_VOLUME        Docker volume for /home/appuser/.quecto (default: quecto-home)
+  QUECTO_INSTANCE           instance name isolating volumes (default: slug of QUECTO_REPO_REF)
+  QUECTO_WORKSPACE_VOLUME   Docker volume for /workspace (default: quecto-workspace-\$QUECTO_INSTANCE)
+  QUECTO_HOME_VOLUME        Docker volume for /home/appuser/.quecto (default: quecto-home-\$QUECTO_INSTANCE)
+  QUECTO_ALLOW_SHARED_WORKSPACE  1 to skip the "volume already in use" guard
   QUECTO_TUI_BIN            host TUI command to run (default: quecto-tui)
   QUECTO_SSH_DIR            optional host SSH directory mounted read-only
   QUECTO_CONFIG_FILE        host config.json to seed into container Quecto home
@@ -67,6 +82,9 @@ Options:
   --api                 Start quecto-api in the container on localhost:${API_PORT}
   --transport MODE      auto, direct, or tcp-proxy
   --image TAG           Docker image tag to build/use
+  --instance NAME       Isolate this harness under its own Docker volumes
+  --api-port PORT       Pin the API port (fails if busy instead of auto-advancing)
+  --proxy-port PORT     Pin the TCP bridge port (fails if busy instead of auto-advancing)
   --no-build            Do not build the Docker image first
   -h, --help            Show this help
   --                    Remaining arguments are passed to local quecto-tui
@@ -86,6 +104,20 @@ while [[ $# -gt 0 ]]; do
       ;;
     --image)
       IMAGE="${2:-}"
+      shift 2
+      ;;
+    --instance)
+      QUECTO_INSTANCE="${2:-}"
+      shift 2
+      ;;
+    --api-port)
+      API_PORT="${2:-}"
+      API_PORT_PINNED=1
+      shift 2
+      ;;
+    --proxy-port)
+      PROXY_PORT="${2:-}"
+      PROXY_PORT_PINNED=1
       shift 2
       ;;
     --no-build)
@@ -108,6 +140,28 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Each instance gets its own /workspace and Quecto state volumes so that
+# concurrent harnesses never share one git working tree or cargo install root.
+# The instance name defaults to the checked-out ref, so parallel runs on
+# different branches are isolated while repeat runs on one branch keep their
+# warm build cache.
+if [[ -z "$QUECTO_INSTANCE" ]]; then
+  QUECTO_INSTANCE="$(printf '%s' "$QUECTO_REPO_REF" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -e 's#[^a-z0-9_.-]#-#g' -e 's#^[-._]*##' -e 's#[-._]*$##')"
+fi
+if [[ -z "$QUECTO_INSTANCE" ]]; then
+  echo "Could not derive an instance name from QUECTO_REPO_REF='$QUECTO_REPO_REF'." >&2
+  echo "Pass --instance NAME or set QUECTO_INSTANCE." >&2
+  exit 2
+fi
+if [[ ! "$QUECTO_INSTANCE" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+  echo "Invalid instance name '$QUECTO_INSTANCE' (expected [a-zA-Z0-9][a-zA-Z0-9_.-]*)" >&2
+  exit 2
+fi
+QUECTO_WORKSPACE_VOLUME="${QUECTO_WORKSPACE_VOLUME:-quecto-workspace-$QUECTO_INSTANCE}"
+QUECTO_HOME_VOLUME="${QUECTO_HOME_VOLUME:-quecto-home-$QUECTO_INSTANCE}"
+
 case "$TRANSPORT" in
   auto|direct|tcp-proxy) ;;
   *) echo "Invalid --transport '$TRANSPORT' (expected auto, direct, or tcp-proxy)" >&2; exit 2 ;;
@@ -119,6 +173,65 @@ if [[ "$TRANSPORT" == "auto" ]]; then
   else
     TRANSPORT="tcp-proxy"
   fi
+fi
+
+port_is_free() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ! ss -ltnH "sport = :$port" 2>/dev/null | grep -q .
+  else
+    ! (echo >"/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1
+  fi
+}
+
+# Resolve a host port, auto-advancing only when the caller did not pin it.
+# $1 label, $2 port variable name, $3 pinned flag, $4.. ports to avoid
+resolve_port() {
+  local label="$1" var="$2" pinned="$3"
+  shift 3
+  local avoid=("$@")
+  local port="${!var}"
+
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || ((port < 1 || port > 65535)); then
+    echo "Invalid $label port '$port' (expected 1-65535)" >&2
+    exit 2
+  fi
+
+  local candidate="$port" taken
+  for _ in $(seq 0 200); do
+    taken=0
+    for used in ${avoid[@]+"${avoid[@]}"}; do
+      [[ "$candidate" == "$used" ]] && taken=1
+    done
+    if ((taken == 0)) && port_is_free "$candidate"; then
+      if [[ "$candidate" != "$port" ]]; then
+        echo "$label port $port is in use; using $candidate instead." >&2
+      fi
+      printf -v "$var" '%s' "$candidate"
+      return 0
+    fi
+    if [[ "$pinned" == "1" ]]; then
+      echo "$label port $port is already in use on 127.0.0.1." >&2
+      echo "Free it, or pick another with --${label,,}-port / QUECTO_DOCKER_${label^^}_PORT." >&2
+      exit 1
+    fi
+    ((candidate++))
+    ((candidate > 65535)) && break
+  done
+  echo "Could not find a free $label port starting at $port." >&2
+  exit 1
+}
+
+if [[ "$API_ENABLED" == "1" ]]; then
+  resolve_port api API_PORT "$API_PORT_PINNED"
+  # quecto-api lives in its own workspace package; without it the entrypoint
+  # publishes the port but has no binary to serve on it.
+  if [[ -z "${QUECTO_INSTALL_PACKAGES_EXPLICIT:-}" && " $QUECTO_INSTALL_PACKAGES " != *" quecto-api "* ]]; then
+    QUECTO_INSTALL_PACKAGES="$QUECTO_INSTALL_PACKAGES quecto-api"
+  fi
+fi
+if [[ "$TRANSPORT" == "tcp-proxy" ]]; then
+  resolve_port proxy PROXY_PORT "$PROXY_PORT_PINNED" "$API_PORT"
 fi
 
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
@@ -133,6 +246,20 @@ if ! command -v "$QUECTO_TUI_BIN" >/dev/null 2>&1; then
   echo "Host TUI command '$QUECTO_TUI_BIN' was not found on PATH." >&2
   echo "Install quecto-tui locally first, or set QUECTO_TUI_BIN=/path/to/quecto-tui." >&2
   exit 1
+fi
+
+# Two live harnesses sharing one workspace volume would check out and pull the
+# same git tree from under each other, so refuse unless explicitly allowed.
+if [[ "${QUECTO_ALLOW_SHARED_WORKSPACE:-0}" != "1" ]]; then
+  workspace_users="$(docker ps --quiet --filter "volume=$QUECTO_WORKSPACE_VOLUME" 2>/dev/null || true)"
+  if [[ -n "$workspace_users" ]]; then
+    echo "Workspace volume '$QUECTO_WORKSPACE_VOLUME' is already in use by a running container:" >&2
+    docker ps --filter "volume=$QUECTO_WORKSPACE_VOLUME" --format '  {{.ID}}  {{.Names}}' >&2
+    echo "Start this harness under its own instance instead, e.g.:" >&2
+    echo "  $0 --instance my-second-branch" >&2
+    echo "Set QUECTO_ALLOW_SHARED_WORKSPACE=1 to override." >&2
+    exit 1
+  fi
 fi
 
 COMPOSE_PROJECT_NAME="quecto-harness-$RANDOM-$$"
