@@ -71,6 +71,8 @@ impl ExtensionToolRegistry for EmptyRegistry {}
 
 impl SessionAwareTools for EmptyRegistry {}
 
+impl quecto::domain::tool::ToolPolicyMutator for EmptyRegistry {}
+
 impl quecto::domain::tool::ToolRegistry for EmptyRegistry {}
 
 fn agent_loop(reply: &str) -> Arc<dyn AgentLoop> {

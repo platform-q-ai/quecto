@@ -143,6 +143,8 @@ impl ExtensionToolRegistry for CovEmptyRegistry {}
 
 impl SessionAwareTools for CovEmptyRegistry {}
 
+impl ToolPolicyMutator for CovEmptyRegistry {}
+
 impl ToolRegistry for CovEmptyRegistry {}
 
 #[test]
@@ -211,6 +213,7 @@ impl ToolExecutor for CovOneDefRegistry {
 
 impl ExtensionToolRegistry for CovOneDefRegistry {}
 impl SessionAwareTools for CovOneDefRegistry {}
+impl ToolPolicyMutator for CovOneDefRegistry {}
 impl ToolRegistry for CovOneDefRegistry {}
 
 #[test]

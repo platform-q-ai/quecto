@@ -25,5 +25,7 @@ mod tool_catalog;
 mod tool_executor;
 #[path = "contracts/tool_guard.rs"]
 mod tool_guard;
+#[path = "contracts/tool_policy_mutator.rs"]
+mod tool_policy_mutator;
 #[path = "contracts/tool_registry.rs"]
 mod tool_registry;

@@ -1,8 +1,7 @@
 use super::*;
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::tool::{
-    ExtensionToolRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition, ToolExecutor,
-    ToolRegistry, ToolResult,
+    Tool, ToolCatalog, ToolDefinition, ToolExecutor, ToolRegistry, ToolResult,
 };
 use std::sync::{Arc, Mutex};
 
@@ -43,7 +42,7 @@ impl MockProvider {
         *self.request_count.lock().unwrap()
     }
 
-    fn last_tool_defs(&self) -> Vec<ToolDefinition> {
+    pub(super) fn last_tool_defs(&self) -> Vec<ToolDefinition> {
         self.last_tool_defs.lock().unwrap().clone()
     }
 }
@@ -151,7 +150,7 @@ impl LlmProvider for MockProvider {
 #[derive(Default)]
 pub(super) struct MockRegistry {
     tools: Vec<Arc<dyn Tool>>,
-    cached_definitions: Vec<ToolDefinition>,
+    pub(super) cached_definitions: Vec<ToolDefinition>,
 }
 
 impl MockRegistry {
@@ -193,10 +192,6 @@ impl ToolExecutor for MockRegistry {
         Box::pin(async move { Err(err) })
     }
 }
-
-impl ExtensionToolRegistry for MockRegistry {}
-impl SessionAwareTools for MockRegistry {}
-impl ToolRegistry for MockRegistry {}
 
 pub(super) struct MockTool {
     def: ToolDefinition,

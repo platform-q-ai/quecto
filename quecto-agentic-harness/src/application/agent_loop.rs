@@ -14,7 +14,8 @@ use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent
 use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::{
-    ExtensionToolRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
+    ExtensionToolRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolPolicyMutation,
+    ToolRegistry,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -88,7 +89,7 @@ pub struct AgentLoopConfig {
 }
 pub struct AgentLoopImpl {
     provider: Arc<dyn LlmProvider>,
-    tool_registry: Box<dyn ToolRegistry>,
+    pub(super) tool_registry: Box<dyn ToolRegistry>,
     model: String,
     max_tokens: u32,
     /// Per-model registry output cap, if known; see `agent_loop_clamp` (#935).
@@ -118,6 +119,8 @@ pub struct AgentLoopImpl {
     /// Context-management boundary for pruning, spilling, dirty-prefix, and
     /// user-facing context gauge decisions.
     context_manager: ContextManager,
+    pub(super) pending_tool_policy_mutations: std::sync::Mutex<Vec<ToolPolicyMutation>>,
+    pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
 }
 impl std::fmt::Debug for AgentLoopImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -157,6 +160,8 @@ impl AgentLoopImpl {
             audit_log: config.audit_log,
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
             context_manager,
+            pending_tool_policy_mutations: std::sync::Mutex::new(Vec::new()),
+            turn_in_flight: std::sync::atomic::AtomicBool::new(false),
         }
     }
     /// Read-and-clear the durable-prefix dirty latch (#1072).
@@ -519,6 +524,7 @@ impl AgentLoopImpl {
 
     /// Run the LLM-tool loop.
     async fn run_loop(&self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
+        self.mark_turn_in_flight();
         let tool_defs = self.tool_catalog().definitions();
         let mut iterations: u32 = 0;
         let mut current_turn: u32 = 1;
@@ -706,6 +712,9 @@ mod issue_1072_tests;
 #[cfg(test)]
 #[path = "agent_loop_993_tests.rs"]
 mod issue_993_tests;
+#[cfg(test)]
+#[path = "agent_loop_policy_tests.rs"]
+mod policy_tests;
 #[cfg(test)]
 #[path = "agent_loop_spill_tests.rs"]
 mod spill_tests;

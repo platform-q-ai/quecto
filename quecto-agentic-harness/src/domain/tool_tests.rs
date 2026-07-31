@@ -31,6 +31,8 @@ impl ExtensionToolRegistry for EmptyRegistry {}
 
 impl SessionAwareTools for EmptyRegistry {}
 
+impl ToolPolicyMutator for EmptyRegistry {}
+
 impl ToolRegistry for EmptyRegistry {}
 
 fn def(name: &'static str) -> ToolDefinition {

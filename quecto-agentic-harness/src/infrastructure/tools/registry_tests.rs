@@ -4,7 +4,7 @@ use crate::domain::tool_descriptor::ToolSource;
 use crate::infrastructure::security::sandbox::Sandbox;
 use tempfile::TempDir;
 
-fn test_registry() -> (ToolRegistryImpl, TempDir) {
+pub(crate) fn test_registry() -> (ToolRegistryImpl, TempDir) {
     let tmp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), true);
     let reg = ToolRegistryImpl::with_core_tools(tmp.path().to_path_buf(), sandbox);

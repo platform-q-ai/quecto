@@ -10,7 +10,8 @@ use std::sync::Arc;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{
     ExtensionToolRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition, ToolExecutor,
-    ToolGuard, ToolResult,
+    ToolGuard, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
+    ToolPolicyMutationStatus, ToolPolicyReconciliation, ToolResult,
 };
 use crate::domain::tool_descriptor::{
     ToolAvailability, ToolCatalogueEntry, ToolDescriptor, ToolHealth, ToolLifecycleKind,
@@ -423,6 +424,50 @@ impl ToolRegistryImpl {
         entries
     }
 
+    fn catalogue_entry(&self, name: &str) -> Option<ToolCatalogueEntry> {
+        self.catalogue_entries()
+            .into_iter()
+            .find(|entry| entry.name.as_ref() == name || entry.stable_id.as_ref() == name)
+    }
+
+    /// Apply live runtime policy mutations and return before/after snapshots.
+    pub fn apply_tool_policy_mutations(
+        &mut self,
+        mutations: &[ToolPolicyMutation],
+        mode: ToolPolicyApplyMode,
+    ) -> ToolPolicyReconciliation {
+        let mut results = Vec::with_capacity(mutations.len());
+        for mutation in mutations {
+            let before = self.catalogue_entry(&mutation.name);
+            let status = match before.as_ref() {
+                None => ToolPolicyMutationStatus::UnknownTool,
+                Some(entry)
+                    if mutation.availability.is_enabled()
+                        && entry.explicit_restriction.is_some() =>
+                {
+                    ToolPolicyMutationStatus::BlockedByRestriction
+                }
+                Some(entry) if entry.runtime_availability == mutation.availability => {
+                    ToolPolicyMutationStatus::AlreadyInState
+                }
+                Some(_) => {
+                    self.set_availability(&mutation.name, mutation.availability);
+                    ToolPolicyMutationStatus::Applied
+                }
+            };
+            let after = self.catalogue_entry(&mutation.name);
+            results.push(ToolPolicyMutationResult {
+                name: mutation.name.clone(),
+                requested_availability: mutation.availability,
+                status,
+                before,
+                after,
+                reason: mutation.reason.clone(),
+            });
+        }
+        ToolPolicyReconciliation { mode, results }
+    }
+
     /// Runtime-disable a registered tool without removing its descriptor.
     pub fn disable_tool(&mut self, name: &str) -> bool {
         self.set_availability(name, ToolAvailability::Disabled)
@@ -644,6 +689,16 @@ impl ExtensionToolRegistry for ToolRegistryImpl {
     }
 }
 
+impl crate::domain::tool::ToolPolicyMutator for ToolRegistryImpl {
+    fn apply_tool_policy_mutations(
+        &mut self,
+        mutations: &[ToolPolicyMutation],
+        mode: ToolPolicyApplyMode,
+    ) -> ToolPolicyReconciliation {
+        self.apply_tool_policy_mutations(mutations, mode)
+    }
+}
+
 impl SessionAwareTools for ToolRegistryImpl {
     fn set_session_key(&self, session_key: &str) {
         self.set_session_key(session_key);
@@ -659,3 +714,6 @@ mod tests;
 #[cfg(test)]
 #[path = "registry_catalogue_tests.rs"]
 mod catalogue_tests;
+#[cfg(test)]
+#[path = "registry_policy_tests.rs"]
+mod policy_tests;

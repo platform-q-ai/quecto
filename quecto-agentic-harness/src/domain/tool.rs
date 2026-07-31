@@ -3,7 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use super::error::DomainError;
-use super::tool_descriptor::{ToolCatalogueEntry, ToolDescriptor};
+use super::tool_descriptor::{ToolAvailability, ToolCatalogueEntry, ToolDescriptor};
 
 /// Metadata describing a tool for the LLM.
 ///
@@ -144,6 +144,86 @@ pub trait ToolExecutor: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>>;
 }
 
+/// Requested runtime policy state for a registered tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolPolicyMutation {
+    pub name: String,
+    pub availability: ToolAvailability,
+    pub reason: String,
+}
+
+impl ToolPolicyMutation {
+    pub fn enable(name: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            availability: ToolAvailability::Enabled,
+            reason: reason.into(),
+        }
+    }
+
+    pub fn disable(name: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            availability: ToolAvailability::Disabled,
+            reason: reason.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolPolicyApplyMode {
+    ImmediateIfIdle,
+    AtNextTurnBoundary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolPolicyMutationStatus {
+    Applied,
+    AlreadyInState,
+    UnknownTool,
+    BlockedByRestriction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolPolicyMutationResult {
+    pub name: String,
+    pub requested_availability: ToolAvailability,
+    pub status: ToolPolicyMutationStatus,
+    pub before: Option<ToolCatalogueEntry>,
+    pub after: Option<ToolCatalogueEntry>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolPolicyReconciliation {
+    pub mode: ToolPolicyApplyMode,
+    pub results: Vec<ToolPolicyMutationResult>,
+}
+
+/// Port: live runtime policy mutation for registered tools.
+pub trait ToolPolicyMutator: Send + Sync {
+    fn apply_tool_policy_mutations(
+        &mut self,
+        mutations: &[ToolPolicyMutation],
+        mode: ToolPolicyApplyMode,
+    ) -> ToolPolicyReconciliation {
+        ToolPolicyReconciliation {
+            mode,
+            results: mutations
+                .iter()
+                .map(|mutation| ToolPolicyMutationResult {
+                    name: mutation.name.clone(),
+                    requested_availability: mutation.availability,
+                    status: ToolPolicyMutationStatus::UnknownTool,
+                    before: None,
+                    after: None,
+                    reason: mutation.reason.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
 /// Port: runtime-loadable tool lifecycle management.
 ///
 /// This port is about provider lifecycle, not the common catalogue meaning of
@@ -228,7 +308,7 @@ pub trait SessionAwareTools: Send + Sync {
 /// session propagation behaviour. The full registry remains as the ergonomic
 /// bundle owned by `AgentLoopImpl`.
 pub trait ToolRegistry:
-    ToolCatalog + ToolExecutor + ExtensionToolRegistry + SessionAwareTools
+    ToolCatalog + ToolExecutor + ExtensionToolRegistry + SessionAwareTools + ToolPolicyMutator
 {
 }
 
