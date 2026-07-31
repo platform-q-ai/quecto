@@ -183,7 +183,6 @@ pub enum Command {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     AgentStart,
-    /// Harness workspace path announced by the agent during socket setup (#1350).
     Workspace {
         path: String,
     },
