@@ -300,6 +300,13 @@ impl AgentLoopImpl {
             .register_uds_extension(tool)
     }
 
+    /// Return whether a UDS-delivered extension tool would be accepted for a
+    /// client owner without mutating the registry.
+    pub fn can_register_uds_extension_tool_for_owner(&self, name: &str, owner: &str) -> bool {
+        self.extension_tool_registry()
+            .can_register_uds_extension_for_owner(name, owner)
+    }
+
     /// Register a UDS-delivered extension tool with per-connection ownership
     /// metadata for catalogue/policy consumers.
     pub fn register_uds_extension_tool_for_owner(

@@ -258,6 +258,19 @@ impl ToolRegistryImpl {
         self.register_with_metadata(tool, ToolRegistration::uds())
     }
 
+    /// Return whether a UDS-delivered extension tool with `name` and `owner`
+    /// would be accepted by the registry without mutating it.
+    pub fn can_register_uds_extension_for_owner(&self, name: &str, owner: &str) -> bool {
+        if self.denied_names.contains(name) {
+            return false;
+        }
+        if let Some(existing) = self.metadata.get(name) {
+            existing.unloadable && existing.owner.as_ref() == owner
+        } else {
+            true
+        }
+    }
+
     /// Register a UDS-delivered extension tool with per-connection ownership.
     pub fn register_uds_extension_for_owner(
         &mut self,
@@ -513,6 +526,10 @@ impl ExtensionToolRegistry for ToolRegistryImpl {
 
     fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
         self.register_uds_extension(tool)
+    }
+
+    fn can_register_uds_extension_for_owner(&self, name: &str, owner: &str) -> bool {
+        self.can_register_uds_extension_for_owner(name, owner)
     }
 
     fn register_uds_extension_for_owner(

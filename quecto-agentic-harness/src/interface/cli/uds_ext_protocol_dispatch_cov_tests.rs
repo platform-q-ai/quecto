@@ -87,7 +87,7 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
 }
 
 #[tokio::test]
-async fn dispatch_register_tools_rolls_back_if_registry_rejects_staged_tool() {
+async fn dispatch_register_tools_preflights_registry_rejection_before_client_state_mutation() {
     let tmp = tempfile::TempDir::new().unwrap();
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     registry.remove("blocked_ext");

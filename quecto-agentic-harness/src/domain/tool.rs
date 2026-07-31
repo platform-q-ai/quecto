@@ -178,6 +178,12 @@ pub trait ExtensionToolRegistry: Send + Sync {
         self.register_extension(tool)
     }
 
+    /// Return whether a UDS-delivered runtime-loadable extension tool with this
+    /// name and owner would be accepted by the registry without mutating it.
+    fn can_register_uds_extension_for_owner(&self, _name: &str, _owner: &str) -> bool {
+        true
+    }
+
     /// Register a UDS-delivered runtime-loadable extension tool owned by a
     /// specific UDS client/connection.
     ///

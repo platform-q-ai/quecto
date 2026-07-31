@@ -487,6 +487,89 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
 }
 
 #[tokio::test]
+async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_existing_replacement()
+{
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    registry.remove("blocked_ext");
+    let mut agent = cov_agent_with_registry(registry);
+    let (existing_tool, _) = create_uds_tool(
+        crate::domain::tool::ToolDefinition {
+            name: "weather".into(),
+            description: "Existing weather".into(),
+            parameters_schema: r#"{"type":"object"}"#.into(),
+        },
+        std::time::Duration::from_secs(1),
+    );
+    agent.register_uds_extension_tool_for_owner(existing_tool, "uds:client:123".into());
+    let mut messages = Vec::new();
+    let mut session =
+        super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
+    let mut session_key = "cli:test".to_string();
+    let store =
+        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let mut writer = tokio::io::sink();
+    let client_registry = new_client_tool_registry();
+    let state = session.state_snapshot(0, None, 0, None);
+    let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
+    let tools = [tool_reg("weather"), tool_reg("blocked_ext")];
+    let mut ctx = super::super::uds::DispatchCtx {
+        execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+        wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
+        base_dir: tmp.path(),
+        agent: &mut agent,
+        messages: &mut messages,
+        conversation_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+            super::super::uds_snapshots::ConversationSnapshotData::default(),
+        )),
+        state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
+        session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+        extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        session: &mut session,
+        stdout: Some(&mut writer),
+        session_key: &mut session_key,
+        session_store: &store,
+        ephemeral: false,
+        system_prompt: "",
+        cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::uds_cancel::CancelSlot::Idle,
+        )),
+        turn_control: std::sync::Arc::default(),
+        broadcast_tx: None,
+        ext_registry: None,
+        client_tool_registry: client_registry.clone(),
+        current_client_id: 123,
+        subagent_registry: None,
+        notification_rx: None,
+        workflow_state: None,
+        workflow_config: None,
+        provider_reload: None,
+        provider_reload_inputs: None,
+        last_persisted_message_index: 0,
+        durable_prefix_dirty: false,
+    };
+
+    dispatch_register_tools(&mut ctx, Some("mixed-reject"), &tools).await;
+
+    let descriptors = ctx.agent.tool_descriptors();
+    assert!(
+        descriptors
+            .iter()
+            .any(|descriptor| descriptor.name() == "weather")
+    );
+    assert!(
+        !descriptors
+            .iter()
+            .any(|descriptor| descriptor.name() == "blocked_ext")
+    );
+    assert!(
+        client_registry.lock().unwrap().get(&123).is_none(),
+        "failed batch must not mutate UDS client state"
+    );
+}
+
+#[tokio::test]
 async fn forward_tool_requests_shutdown_drains_buffered_invocations_with_reason() {
     let registry = new_client_tool_registry();
     registry.lock().unwrap().entry(93).or_default();
