@@ -73,6 +73,7 @@ impl Drop for BusyGuard {
 pub(super) struct MultiClientArgs<'a> {
     pub agent: AgentLoopImpl,
     pub base_dir: &'a std::path::Path,
+    pub workspace: &'a std::path::Path,
     pub messages: Vec<Message>,
     pub model: String,
     pub session_key: String,
@@ -166,6 +167,7 @@ pub(super) async fn multi_client_loop(
     let MultiClientArgs {
         mut agent,
         base_dir,
+        workspace,
         mut messages,
         model,
         mut session_key,
@@ -247,7 +249,7 @@ pub(super) async fn multi_client_loop(
         busy: busy.clone(),
         subagent_registry: subagent_registry.clone(),
         workflow_state: wf_state.clone(),
-        workspace_path: base_dir.to_path_buf(),
+        workspace_path: workspace.to_path_buf(),
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)

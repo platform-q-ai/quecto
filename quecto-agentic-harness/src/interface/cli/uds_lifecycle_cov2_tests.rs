@@ -60,6 +60,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
     UdsLoopArgs {
         agent: make_agent(),
         base_dir: base,
+        workspace: base,
         session_key: "cli:life".into(),
         model: "stub".into(),
         ephemeral: true,
@@ -225,6 +226,7 @@ async fn single_client_socket_override_serves_get_state() {
                 SingleClientArgs {
                     agent: make_agent(),
                     base_dir: dir.path(),
+                    workspace: dir.path(),
                     messages: Vec::new(),
                     model: "stub".into(),
                     session_key: "cli:single".into(),

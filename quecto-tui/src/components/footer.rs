@@ -30,14 +30,9 @@ impl Default for Footer {
 
 impl Footer {
     pub fn new() -> Self {
-        let mut pwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
+        let pwd = std::env::current_dir()
+            .map(|p| Self::format_pwd_path(&p))
             .unwrap_or_else(|_| "?".to_string());
-        if let Ok(home) = std::env::var("HOME") {
-            if pwd.starts_with(&home) {
-                pwd = format!("~{}", &pwd[home.len()..]);
-            }
-        }
         Self {
             model: "unknown".to_string(),
             git_branch: None,
@@ -78,14 +73,21 @@ impl Footer {
         self.git_branch = branch;
     }
 
-    pub fn set_pwd_path(&mut self, path: &std::path::Path) {
-        let mut pwd = path.display().to_string();
+    fn format_pwd_path(path: &std::path::Path) -> String {
         if let Ok(home) = std::env::var("HOME") {
-            if pwd.starts_with(&home) {
-                pwd = format!("~{}", &pwd[home.len()..]);
+            let home = std::path::PathBuf::from(home);
+            if path == home {
+                return "~".to_string();
+            }
+            if let Ok(rest) = path.strip_prefix(&home) {
+                return format!("~/{}", rest.display());
             }
         }
-        self.pwd = pwd;
+        path.display().to_string()
+    }
+
+    pub fn set_pwd_path(&mut self, path: &std::path::Path) {
+        self.pwd = Self::format_pwd_path(path);
     }
 
     pub fn set_context(&mut self, percent: Option<f64>, window: usize) {
