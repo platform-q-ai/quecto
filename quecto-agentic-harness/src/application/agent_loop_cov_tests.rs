@@ -47,9 +47,26 @@ fn setters_swap_provider_streaming_and_audit_log() {
 }
 
 #[test]
-fn unregister_uds_extension_tools_for_client_delegates_to_registry_owner_cleanup() {
+fn uds_extension_lifecycle_methods_delegate_to_registry_contracts() {
     let provider = Arc::new(MockProvider::new(vec![]));
     let mut agent = AgentLoopImpl::new(test_config(provider, Box::new(ToolRegistryImpl::new())));
+    assert!(
+        agent.register_uds_extension_tool(Arc::new(super::tests::MockTool::new(
+            "legacy_uds_tool",
+            "ok"
+        )))
+    );
+    assert!(
+        agent
+            .tool_registry_extension_names()
+            .contains(&"legacy_uds_tool".to_string())
+    );
+    agent.unregister_extension_tool("legacy_uds_tool");
+    assert!(
+        !agent
+            .tool_registry_extension_names()
+            .contains(&"legacy_uds_tool".to_string())
+    );
     agent.register_uds_extension_tool_for_owner(
         Arc::new(super::tests::MockTool::new("owned_tool", "ok")),
         "uds:client:55".into(),
