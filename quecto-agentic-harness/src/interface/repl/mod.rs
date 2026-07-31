@@ -13,10 +13,6 @@ use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
-use crate::infrastructure::extensions::native::{
-    SessionToolDeps, build_session_tool_extensions, register_bundled_native_tools,
-};
-use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
@@ -271,7 +267,7 @@ fn build_repl_runtime() -> Result<tokio::runtime::Runtime, std::io::Error> {
 /// This is the main entry point called from cli.rs.
 pub fn run_repl<R: BufRead, W: Write>(
     reader: R,
-    writer: W,
+    mut writer: W,
     is_tty: bool,
     ctx: &ReplContext<'_>,
 ) -> i32 {
@@ -295,12 +291,6 @@ pub fn run_repl<R: BufRead, W: Write>(
         max_capture_bytes: exec_settings,
         ..crate::infrastructure::tools::bash::ExecOptions::default()
     };
-    let mut registry = crate::interface::shared::build_official_tool_registry(
-        workspace,
-        sandbox,
-        exec_options,
-        false,
-    );
     let ephemeral = ctx.flags.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {
         String::new()
@@ -309,14 +299,41 @@ pub fn run_repl<R: BufRead, W: Write>(
     } else {
         crate::interface::shared::generate_chat_key()
     };
-    let spill_store = Arc::new(FileContextSpillStore::new(ctx.base_dir.to_path_buf()));
-    register_bundled_native_tools(
-        &mut registry,
-        build_session_tool_extensions(SessionToolDeps {
-            spill_store: spill_store.clone(),
-            session_key: session_key.clone(),
-        }),
-    );
+    let mut stderr = String::new();
+    let runtime = match crate::interface::shared::build_tool_runtime(
+        crate::interface::shared::ToolRuntimeBuildArgs {
+            entrypoint: crate::interface::shared::ToolEntrypoint::Repl,
+            base_dir: ctx.base_dir,
+            config: ctx.config,
+            http_client: &crate::interface::shared::build_http_client(),
+            workspace,
+            sandbox,
+            exec_options,
+            session_key,
+            spawned: false,
+            restrict_to_workspace: !ctx.flags.no_sandbox
+                && ctx.config.agents.defaults.restrict_to_workspace,
+            parent_session_name: ctx.flags.session_name.clone(),
+            disabled_tools: &[],
+            workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy::disabled(
+                ctx.base_dir,
+                None,
+            ),
+            stderr: &mut stderr,
+        },
+    ) {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            let _ = writeln!(writer, "Error: failed to initialize tool runtime: {err}");
+            return 1;
+        }
+    };
+    if !stderr.is_empty() {
+        tracing::warn!("{stderr}");
+    }
+    let registry = runtime.registry;
+    let spill_store = runtime.spill_store;
+    let session_key = runtime.session_key;
 
     // Resolve the progress callback:
     // 1. If the caller injected an explicit callback (e.g. BDD test recorder), use it.
