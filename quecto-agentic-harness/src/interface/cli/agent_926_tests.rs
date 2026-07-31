@@ -99,20 +99,21 @@ fn test_926_empty_base_dir_still_keeps_notification_rx_live() {
     );
 }
 
-/// #957: the END STATE of a read-only child. A child launched with
+/// #957/#1276: the END STATE of a read-only child. A child launched with
 /// `--disable-tool write --disable-tool edit` (what a `read_only: true` spawn
-/// forwards) must build a registry with `write`/`edit` removed — the model never
-/// sees them — while its non-mutating toolset (`bash`/`read`/`grep`/`find`/
-/// `agent_cmd`) stays intact. Asserts the registry end-state directly rather than
-/// inferring it transitively from the `remove_all` unit tests.
-#[test]
-fn test_957_read_only_child_registry_omits_write_edit_keeps_others() {
+/// forwards) must build a registry where `write`/`edit` are hidden from the
+/// model and reject execution, but remain registered/described for policy/UI
+/// callers. Its non-mutating toolset (`bash`/`read`/`grep`/`find`/`agent_cmd`)
+/// stays model-visible. Asserts the real build path directly rather than
+/// self-applying registry mutation in the test.
+#[tokio::test]
+async fn test_957_read_only_child_registry_omits_write_edit_keeps_others() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = config_with_provider();
     let mut flags = spawn_capable_flags();
     flags.disabled_tools = vec!["write".to_string(), "edit".to_string()];
     let mut stderr = String::new();
-    let mut build = build_tool_registry(ToolRegistryArgs {
+    let build = build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
         config: &config,
         http_client: &reqwest::Client::new(),
@@ -123,31 +124,54 @@ fn test_957_read_only_child_registry_omits_write_edit_keeps_others() {
         home_dir: None,
     })
     .expect("registry build should succeed");
-    // Guard against a vacuous pass: the base registry must actually expose the
-    // tools we intend to remove, so the post-removal absence proves removal (not
-    // that they were never registered — the exact regression a read-only guard
-    // must catch).
-    let before = build.registry.names();
-    for t in ["write", "edit"] {
-        assert!(
-            before.contains(&t.to_string()),
-            "base registry must expose `{t}` before removal; names = {before:?}"
-        );
-    }
-    // Mirror the child CLI: tools named on `--disable-tool` are removed before
-    // the session starts (agent.rs applies `registry.remove_all`).
-    build.registry.remove_all(&flags.disabled_tools);
+
     let names = build.registry.names();
-    for gone in ["write", "edit"] {
+    let definitions: Vec<_> = build
+        .registry
+        .definitions()
+        .iter()
+        .map(|definition| definition.name.as_ref().to_string())
+        .collect();
+    for disabled in ["write", "edit"] {
         assert!(
-            !names.contains(&gone.to_string()),
-            "read-only child must not expose `{gone}`; names = {names:?}"
+            names.contains(&disabled.to_string()),
+            "read-only child must keep `{disabled}` registered/described; names = {names:?}"
+        );
+        assert!(
+            !definitions.contains(&disabled.to_string()),
+            "read-only child must hide `{disabled}` from model-visible definitions; definitions = {definitions:?}"
+        );
+        let descriptor = build
+            .registry
+            .descriptor(disabled)
+            .expect("disabled tool descriptor");
+        assert!(
+            !descriptor.availability.is_enabled(),
+            "`{disabled}` descriptor should be disabled: {descriptor:?}"
+        );
+        let execution = build
+            .registry
+            .execute(disabled, r#"{}"#)
+            .await
+            .expect("disabled tool execution returns an LLM-visible rejection");
+        assert!(execution.is_error, "{disabled} executed: {execution:?}");
+        assert!(
+            execution.content.contains("disabled by runtime policy"),
+            "unexpected disabled-tool message: {}",
+            execution.content
+        );
+        assert!(
+            !build
+                .registry
+                .can_register_uds_extension_for_owner(disabled, "uds:client:test"),
+            "read-only disabled name `{disabled}` must not be reintroduced by UDS"
         );
     }
+    assert!(build.registry.extension_names().is_empty());
     for kept in ["bash", "read", "grep", "find", "agent_cmd"] {
         assert!(
-            names.contains(&kept.to_string()),
-            "read-only child must retain `{kept}`; names = {names:?}"
+            definitions.contains(&kept.to_string()),
+            "read-only child must retain model-visible `{kept}`; definitions = {definitions:?}"
         );
     }
 }

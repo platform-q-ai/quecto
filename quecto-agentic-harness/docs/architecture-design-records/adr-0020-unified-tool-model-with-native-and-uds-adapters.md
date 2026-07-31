@@ -12,9 +12,12 @@
   - `build_session_tool_extensions` → `recall`
   - `build_agent_control_tool_extensions` → `spawn` + `agent_cmd` (+ live handles)
   - `build_workflow_tool_extension` / `register_workflow_tool` → `workflow`
-  - `build_native_extensions` → config-gated web tools (still
-    `register_extension` for unload/shadow parity)
-  - `register_bundled_native_tools` for non-unloadable official registration
+  - `build_native_extensions` → config-gated web tools collected by the legacy
+    `ExtensionRegistry` package aggregator, then installed via bundled-native
+    `registry.register(...)` / `register_extension_tools()` rather than runtime
+    `register_extension`
+  - `register_bundled_native_tools` / bundled-native registration for
+    non-unloadable official registration
   Composition roots (CLI agent, REPL, shared workflow helper) consume these
   providers instead of constructing concrete production tool types ad hoc.
   `DocsTool::with_spawned` remains transitional.
@@ -80,7 +83,12 @@ same catalogue, policy, and execution interfaces.
 Runtime policy changes must not unregister tools merely to hide them from the
 model. Disabling a tool keeps its descriptor registered, removes it from
 model-visible definitions, and rejects new executions through the common tool
-execution path. Re-enabling restores model visibility without restarting Quecto.
+execution path. Startup `--disable-tool` restrictions use this descriptor-preserving
+runtime policy and also reserve every named tool against future UDS/runtime
+registration for the process lifetime. Re-enabling ordinary runtime-disabled tools
+restores model visibility without restarting Quecto; session startup restrictions
+remain denied to future registration unless a future privileged policy surface
+explicitly changes that contract.
 
 Profile-level decisions belong outside concrete tool implementations. Parent,
 child, and future custom profiles may decide which descriptors are enabled, but

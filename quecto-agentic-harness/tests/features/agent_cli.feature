@@ -144,13 +144,13 @@ Feature: Agent CLI — Headless One-Shot Mode
 
   # --- Issue #402: --disable-tool flag ---
 
-  Scenario: --disable-tool removes a tool from the agent
+  Scenario: --disable-tool hides a tool from the agent model
     Given a temp base directory
-    And a config file with an OpenAI provider pointing at a mock server
-    And the mock LLM returns a text response "no bash for you"
+    And a mock LLM that captures requests and returns text "no bash for you"
     When I run quecto agent --disable-tool bash -m "hello"
     Then the exit code should be 0
     And stdout should contain "no bash for you"
+    And the LLM request should not have included tool "bash"
 
   Scenario: --disable-tool warns on unknown tool name
     Given a temp base directory

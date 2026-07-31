@@ -1197,7 +1197,7 @@ All flags for `quecto agent` that affect UDS mode:
 | `--workflow-guards` | Enable workflow bash command guards |
 | `--no-workflow` | Disable workflow tool/state/prompt |
 | `--parent-id <id>` | Declare this agent's parent in the unit tree (set automatically by `spawn`) |
-| `--disable-tool <name>` | Remove a tool from the registry (repeatable) |
+| `--disable-tool <name>` | Disable/hide a tool and deny re-registration (repeatable) |
 | `--config <path>` | Override config file path |
 
 > **Note:** `bash` commands run natively in the workspace and can reach

@@ -612,6 +612,84 @@ fn trait_paths_expose_descriptors_and_runtime_policy() {
 }
 
 #[test]
+fn startup_restrictions_disable_descriptors_and_deny_future_registration() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(reg.register_extension(Arc::new(DummyTestTool::new("plugin_tool",))));
+
+    let warnings = reg.apply_startup_tool_restrictions(&[
+        "bash".to_string(),
+        "plugin_tool".to_string(),
+        "missing_tool".to_string(),
+    ]);
+
+    assert_eq!(warnings, vec!["missing_tool".to_string()]);
+    assert!(
+        reg.get("bash").is_some(),
+        "disabled bundled-native tool remains registered"
+    );
+    assert!(
+        reg.get("plugin_tool").is_some(),
+        "disabled unloadable runtime tool remains registered"
+    );
+    assert!(
+        !reg.definitions().iter().any(|d| d.name.as_ref() == "bash"),
+        "startup-disabled bundled-native tool is hidden from model-visible definitions"
+    );
+    assert!(
+        !reg.definitions()
+            .iter()
+            .any(|d| d.name.as_ref() == "plugin_tool"),
+        "startup-disabled unloadable runtime tool is hidden from model-visible definitions"
+    );
+    let descriptor = reg.descriptor("bash").expect("descriptor");
+    assert!(matches!(descriptor.source, ToolSource::BundledNative));
+    assert!(!descriptor.availability.is_enabled());
+    assert!(!reg.can_register_uds_extension_for_owner("bash", "uds:client:1"));
+    assert!(!reg.can_register_uds_extension_for_owner("plugin_tool", "runtime:extension"));
+    reg.unregister_extension("plugin_tool");
+    assert!(
+        reg.get("plugin_tool").is_none(),
+        "owner-scoped unload remains a separate destructive lifecycle path"
+    );
+    assert!(
+        !reg.register_extension(Arc::new(DummyTestTool::new("plugin_tool"))),
+        "startup-disabled existing unloadable name stays denied after unload"
+    );
+    assert!(!reg.register_extension(Arc::new(DummyTestTool::new("missing_tool",))));
+}
+
+#[tokio::test]
+async fn disabled_tool_execution_rejects_before_guards() {
+    struct CountingGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl ToolGuard for CountingGuard {
+        fn check(&self, _tool_name: &str, _arguments: &str) -> Result<(), String> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err("guard should not run for disabled tools".to_string())
+        }
+    }
+
+    let (mut reg, _tmp) = test_registry();
+    let guard_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    reg.register_guard(Arc::new(CountingGuard(guard_calls.clone())));
+    assert!(reg.disable_tool("ls"));
+
+    let result = reg.execute("ls", r#"{}"#).await.expect("policy result");
+
+    assert!(result.is_error, "disabled tool should reject execution");
+    assert!(
+        result.content.contains("disabled by runtime policy"),
+        "unexpected disabled-tool message: {}",
+        result.content
+    );
+    assert_eq!(
+        guard_calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "disabled policy should short-circuit before guards"
+    );
+}
+
+#[test]
 fn disable_then_disable_again_is_idempotent() {
     let (mut reg, _tmp) = test_registry();
     assert!(reg.disable_tool("read"));

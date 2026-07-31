@@ -662,7 +662,7 @@ fn help_text(out: &mut String) {
         "                       --effort <level>  Effort level for 4.6 models (low/medium/high/max)\n",
     );
     out.push_str(
-        "                       --disable-tool <name>  Remove a tool from the registry (repeatable)\n",
+        "                       --disable-tool <name>  Disable/hide a tool and deny re-registration (repeatable)\n",
     );
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
     out.push_str("  models      Manage runtime model registry (discover)\n");

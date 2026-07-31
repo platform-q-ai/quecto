@@ -81,9 +81,12 @@ pub struct ToolRegistryImpl {
     metadata: HashMap<String, ToolRegistration>,
     definitions: Vec<ToolDefinition>,
     guards: Vec<Arc<dyn ToolGuard>>,
-    /// Names explicitly removed via `remove()` or `remove_all()`.
-    /// These are permanently blocked from re-registration through both bundled
-    /// native and runtime-loadable paths.
+    /// Names explicitly reserved away from future registration.
+    ///
+    /// Destructive `remove()` / `remove_all()` add names here while unregistering
+    /// their descriptors. Startup policy restrictions add names here without
+    /// unregistering existing tools, so disabled names remain described but UDS
+    /// and other runtime registration paths cannot reintroduce or shadow them.
     denied_names: std::collections::HashSet<String>,
 }
 
@@ -201,6 +204,45 @@ impl ToolRegistryImpl {
         }
         if warnings.len() < names.len() {
             // At least one tool was actually removed
+            self.rebuild_definitions();
+        }
+        warnings
+    }
+
+    /// Reserve a tool name so future bundled-native or runtime registrations
+    /// cannot introduce or shadow it.
+    ///
+    /// This is intentionally non-destructive: if a tool with this name already
+    /// exists, its descriptor and concrete implementation remain registered.
+    fn deny_registration_name(&mut self, name: &str) {
+        self.denied_names.insert(name.to_string());
+    }
+
+    /// Apply startup `--disable-tool` policy.
+    ///
+    /// Existing tools are disabled but remain registered/described. Every named
+    /// tool, including unknown names, is also denied for future registration so
+    /// UDS clients cannot reintroduce a process-disabled capability later.
+    /// Returns unknown names for caller-visible warnings.
+    pub fn apply_startup_tool_restrictions(&mut self, names: &[String]) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let mut rebuild_needed = false;
+        for name in names {
+            self.deny_registration_name(name);
+            if !self.tools.contains_key(name) {
+                warnings.push(name.clone());
+                continue;
+            }
+            let metadata = self
+                .metadata
+                .entry(name.clone())
+                .or_insert_with(ToolRegistration::official_native);
+            if metadata.availability != ToolAvailability::Disabled {
+                metadata.availability = ToolAvailability::Disabled;
+                rebuild_needed = true;
+            }
+        }
+        if rebuild_needed {
             self.rebuild_definitions();
         }
         warnings

@@ -177,8 +177,9 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
     }
 
     // Forward each read-only tool restriction as `--disable-tool <name>` so the
-    // child removes it from its registry before the session starts (#957). The
-    // child CLI already consumes `--disable-tool`.
+    // child disables/hides it before the session starts and denies later runtime
+    // re-registration (#957/#1276). The child CLI already consumes
+    // `--disable-tool`.
     for tool in &config.disable_tools {
         args.push("--disable-tool".into());
         args.push(tool.into());

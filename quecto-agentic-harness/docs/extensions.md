@@ -117,7 +117,7 @@ individual tool names; the package name `"web"` is an internal
 - They share the process's HTTP client and connection pool
 - Child agents (via `spawn`) re-read the same config from `QUECTO_BASE_DIR`, so they get the same native extensions
 - Native extensions cannot be added or removed at runtime — changes require restarting the agent (or a process that reloads config and rebuilds the tool registry)
-- Tools removed with `--disable-tool` are denylisted for the process lifetime; neither native registration nor UDS `register_tools` can re-add those names
+- Tools named with `--disable-tool` remain registered/described but are disabled, hidden from model-visible definitions, and denylisted for the process lifetime; neither native registration nor UDS `register_tools` can re-add those names
 
 ## UDS extensions
 
@@ -171,7 +171,7 @@ Other rejection cases (whole batch fails; nothing is registered):
 
 - Duplicate name in the same request: `"tool 'X' is registered more than once in this request"`
 - Name already owned by another connected client: `"tool 'X' is already registered by client <id>"`
-- Name on the process denylist (`--disable-tool`): the name cannot be reintroduced into the tool registry (registry `register_extension` no-ops / warns). Prefer not registering disabled names; they will not appear to the LLM
+- Name on the process denylist (`--disable-tool`): the name cannot be reintroduced into the tool registry (registry registration rejects/no-ops). Prefer not registering disabled names; they will not appear to the LLM
 
 **Side effect (on success):** An `extensions_changed` event is broadcast to all connected clients. The event lists **tool** names currently registered as extensions (e.g. `web_search`, `weather`), not the internal native package name `"web"`.
 

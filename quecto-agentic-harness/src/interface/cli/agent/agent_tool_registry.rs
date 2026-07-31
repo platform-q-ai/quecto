@@ -231,6 +231,18 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
     crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);
 
+    // Apply startup tool restrictions after every startup provider has had a
+    // chance to register. Restricted tools remain registered/described for
+    // policy/UI callers, but are hidden from model-visible definitions, reject
+    // execution, and their names stay denied for future UDS/runtime registration.
+    let warnings = registry.apply_startup_tool_restrictions(&flags.disabled_tools);
+    for name in &warnings {
+        stderr.push_str(&format!(
+            "WARNING: --disable-tool: no tool named '{}' in the registry\n",
+            name
+        ));
+    }
+
     // #926: the parent is always spawn-capable — `SpawnTool` (with `notify_tx`)
     // and `AgentCmdTool` (with the protocol registry) are registered above
     // UNCONDITIONALLY. So the notification receiver and the protocol registry

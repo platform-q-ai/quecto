@@ -1056,9 +1056,10 @@ fn feature_js_bdd_review_is_strict() {
 
 #[test]
 fn reviewer_spawns_are_read_only() {
-    // #957: both the `bdd_review` and PR `reviewers` spawns must launch reviewers
-    // read-only — `write` and `edit` removed from the child registry so the model
-    // never sees them (defense-in-depth against reviewers writing stray files).
+    // #957/#1276: both the `bdd_review` and PR `reviewers` spawns must launch
+    // reviewers read-only — `write` and `edit` hidden from the child model-visible
+    // definitions and rejected on execution (defense-in-depth against reviewers
+    // writing stray files).
     // The instruction MUST live in each review step's own `guidance` — a field
     // the runtime deserializes — NOT a `shared_guidance` field serde silently
     // drops (that phantom field made this instruction inert at runtime). See the

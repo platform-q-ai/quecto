@@ -168,10 +168,11 @@ default agent-facing path.)
 
 - Children inherit the parent's sandbox posture, credentials, and tools. Do not
   broaden a child's practical authority beyond the user's intent.
-- `read_only: true` removes the `write` and `edit` tools but is **not a hard
-  sandbox** because the child retains `bash`. Explicitly prohibit mutation and
-  verify the workspace diff after read-only children finish before trusting that
-  they made no changes.
+- `read_only: true` disables and hides the `write` and `edit` tools from the
+  child's model-visible tool definitions but is **not a hard sandbox** because
+  the child retains `bash`. Explicitly prohibit mutation and verify the
+  workspace diff after read-only children finish before trusting that they made
+  no changes.
 - Never print secrets. Have children use configured local tools without echoing
   credentials.
 - Avoid redundant agents, but use parallelism across genuinely distinct
@@ -253,16 +254,18 @@ connects to the child's UDS socket directly from Rust.
 
 #### Spawning read-only (`read_only` / `disable_tools`)
 
-A parent can launch a child with specific tools removed, so the child cannot use
-them at all:
+A parent can launch a child with specific tools disabled, so the child cannot use
+them through the model-visible tool surface:
 
 - **`disable_tools` (optional).** An array of tool names (e.g. `["write",
-  "edit"]`). Each named tool is **removed from the child registry before its session starts**,
-  so the child's model never sees them in its tool definitions and cannot invoke
-  them — defense-in-depth beyond a prompt instruction.
+  "edit"]`). Each named tool is **disabled before the child session starts**:
+  it remains registered/described for policy/UI callers, but is hidden from the
+  child's model-visible tool definitions, rejects execution, and is denied from
+  later UDS/runtime re-registration — defense-in-depth beyond a prompt instruction.
 - **`read_only` (optional).** A convenience that expands to
   `disable_tools: ["write", "edit"]`. The child keeps `bash`, `read`, `grep`,
-  `find` and `agent_cmd`, but the `"write"` and `"edit"` tools are gone.
+  `find` and `agent_cmd` model-visible, while the `"write"` and `"edit"` tools
+  are hidden and disabled.
 
 This is the recommended posture for reviewers, which should inspect and report
 but not mutate the repo:
@@ -278,8 +281,8 @@ but not mutate the repo:
 }
 ```
 
-**Caveat — this is not a hard sandbox.** Removing `write`/`edit` stops those
-tools, but a child can still mutate via `bash` (e.g. `sed`, `>` redirects). Reviewers keep `bash`/`read`/`grep`/`find`/`agent_cmd` precisely so
+**Caveat — this is not a hard sandbox.** Disabling `write`/`edit` stops those
+tools from appearing in model-visible definitions and from executing, but a child can still mutate via `bash` (e.g. `sed`, `>` redirects). Reviewers keep `bash`/`read`/`grep`/`find`/`agent_cmd` precisely so
 they can fetch a diff and post comments; treat `read_only` as a guard against
 accidental writes, not an isolation boundary. For stronger guarantees use a
 workspace/sandbox posture. For a top-level agent, the CLI equivalent is
@@ -731,10 +734,10 @@ Wait for the existing agent to finish (check with `agent_cmd get_state`) or
 
 ## Disabling subagents
 
-To prevent the LLM from spawning subagents entirely, remove both tools before
-the session starts: `--disable-tool spawn --disable-tool agent_cmd`. The same
-`--disable-tool` flag works for any core or extension tool name on a top-level
-agent; on a child, use spawn `disable_tools` / `read_only` (above).
+To prevent the LLM from spawning subagents entirely, disable and hide both tools
+before the session starts: `--disable-tool spawn --disable-tool agent_cmd`. The
+same `--disable-tool` flag works for any core or extension tool name on a
+top-level agent; on a child, use spawn `disable_tools` / `read_only` (above).
 
 ## REPL subagent commands
 
