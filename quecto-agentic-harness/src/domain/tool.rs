@@ -170,13 +170,13 @@ impl ToolPolicyMutation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ToolPolicyApplyMode {
     ImmediateIfIdle,
     AtNextTurnBoundary,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ToolPolicyMutationStatus {
     Applied,
     AlreadyInState,
@@ -184,7 +184,7 @@ pub enum ToolPolicyMutationStatus {
     BlockedByRestriction,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ToolPolicyMutationResult {
     pub name: String,
     pub requested_availability: ToolAvailability,
@@ -194,7 +194,7 @@ pub struct ToolPolicyMutationResult {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ToolPolicyReconciliation {
     pub mode: ToolPolicyApplyMode,
     pub results: Vec<ToolPolicyMutationResult>,

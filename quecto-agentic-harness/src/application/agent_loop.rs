@@ -257,12 +257,12 @@ impl AgentLoopImpl {
     /// so the event is only constructed when a callback is registered; on the
     /// headless path (`progress_callback = None`) it's never called.
     #[inline]
-    fn notify(&self, make_event: impl FnOnce() -> AgentProgressEvent) {
+    pub(super) fn notify(&self, make_event: impl FnOnce() -> AgentProgressEvent) {
         if let Some(ref cb) = self.progress_callback {
             cb(make_event());
         }
     }
-    /// Set the maximum number of tool iterations (overrides default).
+
     pub fn with_max_tool_iterations(mut self, max: u32) -> Self {
         self.max_tool_iterations = max;
         self
@@ -321,27 +321,40 @@ impl AgentLoopImpl {
             .can_register_uds_extension_for_owner(name, owner)
     }
 
-    /// Register a UDS-delivered extension tool with per-connection ownership
-    /// metadata for catalogue/policy consumers.
     pub fn register_uds_extension_tool_for_owner(
         &mut self,
         tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
         owner: std::borrow::Cow<'static, str>,
     ) -> bool {
-        self.extension_tool_registry_mut()
-            .register_uds_extension_for_owner(tool, owner)
+        let name = tool.definition().name.to_string();
+        let before = self.tool_catalogue_entries();
+        let registered = self
+            .extension_tool_registry_mut()
+            .register_uds_extension_for_owner(tool, owner);
+        if registered {
+            self.notify_tool_catalogue_changed(vec![name], before, "register_tool");
+        }
+        registered
     }
     /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
     pub fn unregister_extension_tool(&mut self, name: &str) {
+        let before = self.tool_catalogue_entries();
         self.extension_tool_registry_mut()
             .unregister_extension(name);
+        self.notify_tool_catalogue_changed(vec![name.to_string()], before, "unregister_tool");
     }
 
     /// Unregister all UDS-delivered extension tools owned by a connection.
     pub fn unregister_uds_extension_tools_for_client(&mut self, client_id: u64) -> Vec<String> {
         let owner = format!("uds:client:{client_id}");
-        self.tool_registry
-            .unregister_extensions_for_owner(owner.as_str())
+        let before = self.tool_catalogue_entries();
+        let removed = self
+            .tool_registry
+            .unregister_extensions_for_owner(owner.as_str());
+        if !removed.is_empty() {
+            self.notify_tool_catalogue_changed(removed.clone(), before, "unregister_client_tools");
+        }
+        removed
     }
     /// Return all tool definitions (for core name lookups).
     pub fn tool_definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
@@ -611,6 +624,7 @@ impl AgentLoopImpl {
                         }
                         ProviderFailureTransition::Terminal(_class) => {
                             let _state = TurnState::FailProviderRequest;
+                            self.clear_turn_in_flight();
                             return self.fail_provider_request(current_turn, error).await;
                         }
                     }
@@ -640,6 +654,7 @@ impl AgentLoopImpl {
                     let result = self
                         .finalize_turn_response(messages, response, end, &mut appended_messages)
                         .await;
+                    self.clear_turn_in_flight();
                     return Ok(result);
                 }
                 TurnState::ExecuteToolCalls => {}
@@ -673,12 +688,14 @@ impl AgentLoopImpl {
 
             if iterations >= self.max_tool_iterations {
                 let _state = TurnState::StopAtToolIterationLimit;
-                return Ok(self.tool_iteration_limit_result(
+                let result = self.tool_iteration_limit_result(
                     messages,
                     iterations,
                     usage_totals,
                     appended_messages,
-                ));
+                );
+                self.clear_turn_in_flight();
+                return Ok(result);
             }
         }
     }
