@@ -526,6 +526,8 @@ pub(super) struct ClientHandlerArgs {
     /// child-targeted `sync` off the blocked dispatcher (spike).
     pub(super) subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub(super) workspace_path: std::path::PathBuf,
+    pub(super) workspace_tx: tokio::sync::mpsc::Sender<String>,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     pub(super) _guard: ClientGuard,
 }
@@ -542,6 +544,8 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
         client_tool_registry,
         conversation_snapshot,
         subagent_registry,
+        workspace_path,
+        workspace_tx,
         _guard,
     } = args;
     use tokio::io::BufReader;
@@ -598,6 +602,8 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
         }
     });
 
+    let mut workspace_sent = false;
+
     // Reader loop: commands → dispatch mpsc.
     // Each message is sniffed as a length-prefixed frame or a legacy NDJSON
     // line (#1059, deprecation window). Over-cap messages are rejected while
@@ -631,6 +637,15 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
             quecto_line_io::Incoming::LegacyLine(b) => (quecto_line_io::WireMode::LegacyLine, b),
         };
         wire_mode.record(mode);
+        if !workspace_sent {
+            workspace_sent = true;
+            let workspace_line = super::protocol::AgentEvent::Workspace {
+                path: workspace_path.display().to_string(),
+            }
+            .to_json_line()
+                + "\n";
+            let _ = workspace_tx.send(workspace_line).await;
+        }
         // Reuse the payload `Vec`'s allocation on the common valid-UTF-8 path;
         // only pay a copy for the lossy fallback on malformed input.
         let line = String::from_utf8(bytes)

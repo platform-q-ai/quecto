@@ -207,7 +207,12 @@ async fn single_client_loop(
     let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
     let mut writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
 
-    let wire_mode = super::uds_wire::ConnectionWireMode::default();
+    let wire_mode = super::uds_wire::ConnectionWireMode::legacy();
+    let workspace_event = super::protocol::AgentEvent::Workspace {
+        path: workspace.display().to_string(),
+    };
+    let line = workspace_event.to_json_line() + "\n";
+    let _ = super::uds_wire::write_event_line(&mut writer, &line, &wire_mode).await;
 
     inject_system_prompt(&mut messages, &system_prompt);
 
@@ -215,11 +220,6 @@ async fn single_client_loop(
     let max_context_tokens = agent.max_context_tokens();
     let initial_effort = agent.effort().map(|l| l.as_str().to_string());
     let initial_stats = super::uds_session::compute_session_stats(&session_key, &messages);
-    let workspace_event = super::protocol::AgentEvent::Workspace {
-        path: workspace.display().to_string(),
-    };
-    let line = workspace_event.to_json_line() + "\n";
-    let _ = super::uds_wire::write_event_line(&mut writer, &line, &wire_mode).await;
     let mut initial_conversation_snapshot =
         super::uds_snapshots::ConversationSnapshotData::from_messages(messages.clone());
     initial_conversation_snapshot

@@ -273,3 +273,6 @@ fn format_tokens(count: usize) -> String {
 #[cfg(test)]
 #[path = "footer_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "footer_path_tests.rs"]
+mod footer_path_tests;

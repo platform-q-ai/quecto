@@ -128,6 +128,20 @@ impl FilesAutocomplete {
         self.injected = false;
     }
 
+    /// Invalidate any loaded/in-flight workspace file list so the next active
+    /// `@files` update requests a fresh load from the current workspace root.
+    pub fn invalidate_loaded_files(&mut self) {
+        if self.injected {
+            return;
+        }
+        self.files.clear();
+        self.loaded_at = None;
+        self.loading = false;
+        self.load_requested = false;
+        self.last_cursor_col = None;
+        self.last_line.clear();
+    }
+
     /// Consume a pending background-load request.
     pub fn take_load_request(&mut self) -> bool {
         std::mem::take(&mut self.load_requested)

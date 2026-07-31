@@ -94,6 +94,7 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
     MultiClientArgs {
         agent: make_agent(),
         base_dir: base,
+        workspace: base,
         messages: vec![Message::user("seed")],
         model: "stub".into(),
         session_key: "cli:cov".into(),

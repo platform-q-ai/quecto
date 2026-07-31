@@ -18,6 +18,9 @@ impl App {
             Event::AgentStart => self.handle_agent_start(),
             Event::Workspace { path } => {
                 let root = std::path::PathBuf::from(path);
+                if self.workspace.root.as_ref() != Some(&root) {
+                    self.workspace.files_autocomplete.invalidate_loaded_files();
+                }
                 self.workspace.root = Some(root.clone());
                 self.workspace.git_repo = Some(root.clone());
                 self.master_session.footer.set_pwd_path(&root);
