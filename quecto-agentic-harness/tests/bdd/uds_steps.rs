@@ -338,6 +338,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
         run_uds_loop(UdsLoopArgs {
             agent,
             base_dir: &base_for_thread,
+            workspace: &base_for_thread,
             session_key,
             model,
             ephemeral,
@@ -1746,6 +1747,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
         run_uds_loop(UdsLoopArgs {
             agent,
             base_dir: &base_dir,
+            workspace: &base_dir,
             session_key,
             model,
             ephemeral,
@@ -2159,6 +2161,7 @@ fn mc_spawn_agent(
         quecto::interface::cli::uds::run_uds_loop(UdsLoopArgs {
             agent,
             base_dir: &base_for_thread,
+            workspace: &base_for_thread,
             session_key,
             model,
             ephemeral,
