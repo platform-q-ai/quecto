@@ -513,6 +513,21 @@ fn register_uds_extension_rejects_core_shadow_and_denylist() {
 }
 
 #[test]
+fn uds_owner_registration_preflight_matches_mutating_acceptance_rules() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(!reg.can_register_uds_extension_for_owner("bash", "uds:client:1"));
+    assert!(reg.remove("bash"));
+    assert!(!reg.can_register_uds_extension_for_owner("bash", "uds:client:1"));
+    assert!(reg.can_register_uds_extension_for_owner("weather", "uds:client:1"));
+    assert!(reg.register_uds_extension_for_owner(
+        Arc::new(DummyTestTool::new("weather")),
+        "uds:client:1".into(),
+    ));
+    assert!(reg.can_register_uds_extension_for_owner("weather", "uds:client:1"));
+    assert!(!reg.can_register_uds_extension_for_owner("weather", "uds:client:2"));
+}
+
+#[test]
 fn unloadable_tool_names_remain_owned_by_their_registering_connection() {
     let mut reg = ToolRegistryImpl::new();
     assert!(reg.register_uds_extension_for_owner(
