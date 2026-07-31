@@ -212,18 +212,20 @@ fn register_with_metadata_prevents_shadowing_non_unloadable_tools() {
 }
 
 #[test]
-fn register_with_metadata_allows_unloadable_owner_replacement() {
+fn register_with_metadata_replaces_unloadable_tool_for_same_owner() {
     let mut reg = ToolRegistryImpl::new();
     assert!(reg.register_with_metadata(
         Arc::new(DummyTestTool::new("dynamic")),
         ToolRegistration::runtime("owner:one")
     ));
     assert!(reg.register_with_metadata(
-        Arc::new(DummyTestTool::new("dynamic")),
-        ToolRegistration::uds()
+        Arc::new(DummyTestTool::with_desc("dynamic", "replacement")),
+        ToolRegistration::runtime("owner:one")
     ));
     let descriptor = reg.descriptor("dynamic").expect("descriptor");
-    assert!(matches!(descriptor.source, ToolSource::Uds));
+    assert!(matches!(descriptor.source, ToolSource::Runtime));
+    assert_eq!(descriptor.owner.as_ref(), "owner:one");
+    assert_eq!(descriptor.definition.description.as_ref(), "replacement");
     assert_eq!(reg.extension_names(), vec!["dynamic".to_string()]);
 }
 
