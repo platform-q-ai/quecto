@@ -299,10 +299,35 @@ impl AgentLoopImpl {
         self.extension_tool_registry_mut()
             .register_uds_extension(tool)
     }
+
+    /// Return whether a UDS-delivered extension tool would be accepted for a
+    /// client owner without mutating the registry.
+    pub fn can_register_uds_extension_tool_for_owner(&self, name: &str, owner: &str) -> bool {
+        self.extension_tool_registry()
+            .can_register_uds_extension_for_owner(name, owner)
+    }
+
+    /// Register a UDS-delivered extension tool with per-connection ownership
+    /// metadata for catalogue/policy consumers.
+    pub fn register_uds_extension_tool_for_owner(
+        &mut self,
+        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+        owner: std::borrow::Cow<'static, str>,
+    ) -> bool {
+        self.extension_tool_registry_mut()
+            .register_uds_extension_for_owner(tool, owner)
+    }
     /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
     pub fn unregister_extension_tool(&mut self, name: &str) {
         self.extension_tool_registry_mut()
             .unregister_extension(name);
+    }
+
+    /// Unregister all UDS-delivered extension tools owned by a connection.
+    pub fn unregister_uds_extension_tools_for_client(&mut self, client_id: u64) -> Vec<String> {
+        let owner = format!("uds:client:{client_id}");
+        self.tool_registry
+            .unregister_extensions_for_owner(owner.as_str())
     }
     /// Return all tool definitions (for core name lookups).
     pub fn tool_definitions(&self) -> &[crate::domain::tool::ToolDefinition] {

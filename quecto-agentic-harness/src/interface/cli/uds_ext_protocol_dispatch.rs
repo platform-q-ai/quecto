@@ -20,6 +20,20 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
         .map(|d| d.name().to_string())
         .collect();
 
+    let owner = format!("uds:client:{}", ctx.current_client_id);
+    if let Some(rejected) = tools.iter().find(|tool| {
+        !ctx.agent
+            .can_register_uds_extension_tool_for_owner(&tool.name, &owner)
+    }) {
+        let err = AgentEvent::err(
+            id,
+            "register_tools",
+            format!("tool '{}' was rejected by the tool registry", rejected.name),
+        );
+        crate::interface::cli::uds::emit_event_to_broadcast_or_writer(ctx, &err).await;
+        return;
+    }
+
     let (ok, ev, new_tools) = handle_register_tools(RegisterToolsArgs {
         client_id: ctx.current_client_id,
         id,
@@ -33,8 +47,12 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
     }
 
     let mut accepted = Vec::new();
+    let owner: std::borrow::Cow<'static, str> = std::borrow::Cow::Owned(owner);
     for (tool_reg, tool) in tools.iter().zip(new_tools.iter()) {
-        if ctx.agent.register_uds_extension_tool(tool.clone()) {
+        if ctx
+            .agent
+            .register_uds_extension_tool_for_owner(tool.clone(), owner.clone())
+        {
             accepted.push(tool_reg.name.clone());
         }
     }

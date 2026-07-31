@@ -839,7 +839,7 @@ Feature: UDS mode for headless agent operation
     And client 1 should have received a response command "register_tools" with success true
     And the post-register get_extensions response should list extension "weather"
     And the post-register get_extensions response should list extension "weather" with source "uds"
-    And the post-register get_extensions response should list extension "weather" with owner "uds:runtime"
+    And the post-register get_extensions response should list extension "weather" with owner "uds:client:5"
 
   @done @multi-client @uds-ext
   Scenario: register_tools rejects tool that shadows a core tool

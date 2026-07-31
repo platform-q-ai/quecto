@@ -145,6 +145,16 @@ impl SessionAwareTools for CovEmptyRegistry {}
 
 impl ToolRegistry for CovEmptyRegistry {}
 
+#[test]
+fn empty_registry_default_owner_cleanup_returns_no_removed_tools() {
+    let mut registry = CovEmptyRegistry;
+    assert!(
+        registry
+            .unregister_extensions_for_owner("uds:client:missing")
+            .is_empty()
+    );
+}
+
 #[tokio::test]
 async fn local_tool_and_registry_execute_trait_surface() {
     let tool = CovNoopTool;
@@ -155,6 +165,14 @@ async fn local_tool_and_registry_execute_trait_surface() {
     let mut registry = CovEmptyRegistry;
     assert_eq!(registry.tool_count(), 0);
     assert!(registry.extension_names().is_empty());
+    assert!(registry.can_register_uds_extension_for_owner("cov_noop", "uds:client:cov"));
+    assert!(
+        !registry.register_uds_extension_for_owner(
+            std::sync::Arc::new(CovNoopTool),
+            "uds:client:cov".into(),
+        ),
+        "default owner-specific UDS registration delegates to unsupported legacy path"
+    );
     registry.set_session_key("covered");
     registry.register_extension(std::sync::Arc::new(CovNoopTool));
     registry.unregister_extension("cov_noop");

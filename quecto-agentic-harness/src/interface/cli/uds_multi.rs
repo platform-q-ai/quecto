@@ -479,9 +479,8 @@ async fn handle_disconnect(ctx: &mut DispatchCtx<'_>, client_id: u64) {
     let removed =
         super::uds_ext_protocol::handle_client_disconnect(client_id, &ctx.client_tool_registry);
     if !removed.is_empty() {
-        for name in &removed {
-            ctx.agent.unregister_extension_tool(name);
-        }
+        ctx.agent
+            .unregister_uds_extension_tools_for_client(client_id);
         let ext_names = ctx.agent.tool_registry_extension_names();
         let changed =
             super::uds_ext_protocol::build_extensions_changed_event(&ext_names, ctx.agent);

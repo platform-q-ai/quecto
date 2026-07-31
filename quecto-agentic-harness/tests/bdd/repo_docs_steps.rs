@@ -32,6 +32,24 @@ fn when_read_repository_file(world: &mut QuectoWorld, relative_path: String) {
     }
 }
 
+#[then("the output should describe the current package version")]
+fn then_output_describes_current_package_version(world: &mut QuectoWorld) {
+    let manifest =
+        common::read_repository_file(Path::new(env!("CARGO_MANIFEST_DIR")), "Cargo.toml")
+            .expect("read package manifest");
+    let version = manifest
+        .lines()
+        .find_map(|line| line.strip_prefix("version = "))
+        .map(|value| value.trim_matches('"'))
+        .expect("package manifest should declare a version");
+    assert!(
+        world
+            .stdout
+            .contains(&format!("Current version: **{version}**")),
+        "README should describe current package version {version}"
+    );
+}
+
 #[when("I inspect obsolete repository planning artifact paths")]
 fn when_inspect_obsolete_planning_artifact_paths(world: &mut QuectoWorld) {
     world.stdout = OBSOLETE_PLANNING_DOCS.join("\n");

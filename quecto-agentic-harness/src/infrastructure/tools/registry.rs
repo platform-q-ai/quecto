@@ -43,9 +43,13 @@ impl ToolRegistration {
     }
 
     pub fn uds() -> Self {
+        Self::uds_owner("uds:runtime")
+    }
+
+    pub fn uds_owner(owner: impl Into<Cow<'static, str>>) -> Self {
         Self {
             source: ToolSource::Uds,
-            owner: Cow::Borrowed("uds:runtime"),
+            owner: owner.into(),
             availability: ToolAvailability::Enabled,
             unloadable: true,
         }
@@ -223,6 +227,10 @@ impl ToolRegistryImpl {
                 tracing::warn!(tool = %name, "register rejected: shadows non-unloadable tool");
                 return false;
             }
+            if existing.owner != metadata.owner {
+                tracing::warn!(tool = %name, existing_owner = %existing.owner, new_owner = %metadata.owner, "register rejected: shadows another owner");
+                return false;
+            }
         }
         self.metadata.insert(name.clone(), metadata);
         self.tools.insert(name, tool);
@@ -250,6 +258,28 @@ impl ToolRegistryImpl {
         self.register_with_metadata(tool, ToolRegistration::uds())
     }
 
+    /// Return whether a UDS-delivered extension tool with `name` and `owner`
+    /// would be accepted by the registry without mutating it.
+    pub fn can_register_uds_extension_for_owner(&self, name: &str, owner: &str) -> bool {
+        if self.denied_names.contains(name) {
+            return false;
+        }
+        if let Some(existing) = self.metadata.get(name) {
+            existing.unloadable && existing.owner.as_ref() == owner
+        } else {
+            true
+        }
+    }
+
+    /// Register a UDS-delivered extension tool with per-connection ownership.
+    pub fn register_uds_extension_for_owner(
+        &mut self,
+        tool: Arc<dyn Tool>,
+        owner: Cow<'static, str>,
+    ) -> bool {
+        self.register_with_metadata(tool, ToolRegistration::uds_owner(owner))
+    }
+
     /// Remove an unloadable tool by name.
     ///
     /// No-op if `name` is not unloadable, preventing runtime lifecycle events
@@ -266,6 +296,27 @@ impl ToolRegistryImpl {
         self.metadata.remove(name);
         self.tools.remove(name);
         self.rebuild_definitions();
+    }
+
+    /// Remove unloadable runtime tools owned by a delivery/lifecycle adapter.
+    ///
+    /// This keeps UDS disconnect cleanup scoped to the disconnecting client while
+    /// preserving bundled native tools and other clients' runtime tools.
+    pub fn unregister_extensions_for_owner(&mut self, owner: &str) -> Vec<String> {
+        let names: Vec<String> = self
+            .metadata
+            .iter()
+            .filter(|(_, metadata)| metadata.unloadable && metadata.owner.as_ref() == owner)
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in &names {
+            self.metadata.remove(name);
+            self.tools.remove(name);
+        }
+        if !names.is_empty() {
+            self.rebuild_definitions();
+        }
+        names
     }
 
     /// Return the names of currently unloadable runtime tools.
@@ -469,8 +520,24 @@ impl ExtensionToolRegistry for ToolRegistryImpl {
         self.unregister_extension(name);
     }
 
+    fn unregister_extensions_for_owner(&mut self, owner: &str) -> Vec<String> {
+        self.unregister_extensions_for_owner(owner)
+    }
+
     fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
         self.register_uds_extension(tool)
+    }
+
+    fn can_register_uds_extension_for_owner(&self, name: &str, owner: &str) -> bool {
+        self.can_register_uds_extension_for_owner(name, owner)
+    }
+
+    fn register_uds_extension_for_owner(
+        &mut self,
+        tool: Arc<dyn Tool>,
+        owner: Cow<'static, str>,
+    ) -> bool {
+        self.register_uds_extension_for_owner(tool, owner)
     }
 
     fn enable_tool(&mut self, name: &str) -> bool {

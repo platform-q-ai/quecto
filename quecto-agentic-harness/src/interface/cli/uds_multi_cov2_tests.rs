@@ -234,7 +234,8 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     let live = Arc::new(std::sync::atomic::AtomicU32::new(1));
     let registry = super::super::uds_ext_protocol::new_client_tool_registry();
     let mut agent = make_agent();
-    agent.register_extension_tool(Arc::new(TinyExtensionTool));
+    agent
+        .register_uds_extension_tool_for_owner(Arc::new(TinyExtensionTool), "uds:client:55".into());
     registry
         .lock()
         .unwrap()

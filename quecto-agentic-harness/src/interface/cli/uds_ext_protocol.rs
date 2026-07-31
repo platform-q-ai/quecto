@@ -407,28 +407,25 @@ pub fn handle_client_disconnect(client_id: u64, registry: &ClientToolRegistry) -
     state.tool_names.into_iter().collect()
 }
 
-/// Build the current extension list from the agent's tool registry.
+/// Build the current runtime-loadable extension list from agent descriptors.
 pub fn build_extensions_changed_event(
     extension_names: &[String],
     agent: &crate::application::agent_loop::AgentLoopImpl,
 ) -> AgentEvent {
-    let extensions: Vec<ExtensionInfo> = {
-        let defs = agent.tool_definitions();
-        extension_names
-            .iter()
-            .filter_map(|name| {
-                defs.iter()
-                    .find(|d| d.name.as_ref() == name)
-                    .map(|d| ExtensionInfo {
-                        name: d.name.to_string(),
-                        description: d.description.to_string(),
-                        source: Some("uds".to_string()),
-                        owner: Some("uds:runtime".to_string()),
-                        availability: Some("enabled".to_string()),
-                    })
-            })
-            .collect()
-    };
+    let extension_names: std::collections::HashSet<&str> =
+        extension_names.iter().map(String::as_str).collect();
+    let extensions: Vec<ExtensionInfo> = agent
+        .tool_descriptors()
+        .into_iter()
+        .filter(|descriptor| extension_names.contains(descriptor.name()))
+        .map(|descriptor| ExtensionInfo {
+            name: descriptor.definition.name.to_string(),
+            description: descriptor.definition.description.to_string(),
+            source: Some(descriptor.source.as_str().to_string()),
+            owner: Some(descriptor.owner.to_string()),
+            availability: Some(descriptor.availability.as_str().to_string()),
+        })
+        .collect();
     AgentEvent::ExtensionsChanged { extensions }
 }
 
