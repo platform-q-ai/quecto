@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use super::error::DomainError;
 use super::message::Message;
+use super::tool::ToolPolicyReconciliation;
+use super::tool_descriptor::ToolCatalogueEntry;
 
 /// A live progress event emitted by the agent loop during processing.
 ///
@@ -68,6 +70,18 @@ pub enum AgentProgressEvent {
     /// Canonical conversation changed, including pruning or a final append.
     ConversationChanged {
         messages: Arc<[crate::domain::message::Message]>,
+    },
+    /// Rich catalogue changed after a real tool registration/unregistration path.
+    ToolCatalogueChanged {
+        changed_tools: Vec<String>,
+        before: Vec<ToolCatalogueEntry>,
+        after: Vec<ToolCatalogueEntry>,
+        reason: String,
+    },
+    /// Runtime tool policy changed after live reconciliation.
+    ToolPolicyChanged {
+        reconciliation: ToolPolicyReconciliation,
+        reason: String,
     },
     /// The agent loop has produced a final text response and is done.
     Done,

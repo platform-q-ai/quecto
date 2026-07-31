@@ -65,6 +65,8 @@ impl ExtensionToolRegistry for EmptyRegistry {}
 
 impl SessionAwareTools for EmptyRegistry {}
 
+impl crate::domain::tool::ToolPolicyMutator for EmptyRegistry {}
+
 impl crate::domain::tool::ToolRegistry for EmptyRegistry {}
 
 #[tokio::test]

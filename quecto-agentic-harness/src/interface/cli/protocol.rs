@@ -93,6 +93,22 @@ pub enum AgentEvent {
     },
     /// Extension list changed (after reload or hot-reload).
     ExtensionsChanged { extensions: Vec<ExtensionInfo> },
+    /// Rich catalogue changed after tool registration/unregistration.
+    #[serde(rename_all = "camelCase")]
+    ToolCatalogueChanged {
+        changed_tools: Vec<String>,
+        before: Vec<serde_json::Value>,
+        after: Vec<serde_json::Value>,
+        reason: String,
+    },
+    /// Runtime tool policy changed after live reconciliation.
+    #[serde(rename_all = "camelCase")]
+    ToolPolicyChanged {
+        changed_tools: Vec<String>,
+        results: Vec<serde_json::Value>,
+        apply_mode: String,
+        reason: String,
+    },
     /// Request sent to an extension client to execute a tool.
     ///
     /// Routed only to the client that registered the tool — not broadcast.
@@ -432,6 +448,10 @@ pub struct TokenStats {
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "protocol_event_tests.rs"]
+mod event_tests;
 
 #[cfg(test)]
 #[path = "protocol_shape_tests.rs"]

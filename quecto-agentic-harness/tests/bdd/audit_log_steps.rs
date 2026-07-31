@@ -352,6 +352,8 @@ impl quecto::domain::tool::ExtensionToolRegistry for LoopEmptyRegistry {}
 
 impl quecto::domain::tool::SessionAwareTools for LoopEmptyRegistry {}
 
+impl quecto::domain::tool::ToolPolicyMutator for LoopEmptyRegistry {}
+
 impl quecto::domain::tool::ToolRegistry for LoopEmptyRegistry {}
 
 #[given(

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::agent::{AgentLoop, AgentProgressEvent};
 use crate::domain::message::Message;
-use crate::interface::cli::protocol::{AgentEvent, ToolResultContent, TurnMessage, TurnUsage};
+use crate::interface::cli::protocol::{AgentEvent, TurnMessage, TurnUsage};
 use crate::interface::cli::uds_session::AgentSession;
 
 /// State of the cancellation slot for the current (or next) agent run.
@@ -377,6 +377,11 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     })
     .await;
 
+    // The CLI UDS boundary owns a mutable agent and is therefore the real
+    // production boundary where queued AtNextTurnBoundary policy mutations can
+    // be drained before the next prompt snapshots tool definitions.
+    let _ = agent.drain_tool_policy_mutations_at_boundary();
+
     // Clear the callback so it doesn't hold the closed sender.
     agent.set_progress_callback(None);
     agent_session.set_streaming(false);
@@ -660,56 +665,10 @@ pub(in crate::interface::cli) fn forward_notification_broadcast(
 
 /// Forward a single progress event to `sink`.
 ///
-/// Forwards `Token`, `ToolStarted`, `ToolFinished`, and `TurnCompleted` events
-/// in real time. `Thinking` and `Done` are not forwarded (no UDS mapping).
+/// Forwards progress events in real time. `Thinking` and `Done` are not forwarded
+/// (no UDS mapping).
 pub(crate) async fn forward_progress_event_sink(ev: AgentProgressEvent, sink: &mut EventSink<'_>) {
-    match ev {
-        AgentProgressEvent::Token(t) => {
-            sink.emit(&AgentEvent::Token { token: t }).await;
-        }
-        AgentProgressEvent::ToolStarted {
-            tool_call_id,
-            name,
-            arguments,
-        } => {
-            let args: serde_json::Value = serde_json::from_str(&arguments).unwrap_or_default();
-            sink.emit(&AgentEvent::ToolExecutionStart {
-                tool_call_id,
-                tool_name: name,
-                args,
-            })
-            .await;
-        }
-        AgentProgressEvent::ToolFinished {
-            tool_call_id,
-            name,
-            result_content,
-            is_error,
-            ..
-        } => {
-            sink.emit(&AgentEvent::ToolExecutionEnd {
-                tool_call_id,
-                tool_name: name,
-                result: ToolResultContent {
-                    content: vec![serde_json::json!({"type":"text","text": result_content})],
-                },
-                is_error,
-            })
-            .await;
-        }
-        AgentProgressEvent::TurnCompleted { messages } => {
-            // Stream this turn's output as stable refs on the agent's own stream;
-            // a parent monitor re-stamps it with the child id (#797 / #1060).
-            let message_refs: Vec<String> = messages.iter().map(|m| m.id().to_string()).collect();
-            sink.emit(&AgentEvent::SubagentMessagesAppended {
-                agent_id: String::new(),
-                messages: vec![],
-                message_refs,
-            })
-            .await;
-        }
-        _ => {}
-    }
+    super::uds_progress_forward::forward_event(ev, sink).await;
 }
 
 /// Thin `Writer`-sink adapter for progress events, retained for unit tests that

@@ -209,7 +209,9 @@ impl<W: Write + Send> ProgressRenderer<W> {
             }
             AgentProgressEvent::Token(_)
             | AgentProgressEvent::TurnCompleted { .. }
-            | AgentProgressEvent::ConversationChanged { .. } => {
+            | AgentProgressEvent::ConversationChanged { .. }
+            | AgentProgressEvent::ToolCatalogueChanged { .. }
+            | AgentProgressEvent::ToolPolicyChanged { .. } => {
                 // Tokens and per-turn message snapshots are forwarded via the
                 // UDS protocol layer, not the REPL spinner. The REPL uses
                 // non-streaming progress events.

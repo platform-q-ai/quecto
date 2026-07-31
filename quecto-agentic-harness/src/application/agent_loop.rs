@@ -14,7 +14,8 @@ use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent
 use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::{
-    ExtensionToolRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
+    ExtensionToolRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolPolicyMutation,
+    ToolRegistry,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -88,7 +89,7 @@ pub struct AgentLoopConfig {
 }
 pub struct AgentLoopImpl {
     provider: Arc<dyn LlmProvider>,
-    tool_registry: Box<dyn ToolRegistry>,
+    pub(super) tool_registry: Box<dyn ToolRegistry>,
     model: String,
     max_tokens: u32,
     /// Per-model registry output cap, if known; see `agent_loop_clamp` (#935).
@@ -118,6 +119,10 @@ pub struct AgentLoopImpl {
     /// Context-management boundary for pruning, spilling, dirty-prefix, and
     /// user-facing context gauge decisions.
     context_manager: ContextManager,
+    pub(super) pending_tool_policy_mutations: std::sync::Mutex<Vec<ToolPolicyMutation>>,
+    pub(super) runtime_disabled_tools: std::sync::Mutex<std::collections::HashSet<String>>,
+    pub(super) runtime_enabled_tools: std::sync::Mutex<std::collections::HashSet<String>>,
+    pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
 }
 impl std::fmt::Debug for AgentLoopImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -157,6 +162,10 @@ impl AgentLoopImpl {
             audit_log: config.audit_log,
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
             context_manager,
+            pending_tool_policy_mutations: std::sync::Mutex::new(Vec::new()),
+            runtime_disabled_tools: std::sync::Mutex::new(std::collections::HashSet::new()),
+            runtime_enabled_tools: std::sync::Mutex::new(std::collections::HashSet::new()),
+            turn_in_flight: std::sync::atomic::AtomicBool::new(false),
         }
     }
     /// Read-and-clear the durable-prefix dirty latch (#1072).
@@ -252,12 +261,12 @@ impl AgentLoopImpl {
     /// so the event is only constructed when a callback is registered; on the
     /// headless path (`progress_callback = None`) it's never called.
     #[inline]
-    fn notify(&self, make_event: impl FnOnce() -> AgentProgressEvent) {
+    pub(super) fn notify(&self, make_event: impl FnOnce() -> AgentProgressEvent) {
         if let Some(ref cb) = self.progress_callback {
             cb(make_event());
         }
     }
-    /// Set the maximum number of tool iterations (overrides default).
+
     pub fn with_max_tool_iterations(mut self, max: u32) -> Self {
         self.max_tool_iterations = max;
         self
@@ -277,7 +286,6 @@ impl AgentLoopImpl {
     pub fn tool_registry_extension_names(&self) -> Vec<String> {
         self.extension_tool_registry().extension_names()
     }
-
     /// Return descriptors for policy/UI callers without exposing concrete tool
     /// implementations.
     pub fn tool_descriptors(&self) -> Vec<crate::domain::tool_descriptor::ToolDescriptor> {
@@ -316,34 +324,47 @@ impl AgentLoopImpl {
             .can_register_uds_extension_for_owner(name, owner)
     }
 
-    /// Register a UDS-delivered extension tool with per-connection ownership
-    /// metadata for catalogue/policy consumers.
     pub fn register_uds_extension_tool_for_owner(
         &mut self,
         tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
         owner: std::borrow::Cow<'static, str>,
     ) -> bool {
-        self.extension_tool_registry_mut()
-            .register_uds_extension_for_owner(tool, owner)
+        let name = tool.definition().name.to_string();
+        let before = self.tool_catalogue_entries();
+        let registered = self
+            .extension_tool_registry_mut()
+            .register_uds_extension_for_owner(tool, owner);
+        if registered {
+            self.notify_tool_catalogue_changed(vec![name], before, "register_tool");
+        }
+        registered
     }
     /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
     pub fn unregister_extension_tool(&mut self, name: &str) {
+        let before = self.tool_catalogue_entries();
         self.extension_tool_registry_mut()
             .unregister_extension(name);
+        self.notify_tool_catalogue_changed(vec![name.to_string()], before, "unregister_tool");
     }
 
     /// Unregister all UDS-delivered extension tools owned by a connection.
     pub fn unregister_uds_extension_tools_for_client(&mut self, client_id: u64) -> Vec<String> {
         let owner = format!("uds:client:{client_id}");
-        self.tool_registry
-            .unregister_extensions_for_owner(owner.as_str())
+        let before = self.tool_catalogue_entries();
+        let removed = self
+            .tool_registry
+            .unregister_extensions_for_owner(owner.as_str());
+        if !removed.is_empty() {
+            self.notify_tool_catalogue_changed(removed.clone(), before, "unregister_client_tools");
+        }
+        removed
     }
     /// Return all tool definitions (for core name lookups).
     pub fn tool_definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
         self.tool_catalog().definitions()
     }
 
-    fn tool_catalog(&self) -> &dyn ToolCatalog {
+    pub(super) fn tool_catalog(&self) -> &dyn ToolCatalog {
         &*self.tool_registry
     }
 
@@ -519,7 +540,8 @@ impl AgentLoopImpl {
 
     /// Run the LLM-tool loop.
     async fn run_loop(&self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
-        let tool_defs = self.tool_catalog().definitions();
+        self.mark_turn_in_flight();
+        let mut tool_defs = self.current_tool_definitions();
         let mut iterations: u32 = 0;
         let mut current_turn: u32 = 1;
         // True when the manifest needs a rebuild; starts true for prior spills.
@@ -532,16 +554,10 @@ impl AgentLoopImpl {
         // cannot preserve as-appended content.
         //
         // Cost (#1073 review): one clone per appended message, held until run
-        // end. This is a PER-MESSAGE bound only — the aggregate is the sum of
-        // everything the run appended and is NOT bounded by the context
-        // budget; a very long tool loop with large results accumulates the
-        // full total even while the pruning ladder reclaims the conversation
-        // copies. Accepted deliberately: the ledger drops when `AgentResult`
+        // end. Accepted deliberately: the ledger drops when `AgentResult`
         // is consumed at run end, and emission is independently capped at the
-        // shared 8 MiB protocol frame cap (#1062), so an over-cap aggregate
-        // is rejected at emission rather than silently trimmed. If a real
-        // workload ever demonstrates
-        // run-lifetime ledger growth as a problem, the remedy is
+        // shared 8 MiB protocol frame cap (#1062); over-cap aggregates reject
+        // at emission. If run-lifetime ledger growth becomes a problem, use
         // clone-on-demote (move the original into the ledger only when a
         // prune pass is about to mutate it), not Arc sharing.
         let mut appended_messages = Vec::new();
@@ -553,6 +569,10 @@ impl AgentLoopImpl {
         let mut malformed_retries: u32 = 0;
 
         loop {
+            if iterations > 0 {
+                self.drain_tool_policy_mutations_at_internal_boundary();
+                tool_defs = self.current_tool_definitions();
+            }
             let _state = TurnState::PrepareProviderRequest;
             let estimated_context_tokens = self
                 .apply_context_pruning(messages, current_turn, spills_dirty)
@@ -563,7 +583,7 @@ impl AgentLoopImpl {
 
             let request = self.prepare_provider_request_transition(
                 messages,
-                tool_defs,
+                &tool_defs,
                 estimated_context_tokens,
             );
             let _state = TurnState::AwaitProviderResponse;
@@ -605,6 +625,7 @@ impl AgentLoopImpl {
                         }
                         ProviderFailureTransition::Terminal(_class) => {
                             let _state = TurnState::FailProviderRequest;
+                            self.clear_turn_in_flight();
                             return self.fail_provider_request(current_turn, error).await;
                         }
                     }
@@ -634,6 +655,7 @@ impl AgentLoopImpl {
                     let result = self
                         .finalize_turn_response(messages, response, end, &mut appended_messages)
                         .await;
+                    self.clear_turn_in_flight();
                     return Ok(result);
                 }
                 TurnState::ExecuteToolCalls => {}
@@ -667,12 +689,14 @@ impl AgentLoopImpl {
 
             if iterations >= self.max_tool_iterations {
                 let _state = TurnState::StopAtToolIterationLimit;
-                return Ok(self.tool_iteration_limit_result(
+                let result = self.tool_iteration_limit_result(
                     messages,
                     iterations,
                     usage_totals,
                     appended_messages,
-                ));
+                );
+                self.clear_turn_in_flight();
+                return Ok(result);
             }
         }
     }
@@ -706,6 +730,9 @@ mod issue_1072_tests;
 #[cfg(test)]
 #[path = "agent_loop_993_tests.rs"]
 mod issue_993_tests;
+#[cfg(test)]
+#[path = "agent_loop_policy_tests.rs"]
+mod policy_tests;
 #[cfg(test)]
 #[path = "agent_loop_spill_tests.rs"]
 mod spill_tests;
