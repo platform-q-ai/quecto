@@ -226,11 +226,24 @@ impl ToolRegistryImpl {
     /// Returns unknown names for caller-visible warnings.
     pub fn apply_startup_tool_restrictions(&mut self, names: &[String]) -> Vec<String> {
         let mut warnings = Vec::new();
+        let mut rebuild_needed = false;
         for name in names {
             self.deny_registration_name(name);
-            if !self.disable_tool(name) {
+            if !self.tools.contains_key(name) {
                 warnings.push(name.clone());
+                continue;
             }
+            let metadata = self
+                .metadata
+                .entry(name.clone())
+                .or_insert_with(ToolRegistration::official_native);
+            if metadata.availability != ToolAvailability::Disabled {
+                metadata.availability = ToolAvailability::Disabled;
+                rebuild_needed = true;
+            }
+        }
+        if rebuild_needed {
+            self.rebuild_definitions();
         }
         warnings
     }

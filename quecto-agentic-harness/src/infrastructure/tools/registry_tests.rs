@@ -614,27 +614,47 @@ fn trait_paths_expose_descriptors_and_runtime_policy() {
 #[test]
 fn startup_restrictions_disable_descriptors_and_deny_future_registration() {
     let (mut reg, _tmp) = test_registry();
+    assert!(reg.register_extension(Arc::new(DummyTestTool::new("plugin_tool",))));
 
-    let warnings =
-        reg.apply_startup_tool_restrictions(&["bash".to_string(), "missing_tool".to_string()]);
+    let warnings = reg.apply_startup_tool_restrictions(&[
+        "bash".to_string(),
+        "plugin_tool".to_string(),
+        "missing_tool".to_string(),
+    ]);
 
     assert_eq!(warnings, vec!["missing_tool".to_string()]);
     assert!(
         reg.get("bash").is_some(),
-        "disabled tool remains registered"
+        "disabled bundled-native tool remains registered"
+    );
+    assert!(
+        reg.get("plugin_tool").is_some(),
+        "disabled unloadable runtime tool remains registered"
     );
     assert!(
         !reg.definitions().iter().any(|d| d.name.as_ref() == "bash"),
-        "startup-disabled tool is hidden from model-visible definitions"
+        "startup-disabled bundled-native tool is hidden from model-visible definitions"
+    );
+    assert!(
+        !reg.definitions()
+            .iter()
+            .any(|d| d.name.as_ref() == "plugin_tool"),
+        "startup-disabled unloadable runtime tool is hidden from model-visible definitions"
     );
     let descriptor = reg.descriptor("bash").expect("descriptor");
     assert!(matches!(descriptor.source, ToolSource::BundledNative));
     assert!(!descriptor.availability.is_enabled());
-    assert!(!reg.register_extension(Arc::new(DummyTestTool::new("bash"))));
-    assert!(!reg.register_uds_extension_for_owner(
-        Arc::new(DummyTestTool::new("bash")),
-        "uds:client:1".into(),
-    ));
+    assert!(!reg.can_register_uds_extension_for_owner("bash", "uds:client:1"));
+    assert!(!reg.can_register_uds_extension_for_owner("plugin_tool", "runtime:extension"));
+    reg.unregister_extension("plugin_tool");
+    assert!(
+        reg.get("plugin_tool").is_none(),
+        "owner-scoped unload remains a separate destructive lifecycle path"
+    );
+    assert!(
+        !reg.register_extension(Arc::new(DummyTestTool::new("plugin_tool"))),
+        "startup-disabled existing unloadable name stays denied after unload"
+    );
     assert!(!reg.register_extension(Arc::new(DummyTestTool::new("missing_tool",))));
 }
 

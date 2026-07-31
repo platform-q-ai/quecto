@@ -3212,34 +3212,48 @@ fn then_live_index_absent_from_front_prompt(world: &mut QuectoWorld) {
 // Extension wiring assertions (#318 Part 2)
 // ===========================================================================
 
+fn openai_request_includes_tool(body: &serde_json::Value, tool_name: &str) -> bool {
+    body["tools"]
+        .as_array()
+        .map(|tools| {
+            tools
+                .iter()
+                .any(|tool| tool["function"]["name"].as_str() == Some(tool_name))
+        })
+        .unwrap_or(false)
+}
+
 /// Assert that at least one LLM request included a tool definition with the given name.
 #[then(expr = "the LLM request should have included tool {string}")]
 fn then_llm_request_included_tool(world: &mut QuectoWorld, tool_name: String) {
-    let server = world
-        .wiremock_server_ref
-        .expect("no capturing mock LLM configured — use 'a mock LLM that captures requests'");
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let requests = rt.block_on(async { server.received_requests().await });
-    std::mem::forget(rt);
-    let requests = requests.expect("request recording not enabled");
+    let bodies = captured_openai_request_bodies(world);
     assert!(
-        !requests.is_empty(),
+        !bodies.is_empty(),
         "expected at least one request to the LLM"
     );
-    let found = requests.iter().any(|req| {
-        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
-        body["tools"]
-            .as_array()
-            .map(|tools| {
-                tools
-                    .iter()
-                    .any(|t| t["function"]["name"].as_str() == Some(tool_name.as_str()))
-            })
-            .unwrap_or(false)
-    });
+    let found = bodies
+        .iter()
+        .any(|body| openai_request_includes_tool(body, &tool_name));
     assert!(
         found,
         "expected LLM request to include tool '{}', but it was not found in tool definitions",
+        tool_name
+    );
+}
+
+#[then(expr = "the LLM request should not have included tool {string}")]
+fn then_llm_request_did_not_include_tool(world: &mut QuectoWorld, tool_name: String) {
+    let bodies = captured_openai_request_bodies(world);
+    assert!(
+        !bodies.is_empty(),
+        "expected at least one request to the LLM"
+    );
+    let found = bodies
+        .iter()
+        .any(|body| openai_request_includes_tool(body, &tool_name));
+    assert!(
+        !found,
+        "expected LLM request not to include tool '{}', but it appeared in tool definitions",
         tool_name
     );
 }
