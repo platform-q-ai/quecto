@@ -331,6 +331,7 @@ pub fn run_repl<R: BufRead, W: Write>(
     if !stderr.is_empty() {
         tracing::warn!("{stderr}");
     }
+    let _policy_state = runtime.policy_state;
     let registry = runtime.registry;
     let spill_store = runtime.spill_store;
     let session_key = runtime.session_key;

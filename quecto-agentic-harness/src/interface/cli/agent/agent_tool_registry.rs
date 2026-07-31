@@ -116,6 +116,8 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         },
     )?;
 
+    let _policy_state = runtime.policy_state;
+
     // #926: the parent is always spawn-capable — `SpawnTool` (with `notify_tx`)
     // and `AgentCmdTool` (with the protocol registry) are constructed by the
     // shared runtime builder for CLI/UDS. A live `notify_tx` paired with a
@@ -143,18 +145,3 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
 #[cfg(test)]
 #[path = "agent_tool_registry_cov_tests.rs"]
 mod cov_tests;
-
-#[cfg(test)]
-fn load_workflow_spec(
-    path: &std::path::Path,
-) -> Result<crate::domain::workflow::WorkflowSpec, String> {
-    let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
-    let max = crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES as u64;
-    if len > max {
-        return Err(format!("workflow spec too large: {len} bytes (max {max})"));
-    }
-    let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    // Single-use: best-effort cleanup once consumed.
-    let _ = std::fs::remove_file(path);
-    serde_json::from_str::<crate::domain::workflow::WorkflowSpec>(&raw).map_err(|e| e.to_string())
-}

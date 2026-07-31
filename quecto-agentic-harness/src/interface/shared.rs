@@ -670,9 +670,8 @@ pub fn register_extension_tools(
     }
 }
 
-pub use crate::interface::tool_runtime::{
-    ToolEntrypoint, ToolRuntimeBuild, ToolRuntimeBuildArgs, ToolRuntimePolicyState,
-    ToolRuntimeWorkflowPolicy, build_tool_runtime,
+pub(crate) use crate::interface::tool_runtime::{
+    ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeWorkflowPolicy, build_tool_runtime,
 };
 
 /// Resolve the XDG runtime directory or fall back to temp.

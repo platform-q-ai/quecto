@@ -5,7 +5,7 @@
 /// [`build_tool_runtime`], which performs provider discovery/registration in one
 /// place and then applies entrypoint defaults as catalogue policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolEntrypoint {
+pub(crate) enum ToolEntrypoint {
     /// One-shot CLI agent invocation (`quecto agent ...`).
     CliAgent,
     /// UDS-backed agent session (`quecto agent --mode uds ...`).
@@ -35,7 +35,7 @@ impl ToolEntrypoint {
 /// user-visible CLI/UDS/REPL differences explicit instead of encoding them as
 /// omitted provider construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ToolRuntimePolicyState {
+pub(crate) struct ToolRuntimePolicyState {
     pub entrypoint: ToolEntrypoint,
     pub agent_control_default_enabled: bool,
     pub web_default_enabled: bool,
@@ -54,7 +54,7 @@ impl ToolRuntimePolicyState {
 }
 
 /// Workflow-specific policy inputs for [`build_tool_runtime`].
-pub struct ToolRuntimeWorkflowPolicy<'a> {
+pub(crate) struct ToolRuntimeWorkflowPolicy<'a> {
     pub workflow_disabled: bool,
     pub workflow_guards: bool,
     pub workflow_spec_path: Option<&'a std::path::Path>,
@@ -81,7 +81,7 @@ impl<'a> ToolRuntimeWorkflowPolicy<'a> {
 }
 
 /// Inputs for the shared tool runtime/catalogue builder.
-pub struct ToolRuntimeBuildArgs<'a> {
+pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub entrypoint: ToolEntrypoint,
     pub base_dir: &'a std::path::Path,
     pub config: &'a crate::infrastructure::config::Config,
@@ -99,7 +99,7 @@ pub struct ToolRuntimeBuildArgs<'a> {
 }
 
 /// Result of the shared tool runtime/catalogue builder.
-pub struct ToolRuntimeBuild {
+pub(crate) struct ToolRuntimeBuild {
     pub registry: crate::infrastructure::tools::registry::ToolRegistryImpl,
     pub spill_store:
         std::sync::Arc<crate::infrastructure::persistence::context_spill::FileContextSpillStore>,
@@ -122,7 +122,9 @@ pub struct ToolRuntimeBuild {
 /// and web tools after registration rather than silently omitting their
 /// providers, while UDS remains the only entrypoint that supports the workflow
 /// runtime.
-pub fn build_tool_runtime(args: ToolRuntimeBuildArgs<'_>) -> Result<ToolRuntimeBuild, String> {
+pub(crate) fn build_tool_runtime(
+    args: ToolRuntimeBuildArgs<'_>,
+) -> Result<ToolRuntimeBuild, String> {
     use crate::infrastructure::extensions::native::{
         AgentControlToolDeps, SessionToolDeps, build_agent_control_tool_extensions,
         build_session_tool_extensions, register_bundled_native_tools,
@@ -311,7 +313,7 @@ fn build_workflow_runtime(
     Ok(Some(state))
 }
 
-fn load_workflow_spec(
+pub(crate) fn load_workflow_spec(
     path: &std::path::Path,
 ) -> Result<crate::domain::workflow::WorkflowSpec, String> {
     let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
@@ -325,3 +327,7 @@ fn load_workflow_spec(
     let _ = std::fs::remove_file(path);
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+#[path = "tool_runtime_cov_tests.rs"]
+mod cov_tests;
