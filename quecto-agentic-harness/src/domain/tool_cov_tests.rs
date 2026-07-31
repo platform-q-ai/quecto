@@ -145,6 +145,16 @@ impl SessionAwareTools for CovEmptyRegistry {}
 
 impl ToolRegistry for CovEmptyRegistry {}
 
+#[test]
+fn empty_registry_default_owner_cleanup_returns_no_removed_tools() {
+    let mut registry = CovEmptyRegistry;
+    assert!(
+        registry
+            .unregister_extensions_for_owner("uds:client:missing")
+            .is_empty()
+    );
+}
+
 #[tokio::test]
 async fn local_tool_and_registry_execute_trait_surface() {
     let tool = CovNoopTool;

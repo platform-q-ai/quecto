@@ -2,6 +2,7 @@ use super::*;
 use crate::application::agent_loop::tests::{MockProvider, MockRegistry, test_config};
 use crate::domain::audit::{AuditEvent, AuditSink};
 use crate::domain::message::{LlmResponse, Message, Role};
+use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Default)]
@@ -43,6 +44,28 @@ fn setters_swap_provider_streaming_and_audit_log() {
     assert!(Arc::ptr_eq(agent.audit_log().unwrap(), &audit));
     agent.set_audit_log(None);
     assert!(agent.audit_log().is_none());
+}
+
+#[test]
+fn unregister_uds_extension_tools_for_client_delegates_to_registry_owner_cleanup() {
+    let provider = Arc::new(MockProvider::new(vec![]));
+    let mut agent = AgentLoopImpl::new(test_config(provider, Box::new(ToolRegistryImpl::new())));
+    agent.register_uds_extension_tool_for_owner(
+        Arc::new(super::tests::MockTool::new("owned_tool", "ok")),
+        "uds:client:55".into(),
+    );
+    agent.register_uds_extension_tool_for_owner(
+        Arc::new(super::tests::MockTool::new("other_tool", "ok")),
+        "uds:client:77".into(),
+    );
+
+    let removed = agent.unregister_uds_extension_tools_for_client(55);
+
+    assert_eq!(removed, vec!["owned_tool".to_string()]);
+    assert_eq!(
+        agent.tool_registry_extension_names(),
+        vec!["other_tool".to_string()]
+    );
 }
 
 #[tokio::test]
