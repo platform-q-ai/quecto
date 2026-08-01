@@ -491,7 +491,12 @@ impl ToolRegistryImpl {
                 {
                     ToolPolicyMutationStatus::BlockedByRestriction
                 }
-                Some(entry) if entry.effective_scope == mutation.scope => {
+                Some(entry)
+                    if entry
+                        .profile_scope
+                        .unwrap_or(ProfileAvailabilityScope::Both)
+                        == mutation.scope =>
+                {
                     ToolPolicyMutationStatus::AlreadyInState
                 }
                 Some(_) => {
@@ -555,11 +560,8 @@ impl ToolRegistryImpl {
             .metadata
             .entry(name.to_string())
             .or_insert_with(ToolRegistration::official_native);
-        let old_availability = metadata.availability;
         update(metadata);
-        if metadata.availability != old_availability {
-            self.rebuild_definitions();
-        }
+        self.rebuild_definitions();
         true
     }
 

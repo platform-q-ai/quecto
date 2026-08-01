@@ -222,13 +222,10 @@ fn restriction_ceiling_blocks_scope_widening_but_allows_narrowing_to_none() {
     );
 
     let narrow = reg.apply_tool_policy_mutations(
-        &[ToolPolicyMutation::disable("read", "already narrowed")],
+        &[ToolPolicyMutation::disable("read", "record profile narrow")],
         ToolPolicyApplyMode::ImmediateIfIdle,
     );
-    assert_eq!(
-        narrow.results[0].status,
-        ToolPolicyMutationStatus::AlreadyInState
-    );
+    assert_eq!(narrow.results[0].status, ToolPolicyMutationStatus::Applied);
     assert_eq!(
         narrow.results[0].after.as_ref().unwrap().effective_scope,
         ProfileAvailabilityScope::None
@@ -446,4 +443,88 @@ fn runtime_enable_clears_prior_profile_disable() {
     assert_eq!(entry.effective_scope, ProfileAvailabilityScope::Both);
     assert!(entry.effective_parent_enabled);
     assert!(entry.effective_child_enabled);
+}
+
+#[test]
+fn disable_under_entrypoint_ceiling_records_profile_scope() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(reg.disable_tool_by_entrypoint_default("read"));
+
+    let reconciliation = reg.apply_tool_policy_mutations(
+        &[ToolPolicyMutation::disable(
+            "read",
+            "record profile disable",
+        )],
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    let after = reconciliation.results[0].after.as_ref().unwrap();
+    assert_eq!(after.profile_scope, Some(ProfileAvailabilityScope::None));
+    assert_eq!(after.effective_scope, ProfileAvailabilityScope::None);
+}
+
+#[test]
+fn enable_tool_rebuilds_parent_child_definition_caches_after_scope_change() {
+    let (mut reg, _tmp) = test_registry();
+    reg.apply_tool_policy_mutations(
+        &[ToolPolicyMutation::set_scope(
+            "read",
+            ProfileAvailabilityScope::Child,
+            "child",
+        )],
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+    assert!(
+        !reg.definitions_for(ToolProfileContext::Parent)
+            .iter()
+            .any(|definition| definition.name.as_ref() == "read")
+    );
+    assert!(
+        reg.definitions_for(ToolProfileContext::Child)
+            .iter()
+            .any(|definition| definition.name.as_ref() == "read")
+    );
+
+    assert!(reg.enable_tool("read"));
+
+    assert!(
+        reg.definitions_for(ToolProfileContext::Parent)
+            .iter()
+            .any(|definition| definition.name.as_ref() == "read")
+    );
+    assert!(
+        reg.definitions_for(ToolProfileContext::Child)
+            .iter()
+            .any(|definition| definition.name.as_ref() == "read")
+    );
+}
+
+#[test]
+fn catalogue_scope_json_pins_literal_wire_names() {
+    let (mut reg, _tmp) = test_registry();
+    reg.apply_tool_policy_mutations(
+        &[ToolPolicyMutation::set_scope(
+            "read",
+            ProfileAvailabilityScope::Child,
+            "json",
+        )],
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+
+    let entry = reg
+        .catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name.as_ref() == "read")
+        .unwrap();
+    let json = serde_json::to_value(&entry).unwrap();
+
+    assert_eq!(json["profileScope"], "child");
+    assert_eq!(json["effectiveScope"], "child");
+    assert_eq!(json["effectiveParentEnabled"], false);
+    assert_eq!(json["effectiveChildEnabled"], true);
+    assert_eq!(json["profileEnabled"], true);
 }

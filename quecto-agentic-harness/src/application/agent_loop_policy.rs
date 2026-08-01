@@ -4,7 +4,7 @@ use crate::domain::tool::{
     ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
     ToolPolicyMutationStatus, ToolPolicyReconciliation,
 };
-use crate::domain::tool_descriptor::ToolCatalogueEntry;
+use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolCatalogueEntry};
 use std::sync::atomic::Ordering;
 
 impl AgentLoopImpl {
@@ -117,7 +117,7 @@ impl AgentLoopImpl {
             if result.status != ToolPolicyMutationStatus::Applied {
                 continue;
             }
-            if result.requested_availability.is_enabled() {
+            if result.requested_scope.allows_parent() {
                 disabled.remove(result.name.as_str());
                 enabled.insert(result.name.to_string());
             } else {
@@ -125,6 +125,27 @@ impl AgentLoopImpl {
                 enabled.remove(result.name.as_str());
             }
         }
+    }
+
+    fn entry_scope_ceiling(entry: &ToolCatalogueEntry) -> ProfileAvailabilityScope {
+        let default = ProfileAvailabilityScope::from_enabled(entry.default_enabled);
+        let configured = entry
+            .configured_enabled
+            .map(ProfileAvailabilityScope::from_enabled)
+            .unwrap_or(ProfileAvailabilityScope::Both);
+        let session = entry
+            .session_enabled
+            .map(ProfileAvailabilityScope::from_enabled)
+            .unwrap_or(ProfileAvailabilityScope::Both);
+        let restriction = if entry.explicit_restriction.is_some() {
+            ProfileAvailabilityScope::None
+        } else {
+            ProfileAvailabilityScope::Both
+        };
+        default
+            .intersection(configured)
+            .intersection(session)
+            .intersection(restriction)
     }
 
     pub fn queue_tool_policy_mutation(&self, mutations: &[ToolPolicyMutation]) {
@@ -246,12 +267,15 @@ impl AgentLoopImpl {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             for mutation in &mutations {
                 let before_entry = before.iter().find(|entry| entry.name == mutation.name);
-                if mutation.availability.is_enabled()
-                    && before_entry.is_some_and(|entry| entry.explicit_restriction.is_none())
-                {
-                    disabled.remove(mutation.name.as_str());
-                    enabled.insert(mutation.name.to_string());
-                } else if !mutation.availability.is_enabled() {
+                if before_entry.is_some_and(|entry| entry.explicit_restriction.is_none()) {
+                    if mutation.scope.allows_parent() {
+                        disabled.remove(mutation.name.as_str());
+                        enabled.insert(mutation.name.to_string());
+                    } else {
+                        disabled.insert(mutation.name.to_string());
+                        enabled.remove(mutation.name.as_str());
+                    }
+                } else if mutation.scope == ProfileAvailabilityScope::None {
                     disabled.insert(mutation.name.to_string());
                     enabled.remove(mutation.name.as_str());
                 }
@@ -275,15 +299,15 @@ impl AgentLoopImpl {
                 let status = match before_entry.as_ref() {
                     None => ToolPolicyMutationStatus::UnknownTool,
                     Some(entry)
-                        if mutation.availability.is_enabled()
-                            && entry.explicit_restriction.is_some() =>
+                        if !mutation
+                            .scope
+                            .is_subset_of(Self::entry_scope_ceiling(entry)) =>
                     {
                         ToolPolicyMutationStatus::BlockedByRestriction
                     }
                     Some(entry)
-                        if entry.runtime_availability == mutation.availability
-                            && entry.effective_enabled == mutation.availability.is_enabled()
-                            && !(mutation.availability.is_enabled()
+                        if entry.effective_scope == mutation.scope
+                            && !(mutation.scope.allows_parent()
                                 && disabled_before.contains(mutation.name.as_str())) =>
                     {
                         ToolPolicyMutationStatus::AlreadyInState
@@ -291,15 +315,24 @@ impl AgentLoopImpl {
                     Some(_) => ToolPolicyMutationStatus::Applied,
                 };
                 if let Some(entry) = after_entry.as_mut() {
-                    entry.effective_enabled = match status {
-                        ToolPolicyMutationStatus::Applied => mutation.availability.is_enabled(),
-                        ToolPolicyMutationStatus::BlockedByRestriction => false,
-                        _ => entry.effective_enabled,
-                    };
-                    entry.runtime_availability = match status {
-                        ToolPolicyMutationStatus::Applied => mutation.availability,
-                        _ => entry.runtime_availability,
-                    };
+                    match status {
+                        ToolPolicyMutationStatus::Applied => {
+                            entry.profile_scope = Some(mutation.scope);
+                            entry.profile_enabled = Some(mutation.scope.is_enabled());
+                            entry.effective_scope = mutation.scope;
+                            entry.effective_parent_enabled = mutation.scope.allows_parent();
+                            entry.effective_child_enabled = mutation.scope.allows_child();
+                            entry.effective_enabled = mutation.scope.is_enabled();
+                            entry.runtime_availability = mutation.availability;
+                        }
+                        ToolPolicyMutationStatus::BlockedByRestriction => {
+                            entry.effective_scope = ProfileAvailabilityScope::None;
+                            entry.effective_parent_enabled = false;
+                            entry.effective_child_enabled = false;
+                            entry.effective_enabled = false;
+                        }
+                        _ => {}
+                    }
                 }
                 ToolPolicyMutationResult {
                     name: mutation.name.clone(),
