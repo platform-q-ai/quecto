@@ -28,4 +28,5 @@ pub(crate) struct ModelRegistry {
 #[derive(Default)]
 pub(super) struct ToolPolicyFlow {
     pub(super) modal: Option<crate::components::selectable_item_modal::SelectableItemModal>,
+    pub(super) open_pending: bool,
 }

@@ -55,7 +55,12 @@ impl App {
                 active_template,
                 available_templates,
             }),
-            Event::ToolCatalogueChanged { after, .. } => self.merge_tool_catalogue(after),
+            Event::ToolCatalogueChanged { after, .. } => {
+                self.merge_tool_catalogue(after);
+                if self.tool_policy.open_pending {
+                    self.open_tool_policy_modal();
+                }
+            }
             Event::ToolPolicyChanged { results, .. } => self.merge_tool_policy_results(results),
             _ => {}
         }

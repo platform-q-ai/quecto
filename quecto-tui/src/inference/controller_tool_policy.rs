@@ -9,12 +9,14 @@ impl App {
         let mut entries = self.tool_catalogue.values().cloned().collect::<Vec<_>>();
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         if entries.is_empty() {
+            self.tool_policy.open_pending = true;
             self.send_command(Command::GetToolCatalogue {
                 id: Some("tool-policy-open".into()),
             });
             self.notify("Loading tool catalogue…", NotifyLevel::Info);
             return;
         }
+        self.tool_policy.open_pending = false;
         let scopes = entries
             .iter()
             .map(|e| {
