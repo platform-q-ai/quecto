@@ -501,7 +501,7 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &correlated_subagents,
         r#"{"type":"get_subagents"}"#
     ));
-    // #880: get_session_stats and get_extensions snapshots are valid answers
+    // #880: get_session_stats and get_tool_catalogue snapshots are valid answers
     // for their own request commands (pure reads, independent of the blocked
     // dispatch loop), but still never answer a different command.
     let stats_snapshot = serde_json::json!({
@@ -522,23 +522,23 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &malformed_stats_snapshot,
         r#"{"type":"get_session_stats"}"#
     ));
-    let extensions_snapshot = serde_json::json!({
+    let tool_catalogue_snapshot = serde_json::json!({
         "type": "response",
-        "command": "get_extensions",
-        "data": { "extensions": [], "snapshot": true }
+        "command": "get_tool_catalogue",
+        "data": { "tools": [], "snapshot": true }
     });
     assert!(subagent_snapshot::response_is_valid_answer(
-        &extensions_snapshot,
-        r#"{"type":"get_extensions"}"#
+        &tool_catalogue_snapshot,
+        r#"{"type":"get_tool_catalogue"}"#
     ));
-    let malformed_extensions_snapshot = serde_json::json!({
+    let malformed_tool_catalogue_snapshot = serde_json::json!({
         "type": "response",
-        "command": "get_extensions",
-        "data": { "extensions": [] }
+        "command": "get_tool_catalogue",
+        "data": { "tools": [] }
     });
     assert!(!subagent_snapshot::response_is_valid_answer(
-        &malformed_extensions_snapshot,
-        r#"{"type":"get_extensions"}"#
+        &malformed_tool_catalogue_snapshot,
+        r#"{"type":"get_tool_catalogue"}"#
     ));
     // A get_subagents snapshot must NOT answer a different command (#835).
     assert!(!subagent_snapshot::response_is_valid_answer(
@@ -550,7 +550,7 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         r#"{"type":"get_subagents"}"#
     ));
     assert!(!subagent_snapshot::response_is_valid_answer(
-        &extensions_snapshot,
+        &tool_catalogue_snapshot,
         r#"{"type":"get_session_stats"}"#
     ));
     assert!(!subagent_snapshot::response_is_valid_answer(

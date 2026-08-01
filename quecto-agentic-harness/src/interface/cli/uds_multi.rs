@@ -25,8 +25,8 @@ pub(crate) use super::uds_snapshots::{
     build_get_messages_line, build_get_state_line, build_get_subagents_line,
 };
 use super::uds_snapshots::{
-    refresh_conversation_snapshot, refresh_extension_snapshot, refresh_session_stats_snapshot,
-    refresh_state_snapshot,
+    refresh_conversation_snapshot, refresh_session_stats_snapshot, refresh_state_snapshot,
+    refresh_tool_catalogue_snapshot,
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ pub(super) struct MultiClientArgs<'a> {
     pub session_key: String,
     pub ephemeral: bool,
     pub system_prompt: String,
-    /// Shared extension registry for get_extensions / reload_extensions.
+    /// Shared tool catalogue snapshot for get_tool_catalogue.
     pub ext_registry: Option<
         std::sync::Arc<
             std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
@@ -208,19 +208,11 @@ pub(super) async fn multi_client_loop(
             agent.max_context_tokens(),
         ),
     ));
-    let runtime_tool_names: std::collections::HashSet<String> =
-        agent.runtime_tool_names().into_iter().collect();
-    let extension_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
+    let tool_catalogue_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
         agent
-            .tool_definitions()
-            .iter()
-            .filter(|def| runtime_tool_names.contains(def.name.as_ref()))
-            .map(|def| {
-                serde_json::json!({
-                    "name": def.name.as_ref(),
-                    "description": def.description.as_ref(),
-                })
-            })
+            .tool_catalogue_entries()
+            .into_iter()
+            .map(|entry| serde_json::to_value(entry).unwrap_or_default())
             .collect(),
     ));
 
@@ -251,7 +243,7 @@ pub(super) async fn multi_client_loop(
         state_snapshot: state_snapshot.clone(),
         execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),
-        extension_snapshot: extension_snapshot.clone(),
+        tool_catalogue_snapshot: tool_catalogue_snapshot.clone(),
         busy: busy.clone(),
         subagent_registry: subagent_registry.clone(),
         workflow_state: wf_state.clone(),
@@ -273,7 +265,7 @@ pub(super) async fn multi_client_loop(
         state_snapshot: state_snapshot.clone(),
         execution_state: execution_state.clone(),
         session_stats_snapshot: session_stats_snapshot.clone(),
-        extension_snapshot: extension_snapshot.clone(),
+        tool_catalogue_snapshot: tool_catalogue_snapshot.clone(),
         busy: busy.clone(),
         session: &mut agent_session,
         stdout: None,
@@ -284,7 +276,7 @@ pub(super) async fn multi_client_loop(
         cancel_handle,
         turn_control,
         broadcast_tx: Some(broadcast_tx),
-        ext_registry,
+        _ext_registry: ext_registry,
         client_tool_registry: client_tool_registry.clone(),
         current_client_id: 0,
         subagent_registry,
@@ -413,7 +405,7 @@ async fn run_dispatch_loop(
         refresh_conversation_snapshot(ctx).await;
         refresh_state_snapshot(ctx).await;
         refresh_session_stats_snapshot(ctx).await;
-        refresh_extension_snapshot(ctx).await;
+        refresh_tool_catalogue_snapshot(ctx).await;
     }
 }
 
@@ -474,14 +466,33 @@ async fn handle_client_msg(
 
 /// Unregister tools owned by a disconnecting client (#352).
 async fn handle_disconnect(ctx: &mut DispatchCtx<'_>, client_id: u64) {
+    let before: Vec<serde_json::Value> = ctx
+        .agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .map(|entry| serde_json::to_value(entry).unwrap_or_default())
+        .collect();
     let removed =
         super::uds_ext_protocol::handle_client_disconnect(client_id, &ctx.client_tool_registry);
     if !removed.is_empty() {
         ctx.agent.unregister_uds_tools_for_client(client_id);
-        let ext_names = ctx.agent.runtime_tool_names();
-        let changed =
-            super::uds_ext_protocol::build_extensions_changed_event(&ext_names, ctx.agent);
-        emit_event_to_broadcast_or_writer(ctx, &changed).await;
+        let after: Vec<serde_json::Value> = ctx
+            .agent
+            .tool_catalogue_entries()
+            .into_iter()
+            .map(|entry| serde_json::to_value(entry).unwrap_or_default())
+            .collect();
+        {
+            let mut snapshot = ctx.tool_catalogue_snapshot.write().await;
+            *snapshot = after.clone();
+        }
+        let ev = AgentEvent::ToolCatalogueChanged {
+            changed_tools: removed,
+            before,
+            after,
+            reason: "client_disconnect".to_string(),
+        };
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
 }
 

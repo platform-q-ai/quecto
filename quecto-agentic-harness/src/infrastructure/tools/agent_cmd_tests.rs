@@ -315,23 +315,13 @@ fn test_parse_get_subagents() {
 }
 
 #[test]
-fn test_parse_get_extensions() {
+fn test_parse_get_tool_catalogue() {
     let tool = empty_tool();
     let (_, cmd, _) = tool
-        .parse_and_build(r#"{"agent_id":"w1","command":"get_extensions"}"#)
+        .parse_and_build(r#"{"agent_id":"w1","command":"get_tool_catalogue"}"#)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
-    assert_eq!(parsed["type"], "get_extensions");
-}
-
-#[test]
-fn test_parse_reload_extensions() {
-    let tool = empty_tool();
-    let (_, cmd, _) = tool
-        .parse_and_build(r#"{"agent_id":"w1","command":"reload_extensions"}"#)
-        .unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
-    assert_eq!(parsed["type"], "reload_extensions");
+    assert_eq!(parsed["type"], "get_tool_catalogue");
 }
 
 #[test]

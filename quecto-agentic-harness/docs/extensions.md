@@ -109,8 +109,8 @@ Safety limits:
 This registers a single bundled-native extension package named `"web"` that
 contributes both `web_search` and `web_fetch` tools. The LLM sees the individual
 tool names when policy enables them. The package name `"web"` is an internal
-`ExtensionRegistry` label, and `get_extensions` remains a compatibility view for
-runtime-loadable UDS tools rather than the complete native+UDS catalogue.
+`ExtensionRegistry` label. Control/query clients use `get_tool_catalogue` (or
+`list_tools`) for the complete native+UDS `ToolCatalogueEntry` snapshot.
 
 ### Behavior
 
@@ -174,7 +174,7 @@ Other rejection cases (whole batch fails; nothing is registered):
 - Name already owned by another connected client: `"tool 'X' is already registered by client <id>"`
 - Name on the process denylist (`--disable-tool`): the name cannot be reintroduced into the tool registry (registry registration rejects/no-ops). Prefer not registering disabled names; they will not appear to the LLM
 
-**Side effect (on success):** An `extensions_changed` event is broadcast to all connected clients. The event lists **runtime-loadable UDS tool** names currently registered as extensions (e.g. `weather`). It is a historical compatibility view, not the complete bundled-native plus UDS catalogue.
+**Side effect (on success):** A `tool_catalogue_changed` event is broadcast to control/query clients. The event carries `changedTools`, `before`, `after`, and `reason` so clients can update from rich catalogue snapshots.
 
 #### Receiving execution requests
 
@@ -227,7 +227,7 @@ The extension process responds with `tool_result`:
 ### Lifecycle
 
 - **Connect = available:** Tools are available as soon as `register_tools` succeeds
-- **Disconnect = auto-unregister:** When a client disconnects, all its tools are immediately removed and an `extensions_changed` event is broadcast
+- **Disconnect = auto-unregister:** When a client disconnects, all its tools are immediately removed and a `tool_catalogue_changed` event is broadcast
 - **Disconnect during execution:** If a client disconnects while a tool call is pending, the agent receives an error result: `"Extension disconnected during execution of tool '<name>'"`
 - **Timeout:** If a tool doesn't respond within **30 seconds**, the agent returns: `"Extension timed out after 30s executing tool '<name>'"`
 - **Re-registration:** Sending `register_tools` for a tool already owned by **this** client updates its definition (idempotent). Ownership by another client is rejected (see above)
@@ -305,35 +305,35 @@ done
 
 > **Note:** The shell example requires `socat` and `jq`. For production extensions, use a proper client library or a compiled binary.
 
-## Querying extensions
+## Querying the tool catalogue
 
-Connected clients can query the current extension list:
+Control/query clients can query the rich catalogue snapshot:
 
 ```json
-{"type":"get_extensions","id":"ge-1"}
+{"type":"get_tool_catalogue","id":"tc-1"}
 ```
 
-Response:
+`list_tools` is accepted as an alias. Responses use command `get_tool_catalogue`
+and place catalogue entries under `data.tools`:
 
 ```json
 {
   "type": "response",
-  "id": "ge-1",
-  "command": "get_extensions",
+  "id": "tc-1",
+  "command": "get_tool_catalogue",
   "success": true,
   "data": {
-    "extensions": [
-      {"name": "weather", "description": "Get current weather for a city"}
+    "tools": [
+      {"name": "weather", "description": "Get current weather for a city", "source": "uds", "owner": "uds:client:1", "effectiveEnabled": true}
     ]
   }
 }
 ```
 
-This historical command lists **runtime-loadable UDS extension tool** entries
-(name + description from the tool definition). It is not the complete tool
-catalogue: bundled-native tools such as `web_search` and `web_fetch`, and the
-internal native package label `"web"`, are intentionally omitted from this
-compatibility view.
+Runtime tool-provider commands (`register_tools`, `unregister_tools`,
+`execute_tool`, `tool_result`) remain separate from catalogue query commands.
+Providers mutate and service UDS tools; control/query clients inspect the
+resulting catalogue.
 
 ## System prompt injection
 

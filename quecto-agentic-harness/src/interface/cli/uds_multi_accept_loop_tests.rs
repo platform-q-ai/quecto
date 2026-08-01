@@ -67,7 +67,7 @@ fn make_args(
                 &[Message::user("hello")],
             ),
         )),
-        extension_snapshot: Arc::new(tokio::sync::RwLock::new(vec![serde_json::json!({
+        tool_catalogue_snapshot: Arc::new(tokio::sync::RwLock::new(vec![serde_json::json!({
             "name": "weather",
             "description": "Weather lookup",
         })])),
@@ -176,19 +176,16 @@ async fn busy_accept_loop_pushes_session_stats_and_extensions_snapshots() {
     assert_eq!(stats["data"]["snapshot"], true);
     assert_eq!(stats["data"]["userMessages"], 1);
 
-    let extensions_line = received
+    let tools_line = received
         .lines()
-        .find(|l| l.contains("\"command\":\"get_extensions\""))
+        .find(|l| l.contains("\"command\":\"get_tool_catalogue\""))
         .expect("busy client must receive extensions snapshot");
-    let extensions: serde_json::Value =
-        serde_json::from_str(extensions_line).expect("valid extensions JSON");
-    assert_eq!(extensions["type"], "response");
-    assert_eq!(extensions["command"], "get_extensions");
-    assert_eq!(extensions["success"], true);
-    assert_eq!(extensions["data"]["snapshot"], true);
-    let list = extensions["data"]["extensions"]
-        .as_array()
-        .expect("extensions array");
+    let tools: serde_json::Value = serde_json::from_str(tools_line).expect("valid tools JSON");
+    assert_eq!(tools["type"], "response");
+    assert_eq!(tools["command"], "get_tool_catalogue");
+    assert_eq!(tools["success"], true);
+    assert_eq!(tools["data"]["snapshot"], true);
+    let list = tools["data"]["tools"].as_array().expect("extensions array");
     assert_eq!(list.len(), 1);
     assert_eq!(list[0]["name"], "weather");
 }

@@ -207,15 +207,12 @@ async fn clear_history_handler_connected_and_disconnected() {
 }
 
 #[tokio::test]
-async fn subagents_and_extensions_handlers_forward() {
+async fn subagents_and_tools_handlers_forward() {
     for resp in [
         subagents_handler(state_for(connected_gw()))
             .await
             .into_response(),
-        extensions_handler(state_for(connected_gw()))
-            .await
-            .into_response(),
-        extensions_reload_handler(state_for(connected_gw()))
+        tools_handler(state_for(connected_gw()))
             .await
             .into_response(),
         state_handler(state_for(connected_gw()))
@@ -579,14 +576,7 @@ async fn handlers_map_transport_failure_to_500() {
         StatusCode::INTERNAL_SERVER_ERROR
     );
     assert_eq!(
-        extensions_handler(state_for(failing_gw()))
-            .await
-            .into_response()
-            .status(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    assert_eq!(
-        extensions_reload_handler(state_for(failing_gw()))
+        tools_handler(state_for(failing_gw()))
             .await
             .into_response()
             .status(),

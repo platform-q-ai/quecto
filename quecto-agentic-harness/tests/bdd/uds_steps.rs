@@ -2768,16 +2768,16 @@ fn given_mock_llm_extension_tool_call_then_text(
     std::mem::forget(rt);
 }
 
-// ─── get_extensions assertion steps ───────────────────────────────────────────
+// ─── get_tool_catalogue assertion steps ───────────────────────────────────────────
 
-/// Find the get_extensions response (first or post-reload depending on context).
-fn find_get_extensions_response(
+/// Find the get_tool_catalogue response (first or post-reload depending on context).
+fn find_get_tool_catalogue_response(
     events: &[String],
     id_prefix: Option<&str>,
 ) -> Option<serde_json::Value> {
     events.iter().find_map(|l| {
         let v: serde_json::Value = serde_json::from_str(l).ok()?;
-        if v["type"] == "response" && v["command"] == "get_extensions" {
+        if v["type"] == "response" && v["command"] == "get_tool_catalogue" {
             if let Some(prefix) = id_prefix {
                 if v["id"].as_str()?.starts_with(prefix) {
                     return Some(v);
@@ -2791,56 +2791,56 @@ fn find_get_extensions_response(
     })
 }
 
-#[then(expr = "the get_extensions response should list extension {string}")]
-fn then_get_extensions_lists(world: &mut QuectoWorld, name: String) {
+#[then(expr = "the get_tool_catalogue response should list tool {string}")]
+fn then_get_tool_catalogue_lists(world: &mut QuectoWorld, name: String) {
     execute_uds(world);
-    let resp = find_get_extensions_response(&world.agent_events, None)
-        .expect("no get_extensions response");
-    let exts = resp["data"]["extensions"]
+    let resp = find_get_tool_catalogue_response(&world.agent_events, None)
+        .expect("no get_tool_catalogue response");
+    let tools = resp["data"]["tools"]
         .as_array()
-        .expect("extensions not an array");
-    let found = exts.iter().any(|e| e["name"].as_str() == Some(&name));
+        .expect("tools not an array");
+    let found = tools.iter().any(|e| e["name"].as_str() == Some(&name));
     assert!(
         found,
-        "expected get_extensions to list extension {name:?}\nexts: {exts:?}"
+        "expected get_tool_catalogue to list tool {name:?}\ntools: {tools:?}"
     );
 }
 
-#[then(expr = "the get_extensions response should have {int} extensions")]
-fn then_get_extensions_count(world: &mut QuectoWorld, count: usize) {
+#[then(expr = "the get_tool_catalogue response should have {int} tools")]
+fn then_get_tool_catalogue_count(world: &mut QuectoWorld, count: usize) {
     execute_uds(world);
-    let resp = find_get_extensions_response(&world.agent_events, None)
-        .expect("no get_extensions response");
-    let exts = resp["data"]["extensions"]
+    let resp = find_get_tool_catalogue_response(&world.agent_events, None)
+        .expect("no get_tool_catalogue response");
+    let tools = resp["data"]["tools"]
         .as_array()
-        .expect("extensions not an array");
+        .expect("tools not an array");
     assert_eq!(
-        exts.len(),
+        tools.len(),
         count,
-        "expected {count} extensions, got {}\nexts: {exts:?}",
-        exts.len()
+        "expected {count} tools, got {}\ntools: {tools:?}",
+        tools.len()
     );
 }
 
-#[then(expr = "the get_extensions response should not list extension {string}")]
-fn then_get_extensions_not_lists(world: &mut QuectoWorld, name: String) {
+#[then(expr = "the get_tool_catalogue response should not list tool {string}")]
+fn then_get_tool_catalogue_not_lists(world: &mut QuectoWorld, name: String) {
     execute_uds(world);
-    let resp = find_get_extensions_response(&world.agent_events, None)
-        .expect("no get_extensions response");
-    let exts = resp["data"]["extensions"]
+    let resp = find_get_tool_catalogue_response(&world.agent_events, None)
+        .expect("no get_tool_catalogue response");
+    let tools = resp["data"]["tools"]
         .as_array()
-        .expect("extensions not an array");
-    let found = exts.iter().any(|e| e["name"].as_str() == Some(&name));
+        .expect("tools not an array");
+    let found = tools.iter().any(|e| e["name"].as_str() == Some(&name));
     assert!(
         !found,
-        "expected get_extensions NOT to list extension {name:?}\nexts: {exts:?}"
+        "expected get_tool_catalogue NOT to list tool {name:?}\ntools: {tools:?}"
     );
 }
 
-// ─── extensions_changed event assertions ──────────────────────────────────────
+// ─── tool_catalogue_changed event assertions ──────────────────────────────────────
 
-#[then(expr = "client {int} should have received an extensions_changed event listing {string}")]
-fn then_client_received_extensions_changed_listing(
+#[then(expr = "client {int} should have received a tool catalogue update listing tool {string}")]
+fn then_client_received_tool_catalogue_changed_listing(
     world: &mut QuectoWorld,
     client_id: u32,
     name: String,
@@ -2856,17 +2856,17 @@ fn then_client_received_extensions_changed_listing(
             Ok(v) => v,
             Err(_) => return false,
         };
-        if v["type"].as_str() != Some("extensions_changed") {
+        if v["type"].as_str() != Some("tool_catalogue_changed") {
             return false;
         }
-        v["extensions"]
+        v["changedTools"]
             .as_array()
-            .map(|exts| exts.iter().any(|e| e["name"].as_str() == Some(&name)))
+            .map(|tools| tools.iter().any(|tool| tool.as_str() == Some(&name)))
             .unwrap_or(false)
     });
     assert!(
         found,
-        "expected client {client_id} to receive extensions_changed listing {name:?}\nevents: {events:#?}"
+        "expected client {client_id} to receive tool_catalogue_changed listing {name:?}\nevents: {events:#?}"
     );
 }
 
@@ -3239,7 +3239,7 @@ fn find_ge_response(events: &[String], id_prefix: &str) -> Option<serde_json::Va
     events.iter().find_map(|line| {
         let ev: serde_json::Value = serde_json::from_str(line).ok()?;
         if ev["type"].as_str() == Some("response")
-            && ev["command"].as_str() == Some("get_extensions")
+            && ev["command"].as_str() == Some("get_tool_catalogue")
             && ev["success"].as_bool() == Some(true)
             && ev["id"]
                 .as_str()
@@ -3252,70 +3252,55 @@ fn find_ge_response(events: &[String], id_prefix: &str) -> Option<serde_json::Va
     })
 }
 
-#[then(expr = "the post-register get_extensions response should list extension {string}")]
-fn then_post_register_lists_ext(world: &mut QuectoWorld, name: String) {
+#[then(expr = "the tool catalogue response {string} should list tool {string}")]
+fn then_catalogue_response_lists_tool(world: &mut QuectoWorld, response_id: String, name: String) {
     execute_multi_client_uds(world);
-    let events = world.mc_client_events.get(&1).expect("no client 1 events");
-    let resp = find_ge_response(events, "ge-reg").expect("no ge-reg response");
-    let exts = resp["data"]["extensions"]
-        .as_array()
-        .expect("no extensions");
+    let client_id = if response_id == "ge-multi" { 2 } else { 1 };
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .unwrap_or_else(|| panic!("no client {client_id} events"));
+    let resp = find_ge_response(events, &response_id)
+        .unwrap_or_else(|| panic!("no {response_id} response"));
+    let tools = resp["data"]["tools"].as_array().expect("no tools");
     assert!(
-        exts.iter().any(|e| e["name"].as_str() == Some(&name)),
-        "'{name}' not in {exts:?}"
+        tools.iter().any(|e| e["name"].as_str() == Some(&name)),
+        "'{name}' not in {tools:?}"
     );
 }
 
-#[then(expr = "the post-unregister get_extensions response should have {int} extensions")]
-fn then_post_unregister_empty(world: &mut QuectoWorld, count: u32) {
+#[then(expr = "the tool catalogue response {string} should contain {int} tools")]
+fn then_catalogue_response_count(world: &mut QuectoWorld, response_id: String, count: u32) {
     execute_multi_client_uds(world);
-    let events = world.mc_client_events.get(&1).expect("no client 1 events");
-    let resp = find_ge_response(events, "ge-unreg").expect("no ge-unreg response");
-    let exts = resp["data"]["extensions"]
-        .as_array()
-        .expect("no extensions");
-    assert_eq!(exts.len(), count as usize);
-}
-
-#[then(expr = "the post-disconnect get_extensions response should have {int} extensions")]
-fn then_post_disconnect_empty(world: &mut QuectoWorld, count: u32) {
-    execute_multi_client_uds(world);
-    let events = world.mc_client_events.get(&3).expect("no client 3 events");
-    let resp = find_ge_response(events, "ge-disc").expect("no ge-disc response");
-    let exts = resp["data"]["extensions"]
-        .as_array()
-        .expect("no extensions");
-    assert_eq!(exts.len(), count as usize);
-}
-
-#[then(expr = "the post-multi get_extensions response should list extension {string}")]
-fn then_post_multi_lists_ext(world: &mut QuectoWorld, name: String) {
-    execute_multi_client_uds(world);
-    let events = world.mc_client_events.get(&2).expect("no client 2 events");
-    let resp = find_ge_response(events, "ge-multi").expect("no ge-multi response");
-    let exts = resp["data"]["extensions"]
-        .as_array()
-        .expect("no extensions");
-    assert!(
-        exts.iter().any(|e| e["name"].as_str() == Some(&name)),
-        "'{name}' not in {exts:?}"
-    );
+    let client_id = if response_id == "ge-disc" { 3 } else { 1 };
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .unwrap_or_else(|| panic!("no client {client_id} events"));
+    let resp = find_ge_response(events, &response_id)
+        .unwrap_or_else(|| panic!("no {response_id} response"));
+    let tools = resp["data"]["tools"].as_array().expect("no tools");
+    assert_eq!(tools.len(), count as usize);
 }
 
 #[then(
-    expr = "the post-redef get_extensions response should list extension {string} with description {string}"
+    expr = "the tool catalogue response {string} should list tool {string} with description {string}"
 )]
-fn then_post_redef_desc(world: &mut QuectoWorld, name: String, desc: String) {
+fn then_catalogue_response_desc(
+    world: &mut QuectoWorld,
+    response_id: String,
+    name: String,
+    desc: String,
+) {
     execute_multi_client_uds(world);
     let events = world.mc_client_events.get(&1).expect("no client 1 events");
-    let resp = find_ge_response(events, "ge-redef").expect("no ge-redef response");
-    let exts = resp["data"]["extensions"]
-        .as_array()
-        .expect("no extensions");
-    let ext = exts
+    let resp = find_ge_response(events, &response_id)
+        .unwrap_or_else(|| panic!("no {response_id} response"));
+    let tools = resp["data"]["tools"].as_array().expect("no tools");
+    let ext = tools
         .iter()
         .find(|e| e["name"].as_str() == Some(&name))
-        .unwrap_or_else(|| panic!("'{name}' not in {exts:?}"));
+        .unwrap_or_else(|| panic!("'{name}' not in {tools:?}"));
     assert_eq!(ext["description"].as_str(), Some(desc.as_str()));
 }
 
@@ -4157,35 +4142,36 @@ fn then_execute_tool_args_contain(world: &mut QuectoWorld, tool_name: String, ne
 }
 
 #[then(
-    expr = "the post-register get_extensions response should list extension {string} with source {string}"
+    expr = "the tool catalogue response {string} should list tool {string} from source {string}"
 )]
-fn then_post_register_lists_ext_source(world: &mut QuectoWorld, name: String, source: String) {
+fn then_catalogue_response_lists_tool_source(
+    world: &mut QuectoWorld,
+    response_id: String,
+    name: String,
+    source: String,
+) {
     execute_multi_client_uds(world);
     let events = world.mc_client_events.get(&1).expect("no client 1 events");
-    let resp = find_ge_response(events, "ge-reg").expect("no ge-reg response");
-    let exts = resp["data"]["extensions"]
-        .as_array()
-        .expect("no extensions");
-    let ext = exts
+    let resp = find_ge_response(events, &response_id)
+        .unwrap_or_else(|| panic!("no {response_id} response"));
+    let tools = resp["data"]["tools"].as_array().expect("no tools");
+    let ext = tools
         .iter()
         .find(|e| e["name"].as_str() == Some(&name))
-        .unwrap_or_else(|| panic!("'{name}' not in {exts:?}"));
+        .unwrap_or_else(|| panic!("'{name}' not in {tools:?}"));
     assert_eq!(ext["source"].as_str(), Some(source.as_str()));
 }
 
-#[then(
-    expr = "the post-register get_extensions response should list extension {string} with owner {string}"
-)]
-fn then_post_register_lists_ext_owner(world: &mut QuectoWorld, name: String, owner: String) {
+#[then(expr = "the registered tool {string} should be owned by client {int}")]
+fn then_post_register_lists_tool_owner(world: &mut QuectoWorld, name: String, client_id: u32) {
     execute_multi_client_uds(world);
     let events = world.mc_client_events.get(&1).expect("no client 1 events");
     let resp = find_ge_response(events, "ge-reg").expect("no ge-reg response");
-    let exts = resp["data"]["extensions"]
-        .as_array()
-        .expect("no extensions");
-    let ext = exts
+    let tools = resp["data"]["tools"].as_array().expect("no tools");
+    let ext = tools
         .iter()
         .find(|e| e["name"].as_str() == Some(&name))
-        .unwrap_or_else(|| panic!("'{name}' not in {exts:?}"));
-    assert_eq!(ext["owner"].as_str(), Some(owner.as_str()));
+        .unwrap_or_else(|| panic!("'{name}' not in {tools:?}"));
+    let expected_owner = format!("uds:client:{client_id}");
+    assert_eq!(ext["owner"].as_str(), Some(expected_owner.as_str()));
 }

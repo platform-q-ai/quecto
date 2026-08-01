@@ -594,7 +594,7 @@ fn every_agent_cmd_command_renders_a_box() {
         "get_state",
         "get_subagents",
         "get_session_stats",
-        "get_extensions",
+        "get_tool_catalogue",
         "get_messages",
         "await",
         "prompt",

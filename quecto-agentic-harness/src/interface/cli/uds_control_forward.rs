@@ -72,7 +72,7 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
         // fired; steer also re-queues its message ahead of the line.
         "steer" => Some(serde_json::json!({ "type": "steer", "message": message? }).to_string()),
         "abort" => None,
-        "set_model" | "clear_history" | "reload_extensions" => {
+        "set_model" | "clear_history" => {
             let mut forwarded = obj.clone();
             forwarded.remove("ack");
             forwarded.remove("id");

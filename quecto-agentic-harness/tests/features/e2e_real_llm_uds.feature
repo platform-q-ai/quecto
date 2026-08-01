@@ -5,8 +5,7 @@ Feature: E2E Real LLM UDS Agent
 
   Covers ALL UDS commands:
     prompt, steer, follow_up, abort, get_state, get_messages,
-    get_messages_tail, get_session_stats, set_model, get_extensions,
-    reload_extensions
+    get_messages_tail, get_session_stats, set_model, get_tool_catalogue
 
   Background:
     Given a real LLM UDS workspace is configured
@@ -316,28 +315,16 @@ Feature: E2E Real LLM UDS Agent
     And the agent_end messages should contain "FOLLOWUP_PROCESSED"
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # get_extensions command
+  # get_tool_catalogue command
   # ═══════════════════════════════════════════════════════════════════════════
 
   @done @manual-real-llm @mock-llm
-  Scenario: UDS get_extensions returns list (empty when no extensions installed)
+  Scenario: UDS get_tool_catalogue returns catalogue
     When I start the real LLM UDS agent
-    And I send command "get_extensions" with id "ge-1"
+    And I send command "get_tool_catalogue" with id "ge-1"
     And I close the UDS connection
     Then the UDS agent exits with code 0
-    And the agent output should contain a response command "get_extensions" with success true
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # reload_extensions command
-  # ═══════════════════════════════════════════════════════════════════════════
-
-  @done @manual-real-llm @mock-llm
-  Scenario: UDS reload_extensions succeeds
-    When I start the real LLM UDS agent
-    And I send command "reload_extensions" with id "re-1"
-    And I close the UDS connection
-    Then the UDS agent exits with code 0
-    And the agent output should contain a response command "reload_extensions" with success true
+    And the agent output should contain a response command "get_tool_catalogue" with success true
 
   # ═══════════════════════════════════════════════════════════════════════════
   # Correlation ID handling across commands
@@ -349,7 +336,7 @@ Feature: E2E Real LLM UDS Agent
     And I send command "get_state" with id "corr-gs"
     And I send command "get_messages" with id "corr-gm"
     And I send command "get_session_stats" with id "corr-ss"
-    And I send command "get_extensions" with id "corr-ge"
+    And I send command "get_tool_catalogue" with id "corr-ge"
     And I send command "abort" with id "corr-ab"
     And I close the UDS connection
     Then the UDS agent exits with code 0

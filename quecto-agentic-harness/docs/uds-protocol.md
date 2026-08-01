@@ -644,39 +644,37 @@ Return the current list of spawned subagents and their live status (#524).
 
 ---
 
-### `get_extensions`
+### `get_tool_catalogue` / `list_tools`
 
-Return the historical compatibility list of runtime-loadable UDS extension tools registered by connected clients. This is not the complete bundled-native plus UDS tool catalogue; bundled-native tools from config such as `web_search` and `web_fetch` are intentionally omitted.
+Return the rich tool catalogue snapshot for control/query clients. This is the complete bundled-native plus UDS view: each entry is a `ToolCatalogueEntry` with tool identity, description/schema, source, owner, lifecycle, configured/profile/session policy placeholders, effective availability, restriction reason, and health.
+
+`list_tools` is accepted as a wire alias and responds with command `get_tool_catalogue`.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `type` | `"get_extensions"` | yes | |
+| `type` | `"get_tool_catalogue"` or `"list_tools"` | yes | |
 | `id` | string | no | Correlation ID |
 
 **Response data:**
 
 ```json
 {
-  "extensions": [
-    {"name": "weather", "description": "Get current weather for a city"}
+  "tools": [
+    {
+      "name": "weather",
+      "description": "Get current weather for a city",
+      "source": "uds",
+      "owner": "uds:client:1",
+      "availability": "enabled",
+      "lifecycle": "runtime-loadable",
+      "effectiveEnabled": true,
+      "health": "healthy"
+    }
   ]
 }
 ```
 
-Returns an empty array if no runtime-loadable UDS extension tools are registered.
-
----
-
-### `reload_extensions`
-
-> **Deprecated.** This command exists for backward compatibility but is a no-op since v0.19.0. It returns `success: true` immediately without doing anything. Native extensions are loaded once at startup; UDS extensions are managed via `register_tools` / `unregister_tools`.
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `type` | `"reload_extensions"` | yes | |
-| `id` | string | no | Correlation ID |
-
-**Response:** Always `success: true`.
+Returns an empty `tools` array only when no tools are registered in the process.
 
 ---
 
@@ -704,7 +702,7 @@ Each tool object:
 {"type":"response","id":"rt-1","command":"register_tools","success":true,"data":{"registered":["weather"]}}
 ```
 
-**Side effect:** Broadcasts `extensions_changed` to all connected clients.
+**Side effect:** Broadcasts `tool_catalogue_changed` to connected control/query clients with `changedTools`, `before`, `after`, and `reason`.
 
 **Failure:** Returns `success: false` if any tool shadows a core tool name. No tools from the batch are registered.
 
@@ -744,7 +742,7 @@ Remove previously registered tools by name.
 {"type":"response","id":"ut-1","command":"unregister_tools","success":true,"data":{"unregistered":["weather"]}}
 ```
 
-**Side effect:** Broadcasts `extensions_changed` to all connected clients.
+**Side effect:** Broadcasts `tool_catalogue_changed` to connected control/query clients with `changedTools`, `before`, `after`, and `reason`.
 
 Unknown tool names are silently ignored (not an error).
 
@@ -937,17 +935,19 @@ Sent to the specific extension client that registered a tool when the LLM calls 
 
 The extension must respond with a `tool_result` command containing the matching `toolCallId`. If no response arrives within 30 seconds, the agent returns a timeout error to the LLM.
 
-### `extensions_changed`
+### `tool_catalogue_changed`
 
-Broadcast when the extension list changes (after `register_tools`, `unregister_tools`, or client disconnect). Contains the full updated list.
+Broadcast when the rich tool catalogue changes after `register_tools`, `unregister_tools`, or client disconnect. Contains changed tool names, the previous catalogue snapshot, the new snapshot, and a reason.
 
 ```json
 {
-  "type": "extensions_changed",
-  "extensions": [
-    {"name": "web_search", "description": "Search the web using Brave Search or DuckDuckGo"},
-    {"name": "weather", "description": "Get current weather for a city"}
-  ]
+  "type": "tool_catalogue_changed",
+  "changedTools": ["weather"],
+  "before": [],
+  "after": [
+    {"name": "weather", "description": "Get current weather for a city", "source": "uds", "owner": "uds:client:1"}
+  ],
+  "reason": "register_tool"
 }
 ```
 
@@ -1093,7 +1093,7 @@ Extension Client                Agent                    Other Clients
   │                               │                          │
   │──register_tools──────────────>│                          │
   │<──────────────response────────│  success:true            │
-  │                               │──extensions_changed─────>│
+  │                               │──tool_catalogue_changed─────>│
   │                               │                          │
   │              ... LLM calls the registered tool ...       │
   │                               │                          │
@@ -1112,7 +1112,7 @@ Extension Client                Agent                    Other Clients
   │                               │                          │
   │──[disconnect]────────────────>│                          │
   │                               │  (auto-unregister tools) │
-  │                               │──extensions_changed─────>│
+  │                               │──tool_catalogue_changed─────>│
 ```
 
 ---

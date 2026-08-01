@@ -1,6 +1,5 @@
 use super::*;
 use tokio::io::AsyncWriteExt;
-
 #[test]
 fn command_serializes_to_json_lines() {
     let cmd = Command::Prompt {
@@ -15,7 +14,6 @@ fn command_serializes_to_json_lines() {
     // streaming_behavior should be omitted when None
     assert!(!json.contains("streamingBehavior"));
 }
-
 #[test]
 fn command_prompt_with_streaming_behavior() {
     let cmd = Command::Prompt {
@@ -26,7 +24,6 @@ fn command_prompt_with_streaming_behavior() {
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"streamingBehavior\":\"steer\""));
 }
-
 #[test]
 fn command_get_state_serializes() {
     let cmd = Command::GetState {
@@ -35,7 +32,6 @@ fn command_get_state_serializes() {
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"get_state\""));
 }
-
 #[test]
 fn command_abort_serializes() {
     let cmd = Command::Abort { id: None };
@@ -43,14 +39,12 @@ fn command_abort_serializes() {
     assert!(json.contains("\"type\":\"abort\""));
     assert!(!json.contains("\"id\""));
 }
-
 #[test]
 fn event_deserializes_agent_start() {
     let json = r#"{"type":"agent_start"}"#;
     let event: Event = serde_json::from_str(json).unwrap();
     assert!(matches!(event, Event::AgentStart));
 }
-
 #[test]
 fn event_deserializes_token() {
     let json = r#"{"type":"token","token":"hello"}"#;
@@ -60,7 +54,6 @@ fn event_deserializes_token() {
         _ => panic!("expected Token event"),
     }
 }
-
 #[test]
 fn event_deserializes_response() {
     let json =
@@ -76,7 +69,6 @@ fn event_deserializes_response() {
         _ => panic!("expected Response event"),
     }
 }
-
 #[test]
 fn event_deserializes_tool_execution_start() {
     let json = r#"{"type":"tool_execution_start","toolCallId":"c-1","toolName":"bash","args":{"command":"ls"}}"#;
@@ -93,7 +85,6 @@ fn event_deserializes_tool_execution_start() {
         _ => panic!("expected ToolExecutionStart"),
     }
 }
-
 #[test]
 fn event_deserializes_tool_execution_end() {
     let json = r#"{"type":"tool_execution_end","toolCallId":"c-1","toolName":"bash","result":{"content":[]},"isError":false}"#;
@@ -110,7 +101,6 @@ fn event_deserializes_tool_execution_end() {
         _ => panic!("expected ToolExecutionEnd"),
     }
 }
-
 #[test]
 fn event_deserializes_subagent_state_changed() {
     let json = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"reviewer","status":"running","lastTool":"bash","pid":123}]}"#;
@@ -126,7 +116,6 @@ fn event_deserializes_subagent_state_changed() {
         _ => panic!("expected SubagentStateChanged"),
     }
 }
-
 #[test]
 fn event_deserializes_subagent_notification() {
     let json = r#"{"type":"subagent_notification","agentId":"researcher","sequence":3,"message":"[subagent] Agent 'researcher' completed. Last output: all tests pass"}"#;
@@ -144,7 +133,6 @@ fn event_deserializes_subagent_notification() {
         _ => panic!("expected SubagentNotification"),
     }
 }
-
 #[test]
 fn event_subagent_state_changed_empty() {
     let json = r#"{"type":"subagent_state_changed","subagents":[]}"#;
@@ -154,7 +142,6 @@ fn event_subagent_state_changed_empty() {
         _ => panic!("expected SubagentStateChanged"),
     }
 }
-
 #[test]
 fn event_subagent_info_with_error() {
     let json = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"lint","status":"error","lastError":"tool 'bash' returned error","pid":0}]}"#;
@@ -170,7 +157,6 @@ fn event_subagent_info_with_error() {
         _ => panic!("expected SubagentStateChanged"),
     }
 }
-
 #[test]
 fn command_get_subagents_serializes() {
     let cmd = Command::GetSubagents {
@@ -180,7 +166,6 @@ fn command_get_subagents_serializes() {
     assert!(json.contains("\"type\":\"get_subagents\""));
     assert!(json.contains("\"id\":\"gs-1\""));
 }
-
 #[test]
 fn event_unknown_type_deserializes_as_unknown() {
     let json = r#"{"type":"some_future_event","data":42}"#;
@@ -453,10 +438,23 @@ fn turn_end_keeps_message_and_tolerates_unused_tool_results() {
 }
 
 #[test]
-fn event_deserializes_extensions_changed() {
-    let json = r#"{"type":"extensions_changed","extensions":[]}"#;
+fn event_deserializes_tool_catalogue_changed() {
+    let json = r#"{"type":"tool_catalogue_changed","changedTools":["weather"],"before":[],"after":[{"name":"weather","source":"uds"}],"reason":"register_tool"}"#;
     let event: Event = serde_json::from_str(json).unwrap();
-    assert!(matches!(event, Event::ExtensionsChanged { .. }));
+    match event {
+        Event::ToolCatalogueChanged {
+            changed_tools,
+            before,
+            after,
+            reason,
+        } => {
+            assert_eq!(changed_tools, vec!["weather"]);
+            assert!(before.is_empty());
+            assert_eq!(after[0]["name"], "weather");
+            assert_eq!(reason, "register_tool");
+        }
+        other => panic!("expected tool catalogue event, got {other:?}"),
+    }
 }
 
 #[test]

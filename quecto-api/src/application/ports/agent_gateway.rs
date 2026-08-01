@@ -60,10 +60,8 @@ pub enum AgentCommand {
     ClearHistory,
     /// #524: list spawned subagents and their live status.
     GetSubagents,
-    /// List registered extensions.
-    GetExtensions,
-    /// Re-scan extension directories and reload script extensions.
-    ReloadExtensions,
+    /// Return rich tool catalogue entries for control/query clients.
+    GetToolCatalogue,
 }
 
 /// Subscriber handle — receives broadcast events from the agent.

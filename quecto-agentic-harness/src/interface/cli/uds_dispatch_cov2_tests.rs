@@ -40,7 +40,7 @@ async fn set_effort_accepts_provider_vocabulary_and_rejects_invalid() {
 }
 
 #[tokio::test]
-async fn dispatch_fieldless_list_sessions_get_messages_and_reload_extensions() {
+async fn dispatch_fieldless_list_sessions_get_messages_and_() {
     let mut fx = Fixture::new();
     fx.store
         .save(&Session {
@@ -69,15 +69,6 @@ async fn dispatch_fieldless_list_sessions_get_messages_and_reload_extensions() {
                     count: Some(1),
                     before: None,
                     agent_id: None,
-                },
-                &mut ctx,
-            )
-            .await
-        );
-        assert!(
-            !super::dispatch_command(
-                AgentCommand::ReloadExtensions {
-                    id: Some("rx".into()),
                 },
                 &mut ctx,
             )

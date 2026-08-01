@@ -384,8 +384,8 @@ output (see [Notification model](#notification-model)).
       "type": "string",
       "enum": ["prompt", "steer", "follow_up", "abort", "kill", "await",
                "get_state", "get_messages",
-               "get_session_stats", "get_subagents", "get_extensions",
-               "set_model", "set_effort", "clear_history", "reload_extensions"],
+               "get_session_stats", "get_subagents", "get_tool_catalogue",
+               "list_tools", "set_model", "set_effort", "clear_history"],
       "description": "Command to send"
     },
     "message": {
@@ -427,11 +427,10 @@ output (see [Notification model](#notification-model)).
 | `get_messages` | Inspect the stable committed transcript, normally after the turn ends (omit `count` for the newest page; pass `count` for the last N; pass `before` to page older history). A busy snapshot can lag the active turn | No |
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List subagents spawned by this agent | No |
-| `get_extensions` | List loaded extensions | No |
+| `get_tool_catalogue` / `list_tools` | Return rich tool catalogue snapshot | No |
 | `set_model` | Change the LLM model | No |
 | `set_effort` | Change the reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the child's active model; invalid values are rejected with the valid list) | No |
 | `clear_history` | Clear conversation history | No |
-| `reload_extensions` | Hot-reload extensions | No |
 
 **Examples:**
 

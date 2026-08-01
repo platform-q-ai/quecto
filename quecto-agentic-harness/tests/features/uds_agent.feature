@@ -758,30 +758,19 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And the agent output should contain a tool_execution_start with a non-empty tool_call_id
 
-  # ─── get_extensions UDS command ──────────────────────────────────────────────
+  # ─── tool catalogue UDS command ──────────────────────────────────────────────
 
-  @done @extensions
-  Scenario: get_extensions returns empty list when no extensions are installed
+  @done @tools
+  Scenario: get_tool_catalogue returns rich catalogue entries for control clients
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     When I start the UDS agent with no [session]
-    And I send command "get_extensions" with id "ge-2"
+    And I send command "get_tool_catalogue" with id "tc-1"
     And I close the UDS connection
     Then the UDS agent exits with code 0
-    And the agent output should contain a response command "get_extensions" with success true
-    And the get_extensions response should have 0 extensions
-
-  # ─── reload_extensions UDS command (no-op after #353) ────────────────────────
-
-  @done @extensions
-  Scenario: reload_extensions returns success
-    Given a temp base directory
-    And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no [session]
-    And I send command "reload_extensions" with id "re-1"
-    And I close the UDS connection
-    Then the UDS agent exits with code 0
-    And the agent output should contain a response command "reload_extensions" with success true
+    And the agent output should contain a response command "get_tool_catalogue" with success true
+    And the get_tool_catalogue response should list tool "bash"
+    And the get_tool_catalogue response for "bash" should include rich catalogue state
 
   # ─── --persist flag (#348) ───────────────────────────────────────────────────
 
@@ -833,13 +822,13 @@ Feature: UDS mode for headless agent operation
     When I start the multi-client UDS agent
     And client 1 connects
     And client 1 sends register_tools with tool "weather" described as "Get weather"
-    And client 1 sends command "get_extensions" with id "ge-reg"
+    And client 1 sends command "get_tool_catalogue" with id "ge-reg"
     And I close all UDS clients
     Then the UDS agent exits with code 0
     And client 1 should have received a response command "register_tools" with success true
-    And the post-register get_extensions response should list extension "weather"
-    And the post-register get_extensions response should list extension "weather" with source "uds"
-    And the post-register get_extensions response should list extension "weather" with owner "uds:client:5"
+    And the tool catalogue response "ge-reg" should list tool "weather"
+    And the tool catalogue response "ge-reg" should list tool "weather" with source "uds"
+    And the registered tool "weather" should be owned by client 1
 
   @done @multi-client @uds-ext
   Scenario: register_tools rejects tool that shadows a core tool
@@ -853,7 +842,7 @@ Feature: UDS mode for headless agent operation
     And client 1 should have received a response command "register_tools" with success false
 
   @done @multi-client @uds-ext
-  Scenario: register_tools broadcasts extensions_changed to all clients
+  Scenario: register_tools broadcasts tool_catalogue_changed to all clients
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     When I start the multi-client UDS agent
@@ -862,7 +851,7 @@ Feature: UDS mode for headless agent operation
     And client 1 sends register_tools with tool "weather" described as "Get weather"
     And I close all UDS clients
     Then the UDS agent exits with code 0
-    And client 2 should have received an event of type "extensions_changed"
+    And client 2 should have received a tool catalogue update listing tool "weather"
 
   @done @multi-client @uds-ext
   Scenario: unregister_tools removes a previously registered tool
@@ -872,11 +861,11 @@ Feature: UDS mode for headless agent operation
     And client 1 connects
     And client 1 sends register_tools with tool "weather" described as "Get weather"
     And client 1 sends unregister_tools with tool "weather"
-    And client 1 sends command "get_extensions" with id "ge-unreg"
+    And client 1 sends command "get_tool_catalogue" with id "ge-unreg"
     And I close all UDS clients
     Then the UDS agent exits with code 0
     And client 1 should have received a response command "unregister_tools" with success true
-    And the post-unregister get_extensions response should have 0 extensions
+    And the tool catalogue response "ge-unreg" should contain 0 tools
 
   @done @multi-client @uds-ext
   Scenario: client disconnect auto-unregisters its tools
@@ -888,13 +877,13 @@ Feature: UDS mode for headless agent operation
     And client 1 sends register_tools with tool "weather" described as "Get weather"
     And client 1 disconnects
     And a new client 3 connects after all clients disconnected
-    And client 3 sends command "get_extensions" with id "ge-disc"
+    And client 3 sends command "get_tool_catalogue" with id "ge-disc"
     And I close all UDS clients
     Then the UDS agent exits with code 0
-    And the post-disconnect get_extensions response should have 0 extensions
+    And the tool catalogue response "ge-disc" should contain 0 tools
 
   @done @multi-client @uds-ext
-  Scenario: multiple extension clients register different tools simultaneously
+  Scenario: multiple tool provider clients register different tools simultaneously
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     When I start the multi-client UDS agent
@@ -902,11 +891,11 @@ Feature: UDS mode for headless agent operation
     And client 2 connects
     And client 1 sends register_tools with tool "weather" described as "Get weather"
     And client 2 sends register_tools with tool "translate" described as "Translate text"
-    And client 2 sends command "get_extensions" with id "ge-multi"
+    And client 2 sends command "get_tool_catalogue" with id "ge-multi"
     And I close all UDS clients
     Then the UDS agent exits with code 0
-    And the post-multi get_extensions response should list extension "weather"
-    And the post-multi get_extensions response should list extension "translate"
+    And the tool catalogue response "ge-multi" should list tool "weather"
+    And the tool catalogue response "ge-multi" should list tool "translate"
 
   @done @multi-client @uds-ext
   Scenario: re-registering a tool updates its definition
@@ -916,10 +905,10 @@ Feature: UDS mode for headless agent operation
     And client 1 connects
     And client 1 sends register_tools with tool "weather" described as "Old description"
     And client 1 sends register_tools with tool "weather" described as "New description"
-    And client 1 sends command "get_extensions" with id "ge-redef"
+    And client 1 sends command "get_tool_catalogue" with id "ge-redef"
     And I close all UDS clients
     Then the UDS agent exits with code 0
-    And the post-redef get_extensions response should list extension "weather" with description "New description"
+    And the tool catalogue response "ge-redef" should list tool "weather" with description "New description"
 
   # ─── Workflow broadcast events (#598) ────────────────────────────────────────
   #

@@ -117,9 +117,9 @@ pub(super) fn query_response_data(
             );
             Some(serde_json::to_value(&stats).unwrap_or_default())
         }
-        AgentCommand::GetExtensions { .. } => Some(
-            serde_json::json!({ "extensions": super::uds_extensions::build_extension_list(ctx) }),
-        ),
+        AgentCommand::GetToolCatalogue { .. } => Some(serde_json::json!({
+            "tools": ctx.agent.tool_catalogue_entries(),
+        })),
         AgentCommand::ListModels { .. } => Some(super::uds_models::list_models_response(ctx)),
         AgentCommand::GetSubagents { .. } => {
             let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
@@ -145,7 +145,6 @@ pub(super) fn query_response_data(
             request_id: id.as_deref().map(CommandId::from),
             ctx,
         }),
-        AgentCommand::ReloadExtensions { .. } => None,
         _ => None,
     }
 }

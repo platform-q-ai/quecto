@@ -33,8 +33,8 @@ pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
         .route("/effort", post(set_effort_handler::<G>))
         .route("/clear_history", post(clear_history_handler::<G>))
         .route("/subagents", get(subagents_handler::<G>))
-        .route("/extensions", get(extensions_handler::<G>))
-        .route("/extensions/reload", post(extensions_reload_handler::<G>))
+        .route("/tools", get(tools_handler::<G>))
+        .route("/tools/catalogue", get(tools_handler::<G>))
         .route("/state", get(state_handler::<G>))
         .route("/messages", get(messages_handler::<G>))
         .route("/messages/tail", get(messages_tail_handler::<G>))
@@ -261,7 +261,7 @@ async fn clear_history_handler<G: AgentGateway>(
     }
 }
 
-// ── Subagents / Extensions ─────────────────────────────────────────────────────
+// ── Subagents / Tools ──────────────────────────────────────────────────────────
 
 async fn subagents_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
@@ -272,19 +272,10 @@ async fn subagents_handler<G: AgentGateway>(
     }
 }
 
-async fn extensions_handler<G: AgentGateway>(
+async fn tools_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
 ) -> impl IntoResponse {
-    match use_cases::extensions::list(&state.gateway).await {
-        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
-        Err(e) => api_error_response(e).into_response(),
-    }
-}
-
-async fn extensions_reload_handler<G: AgentGateway>(
-    State(state): State<Arc<AppState<G>>>,
-) -> impl IntoResponse {
-    match use_cases::extensions::reload(&state.gateway).await {
+    match use_cases::tools::catalogue(&state.gateway).await {
         Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
         Err(e) => api_error_response(e).into_response(),
     }

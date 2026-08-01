@@ -104,10 +104,7 @@ fn flagged_remaining_queueable_commands_ack_and_forward_without_marker() {
             r#"{"type":"clear_history","ack":"accept","id":"c1"}"#,
             "clear_history",
         ),
-        (
-            r#"{"type":"reload_extensions","ack":"accept","id":"e1"}"#,
-            "reload_extensions",
-        ),
+        (r#"{"type":"","ack":"accept","id":"e1"}"#, ""),
     ] {
         let got = intercept_control_forward(line).expect("queueable command is intercepted");
         assert_eq!(ack_json(&got.ack_line)["command"], command);

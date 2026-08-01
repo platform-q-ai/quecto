@@ -88,14 +88,9 @@ fn control_commands_serialize_to_wire() {
         "get_subagents"
     );
     assert_eq!(
-        command_to_json(AgentCommand::GetExtensions, "g2")["type"],
-        "get_extensions"
+        command_to_json(AgentCommand::GetToolCatalogue, "g2")["type"],
+        "get_tool_catalogue"
     );
-    assert_eq!(
-        command_to_json(AgentCommand::ReloadExtensions, "g3")["type"],
-        "reload_extensions"
-    );
-
     let effort = command_to_json(
         AgentCommand::SetEffort {
             effort: "high".into(),

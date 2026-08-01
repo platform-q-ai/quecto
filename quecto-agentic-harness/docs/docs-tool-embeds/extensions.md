@@ -13,7 +13,7 @@ Tool names and schemas for enabled extensions already appear in your tool list. 
 
 - Cannot shadow core tool names (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `docs`, `recall`, `spawn`, `agent_cmd`, `workflow`, …).
 - `--disable-tool` keeps descriptors registered, hides tools from the model, rejects execution, and deny-lists names for the process; UDS cannot re-add them.
-- `get_extensions` is a compatibility view of **runtime-loadable UDS** tool names, not the complete bundled-native+UDS catalogue or internal package labels.
+- `get_tool_catalogue` / `list_tools` returns the rich bundled-native+UDS `ToolCatalogueEntry` snapshot for control/query clients; runtime providers still use `register_tools` / `unregister_tools` / `execute_tool` / `tool_result`.
 - UDS tool default timeout ~30s; disconnect mid-call → error result.
 
 ## Web (if enabled)

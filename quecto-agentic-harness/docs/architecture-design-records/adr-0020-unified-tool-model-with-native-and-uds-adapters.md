@@ -27,12 +27,21 @@
   TUI/API-ready state without adding persisted profile UX: registered versus
   model-visible/effective availability, entrypoint/configured/profile/session
   placeholders, explicit restriction reasons, runtime lifecycle, provider/owner,
-  availability, and coarse health. Existing descriptor and protocol surfaces stay
-  backwards-compatible while consumers migrate to catalogue state.
-- **Still open / deferred follow-ups:** legacy lifecycle API naming cleanup,
-  protocol/TUI migration to consume rich catalogue state, persisted profile
-  policy UX, full parent/child profile policy rewrite, intentional behaviour
-  changes such as REPL parity, and WASM.
+  availability, and coarse health. Descriptor surfaces remain additive. Pre-customer protocol cleanup removes
+  legacy extension-query commands/events while consumers migrate to catalogue
+  state.
+- **Issue #1345 protocol cleanup (landed before external/customer protocol commitments):**
+  UDS and API control/query clients now use `get_tool_catalogue` (wire alias:
+  `list_tools`) and `/tools` or `/tools/catalogue` to read the rich
+  `ToolCatalogueEntry` snapshot. Legacy extension-query protocol surface was
+  intentionally removed rather than kept as long-term compatibility debt. Runtime
+  UDS tool-provider commands (`register_tools`, `unregister_tools`,
+  `execute_tool`, `tool_result`) are preserved: providers mutate/service tools;
+  control/query clients inspect catalogue snapshots and `tool_catalogue_changed`
+  events.
+- **Still open / deferred follow-ups:** persisted profile policy UX, full
+  parent/child profile policy rewrite, intentional behaviour changes such as
+  REPL parity, and WASM.
 
 ## Context
 
@@ -85,9 +94,11 @@ TUI/API consumers: stable id, provider id, lifecycle (`bundled` versus
 restriction reason, effective enabled state, and health. Placeholder profile
 fields remain `None` until the persisted profile UX lands.
 
-The descriptor is a boundary object for policy and UI. The TUI and CLI protocol
-should read descriptors rather than import concrete Rust tool types or infer
-behaviour from native/UDS implementation details.
+The descriptor/catalogue entry is a boundary object for policy and UI. The TUI,
+API, and CLI protocol read catalogue snapshots rather than import concrete Rust
+tool types or infer behaviour from native/UDS implementation details. This
+control/query surface is separate from the runtime provider surface that lets UDS
+clients register tools, receive `execute_tool`, and return `tool_result`.
 
 Official/default tools are considered bundled native tools: compiled into the
 binary, versioned with Quecto, and installed or upgraded by rebuilding/releasing
@@ -121,8 +132,8 @@ tools should not inspect their caller role to self-disable.
   model and not executing work.
 - UDS tools gain the same descriptor surface as native tools, including source,
   owner, and availability.
-- Protocol/UI consumers should progressively migrate from extension-name-only
-  views to descriptor-driven views.
+- Protocol/UI/API consumers use catalogue snapshots and `tool_catalogue_changed`
+  events instead of extension-name-only compatibility views.
 - Native Rust tool changes still require compile/release cycles; runtime
   extensibility remains the job of UDS.
 - WASM is intentionally excluded until a separate decision revisits it.
@@ -141,8 +152,9 @@ tools should not inspect their caller role to self-disable.
 5. Add explicit profile policy owners for parent, child, and custom profiles;
    make profile policy mutate descriptor availability rather than asking tools
    to inspect roles.
-6. Complete protocol/TUI migration to descriptor/policy views and retain
-   backwards-compatible fields where necessary.
+6. Complete pre-customer protocol/TUI/API migration to descriptor/policy views:
+   remove legacy extension-query commands/events and keep only runtime provider
+   commands for UDS tool providers.
 
 ## Alternatives considered
 

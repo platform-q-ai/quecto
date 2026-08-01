@@ -17,7 +17,7 @@ use crate::domain::extension_tool::ToolInvocation;
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::extensions::uds_tool::create_uds_tool;
 
-use super::protocol::{AgentEvent, ExtensionInfo, ToolRegistration};
+use super::protocol::{AgentEvent, ToolRegistration};
 
 /// Default timeout for UDS extension tool execution (seconds).
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 30;
@@ -405,28 +405,6 @@ pub fn handle_client_disconnect(client_id: u64, registry: &ClientToolRegistry) -
     }
 
     state.tool_names.into_iter().collect()
-}
-
-/// Build the current runtime-loadable extension list from agent descriptors.
-pub fn build_extensions_changed_event(
-    extension_names: &[String],
-    agent: &crate::application::agent_loop::AgentLoopImpl,
-) -> AgentEvent {
-    let extension_names: std::collections::HashSet<&str> =
-        extension_names.iter().map(String::as_str).collect();
-    let extensions: Vec<ExtensionInfo> = agent
-        .tool_descriptors()
-        .into_iter()
-        .filter(|descriptor| extension_names.contains(descriptor.name()))
-        .map(|descriptor| ExtensionInfo {
-            name: descriptor.definition.name.to_string(),
-            description: descriptor.definition.description.to_string(),
-            source: Some(descriptor.source.as_str().to_string()),
-            owner: Some(descriptor.owner.to_string()),
-            availability: Some(descriptor.availability.as_str().to_string()),
-        })
-        .collect();
-    AgentEvent::ExtensionsChanged { extensions }
 }
 
 fn resolve_pending_for_tool(state: &mut ClientToolState, tool_name: &str, reason: &str) {

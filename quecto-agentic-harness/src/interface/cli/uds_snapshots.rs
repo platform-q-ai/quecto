@@ -195,7 +195,6 @@ impl ConversationSnapshotData {
     pub fn resolve(&self, message_id: &str) -> Option<&Message> {
         self.lookup(message_id)
     }
-
     /// Prepare a `get_message` lookup result. Collapsed messages that carry a
     /// spill id are returned as a deferred recall so callers do not hold the
     /// snapshot read lock across spill-store I/O.
@@ -220,7 +219,6 @@ impl ConversationSnapshotData {
             generation: self.generation,
         }
     }
-
     pub fn recall_is_current(&self, recall: &RecallIdentity) -> bool {
         self.generation == recall.generation
             && self.spill_session_key == recall.session_key
@@ -228,7 +226,6 @@ impl ConversationSnapshotData {
                 m.is_collapsed && m.spill_id.as_deref() == Some(recall.spill_id.as_str())
             })
     }
-
     pub fn clear(&mut self) -> LedgerAdvance {
         self.messages.clear();
         self.ledger.clear();
@@ -243,7 +240,6 @@ impl ConversationSnapshotData {
             changed: true,
         }
     }
-
     /// Reset the snapshot to exactly `messages`: drop the whole prior ledger
     /// (so refs from a replaced/truncated conversation stop resolving) and then
     /// re-seed live + ledger from the new set. Used by same-session TRUNCATE ops
@@ -260,7 +256,6 @@ impl ConversationSnapshotData {
             changed: advance.changed || publish.changed,
         }
     }
-
     pub fn reset_to_with_spill_store(
         &mut self,
         messages: &[Message],
@@ -277,13 +272,11 @@ impl ConversationSnapshotData {
             changed: advance.changed || publish.changed,
         }
     }
-
     pub fn from_messages(messages: Vec<Message>) -> Self {
         let mut s = Self::default();
         let _ = s.publish(&messages);
         s
     }
-
     pub fn sync_json(&self, epoch: u64, since_rev: u64) -> serde_json::Value {
         let resync = epoch != self.epoch
             || self.frontier.front().is_some_and(|(r, _)| since_rev < *r)
@@ -302,7 +295,6 @@ impl ConversationSnapshotData {
             }
             return data;
         }
-
         let candidates: Vec<(u64, &Message)> = self
             .frontier
             .iter()
@@ -474,7 +466,7 @@ pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
     refresh_conversation_snapshot(ctx).await;
     refresh_state_snapshot(ctx).await;
     refresh_session_stats_snapshot(ctx).await;
-    refresh_extension_snapshot(ctx).await;
+    refresh_tool_catalogue_snapshot(ctx).await;
 }
 
 pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
@@ -531,9 +523,14 @@ pub(super) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
     *snap = stats;
 }
 
-pub(super) async fn refresh_extension_snapshot(ctx: &DispatchCtx<'_>) {
-    let mut snap = ctx.extension_snapshot.write().await;
-    *snap = crate::interface::cli::uds_extensions::build_extension_list(ctx);
+pub(super) async fn refresh_tool_catalogue_snapshot(ctx: &DispatchCtx<'_>) {
+    let mut snap = ctx.tool_catalogue_snapshot.write().await;
+    *snap = ctx
+        .agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .map(|entry| serde_json::to_value(entry).unwrap_or_default())
+        .collect();
 }
 
 /// Build the connect-time `get_messages` snapshot line a BUSY child pushes.
@@ -591,12 +588,12 @@ pub(crate) fn build_get_session_stats_line(
     line
 }
 
-pub(crate) fn build_get_extensions_line(extensions: &[serde_json::Value]) -> String {
+pub(crate) fn build_get_tool_catalogue_line(tools: &[serde_json::Value]) -> String {
     let data = serde_json::json!({
-        "extensions": extensions,
+        "tools": tools,
         "snapshot": true,
     });
-    let ev = AgentEvent::ok(None, "get_extensions", Some(data));
+    let ev = AgentEvent::ok(None, "get_tool_catalogue", Some(data));
     let mut line = ev.to_json_line();
     line.push('\n');
     line
@@ -606,7 +603,7 @@ pub(crate) struct BusySnapshotSources<'a> {
     pub state: &'a StateSnapshot,
     pub conversation: &'a ConversationSnapshot,
     pub session_stats: &'a SessionStatsSnapshot,
-    pub extensions: &'a crate::interface::cli::uds_extensions::ExtensionSnapshot,
+    pub tool_catalogue: &'a crate::interface::cli::uds_extensions::ToolCatalogueSnapshot,
     pub subagents: &'a Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     pub workflow: &'a Option<crate::interface::shared::WorkflowStateHandle>,
     pub execution: &'a super::uds_execution_state::ExecutionStateHandle,
@@ -617,7 +614,7 @@ pub(crate) async fn busy_connect_snapshot_lines(sources: BusySnapshotSources<'_>
         state: state_snapshot,
         conversation: conversation_snapshot,
         session_stats: session_stats_snapshot,
-        extensions: extension_snapshot,
+        tool_catalogue: tool_catalogue_snapshot,
         subagents: subagent_registry,
         workflow: workflow_state,
         execution: execution_state,
@@ -644,8 +641,8 @@ pub(crate) async fn busy_connect_snapshot_lines(sources: BusySnapshotSources<'_>
         build_get_session_stats_line(&stats)
     };
     let extensions_line = {
-        let extensions = extension_snapshot.read().await;
-        build_get_extensions_line(&extensions)
+        let tools = tool_catalogue_snapshot.read().await;
+        build_get_tool_catalogue_line(&tools)
     };
     [
         state_line,

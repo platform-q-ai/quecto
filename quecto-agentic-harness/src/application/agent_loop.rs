@@ -281,7 +281,7 @@ impl AgentLoopImpl {
     pub fn swap_registry(&mut self, registry: Box<dyn ToolRegistry>) {
         self.tool_registry = registry;
     }
-    /// Return names of tools registered from extensions (UDS `get_extensions`
+    /// Return names of tools registered from extensions (UDS `get_tool_catalogue`
     /// reports only actually-available tools; shadows are rejected earlier).
     pub fn runtime_tool_names(&self) -> Vec<String> {
         self.extension_tool_registry().runtime_tool_names()
