@@ -40,7 +40,7 @@ impl App {
     }
 
     pub(super) fn open_pending_tool_policy_modal_after_catalogue_update(&mut self) {
-        if self.tool_policy_modal_pending_catalogue && !self.tool_catalogue.is_empty() {
+        if self.tool_policy_modal_pending_catalogue {
             self.tool_policy_modal_pending_catalogue = false;
             self.open_tool_policy_modal_now();
         }

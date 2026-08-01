@@ -158,6 +158,41 @@ async fn ctrl_t_success_without_tool_catalogue_data_does_not_open_stale_cached_c
 }
 
 #[tokio::test]
+async fn ctrl_t_empty_catalogue_response_clears_stale_cache_and_opens_empty_policy_state() {
+    let mut h = harness().await;
+    h.app_mut()
+        .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
+            stable_id: "tool-stale".into(),
+            name: "stale".into(),
+            profile_scope: Some(crate::protocol::client::ToolScope::Both),
+            ..Default::default()
+        }]);
+
+    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    h.app_mut().handle_response(
+        Some("tool-policy-catalogue".into()),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({ "tools": [] })),
+        None,
+    );
+
+    let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("Tool Policy"),
+        "empty valid catalogue did not open policy modal:\n{frame}"
+    );
+    assert!(
+        frame.contains("No matching items"),
+        "empty policy state not shown:\n{frame}"
+    );
+    assert!(
+        !frame.contains("stale"),
+        "stale cached tool remained visible after empty fresh catalogue:\n{frame}"
+    );
+}
+
+#[tokio::test]
 async fn ctrl_t_fresh_catalogue_response_removes_stale_absent_tools() {
     let mut h = harness().await;
     h.app_mut()
