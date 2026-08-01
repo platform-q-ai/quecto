@@ -26,6 +26,29 @@ fn drain_commands(world: &mut TuiWorld) -> Vec<String> {
     handle.block_on(h.drain_commands())
 }
 
+fn complete_tool_policy_catalogue_refresh(world: &mut TuiWorld) {
+    world
+        .tui_parity
+        .as_mut()
+        .expect("harness")
+        .0
+        .merge_tool_catalogue(vec![
+            ToolCatalogueEntry {
+                stable_id: "parent-tool".into(),
+                name: "parent".into(),
+                profile_scope: Some(ToolScope::Child),
+                ..Default::default()
+            },
+            ToolCatalogueEntry {
+                stable_id: "child-tool".into(),
+                name: "child".into(),
+                profile_scope: Some(ToolScope::Child),
+                ..Default::default()
+            },
+        ]);
+    let _ = drain_commands(world);
+}
+
 fn frame(world: &mut TuiWorld) -> String {
     world.tui_parity.as_mut().expect("harness").0.full_frame()
 }
@@ -61,6 +84,7 @@ fn user_opens_tool_policy_selector_and_applies_changes(world: &mut TuiWorld) {
         .expect("harness")
         .0
         .press(Key::Ctrl('t'));
+    complete_tool_policy_catalogue_refresh(world);
     world
         .tui_parity
         .as_mut()
@@ -104,6 +128,7 @@ fn updated_catalogue_availability_reflected_without_restart(world: &mut TuiWorld
         .expect("harness")
         .0
         .press(Key::Ctrl('t'));
+    complete_tool_policy_catalogue_refresh(world);
     assert!(quecto_tui::components::ansi::strip_ansi(&frame(world)).contains("[-C] parent"));
 }
 
