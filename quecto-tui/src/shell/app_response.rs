@@ -267,15 +267,18 @@ impl App {
     }
 
     fn handle_get_tool_catalogue(&mut self, data: Option<serde_json::Value>) {
-        let Some(data) = data else {
-            self.open_pending_tool_policy_modal_after_catalogue_update();
+        let Some(tools_value) = data.and_then(|data| data.get("tools").cloned()) else {
+            self.tool_policy_modal_pending_catalogue = false;
+            self.replace_tool_catalogue(Vec::new());
+            self.notify("Tool catalogue response missing tools", NotifyLevel::Error);
             return;
         };
-        let tools = data
-            .get("tools")
-            .cloned()
-            .and_then(|value| serde_json::from_value::<Vec<ToolCatalogueEntry>>(value).ok())
-            .unwrap_or_default();
+        let Ok(tools) = serde_json::from_value::<Vec<ToolCatalogueEntry>>(tools_value) else {
+            self.tool_policy_modal_pending_catalogue = false;
+            self.replace_tool_catalogue(Vec::new());
+            self.notify("Tool catalogue response malformed", NotifyLevel::Error);
+            return;
+        };
         self.replace_tool_catalogue(tools);
     }
 

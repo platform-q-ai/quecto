@@ -127,6 +127,37 @@ async fn ctrl_t_with_cached_catalogue_waits_for_fresh_get_tool_catalogue_respons
 }
 
 #[tokio::test]
+async fn ctrl_t_success_without_tool_catalogue_data_does_not_open_stale_cached_catalogue() {
+    let mut h = harness().await;
+    h.app_mut()
+        .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
+            stable_id: "tool-stale".into(),
+            name: "stale".into(),
+            profile_scope: Some(crate::protocol::client::ToolScope::Both),
+            ..Default::default()
+        }]);
+
+    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    h.app_mut().handle_response(
+        Some("tool-policy-catalogue".into()),
+        "get_tool_catalogue".into(),
+        true,
+        None,
+        None,
+    );
+
+    let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        !frame.contains("Tool Policy"),
+        "missing catalogue payload opened stale cached modal:\n{frame}"
+    );
+    assert!(
+        !frame.contains("stale"),
+        "stale cached tool remained visible after missing catalogue payload:\n{frame}"
+    );
+}
+
+#[tokio::test]
 async fn ctrl_t_fresh_catalogue_response_removes_stale_absent_tools() {
     let mut h = harness().await;
     h.app_mut()
