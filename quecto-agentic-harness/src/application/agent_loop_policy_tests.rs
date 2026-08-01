@@ -6,7 +6,8 @@ use crate::domain::tool::{
     ToolPolicyReconciliation, ToolRegistry,
 };
 use crate::domain::tool_descriptor::{
-    ToolAvailability, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind, ToolSource,
+    ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind,
+    ToolSource,
 };
 
 fn mock_catalogue_entry(name: &str, effective_enabled: bool) -> ToolCatalogueEntry {
@@ -25,6 +26,7 @@ fn mock_catalogue_entry(name: &str, effective_enabled: bool) -> ToolCatalogueEnt
         default_enabled: true,
         configured_enabled: None,
         profile_enabled: None,
+        profile_scope: None,
         session_enabled: None,
         explicit_restriction: None,
         runtime_availability: if effective_enabled {
@@ -33,6 +35,9 @@ fn mock_catalogue_entry(name: &str, effective_enabled: bool) -> ToolCatalogueEnt
             ToolAvailability::Disabled
         },
         effective_enabled,
+        effective_scope: ProfileAvailabilityScope::from_enabled(effective_enabled),
+        effective_parent_enabled: effective_enabled,
+        effective_child_enabled: effective_enabled,
         health: if effective_enabled {
             ToolHealth::Ok
         } else {
@@ -59,8 +64,7 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
                 .cached_definitions
                 .iter()
                 .any(|definition| definition.name.as_ref() == mutation.name);
-            if before_enabled && !mutation.availability.is_enabled() {
-            } else if !before_enabled && mutation.availability.is_enabled() {
+            if !before_enabled && mutation.scope.allows_parent() {
                 self.cached_definitions
                     .push(crate::domain::tool::ToolDefinition {
                         name: mutation.name.to_string().into(),
@@ -75,13 +79,24 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
             results.push(ToolPolicyMutationResult {
                 name: mutation.name.clone(),
                 requested_availability: mutation.availability,
+                requested_scope: mutation.scope,
                 status: if before_exists {
                     ToolPolicyMutationStatus::Applied
                 } else {
                     ToolPolicyMutationStatus::UnknownTool
                 },
                 before: before_exists.then(|| mock_catalogue_entry(&mutation.name, before_enabled)),
-                after: before_exists.then(|| mock_catalogue_entry(&mutation.name, after_enabled)),
+                after: before_exists.then(|| {
+                    let mut entry = mock_catalogue_entry(&mutation.name, after_enabled);
+                    entry.profile_scope = Some(mutation.scope);
+                    entry.profile_enabled = Some(mutation.scope.is_enabled());
+                    entry.effective_scope = mutation.scope;
+                    entry.effective_parent_enabled = mutation.scope.allows_parent();
+                    entry.effective_child_enabled = mutation.scope.allows_child();
+                    entry.effective_enabled = mutation.scope.is_enabled();
+                    entry.runtime_availability = mutation.availability;
+                    entry
+                }),
                 reason: mutation.reason.clone(),
             });
         }
@@ -147,6 +162,7 @@ impl crate::domain::tool::ToolPolicyMutator for RestrictedMockRegistry {
                 .map(|mutation| ToolPolicyMutationResult {
                     name: mutation.name.clone(),
                     requested_availability: mutation.availability,
+                    requested_scope: mutation.scope,
                     status: ToolPolicyMutationStatus::BlockedByRestriction,
                     before: Some(self.catalogue_entries()[0].clone()),
                     after: Some(self.catalogue_entries()[0].clone()),
@@ -331,4 +347,133 @@ fn queued_policy_enable_restores_registry_disabled_tool_manifest() {
         ToolPolicyMutationStatus::Applied
     );
     assert_eq!(agent.current_tool_definitions()[0].name.as_ref(), "alpha");
+}
+
+struct CatalogueOnlyRegistry {
+    entries: Vec<ToolCatalogueEntry>,
+    definitions: Vec<crate::domain::tool::ToolDefinition>,
+}
+
+impl ToolCatalog for CatalogueOnlyRegistry {
+    fn definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
+        &self.definitions
+    }
+
+    fn catalogue_entries(&self) -> Vec<ToolCatalogueEntry> {
+        self.entries.clone()
+    }
+}
+
+impl ToolExecutor for CatalogueOnlyRegistry {
+    fn execute(
+        &self,
+        _name: &str,
+        _arguments: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<crate::domain::tool::ToolResult, DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move { Err(DomainError::Tool("not implemented".into())) })
+    }
+}
+
+impl RuntimeToolLifecycleRegistry for CatalogueOnlyRegistry {}
+impl SessionAwareTools for CatalogueOnlyRegistry {}
+impl crate::domain::tool::ToolPolicyMutator for CatalogueOnlyRegistry {}
+impl ToolRegistry for CatalogueOnlyRegistry {}
+
+#[test]
+fn current_tool_definitions_hide_child_only_scope_from_parent_requests() {
+    let provider = Arc::new(MockProvider::new(vec![]));
+    let mut entry = mock_catalogue_entry("child_only", true);
+    entry.profile_enabled = Some(true);
+    entry.profile_scope = Some(ProfileAvailabilityScope::Child);
+    entry.effective_scope = ProfileAvailabilityScope::Child;
+    entry.effective_parent_enabled = false;
+    entry.effective_child_enabled = true;
+    let registry = CatalogueOnlyRegistry {
+        entries: vec![entry],
+        definitions: vec![],
+    };
+    let agent = AgentLoopImpl::new(test_config(provider, Box::new(registry)));
+
+    assert!(agent.current_tool_definitions().is_empty());
+}
+
+#[test]
+fn immediate_child_scope_mutation_does_not_enter_parent_enabled_overlay() {
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+
+    let reconciliation = agent
+        .request_tool_policy_mutation(
+            &[ToolPolicyMutation::set_scope(
+                "alpha",
+                ProfileAvailabilityScope::Child,
+                "child only",
+            )],
+            ToolPolicyApplyMode::ImmediateIfIdle,
+        )
+        .expect("immediate scope applies");
+
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    assert!(
+        !agent
+            .runtime_enabled_tools
+            .lock()
+            .unwrap()
+            .contains("alpha")
+    );
+    assert!(
+        agent
+            .runtime_disabled_tools
+            .lock()
+            .unwrap()
+            .contains("alpha")
+    );
+    assert!(agent.current_tool_definitions().is_empty());
+}
+
+#[test]
+fn queued_child_scope_mutation_reports_and_applies_child_scope() {
+    let (agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+
+    agent.queue_tool_policy_mutation(&[ToolPolicyMutation::set_scope(
+        "alpha",
+        ProfileAvailabilityScope::Child,
+        "child later",
+    )]);
+    let reconciliation = agent
+        .drain_tool_policy_mutations_at_internal_boundary()
+        .expect("queued child scope drains");
+
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    let after = reconciliation.results[0].after.as_ref().unwrap();
+    assert_eq!(after.profile_scope, Some(ProfileAvailabilityScope::Child));
+    assert_eq!(after.effective_scope, ProfileAvailabilityScope::Child);
+    assert!(!after.effective_parent_enabled);
+    assert!(after.effective_child_enabled);
+    assert!(
+        !agent
+            .runtime_enabled_tools
+            .lock()
+            .unwrap()
+            .contains("alpha")
+    );
+    assert!(
+        agent
+            .runtime_disabled_tools
+            .lock()
+            .unwrap()
+            .contains("alpha")
+    );
+    assert!(agent.current_tool_definitions().is_empty());
 }

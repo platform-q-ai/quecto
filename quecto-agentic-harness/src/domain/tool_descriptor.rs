@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::tool::ToolDefinition;
 
@@ -40,6 +40,67 @@ impl ToolSource {
 pub enum ToolAvailability {
     Enabled,
     Disabled,
+}
+
+/// Profile-owned availability for parent and child tool contexts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProfileAvailabilityScope {
+    None,
+    Parent,
+    Child,
+    Both,
+}
+
+/// Alias used by policy/UI-facing call sites that speak in tool-specific terms.
+pub type ToolProfileScope = ProfileAvailabilityScope;
+
+impl ProfileAvailabilityScope {
+    pub const fn allows_parent(self) -> bool {
+        matches!(self, Self::Parent | Self::Both)
+    }
+
+    pub const fn allows_child(self) -> bool {
+        matches!(self, Self::Child | Self::Both)
+    }
+
+    pub const fn cycle_next(self) -> Self {
+        match self {
+            Self::None => Self::Parent,
+            Self::Parent => Self::Child,
+            Self::Child => Self::Both,
+            Self::Both => Self::None,
+        }
+    }
+
+    pub const fn from_parent_child(parent: bool, child: bool) -> Self {
+        match (parent, child) {
+            (false, false) => Self::None,
+            (true, false) => Self::Parent,
+            (false, true) => Self::Child,
+            (true, true) => Self::Both,
+        }
+    }
+
+    pub const fn intersection(self, other: Self) -> Self {
+        Self::from_parent_child(
+            self.allows_parent() && other.allows_parent(),
+            self.allows_child() && other.allows_child(),
+        )
+    }
+
+    pub const fn is_subset_of(self, ceiling: Self) -> bool {
+        (!self.allows_parent() || ceiling.allows_parent())
+            && (!self.allows_child() || ceiling.allows_child())
+    }
+
+    pub const fn from_enabled(enabled: bool) -> Self {
+        if enabled { Self::Both } else { Self::None }
+    }
+
+    pub const fn is_enabled(self) -> bool {
+        !matches!(self, Self::None)
+    }
 }
 
 impl ToolAvailability {
@@ -177,10 +238,14 @@ pub struct ToolCatalogueEntry {
     pub default_enabled: bool,
     pub configured_enabled: Option<bool>,
     pub profile_enabled: Option<bool>,
+    pub profile_scope: Option<ProfileAvailabilityScope>,
     pub session_enabled: Option<bool>,
     pub explicit_restriction: Option<ToolRestrictionReason>,
     pub runtime_availability: ToolAvailability,
     pub effective_enabled: bool,
+    pub effective_scope: ProfileAvailabilityScope,
+    pub effective_parent_enabled: bool,
+    pub effective_child_enabled: bool,
     pub health: ToolHealth,
 }
 
