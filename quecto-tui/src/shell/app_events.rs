@@ -56,18 +56,29 @@ impl App {
                 active_template,
                 available_templates,
             }),
-            Event::ToolCatalogueChanged { after, .. } => self.merge_tool_catalogue(after),
+            Event::ToolCatalogueChanged { after, .. } => self.merge_tool_catalogue_event(after),
             Event::ToolPolicyChanged { results, .. } => self.merge_tool_policy_results(results),
             _ => {}
         }
     }
 
     pub(super) fn merge_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) {
+        self.merge_tool_catalogue_entries(entries);
+        self.open_pending_tool_policy_modal_after_catalogue_update();
+    }
+
+    pub(super) fn merge_tool_catalogue_event(&mut self, entries: Vec<ToolCatalogueEntry>) {
+        self.merge_tool_catalogue_entries(entries);
+        if self.tool_policy_modal_pending_catalogue_id.is_none() {
+            self.open_pending_tool_policy_modal_after_catalogue_update();
+        }
+    }
+
+    fn merge_tool_catalogue_entries(&mut self, entries: Vec<ToolCatalogueEntry>) {
         for entry in entries {
             let key = tool_catalogue_key(&entry);
             self.tool_catalogue.insert(key, entry);
         }
-        self.open_pending_tool_policy_modal_after_catalogue_update();
     }
 
     pub(super) fn replace_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) {

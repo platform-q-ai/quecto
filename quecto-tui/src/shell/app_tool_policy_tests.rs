@@ -63,6 +63,59 @@ async fn ctrl_t_with_empty_catalogue_opens_modal_after_catalogue_update() {
 }
 
 #[tokio::test]
+async fn incremental_catalogue_event_during_pending_ctrl_t_does_not_open_or_consume() {
+    let mut h = harness().await;
+
+    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    let sent = h.drain_commands().await.join("\n");
+    assert!(sent.contains("\"id\":\"tool-policy-catalogue\""), "{sent}");
+
+    h.app_mut()
+        .handle_event(crate::protocol::client::Event::ToolCatalogueChanged {
+            changed_tools: vec!["stale".into()],
+            before: Vec::new(),
+            after: vec![crate::protocol::client::ToolCatalogueEntry {
+                stable_id: "tool-stale".into(),
+                name: "stale".into(),
+                profile_scope: Some(crate::protocol::client::ToolScope::Both),
+                ..Default::default()
+            }],
+            reason: "register_tool".into(),
+        });
+
+    let event_frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        !event_frame.contains("Tool Policy"),
+        "incremental event opened pending policy modal:\n{event_frame}"
+    );
+
+    h.app_mut().handle_response(
+        Some("tool-policy-catalogue".into()),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-fresh",
+                "name": "fresh",
+                "profileScope": "child"
+            }]
+        })),
+        None,
+    );
+
+    let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("Tool Policy"),
+        "fresh response did not open modal:\n{frame}"
+    );
+    assert!(frame.contains("[-C] fresh"), "fresh tool missing:\n{frame}");
+    assert!(
+        !frame.contains("stale"),
+        "incremental stale tool leaked into modal:\n{frame}"
+    );
+}
+
+#[tokio::test]
 async fn stale_get_tool_catalogue_response_does_not_open_or_consume_pending_ctrl_t_request() {
     let mut h = harness().await;
 
