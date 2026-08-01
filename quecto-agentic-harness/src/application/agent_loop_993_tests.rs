@@ -42,7 +42,7 @@ async fn tool_result_preview_is_only_built_when_progress_is_observed() {
     let mut registry = MockRegistry::new();
     let content = "headless-preview-sentinel-993";
     registry.register(Arc::new(MockTool::new("read", content)));
-    let agent = AgentLoopImpl::new(agent_config(provider, registry, None));
+    let mut agent = AgentLoopImpl::new(agent_config(provider, registry, None));
     let mut messages = vec![Message::user("read")];
 
     agent_loop_preview::reset_built_preview_count_for_tests(content);
@@ -68,7 +68,7 @@ async fn tool_result_preview_is_built_once_for_observed_tool_finish() {
     let callback: crate::domain::agent::ProgressCallback = Arc::new(move |event| {
         events_for_callback.lock().unwrap().push(event);
     });
-    let agent = AgentLoopImpl::new(agent_config(provider, registry, Some(callback)));
+    let mut agent = AgentLoopImpl::new(agent_config(provider, registry, Some(callback)));
     let mut messages = vec![Message::user("read")];
 
     agent_loop_preview::reset_built_preview_count_for_tests(content);
@@ -120,7 +120,7 @@ async fn tool_turn_preserves_message_order_and_tool_arguments() {
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(MockTool::new("read", "notes")));
     registry.register(Arc::new(MockTool::new("write", "ok")));
-    let agent = AgentLoopImpl::new(agent_config(provider, registry, None));
+    let mut agent = AgentLoopImpl::new(agent_config(provider, registry, None));
     let mut messages = vec![Message::user("copy")];
 
     reset_tool_call_clone_count_for_tests("call_993_read");

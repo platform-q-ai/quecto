@@ -486,7 +486,7 @@ fn test_run_with_deadline_completes_before_timeout() {
         sandbox,
         Default::default(),
     );
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),
@@ -509,7 +509,7 @@ fn test_run_with_deadline_completes_before_timeout() {
 
     let rt = crate::interface::cli::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("test")];
-    let result = run_with_deadline(&rt, &agent, &mut messages, 30);
+    let result = run_with_deadline(&rt, &mut agent, &mut messages, 30);
     match result {
         DeadlineResult::Completed(inner) => {
             assert!(inner.is_err(), "expected provider error");
@@ -523,10 +523,10 @@ fn test_run_with_deadline_completes_before_timeout() {
 #[test]
 fn test_run_with_deadline_exercises_timeout_path() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let agent = make_test_agent(tmp.path());
+    let mut agent = make_test_agent(tmp.path());
     let rt = crate::interface::cli::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("test")];
-    let result = run_with_deadline(&rt, &agent, &mut messages, 1);
+    let result = run_with_deadline(&rt, &mut agent, &mut messages, 1);
     match result {
         DeadlineResult::Completed(inner) => {
             assert!(inner.is_err());

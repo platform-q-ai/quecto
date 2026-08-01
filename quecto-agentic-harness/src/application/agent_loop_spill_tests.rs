@@ -96,7 +96,7 @@ async fn test_spill_preserves_message_content_after_spill() {
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(MockTool::new("bash", "big output here")));
 
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),
@@ -177,7 +177,7 @@ fn history_with_old_assistant_turn(big: &str) -> Vec<Message> {
 #[tokio::test]
 async fn budget_pruned_assistant_turn_is_spilled_and_recallable() {
     let spill_store = Arc::new(MockSpillStore::default());
-    let agent = tight_budget_agent(spill_store.clone(), 200);
+    let mut agent = tight_budget_agent(spill_store.clone(), 200);
     let big = "x".repeat(2000); // ~500 tokens, over the 200-token ceiling
     let mut messages = history_with_old_assistant_turn(&big);
 
@@ -204,7 +204,7 @@ async fn budget_pruned_assistant_turn_is_spilled_and_recallable() {
 #[tokio::test]
 async fn budget_pruned_user_message_is_spilled_with_role_id() {
     let spill_store = Arc::new(MockSpillStore::default());
-    let agent = tight_budget_agent(spill_store.clone(), 200);
+    let mut agent = tight_budget_agent(spill_store.clone(), 200);
     let big = "x".repeat(2000); // ~500 tokens, over the 200-token ceiling
     let mut old_user = Message::user(&big);
     old_user.turn = Some(1);
@@ -224,7 +224,7 @@ async fn budget_pruned_user_message_is_spilled_with_role_id() {
 #[tokio::test]
 async fn ceiling_message_spill_creates_static_manifest_without_tool_calls() {
     let spill_store = Arc::new(MockSpillStore::default());
-    let agent = tight_budget_agent(spill_store.clone(), 200);
+    let mut agent = tight_budget_agent(spill_store.clone(), 200);
     let big = "x".repeat(2000);
     let mut messages = history_with_old_assistant_turn(&big);
 
@@ -245,7 +245,7 @@ async fn ceiling_message_spill_creates_static_manifest_without_tool_calls() {
 #[tokio::test]
 async fn current_user_prompt_survives_tight_budget() {
     let spill_store = Arc::new(MockSpillStore::default());
-    let agent = tight_budget_agent(spill_store.clone(), 50);
+    let mut agent = tight_budget_agent(spill_store.clone(), 50);
     let big_prompt = "y".repeat(600); // ~150 tokens, over the 50-token ceiling
     // Earlier conversation comes first so the prompt under test is trailing
     // but NOT the first user message — a "pin the first user message only"
@@ -340,7 +340,7 @@ async fn failed_tool_spill_leaves_no_spill_id_and_blocks_collapse() {
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(MockTool::new("bash", "irreplaceable output")));
 
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),
@@ -400,7 +400,7 @@ async fn ephemeral_session_spills_both_tool_output_and_conversation_messages() {
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(MockTool::new("bash", "big output here")));
 
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),

@@ -432,7 +432,7 @@ use agent_tool_registry::{ToolRegistryArgs, ToolRegistryBuild, build_tool_regist
 
 pub(crate) fn run_agent_session(
     base_dir: &std::path::Path,
-    agent: AgentLoopImpl,
+    mut agent: AgentLoopImpl,
     flags: &AgentFlags,
     out: &mut AgentOutput<'_>,
 ) -> i32 {
@@ -486,7 +486,7 @@ pub(crate) fn run_agent_session(
     messages.push(Message::user(message.to_string()));
 
     let agent_result = if let Some(secs) = flags.max_time {
-        match run_with_deadline(&rt, &agent, &mut messages, secs) {
+        match run_with_deadline(&rt, &mut agent, &mut messages, secs) {
             DeadlineResult::Completed(inner) => inner,
             DeadlineResult::TimedOut => {
                 out.stderr.push_str("max-time exceeded\n");
@@ -542,7 +542,7 @@ use crate::interface::shared::scrub_ephemeral_spill;
 /// per-tool and HTTP client timeouts), then the scope exits.
 pub(crate) fn run_with_deadline(
     rt: &tokio::runtime::Runtime,
-    agent: &AgentLoopImpl,
+    agent: &mut AgentLoopImpl,
     messages: &mut Vec<Message>,
     timeout_secs: u64,
 ) -> DeadlineResult {

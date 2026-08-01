@@ -540,7 +540,7 @@ impl AgentLoopImpl {
     }
 
     /// Run the LLM-tool loop.
-    async fn run_loop(&self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
+    async fn run_loop(&mut self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
         self.mark_turn_in_flight();
         let mut tool_defs = self.current_tool_definitions();
         let mut iterations: u32 = 0;
@@ -705,7 +705,7 @@ impl AgentLoopImpl {
 
 impl AgentLoop for AgentLoopImpl {
     fn process<'a>(
-        &'a self,
+        &'a mut self,
         messages: &'a mut Vec<Message>,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<AgentResult, DomainError>> + Send + 'a>>
     {

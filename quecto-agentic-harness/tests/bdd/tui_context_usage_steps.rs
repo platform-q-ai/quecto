@@ -71,7 +71,7 @@ fn run_context_turn(world: &mut QuectoWorld, streaming: bool) {
         stop_reason: None,
         thinking_blocks: vec![],
     });
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider as Arc<dyn LlmProvider>,
         tool_registry: Box::new(ToolRegistryImpl::new()),
         model: "test-model".to_string(),

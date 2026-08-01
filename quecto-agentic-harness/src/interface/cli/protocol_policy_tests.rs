@@ -19,3 +19,26 @@ fn set_tool_policy_command_deserializes_scope_and_mode() {
         other => panic!("expected SetToolPolicy, got {other:?}"),
     }
 }
+
+#[test]
+fn tool_policy_apply_mode_wire_uses_camel_case() {
+    let mode = crate::domain::tool::ToolPolicyApplyMode::AtNextTurnBoundary;
+    let value = serde_json::to_value(mode).expect("serialize apply mode");
+    assert_eq!(value, serde_json::json!("atNextTurnBoundary"));
+
+    let mode = crate::domain::tool::ToolPolicyApplyMode::ImmediateIfIdle;
+    let value = serde_json::to_value(mode).expect("serialize apply mode");
+    assert_eq!(value, serde_json::json!("immediateIfIdle"));
+
+    let command_mode: ToolPolicyApplyModeCommand =
+        serde_json::from_value(serde_json::json!("atNextTurnBoundary"))
+            .expect("parse command mode");
+    assert_eq!(command_mode, ToolPolicyApplyModeCommand::AtNextTurnBoundary);
+
+    let reconciliation = crate::domain::tool::ToolPolicyReconciliation {
+        mode: crate::domain::tool::ToolPolicyApplyMode::AtNextTurnBoundary,
+        results: vec![],
+    };
+    let wire = serde_json::to_value(&reconciliation).expect("serialize reconciliation");
+    assert_eq!(wire["mode"], "atNextTurnBoundary");
+}

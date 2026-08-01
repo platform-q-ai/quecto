@@ -1,10 +1,10 @@
 use super::agent_loop::AgentLoopImpl;
 use crate::domain::agent::AgentProgressEvent;
 use crate::domain::tool::{
-    ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
-    ToolPolicyMutationStatus, ToolPolicyReconciliation,
+    ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus,
+    ToolPolicyReconciliation,
 };
-use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolCatalogueEntry};
+use crate::domain::tool_descriptor::ToolCatalogueEntry;
 use std::sync::atomic::Ordering;
 
 impl AgentLoopImpl {
@@ -159,27 +159,6 @@ impl AgentLoopImpl {
         }
     }
 
-    fn entry_scope_ceiling(entry: &ToolCatalogueEntry) -> ProfileAvailabilityScope {
-        let default = ProfileAvailabilityScope::from_enabled(entry.default_enabled);
-        let configured = entry
-            .configured_enabled
-            .map(ProfileAvailabilityScope::from_enabled)
-            .unwrap_or(ProfileAvailabilityScope::Both);
-        let session = entry
-            .session_enabled
-            .map(ProfileAvailabilityScope::from_enabled)
-            .unwrap_or(ProfileAvailabilityScope::Both);
-        let restriction = if entry.explicit_restriction.is_some() {
-            ProfileAvailabilityScope::None
-        } else {
-            ProfileAvailabilityScope::Both
-        };
-        default
-            .intersection(configured)
-            .intersection(session)
-            .intersection(restriction)
-    }
-
     pub fn queue_tool_policy_mutation(&self, mutations: &[ToolPolicyMutation]) {
         let mut pending = self
             .pending_tool_policy_mutations
@@ -189,7 +168,7 @@ impl AgentLoopImpl {
     }
 
     fn drain_pending_tool_policy_mutations(
-        &self,
+        &mut self,
         clear_in_flight: bool,
     ) -> Option<ToolPolicyReconciliation> {
         let mutations = {
@@ -209,194 +188,24 @@ impl AgentLoopImpl {
             self.clear_turn_in_flight();
         }
 
-        let mut before = self.tool_catalogue_entries();
-        if before.is_empty() {
-            before = self
-                .tool_catalog()
-                .definitions()
-                .iter()
-                .map(|definition| ToolCatalogueEntry {
-                    stable_id: definition.name.to_string().into(),
-                    name: definition.name.to_string().into(),
-                    label: definition.name.to_string().into(),
-                    description: definition.description.to_string().into(),
-                    input_schema: definition.parameters_schema.to_string().into(),
-                    source: crate::domain::tool_descriptor::ToolSource::Runtime,
-                    owner: "runtime".into(),
-                    provider_id: "runtime".into(),
-                    version: None,
-                    lifecycle: crate::domain::tool_descriptor::ToolLifecycleKind::RuntimeLoadable,
-                    configurable: true,
-                    default_enabled: true,
-                    configured_enabled: None,
-                    profile_enabled: None,
-                    profile_scope: None,
-                    session_enabled: None,
-                    explicit_restriction: None,
-                    runtime_availability: crate::domain::tool_descriptor::ToolAvailability::Enabled,
-                    effective_enabled: true,
-                    effective_scope: crate::domain::tool_descriptor::ProfileAvailabilityScope::Both,
-                    effective_parent_enabled: true,
-                    effective_child_enabled: true,
-                    health: crate::domain::tool_descriptor::ToolHealth::Ok,
-                })
-                .collect();
-        }
-        {
-            let disabled = self
-                .runtime_disabled_tools
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            for mutation in &mutations {
-                if mutation.availability.is_enabled()
-                    && before.iter().all(|entry| entry.name != mutation.name)
-                    && disabled.contains(mutation.name.as_str())
-                {
-                    before.push(ToolCatalogueEntry {
-                        stable_id: mutation.name.to_string().into(),
-                        name: mutation.name.to_string().into(),
-                        label: mutation.name.to_string().into(),
-                        description: "".into(),
-                        input_schema: r#"{"type":"object"}"#.into(),
-                        source: crate::domain::tool_descriptor::ToolSource::Runtime,
-                        owner: "runtime".into(),
-                        provider_id: "runtime".into(),
-                        version: None,
-                        lifecycle:
-                            crate::domain::tool_descriptor::ToolLifecycleKind::RuntimeLoadable,
-                        configurable: true,
-                        default_enabled: true,
-                        configured_enabled: None,
-                        profile_enabled: None,
-                        profile_scope: None,
-                        session_enabled: None,
-                        explicit_restriction: None,
-                        runtime_availability:
-                            crate::domain::tool_descriptor::ToolAvailability::Disabled,
-                        effective_enabled: false,
-                        effective_scope:
-                            crate::domain::tool_descriptor::ProfileAvailabilityScope::None,
-                        effective_parent_enabled: false,
-                        effective_child_enabled: false,
-                        health: crate::domain::tool_descriptor::ToolHealth::Disabled,
-                    });
-                }
-            }
-        }
-        let disabled_before = self
-            .runtime_disabled_tools
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        {
-            let mut disabled = self
-                .runtime_disabled_tools
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let mut enabled = self
-                .runtime_enabled_tools
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let mut scopes = self
-                .runtime_policy_scopes
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            for mutation in &mutations {
-                let before_entry = before.iter().find(|entry| entry.name == mutation.name);
-                if before_entry.is_some_and(|entry| entry.explicit_restriction.is_none()) {
-                    scopes.insert(mutation.name.to_string(), mutation.scope);
-                    if mutation.scope.allows_parent() {
-                        disabled.remove(mutation.name.as_str());
-                        enabled.insert(mutation.name.to_string());
-                    } else {
-                        disabled.insert(mutation.name.to_string());
-                        enabled.remove(mutation.name.as_str());
-                    }
-                } else if mutation.scope == ProfileAvailabilityScope::None {
-                    disabled.insert(mutation.name.to_string());
-                    enabled.remove(mutation.name.as_str());
-                }
-            }
-        }
-        let mut after = self.tool_catalogue_entries();
-        if after.is_empty() {
-            after = before.clone();
-        }
-        let results = mutations
-            .iter()
-            .map(|mutation| {
-                let before_entry = before
-                    .iter()
-                    .find(|entry| entry.name == mutation.name)
-                    .cloned();
-                let mut after_entry = after
-                    .iter()
-                    .find(|entry| entry.name == mutation.name)
-                    .cloned();
-                let status = match before_entry.as_ref() {
-                    None => ToolPolicyMutationStatus::UnknownTool,
-                    Some(entry)
-                        if !mutation
-                            .scope
-                            .is_subset_of(Self::entry_scope_ceiling(entry)) =>
-                    {
-                        ToolPolicyMutationStatus::BlockedByRestriction
-                    }
-                    Some(entry)
-                        if entry.effective_scope == mutation.scope
-                            && !(mutation.scope.allows_parent()
-                                && disabled_before.contains(mutation.name.as_str())) =>
-                    {
-                        ToolPolicyMutationStatus::AlreadyInState
-                    }
-                    Some(_) => ToolPolicyMutationStatus::Applied,
-                };
-                if let Some(entry) = after_entry.as_mut() {
-                    match status {
-                        ToolPolicyMutationStatus::Applied => {
-                            entry.profile_scope = Some(mutation.scope);
-                            entry.profile_enabled = Some(mutation.scope.is_enabled());
-                            entry.effective_scope = mutation.scope;
-                            entry.effective_parent_enabled = mutation.scope.allows_parent();
-                            entry.effective_child_enabled = mutation.scope.allows_child();
-                            entry.effective_enabled = mutation.scope.is_enabled();
-                            entry.runtime_availability = mutation.availability;
-                        }
-                        ToolPolicyMutationStatus::BlockedByRestriction => {
-                            entry.effective_scope = ProfileAvailabilityScope::None;
-                            entry.effective_parent_enabled = false;
-                            entry.effective_child_enabled = false;
-                            entry.effective_enabled = false;
-                        }
-                        _ => {}
-                    }
-                }
-                ToolPolicyMutationResult {
-                    name: mutation.name.clone(),
-                    requested_availability: mutation.availability,
-                    requested_scope: mutation.scope,
-                    status,
-                    before: before_entry,
-                    after: after_entry,
-                    reason: mutation.reason.clone(),
-                }
-            })
-            .collect();
-        let reconciliation = ToolPolicyReconciliation {
-            mode: ToolPolicyApplyMode::AtNextTurnBoundary,
-            results,
-        };
+        // Apply through the same registry path as immediate mutations so
+        // catalogue entries, runtime availability, and event `after` snapshots
+        // stay consistent. Overlays are updated only for Applied results.
+        let reconciliation = self
+            .tool_registry
+            .apply_tool_policy_mutations(&mutations, ToolPolicyApplyMode::AtNextTurnBoundary);
+        self.record_applied_tool_policy_overlay(&reconciliation);
         self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
         Some(reconciliation)
     }
 
     pub(super) fn drain_tool_policy_mutations_at_internal_boundary(
-        &self,
+        &mut self,
     ) -> Option<ToolPolicyReconciliation> {
         self.drain_pending_tool_policy_mutations(false)
     }
 
-    pub fn drain_tool_policy_mutations_at_boundary(&self) -> Option<ToolPolicyReconciliation> {
+    pub fn drain_tool_policy_mutations_at_boundary(&mut self) -> Option<ToolPolicyReconciliation> {
         self.drain_pending_tool_policy_mutations(true)
     }
 }

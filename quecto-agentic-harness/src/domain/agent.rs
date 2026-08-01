@@ -167,7 +167,7 @@ pub trait AgentLoop: Send + Sync {
     /// Process a conversation: send messages to the LLM, execute tool calls,
     /// and return the final assistant response with metadata.
     fn process<'a>(
-        &'a self,
+        &'a mut self,
         messages: &'a mut Vec<super::message::Message>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<AgentResult, DomainError>> + Send + 'a>,

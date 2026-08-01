@@ -192,7 +192,7 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
         // Run the real agent-loop spill + count-collapse path. No test-created
         // spill id, entry, or collapsed shape: production assigns the id,
         // persists the full content under the active key, and emits the stub.
-        let agent = AgentLoopImpl::new(AgentLoopConfig {
+        let mut agent = AgentLoopImpl::new(AgentLoopConfig {
             provider: Arc::new(Issue1093SeedProvider),
             tool_registry: Box::new(ToolRegistryImpl::new()),
             model: "issue-1093-seed".into(),

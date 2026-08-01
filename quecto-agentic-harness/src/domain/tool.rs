@@ -210,6 +210,7 @@ impl From<ProfileAvailabilityScope> for ToolAvailability {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ToolPolicyApplyMode {
     ImmediateIfIdle,
     AtNextTurnBoundary,

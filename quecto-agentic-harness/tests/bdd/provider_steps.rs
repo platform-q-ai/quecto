@@ -132,7 +132,7 @@ fn when_agent_builds_request_for_model(world: &mut QuectoWorld) {
         stop_reason: None,
         thinking_blocks: vec![],
     });
-    let agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
         provider: provider.clone() as Arc<dyn LlmProvider>,
         tool_registry: Box::new(ToolRegistryImpl::new()),
         model: "fireworks/qwen3p7-plus".to_string(),
