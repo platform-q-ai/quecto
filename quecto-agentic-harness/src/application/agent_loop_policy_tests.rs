@@ -64,10 +64,7 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
                 .cached_definitions
                 .iter()
                 .any(|definition| definition.name.as_ref() == mutation.name);
-            if before_enabled && !mutation.scope.allows_parent() {
-                self.cached_definitions
-                    .retain(|definition| definition.name.as_ref() != mutation.name);
-            } else if !before_enabled && mutation.scope.allows_parent() {
+            if !before_enabled && mutation.scope.allows_parent() {
                 self.cached_definitions
                     .push(crate::domain::tool::ToolDefinition {
                         name: mutation.name.to_string().into(),
