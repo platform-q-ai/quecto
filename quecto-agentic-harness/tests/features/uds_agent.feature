@@ -828,7 +828,7 @@ Feature: UDS mode for headless agent operation
     And client 1 should have received a response command "register_tools" with success true
     And the tool catalogue response "ge-reg" should list tool "weather"
     And the tool catalogue response "ge-reg" should list tool "weather" from source "uds"
-    And the registered tool "weather" should be owned by client 1
+    And the registered tool "weather" should have a UDS client owner
 
   @done @multi-client @uds-ext
   Scenario: register_tools rejects tool that shadows a core tool

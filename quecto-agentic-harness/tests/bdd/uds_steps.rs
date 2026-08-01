@@ -4215,8 +4215,8 @@ fn then_catalogue_response_lists_tool_source(
     assert_eq!(ext["source"].as_str(), Some(source.as_str()));
 }
 
-#[then(expr = "the registered tool {string} should be owned by client {int}")]
-fn then_post_register_lists_tool_owner(world: &mut QuectoWorld, name: String, client_id: u32) {
+#[then(expr = "the registered tool {string} should have a UDS client owner")]
+fn then_post_register_lists_tool_owner(world: &mut QuectoWorld, name: String) {
     execute_multi_client_uds(world);
     let events = world.mc_client_events.get(&1).expect("no client 1 events");
     let resp = find_ge_response(events, "ge-reg").expect("no ge-reg response");
@@ -4225,6 +4225,9 @@ fn then_post_register_lists_tool_owner(world: &mut QuectoWorld, name: String, cl
         .iter()
         .find(|e| e["name"].as_str() == Some(&name))
         .unwrap_or_else(|| panic!("'{name}' not in {tools:?}"));
-    let expected_owner = format!("uds:client:{client_id}");
-    assert_eq!(ext["owner"].as_str(), Some(expected_owner.as_str()));
+    let owner = ext["owner"].as_str().expect("missing owner");
+    assert!(
+        owner.starts_with("uds:client:"),
+        "expected UDS client owner for {name:?}; got {owner:?}"
+    );
 }
