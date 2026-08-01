@@ -350,7 +350,7 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd result should contain "cli:busy-stats"
 
   Scenario: get_tool_catalogue against a busy child accepts the connect-time snapshot
-    Given an AgentCmdTool with a busy tool catalogue snapshot registry entry "busy-tools880"
+    Given an AgentCmdTool with a busy extensions snapshot registry entry "busy-tools880"
     When I execute agent_cmd with '{"agent_id":"busy-tools880","command":"get_tool_catalogue"}'
     Then the agent_cmd result should not be an error
     And the agent_cmd response command "get_tool_catalogue" should include a "tools" array

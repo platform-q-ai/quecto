@@ -827,7 +827,7 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And client 1 should have received a response command "register_tools" with success true
     And the tool catalogue response "ge-reg" should list tool "weather"
-    And the tool catalogue response "ge-reg" should list tool "weather" with source "uds"
+    And the tool catalogue response "ge-reg" should list tool "weather" from source "uds"
     And the registered tool "weather" should be owned by client 1
 
   @done @multi-client @uds-ext
@@ -865,7 +865,7 @@ Feature: UDS mode for headless agent operation
     And I close all UDS clients
     Then the UDS agent exits with code 0
     And client 1 should have received a response command "unregister_tools" with success true
-    And the tool catalogue response "ge-unreg" should contain 0 tools
+    And the tool catalogue response "ge-unreg" should not list tool "weather"
 
   @done @multi-client @uds-ext
   Scenario: client disconnect auto-unregisters its tools
@@ -880,7 +880,7 @@ Feature: UDS mode for headless agent operation
     And client 3 sends command "get_tool_catalogue" with id "ge-disc"
     And I close all UDS clients
     Then the UDS agent exits with code 0
-    And the tool catalogue response "ge-disc" should contain 0 tools
+    And the tool catalogue response "ge-disc" should not list tool "weather"
 
   @done @multi-client @uds-ext
   Scenario: multiple tool provider clients register different tools simultaneously

@@ -2837,6 +2837,38 @@ fn then_get_tool_catalogue_not_lists(world: &mut QuectoWorld, name: String) {
     );
 }
 
+#[then(expr = "the get_tool_catalogue response for {string} should include rich catalogue state")]
+fn then_get_tool_catalogue_entry_has_rich_state(world: &mut QuectoWorld, name: String) {
+    execute_uds(world);
+    let resp = find_get_tool_catalogue_response(&world.agent_events, None)
+        .expect("no get_tool_catalogue response");
+    let tools = resp["data"]["tools"]
+        .as_array()
+        .expect("tools not an array");
+    let entry = tools
+        .iter()
+        .find(|e| e["name"].as_str() == Some(&name))
+        .unwrap_or_else(|| panic!("'{name}' not in {tools:?}"));
+    for field in [
+        "stableId",
+        "label",
+        "description",
+        "inputSchema",
+        "source",
+        "owner",
+        "providerId",
+        "lifecycle",
+        "runtimeAvailability",
+        "effectiveEnabled",
+        "health",
+    ] {
+        assert!(
+            entry.get(field).is_some(),
+            "expected rich catalogue field {field:?} in {entry:?}"
+        );
+    }
+}
+
 // ─── tool_catalogue_changed event assertions ──────────────────────────────────────
 
 #[then(expr = "client {int} should have received a tool catalogue update listing tool {string}")]
@@ -3281,6 +3313,27 @@ fn then_catalogue_response_count(world: &mut QuectoWorld, response_id: String, c
         .unwrap_or_else(|| panic!("no {response_id} response"));
     let tools = resp["data"]["tools"].as_array().expect("no tools");
     assert_eq!(tools.len(), count as usize);
+}
+
+#[then(expr = "the tool catalogue response {string} should not list tool {string}")]
+fn then_catalogue_response_not_lists_tool(
+    world: &mut QuectoWorld,
+    response_id: String,
+    name: String,
+) {
+    execute_multi_client_uds(world);
+    let client_id = if response_id == "ge-disc" { 3 } else { 1 };
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .unwrap_or_else(|| panic!("no client {client_id} events"));
+    let resp = find_ge_response(events, &response_id)
+        .unwrap_or_else(|| panic!("no {response_id} response"));
+    let tools = resp["data"]["tools"].as_array().expect("no tools");
+    assert!(
+        !tools.iter().any(|e| e["name"].as_str() == Some(&name)),
+        "'{name}' unexpectedly present in {tools:?}"
+    );
 }
 
 #[then(

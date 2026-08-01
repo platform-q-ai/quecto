@@ -45,7 +45,7 @@ pub(super) struct AcceptedControl {
 /// A cheap substring gate short-circuits the JSON parse for the overwhelmingly
 /// common unflagged line before doing any allocation.
 pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
-    if !line.contains(r#""accept""#) {
+    if !line.contains("accept") {
         return None;
     }
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
