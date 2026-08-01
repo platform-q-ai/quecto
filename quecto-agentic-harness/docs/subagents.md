@@ -470,7 +470,8 @@ state (completed / errored / exited) the parent automatically receives a single
   the child's output, e.g.
   `Agent 'worker' completed and is ready for inspection`,
   `Agent 'linter' failed: …`, or
-  `Agent 'worker' exited unexpectedly`.
+  `Agent 'worker' exited unexpectedly`. A failed note means terminal/run-level
+  failure (such as `agent_error`), not every recoverable child tool `isError`.
 - **Coalesced + deduplicated** — multiple completions from the same child
   collapse to one note (latest wins), so a noisy child costs at most one extra
   turn.
@@ -493,6 +494,10 @@ re-run of the same child will auto-note again.
 
 In both cases the note/await result is a **summary only**; to read the child's
 full output call `get_messages` (optionally with `count` for the last N messages).
+Intermediate child tool errors are the child's problem: they remain visible in
+the child transcript/tool stream but do not interrupt the parent, set
+`get_subagents.lastError`, or mark the child `status:error` unless the run later
+emits a true terminal failure signal.
 
 ### What you can see without `await`
 

@@ -82,24 +82,9 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             entry.updated_at = Instant::now();
         }
         "tool_execution_end" => {
-            let is_error = value
-                .get("isError")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let tool_name = value
-                .get("toolName")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            if is_error {
-                entry.status =
-                    apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::RunFailed);
-                entry.last_error = Some(truncate_string(
-                    &format!("tool '{}' returned error", tool_name),
-                    MAX_STORED_STRING,
-                ));
-            } else {
-                entry.last_error = None;
-            }
+            // Recoverable tool errors are child-local. They should not poison
+            // the parent-facing run status/error fields; only terminal
+            // run-level failures (`agent_error`) do that.
             entry.updated_at = Instant::now();
         }
         "workflow_state" => {
@@ -437,7 +422,6 @@ pub fn should_broadcast_state_changed_after_event(value: &serde_json::Value) -> 
     match value.get("type").and_then(|v| v.as_str()) {
         Some("agent_start") => true,
         Some("agent_end") => true,
-        Some("tool_execution_end") => value.get("isError").and_then(|v| v.as_bool()) == Some(true),
         Some("response") => value.get("command").and_then(|v| v.as_str()) == Some("agent_error"),
         _ => false,
     }
@@ -560,14 +544,14 @@ fn apply_and_notify(
     let sequence = update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, value));
     retry_pending_stalls(registry, notify_tx);
     let workflow_mode = entry_workflow_mode(registry, agent_id);
-    // A tool failure remains the observed outcome for this turn. `agent_end`
+    // A terminal run error remains the observed outcome for this turn. `agent_end`
     // merely closes the turn and must not follow it with a success-like idle note.
     if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
         && registry
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(agent_id)
-            .is_some_and(|entry| entry.last_error.is_some())
+            .is_some_and(|entry| entry.run_error.is_some())
     {
         return;
     }
@@ -649,25 +633,7 @@ fn notify_from_parsed(
                 agent_id: agent_id.to_string(),
             })
         }
-        "tool_execution_end" => {
-            let is_error = value
-                .get("isError")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if is_error {
-                let tool_name = value
-                    .get("toolName")
-                    .and_then(|v| v.as_str())
-                    .map(|s| truncate_string(s, MAX_STORED_STRING))
-                    .unwrap_or_else(|| "unknown".to_string());
-                Some(SubagentNotification::Errored {
-                    agent_id: agent_id.to_string(),
-                    error: format!("tool '{}' returned error", tool_name),
-                })
-            } else {
-                None
-            }
-        }
+        "tool_execution_end" => None,
         "response" if value.get("command").and_then(|v| v.as_str()) == Some("agent_error") => {
             Some(SubagentNotification::Errored {
                 agent_id: agent_id.to_string(),
@@ -734,6 +700,10 @@ mod completion_tests;
 #[cfg(test)]
 #[path = "tests/subagent_monitor_stall_race_tests.rs"]
 mod stall_race_tests;
+
+#[cfg(test)]
+#[path = "tests/subagent_monitor_tool_error_tests.rs"]
+mod tool_error_tests;
 
 #[cfg(test)]
 #[path = "subagent_monitor_bounded_read_tests.rs"]

@@ -80,7 +80,7 @@ pub struct SubagentEntry {
     pub status: SubagentStatus,
     /// Name of the last tool being executed (from tool_execution_start).
     pub last_tool: Option<String>,
-    /// Description of the last error (from tool_execution_end with is_error or agent_error).
+    /// Description of the last terminal/run-level error (for example agent_error).
     pub last_error: Option<String>,
     /// Run-level agent error (for example provider/model failure). Unlike a tool
     /// error, this means the prompt run failed and `agent_cmd await` should
