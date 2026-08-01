@@ -29,15 +29,21 @@ impl AgentLoopImpl {
                 .definitions_for(self.tool_profile_context)
                 .iter()
                 .filter(|definition| {
-                    scopes.get(definition.name.as_ref()).map_or(
-                        !disabled.contains(definition.name.as_ref()),
+                    // Scope overlays are authoritative for profile visibility.
+                    // `runtime_enabled_tools` must not resurrect parent-only
+                    // (or otherwise out-of-profile) tools under the wrong profile.
+                    scopes.get(definition.name.as_ref()).map_or_else(
+                        || {
+                            !disabled.contains(definition.name.as_ref())
+                                || enabled.contains(definition.name.as_ref())
+                        },
                         |scope| match self.tool_profile_context {
                             crate::domain::tool::ToolProfileContext::Parent => {
                                 scope.allows_parent()
                             }
                             crate::domain::tool::ToolProfileContext::Child => scope.allows_child(),
                         },
-                    ) || enabled.contains(definition.name.as_ref())
+                    )
                 })
                 .cloned()
                 .collect();
@@ -45,7 +51,8 @@ impl AgentLoopImpl {
         catalogue_entries
             .into_iter()
             .filter(|entry| {
-                let profile_enabled = scopes.get(entry.name.as_ref()).map_or_else(
+                let scoped = scopes.get(entry.name.as_ref());
+                let profile_enabled = scoped.map_or_else(
                     || match self.tool_profile_context {
                         crate::domain::tool::ToolProfileContext::Parent => {
                             entry.effective_parent_enabled
@@ -59,7 +66,10 @@ impl AgentLoopImpl {
                         crate::domain::tool::ToolProfileContext::Child => scope.allows_child(),
                     },
                 );
-                (profile_enabled || enabled.contains(entry.name.as_ref()))
+                // Force-enable only when no scope overlay is present; a Parent
+                // scope must not leak into Child-profile definitions via enabled.
+                let force_enabled = scoped.is_none() && enabled.contains(entry.name.as_ref());
+                (profile_enabled || force_enabled)
                     && entry.explicit_restriction.is_none()
                     && (entry.profile_scope.is_some() || !disabled.contains(entry.name.as_ref()))
             })
@@ -149,12 +159,23 @@ impl AgentLoopImpl {
                 continue;
             }
             scopes.insert(result.name.to_string(), result.requested_scope);
-            if result.requested_scope.allows_parent() {
-                disabled.remove(result.name.as_str());
-                enabled.insert(result.name.to_string());
-            } else {
-                disabled.insert(result.name.to_string());
-                enabled.remove(result.name.as_str());
+            // `runtime_enabled_tools` is a profile-agnostic force-enable. Only
+            // Both (visible on every profile) may enter it. Parent-only must
+            // rely on the scope overlay so Child-profile agents stay hidden.
+            match result.requested_scope {
+                crate::domain::tool_descriptor::ProfileAvailabilityScope::Both => {
+                    disabled.remove(result.name.as_str());
+                    enabled.insert(result.name.to_string());
+                }
+                crate::domain::tool_descriptor::ProfileAvailabilityScope::Parent => {
+                    disabled.remove(result.name.as_str());
+                    enabled.remove(result.name.as_str());
+                }
+                crate::domain::tool_descriptor::ProfileAvailabilityScope::Child
+                | crate::domain::tool_descriptor::ProfileAvailabilityScope::None => {
+                    disabled.insert(result.name.to_string());
+                    enabled.remove(result.name.as_str());
+                }
             }
         }
     }

@@ -110,3 +110,75 @@ fn tool_result_and_image_block_construct() {
     assert!(!r.is_error);
     assert_eq!(r.image_blocks[0].mime_type, "image/png");
 }
+
+#[test]
+fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
+    // set_tool_policy ack and tool_policy_changed results serialize the domain
+    // structs directly — field names and status must match protocol camelCase.
+    let result = ToolPolicyMutationResult {
+        name: "alpha".into(),
+        requested_availability: ToolAvailability::Enabled,
+        requested_scope: ProfileAvailabilityScope::Parent,
+        status: ToolPolicyMutationStatus::Applied,
+        before: None,
+        after: None,
+        reason: "test".into(),
+    };
+    let wire = serde_json::to_value(&result).expect("serialize mutation result");
+    assert!(
+        wire.get("requestedAvailability").is_some(),
+        "expected camelCase requestedAvailability, got keys: {:?}",
+        wire.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
+    assert!(wire.get("requested_availability").is_none());
+    assert!(
+        wire.get("requestedScope").is_some(),
+        "expected camelCase requestedScope"
+    );
+    assert!(wire.get("requested_scope").is_none());
+    assert_eq!(wire["status"], "applied");
+    assert_eq!(wire["requestedAvailability"], "enabled");
+    assert_eq!(wire["requestedScope"], "parent");
+
+    let already = ToolPolicyMutationResult {
+        status: ToolPolicyMutationStatus::AlreadyInState,
+        ..result.clone()
+    };
+    let already_wire = serde_json::to_value(&already).expect("serialize already-in-state");
+    assert_eq!(already_wire["status"], "alreadyInState");
+
+    let blocked = ToolPolicyMutationResult {
+        status: ToolPolicyMutationStatus::BlockedByRestriction,
+        ..result.clone()
+    };
+    let blocked_wire = serde_json::to_value(&blocked).expect("serialize blocked");
+    assert_eq!(blocked_wire["status"], "blockedByRestriction");
+
+    let unknown = ToolPolicyMutationResult {
+        status: ToolPolicyMutationStatus::UnknownTool,
+        ..result
+    };
+    let unknown_wire = serde_json::to_value(&unknown).expect("serialize unknown");
+    assert_eq!(unknown_wire["status"], "unknownTool");
+
+    let reconciliation = ToolPolicyReconciliation {
+        mode: ToolPolicyApplyMode::ImmediateIfIdle,
+        results: vec![ToolPolicyMutationResult {
+            name: "beta".into(),
+            requested_availability: ToolAvailability::Disabled,
+            requested_scope: ProfileAvailabilityScope::None,
+            status: ToolPolicyMutationStatus::Applied,
+            before: None,
+            after: None,
+            reason: "off".into(),
+        }],
+    };
+    let recon_wire = serde_json::to_value(&reconciliation).expect("serialize reconciliation");
+    assert_eq!(recon_wire["mode"], "immediateIfIdle");
+    assert_eq!(
+        recon_wire["results"][0]["requestedAvailability"],
+        "disabled"
+    );
+    assert_eq!(recon_wire["results"][0]["requestedScope"], "none");
+    assert_eq!(recon_wire["results"][0]["status"], "applied");
+}

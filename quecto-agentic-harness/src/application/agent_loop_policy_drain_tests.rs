@@ -192,3 +192,109 @@ fn queued_child_scope_mutation_reports_and_applies_child_scope() {
     assert_eq!(child_defs.len(), 1);
     assert_eq!(child_defs[0].name.as_ref(), "alpha");
 }
+
+#[test]
+fn parent_only_applied_mutation_stays_hidden_on_child_profile_agent() {
+    // Parent-only Applied overlays must not leak into Child-profile model-visible
+    // definitions via runtime_enabled_tools (which previously OR'd past scope).
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+    agent.tool_profile_context = ToolProfileContext::Child;
+
+    let reconciliation = agent
+        .request_tool_policy_mutation(
+            &[ToolPolicyMutation::set_scope(
+                "alpha",
+                ProfileAvailabilityScope::Parent,
+                "parent only",
+            )],
+            ToolPolicyApplyMode::ImmediateIfIdle,
+        )
+        .expect("immediate parent-only scope applies");
+
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    let after = reconciliation.results[0]
+        .after
+        .as_ref()
+        .expect("applied mutation includes after snapshot");
+    assert_eq!(after.effective_scope, ProfileAvailabilityScope::Parent);
+    assert!(after.effective_parent_enabled);
+    assert!(!after.effective_child_enabled);
+
+    // Scope overlay records Parent, but the enabled overlay must not force the
+    // tool into Child-profile catalogues / definitions.
+    assert_eq!(
+        agent
+            .runtime_policy_scopes
+            .lock()
+            .unwrap()
+            .get("alpha")
+            .copied(),
+        Some(ProfileAvailabilityScope::Parent)
+    );
+    assert!(
+        !agent
+            .runtime_enabled_tools
+            .lock()
+            .unwrap()
+            .contains("alpha"),
+        "parent-only Applied must not enter runtime_enabled_tools"
+    );
+    assert!(
+        agent.current_tool_definitions().is_empty(),
+        "child-profile agent must hide parent-only tools even after Applied overlay"
+    );
+
+    // Parent-profile agents still see Parent-only tools via the scope overlay.
+    agent.tool_profile_context = ToolProfileContext::Parent;
+    let parent_defs = agent.current_tool_definitions();
+    assert_eq!(parent_defs.len(), 1);
+    assert_eq!(parent_defs[0].name.as_ref(), "alpha");
+}
+
+#[test]
+fn both_scope_applied_mutation_enters_enabled_overlay_and_stays_visible() {
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+    // Start from a disabled tool so Both is a real Applied transition (not AlreadyInState).
+    let disabled = agent
+        .request_tool_policy_mutation(
+            &[ToolPolicyMutation::disable("alpha", "start disabled")],
+            ToolPolicyApplyMode::ImmediateIfIdle,
+        )
+        .expect("immediate disable applies");
+    assert_eq!(
+        disabled.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    assert!(agent.current_tool_definitions().is_empty());
+
+    let reconciliation = agent
+        .request_tool_policy_mutation(
+            &[ToolPolicyMutation::set_scope(
+                "alpha",
+                ProfileAvailabilityScope::Both,
+                "both profiles",
+            )],
+            ToolPolicyApplyMode::ImmediateIfIdle,
+        )
+        .expect("immediate both scope applies");
+
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    assert!(
+        agent
+            .runtime_enabled_tools
+            .lock()
+            .unwrap()
+            .contains("alpha"),
+        "Both Applied may enter runtime_enabled_tools"
+    );
+    assert_eq!(agent.current_tool_definitions()[0].name.as_ref(), "alpha");
+
+    agent.tool_profile_context = ToolProfileContext::Child;
+    assert_eq!(agent.current_tool_definitions()[0].name.as_ref(), "alpha");
+}
