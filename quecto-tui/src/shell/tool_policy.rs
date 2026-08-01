@@ -55,7 +55,11 @@ impl App {
             .iter()
             .map(|entry| {
                 let id = catalogue_key(entry);
-                let scope = entry.profile_scope.unwrap_or(ToolScope::None).into();
+                let scope = entry
+                    .profile_scope
+                    .or_else(|| entry.profile_enabled.map(legacy_profile_enabled_scope))
+                    .unwrap_or(ToolScope::None)
+                    .into();
                 (id, scope)
             })
             .collect::<BTreeMap<_, _>>();
@@ -119,5 +123,13 @@ fn catalogue_key(entry: &ToolCatalogueEntry) -> String {
         entry.name.clone()
     } else {
         entry.stable_id.clone()
+    }
+}
+
+fn legacy_profile_enabled_scope(enabled: bool) -> ToolScope {
+    if enabled {
+        ToolScope::Both
+    } else {
+        ToolScope::None
     }
 }

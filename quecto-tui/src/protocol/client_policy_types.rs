@@ -48,6 +48,8 @@ pub struct ToolCatalogueEntry {
     #[serde(default)]
     pub profile_scope: Option<ToolScope>,
     #[serde(default)]
+    pub profile_enabled: Option<bool>,
+    #[serde(default)]
     pub effective_scope: Option<ToolScope>,
     #[serde(default)]
     pub effective_parent_enabled: Option<bool>,

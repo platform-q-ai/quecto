@@ -350,6 +350,35 @@ async fn ctrl_t_fresh_catalogue_response_removes_stale_absent_tools() {
 }
 
 #[tokio::test]
+async fn ctrl_t_seeds_and_applies_legacy_profile_enabled_when_profile_scope_absent() {
+    let mut h = harness().await;
+    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    h.app_mut().handle_response(
+        Some("tool-policy-catalogue".into()),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-alpha",
+                "name": "alpha",
+                "profileEnabled": true,
+                "effectiveScope": "child"
+            }]
+        })),
+        None,
+    );
+    let frame = h.app_mut().compose_frame().join("\n");
+    assert!(crate::components::ansi::strip_ansi(&frame).contains("[PC] alpha"));
+
+    h.app_mut().handle_key(crate::shell::keys::Key::Enter);
+    let sent = h.drain_commands().await.join("\n");
+    assert!(sent.contains("\"type\":\"set_tool_policy\""), "{sent}");
+    assert!(sent.contains("\"toolId\":\"tool-alpha\""), "{sent}");
+    assert!(sent.contains("\"scope\":\"both\""), "{sent}");
+    assert!(!sent.contains("\"scope\":\"child\""), "{sent}");
+}
+
+#[tokio::test]
 async fn ctrl_t_apply_without_changes_does_not_persist_effective_downstream_scope() {
     let mut h = harness().await;
     h.app_mut()
