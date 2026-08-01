@@ -32,16 +32,18 @@ impl From<ScopeSelection> for ToolScope {
 
 impl App {
     pub(super) fn open_tool_policy_modal(&mut self) {
-        self.tool_policy_modal_pending_catalogue = true;
-        self.send_command(Command::GetToolCatalogue {
-            id: Some("tool-policy-catalogue".into()),
-        });
+        let id = "tool-policy-catalogue".to_string();
+        self.tool_policy_modal_pending_catalogue_id = Some(id.clone());
+        self.send_command(Command::GetToolCatalogue { id: Some(id) });
         self.notify("Requested tool catalogue", NotifyLevel::Info);
     }
 
+    pub(super) fn is_pending_tool_policy_catalogue_response(&self, id: Option<&str>) -> bool {
+        self.tool_policy_modal_pending_catalogue_id.as_deref() == id
+    }
+
     pub(super) fn open_pending_tool_policy_modal_after_catalogue_update(&mut self) {
-        if self.tool_policy_modal_pending_catalogue {
-            self.tool_policy_modal_pending_catalogue = false;
+        if self.tool_policy_modal_pending_catalogue_id.take().is_some() {
             self.open_tool_policy_modal_now();
         }
     }
@@ -105,7 +107,7 @@ impl App {
             }
             SelectableItemModalResult::Dismissed => {
                 self.tool_policy_modal = None;
-                self.tool_policy_modal_pending_catalogue = false;
+                self.tool_policy_modal_pending_catalogue_id = None;
             }
             _ => {}
         }

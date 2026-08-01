@@ -63,6 +63,67 @@ async fn ctrl_t_with_empty_catalogue_opens_modal_after_catalogue_update() {
 }
 
 #[tokio::test]
+async fn stale_get_tool_catalogue_response_does_not_open_or_consume_pending_ctrl_t_request() {
+    let mut h = harness().await;
+
+    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    let sent = h.drain_commands().await.join("\n");
+    assert!(sent.contains("\"id\":\"tool-policy-catalogue\""), "{sent}");
+
+    h.app_mut().handle_response(
+        Some("unrelated-tool-policy-catalogue".into()),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-stale",
+                "name": "stale",
+                "profileScope": "both"
+            }]
+        })),
+        None,
+    );
+
+    let stale_frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        !stale_frame.contains("Tool Policy"),
+        "stale foreign response opened policy modal:\n{stale_frame}"
+    );
+    assert!(
+        !stale_frame.contains("stale"),
+        "stale foreign response replaced pending catalogue:\n{stale_frame}"
+    );
+
+    h.app_mut().handle_response(
+        Some("tool-policy-catalogue".into()),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-fresh",
+                "name": "fresh",
+                "profileScope": "child"
+            }]
+        })),
+        None,
+    );
+
+    let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("Tool Policy"),
+        "matching response did not open modal:\n{frame}"
+    );
+    assert!(
+        frame.contains("[-C] fresh"),
+        "fresh catalogue missing:\n{frame}"
+    );
+    assert!(
+        !frame.contains("stale"),
+        "stale catalogue leaked into modal:\n{frame}"
+    );
+}
+
+#[tokio::test]
 async fn ctrl_t_with_empty_catalogue_opens_modal_after_get_tool_catalogue_response() {
     let mut h = harness().await;
 
