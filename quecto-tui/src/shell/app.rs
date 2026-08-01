@@ -39,6 +39,9 @@ const RAW_PASTE_QUIET_TIMEOUT: Duration = Duration::from_millis(10);
 mod app_commands;
 #[path = "tool_policy.rs"]
 mod tool_policy;
+#[cfg(any(test, feature = "test-harness"))]
+#[path = "tui_harness_tool_policy.rs"]
+mod tui_harness_tool_policy;
 use app_commands::builtin_commands;
 use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
 

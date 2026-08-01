@@ -347,6 +347,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
 | `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |
 | `shell/tui_harness_disconnect.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_events.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_probes.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
