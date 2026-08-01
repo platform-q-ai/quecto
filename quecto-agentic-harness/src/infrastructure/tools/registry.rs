@@ -546,11 +546,11 @@ impl ToolRegistryImpl {
     /// Runtime-enable a registered tool without restart.
     pub fn enable_tool(&mut self, name: &str) -> bool {
         self.set_registration_metadata(name, |metadata| {
-            metadata.availability = ToolAvailability::Enabled;
             metadata.profile_scope = Some(ProfileAvailabilityScope::Both);
             metadata.profile_enabled = Some(true);
-            metadata.session_enabled = None;
-            metadata.explicit_restriction = None;
+            if metadata.explicit_restriction.is_none() && metadata.session_enabled != Some(false) {
+                metadata.availability = ToolAvailability::Enabled;
+            }
         })
     }
 
