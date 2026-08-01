@@ -321,13 +321,23 @@ impl SelectableItemModal {
 
     pub fn enable_visible(&mut self) {
         for idx in &self.visible_indices {
-            self.working_enabled.insert(self.rows[*idx].id.clone());
+            let id = self.rows[*idx].id.clone();
+            if self.mode == SelectionMode::Scope {
+                self.working_scopes.insert(id, ScopeSelection::Both);
+            } else {
+                self.working_enabled.insert(id);
+            }
         }
     }
 
     pub fn disable_visible(&mut self) {
         for idx in &self.visible_indices {
-            self.working_enabled.remove(&self.rows[*idx].id);
+            if self.mode == SelectionMode::Scope {
+                self.working_scopes
+                    .insert(self.rows[*idx].id.clone(), ScopeSelection::None);
+            } else {
+                self.working_enabled.remove(&self.rows[*idx].id);
+            }
         }
     }
 

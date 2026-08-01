@@ -121,6 +121,7 @@ the 30s deadline instead.
 | `Ctrl+C` | Clear the editor first; if the editor is empty, abort the active run |
 | `Ctrl+D` | Exit immediately |
 | `Ctrl+L` | Open model selector |
+| `Ctrl+T` | Open tool/profile policy |
 | `Ctrl+O` | Toggle tool output expansion |
 | `Ctrl+Z` | Suspend the TUI (`fg` to resume) |
 | `PageUp` / `PageDown` | Scroll chat |
