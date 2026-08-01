@@ -63,6 +63,15 @@ pub enum AgentEvent {
         after: Vec<serde_json::Value>,
         reason: String,
     },
+    /// Live tool policy reconciliation event.
+    #[serde(rename_all = "camelCase")]
+    ToolPolicyChanged {
+        changed_tools: Vec<String>,
+        #[serde(default)]
+        results: Vec<serde_json::Value>,
+        apply_mode: String,
+        reason: String,
+    },
     /// A spawned child appended messages this turn (#1060: refs-based, so the
     /// full content is not re-carried). Preserved rather than falling through to
     /// `Unknown` so clients keep the child's message identity.

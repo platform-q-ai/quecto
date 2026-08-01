@@ -194,6 +194,36 @@ async fn set_effort_handler_success_and_validation() {
 }
 
 #[tokio::test]
+async fn set_tool_policy_handler_success_and_validation() {
+    let ok = set_tool_policy_handler(
+        state_for(connected_gw()),
+        Json(SetToolPolicyRequest {
+            mutations: vec![ToolPolicyMutationPayload {
+                tool_id: None,
+                name: Some("alpha".into()),
+                scope: crate::application::ports::agent_gateway::ToolPolicyScopePayload::Child,
+                reason: Some("test".into()),
+            }],
+            mode: ToolPolicyApplyModePayload::ImmediateIfIdle,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(ok.status(), StatusCode::OK);
+
+    let bad = set_tool_policy_handler(
+        state_for(connected_gw()),
+        Json(SetToolPolicyRequest {
+            mutations: Vec::new(),
+            mode: ToolPolicyApplyModePayload::ImmediateIfIdle,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn clear_history_handler_connected_and_disconnected() {
     let ok = clear_history_handler(state_for(connected_gw()))
         .await

@@ -450,7 +450,7 @@ fn event_deserializes_tool_catalogue_changed() {
         } => {
             assert_eq!(changed_tools, vec!["weather"]);
             assert!(before.is_empty());
-            assert_eq!(after[0]["name"], "weather");
+            assert_eq!(after[0].name, "weather");
             assert_eq!(reason, "register_tool");
         }
         other => panic!("expected tool catalogue event, got {other:?}"),

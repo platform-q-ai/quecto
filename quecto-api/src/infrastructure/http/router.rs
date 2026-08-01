@@ -11,7 +11,9 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
 
-use crate::application::ports::agent_gateway::{AgentCommand, AgentGateway};
+use crate::application::ports::agent_gateway::{
+    AgentCommand, AgentGateway, ToolPolicyApplyModePayload, ToolPolicyMutationPayload,
+};
 use crate::application::use_cases;
 use crate::domain::event::AgentEvent;
 
@@ -35,6 +37,7 @@ pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
         .route("/subagents", get(subagents_handler::<G>))
         .route("/tools", get(tools_handler::<G>))
         .route("/tools/catalogue", get(tools_handler::<G>))
+        .route("/tools/policy", post(set_tool_policy_handler::<G>))
         .route("/state", get(state_handler::<G>))
         .route("/messages", get(messages_handler::<G>))
         .route("/messages/tail", get(messages_tail_handler::<G>))
@@ -276,6 +279,23 @@ async fn tools_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
 ) -> impl IntoResponse {
     match use_cases::tools::catalogue(&state.gateway).await {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetToolPolicyRequest {
+    mutations: Vec<ToolPolicyMutationPayload>,
+    mode: ToolPolicyApplyModePayload,
+}
+
+async fn set_tool_policy_handler<G: AgentGateway>(
+    State(state): State<Arc<AppState<G>>>,
+    Json(body): Json<SetToolPolicyRequest>,
+) -> impl IntoResponse {
+    match use_cases::set_tool_policy::execute(&state.gateway, body.mutations, body.mode).await {
         Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
         Err(e) => api_error_response(e).into_response(),
     }

@@ -7,6 +7,7 @@ pub mod health_check;
 pub mod send_prompt;
 pub mod set_effort;
 pub mod set_model;
+pub mod set_tool_policy;
 pub mod steer;
 pub mod tools;
 

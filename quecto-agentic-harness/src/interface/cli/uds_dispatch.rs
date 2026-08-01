@@ -17,6 +17,8 @@ pub(super) use super::uds_dispatch_session::{
 use super::uds_dispatch_session::{handle_new_session, handle_resume_session, handle_rewind_to};
 use super::{AgentCommand, AgentEvent};
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
+use crate::domain::tool::{ToolPolicyApplyMode, ToolPolicyMutation};
+use crate::interface::cli::protocol::{ToolPolicyApplyModeCommand, ToolPolicyMutationCommand};
 use crate::interface::cli::uds_ext_protocol;
 
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
@@ -95,6 +97,9 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         AgentCommand::SetEffort { effort, .. } => {
             handle_set_effort(ctx, id.as_deref(), &type_name, &effort).await
         }
+        AgentCommand::SetToolPolicy {
+            mutations, mode, ..
+        } => handle_set_tool_policy(ctx, id.as_deref(), &type_name, mutations, mode).await,
         AgentCommand::Reload { .. } => {
             super::super::uds_reload::handle_reload(ctx, id.as_deref(), &type_name).await
         }
@@ -126,6 +131,50 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             false
         }
     }
+}
+
+pub(super) async fn handle_set_tool_policy(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    mutations: Vec<ToolPolicyMutationCommand>,
+    mode: ToolPolicyApplyModeCommand,
+) -> bool {
+    let mut domain_mutations = Vec::with_capacity(mutations.len());
+    for mutation in mutations {
+        let Some(name) = mutation.name.or(mutation.tool_id) else {
+            let ev = AgentEvent::err(
+                id,
+                type_name,
+                "tool policy mutation requires name or toolId",
+            );
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            return false;
+        };
+        let reason = mutation
+            .reason
+            .unwrap_or_else(|| "set_tool_policy".to_string());
+        domain_mutations.push(ToolPolicyMutation::set_scope(name, mutation.scope, reason));
+    }
+
+    let apply_mode = match mode {
+        ToolPolicyApplyModeCommand::ImmediateIfIdle => ToolPolicyApplyMode::ImmediateIfIdle,
+        ToolPolicyApplyModeCommand::AtNextTurnBoundary => ToolPolicyApplyMode::AtNextTurnBoundary,
+    };
+    let reconciliation = ctx
+        .agent
+        .request_tool_policy_mutation(&domain_mutations, apply_mode);
+    let data = match reconciliation {
+        Some(reconciliation) => serde_json::to_value(&reconciliation).unwrap_or_default(),
+        None => serde_json::json!({
+            "mode": "AtNextTurnBoundary",
+            "queued": true,
+            "results": [],
+        }),
+    };
+    let ev = AgentEvent::ok(id, type_name, Some(data));
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    false
 }
 
 pub(super) async fn handle_steer(
@@ -265,6 +314,9 @@ mod lifecycle_1060_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_masked_pruning_tests.rs"]
 mod masked_pruning_tests;
+#[cfg(test)]
+#[path = "uds_dispatch_policy_tests.rs"]
+mod policy_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_resume_persist_tests.rs"]
 mod resume_persist_tests;

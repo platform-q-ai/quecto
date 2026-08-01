@@ -8,6 +8,7 @@ use std::pin::Pin;
 
 use crate::domain::error::ApiError;
 use crate::domain::event::AgentEvent;
+use serde::{Deserialize, Serialize};
 
 /// A command to send to the agent.
 #[derive(Debug, Clone)]
@@ -62,6 +63,39 @@ pub enum AgentCommand {
     GetSubagents,
     /// Return rich tool catalogue entries for control/query clients.
     GetToolCatalogue,
+    /// Mutate live catalogue-backed tool policy.
+    SetToolPolicy {
+        mutations: Vec<ToolPolicyMutationPayload>,
+        mode: ToolPolicyApplyModePayload,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolPolicyMutationPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub scope: ToolPolicyScopePayload,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolPolicyApplyModePayload {
+    ImmediateIfIdle,
+    AtNextTurnBoundary,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolPolicyScopePayload {
+    None,
+    Parent,
+    Child,
+    Both,
 }
 
 /// Subscriber handle — receives broadcast events from the agent.

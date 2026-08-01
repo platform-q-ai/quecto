@@ -91,6 +91,21 @@ fn control_commands_serialize_to_wire() {
         command_to_json(AgentCommand::GetToolCatalogue, "g2")["type"],
         "get_tool_catalogue"
     );
+    let policy = command_to_json(
+        AgentCommand::SetToolPolicy {
+            mutations: vec![crate::application::ports::agent_gateway::ToolPolicyMutationPayload {
+                tool_id: None,
+                name: Some("alpha".into()),
+                scope: crate::application::ports::agent_gateway::ToolPolicyScopePayload::Child,
+                reason: Some("test".into()),
+            }],
+            mode: crate::application::ports::agent_gateway::ToolPolicyApplyModePayload::AtNextTurnBoundary,
+        },
+        "p1",
+    );
+    assert_eq!(policy["type"], "set_tool_policy");
+    assert_eq!(policy["mode"], "atNextTurnBoundary");
+    assert_eq!(policy["mutations"][0]["scope"], "child");
     let effort = command_to_json(
         AgentCommand::SetEffort {
             effort: "high".into(),
@@ -471,4 +486,24 @@ fn remaining_commands_serialize_to_wire() {
     assert_eq!(model["provider"], "openai");
     assert_eq!(model["modelId"], "gpt");
     assert!(model.get("model").is_none());
+}
+
+#[test]
+fn tool_policy_changed_is_modeled_not_unknown() {
+    let wire = r#"{"type":"tool_policy_changed","changedTools":["alpha"],"results":[{"name":"alpha","before":{"effectiveScope":"both"},"after":{"effectiveScope":"child"}}],"applyMode":"immediateIfIdle","reason":"set_tool_policy"}"#;
+    let ev: AgentEvent = serde_json::from_str(wire).expect("parse");
+    match &ev {
+        AgentEvent::ToolPolicyChanged {
+            changed_tools,
+            results,
+            apply_mode,
+            reason,
+        } => {
+            assert_eq!(changed_tools, &vec!["alpha".to_string()]);
+            assert_eq!(results[0]["after"]["effectiveScope"], "child");
+            assert_eq!(apply_mode, "immediateIfIdle");
+            assert_eq!(reason, "set_tool_policy");
+        }
+        other => panic!("expected ToolPolicyChanged, got {other:?}"),
+    }
 }
