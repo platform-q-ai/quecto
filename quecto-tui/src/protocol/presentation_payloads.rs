@@ -162,6 +162,36 @@ pub fn tool_display_args(value: Option<&Value>) -> ToolDisplayArgs<'_> {
 /// operator-facing status, not user input: the live path renders them as a
 /// one-line chat status via `handle_subagent_notification`, so replayed
 /// history must skip them instead of drawing them as user messages.
+/// Also matches a ladder-collapsed note: pruning rewrites the content as
+/// `[user: "<preview>" (N tokens) — recall("id")]`, and the 60-char preview
+/// keeps the opening wrapper tag. Notes are now user-role, so unlike before
+/// they are ordinary conversation for the collapse ladder.
 pub fn is_subagent_note(content: &str) -> bool {
-    content.trim_start().starts_with("<subagent_notification")
+    let content = content.trim_start();
+    content.starts_with(SUBAGENT_NOTE_TAG)
+        || content
+            .strip_prefix("[user: \"")
+            .is_some_and(|preview| preview.starts_with(SUBAGENT_NOTE_TAG))
+}
+
+const SUBAGENT_NOTE_TAG: &str = "<subagent_notification";
+
+#[cfg(test)]
+mod subagent_note_tests {
+    use super::is_subagent_note;
+
+    #[test]
+    fn detects_notes_verbatim_and_collapsed() {
+        assert!(is_subagent_note(
+            "<subagent_notification source=\"spawn_tool\" agent_id=\"poet\" sequence=\"1\">\nidle\n</subagent_notification>"
+        ));
+        // Ladder-collapsed form (context_pruning::message_collapse_stub).
+        assert!(is_subagent_note(
+            "[user: \"<subagent_notification source=\"spawn_tool\" agent_id=\"po\" (31 tokens) — recall(\"turn3:msg:user\")]"
+        ));
+        assert!(!is_subagent_note("write me a poem"));
+        assert!(!is_subagent_note(
+            "[user: \"write me a poem\" (4 tokens) — recall(\"turn1:msg:user\")]"
+        ));
+    }
 }
