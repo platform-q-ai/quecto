@@ -3,7 +3,6 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use std::path::PathBuf;
 
 use crate::interface::cli::{CliContext, run_with_output};
@@ -82,7 +81,12 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
     let provider = build_agent_provider(&config, base_dir, &reqwest::Client::new()).unwrap();
     let workspace = PathBuf::from(config.workspace_path());
     let sandbox = Sandbox::new(Some(workspace.clone()), true);
-    let registry = ToolRegistryImpl::with_core_tools(workspace, sandbox);
+    let registry = crate::infrastructure::extensions::native::build_official_tool_registry(
+        workspace,
+        sandbox,
+        Default::default(),
+        false,
+    );
     AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -477,7 +481,12 @@ fn test_run_with_deadline_completes_before_timeout() {
     let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
     let workspace = PathBuf::from(config.workspace_path());
     let sandbox = Sandbox::new(Some(workspace.clone()), true);
-    let registry = ToolRegistryImpl::with_core_tools(workspace, sandbox);
+    let registry = crate::infrastructure::extensions::native::build_official_tool_registry(
+        workspace,
+        sandbox,
+        Default::default(),
+        false,
+    );
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),

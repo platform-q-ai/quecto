@@ -1,6 +1,6 @@
 # ADR-0020 — Unified Tool Model with Native and UDS Delivery Adapters
 
-**Status:** Proposed.
+**Status:** Accepted.
 
 **Implementation status (issue #1276):**
 

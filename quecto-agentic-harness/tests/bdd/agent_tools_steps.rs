@@ -8,7 +8,12 @@ fn given_tool_workspace(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("failed to create temp dir");
     let ws = td.path().to_path_buf();
     let sandbox = Sandbox::new(Some(ws.clone()), true);
-    let registry = ToolRegistryImpl::with_core_tools(ws.clone(), sandbox);
+    let registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
+        ws.clone(),
+        sandbox,
+        Default::default(),
+        false,
+    );
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);
     world._temp_dir = Some(td);
@@ -19,7 +24,12 @@ fn given_tool_workspace_with_exec_timeout(world: &mut QuectoWorld, timeout_secs:
     let td = TempDir::new().expect("failed to create temp dir");
     let ws = td.path().to_path_buf();
     let sandbox = Sandbox::new(Some(ws.clone()), true);
-    let mut registry = ToolRegistryImpl::with_core_tools(ws.clone(), sandbox);
+    let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
+        ws.clone(),
+        sandbox,
+        Default::default(),
+        false,
+    );
 
     let exec_sandbox = Sandbox::new(Some(ws.clone()), true);
     let exec = ExecTool::with_timeout(
@@ -53,7 +63,12 @@ fn given_workspace_with_many_files(world: &mut QuectoWorld, count: usize) {
     }
     let ws = tmp.path().to_path_buf();
     let sandbox = Sandbox::new(Some(ws.clone()), true);
-    let registry = ToolRegistryImpl::with_core_tools(ws.clone(), sandbox);
+    let registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
+        ws.clone(),
+        sandbox,
+        Default::default(),
+        false,
+    );
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);
     world._tool_workspace_tmp = Some(tmp);

@@ -29,7 +29,12 @@ fn given_web_fetch_workspace(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("create temp dir");
     let ws = td.path().to_path_buf();
     let sandbox = Sandbox::new(Some(ws.clone()), true);
-    let mut registry = ToolRegistryImpl::with_core_tools(ws.clone(), sandbox);
+    let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
+        ws.clone(),
+        sandbox,
+        Default::default(),
+        false,
+    );
 
     let (server, uri) = start_web_fetch_mock();
     // Allowlist only the mock server's host:port so SSRF protection still
@@ -56,7 +61,12 @@ fn given_web_fetch_workspace_1kb(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("create temp dir");
     let ws = td.path().to_path_buf();
     let sandbox = Sandbox::new(Some(ws.clone()), true);
-    let mut registry = ToolRegistryImpl::with_core_tools(ws.clone(), sandbox);
+    let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
+        ws.clone(),
+        sandbox,
+        Default::default(),
+        false,
+    );
 
     let (server, uri) = start_web_fetch_mock();
     let host_port = reqwest::Url::parse(&uri)

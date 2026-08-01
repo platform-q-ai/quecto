@@ -7,7 +7,12 @@ use tempfile::TempDir;
 pub(crate) fn test_registry() -> (ToolRegistryImpl, TempDir) {
     let tmp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), true);
-    let reg = ToolRegistryImpl::with_core_tools(tmp.path().to_path_buf(), sandbox);
+    let reg = crate::infrastructure::extensions::native::build_official_tool_registry(
+        tmp.path().to_path_buf(),
+        sandbox,
+        Default::default(),
+        false,
+    );
     (reg, tmp)
 }
 
@@ -405,7 +410,12 @@ fn test_remove_all_batch() {
 fn test_rebuild_definitions_no_duplicates_after_re_register() {
     let tmp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), true);
-    let mut reg = ToolRegistryImpl::with_core_tools(tmp.path().to_path_buf(), sandbox.clone());
+    let mut reg = crate::infrastructure::extensions::native::build_official_tool_registry(
+        tmp.path().to_path_buf(),
+        sandbox.clone(),
+        Default::default(),
+        false,
+    );
     let initial_count = reg.definitions().len();
 
     // Re-register a tool that already exists — should not duplicate

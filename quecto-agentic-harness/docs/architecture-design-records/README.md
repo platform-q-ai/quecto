@@ -30,7 +30,7 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 | [0017](adr-0017-protocol-evolution-matrix.md) | Protocol Evolution Is Tracked by a Capability Matrix | 🕒 Proposed | UDS protocol capabilities are tracked in a [compatibility/evolution matrix](../architecture/protocol-capability-matrix.md). |
 | [0018](adr-0018-contributor-change-cookbooks.md) | Contributor Change Cookbooks for Common Harness Extensions | 🕒 Proposed | Common harness extension paths are documented as focused cookbooks. |
 | [0019](adr-0019-role-segregated-domain-ports.md) | Domain Ports Are Segregated by Role When They Grow | 🕒 Proposed | Broad ports split into role-focused traits when caller pressure justifies it. |
-| [0020](adr-0020-unified-tool-model-with-native-and-uds-adapters.md) | Unified Tool Model with Native and UDS Delivery Adapters | 🕒 Proposed | Quecto has one tool model and policy pipeline; native and UDS are delivery adapters with descriptor-owned runtime availability. |
+| [0020](adr-0020-unified-tool-model-with-native-and-uds-adapters.md) | Unified Tool Model with Native and UDS Delivery Adapters | ✅ Accepted | Quecto has one tool model and policy pipeline; native and UDS are delivery adapters with descriptor-owned runtime availability. |
 
 ## The ADR-0008 protocol series
 

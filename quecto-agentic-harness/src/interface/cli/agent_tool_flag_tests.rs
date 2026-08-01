@@ -19,10 +19,14 @@ fn test_headless_agent_registry_includes_spawn_tool() {
         config.agents.defaults.restrict_to_workspace,
     );
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
-    let mut registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
+    let mut registry = crate::infrastructure::extensions::native::build_official_tool_registry(
         workspace.clone(),
         sandbox,
-        exec_settings,
+        crate::infrastructure::tools::bash::ExecOptions {
+            max_capture_bytes: exec_settings,
+            ..Default::default()
+        },
+        false,
     );
 
     // Match what build_agent_from_config does: with_base_dir so spawn is
