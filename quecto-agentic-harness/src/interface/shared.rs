@@ -677,14 +677,6 @@ pub fn register_bundled_native_extension_tools(
     }
 }
 
-/// Compatibility name for the pre-ADR-0020 bundled-native helper.
-pub fn register_runtime_tools(
-    registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
-    ext_registry: &crate::infrastructure::extensions::registry::ExtensionRegistry,
-) {
-    register_bundled_native_extension_tools(registry, ext_registry);
-}
-
 pub(crate) use crate::interface::tool_runtime::{
     ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeWorkflowPolicy, build_tool_runtime,
 };
