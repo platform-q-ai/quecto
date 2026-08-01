@@ -84,7 +84,7 @@ fn apply_line_highlight_plain_text() {
         "should contain reverse-video end"
     );
     // The visible text should still be "hello world" when ANSI is stripped.
-    let plain = super::app_methods::strip_ansi(&result);
+    let plain = super::app_render_helpers::strip_ansi(&result);
     assert_eq!(plain, "hello world");
 }
 
@@ -140,7 +140,7 @@ fn apply_line_highlight_survives_theme_reset_after_blockquote_gutter() {
     let end = crate::components::utils::visible_width(&line) as u16;
     let result = apply_line_highlight(&line, 0, end);
 
-    let plain = super::app_methods::strip_ansi(&result);
+    let plain = super::app_render_helpers::strip_ansi(&result);
     assert_eq!(plain, "│ quoted body text");
 
     // Every body character after the gutter must sit inside a reverse span.
@@ -155,7 +155,7 @@ fn apply_line_highlight_survives_theme_reset_after_bullet_marker() {
     let end = crate::components::utils::visible_width(&line) as u16;
     let result = apply_line_highlight(&line, 0, end);
 
-    let plain = super::app_methods::strip_ansi(&result);
+    let plain = super::app_render_helpers::strip_ansi(&result);
     assert_eq!(plain, "• list item body");
     assert_visible_range_is_reversed(&result, 0, end);
 }
@@ -393,7 +393,7 @@ fn assert_first_reverse_video_starts_at_or_after(line: &str, min_col: u16, row_i
     let Some(byte_idx) = line.find("\x1b[7m") else {
         panic!("row {row_idx} should be highlighted: {line:?}");
     };
-    let visible_before_highlight = super::app_methods::strip_ansi(&line[..byte_idx]);
+    let visible_before_highlight = super::app_render_helpers::strip_ansi(&line[..byte_idx]);
     let start_col = crate::components::utils::visible_width(&visible_before_highlight) as u16;
     assert!(
         start_col >= min_col,

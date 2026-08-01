@@ -3,7 +3,7 @@
 //! The component owns normalized, sanitized row data and exposes only stable item
 //! IDs in its result so callers keep domain persistence outside the UI layer.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 
 use crate::components::ansi::sanitize_control;
@@ -23,8 +23,37 @@ const MAX_VISIBLE_ITEMS: usize = 12;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectableItemModalResult {
     Applied(BTreeSet<String>),
+    AppliedScopes(BTreeMap<String, ScopeSelection>),
     Dismissed,
     Pending,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ScopeSelection {
+    None,
+    Parent,
+    Child,
+    Both,
+}
+
+impl ScopeSelection {
+    fn next(self) -> Self {
+        match self {
+            Self::None => Self::Parent,
+            Self::Parent => Self::Child,
+            Self::Child => Self::Both,
+            Self::Both => Self::None,
+        }
+    }
+
+    fn marker(self) -> &'static str {
+        match self {
+            Self::None => "[--] ",
+            Self::Parent => "[P-] ",
+            Self::Child => "[-C] ",
+            Self::Both => "[PC] ",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +212,9 @@ impl<T> SelectableItemModalBuilder<T> {
             visible_indices: Vec::new(),
             original_enabled: enabled_ids.clone(),
             working_enabled: enabled_ids,
+            original_scopes: BTreeMap::new(),
+            working_scopes: BTreeMap::new(),
+            scope_mode: false,
             query: String::new(),
             navigator: ListNavigator::new(),
             result: SelectableItemModalResult::Pending,
@@ -199,6 +231,9 @@ pub struct SelectableItemModal {
     visible_indices: Vec<usize>,
     original_enabled: BTreeSet<String>,
     working_enabled: BTreeSet<String>,
+    original_scopes: BTreeMap<String, ScopeSelection>,
+    working_scopes: BTreeMap<String, ScopeSelection>,
+    scope_mode: bool,
     query: String,
     navigator: ListNavigator,
     result: SelectableItemModalResult,
@@ -247,6 +282,22 @@ impl SelectableItemModal {
         self.selected_row().map(|row| row.id.as_str())
     }
 
+    pub fn with_scope_selection(mut self, scopes: BTreeMap<String, ScopeSelection>) -> Self {
+        let valid_ids = self
+            .rows
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<BTreeSet<_>>();
+        let scopes = scopes
+            .into_iter()
+            .filter(|(id, _)| valid_ids.contains(id))
+            .collect::<BTreeMap<_, _>>();
+        self.original_scopes = scopes.clone();
+        self.working_scopes = scopes;
+        self.scope_mode = true;
+        self
+    }
+
     pub fn visible_count(&self) -> usize {
         self.visible_indices.len()
     }
@@ -255,6 +306,15 @@ impl SelectableItemModal {
         let Some(id) = self.selected_row().map(|row| row.id.clone()) else {
             return;
         };
+        if self.scope_mode {
+            let current = self
+                .working_scopes
+                .get(&id)
+                .copied()
+                .unwrap_or(ScopeSelection::None);
+            self.working_scopes.insert(id, current.next());
+            return;
+        }
         if !self.working_enabled.insert(id.clone()) {
             self.working_enabled.remove(&id);
         }
@@ -359,7 +419,13 @@ impl Component for SelectableItemModal {
             mode,
             |idx| {
                 let row = &self.rows[*idx];
-                let marker = if self.working_enabled.contains(&row.id) {
+                let marker = if self.scope_mode {
+                    self.working_scopes
+                        .get(&row.id)
+                        .copied()
+                        .unwrap_or(ScopeSelection::None)
+                        .marker()
+                } else if self.working_enabled.contains(&row.id) {
                     "[x] "
                 } else {
                     "[ ] "
@@ -380,10 +446,15 @@ impl Component for SelectableItemModal {
             Key::Up => self.navigator.move_previous(self.visible_indices.len()),
             Key::Down => self.navigator.move_next(self.visible_indices.len()),
             Key::Enter => {
-                self.result = SelectableItemModalResult::Applied(self.working_enabled.clone())
+                self.result = if self.scope_mode {
+                    SelectableItemModalResult::AppliedScopes(self.working_scopes.clone())
+                } else {
+                    SelectableItemModalResult::Applied(self.working_enabled.clone())
+                }
             }
             Key::Escape => {
                 self.working_enabled = self.original_enabled.clone();
+                self.working_scopes = self.original_scopes.clone();
                 self.result = SelectableItemModalResult::Dismissed;
             }
             Key::Backspace => {

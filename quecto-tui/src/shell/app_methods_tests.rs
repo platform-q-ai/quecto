@@ -1,6 +1,7 @@
 //! Tests for pure helper functions in `app_methods.rs` (issue #729).
 
 use super::app_methods;
+use super::app_render_helpers;
 use super::app_selection::SelectionAnchor;
 use crate::components::component::Component;
 use crate::protocol::client::Client;
@@ -149,7 +150,7 @@ fn civil_from_days_december_31() {
 
 #[test]
 fn subagent_activity_line_singular() {
-    let line = app_methods::subagent_activity_line(1, 0);
+    let line = app_render_helpers::subagent_activity_line(1, 0);
     assert!(
         line.contains("subagent"),
         "should contain 'subagent': {line}"
@@ -162,7 +163,7 @@ fn subagent_activity_line_singular() {
 
 #[test]
 fn subagent_activity_line_plural() {
-    let line = app_methods::subagent_activity_line(3, 0);
+    let line = app_render_helpers::subagent_activity_line(3, 0);
     assert!(
         line.contains("subagents"),
         "plural form should have 'subagents': {line}"
@@ -171,14 +172,14 @@ fn subagent_activity_line_plural() {
 
 #[test]
 fn subagent_activity_line_contains_count() {
-    let line = app_methods::subagent_activity_line(5, 0);
+    let line = app_render_helpers::subagent_activity_line(5, 0);
     assert!(line.contains("5"), "should contain the count: {line}");
 }
 
 #[test]
 fn subagent_activity_line_animates() {
-    let frame0 = app_methods::subagent_activity_line(2, 0);
-    let frame1 = app_methods::subagent_activity_line(2, 1);
+    let frame0 = app_render_helpers::subagent_activity_line(2, 0);
+    let frame1 = app_render_helpers::subagent_activity_line(2, 1);
     // The spinner character should differ between frames (animation).
     let strip = |s: &str| s.chars().filter(|c| !c.is_control()).collect::<String>();
     // At minimum, both should contain the subagent text.
@@ -189,14 +190,14 @@ fn subagent_activity_line_animates() {
 #[test]
 fn subagent_activity_line_zero() {
     // Zero active subagents — should still render without panic.
-    let line = app_methods::subagent_activity_line(0, 0);
+    let line = app_render_helpers::subagent_activity_line(0, 0);
     assert!(!line.is_empty());
 }
 
 #[test]
 fn subagent_activity_line_frame_wraps() {
     // Frame index beyond SPINNER_FRAMES.len() should wrap without panic.
-    let line = app_methods::subagent_activity_line(1, 1000);
+    let line = app_render_helpers::subagent_activity_line(1, 1000);
     assert!(!line.is_empty());
 }
 
@@ -311,48 +312,54 @@ async fn extract_selection_multi_row_omits_panel_and_divider() {
 
 #[test]
 fn strip_ansi_empty_string() {
-    assert_eq!(app_methods::strip_ansi(""), "");
+    assert_eq!(app_render_helpers::strip_ansi(""), "");
 }
 
 #[test]
 fn strip_ansi_plain_text() {
-    assert_eq!(app_methods::strip_ansi("hello world"), "hello world");
+    assert_eq!(app_render_helpers::strip_ansi("hello world"), "hello world");
 }
 
 #[test]
 fn strip_ansi_removes_color_codes() {
     assert_eq!(
-        app_methods::strip_ansi("\x1b[31mred\x1b[0m text"),
+        app_render_helpers::strip_ansi("\x1b[31mred\x1b[0m text"),
         "red text"
     );
 }
 
 #[test]
 fn strip_ansi_preserves_unicode() {
-    assert_eq!(app_methods::strip_ansi("héllo 世界"), "héllo 世界");
+    assert_eq!(app_render_helpers::strip_ansi("héllo 世界"), "héllo 世界");
 }
 
 #[test]
 fn strip_ansi_removes_multiple_escapes() {
     assert_eq!(
-        app_methods::strip_ansi("\x1b[1m\x1b[32mbold green\x1b[0m"),
+        app_render_helpers::strip_ansi("\x1b[1m\x1b[32mbold green\x1b[0m"),
         "bold green"
     );
 }
 
 #[test]
 fn strip_ansi_removes_csi_with_tilde() {
-    assert_eq!(app_methods::strip_ansi("\x1b[5~text"), "text");
+    assert_eq!(app_render_helpers::strip_ansi("\x1b[5~text"), "text");
 }
 
 #[test]
 fn strip_ansi_removes_osc_with_bel() {
-    assert_eq!(app_methods::strip_ansi("\x1b]0;title\x07text"), "text");
+    assert_eq!(
+        app_render_helpers::strip_ansi("\x1b]0;title\x07text"),
+        "text"
+    );
 }
 
 #[test]
 fn strip_ansi_removes_osc_with_st() {
-    assert_eq!(app_methods::strip_ansi("\x1b]0;title\x1b\\text"), "text");
+    assert_eq!(
+        app_render_helpers::strip_ansi("\x1b]0;title\x1b\\text"),
+        "text"
+    );
 }
 
 #[tokio::test]
@@ -379,7 +386,10 @@ fn composite_centered_splices_overlay_at_centered_origin() {
     let overlay = vec!["ABCD".to_string(), "EFGH".to_string()];
     super::App::composite_centered(&mut lines, &overlay, 4, width, height);
 
-    let stripped: Vec<String> = lines.iter().map(|l| app_methods::strip_ansi(l)).collect();
+    let stripped: Vec<String> = lines
+        .iter()
+        .map(|l| app_render_helpers::strip_ansi(l))
+        .collect();
     assert_eq!(stripped[2], "...ABCD...");
     assert_eq!(stripped[3], "...EFGH...");
     // Rows outside the overlay are untouched.
@@ -398,7 +408,7 @@ fn resume_chat_text(app: &mut super::App) -> String {
         .chat
         .render(120)
         .iter()
-        .map(|l| super::app_methods::strip_ansi(l))
+        .map(|l| super::app_render_helpers::strip_ansi(l))
         .collect::<Vec<_>>()
         .join("\n")
 }

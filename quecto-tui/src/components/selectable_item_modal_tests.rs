@@ -410,3 +410,37 @@ fn selectable_item_modal_can_build_from_provider_contract() {
     }
     assert!(provider.dismissed);
 }
+
+#[test]
+fn selectable_item_modal_cycles_four_state_scope_rows_and_applies_scopes() {
+    let mut scopes = BTreeMap::new();
+    scopes.insert("alpha".to_string(), ScopeSelection::None);
+    let mut modal = SelectableItemModal::builder()
+        .items(fixture_items())
+        .id(|item: &FixtureItem| item.id.to_string())
+        .label(|item| item.label.to_string())
+        .description(|item| item.description.map(str::to_string))
+        .build()
+        .unwrap()
+        .with_scope_selection(scopes);
+
+    assert!(plain_render(&mut modal).contains("[--] Alpha Model"));
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert!(plain_render(&mut modal).contains("[P-] Alpha Model"));
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert!(plain_render(&mut modal).contains("[-C] Alpha Model"));
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert!(plain_render(&mut modal).contains("[PC] Alpha Model"));
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert!(plain_render(&mut modal).contains("[--] Alpha Model"));
+
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert!(modal.handle_input(&Key::Enter));
+    assert_eq!(
+        modal.take_result(),
+        SelectableItemModalResult::AppliedScopes(BTreeMap::from([(
+            "alpha".to_string(),
+            ScopeSelection::Parent,
+        )]))
+    );
+}

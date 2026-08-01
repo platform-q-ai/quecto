@@ -14,7 +14,7 @@
 //! the chat, so that's what the harness records.
 
 use super::App;
-use super::app_methods::strip_ansi;
+use super::app_render_helpers::strip_ansi;
 use super::app_selection::{SelectionAnchor, TextSelection};
 use crate::agents::focus::Focus;
 use crate::components::chat::ChatEntry;
