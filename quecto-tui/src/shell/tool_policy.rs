@@ -57,11 +57,7 @@ impl App {
             .iter()
             .map(|entry| {
                 let id = catalogue_key(entry);
-                let scope = entry
-                    .profile_scope
-                    .or(entry.effective_scope)
-                    .unwrap_or(ToolScope::None)
-                    .into();
+                let scope = entry.profile_scope.unwrap_or(ToolScope::None).into();
                 (id, scope)
             })
             .collect::<BTreeMap<_, _>>();
