@@ -67,10 +67,14 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         config.agents.defaults.restrict_to_workspace,
     );
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
-    let mut registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
+    let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
         workspace.clone(),
         sandbox,
-        exec_settings,
+        quecto::infrastructure::tools::bash::ExecOptions {
+            max_capture_bytes: exec_settings,
+            ..Default::default()
+        },
+        false,
     );
 
     // Create broadcast channel early so the workflow emitter can use it (#598).

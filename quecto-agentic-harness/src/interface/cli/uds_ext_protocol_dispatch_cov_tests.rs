@@ -8,9 +8,11 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         Some(tmp.path().to_path_buf()),
         true,
     );
-    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::with_core_tools(
+    let mut registry = crate::infrastructure::extensions::native::build_official_tool_registry(
         tmp.path().to_path_buf(),
         sandbox,
+        Default::default(),
+        false,
     );
     assert!(registry.disable_tool("bash"));
     assert!(

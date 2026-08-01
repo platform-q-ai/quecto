@@ -1,6 +1,6 @@
 # ADR-0020 — Unified Tool Model with Native and UDS Delivery Adapters
 
-**Status:** Proposed.
+**Status:** Accepted.
 
 **Implementation status (issue #1276):**
 
@@ -29,14 +29,10 @@
   placeholders, explicit restriction reasons, runtime lifecycle, provider/owner,
   availability, and coarse health. Existing descriptor and protocol surfaces stay
   backwards-compatible while consumers migrate to catalogue state.
-- **Still open / deferred follow-ups:** live policy reconciliation beyond the
-  current registry primitives/read-only catalogue accessor (safe-turn-boundary
-  application, catalogue/policy change events, defined in-flight behaviour, and
-  an application mutation API), removal of legacy concrete-construction helpers
-  such as `ToolRegistryImpl::with_core_tools*`, legacy lifecycle API naming
-  cleanup, protocol/TUI migration to consume rich catalogue state, persisted
-  profile policy UX, full parent/child profile policy rewrite, intentional
-  behaviour changes such as REPL parity, and WASM.
+- **Still open / deferred follow-ups:** legacy lifecycle API naming cleanup,
+  protocol/TUI migration to consume rich catalogue state, persisted profile
+  policy UX, full parent/child profile policy rewrite, intentional behaviour
+  changes such as REPL parity, and WASM.
 
 ## Context
 

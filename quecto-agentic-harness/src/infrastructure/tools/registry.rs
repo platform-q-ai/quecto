@@ -3,10 +3,10 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
+pub use super::registration::ToolRegistration;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{
     ExtensionToolRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition, ToolExecutor,
@@ -18,10 +18,6 @@ use crate::domain::tool_descriptor::{
     ToolRestrictionReason,
 };
 use crate::infrastructure::config::Config;
-use crate::infrastructure::security::sandbox::Sandbox;
-
-use super::bash::ExecOptions;
-pub use super::registration::ToolRegistration;
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
@@ -79,49 +75,6 @@ impl ToolRegistryImpl {
     /// Return the number of registered guards.
     pub fn guard_count(&self) -> usize {
         self.guards.len()
-    }
-
-    /// Create a registry with the core filesystem and exec tools (default options).
-    pub fn with_core_tools(workspace: PathBuf, sandbox: Sandbox) -> Self {
-        Self::with_core_tools_and_exec_options(workspace, sandbox, ExecOptions::default())
-    }
-
-    /// Create a registry with core tools and an explicit exec capture limit.
-    pub fn with_core_tools_and_exec_settings(
-        workspace: PathBuf,
-        sandbox: Sandbox,
-        max_capture_bytes: usize,
-    ) -> Self {
-        let exec_options = ExecOptions {
-            max_capture_bytes,
-            ..ExecOptions::default()
-        };
-        Self::with_core_tools_and_exec_options(workspace, sandbox, exec_options)
-    }
-
-    /// Create a registry with core tools and explicit exec options.
-    pub fn with_core_tools_and_exec_options(
-        workspace: PathBuf,
-        sandbox: Sandbox,
-        exec_options: ExecOptions,
-    ) -> Self {
-        Self::with_core_tools_and_exec_options_spawned(workspace, sandbox, exec_options, false)
-    }
-
-    /// Create a registry with core tools, exec options, and docs visibility for
-    /// top-level vs spawned agents (#1319).
-    pub fn with_core_tools_and_exec_options_spawned(
-        workspace: PathBuf,
-        sandbox: Sandbox,
-        exec_options: ExecOptions,
-        spawned: bool,
-    ) -> Self {
-        crate::infrastructure::extensions::native::build_official_tool_registry(
-            workspace,
-            sandbox,
-            exec_options,
-            spawned,
-        )
     }
 
     /// Remove a tool by name and permanently block re-registration.

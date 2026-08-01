@@ -1533,8 +1533,15 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         config.agents.defaults.restrict_to_workspace,
     );
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
-    let mut registry =
-        ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
+    let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
+        workspace,
+        sandbox,
+        quecto::infrastructure::tools::bash::ExecOptions {
+            max_capture_bytes: exec_settings,
+            ..Default::default()
+        },
+        false,
+    );
     let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
     quecto::interface::shared::register_extension_tools(&mut registry, &ext_registry);
     let ephemeral = world.no_session || world.session_name.as_deref() == Some("-");

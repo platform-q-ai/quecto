@@ -558,7 +558,6 @@ async fn emitter_sends_workflow_state_through_broadcast_channel() {
 #[tokio::test]
 async fn register_workflow_tool_with_broadcast_emitter() {
     use crate::infrastructure::security::sandbox::Sandbox;
-    use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
     let emitter = broadcast_emitter(broadcast_tx.clone(), None, None);
@@ -566,7 +565,12 @@ async fn register_workflow_tool_with_broadcast_emitter() {
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().to_path_buf();
     let sandbox = Sandbox::new(Some(workspace.clone()), false);
-    let mut registry = ToolRegistryImpl::with_core_tools(workspace, sandbox);
+    let mut registry = crate::infrastructure::extensions::native::build_official_tool_registry(
+        workspace,
+        sandbox,
+        Default::default(),
+        false,
+    );
 
     let _engine = crate::interface::shared::register_workflow_tool(
         &mut registry,
