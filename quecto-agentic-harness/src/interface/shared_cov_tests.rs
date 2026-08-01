@@ -185,7 +185,7 @@ async fn build_official_tool_registry_registers_common_bundled_native_surface() 
         names, expected_names,
         "official bundled native tool surface must not drift"
     );
-    assert!(registry.extension_names().is_empty());
+    assert!(registry.runtime_tool_names().is_empty());
     for name in names {
         let descriptor = registry.descriptor(name).expect("descriptor");
         assert!(matches!(
@@ -198,7 +198,7 @@ async fn build_official_tool_registry_registers_common_bundled_native_surface() 
             crate::domain::tool_descriptor::ToolAvailability::Enabled
         ));
     }
-    registry.unregister_extension("docs");
+    registry.unregister_runtime_tool("docs");
     assert!(registry.descriptor("docs").is_some());
 
     let output = registry
@@ -226,7 +226,7 @@ fn build_and_register_native_extensions_registers_web_fetch() {
     );
 
     let mut tool_registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
-    register_extension_tools(&mut tool_registry, &ext_registry);
+    register_bundled_native_extension_tools(&mut tool_registry, &ext_registry);
     assert!(
         tool_registry
             .definitions()
@@ -235,7 +235,7 @@ fn build_and_register_native_extensions_registers_web_fetch() {
         "config-gated bundled native web_fetch should be model-visible"
     );
     assert!(
-        tool_registry.extension_names().is_empty(),
+        tool_registry.runtime_tool_names().is_empty(),
         "bundled native web tools should not be runtime-unloadable extension tools"
     );
     let descriptor = tool_registry
@@ -257,9 +257,9 @@ fn build_and_register_native_extensions_empty_when_no_web_tools() {
         "no web tools enabled -> no extensions"
     );
 
-    // register_extension_tools over an empty registry is a no-op loop.
+    // register_bundled_native_extension_tools over an empty registry is a no-op loop.
     let mut tool_registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
-    register_extension_tools(&mut tool_registry, &ext_registry);
+    register_bundled_native_extension_tools(&mut tool_registry, &ext_registry);
 }
 
 // --- resolve_api_key_with_refresh (sync wrapper) outside a runtime ---
@@ -523,7 +523,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
         }
         assert!(built.notification_rx.is_some());
         assert!(built.subagent_registry.is_some());
-        assert!(built.registry.extension_names().is_empty());
+        assert!(built.registry.runtime_tool_names().is_empty());
     }
 }
 

@@ -163,11 +163,11 @@ async fn test_957_read_only_child_registry_omits_write_edit_keeps_others() {
         assert!(
             !build
                 .registry
-                .can_register_uds_extension_for_owner(disabled, "uds:client:test"),
+                .can_register_uds_tool_for_owner(disabled, "uds:client:test"),
             "read-only disabled name `{disabled}` must not be reintroduced by UDS"
         );
     }
-    assert!(build.registry.extension_names().is_empty());
+    assert!(build.registry.runtime_tool_names().is_empty());
     for kept in ["bash", "read", "grep", "find", "agent_cmd"] {
         assert!(
             definitions.contains(&kept.to_string()),

@@ -1,7 +1,7 @@
 //! Contract tests for the composed `ToolRegistry` bundle port.
 //!
 //! Role-specific contracts live in `tool_catalog`, `tool_executor`,
-//! `extension_tool_registry`, and `session_aware_tools`. This module proves
+//! `runtime_tool_lifecycle_registry`, and `session_aware_tools`. This module proves
 //! the composition-root bundle still exposes the combined capability expected by
 //! `AgentLoopImpl`.
 
@@ -68,11 +68,11 @@ fn full_registry_bundle_exposes_extension_and_session_roles() {
     let seen_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut reg: Box<dyn ToolRegistry> = Box::new(ToolRegistryImpl::new());
 
-    reg.register_extension(Arc::new(Echo {
+    reg.register_runtime_tool(Arc::new(Echo {
         name: Cow::Borrowed("extension"),
         seen_sessions: Some(seen_sessions.clone()),
     }));
-    assert_eq!(reg.extension_names(), vec!["extension"]);
+    assert_eq!(reg.runtime_tool_names(), vec!["extension"]);
 
     reg.set_session_key("session-a");
     assert_eq!(
@@ -80,8 +80,8 @@ fn full_registry_bundle_exposes_extension_and_session_roles() {
         vec!["session-a".to_string()]
     );
 
-    reg.unregister_extension("extension");
-    assert!(reg.extension_names().is_empty());
+    reg.unregister_runtime_tool("extension");
+    assert!(reg.runtime_tool_names().is_empty());
     assert_eq!(reg.tool_count(), 0);
 }
 

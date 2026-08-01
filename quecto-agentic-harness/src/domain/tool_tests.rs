@@ -27,7 +27,7 @@ impl ToolExecutor for EmptyRegistry {
     }
 }
 
-impl ExtensionToolRegistry for EmptyRegistry {}
+impl RuntimeToolLifecycleRegistry for EmptyRegistry {}
 
 impl SessionAwareTools for EmptyRegistry {}
 
@@ -56,11 +56,11 @@ fn tool_count_defaults_to_definitions_len() {
 async fn extension_defaults_are_inert() {
     // Default ToolRegistry methods: no extension tracking; register/unregister no-op.
     let mut reg = EmptyRegistry { defs: vec![] };
-    assert!(reg.extension_names().is_empty());
+    assert!(reg.runtime_tool_names().is_empty());
     reg.set_session_key("session-1"); // default no-op, must not panic
-    reg.register_extension(std::sync::Arc::new(NoopTool)); // default no-op
-    reg.unregister_extension("nope"); // no-op, must not panic
-    assert!(reg.extension_names().is_empty());
+    reg.register_runtime_tool(std::sync::Arc::new(NoopTool)); // default no-op
+    reg.unregister_runtime_tool("nope"); // no-op, must not panic
+    assert!(reg.runtime_tool_names().is_empty());
     let result = reg.execute("missing", "{}").await.unwrap();
     assert!(!result.is_error);
     assert_eq!(result.content, "");

@@ -11,7 +11,7 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
     id: Option<&str>,
     tools: &[ToolRegistration],
 ) {
-    let ext_names = ctx.agent.tool_registry_extension_names();
+    let ext_names = ctx.agent.runtime_tool_names();
     let core_names: std::collections::HashSet<String> = ctx
         .agent
         .tool_descriptors()
@@ -23,7 +23,7 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
     let owner = format!("uds:client:{}", ctx.current_client_id);
     if let Some(rejected) = tools.iter().find(|tool| {
         !ctx.agent
-            .can_register_uds_extension_tool_for_owner(&tool.name, &owner)
+            .can_register_uds_tool_for_owner(&tool.name, &owner)
     }) {
         let err = AgentEvent::err(
             id,
@@ -51,7 +51,7 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
     for (tool_reg, tool) in tools.iter().zip(new_tools.iter()) {
         if ctx
             .agent
-            .register_uds_extension_tool_for_owner(tool.clone(), owner.clone())
+            .register_uds_tool_for_owner(tool.clone(), owner.clone())
         {
             accepted.push(tool_reg.name.clone());
         }
@@ -59,7 +59,7 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
 
     if accepted.len() != new_tools.len() {
         for name in &accepted {
-            ctx.agent.unregister_extension_tool(name);
+            ctx.agent.unregister_runtime_tool(name);
         }
         let requested: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
         let (_, staged) = handle_unregister_tools(
@@ -95,7 +95,7 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
     for tool_reg in tools {
         spawn_tool_forwarder_for(ctx, &tool_reg.name);
     }
-    let ext_names = ctx.agent.tool_registry_extension_names();
+    let ext_names = ctx.agent.runtime_tool_names();
     let changed = build_extensions_changed_event(&ext_names, ctx.agent);
     crate::interface::cli::uds::emit_event_to_broadcast_or_writer(ctx, &changed).await;
 }
@@ -298,9 +298,9 @@ pub(in crate::interface::cli) async fn dispatch_unregister_tools(
 
     if !removed.is_empty() {
         for name in &removed {
-            ctx.agent.unregister_extension_tool(name);
+            ctx.agent.unregister_runtime_tool(name);
         }
-        let ext_names = ctx.agent.tool_registry_extension_names();
+        let ext_names = ctx.agent.runtime_tool_names();
         let changed = build_extensions_changed_event(&ext_names, ctx.agent);
         crate::interface::cli::uds::emit_event_to_broadcast_or_writer(ctx, &changed).await;
     }

@@ -51,7 +51,7 @@ fn uds_extension_lifecycle_methods_delegate_to_registry_contracts() {
     let provider = Arc::new(MockProvider::new(vec![]));
     let mut agent = AgentLoopImpl::new(test_config(provider, Box::new(ToolRegistryImpl::new())));
     assert!(
-        agent.register_uds_extension_tool(Arc::new(super::tests::MockTool::new(
+        agent.register_uds_tool(Arc::new(super::tests::MockTool::new(
             "legacy_uds_tool",
             "ok"
         )))
@@ -67,6 +67,16 @@ fn uds_extension_lifecycle_methods_delegate_to_registry_contracts() {
             .tool_registry_extension_names()
             .contains(&"legacy_uds_tool".to_string())
     );
+    agent.register_extension_tool(Arc::new(super::tests::MockTool::new(
+        "legacy_runtime",
+        "ok",
+    )));
+    assert!(
+        agent
+            .tool_registry_extension_names()
+            .contains(&"legacy_runtime".to_string())
+    );
+    agent.unregister_extension_tool("legacy_runtime");
     agent.register_uds_extension_tool_for_owner(
         Arc::new(super::tests::MockTool::new("owned_tool", "ok")),
         "uds:client:55".into(),

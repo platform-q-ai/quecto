@@ -193,11 +193,11 @@ fn register_with_metadata_controls_descriptor_and_unloadability() {
     assert!(matches!(descriptor.source, ToolSource::Runtime));
     assert!(!descriptor.availability.is_enabled());
     assert!(!reg.definitions().iter().any(|d| d.name == "phase2_tool"));
-    assert_eq!(reg.extension_names(), vec!["phase2_tool".to_string()]);
+    assert_eq!(reg.runtime_tool_names(), vec!["phase2_tool".to_string()]);
 
     assert!(reg.enable_tool("phase2_tool"));
     assert!(reg.definitions().iter().any(|d| d.name == "phase2_tool"));
-    reg.unregister_extension("phase2_tool");
+    reg.unregister_runtime_tool("phase2_tool");
     assert!(reg.get("phase2_tool").is_none());
 }
 
@@ -214,7 +214,7 @@ fn register_with_metadata_prevents_shadowing_non_unloadable_tools() {
     ));
     let descriptor = reg.descriptor("stable").expect("descriptor");
     assert!(matches!(descriptor.source, ToolSource::BundledNative));
-    assert!(reg.extension_names().is_empty());
+    assert!(reg.runtime_tool_names().is_empty());
 }
 
 #[test]
@@ -232,26 +232,26 @@ fn register_with_metadata_replaces_unloadable_tool_for_same_owner() {
     assert!(matches!(descriptor.source, ToolSource::Runtime));
     assert_eq!(descriptor.owner.as_ref(), "owner:one");
     assert_eq!(descriptor.definition.description.as_ref(), "replacement");
-    assert_eq!(reg.extension_names(), vec!["dynamic".to_string()]);
+    assert_eq!(reg.runtime_tool_names(), vec!["dynamic".to_string()]);
 }
 
 #[test]
-fn test_register_extension_tool() {
+fn test_register_runtime_tool() {
     let mut reg = ToolRegistryImpl::new();
     let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("ext_greet"));
-    reg.register_extension(tool);
+    reg.register_runtime_tool(tool);
     assert!(reg.get("ext_greet").is_some());
-    assert!(reg.extension_names().contains(&"ext_greet".to_string()));
+    assert!(reg.runtime_tool_names().contains(&"ext_greet".to_string()));
 }
 
 #[test]
-fn test_register_extension_tool_does_not_mark_as_core() {
+fn test_register_runtime_tool_does_not_mark_as_core() {
     let (mut reg, _tmp) = test_registry();
     let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("ext_greet"));
-    reg.register_extension(tool);
+    reg.register_runtime_tool(tool);
     // Core tools should not appear in extension_names
-    assert!(!reg.extension_names().contains(&"bash".to_string()));
-    assert!(reg.extension_names().contains(&"ext_greet".to_string()));
+    assert!(!reg.runtime_tool_names().contains(&"bash".to_string()));
+    assert!(reg.runtime_tool_names().contains(&"ext_greet".to_string()));
 }
 
 #[test]
@@ -259,36 +259,36 @@ fn test_register_extension_rejects_shadow_of_core_tool() {
     let (mut reg, _tmp) = test_registry();
     let initial_count = reg.definitions().len();
     let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("bash")); // shadows core
-    reg.register_extension(tool);
+    reg.register_runtime_tool(tool);
     // Should NOT have replaced the core tool or added to extension_names
     assert_eq!(reg.definitions().len(), initial_count);
-    assert!(!reg.extension_names().contains(&"bash".to_string()));
+    assert!(!reg.runtime_tool_names().contains(&"bash".to_string()));
 }
 
 #[test]
-fn test_unregister_extension_tool() {
+fn test_unregister_runtime_tool() {
     let mut reg = ToolRegistryImpl::new();
     let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("ext_greet"));
-    reg.register_extension(tool);
+    reg.register_runtime_tool(tool);
     assert!(reg.get("ext_greet").is_some());
 
-    reg.unregister_extension("ext_greet");
+    reg.unregister_runtime_tool("ext_greet");
     assert!(reg.get("ext_greet").is_none());
-    assert!(!reg.extension_names().contains(&"ext_greet".to_string()));
+    assert!(!reg.runtime_tool_names().contains(&"ext_greet".to_string()));
 }
 
 #[test]
 fn test_unregister_extension_does_not_remove_core_tools() {
     let (mut reg, _tmp) = test_registry();
     // Attempting to unregister a core tool via unregister_extension should be a no-op
-    reg.unregister_extension("bash");
+    reg.unregister_runtime_tool("bash");
     assert!(reg.get("bash").is_some(), "core tool should not be removed");
 }
 
 #[test]
 fn test_extension_names_empty_by_default() {
     let (reg, _tmp) = test_registry();
-    assert!(reg.extension_names().is_empty());
+    assert!(reg.runtime_tool_names().is_empty());
 }
 
 /// Minimal test tool for extension tracking tests.
@@ -361,14 +361,14 @@ fn test_remove_nonexistent_tool() {
 fn test_remove_extension_tool() {
     let mut reg = ToolRegistryImpl::new();
     let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("ext_greet"));
-    reg.register_extension(tool);
+    reg.register_runtime_tool(tool);
     assert!(reg.get("ext_greet").is_some());
 
     let removed = reg.remove("ext_greet");
     assert!(removed);
     assert!(reg.get("ext_greet").is_none());
     // Should also clean up extension_tool_names tracking
-    assert!(!reg.extension_names().contains(&"ext_greet".to_string()));
+    assert!(!reg.runtime_tool_names().contains(&"ext_greet".to_string()));
 }
 
 #[test]
@@ -387,7 +387,7 @@ fn test_remove_blocks_re_registration() {
 
     // Attempt via register_extension()
     let tool2: Arc<dyn Tool> = Arc::new(DummyTestTool::new("bash"));
-    reg.register_extension(tool2);
+    reg.register_runtime_tool(tool2);
     assert!(
         reg.get("bash").is_none(),
         "denylist should block register_extension()"
@@ -455,7 +455,7 @@ fn descriptors_include_source_and_availability_for_native_and_uds_tools() {
             && d.availability.is_enabled()
     }));
 
-    let ok = reg.register_uds_extension_for_owner(
+    let ok = reg.register_uds_tool_for_owner(
         Arc::new(DummyTestTool::new("weather")),
         "uds:client:7".into(),
     );
@@ -517,37 +517,37 @@ async fn disabled_tool_execute_is_rejected_and_enable_restores_execution() {
 #[test]
 fn register_uds_extension_rejects_core_shadow_and_denylist() {
     let (mut reg, _tmp) = test_registry();
-    assert!(!reg.register_uds_extension(Arc::new(DummyTestTool::new("bash"))));
+    assert!(!reg.register_uds_tool(Arc::new(DummyTestTool::new("bash"))));
     assert!(reg.remove("bash"));
-    assert!(!reg.register_uds_extension(Arc::new(DummyTestTool::new("bash"))));
+    assert!(!reg.register_uds_tool(Arc::new(DummyTestTool::new("bash"))));
     assert!(reg.get("bash").is_none());
 }
 
 #[test]
 fn uds_owner_registration_preflight_matches_mutating_acceptance_rules() {
     let (mut reg, _tmp) = test_registry();
-    assert!(!reg.can_register_uds_extension_for_owner("bash", "uds:client:1"));
+    assert!(!reg.can_register_uds_tool_for_owner("bash", "uds:client:1"));
     assert!(reg.remove("bash"));
-    assert!(!reg.can_register_uds_extension_for_owner("bash", "uds:client:1"));
-    assert!(reg.can_register_uds_extension_for_owner("weather", "uds:client:1"));
-    assert!(reg.register_uds_extension_for_owner(
+    assert!(!reg.can_register_uds_tool_for_owner("bash", "uds:client:1"));
+    assert!(reg.can_register_uds_tool_for_owner("weather", "uds:client:1"));
+    assert!(reg.register_uds_tool_for_owner(
         Arc::new(DummyTestTool::new("weather")),
         "uds:client:1".into(),
     ));
-    assert!(reg.can_register_uds_extension_for_owner("weather", "uds:client:1"));
-    assert!(!reg.can_register_uds_extension_for_owner("weather", "uds:client:2"));
+    assert!(reg.can_register_uds_tool_for_owner("weather", "uds:client:1"));
+    assert!(!reg.can_register_uds_tool_for_owner("weather", "uds:client:2"));
 }
 
 #[test]
 fn unloadable_tool_names_remain_owned_by_their_registering_connection() {
     let mut reg = ToolRegistryImpl::new();
-    assert!(reg.register_uds_extension_for_owner(
+    assert!(reg.register_uds_tool_for_owner(
         Arc::new(DummyTestTool::new("weather")),
         "uds:client:1".into(),
     ));
 
     assert!(
-        !reg.register_uds_extension_for_owner(
+        !reg.register_uds_tool_for_owner(
             Arc::new(DummyTestTool::new("weather")),
             "uds:client:2".into(),
         ),
@@ -558,7 +558,7 @@ fn unloadable_tool_names_remain_owned_by_their_registering_connection() {
         "uds:client:1"
     );
 
-    assert!(reg.register_uds_extension_for_owner(
+    assert!(reg.register_uds_tool_for_owner(
         Arc::new(DummyTestTool::with_desc("weather", "new generation")),
         "uds:client:1".into(),
     ));
@@ -570,11 +570,11 @@ fn unloadable_tool_names_remain_owned_by_their_registering_connection() {
 #[test]
 fn owner_scoped_unregister_removes_only_matching_runtime_capabilities() {
     let (mut reg, _tmp) = test_registry();
-    assert!(reg.register_uds_extension_for_owner(
+    assert!(reg.register_uds_tool_for_owner(
         Arc::new(DummyTestTool::new("weather")),
         "uds:client:1".into(),
     ));
-    assert!(reg.register_uds_extension_for_owner(
+    assert!(reg.register_uds_tool_for_owner(
         Arc::new(DummyTestTool::new("calendar")),
         "uds:client:2".into(),
     ));
@@ -598,7 +598,7 @@ fn disable_or_enable_unknown_tool_returns_false() {
 
 #[test]
 fn trait_paths_expose_descriptors_and_runtime_policy() {
-    use crate::domain::tool::{ExtensionToolRegistry, ToolCatalog};
+    use crate::domain::tool::{RuntimeToolLifecycleRegistry, ToolCatalog};
 
     let (mut reg, _tmp) = test_registry();
     {
@@ -612,20 +612,20 @@ fn trait_paths_expose_descriptors_and_runtime_policy() {
     }
 
     {
-        let ext: &mut dyn ExtensionToolRegistry = &mut reg;
+        let ext: &mut dyn RuntimeToolLifecycleRegistry = &mut reg;
         assert!(ext.disable_tool("bash"));
         assert!(ext.enable_tool("bash"));
         // no-op when already enabled
         assert!(ext.enable_tool("bash"));
-        assert!(ext.register_uds_extension(std::sync::Arc::new(DummyTestTool::new("wx"))));
-        assert!(ext.extension_names().iter().any(|n| n == "wx"));
+        assert!(ext.register_uds_tool(std::sync::Arc::new(DummyTestTool::new("wx"))));
+        assert!(ext.runtime_tool_names().iter().any(|n| n == "wx"));
     }
 }
 
 #[test]
 fn startup_restrictions_disable_descriptors_and_deny_future_registration() {
     let (mut reg, _tmp) = test_registry();
-    assert!(reg.register_extension(Arc::new(DummyTestTool::new("plugin_tool",))));
+    assert!(reg.register_runtime_tool(Arc::new(DummyTestTool::new("plugin_tool",))));
 
     let warnings = reg.apply_startup_tool_restrictions(&[
         "bash".to_string(),
@@ -655,18 +655,18 @@ fn startup_restrictions_disable_descriptors_and_deny_future_registration() {
     let descriptor = reg.descriptor("bash").expect("descriptor");
     assert!(matches!(descriptor.source, ToolSource::BundledNative));
     assert!(!descriptor.availability.is_enabled());
-    assert!(!reg.can_register_uds_extension_for_owner("bash", "uds:client:1"));
-    assert!(!reg.can_register_uds_extension_for_owner("plugin_tool", "runtime:extension"));
-    reg.unregister_extension("plugin_tool");
+    assert!(!reg.can_register_uds_tool_for_owner("bash", "uds:client:1"));
+    assert!(!reg.can_register_uds_tool_for_owner("plugin_tool", "runtime:extension"));
+    reg.unregister_runtime_tool("plugin_tool");
     assert!(
         reg.get("plugin_tool").is_none(),
         "owner-scoped unload remains a separate destructive lifecycle path"
     );
     assert!(
-        !reg.register_extension(Arc::new(DummyTestTool::new("plugin_tool"))),
+        !reg.register_runtime_tool(Arc::new(DummyTestTool::new("plugin_tool"))),
         "startup-disabled existing unloadable name stays denied after unload"
     );
-    assert!(!reg.register_extension(Arc::new(DummyTestTool::new("missing_tool",))));
+    assert!(!reg.register_runtime_tool(Arc::new(DummyTestTool::new("missing_tool",))));
 }
 
 #[tokio::test]

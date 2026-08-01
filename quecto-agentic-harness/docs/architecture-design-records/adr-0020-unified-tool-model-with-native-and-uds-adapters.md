@@ -14,8 +14,8 @@
   - `build_workflow_tool_extension` / `register_workflow_tool` → `workflow`
   - `build_native_extensions` → config-gated web tools collected by the legacy
     `ExtensionRegistry` package aggregator, then installed via bundled-native
-    `registry.register(...)` / `register_extension_tools()` rather than runtime
-    `register_extension`
+    `registry.register(...)` / `register_bundled_native_extension_tools()`
+    rather than runtime `register_runtime_tool`
   - `register_bundled_native_tools` / bundled-native registration for
     non-unloadable official registration
   Composition roots consume these providers through the shared

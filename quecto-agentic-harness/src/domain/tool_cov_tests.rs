@@ -139,7 +139,7 @@ impl ToolExecutor for CovEmptyRegistry {
     }
 }
 
-impl ExtensionToolRegistry for CovEmptyRegistry {}
+impl RuntimeToolLifecycleRegistry for CovEmptyRegistry {}
 
 impl SessionAwareTools for CovEmptyRegistry {}
 
@@ -166,18 +166,18 @@ async fn local_tool_and_registry_execute_trait_surface() {
 
     let mut registry = CovEmptyRegistry;
     assert_eq!(registry.tool_count(), 0);
-    assert!(registry.extension_names().is_empty());
-    assert!(registry.can_register_uds_extension_for_owner("cov_noop", "uds:client:cov"));
+    assert!(registry.runtime_tool_names().is_empty());
+    assert!(registry.can_register_uds_tool_for_owner("cov_noop", "uds:client:cov"));
     assert!(
-        !registry.register_uds_extension_for_owner(
+        !registry.register_uds_tool_for_owner(
             std::sync::Arc::new(CovNoopTool),
             "uds:client:cov".into(),
         ),
         "default owner-specific UDS registration delegates to unsupported legacy path"
     );
     registry.set_session_key("covered");
-    registry.register_extension(std::sync::Arc::new(CovNoopTool));
-    registry.unregister_extension("cov_noop");
+    registry.register_runtime_tool(std::sync::Arc::new(CovNoopTool));
+    registry.unregister_runtime_tool("cov_noop");
     assert!(registry.execute("missing", "{}").await.is_err());
 }
 
@@ -186,7 +186,7 @@ fn default_catalog_and_extension_trait_methods_are_exercised() {
     let mut registry = CovEmptyRegistry;
     // Default catalog descriptors fall back to Runtime/enabled metadata.
     assert!(registry.descriptors().is_empty());
-    assert!(!registry.register_uds_extension(std::sync::Arc::new(CovNoopTool)));
+    assert!(!registry.register_uds_tool(std::sync::Arc::new(CovNoopTool)));
     assert!(!registry.enable_tool("cov_noop"));
     assert!(!registry.disable_tool("cov_noop"));
 }
@@ -211,7 +211,7 @@ impl ToolExecutor for CovOneDefRegistry {
     }
 }
 
-impl ExtensionToolRegistry for CovOneDefRegistry {}
+impl RuntimeToolLifecycleRegistry for CovOneDefRegistry {}
 impl SessionAwareTools for CovOneDefRegistry {}
 impl ToolPolicyMutator for CovOneDefRegistry {}
 impl ToolRegistry for CovOneDefRegistry {}

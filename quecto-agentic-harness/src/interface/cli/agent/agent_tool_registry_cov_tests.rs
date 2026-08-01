@@ -232,7 +232,11 @@ fn build_tool_registry_registers_agent_control_tools_as_official_native() {
         assert_eq!(descriptor.owner.as_ref(), "quecto:official-tools");
         assert!(matches!(descriptor.availability, ToolAvailability::Enabled));
         assert!(
-            !built.registry.extension_names().iter().any(|n| n == name),
+            !built
+                .registry
+                .runtime_tool_names()
+                .iter()
+                .any(|n| n == name),
             "{name} must not be unloadable via unregister_extension"
         );
         assert!(
@@ -289,7 +293,7 @@ fn build_tool_registry_registers_workflow_when_uds_and_enabled() {
     assert!(
         !built
             .registry
-            .extension_names()
+            .runtime_tool_names()
             .iter()
             .any(|n| n == "workflow")
     );
@@ -334,7 +338,11 @@ fn build_tool_registry_registers_web_tools_as_bundled_native_official_tools() {
         assert!(matches!(descriptor.source, ToolSource::BundledNative));
         assert_eq!(descriptor.owner.as_ref(), "quecto:official-tools");
         assert!(
-            !built.registry.extension_names().iter().any(|n| n == name),
+            !built
+                .registry
+                .runtime_tool_names()
+                .iter()
+                .any(|n| n == name),
             "{name} must not be runtime-unloadable"
         );
         assert!(

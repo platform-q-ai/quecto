@@ -1543,7 +1543,10 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         false,
     );
     let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
-    quecto::interface::shared::register_extension_tools(&mut registry, &ext_registry);
+    quecto::interface::shared::register_bundled_native_extension_tools(
+        &mut registry,
+        &ext_registry,
+    );
     let ephemeral = world.no_session || world.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {
         String::new()

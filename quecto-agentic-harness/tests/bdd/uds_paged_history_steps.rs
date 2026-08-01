@@ -871,7 +871,10 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
         false,
     );
     let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
-    quecto::interface::shared::register_extension_tools(&mut registry, &ext_registry);
+    quecto::interface::shared::register_bundled_native_extension_tools(
+        &mut registry,
+        &ext_registry,
+    );
     let spill_store = Arc::new(FileContextSpillStore::new(base.to_path_buf()));
     let session_key = Session::build_key("cli", session_name);
     let model = config.agents.defaults.model.clone();

@@ -329,5 +329,5 @@ fn register_bundled_native_tools_marks_official_not_extension_tracked() {
     let d = registry.descriptor("bash").unwrap();
     assert!(matches!(d.source, ToolSource::BundledNative));
     assert_eq!(d.owner.as_ref(), "quecto:official-tools");
-    assert!(!registry.extension_names().iter().any(|n| n == "bash"));
+    assert!(!registry.runtime_tool_names().iter().any(|n| n == "bash"));
 }
