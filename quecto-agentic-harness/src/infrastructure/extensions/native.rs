@@ -91,14 +91,16 @@ impl Extension for NativeExtension {
 /// This is the native-provider seam for official/default capabilities: callers
 /// consume `Extension` objects and register their tools through the same
 /// descriptor/policy registry path used by runtime UDS tools.
-pub fn build_official_tool_extensions(
-    workspace: PathBuf,
-    sandbox: crate::infrastructure::security::sandbox::Sandbox,
-    exec_options: crate::infrastructure::tools::bash::ExecOptions,
-    spawned: bool,
-) -> Vec<Arc<dyn Extension>> {
-    let sandbox = Arc::new(sandbox);
-    let workspace = Arc::new(workspace);
+pub struct OfficialToolDeps {
+    pub workspace: PathBuf,
+    pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
+    pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
+    pub docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy,
+}
+
+pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Extension>> {
+    let sandbox = Arc::new(deps.sandbox);
+    let workspace = Arc::new(deps.workspace);
 
     vec![Arc::new(NativeExtension::with_tools(
         "quecto:official-tools",
@@ -107,7 +109,7 @@ pub fn build_official_tool_extensions(
             Arc::new(crate::infrastructure::tools::bash::ExecTool::with_options(
                 workspace.clone(),
                 sandbox.clone(),
-                exec_options,
+                deps.exec_options,
             )),
             Arc::new(crate::infrastructure::tools::filesystem::ReadTool::new(
                 workspace.clone(),
@@ -132,11 +134,14 @@ pub fn build_official_tool_extensions(
             Arc::new(crate::infrastructure::tools::find::FindTool::new(
                 workspace, sandbox,
             )),
-            // Quecto operating manual, embedded in the binary. Spawned children
-            // omit the parent-only quick-start page (#1319).
-            Arc::new(crate::infrastructure::tools::docs::DocsTool::with_spawned(
-                spawned,
-            )),
+            // Quecto operating manual, embedded in the binary. Runtime profile
+            // policy owns availability; the docs tool only receives explicit
+            // content policy for parent-only quick-start filtering (#1319/#1334).
+            Arc::new(
+                crate::infrastructure::tools::docs::DocsTool::with_content_policy(
+                    deps.docs_content_policy,
+                ),
+            ),
         ],
     ))]
 }
@@ -232,14 +237,23 @@ pub fn register_bundled_native_tools(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     extensions: Vec<Arc<dyn Extension>>,
 ) {
+    register_bundled_native_tools_with_scope(registry, extensions, None);
+}
+
+pub fn register_bundled_native_tools_with_scope(
+    registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
+    extensions: Vec<Arc<dyn Extension>>,
+    profile_scope: Option<crate::domain::tool_descriptor::ProfileAvailabilityScope>,
+) {
     for extension in extensions {
         let provider_id = extension.name().to_string();
         for tool in extension.tools() {
-            registry.register_with_metadata(
-                tool,
+            let mut metadata =
                 crate::infrastructure::tools::registry::ToolRegistration::official_native()
-                    .with_provider_id(provider_id.clone()),
-            );
+                    .with_provider_id(provider_id.clone());
+            metadata.profile_scope = profile_scope;
+            metadata.profile_enabled = profile_scope.map(|scope| scope.is_enabled());
+            registry.register_with_metadata(tool, metadata);
         }
     }
 }
@@ -248,12 +262,16 @@ pub fn build_official_tool_registry(
     workspace: PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
     exec_options: crate::infrastructure::tools::bash::ExecOptions,
-    spawned: bool,
 ) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     register_bundled_native_tools(
         &mut registry,
-        build_official_tool_extensions(workspace, sandbox, exec_options, spawned),
+        build_official_tool_extensions(OfficialToolDeps {
+            workspace,
+            sandbox,
+            exec_options,
+            docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy::Parent,
+        }),
     );
     registry
 }

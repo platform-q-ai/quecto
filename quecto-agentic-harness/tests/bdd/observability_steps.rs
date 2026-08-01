@@ -67,6 +67,7 @@ fn when_agent_processes_tool_call(world: &mut QuectoWorld) {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
 
     // Capture tracing output

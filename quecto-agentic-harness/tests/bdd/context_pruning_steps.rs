@@ -1493,6 +1493,7 @@ fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
     let messages = world.context_messages.as_mut().unwrap();
     messages.push(Message::user("a question"));
@@ -1952,6 +1953,7 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
     // The in-flight prompt alone (never droppable) exceeds the tiny budget.
     let mut messages = vec![Message::user("y".repeat(600))];
@@ -2018,6 +2020,7 @@ fn when_agent_derives_effective_budget(world: &mut QuectoWorld) {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: world.context_model_window.expect("window declared"),
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
     world.context_effective_budget = Some(agent.effective_max_context_tokens());
 }
@@ -2084,6 +2087,7 @@ fn run_prompt_through_loop(
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
     let messages = world.context_messages.as_mut().unwrap();
     messages.push(Message::user("a question"));

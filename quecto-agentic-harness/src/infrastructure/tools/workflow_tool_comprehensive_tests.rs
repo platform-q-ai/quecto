@@ -569,7 +569,6 @@ async fn register_workflow_tool_with_broadcast_emitter() {
         workspace,
         sandbox,
         Default::default(),
-        false,
     );
 
     let _engine = crate::interface::shared::register_workflow_tool(

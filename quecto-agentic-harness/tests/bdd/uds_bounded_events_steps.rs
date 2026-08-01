@@ -1540,7 +1540,6 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             max_capture_bytes: exec_settings,
             ..Default::default()
         },
-        false,
     );
     let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
     quecto::interface::shared::register_bundled_native_extension_tools(
@@ -1570,6 +1569,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
     if world._uds_streaming_enabled {
         agent.set_streaming(true);

@@ -24,6 +24,7 @@ pub struct ToolRegistryImpl {
     definitions: Vec<ToolDefinition>,
     parent_definitions: Vec<ToolDefinition>,
     child_definitions: Vec<ToolDefinition>,
+    execution_profile_context: Option<ToolProfileContext>,
     guards: Vec<Arc<dyn ToolGuard>>,
     /// Names explicitly reserved away from future registration.
     ///
@@ -62,9 +63,14 @@ impl ToolRegistryImpl {
             definitions: Vec::new(),
             parent_definitions: Vec::new(),
             child_definitions: Vec::new(),
+            execution_profile_context: None,
             guards: Vec::new(),
             denied_names: std::collections::HashSet::new(),
         }
+    }
+
+    pub fn set_execution_profile_context(&mut self, context: ToolProfileContext) {
+        self.execution_profile_context = Some(context);
     }
 
     /// Register a guard that runs before every tool execution.
@@ -540,11 +546,11 @@ impl ToolRegistryImpl {
     /// Runtime-enable a registered tool without restart.
     pub fn enable_tool(&mut self, name: &str) -> bool {
         self.set_registration_metadata(name, |metadata| {
-            metadata.availability = ToolAvailability::Enabled;
             metadata.profile_scope = Some(ProfileAvailabilityScope::Both);
             metadata.profile_enabled = Some(true);
-            metadata.session_enabled = None;
-            metadata.explicit_restriction = None;
+            if metadata.explicit_restriction.is_none() && metadata.session_enabled != Some(false) {
+                metadata.availability = ToolAvailability::Enabled;
+            }
         })
     }
 
@@ -676,6 +682,27 @@ impl ToolRegistryImpl {
                 is_error: true,
                 image_blocks: vec![],
             });
+        }
+        if let Some(context) = self.execution_profile_context {
+            let scope = self
+                .metadata
+                .get(name)
+                .map(Self::effective_scope)
+                .unwrap_or(ProfileAvailabilityScope::Both);
+            let allowed = match context {
+                ToolProfileContext::Parent => scope.allows_parent(),
+                ToolProfileContext::Child => scope.allows_child(),
+            };
+            if !allowed {
+                return Ok(ToolResult {
+                    content: format!(
+                        "tool '{}' is not available in the {:?} runtime profile",
+                        name, context
+                    ),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            }
         }
 
         // Run guards before tool execution

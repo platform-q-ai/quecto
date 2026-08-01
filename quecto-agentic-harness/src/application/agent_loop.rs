@@ -15,7 +15,7 @@ use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolPolicyMutation,
-    ToolRegistry,
+    ToolProfileContext, ToolRegistry,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -52,7 +52,6 @@ const MAX_PROVIDER_ATTEMPTS: usize = 3;
 const PROVIDER_RETRY_BACKOFF_MS: u64 = 100;
 /// Cap on model-malformed requests re-prompted as addressable feedback (#931).
 const MAX_MALFORMED_REQUEST_RETRIES: u32 = 3;
-/// Configuration for building an agent loop.
 pub struct AgentLoopConfig {
     pub provider: Arc<dyn LlmProvider>,
     pub tool_registry: Box<dyn ToolRegistry>,
@@ -81,11 +80,9 @@ pub struct AgentLoopConfig {
     /// (`u32::MAX` / `COLLAPSE_DISABLED` disables). Constructor field for the
     /// same reason as `pin_recent_turns`.
     pub context_collapse_after_messages: u32,
-    /// #1044: the active model's known context window (`None` when unknown);
-    /// bounds the effective pruning budget. Constructor field so window-aware
-    /// budgeting cannot be forgotten at a construction site; `set_model`
-    /// re-derives it on a model switch.
+    /// #1044: active model context window (`None` unknown); bounds pruning budget.
     pub model_context_window: Option<usize>,
+    pub tool_profile_context: ToolProfileContext,
 }
 pub struct AgentLoopImpl {
     provider: Arc<dyn LlmProvider>,
@@ -123,6 +120,7 @@ pub struct AgentLoopImpl {
     pub(super) runtime_disabled_tools: std::sync::Mutex<std::collections::HashSet<String>>,
     pub(super) runtime_enabled_tools: std::sync::Mutex<std::collections::HashSet<String>>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
+    pub(super) tool_profile_context: ToolProfileContext,
 }
 impl std::fmt::Debug for AgentLoopImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -166,6 +164,7 @@ impl AgentLoopImpl {
             runtime_disabled_tools: std::sync::Mutex::new(std::collections::HashSet::new()),
             runtime_enabled_tools: std::sync::Mutex::new(std::collections::HashSet::new()),
             turn_in_flight: std::sync::atomic::AtomicBool::new(false),
+            tool_profile_context: config.tool_profile_context,
         }
     }
     /// Read-and-clear the durable-prefix dirty latch (#1072).

@@ -36,6 +36,7 @@ async fn retries_retryable_provider_failures_before_returning_success() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -73,6 +74,7 @@ async fn retries_streaming_provider_failures_before_any_output() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -106,6 +108,7 @@ async fn does_not_retry_streaming_provider_failures_after_output() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -144,6 +147,7 @@ async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -179,6 +183,7 @@ async fn does_not_retry_streaming_openai_insufficient_quota_429() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -213,6 +218,7 @@ async fn provider_context_limit_errors_are_actionable() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -258,6 +264,7 @@ async fn retries_empty_streaming_done_before_success() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -296,6 +303,7 @@ async fn empty_streaming_done_with_max_tokens_preserves_stop_reason() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 

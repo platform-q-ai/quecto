@@ -25,6 +25,7 @@ fn test_swap_registry_replaces_tool_registry() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     assert_eq!(agent.info().tool_count, 1);
     assert_eq!(agent.tool_registry.definitions()[0].name.as_ref(), "tool_a");
@@ -66,6 +67,7 @@ fn test_swap_registry_info_reflects_new_count() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     assert_eq!(agent.info().tool_count, 0);
 
@@ -163,6 +165,7 @@ fn bare_agent() -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
 }
 

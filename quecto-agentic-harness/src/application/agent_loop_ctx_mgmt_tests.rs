@@ -118,6 +118,7 @@ fn agent(
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -500,6 +501,7 @@ fn agent_loop_config_carries_context_knobs_as_constructor_fields() {
         pin_recent_turns: 5,
         context_collapse_after_messages: 7,
         model_context_window: Some(48_000),
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     assert_eq!(agent.context_knob_snapshot(), (5, 7));
     assert_eq!(agent.model_context_window, Some(48_000));

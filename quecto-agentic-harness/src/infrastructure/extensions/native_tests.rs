@@ -4,6 +4,7 @@
 use super::*;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::infrastructure::extensions::native::OfficialToolDeps;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -236,12 +237,12 @@ fn build_official_tool_extensions_lists_core_workspace_tools() {
         Some(tmp.path().to_path_buf()),
         true,
     );
-    let exts = build_official_tool_extensions(
-        tmp.path().to_path_buf(),
+    let exts = build_official_tool_extensions(OfficialToolDeps {
+        workspace: tmp.path().to_path_buf(),
         sandbox,
-        crate::infrastructure::tools::bash::ExecOptions::default(),
-        false,
-    );
+        exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
+        docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy::Parent,
+    });
     assert_eq!(exts.len(), 1);
     assert_eq!(exts[0].name(), "quecto:official-tools");
     for name in [
@@ -318,16 +319,22 @@ fn register_bundled_native_tools_marks_official_not_extension_tracked() {
     let mut registry = ToolRegistryImpl::new();
     register_bundled_native_tools(
         &mut registry,
-        build_official_tool_extensions(
-            tmp.path().to_path_buf(),
+        build_official_tool_extensions(OfficialToolDeps {
+            workspace: tmp.path().to_path_buf(),
             sandbox,
-            crate::infrastructure::tools::bash::ExecOptions::default(),
-            false,
-        ),
+            exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
+            docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy::Parent,
+        }),
     );
     assert!(registry.get("bash").is_some());
     let d = registry.descriptor("bash").unwrap();
     assert!(matches!(d.source, ToolSource::BundledNative));
     assert_eq!(d.owner.as_ref(), "quecto:official-tools");
+    let bash_entry = registry
+        .catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name == "bash")
+        .expect("bash catalogue entry");
+    assert_eq!(bash_entry.provider_id.as_ref(), "quecto:official-tools");
     assert!(!registry.runtime_tool_names().iter().any(|n| n == "bash"));
 }

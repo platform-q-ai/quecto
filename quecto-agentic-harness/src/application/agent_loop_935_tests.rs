@@ -38,6 +38,7 @@ fn agent_with_caps(
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_model_max_tokens(model_max_tokens);
     (agent, provider)
@@ -116,6 +117,7 @@ async fn set_model_max_tokens_re_clamps_for_subsequent_turns() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     // First turn: no per-model cap → configured value.
     let mut m1 = vec![Message::user("a")];

@@ -1,9 +1,11 @@
 use crate::domain::tool_descriptor::{ToolAvailability, ToolHealth, ToolRestrictionReason};
 use crate::interface::tool_runtime::{
-    ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeWorkflowPolicy, build_tool_runtime,
+    ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeProfileContext, ToolRuntimeWorkflowPolicy,
+    build_tool_runtime,
 };
 
 fn build_runtime_with_flags(
+    profile_context: ToolRuntimeProfileContext,
     spawned: bool,
     disabled_tools: &[String],
 ) -> crate::interface::tool_runtime::ToolRuntimeBuild {
@@ -18,6 +20,7 @@ fn build_runtime_with_flags(
 
     build_tool_runtime(ToolRuntimeBuildArgs {
         entrypoint: ToolEntrypoint::Repl,
+        profile_context,
         base_dir: tmp.path(),
         config: &config,
         http_client: &client,
@@ -37,7 +40,7 @@ fn build_runtime_with_flags(
 
 #[test]
 fn repl_catalogue_marks_entrypoint_default_restrictions() {
-    let built = build_runtime_with_flags(false, &[]);
+    let built = build_runtime_with_flags(ToolRuntimeProfileContext::Parent, false, &[]);
 
     let spawn = built
         .catalogue_entries
@@ -56,7 +59,11 @@ fn repl_catalogue_marks_entrypoint_default_restrictions() {
 
 #[test]
 fn spawned_runtime_catalogue_marks_disable_tool_as_spawn_restriction() {
-    let built = build_runtime_with_flags(true, &["write".to_string()]);
+    let built = build_runtime_with_flags(
+        ToolRuntimeProfileContext::Child,
+        true,
+        &["write".to_string()],
+    );
 
     let write = built
         .catalogue_entries

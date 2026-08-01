@@ -21,7 +21,7 @@ impl AgentLoopImpl {
         if catalogue_entries.is_empty() {
             return self
                 .tool_catalog()
-                .definitions()
+                .definitions_for(self.tool_profile_context)
                 .iter()
                 .filter(|definition| {
                     !disabled.contains(definition.name.as_ref())
@@ -33,7 +33,13 @@ impl AgentLoopImpl {
         catalogue_entries
             .into_iter()
             .filter(|entry| {
-                (entry.effective_parent_enabled || enabled.contains(entry.name.as_ref()))
+                let profile_enabled = match self.tool_profile_context {
+                    crate::domain::tool::ToolProfileContext::Parent => {
+                        entry.effective_parent_enabled
+                    }
+                    crate::domain::tool::ToolProfileContext::Child => entry.effective_child_enabled,
+                };
+                (profile_enabled || enabled.contains(entry.name.as_ref()))
                     && !disabled.contains(entry.name.as_ref())
                     && entry.explicit_restriction.is_none()
             })

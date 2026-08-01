@@ -85,7 +85,6 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         workspace,
         sandbox,
         Default::default(),
-        false,
     );
     AgentLoopImpl::new(AgentLoopConfig {
         provider,
@@ -104,6 +103,7 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1)
 }
@@ -485,7 +485,6 @@ fn test_run_with_deadline_completes_before_timeout() {
         workspace,
         sandbox,
         Default::default(),
-        false,
     );
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
@@ -504,6 +503,7 @@ fn test_run_with_deadline_completes_before_timeout() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 

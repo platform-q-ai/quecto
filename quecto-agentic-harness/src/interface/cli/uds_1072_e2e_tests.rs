@@ -205,6 +205,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
 
     // 8 oversized prior turns: the 700-token budget forces rung 2 to drop
@@ -342,6 +343,7 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     let mut messages = vec![
         Message::user("earlier"),

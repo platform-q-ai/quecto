@@ -570,6 +570,7 @@ mod context_settings {
             pin_recent_turns: defaults.pin_recent_turns,
             context_collapse_after_messages: defaults.context_collapse_after_messages,
             model_context_window,
+            tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
         })
     }
 

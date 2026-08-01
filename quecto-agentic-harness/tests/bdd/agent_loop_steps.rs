@@ -59,6 +59,7 @@ fn build_agent_loop_with_callback(
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
 
     if let Some(max) = max_iterations {

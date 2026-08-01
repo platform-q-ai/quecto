@@ -263,6 +263,7 @@ pub(super) fn test_config(
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     }
 }
 
@@ -648,6 +649,7 @@ fn new_threads_context_knobs_and_model_window_into_observable_budget() {
         context_collapse_after_messages: 11,
         max_context_tokens: 10_000,
         model_context_window: Some(4_096),
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
         max_tokens: 512,
         ..test_config(provider, Box::new(registry))
     });

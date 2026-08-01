@@ -2,7 +2,7 @@ use super::tests::{DummyTestTool, test_registry};
 use crate::domain::tool::{
     Tool, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolProfileContext,
 };
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolRestrictionReason};
 use std::sync::Arc;
 
 #[test]
@@ -443,6 +443,102 @@ fn runtime_enable_clears_prior_profile_disable() {
     assert_eq!(entry.effective_scope, ProfileAvailabilityScope::Both);
     assert!(entry.effective_parent_enabled);
     assert!(entry.effective_child_enabled);
+}
+
+#[tokio::test]
+async fn runtime_enable_preserves_spawn_restriction_ceiling_and_blocks_direct_execution() {
+    let (mut reg, _tmp) = test_registry();
+    reg.apply_spawn_tool_restrictions(&["read".to_string()]);
+
+    assert!(reg.enable_tool("read"));
+
+    let entry = reg
+        .catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name.as_ref() == "read")
+        .unwrap();
+    assert_eq!(entry.session_enabled, Some(false));
+    assert_eq!(
+        entry.explicit_restriction,
+        Some(ToolRestrictionReason::Spawn)
+    );
+    assert_eq!(entry.profile_scope, Some(ProfileAvailabilityScope::Both));
+    assert_eq!(entry.effective_scope, ProfileAvailabilityScope::None);
+    assert!(!entry.effective_enabled);
+    assert!(
+        !reg.definitions()
+            .iter()
+            .any(|definition| definition.name.as_ref() == "read")
+    );
+
+    let result = reg
+        .execute("read", r#"{"path":"Cargo.toml"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("disabled by runtime policy"));
+}
+
+#[tokio::test]
+async fn runtime_enable_preserves_startup_disable_ceiling_and_blocks_direct_execution() {
+    let (mut reg, _tmp) = test_registry();
+    reg.apply_startup_tool_restrictions(&["read".to_string()]);
+
+    assert!(reg.enable_tool("read"));
+
+    let entry = reg
+        .catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name.as_ref() == "read")
+        .unwrap();
+    assert_eq!(entry.session_enabled, Some(false));
+    assert_eq!(
+        entry.explicit_restriction,
+        Some(ToolRestrictionReason::ExplicitDisable)
+    );
+    assert_eq!(entry.profile_scope, Some(ProfileAvailabilityScope::Both));
+    assert_eq!(entry.effective_scope, ProfileAvailabilityScope::None);
+    assert!(!entry.effective_enabled);
+
+    let result = reg
+        .execute("read", r#"{"path":"Cargo.toml"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("disabled by runtime policy"));
+}
+
+#[test]
+fn live_policy_enable_cannot_clear_spawn_restriction_after_runtime_enable_attempt() {
+    let (mut reg, _tmp) = test_registry();
+    reg.apply_spawn_tool_restrictions(&["read".to_string()]);
+    assert!(reg.enable_tool("read"));
+
+    let reconciliation = reg.apply_tool_policy_mutations(
+        &[ToolPolicyMutation::enable("read", "live enable")],
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::BlockedByRestriction
+    );
+    assert_eq!(
+        reconciliation.results[0]
+            .after
+            .as_ref()
+            .unwrap()
+            .explicit_restriction,
+        Some(ToolRestrictionReason::Spawn)
+    );
+    assert_eq!(
+        reconciliation.results[0]
+            .after
+            .as_ref()
+            .unwrap()
+            .effective_scope,
+        ProfileAvailabilityScope::None
+    );
 }
 
 #[test]

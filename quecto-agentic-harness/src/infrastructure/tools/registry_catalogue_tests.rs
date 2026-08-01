@@ -6,7 +6,7 @@ use crate::domain::tool_descriptor::{
 };
 use crate::infrastructure::tools::registry::tests::DummyTestTool;
 
-fn registry_with_disabled_native_and_uds() -> ToolRegistryImpl {
+fn registry_with_startup_disabled_native_and_uds() -> ToolRegistryImpl {
     let mut reg = ToolRegistryImpl::new();
     assert!(
         reg.register_with_metadata(
@@ -31,7 +31,7 @@ fn registry_with_disabled_native_and_uds() -> ToolRegistryImpl {
 
 #[test]
 fn catalogue_entries_distinguish_runtime_lifecycle_and_effective_state() {
-    let reg = registry_with_disabled_native_and_uds();
+    let reg = registry_with_startup_disabled_native_and_uds();
     let entries = reg.catalogue_entries();
     let native = entries.iter().find(|entry| entry.name == "native").unwrap();
     assert_eq!(native.stable_id, "native");
@@ -117,8 +117,14 @@ fn spawn_restrictions_preserve_spawn_provenance() {
 }
 
 #[test]
-fn enable_tool_clears_session_restriction_metadata() {
-    let mut reg = registry_with_disabled_native_and_uds();
+fn enable_tool_restores_runtime_disabled_tool_metadata() {
+    let mut reg = ToolRegistryImpl::new();
+    assert!(reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("native")),
+        ToolRegistration::official_native().with_provider_id("quecto:test-native"),
+    ));
+    assert!(reg.disable_tool("native"));
+
     assert!(reg.enable_tool("native"));
 
     let entries = reg.catalogue_entries();
@@ -128,4 +134,22 @@ fn enable_tool_clears_session_restriction_metadata() {
     assert_eq!(native.session_enabled, None);
     assert_eq!(native.explicit_restriction, None);
     assert_eq!(native.health, ToolHealth::Ok);
+}
+
+#[test]
+fn enable_tool_preserves_startup_restriction_metadata() {
+    let mut reg = registry_with_startup_disabled_native_and_uds();
+
+    assert!(reg.enable_tool("native"));
+
+    let entries = reg.catalogue_entries();
+    let native = entries.iter().find(|entry| entry.name == "native").unwrap();
+    assert_eq!(native.runtime_availability, ToolAvailability::Disabled);
+    assert!(!native.effective_enabled);
+    assert_eq!(native.session_enabled, Some(false));
+    assert_eq!(
+        native.explicit_restriction,
+        Some(ToolRestrictionReason::ExplicitDisable)
+    );
+    assert_eq!(native.health, ToolHealth::Disabled);
 }
