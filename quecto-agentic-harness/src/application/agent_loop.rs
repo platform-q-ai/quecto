@@ -17,6 +17,8 @@ use crate::domain::tool::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolPolicyMutation,
     ToolProfileContext, ToolRegistry,
 };
+use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::Arc;
 #[path = "agent_loop_clamp.rs"]
@@ -117,8 +119,9 @@ pub struct AgentLoopImpl {
     /// user-facing context gauge decisions.
     context_manager: ContextManager,
     pub(super) pending_tool_policy_mutations: std::sync::Mutex<Vec<ToolPolicyMutation>>,
-    pub(super) runtime_disabled_tools: std::sync::Mutex<std::collections::HashSet<String>>,
-    pub(super) runtime_enabled_tools: std::sync::Mutex<std::collections::HashSet<String>>,
+    pub(super) runtime_disabled_tools: std::sync::Mutex<HashSet<String>>,
+    pub(super) runtime_enabled_tools: std::sync::Mutex<HashSet<String>>,
+    pub(super) runtime_policy_scopes: std::sync::Mutex<HashMap<String, ProfileAvailabilityScope>>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
     pub(super) tool_profile_context: ToolProfileContext,
 }
@@ -161,8 +164,9 @@ impl AgentLoopImpl {
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
             context_manager,
             pending_tool_policy_mutations: std::sync::Mutex::new(Vec::new()),
-            runtime_disabled_tools: std::sync::Mutex::new(std::collections::HashSet::new()),
-            runtime_enabled_tools: std::sync::Mutex::new(std::collections::HashSet::new()),
+            runtime_disabled_tools: std::sync::Mutex::new(HashSet::new()),
+            runtime_enabled_tools: std::sync::Mutex::new(HashSet::new()),
+            runtime_policy_scopes: std::sync::Mutex::new(HashMap::new()),
             turn_in_flight: std::sync::atomic::AtomicBool::new(false),
             tool_profile_context: config.tool_profile_context,
         }
@@ -306,7 +310,6 @@ impl AgentLoopImpl {
         self.extension_tool_registry_mut()
             .register_runtime_tool(tool)
     }
-
     /// Register a single UDS-delivered extension tool.
     pub fn register_uds_tool(
         &mut self,
@@ -314,7 +317,6 @@ impl AgentLoopImpl {
     ) -> bool {
         self.extension_tool_registry_mut().register_uds_tool(tool)
     }
-
     /// Return whether a UDS-delivered extension tool would be accepted for a
     /// client owner without mutating the registry.
     pub fn can_register_uds_tool_for_owner(&self, name: &str, owner: &str) -> bool {
@@ -716,7 +718,6 @@ impl AgentLoop for AgentLoopImpl {
         }
     }
 }
-
 #[cfg(test)]
 #[path = "agent_loop_catalogue_tests.rs"]
 mod catalogue_tests;

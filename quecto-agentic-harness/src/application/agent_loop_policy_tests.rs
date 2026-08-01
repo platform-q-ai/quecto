@@ -605,6 +605,10 @@ fn immediate_child_scope_mutation_does_not_enter_parent_enabled_overlay() {
             .contains("alpha")
     );
     assert!(agent.current_tool_definitions().is_empty());
+
+    let after = reconciliation.results[0].after.as_ref().unwrap();
+    assert!(after.effective_child_enabled);
+    assert_eq!(after.effective_scope, ProfileAvailabilityScope::Child);
 }
 
 #[test]
@@ -644,4 +648,10 @@ fn queued_child_scope_mutation_reports_and_applies_child_scope() {
             .contains("alpha")
     );
     assert!(agent.current_tool_definitions().is_empty());
+
+    let mut child_agent = agent;
+    child_agent.tool_profile_context = ToolProfileContext::Child;
+    let child_defs = child_agent.current_tool_definitions();
+    assert_eq!(child_defs.len(), 1);
+    assert_eq!(child_defs[0].name.as_ref(), "alpha");
 }

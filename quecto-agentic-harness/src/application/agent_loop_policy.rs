@@ -17,6 +17,11 @@ impl AgentLoopImpl {
             .runtime_enabled_tools
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let scopes = self
+            .runtime_policy_scopes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let catalogue_entries = self.tool_catalogue_entries();
         if catalogue_entries.is_empty() {
             return self
@@ -24,8 +29,15 @@ impl AgentLoopImpl {
                 .definitions_for(self.tool_profile_context)
                 .iter()
                 .filter(|definition| {
-                    !disabled.contains(definition.name.as_ref())
-                        || enabled.contains(definition.name.as_ref())
+                    scopes.get(definition.name.as_ref()).map_or(
+                        !disabled.contains(definition.name.as_ref()),
+                        |scope| match self.tool_profile_context {
+                            crate::domain::tool::ToolProfileContext::Parent => {
+                                scope.allows_parent()
+                            }
+                            crate::domain::tool::ToolProfileContext::Child => scope.allows_child(),
+                        },
+                    ) || enabled.contains(definition.name.as_ref())
                 })
                 .cloned()
                 .collect();
@@ -33,15 +45,23 @@ impl AgentLoopImpl {
         catalogue_entries
             .into_iter()
             .filter(|entry| {
-                let profile_enabled = match self.tool_profile_context {
-                    crate::domain::tool::ToolProfileContext::Parent => {
-                        entry.effective_parent_enabled
-                    }
-                    crate::domain::tool::ToolProfileContext::Child => entry.effective_child_enabled,
-                };
+                let profile_enabled = scopes.get(entry.name.as_ref()).map_or_else(
+                    || match self.tool_profile_context {
+                        crate::domain::tool::ToolProfileContext::Parent => {
+                            entry.effective_parent_enabled
+                        }
+                        crate::domain::tool::ToolProfileContext::Child => {
+                            entry.effective_child_enabled
+                        }
+                    },
+                    |scope| match self.tool_profile_context {
+                        crate::domain::tool::ToolProfileContext::Parent => scope.allows_parent(),
+                        crate::domain::tool::ToolProfileContext::Child => scope.allows_child(),
+                    },
+                );
                 (profile_enabled || enabled.contains(entry.name.as_ref()))
-                    && !disabled.contains(entry.name.as_ref())
                     && entry.explicit_restriction.is_none()
+                    && (entry.profile_scope.is_some() || !disabled.contains(entry.name.as_ref()))
             })
             .map(|entry| ToolDefinition {
                 name: entry.name,
@@ -120,10 +140,15 @@ impl AgentLoopImpl {
             .runtime_enabled_tools
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut scopes = self
+            .runtime_policy_scopes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for result in &reconciliation.results {
             if result.status != ToolPolicyMutationStatus::Applied {
                 continue;
             }
+            scopes.insert(result.name.to_string(), result.requested_scope);
             if result.requested_scope.allows_parent() {
                 disabled.remove(result.name.as_str());
                 enabled.insert(result.name.to_string());
@@ -272,9 +297,14 @@ impl AgentLoopImpl {
                 .runtime_enabled_tools
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut scopes = self
+                .runtime_policy_scopes
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             for mutation in &mutations {
                 let before_entry = before.iter().find(|entry| entry.name == mutation.name);
                 if before_entry.is_some_and(|entry| entry.explicit_restriction.is_none()) {
+                    scopes.insert(mutation.name.to_string(), mutation.scope);
                     if mutation.scope.allows_parent() {
                         disabled.remove(mutation.name.as_str());
                         enabled.insert(mutation.name.to_string());
