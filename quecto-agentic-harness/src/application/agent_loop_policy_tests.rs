@@ -655,3 +655,90 @@ fn queued_child_scope_mutation_reports_and_applies_child_scope() {
     assert_eq!(child_defs.len(), 1);
     assert_eq!(child_defs[0].name.as_ref(), "alpha");
 }
+
+#[tokio::test]
+async fn direct_execution_honors_runtime_profile_scope() {
+    for (scope, context, should_execute) in [
+        (
+            ProfileAvailabilityScope::Parent,
+            ToolProfileContext::Parent,
+            true,
+        ),
+        (
+            ProfileAvailabilityScope::Parent,
+            ToolProfileContext::Child,
+            false,
+        ),
+        (
+            ProfileAvailabilityScope::Child,
+            ToolProfileContext::Parent,
+            false,
+        ),
+        (
+            ProfileAvailabilityScope::Child,
+            ToolProfileContext::Child,
+            true,
+        ),
+        (
+            ProfileAvailabilityScope::Both,
+            ToolProfileContext::Parent,
+            true,
+        ),
+        (
+            ProfileAvailabilityScope::Both,
+            ToolProfileContext::Child,
+            true,
+        ),
+        (
+            ProfileAvailabilityScope::None,
+            ToolProfileContext::Parent,
+            false,
+        ),
+        (
+            ProfileAvailabilityScope::None,
+            ToolProfileContext::Child,
+            false,
+        ),
+    ] {
+        let provider = Arc::new(MockProvider::new(vec![]));
+        let mut registry = MockRegistry::new();
+        registry.register(Arc::new(MockTool::new("alpha", "executed")));
+        let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+            tool_profile_context: context,
+            ..test_config(provider, Box::new(registry))
+        });
+        agent
+            .request_tool_policy_mutation(
+                &[ToolPolicyMutation::set_scope("alpha", scope, "scope test")],
+                ToolPolicyApplyMode::ImmediateIfIdle,
+            )
+            .expect("policy applies");
+
+        let mut messages = Vec::new();
+        let mut run_ledger = Vec::new();
+        agent
+            .execute_tool_calls_for_response(
+                &mut messages,
+                1,
+                tool_call_response("alpha", "{}"),
+                &mut run_ledger,
+            )
+            .await;
+        let tool_result = messages.last().expect("tool result message");
+
+        if should_execute {
+            assert_eq!(
+                tool_result.content, "executed",
+                "{scope:?} in {context:?} should execute"
+            );
+            assert!(!tool_result.is_error);
+        } else {
+            assert!(
+                tool_result.content.contains("disabled by runtime policy"),
+                "{scope:?} in {context:?} should be blocked, got {:?}",
+                tool_result.content
+            );
+            assert!(tool_result.is_error);
+        }
+    }
+}
