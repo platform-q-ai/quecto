@@ -94,6 +94,8 @@ pub struct App {
     /// Recovery batches (client-local id → turn chat range) guarding late overwrites.
     message_recovery_batches: HashMap<String, MessageRecoveryBatch>,
     pending_stub_recall: HashMap<String, app_paged_history::StubRecall>,
+    /// Latest catalogue snapshot keyed by stable id (or name fallback) for future policy UI.
+    tool_catalogue: HashMap<String, crate::protocol::client::ToolCatalogueEntry>,
     failed_stub_recalls: HashSet<(Option<String>, String)>,
     /// Exact correlation id for this client's in-flight resume transcript fetch (#1237).
     /// `get_messages` responses are broadcast; fixed literals would clobber peers.
@@ -163,6 +165,7 @@ impl App {
             pending_message_recovery: HashMap::new(),
             message_recovery_batches: HashMap::new(),
             pending_stub_recall: HashMap::new(),
+            tool_catalogue: HashMap::new(),
             failed_stub_recalls: HashSet::new(),
             pending_resume_messages_id: None,
             pending_rewind_refresh_id: None,

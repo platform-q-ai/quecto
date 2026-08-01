@@ -48,7 +48,7 @@ fn agent_with_caps(
 /// carries 65_536, never the larger configured value.
 #[tokio::test]
 async fn request_output_cap_is_clamped_to_model_cap() {
-    let (agent, provider) = agent_with_caps(200_000, Some(65_536));
+    let (mut agent, provider) = agent_with_caps(200_000, Some(65_536));
     let mut messages = vec![Message::user("hi")];
     agent.run_loop(&mut messages).await.unwrap();
 
@@ -64,7 +64,7 @@ async fn request_output_cap_is_clamped_to_model_cap() {
 /// value (no regression).
 #[tokio::test]
 async fn request_output_cap_unchanged_without_model_cap() {
-    let (agent, provider) = agent_with_caps(8_192, None);
+    let (mut agent, provider) = agent_with_caps(8_192, None);
     let mut messages = vec![Message::user("hi")];
     agent.run_loop(&mut messages).await.unwrap();
 
@@ -79,7 +79,7 @@ async fn request_output_cap_unchanged_without_model_cap() {
 /// (clamp is a floor by min, never a raise).
 #[tokio::test]
 async fn request_output_cap_not_raised_to_model_cap() {
-    let (agent, provider) = agent_with_caps(4_096, Some(65_536));
+    let (mut agent, provider) = agent_with_caps(4_096, Some(65_536));
     let mut messages = vec![Message::user("hi")];
     agent.run_loop(&mut messages).await.unwrap();
 

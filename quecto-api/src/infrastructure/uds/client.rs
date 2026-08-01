@@ -283,6 +283,9 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
         AgentCommand::GetToolCatalogue => {
             serde_json::json!({"type": "get_tool_catalogue", "id": id})
         }
+        AgentCommand::SetToolPolicy { mutations, mode } => {
+            serde_json::json!({"type": "set_tool_policy", "id": id, "mutations": mutations, "mode": mode})
+        }
     }
 }
 

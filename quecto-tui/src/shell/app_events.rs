@@ -55,8 +55,35 @@ impl App {
                 active_template,
                 available_templates,
             }),
+            Event::ToolCatalogueChanged { after, .. } => self.merge_tool_catalogue(after),
+            Event::ToolPolicyChanged { results, .. } => self.merge_tool_policy_results(results),
             _ => {}
         }
+    }
+
+    pub(super) fn merge_tool_catalogue(
+        &mut self,
+        entries: Vec<crate::protocol::client::ToolCatalogueEntry>,
+    ) {
+        for entry in entries {
+            let key = if entry.stable_id.is_empty() {
+                entry.name.clone()
+            } else {
+                entry.stable_id.clone()
+            };
+            self.tool_catalogue.insert(key, entry);
+        }
+    }
+
+    pub(super) fn merge_tool_policy_results(
+        &mut self,
+        results: Vec<crate::protocol::client::ToolPolicyResult>,
+    ) {
+        let entries = results
+            .into_iter()
+            .filter_map(|result| result.after)
+            .collect();
+        self.merge_tool_catalogue(entries);
     }
 
     fn handle_agent_start(&mut self) {

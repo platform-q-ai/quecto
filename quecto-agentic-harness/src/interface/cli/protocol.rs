@@ -18,7 +18,10 @@ pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
 }
 #[path = "protocol_commands.rs"]
 mod protocol_commands;
-pub use protocol_commands::{AgentCommand, StreamingBehavior, ToolRegistration};
+pub use protocol_commands::{
+    AgentCommand, StreamingBehavior, ToolPolicyApplyModeCommand, ToolPolicyMutationCommand,
+    ToolRegistration,
+};
 
 // ─── Events (stdout) ─────────────────────────────────────────────────────────
 
@@ -434,6 +437,9 @@ mod tests;
 #[path = "protocol_event_tests.rs"]
 mod event_tests;
 
+#[cfg(test)]
+#[path = "protocol_policy_tests.rs"]
+mod policy_tests;
 #[cfg(test)]
 #[path = "protocol_shape_tests.rs"]
 mod shape_tests;

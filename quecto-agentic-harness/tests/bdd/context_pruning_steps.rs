@@ -1476,7 +1476,7 @@ fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
         stop_reason: None,
         thinking_blocks: vec![],
     });
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: mock,
         tool_registry: Box::new(quecto::infrastructure::tools::registry::ToolRegistryImpl::new()),
         model: "test-model".into(),
@@ -1936,7 +1936,7 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
         thinking_blocks: vec![],
     });
     let sink = Arc::new(RecordingAuditSink::default());
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: mock,
         tool_registry: Box::new(quecto::infrastructure::tools::registry::ToolRegistryImpl::new()),
         model: "test-model".into(),
@@ -2070,7 +2070,7 @@ fn run_prompt_through_loop(
     for r in responses {
         mock.push_response(r);
     }
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: mock,
         tool_registry: Box::new(quecto::infrastructure::tools::registry::ToolRegistryImpl::new()),
         model: "test-model".into(),

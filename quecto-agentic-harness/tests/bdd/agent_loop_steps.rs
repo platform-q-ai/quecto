@@ -282,7 +282,7 @@ fn when_agent_processes_message(world: &mut QuectoWorld, message: String) {
         .env_overrides
         .get("_max_tool_iterations")
         .and_then(|v| v.parse::<u32>().ok());
-    let agent = build_agent_loop(world, max_iter);
+    let mut agent = build_agent_loop(world, max_iter);
 
     let mut messages = vec![Message::user(message)];
 
@@ -327,7 +327,7 @@ fn when_agent_processes_message_with_progress(world: &mut QuectoWorld, message: 
         .env_overrides
         .get("_max_tool_iterations")
         .and_then(|v| v.parse::<u32>().ok());
-    let agent = build_agent_loop_with_callback(world, max_iter, Some(callback));
+    let mut agent = build_agent_loop_with_callback(world, max_iter, Some(callback));
 
     let mut messages = vec![Message::user(message)];
     let result = tokio::runtime::Runtime::new()
@@ -341,7 +341,7 @@ fn when_agent_processes_message_with_progress(world: &mut QuectoWorld, message: 
 
 #[when("the agent sends a request to the LLM")]
 fn when_agent_sends_request(world: &mut QuectoWorld) {
-    let agent = build_agent_loop(world, None);
+    let mut agent = build_agent_loop(world, None);
 
     // Queue a simple text response so the loop completes
     let mock = world.mock_llm.as_ref().unwrap();

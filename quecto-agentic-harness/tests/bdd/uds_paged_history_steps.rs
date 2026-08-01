@@ -662,7 +662,7 @@ fn seed_stub_session(world: &mut QuectoWorld) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let messages = rt.block_on(async {
         spill_store.clear(&session_key).await.expect("clear spill");
-        let agent = AgentLoopImpl::new(AgentLoopConfig {
+        let mut agent = AgentLoopImpl::new(AgentLoopConfig {
             provider: Arc::new(StubSeedProvider),
             tool_registry: Box::new(ToolRegistryImpl::new()),
             model: "paged-stub-seed".into(),

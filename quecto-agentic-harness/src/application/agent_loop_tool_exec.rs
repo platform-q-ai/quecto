@@ -95,10 +95,22 @@ impl AgentLoopImpl {
 
         let start = std::time::Instant::now();
         let disabled_by_runtime_policy = self
-            .runtime_disabled_tools
+            .runtime_policy_scopes
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .contains(tc.name.as_str());
+            .get(tc.name.as_str())
+            .map_or_else(
+                || {
+                    self.runtime_disabled_tools
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .contains(tc.name.as_str())
+                },
+                |scope| match self.tool_profile_context {
+                    crate::domain::tool::ToolProfileContext::Parent => !scope.allows_parent(),
+                    crate::domain::tool::ToolProfileContext::Child => !scope.allows_child(),
+                },
+            );
         let tool_result = if disabled_by_runtime_policy {
             Ok(crate::domain::tool::ToolResult {
                 content: format!("tool '{}' is disabled by runtime policy", tc.name),

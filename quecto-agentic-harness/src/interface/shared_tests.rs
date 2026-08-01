@@ -596,7 +596,7 @@ mod context_settings {
         let big = "x".repeat(2000); // ~500 tokens each
 
         // Control: default configuration (pin 2) removes turn 2 in full form.
-        let agent = agent_with(&AgentDefaults::default(), 100, None);
+        let mut agent = agent_with(&AgentDefaults::default(), 100, None);
         let mut messages = oversized_history(&big);
         agent.process(&mut messages).await.unwrap();
         assert!(
@@ -607,7 +607,7 @@ mod context_settings {
         );
 
         // The configured pin of 3 keeps turn 2 in full despite the same budget.
-        let agent = agent_with(&defaults, 100, None);
+        let mut agent = agent_with(&defaults, 100, None);
         let mut messages = oversized_history(&big);
         agent.process(&mut messages).await.unwrap();
         assert!(
@@ -631,7 +631,7 @@ mod context_settings {
         old_b.turn = Some(2);
         old_b.spill_id = Some("turn2:msg:assistant".to_string());
 
-        let agent = agent_with(&defaults, 190_000, None);
+        let mut agent = agent_with(&defaults, 190_000, None);
         let mut messages = vec![old_a, old_b, Message::user("new prompt")];
         agent.process(&mut messages).await.unwrap();
         assert!(

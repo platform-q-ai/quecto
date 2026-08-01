@@ -210,12 +210,14 @@ impl From<ProfileAvailabilityScope> for ToolAvailability {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ToolPolicyApplyMode {
     ImmediateIfIdle,
     AtNextTurnBoundary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ToolPolicyMutationStatus {
     Applied,
     AlreadyInState,
@@ -224,6 +226,7 @@ pub enum ToolPolicyMutationStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolPolicyMutationResult {
     pub name: String,
     pub requested_availability: ToolAvailability,
@@ -235,6 +238,7 @@ pub struct ToolPolicyMutationResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolPolicyReconciliation {
     pub mode: ToolPolicyApplyMode,
     pub results: Vec<ToolPolicyMutationResult>,

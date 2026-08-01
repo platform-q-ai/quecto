@@ -87,6 +87,7 @@ async fn recording_spill_store_default_has_entries_is_false() {
 pub(super) struct SessionAwareTool {
     pub(super) seen: std::sync::Mutex<Vec<String>>,
 }
+
 impl Tool for SessionAwareTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {

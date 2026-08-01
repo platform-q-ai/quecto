@@ -11,7 +11,7 @@ use crate::domain::tool_descriptor::{
     ToolSource,
 };
 
-fn mock_catalogue_entry(name: &str, effective_enabled: bool) -> ToolCatalogueEntry {
+pub(super) fn mock_catalogue_entry(name: &str, effective_enabled: bool) -> ToolCatalogueEntry {
     ToolCatalogueEntry {
         stable_id: name.to_string().into(),
         name: name.to_string().into(),
@@ -65,13 +65,33 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
                 .cached_definitions
                 .iter()
                 .any(|definition| definition.name.as_ref() == mutation.name);
-            if !before_enabled && mutation.scope.allows_parent() {
+            let status = if before_exists {
+                ToolPolicyMutationStatus::Applied
+            } else {
+                ToolPolicyMutationStatus::UnknownTool
+            };
+            if status == ToolPolicyMutationStatus::Applied {
+                // Keep the tool definition whenever any profile can see it.
+                // Parent/child visibility is enforced by agent-loop scope overlays
+                // (and by the real registry's split parent/child caches).
                 self.cached_definitions
-                    .push(crate::domain::tool::ToolDefinition {
-                        name: mutation.name.to_string().into(),
-                        description: format!("Mock {} tool", mutation.name).into(),
-                        parameters_schema: r#"{"type":"object"}"#.into(),
-                    });
+                    .retain(|definition| definition.name.as_ref() != mutation.name);
+                if mutation.scope.is_enabled() {
+                    if let Some(tool) = self
+                        .tools
+                        .iter()
+                        .find(|tool| tool.definition().name.as_ref() == mutation.name)
+                    {
+                        self.cached_definitions.push(tool.definition());
+                    } else {
+                        self.cached_definitions
+                            .push(crate::domain::tool::ToolDefinition {
+                                name: mutation.name.to_string().into(),
+                                description: format!("Mock {} tool", mutation.name).into(),
+                                parameters_schema: r#"{"type":"object"}"#.into(),
+                            });
+                    }
+                }
             }
             let after_enabled = self
                 .cached_definitions
@@ -81,11 +101,7 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
                 name: mutation.name.clone(),
                 requested_availability: mutation.availability,
                 requested_scope: mutation.scope,
-                status: if before_exists {
-                    ToolPolicyMutationStatus::Applied
-                } else {
-                    ToolPolicyMutationStatus::UnknownTool
-                },
+                status,
                 before: before_exists.then(|| mock_catalogue_entry(&mutation.name, before_enabled)),
                 after: before_exists.then(|| {
                     let mut entry = mock_catalogue_entry(&mutation.name, after_enabled);
@@ -106,12 +122,12 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
 }
 impl ToolRegistry for MockRegistry {}
 
-struct RestrictedMockRegistry {
+pub(super) struct RestrictedMockRegistry {
     inner: MockRegistry,
 }
 
 impl RestrictedMockRegistry {
-    fn new(name: &str) -> Self {
+    pub(super) fn new(name: &str) -> Self {
         let mut inner = MockRegistry::new();
         inner.register(Arc::new(MockTool::new(name, "ok")));
         Self { inner }
@@ -209,6 +225,59 @@ fn queued_tool_policy_mutations_apply_once_at_turn_boundary() {
 }
 
 #[test]
+fn at_next_turn_boundary_queues_even_when_idle() {
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+
+    let immediate = agent.request_tool_policy_mutation(
+        &[ToolPolicyMutation::disable("alpha", "next boundary")],
+        ToolPolicyApplyMode::AtNextTurnBoundary,
+    );
+
+    assert!(
+        immediate.is_none(),
+        "atNextTurnBoundary must not apply synchronously while idle"
+    );
+    assert_eq!(agent.current_tool_definitions()[0].name.as_ref(), "alpha");
+
+    let reconciliation = agent
+        .drain_tool_policy_mutations_at_boundary()
+        .expect("queued idle mutation drains at boundary");
+    assert_eq!(reconciliation.mode, ToolPolicyApplyMode::AtNextTurnBoundary);
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    assert!(agent.current_tool_definitions().is_empty());
+}
+
+#[test]
+fn at_next_turn_boundary_queues_when_a_turn_is_in_flight() {
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+
+    agent.mark_turn_in_flight();
+    let immediate = agent.request_tool_policy_mutation(
+        &[ToolPolicyMutation::disable("alpha", "next boundary")],
+        ToolPolicyApplyMode::AtNextTurnBoundary,
+    );
+
+    assert!(
+        immediate.is_none(),
+        "atNextTurnBoundary must queue while busy"
+    );
+    assert_eq!(agent.current_tool_definitions()[0].name.as_ref(), "alpha");
+
+    let reconciliation = agent
+        .drain_tool_policy_mutations_at_boundary()
+        .expect("queued in-flight mutation drains at boundary");
+    assert_eq!(reconciliation.mode, ToolPolicyApplyMode::AtNextTurnBoundary);
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    assert!(agent.current_tool_definitions().is_empty());
+}
+
+#[test]
 fn immediate_if_idle_queues_when_a_turn_is_in_flight() {
     let (mut agent, provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
 
@@ -240,9 +309,56 @@ fn immediate_if_idle_queues_when_a_turn_is_in_flight() {
 }
 
 #[tokio::test]
+async fn queued_policy_drains_at_single_response_final_boundary() {
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+
+    agent.queue_tool_policy_mutation(&[ToolPolicyMutation::disable("alpha", "final boundary")]);
+    let mut messages = vec![Message::user("hello")];
+
+    agent
+        .process(&mut messages)
+        .await
+        .expect("single response turn");
+
+    assert!(agent.current_tool_definitions().is_empty());
+    assert!(
+        agent
+            .drain_tool_policy_mutations_at_internal_boundary()
+            .is_none(),
+        "final boundary must drain queued mutations exactly once"
+    );
+}
+
+#[tokio::test]
+async fn queued_policy_drains_at_terminal_provider_failure_boundary() {
+    let provider = Arc::new(MockProvider::new_results(vec![Err(DomainError::Provider(
+        "provider error (401): invalid credentials".to_string(),
+    ))]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(MockTool::new("alpha", "ok")));
+    let mut agent = AgentLoopImpl::new(test_config(provider, Box::new(registry)));
+
+    agent.queue_tool_policy_mutation(&[ToolPolicyMutation::disable("alpha", "terminal boundary")]);
+    let mut messages = vec![Message::user("hello")];
+
+    agent
+        .process(&mut messages)
+        .await
+        .expect_err("provider failure is terminal");
+
+    assert!(agent.current_tool_definitions().is_empty());
+    assert!(
+        agent
+            .drain_tool_policy_mutations_at_internal_boundary()
+            .is_none(),
+        "terminal boundary must drain queued mutations exactly once"
+    );
+}
+
+#[tokio::test]
 async fn queued_policy_does_not_change_in_flight_turn_tool_manifest() {
     let responses = vec![tool_call_response("alpha", "{}"), text_response("done")];
-    let (agent, provider) = make_agent(responses, vec![("alpha", "tool output")]);
+    let (mut agent, provider) = make_agent(responses, vec![("alpha", "tool output")]);
 
     agent.queue_tool_policy_mutation(&[ToolPolicyMutation::disable("alpha", "next turn")]);
     let mut messages = vec![Message::user("use alpha")];
@@ -277,7 +393,7 @@ async fn queued_policy_disable_blocks_stale_post_boundary_tool_call() {
         tool_call_response("alpha", "{}"),
         text_response("done"),
     ];
-    let (agent, _provider) = make_agent(responses, vec![("alpha", "tool output")]);
+    let (mut agent, _provider) = make_agent(responses, vec![("alpha", "tool output")]);
 
     agent.queue_tool_policy_mutation(&[ToolPolicyMutation::disable("alpha", "next turn")]);
     let mut messages = vec![Message::user("use alpha")];
@@ -428,7 +544,7 @@ async fn first_turn_uses_configured_profile_for_model_visible_tools() {
         entries: vec![spawn, docs],
         definitions: vec![],
     };
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         tool_profile_context: ToolProfileContext::Child,
         ..test_config(provider.clone(), Box::new(registry))
     });
@@ -456,7 +572,7 @@ async fn first_turn_parent_profile_keeps_parent_tools_model_visible() {
         entries: vec![spawn],
         definitions: vec![],
     };
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         tool_profile_context: ToolProfileContext::Parent,
         ..test_config(provider.clone(), Box::new(registry))
     });
@@ -471,77 +587,92 @@ async fn first_turn_parent_profile_keeps_parent_tools_model_visible() {
     );
 }
 
-#[test]
-fn immediate_child_scope_mutation_does_not_enter_parent_enabled_overlay() {
-    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
-
-    let reconciliation = agent
-        .request_tool_policy_mutation(
-            &[ToolPolicyMutation::set_scope(
-                "alpha",
-                ProfileAvailabilityScope::Child,
-                "child only",
-            )],
-            ToolPolicyApplyMode::ImmediateIfIdle,
-        )
-        .expect("immediate scope applies");
-
-    assert_eq!(
-        reconciliation.results[0].status,
-        ToolPolicyMutationStatus::Applied
-    );
-    assert!(
-        !agent
-            .runtime_enabled_tools
-            .lock()
-            .unwrap()
-            .contains("alpha")
-    );
-    assert!(
+#[tokio::test]
+async fn direct_execution_honors_runtime_profile_scope() {
+    for (scope, context, should_execute) in [
+        (
+            ProfileAvailabilityScope::Parent,
+            ToolProfileContext::Parent,
+            true,
+        ),
+        (
+            ProfileAvailabilityScope::Parent,
+            ToolProfileContext::Child,
+            false,
+        ),
+        (
+            ProfileAvailabilityScope::Child,
+            ToolProfileContext::Parent,
+            false,
+        ),
+        (
+            ProfileAvailabilityScope::Child,
+            ToolProfileContext::Child,
+            true,
+        ),
+        (
+            ProfileAvailabilityScope::Both,
+            ToolProfileContext::Parent,
+            true,
+        ),
+        (
+            ProfileAvailabilityScope::Both,
+            ToolProfileContext::Child,
+            true,
+        ),
+        (
+            ProfileAvailabilityScope::None,
+            ToolProfileContext::Parent,
+            false,
+        ),
+        (
+            ProfileAvailabilityScope::None,
+            ToolProfileContext::Child,
+            false,
+        ),
+    ] {
+        let provider = Arc::new(MockProvider::new(vec![]));
+        let mut registry = MockRegistry::new();
+        registry.register(Arc::new(MockTool::new("alpha", "executed")));
+        let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+            tool_profile_context: context,
+            ..test_config(provider, Box::new(registry))
+        });
         agent
-            .runtime_disabled_tools
-            .lock()
-            .unwrap()
-            .contains("alpha")
-    );
-    assert!(agent.current_tool_definitions().is_empty());
+            .request_tool_policy_mutation(
+                &[ToolPolicyMutation::set_scope("alpha", scope, "scope test")],
+                ToolPolicyApplyMode::ImmediateIfIdle,
+            )
+            .expect("policy applies");
+
+        let mut messages = Vec::new();
+        let mut run_ledger = Vec::new();
+        agent
+            .execute_tool_calls_for_response(
+                &mut messages,
+                1,
+                tool_call_response("alpha", "{}"),
+                &mut run_ledger,
+            )
+            .await;
+        let tool_result = messages.last().expect("tool result message");
+
+        if should_execute {
+            assert_eq!(
+                tool_result.content, "executed",
+                "{scope:?} in {context:?} should execute"
+            );
+            assert!(!tool_result.is_error);
+        } else {
+            assert!(
+                tool_result.content.contains("disabled by runtime policy"),
+                "{scope:?} in {context:?} should be blocked, got {:?}",
+                tool_result.content
+            );
+            assert!(tool_result.is_error);
+        }
+    }
 }
 
-#[test]
-fn queued_child_scope_mutation_reports_and_applies_child_scope() {
-    let (agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
-
-    agent.queue_tool_policy_mutation(&[ToolPolicyMutation::set_scope(
-        "alpha",
-        ProfileAvailabilityScope::Child,
-        "child later",
-    )]);
-    let reconciliation = agent
-        .drain_tool_policy_mutations_at_internal_boundary()
-        .expect("queued child scope drains");
-
-    assert_eq!(
-        reconciliation.results[0].status,
-        ToolPolicyMutationStatus::Applied
-    );
-    let after = reconciliation.results[0].after.as_ref().unwrap();
-    assert_eq!(after.profile_scope, Some(ProfileAvailabilityScope::Child));
-    assert_eq!(after.effective_scope, ProfileAvailabilityScope::Child);
-    assert!(!after.effective_parent_enabled);
-    assert!(after.effective_child_enabled);
-    assert!(
-        !agent
-            .runtime_enabled_tools
-            .lock()
-            .unwrap()
-            .contains("alpha")
-    );
-    assert!(
-        agent
-            .runtime_disabled_tools
-            .lock()
-            .unwrap()
-            .contains("alpha")
-    );
-    assert!(agent.current_tool_definitions().is_empty());
-}
+#[path = "agent_loop_policy_drain_tests.rs"]
+mod drain_tests;

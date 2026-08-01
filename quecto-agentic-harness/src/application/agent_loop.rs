@@ -17,6 +17,8 @@ use crate::domain::tool::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolPolicyMutation,
     ToolProfileContext, ToolRegistry,
 };
+use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::Arc;
 #[path = "agent_loop_clamp.rs"]
@@ -117,8 +119,9 @@ pub struct AgentLoopImpl {
     /// user-facing context gauge decisions.
     context_manager: ContextManager,
     pub(super) pending_tool_policy_mutations: std::sync::Mutex<Vec<ToolPolicyMutation>>,
-    pub(super) runtime_disabled_tools: std::sync::Mutex<std::collections::HashSet<String>>,
-    pub(super) runtime_enabled_tools: std::sync::Mutex<std::collections::HashSet<String>>,
+    pub(super) runtime_disabled_tools: std::sync::Mutex<HashSet<String>>,
+    pub(super) runtime_enabled_tools: std::sync::Mutex<HashSet<String>>,
+    pub(super) runtime_policy_scopes: std::sync::Mutex<HashMap<String, ProfileAvailabilityScope>>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
     pub(super) tool_profile_context: ToolProfileContext,
 }
@@ -161,8 +164,9 @@ impl AgentLoopImpl {
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
             context_manager,
             pending_tool_policy_mutations: std::sync::Mutex::new(Vec::new()),
-            runtime_disabled_tools: std::sync::Mutex::new(std::collections::HashSet::new()),
-            runtime_enabled_tools: std::sync::Mutex::new(std::collections::HashSet::new()),
+            runtime_disabled_tools: std::sync::Mutex::new(HashSet::new()),
+            runtime_enabled_tools: std::sync::Mutex::new(HashSet::new()),
+            runtime_policy_scopes: std::sync::Mutex::new(HashMap::new()),
             turn_in_flight: std::sync::atomic::AtomicBool::new(false),
             tool_profile_context: config.tool_profile_context,
         }
@@ -306,7 +310,6 @@ impl AgentLoopImpl {
         self.extension_tool_registry_mut()
             .register_runtime_tool(tool)
     }
-
     /// Register a single UDS-delivered extension tool.
     pub fn register_uds_tool(
         &mut self,
@@ -314,7 +317,6 @@ impl AgentLoopImpl {
     ) -> bool {
         self.extension_tool_registry_mut().register_uds_tool(tool)
     }
-
     /// Return whether a UDS-delivered extension tool would be accepted for a
     /// client owner without mutating the registry.
     pub fn can_register_uds_tool_for_owner(&self, name: &str, owner: &str) -> bool {
@@ -538,7 +540,7 @@ impl AgentLoopImpl {
     }
 
     /// Run the LLM-tool loop.
-    async fn run_loop(&self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
+    async fn run_loop(&mut self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
         self.mark_turn_in_flight();
         let mut tool_defs = self.current_tool_definitions();
         let mut iterations: u32 = 0;
@@ -624,7 +626,7 @@ impl AgentLoopImpl {
                         }
                         ProviderFailureTransition::Terminal(_class) => {
                             let _state = TurnState::FailProviderRequest;
-                            self.clear_turn_in_flight();
+                            self.drain_tool_policy_mutations_at_boundary();
                             return self.fail_provider_request(current_turn, error).await;
                         }
                     }
@@ -654,7 +656,7 @@ impl AgentLoopImpl {
                     let result = self
                         .finalize_turn_response(messages, response, end, &mut appended_messages)
                         .await;
-                    self.clear_turn_in_flight();
+                    self.drain_tool_policy_mutations_at_boundary();
                     return Ok(result);
                 }
                 TurnState::ExecuteToolCalls => {}
@@ -694,7 +696,7 @@ impl AgentLoopImpl {
                     usage_totals,
                     appended_messages,
                 );
-                self.clear_turn_in_flight();
+                self.drain_tool_policy_mutations_at_boundary();
                 return Ok(result);
             }
         }
@@ -703,7 +705,7 @@ impl AgentLoopImpl {
 
 impl AgentLoop for AgentLoopImpl {
     fn process<'a>(
-        &'a self,
+        &'a mut self,
         messages: &'a mut Vec<Message>,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<AgentResult, DomainError>> + Send + 'a>>
     {
@@ -716,7 +718,6 @@ impl AgentLoop for AgentLoopImpl {
         }
     }
 }
-
 #[cfg(test)]
 #[path = "agent_loop_catalogue_tests.rs"]
 mod catalogue_tests;
