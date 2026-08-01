@@ -33,7 +33,6 @@ fn given_web_fetch_workspace(world: &mut QuectoWorld) {
         ws.clone(),
         sandbox,
         Default::default(),
-        false,
     );
 
     let (server, uri) = start_web_fetch_mock();
@@ -65,7 +64,6 @@ fn given_web_fetch_workspace_1kb(world: &mut QuectoWorld) {
         ws.clone(),
         sandbox,
         Default::default(),
-        false,
     );
 
     let (server, uri) = start_web_fetch_mock();

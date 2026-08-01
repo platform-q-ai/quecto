@@ -149,7 +149,7 @@ fn when_agent_builds_request_for_model(world: &mut QuectoWorld) {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
-        tool_profile_context: quecto_agentic_harness::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     })
     .with_model_max_tokens(Some(cap));
     let mut messages = vec![Message::user("hi")];

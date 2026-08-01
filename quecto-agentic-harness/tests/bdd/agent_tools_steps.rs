@@ -12,7 +12,6 @@ fn given_tool_workspace(world: &mut QuectoWorld) {
         ws.clone(),
         sandbox,
         Default::default(),
-        false,
     );
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);
@@ -28,7 +27,6 @@ fn given_tool_workspace_with_exec_timeout(world: &mut QuectoWorld, timeout_secs:
         ws.clone(),
         sandbox,
         Default::default(),
-        false,
     );
 
     let exec_sandbox = Sandbox::new(Some(ws.clone()), true);
@@ -67,7 +65,6 @@ fn given_workspace_with_many_files(world: &mut QuectoWorld, count: usize) {
         ws.clone(),
         sandbox,
         Default::default(),
-        false,
     );
     world.tool_workspace = Some(ws);
     world.tool_registry = Some(registry);

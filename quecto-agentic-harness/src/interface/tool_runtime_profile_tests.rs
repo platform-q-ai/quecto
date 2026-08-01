@@ -138,3 +138,19 @@ async fn spawned_disable_tools_restrictions_are_layered_over_child_profile_polic
         .unwrap();
     assert!(quick_start.is_error);
 }
+
+#[tokio::test]
+async fn child_profile_blocks_parent_only_tools_even_if_called_directly() {
+    let built = runtime(ToolRuntimeProfileContext::Child, true, &[]);
+
+    let spawn_result = built.registry.execute("spawn", "{}").await.unwrap();
+    assert!(spawn_result.is_error);
+    assert!(spawn_result.content.contains("Child runtime profile"));
+
+    let agent_cmd_result = built.registry.execute("agent_cmd", "{}").await.unwrap();
+    assert!(agent_cmd_result.is_error);
+    assert!(agent_cmd_result.content.contains("Child runtime profile"));
+
+    let docs_result = built.registry.execute("docs", "{}").await.unwrap();
+    assert!(!docs_result.is_error);
+}

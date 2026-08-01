@@ -395,7 +395,7 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
-        tool_profile_context: quecto_agentic_harness::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
 
     let rt = tokio::runtime::Runtime::new().expect("runtime");

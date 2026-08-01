@@ -1,3 +1,6 @@
+use crate::domain::tool::ToolProfileContext;
+use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+
 /// Entrypoint policy selector for the shared tool runtime/catalogue builder.
 ///
 /// The value describes the supported composition root, not a separate tool
@@ -101,6 +104,13 @@ impl ToolRuntimeProfileContext {
     fn is_child(self) -> bool {
         matches!(self, Self::Child)
     }
+
+    fn profile_context(self) -> ToolProfileContext {
+        match self {
+            Self::Parent => ToolProfileContext::Parent,
+            Self::Child => ToolProfileContext::Child,
+        }
+    }
 }
 
 /// Inputs for the shared tool runtime/catalogue builder.
@@ -191,12 +201,8 @@ pub(crate) fn build_tool_runtime(
             },
         }),
         Some(match profile_context {
-            ToolRuntimeProfileContext::Parent => {
-                crate::domain::tool_descriptor::ProfileAvailabilityScope::Parent
-            }
-            ToolRuntimeProfileContext::Child => {
-                crate::domain::tool_descriptor::ProfileAvailabilityScope::Child
-            }
+            ToolRuntimeProfileContext::Parent => ProfileAvailabilityScope::Parent,
+            ToolRuntimeProfileContext::Child => ProfileAvailabilityScope::Child,
         }),
     );
 
@@ -222,7 +228,7 @@ pub(crate) fn build_tool_runtime(
     register_bundled_native_tools_with_scope(
         &mut registry,
         agent_control.extensions,
-        Some(crate::domain::tool_descriptor::ProfileAvailabilityScope::Parent),
+        Some(ProfileAvailabilityScope::Parent),
     );
     let notify_rx = agent_control.notification_rx;
     let _ = agent_control.notification_tx;
@@ -257,6 +263,8 @@ pub(crate) fn build_tool_runtime(
             name
         ));
     }
+
+    registry.set_execution_profile_context(profile_context.profile_context());
 
     let catalogue_entries = registry.catalogue_entries();
 
