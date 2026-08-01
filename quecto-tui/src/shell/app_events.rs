@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::client::ToolCatalogueEntry;
 
 #[cfg(test)]
 pub(super) use super::app_message_recovery::recovered_chat_entries;
@@ -61,18 +62,19 @@ impl App {
         }
     }
 
-    pub(super) fn merge_tool_catalogue(
-        &mut self,
-        entries: Vec<crate::protocol::client::ToolCatalogueEntry>,
-    ) {
+    pub(super) fn merge_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) {
         for entry in entries {
-            let key = if entry.stable_id.is_empty() {
-                entry.name.clone()
-            } else {
-                entry.stable_id.clone()
-            };
+            let key = tool_catalogue_key(&entry);
             self.tool_catalogue.insert(key, entry);
         }
+        self.open_pending_tool_policy_modal_after_catalogue_update();
+    }
+
+    pub(super) fn replace_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) {
+        self.tool_catalogue = entries
+            .into_iter()
+            .map(|entry| (tool_catalogue_key(&entry), entry))
+            .collect();
         self.open_pending_tool_policy_modal_after_catalogue_update();
     }
 
@@ -387,6 +389,14 @@ pub(super) fn build_workflow_state(
         event["availableTemplates"] = serde_json::json!(templates);
     }
     workflow_bar::parse_workflow_event(&event)
+}
+
+fn tool_catalogue_key(entry: &ToolCatalogueEntry) -> String {
+    if entry.stable_id.is_empty() {
+        entry.name.clone()
+    } else {
+        entry.stable_id.clone()
+    }
 }
 
 struct WorkflowStateEvent {

@@ -276,7 +276,7 @@ impl App {
             .cloned()
             .and_then(|value| serde_json::from_value::<Vec<ToolCatalogueEntry>>(value).ok())
             .unwrap_or_default();
-        self.merge_tool_catalogue(tools);
+        self.replace_tool_catalogue(tools);
     }
 
     /// Correlate a successful master `get_messages` response (#1061 / #1237).

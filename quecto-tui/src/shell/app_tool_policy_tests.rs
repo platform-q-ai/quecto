@@ -127,6 +127,49 @@ async fn ctrl_t_with_cached_catalogue_waits_for_fresh_get_tool_catalogue_respons
 }
 
 #[tokio::test]
+async fn ctrl_t_fresh_catalogue_response_removes_stale_absent_tools() {
+    let mut h = harness().await;
+    h.app_mut()
+        .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
+            stable_id: "tool-stale".into(),
+            name: "stale".into(),
+            profile_scope: Some(crate::protocol::client::ToolScope::Both),
+            ..Default::default()
+        }]);
+
+    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    h.app_mut().handle_response(
+        Some("tool-policy-catalogue".into()),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-fresh",
+                "name": "fresh",
+                "profileScope": "none"
+            }]
+        })),
+        None,
+    );
+
+    let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(frame.contains("Tool Policy"));
+    assert!(frame.contains("[--] fresh"));
+    assert!(
+        !frame.contains("stale"),
+        "stale absent tool remained visible:\n{frame}"
+    );
+
+    h.app_mut().handle_key(crate::shell::keys::Key::Enter);
+    let sent = h.drain_commands().await.join("\n");
+    assert!(sent.contains("\"toolId\":\"tool-fresh\""), "{sent}");
+    assert!(
+        !sent.contains("tool-stale"),
+        "stale absent tool remained mutable:\n{sent}"
+    );
+}
+
+#[tokio::test]
 async fn ctrl_t_apply_without_changes_does_not_persist_effective_downstream_scope() {
     let mut h = harness().await;
     h.app_mut()
