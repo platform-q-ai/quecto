@@ -96,8 +96,9 @@ impl AgentLoopImpl {
         mutations: &[ToolPolicyMutation],
         mode: ToolPolicyApplyMode,
     ) -> Option<ToolPolicyReconciliation> {
-        if mode == ToolPolicyApplyMode::ImmediateIfIdle
-            && self.turn_in_flight.load(Ordering::SeqCst)
+        if mode == ToolPolicyApplyMode::AtNextTurnBoundary
+            || (mode == ToolPolicyApplyMode::ImmediateIfIdle
+                && self.turn_in_flight.load(Ordering::SeqCst))
         {
             self.queue_tool_policy_mutation(mutations);
             return None;

@@ -209,6 +209,59 @@ fn queued_tool_policy_mutations_apply_once_at_turn_boundary() {
 }
 
 #[test]
+fn at_next_turn_boundary_queues_even_when_idle() {
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+
+    let immediate = agent.request_tool_policy_mutation(
+        &[ToolPolicyMutation::disable("alpha", "next boundary")],
+        ToolPolicyApplyMode::AtNextTurnBoundary,
+    );
+
+    assert!(
+        immediate.is_none(),
+        "atNextTurnBoundary must not apply synchronously while idle"
+    );
+    assert_eq!(agent.current_tool_definitions()[0].name.as_ref(), "alpha");
+
+    let reconciliation = agent
+        .drain_tool_policy_mutations_at_boundary()
+        .expect("queued idle mutation drains at boundary");
+    assert_eq!(reconciliation.mode, ToolPolicyApplyMode::AtNextTurnBoundary);
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    assert!(agent.current_tool_definitions().is_empty());
+}
+
+#[test]
+fn at_next_turn_boundary_queues_when_a_turn_is_in_flight() {
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+
+    agent.mark_turn_in_flight();
+    let immediate = agent.request_tool_policy_mutation(
+        &[ToolPolicyMutation::disable("alpha", "next boundary")],
+        ToolPolicyApplyMode::AtNextTurnBoundary,
+    );
+
+    assert!(
+        immediate.is_none(),
+        "atNextTurnBoundary must queue while busy"
+    );
+    assert_eq!(agent.current_tool_definitions()[0].name.as_ref(), "alpha");
+
+    let reconciliation = agent
+        .drain_tool_policy_mutations_at_boundary()
+        .expect("queued in-flight mutation drains at boundary");
+    assert_eq!(reconciliation.mode, ToolPolicyApplyMode::AtNextTurnBoundary);
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    assert!(agent.current_tool_definitions().is_empty());
+}
+
+#[test]
 fn immediate_if_idle_queues_when_a_turn_is_in_flight() {
     let (mut agent, provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
 
