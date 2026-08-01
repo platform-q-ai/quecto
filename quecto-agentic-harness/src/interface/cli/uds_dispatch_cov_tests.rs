@@ -238,7 +238,7 @@ impl Fixture {
     }
 }
 
-fn tool_reg(name: &str) -> ToolRegistration {
+pub(super) fn tool_reg(name: &str) -> ToolRegistration {
     ToolRegistration {
         name: name.into(),
         description: "desc".into(),

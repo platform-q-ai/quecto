@@ -333,10 +333,17 @@ impl AgentLoopImpl {
     }
     /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
     pub fn unregister_runtime_tool(&mut self, name: &str) {
-        let before = self.tool_catalogue_entries();
+        self.unregister_runtime_tool_quiet(name);
+    }
+
+    /// Unregister one runtime tool without emitting a progress notification.
+    ///
+    /// UDS command dispatch batches catalogue change emission for a whole
+    /// logical `unregister_tools` command so clients see one before/after event
+    /// instead of one per tool plus one aggregate event.
+    pub(crate) fn unregister_runtime_tool_quiet(&mut self, name: &str) {
         self.extension_tool_registry_mut()
             .unregister_runtime_tool(name);
-        self.notify_tool_catalogue_changed(vec![name.to_string()], before, "unregister_tool");
     }
 
     /// Unregister all UDS-delivered extension tools owned by a connection.

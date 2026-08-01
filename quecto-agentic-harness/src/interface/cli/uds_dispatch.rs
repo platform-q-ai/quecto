@@ -277,3 +277,6 @@ mod tests_843;
 #[cfg(test)]
 #[path = "uds_dispatch_843_targeted_tests.rs"]
 mod tests_843_targeted;
+#[cfg(test)]
+#[path = "uds_dispatch_tool_catalogue_tests.rs"]
+mod tool_catalogue_tests;

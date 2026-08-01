@@ -328,7 +328,7 @@ pub(in crate::interface::cli) async fn dispatch_unregister_tools(
 
     if !removed.is_empty() {
         for name in &removed {
-            ctx.agent.unregister_runtime_tool(name);
+            ctx.agent.unregister_runtime_tool_quiet(name);
         }
         emit_tool_catalogue_changed(ctx, removed, before, "unregister_tool").await;
     }
