@@ -173,6 +173,29 @@ fn agent_end_preserves_message_refs_round_trip() {
 }
 
 #[test]
+fn tool_catalogue_changed_is_modeled_not_unknown() {
+    let wire = r#"{"type":"tool_catalogue_changed","changedTools":["weather"],"before":[],"after":[{"name":"weather"}],"reason":"register_tool"}"#;
+    let ev: AgentEvent = serde_json::from_str(wire).expect("parse");
+    match &ev {
+        AgentEvent::ToolCatalogueChanged {
+            changed_tools,
+            before,
+            after,
+            reason,
+        } => {
+            assert_eq!(changed_tools, &vec!["weather".to_string()]);
+            assert!(before.is_empty());
+            assert_eq!(after[0]["name"], "weather");
+            assert_eq!(reason, "register_tool");
+        }
+        other => panic!("expected ToolCatalogueChanged, not Unknown; got {other:?}"),
+    }
+    let out = serde_json::to_value(&ev).unwrap();
+    assert_eq!(out["type"], "tool_catalogue_changed");
+    assert_eq!(out["changedTools"], serde_json::json!(["weather"]));
+}
+
+#[test]
 fn subagent_messages_appended_is_modeled_not_unknown() {
     let wire = r#"{"type":"subagent_messages_appended","agent_id":"worker","messages":[],"messageRefs":["x"]}"#;
     let ev: AgentEvent = serde_json::from_str(wire).expect("parse");

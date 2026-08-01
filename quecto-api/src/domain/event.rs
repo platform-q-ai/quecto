@@ -53,6 +53,16 @@ pub enum AgentEvent {
         #[serde(default)]
         error: Option<String>,
     },
+    /// Rich catalogue changed after tool registration/unregistration.
+    #[serde(rename_all = "camelCase")]
+    ToolCatalogueChanged {
+        changed_tools: Vec<String>,
+        #[serde(default)]
+        before: Vec<serde_json::Value>,
+        #[serde(default)]
+        after: Vec<serde_json::Value>,
+        reason: String,
+    },
     /// A spawned child appended messages this turn (#1060: refs-based, so the
     /// full content is not re-carried). Preserved rather than falling through to
     /// `Unknown` so clients keep the child's message identity.

@@ -76,7 +76,7 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
             json.get("command").and_then(|v| v.as_str()) == Some("get_tool_catalogue")
                 && json.pointer("/data/snapshot").and_then(|v| v.as_bool()) == Some(true)
                 && json
-                    .pointer("/data/extensions")
+                    .pointer("/data/tools")
                     .and_then(|v| v.as_array())
                     .is_some()
         }

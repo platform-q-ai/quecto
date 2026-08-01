@@ -328,15 +328,8 @@ impl AgentLoopImpl {
         tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
         owner: std::borrow::Cow<'static, str>,
     ) -> bool {
-        let name = tool.definition().name.to_string();
-        let before = self.tool_catalogue_entries();
-        let registered = self
-            .extension_tool_registry_mut()
-            .register_uds_tool_for_owner(tool, owner);
-        if registered {
-            self.notify_tool_catalogue_changed(vec![name], before, "register_tool");
-        }
-        registered
+        self.extension_tool_registry_mut()
+            .register_uds_tool_for_owner(tool, owner)
     }
     /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
     pub fn unregister_runtime_tool(&mut self, name: &str) {
