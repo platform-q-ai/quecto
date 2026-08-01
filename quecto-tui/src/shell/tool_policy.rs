@@ -33,6 +33,7 @@ impl From<ScopeSelection> for ToolScope {
 impl App {
     pub(super) fn open_tool_policy_modal(&mut self) {
         if self.tool_catalogue.is_empty() {
+            self.tool_policy_modal_pending_catalogue = true;
             self.send_command(Command::GetToolCatalogue {
                 id: Some("tool-policy-catalogue".into()),
             });
@@ -40,6 +41,13 @@ impl App {
             return;
         }
         self.open_tool_policy_modal_now();
+    }
+
+    pub(super) fn open_pending_tool_policy_modal_after_catalogue_update(&mut self) {
+        if self.tool_policy_modal_pending_catalogue && !self.tool_catalogue.is_empty() {
+            self.tool_policy_modal_pending_catalogue = false;
+            self.open_tool_policy_modal_now();
+        }
     }
 
     pub(super) fn open_tool_policy_modal_now(&mut self) {
@@ -103,7 +111,10 @@ impl App {
                     });
                 }
             }
-            SelectableItemModalResult::Dismissed => self.tool_policy_modal = None,
+            SelectableItemModalResult::Dismissed => {
+                self.tool_policy_modal = None;
+                self.tool_policy_modal_pending_catalogue = false;
+            }
             _ => {}
         }
     }

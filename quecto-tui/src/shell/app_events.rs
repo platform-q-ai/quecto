@@ -73,6 +73,7 @@ impl App {
             };
             self.tool_catalogue.insert(key, entry);
         }
+        self.open_pending_tool_policy_modal_after_catalogue_update();
     }
 
     pub(super) fn merge_tool_policy_results(

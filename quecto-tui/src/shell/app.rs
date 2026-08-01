@@ -100,6 +100,7 @@ pub struct App {
     /// Latest catalogue snapshot keyed by stable id (or name fallback) for future policy UI.
     tool_catalogue: HashMap<String, crate::protocol::client::ToolCatalogueEntry>,
     tool_policy_modal: Option<SelectableItemModal>,
+    tool_policy_modal_pending_catalogue: bool,
     failed_stub_recalls: HashSet<(Option<String>, String)>,
     /// Exact correlation id for this client's in-flight resume transcript fetch (#1237).
     /// `get_messages` responses are broadcast; fixed literals would clobber peers.
@@ -171,6 +172,7 @@ impl App {
             pending_stub_recall: HashMap::new(),
             tool_catalogue: HashMap::new(),
             tool_policy_modal: None,
+            tool_policy_modal_pending_catalogue: false,
             failed_stub_recalls: HashSet::new(),
             pending_resume_messages_id: None,
             pending_rewind_refresh_id: None,

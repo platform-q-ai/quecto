@@ -29,6 +29,27 @@ async fn ctrl_t_opens_tool_policy_modal_and_apply_sends_mutations() {
 }
 
 #[tokio::test]
+async fn ctrl_t_with_empty_catalogue_opens_modal_after_catalogue_update() {
+    let mut h = harness().await;
+
+    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    let sent = h.drain_commands().await.join("\n");
+    assert!(sent.contains("\"type\":\"get_tool_catalogue\""), "{sent}");
+
+    h.app_mut()
+        .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
+            stable_id: "tool-alpha".into(),
+            name: "alpha".into(),
+            profile_scope: Some(crate::protocol::client::ToolScope::None),
+            ..Default::default()
+        }]);
+
+    let frame = h.app_mut().compose_frame().join("\n");
+    assert!(crate::components::ansi::strip_ansi(&frame).contains("Tool Policy"));
+    assert!(crate::components::ansi::strip_ansi(&frame).contains("[--] alpha"));
+}
+
+#[tokio::test]
 async fn help_mentions_ctrl_t_tool_policy_shortcut() {
     let mut h = harness().await;
     h.app_mut().show_help();
