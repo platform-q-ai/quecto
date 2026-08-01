@@ -659,3 +659,7 @@ mod parity_tests;
 #[cfg(test)]
 #[path = "anthropic_effort_1066_tests.rs"]
 mod effort_1066_tests;
+
+#[cfg(test)]
+#[path = "anthropic_1338_tests.rs"]
+mod issue_1338_tests;
