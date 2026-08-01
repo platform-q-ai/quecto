@@ -616,9 +616,9 @@ pub fn build_http_client() -> reqwest::Client {
 /// Build the shared official-tool catalogue/registry root used by CLI, REPL,
 /// and UDS-backed agent sessions.
 ///
-/// Entrypoints pass their intentional defaults (for example spawned-docs
-/// visibility and exec capture limits) as policy inputs here instead of
-/// constructing a separate production tool set. Native lifecycle remains
+/// Entrypoints pass their intentional defaults (for example docs content policy
+/// and exec capture limits) as policy inputs here instead of constructing a
+/// separate production tool set. Native lifecycle remains
 /// in-process/bundled; UDS lifecycle continues to register dynamic proxy tools
 /// later through the runtime-loadable path.
 pub fn build_official_tool_registry(
