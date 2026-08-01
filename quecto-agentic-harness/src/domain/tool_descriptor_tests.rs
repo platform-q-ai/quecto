@@ -69,3 +69,79 @@ fn rich_catalogue_state_types_have_stable_strings() {
     assert_eq!(ToolHealth::Unavailable.as_str(), "unavailable");
     assert_eq!(ToolHealth::Unknown.as_str(), "unknown");
 }
+
+#[test]
+fn profile_scope_helpers_and_serde_names_are_stable() {
+    let cases = [
+        (
+            ProfileAvailabilityScope::None,
+            false,
+            false,
+            ProfileAvailabilityScope::Parent,
+            "none",
+        ),
+        (
+            ProfileAvailabilityScope::Parent,
+            true,
+            false,
+            ProfileAvailabilityScope::Child,
+            "parent",
+        ),
+        (
+            ProfileAvailabilityScope::Child,
+            false,
+            true,
+            ProfileAvailabilityScope::Both,
+            "child",
+        ),
+        (
+            ProfileAvailabilityScope::Both,
+            true,
+            true,
+            ProfileAvailabilityScope::None,
+            "both",
+        ),
+    ];
+
+    for (scope, parent, child, next, json) in cases {
+        assert_eq!(scope.allows_parent(), parent);
+        assert_eq!(scope.allows_child(), child);
+        assert_eq!(scope.cycle_next(), next);
+        assert_eq!(
+            serde_json::to_string(&scope).unwrap(),
+            format!("\"{}\"", json)
+        );
+        assert_eq!(
+            ProfileAvailabilityScope::from_parent_child(parent, child),
+            scope
+        );
+    }
+}
+
+#[test]
+fn profile_scope_intersection_covers_all_scope_combinations() {
+    use ProfileAvailabilityScope::{Both, Child, None, Parent};
+
+    let cases = [
+        (None, None, None),
+        (None, Parent, None),
+        (None, Child, None),
+        (None, Both, None),
+        (Parent, None, None),
+        (Parent, Parent, Parent),
+        (Parent, Child, None),
+        (Parent, Both, Parent),
+        (Child, None, None),
+        (Child, Parent, None),
+        (Child, Child, Child),
+        (Child, Both, Child),
+        (Both, None, None),
+        (Both, Parent, Parent),
+        (Both, Child, Child),
+        (Both, Both, Both),
+    ];
+
+    for (left, right, expected) in cases {
+        assert_eq!(left.intersection(right), expected, "{left:?} ∩ {right:?}");
+    }
+}

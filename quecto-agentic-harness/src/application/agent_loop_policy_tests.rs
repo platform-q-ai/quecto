@@ -6,7 +6,8 @@ use crate::domain::tool::{
     ToolPolicyReconciliation, ToolRegistry,
 };
 use crate::domain::tool_descriptor::{
-    ToolAvailability, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind, ToolSource,
+    ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind,
+    ToolSource,
 };
 
 fn mock_catalogue_entry(name: &str, effective_enabled: bool) -> ToolCatalogueEntry {
@@ -25,6 +26,7 @@ fn mock_catalogue_entry(name: &str, effective_enabled: bool) -> ToolCatalogueEnt
         default_enabled: true,
         configured_enabled: None,
         profile_enabled: None,
+        profile_scope: None,
         session_enabled: None,
         explicit_restriction: None,
         runtime_availability: if effective_enabled {
@@ -33,6 +35,9 @@ fn mock_catalogue_entry(name: &str, effective_enabled: bool) -> ToolCatalogueEnt
             ToolAvailability::Disabled
         },
         effective_enabled,
+        effective_scope: ProfileAvailabilityScope::from_enabled(effective_enabled),
+        effective_parent_enabled: effective_enabled,
+        effective_child_enabled: effective_enabled,
         health: if effective_enabled {
             ToolHealth::Ok
         } else {
@@ -75,6 +80,7 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
             results.push(ToolPolicyMutationResult {
                 name: mutation.name.clone(),
                 requested_availability: mutation.availability,
+                requested_scope: mutation.scope,
                 status: if before_exists {
                     ToolPolicyMutationStatus::Applied
                 } else {
@@ -147,6 +153,7 @@ impl crate::domain::tool::ToolPolicyMutator for RestrictedMockRegistry {
                 .map(|mutation| ToolPolicyMutationResult {
                     name: mutation.name.clone(),
                     requested_availability: mutation.availability,
+                    requested_scope: mutation.scope,
                     status: ToolPolicyMutationStatus::BlockedByRestriction,
                     before: Some(self.catalogue_entries()[0].clone()),
                     after: Some(self.catalogue_entries()[0].clone()),
@@ -331,4 +338,58 @@ fn queued_policy_enable_restores_registry_disabled_tool_manifest() {
         ToolPolicyMutationStatus::Applied
     );
     assert_eq!(agent.current_tool_definitions()[0].name.as_ref(), "alpha");
+}
+
+struct CatalogueOnlyRegistry {
+    entries: Vec<ToolCatalogueEntry>,
+    definitions: Vec<crate::domain::tool::ToolDefinition>,
+}
+
+impl ToolCatalog for CatalogueOnlyRegistry {
+    fn definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
+        &self.definitions
+    }
+
+    fn catalogue_entries(&self) -> Vec<ToolCatalogueEntry> {
+        self.entries.clone()
+    }
+}
+
+impl ToolExecutor for CatalogueOnlyRegistry {
+    fn execute(
+        &self,
+        _name: &str,
+        _arguments: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<crate::domain::tool::ToolResult, DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move { Err(DomainError::Tool("not implemented".into())) })
+    }
+}
+
+impl RuntimeToolLifecycleRegistry for CatalogueOnlyRegistry {}
+impl SessionAwareTools for CatalogueOnlyRegistry {}
+impl crate::domain::tool::ToolPolicyMutator for CatalogueOnlyRegistry {}
+impl ToolRegistry for CatalogueOnlyRegistry {}
+
+#[test]
+fn current_tool_definitions_hide_child_only_scope_from_parent_requests() {
+    let provider = Arc::new(MockProvider::new(vec![]));
+    let mut entry = mock_catalogue_entry("child_only", true);
+    entry.profile_enabled = Some(true);
+    entry.profile_scope = Some(ProfileAvailabilityScope::Child);
+    entry.effective_scope = ProfileAvailabilityScope::Child;
+    entry.effective_parent_enabled = false;
+    entry.effective_child_enabled = true;
+    let registry = CatalogueOnlyRegistry {
+        entries: vec![entry],
+        definitions: vec![],
+    };
+    let agent = AgentLoopImpl::new(test_config(provider, Box::new(registry)));
+
+    assert!(agent.current_tool_definitions().is_empty());
 }

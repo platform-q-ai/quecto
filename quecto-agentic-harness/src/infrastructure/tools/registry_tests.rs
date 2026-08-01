@@ -2,6 +2,7 @@ use super::*;
 use crate::domain::tool::ToolRegistry;
 use crate::domain::tool_descriptor::ToolSource;
 use crate::infrastructure::security::sandbox::Sandbox;
+use std::pin::Pin;
 use tempfile::TempDir;
 
 pub(crate) fn test_registry() -> (ToolRegistryImpl, TempDir) {

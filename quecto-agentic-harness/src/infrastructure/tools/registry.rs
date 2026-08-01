@@ -2,20 +2,18 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 pub use super::registration::ToolRegistration;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{
-    RuntimeToolLifecycleRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition,
-    ToolExecutor, ToolGuard, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
-    ToolPolicyMutationStatus, ToolPolicyReconciliation, ToolResult,
+    Tool, ToolDefinition, ToolGuard, ToolPolicyApplyMode, ToolPolicyMutation,
+    ToolPolicyMutationResult, ToolPolicyMutationStatus, ToolPolicyReconciliation,
+    ToolProfileContext, ToolResult,
 };
 use crate::domain::tool_descriptor::{
-    ToolAvailability, ToolCatalogueEntry, ToolDescriptor, ToolHealth, ToolLifecycleKind,
-    ToolRestrictionReason,
+    ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolDescriptor, ToolHealth,
+    ToolLifecycleKind, ToolRestrictionReason,
 };
 use crate::infrastructure::config::Config;
 
@@ -24,6 +22,8 @@ pub struct ToolRegistryImpl {
     tools: HashMap<String, Arc<dyn Tool>>,
     metadata: HashMap<String, ToolRegistration>,
     definitions: Vec<ToolDefinition>,
+    parent_definitions: Vec<ToolDefinition>,
+    child_definitions: Vec<ToolDefinition>,
     guards: Vec<Arc<dyn ToolGuard>>,
     /// Names explicitly reserved away from future registration.
     ///
@@ -60,6 +60,8 @@ impl ToolRegistryImpl {
             tools: HashMap::new(),
             metadata: HashMap::new(),
             definitions: Vec::new(),
+            parent_definitions: Vec::new(),
+            child_definitions: Vec::new(),
             guards: Vec::new(),
             denied_names: std::collections::HashSet::new(),
         }
@@ -380,7 +382,8 @@ impl ToolRegistryImpl {
                     .get(name)
                     .cloned()
                     .unwrap_or_else(ToolRegistration::official_native);
-                let effective_enabled = metadata.availability.is_enabled();
+                let effective_scope = Self::effective_scope(&metadata);
+                let effective_enabled = effective_scope != ProfileAvailabilityScope::None;
                 ToolCatalogueEntry {
                     stable_id: Cow::Owned(name.clone()),
                     name: definition.name.clone(),
@@ -399,11 +402,17 @@ impl ToolRegistryImpl {
                     configurable: true,
                     default_enabled: metadata.default_enabled,
                     configured_enabled: metadata.configured_enabled,
-                    profile_enabled: metadata.profile_enabled,
+                    profile_enabled: metadata
+                        .profile_scope
+                        .map(ProfileAvailabilityScope::is_enabled),
+                    profile_scope: metadata.profile_scope,
                     session_enabled: metadata.session_enabled,
                     explicit_restriction: metadata.explicit_restriction,
                     runtime_availability: metadata.availability,
                     effective_enabled,
+                    effective_scope,
+                    effective_parent_enabled: effective_scope.allows_parent(),
+                    effective_child_enabled: effective_scope.allows_child(),
                     health: if effective_enabled {
                         ToolHealth::Ok
                     } else {
@@ -422,6 +431,48 @@ impl ToolRegistryImpl {
             .find(|entry| entry.name.as_ref() == name || entry.stable_id.as_ref() == name)
     }
 
+    fn effective_scope(metadata: &ToolRegistration) -> ProfileAvailabilityScope {
+        let runtime = ProfileAvailabilityScope::from_enabled(metadata.availability.is_enabled());
+        let default = ProfileAvailabilityScope::from_enabled(metadata.default_enabled);
+        let configured = metadata
+            .configured_enabled
+            .map(ProfileAvailabilityScope::from_enabled)
+            .unwrap_or(ProfileAvailabilityScope::Both);
+        let session = metadata
+            .session_enabled
+            .map(ProfileAvailabilityScope::from_enabled)
+            .unwrap_or(ProfileAvailabilityScope::Both);
+        let profile = metadata
+            .profile_scope
+            .unwrap_or(ProfileAvailabilityScope::Both);
+        runtime
+            .intersection(default)
+            .intersection(configured)
+            .intersection(session)
+            .intersection(profile)
+    }
+
+    fn restriction_ceiling(entry: &ToolCatalogueEntry) -> ProfileAvailabilityScope {
+        let default = ProfileAvailabilityScope::from_enabled(entry.default_enabled);
+        let configured = entry
+            .configured_enabled
+            .map(ProfileAvailabilityScope::from_enabled)
+            .unwrap_or(ProfileAvailabilityScope::Both);
+        let session = entry
+            .session_enabled
+            .map(ProfileAvailabilityScope::from_enabled)
+            .unwrap_or(ProfileAvailabilityScope::Both);
+        let restriction = if entry.explicit_restriction.is_some() {
+            ProfileAvailabilityScope::None
+        } else {
+            ProfileAvailabilityScope::Both
+        };
+        default
+            .intersection(configured)
+            .intersection(session)
+            .intersection(restriction)
+    }
+
     /// Apply live runtime policy mutations and return before/after snapshots.
     pub fn apply_tool_policy_mutations(
         &mut self,
@@ -434,16 +485,17 @@ impl ToolRegistryImpl {
             let status = match before.as_ref() {
                 None => ToolPolicyMutationStatus::UnknownTool,
                 Some(entry)
-                    if mutation.availability.is_enabled()
-                        && entry.explicit_restriction.is_some() =>
+                    if !mutation
+                        .scope
+                        .is_subset_of(Self::restriction_ceiling(entry)) =>
                 {
                     ToolPolicyMutationStatus::BlockedByRestriction
                 }
-                Some(entry) if entry.runtime_availability == mutation.availability => {
+                Some(entry) if entry.effective_scope == mutation.scope => {
                     ToolPolicyMutationStatus::AlreadyInState
                 }
                 Some(_) => {
-                    self.set_availability(&mutation.name, mutation.availability);
+                    self.set_profile_scope(&mutation.name, mutation.scope);
                     ToolPolicyMutationStatus::Applied
                 }
             };
@@ -451,6 +503,7 @@ impl ToolRegistryImpl {
             results.push(ToolPolicyMutationResult {
                 name: mutation.name.clone(),
                 requested_availability: mutation.availability,
+                requested_scope: mutation.scope,
                 status,
                 before,
                 after,
@@ -483,6 +536,8 @@ impl ToolRegistryImpl {
     pub fn enable_tool(&mut self, name: &str) -> bool {
         self.set_registration_metadata(name, |metadata| {
             metadata.availability = ToolAvailability::Enabled;
+            metadata.profile_scope = Some(ProfileAvailabilityScope::Both);
+            metadata.profile_enabled = Some(true);
             metadata.session_enabled = None;
             metadata.explicit_restriction = None;
         })
@@ -508,7 +563,7 @@ impl ToolRegistryImpl {
         true
     }
 
-    fn set_availability(&mut self, name: &str, availability: ToolAvailability) -> bool {
+    fn set_profile_scope(&mut self, name: &str, scope: ProfileAvailabilityScope) -> bool {
         if !self.tools.contains_key(name) {
             return false;
         }
@@ -516,12 +571,22 @@ impl ToolRegistryImpl {
             .metadata
             .entry(name.to_string())
             .or_insert_with(ToolRegistration::official_native);
-        if metadata.availability == availability {
+        if metadata.profile_scope == Some(scope) {
             return true;
         }
-        metadata.availability = availability;
+        metadata.profile_scope = Some(scope);
+        metadata.profile_enabled = Some(scope != ProfileAvailabilityScope::None);
+        metadata.availability = ToolAvailability::from(scope);
         self.rebuild_definitions();
         true
+    }
+
+    fn set_availability(&mut self, name: &str, availability: ToolAvailability) -> bool {
+        let scope = match availability {
+            ToolAvailability::Enabled => ProfileAvailabilityScope::Both,
+            ToolAvailability::Disabled => ProfileAvailabilityScope::None,
+        };
+        self.set_profile_scope(name, scope)
     }
 
     /// Rebuild the cached definitions list from enabled registered tools.
@@ -529,18 +594,27 @@ impl ToolRegistryImpl {
     /// Deduplication is unnecessary: `self.tools` is a `HashMap<String, _>`
     /// keyed by `tool.definition().name`, so keys are inherently unique.
     fn rebuild_definitions(&mut self) {
-        self.definitions = self
-            .tools
-            .iter()
-            .filter(|(name, _)| {
-                self.metadata
-                    .get(*name)
-                    .map(|metadata| metadata.availability.is_enabled())
-                    .unwrap_or(true)
-            })
-            .map(|(_, tool)| tool.definition())
-            .collect();
-        self.definitions.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut parent = Vec::new();
+        let mut child = Vec::new();
+        for (name, tool) in &self.tools {
+            let metadata = self
+                .metadata
+                .get(name)
+                .cloned()
+                .unwrap_or_else(ToolRegistration::official_native);
+            let scope = Self::effective_scope(&metadata);
+            if scope.allows_parent() {
+                parent.push(tool.definition());
+            }
+            if scope.allows_child() {
+                child.push(tool.definition());
+            }
+        }
+        parent.sort_by(|a, b| a.name.cmp(&b.name));
+        child.sort_by(|a, b| a.name.cmp(&b.name));
+        self.definitions = parent.clone();
+        self.parent_definitions = parent;
+        self.child_definitions = child;
     }
 
     /// Look up a tool by name.
@@ -551,6 +625,13 @@ impl ToolRegistryImpl {
     /// Return all tool definitions (for injection into the LLM system prompt).
     pub fn definitions(&self) -> &[ToolDefinition] {
         &self.definitions
+    }
+
+    pub fn definitions_for(&self, context: ToolProfileContext) -> &[ToolDefinition] {
+        match context {
+            ToolProfileContext::Parent => &self.parent_definitions,
+            ToolProfileContext::Child => &self.child_definitions,
+        }
     }
 
     /// List all registered tool names.
@@ -613,91 +694,8 @@ impl ToolRegistryImpl {
     }
 }
 
-impl ToolCatalog for ToolRegistryImpl {
-    fn definitions(&self) -> &[ToolDefinition] {
-        self.definitions()
-    }
-
-    fn descriptors(&self) -> Vec<ToolDescriptor> {
-        self.descriptors()
-    }
-
-    fn catalogue_entries(&self) -> Vec<ToolCatalogueEntry> {
-        self.catalogue_entries()
-    }
-}
-
-impl ToolExecutor for ToolRegistryImpl {
-    fn execute(
-        &self,
-        name: &str,
-        arguments: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        let name = name.to_string();
-        let arguments = arguments.to_string();
-        Box::pin(async move { self.execute(&name, &arguments).await })
-    }
-}
-
-impl RuntimeToolLifecycleRegistry for ToolRegistryImpl {
-    fn runtime_tool_names(&self) -> Vec<String> {
-        self.runtime_tool_names()
-    }
-
-    fn register_runtime_tool(&mut self, tool: Arc<dyn Tool>) -> bool {
-        self.register_runtime_tool(tool)
-    }
-
-    fn unregister_runtime_tool(&mut self, name: &str) {
-        self.unregister_runtime_tool(name);
-    }
-
-    fn unregister_runtime_tools_for_owner(&mut self, owner: &str) -> Vec<String> {
-        self.unregister_runtime_tools_for_owner(owner)
-    }
-
-    fn register_uds_tool(&mut self, tool: Arc<dyn Tool>) -> bool {
-        self.register_uds_tool(tool)
-    }
-
-    fn can_register_uds_tool_for_owner(&self, name: &str, owner: &str) -> bool {
-        self.can_register_uds_tool_for_owner(name, owner)
-    }
-
-    fn register_uds_tool_for_owner(
-        &mut self,
-        tool: Arc<dyn Tool>,
-        owner: Cow<'static, str>,
-    ) -> bool {
-        self.register_uds_tool_for_owner(tool, owner)
-    }
-
-    fn enable_tool(&mut self, name: &str) -> bool {
-        self.enable_tool(name)
-    }
-
-    fn disable_tool(&mut self, name: &str) -> bool {
-        self.disable_tool(name)
-    }
-}
-
-impl crate::domain::tool::ToolPolicyMutator for ToolRegistryImpl {
-    fn apply_tool_policy_mutations(
-        &mut self,
-        mutations: &[ToolPolicyMutation],
-        mode: ToolPolicyApplyMode,
-    ) -> ToolPolicyReconciliation {
-        self.apply_tool_policy_mutations(mutations, mode)
-    }
-}
-
-impl SessionAwareTools for ToolRegistryImpl {
-    fn set_session_key(&self, session_key: &str) {
-        self.set_session_key(session_key);
-    }
-}
-
-impl crate::domain::tool::ToolRegistry for ToolRegistryImpl {}
+#[path = "registry_traits.rs"]
+mod trait_impls;
 
 #[cfg(test)]
 #[path = "registry_tests.rs"]

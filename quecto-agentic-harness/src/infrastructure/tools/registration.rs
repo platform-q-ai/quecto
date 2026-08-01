@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use crate::domain::tool_descriptor::{ToolAvailability, ToolRestrictionReason, ToolSource};
+use crate::domain::tool_descriptor::{
+    ProfileAvailabilityScope, ToolAvailability, ToolRestrictionReason, ToolSource,
+};
 
 /// Ownership and lifecycle metadata supplied when a tool enters the common
 /// registry. Delivery adapters (bundled native, UDS, future sources) differ only
@@ -14,6 +16,7 @@ pub struct ToolRegistration {
     pub default_enabled: bool,
     pub configured_enabled: Option<bool>,
     pub profile_enabled: Option<bool>,
+    pub profile_scope: Option<ProfileAvailabilityScope>,
     pub session_enabled: Option<bool>,
     pub explicit_restriction: Option<ToolRestrictionReason>,
     /// Whether lifecycle APIs may unregister this concrete registration without
@@ -32,6 +35,7 @@ impl ToolRegistration {
             default_enabled: true,
             configured_enabled: None,
             profile_enabled: None,
+            profile_scope: None,
             session_enabled: None,
             explicit_restriction: None,
             unloadable: false,
@@ -52,6 +56,7 @@ impl ToolRegistration {
             default_enabled: true,
             configured_enabled: None,
             profile_enabled: None,
+            profile_scope: None,
             session_enabled: None,
             explicit_restriction: None,
             unloadable: true,
@@ -68,6 +73,7 @@ impl ToolRegistration {
             default_enabled: true,
             configured_enabled: None,
             profile_enabled: None,
+            profile_scope: None,
             session_enabled: None,
             explicit_restriction: None,
             unloadable: true,

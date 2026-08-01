@@ -2,7 +2,7 @@
 
 This repository is a Cargo workspace containing the Quecto agentic harness and related packages.
 
-Current version: **0.98.0** (harness / `quecto` binary). Companion crate versions are declared in each package `Cargo.toml`.
+Current version: **0.98.1** (harness / `quecto` binary). Companion crate versions are declared in each package `Cargo.toml`.
 
 ## Packages
 

@@ -33,7 +33,7 @@ impl AgentLoopImpl {
         catalogue_entries
             .into_iter()
             .filter(|entry| {
-                (entry.effective_enabled || enabled.contains(entry.name.as_ref()))
+                (entry.effective_parent_enabled || enabled.contains(entry.name.as_ref()))
                     && !disabled.contains(entry.name.as_ref())
                     && entry.explicit_restriction.is_none()
             })
@@ -177,10 +177,14 @@ impl AgentLoopImpl {
                     default_enabled: true,
                     configured_enabled: None,
                     profile_enabled: None,
+                    profile_scope: None,
                     session_enabled: None,
                     explicit_restriction: None,
                     runtime_availability: crate::domain::tool_descriptor::ToolAvailability::Enabled,
                     effective_enabled: true,
+                    effective_scope: crate::domain::tool_descriptor::ProfileAvailabilityScope::Both,
+                    effective_parent_enabled: true,
+                    effective_child_enabled: true,
                     health: crate::domain::tool_descriptor::ToolHealth::Ok,
                 })
                 .collect();
@@ -211,11 +215,16 @@ impl AgentLoopImpl {
                         default_enabled: true,
                         configured_enabled: None,
                         profile_enabled: None,
+                        profile_scope: None,
                         session_enabled: None,
                         explicit_restriction: None,
                         runtime_availability:
                             crate::domain::tool_descriptor::ToolAvailability::Disabled,
                         effective_enabled: false,
+                        effective_scope:
+                            crate::domain::tool_descriptor::ProfileAvailabilityScope::None,
+                        effective_parent_enabled: false,
+                        effective_child_enabled: false,
                         health: crate::domain::tool_descriptor::ToolHealth::Disabled,
                     });
                 }
@@ -295,6 +304,7 @@ impl AgentLoopImpl {
                 ToolPolicyMutationResult {
                     name: mutation.name.clone(),
                     requested_availability: mutation.availability,
+                    requested_scope: mutation.scope,
                     status,
                     before: before_entry,
                     after: after_entry,
