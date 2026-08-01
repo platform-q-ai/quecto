@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::client::ToolCatalogueEntry;
 
 /// Family prefix for the master attach-time history backfill (#1050 / #1237).
 /// Minted ids are `attach-backfill-{uuid_like}-{seq}`; bare legacy literals are
@@ -190,6 +191,11 @@ impl App {
                 }
             }
             "list_sessions" => self.notify_response_error("Could not list sessions", error),
+            "get_tool_catalogue" if success => self.handle_get_tool_catalogue(data),
+            "get_tool_catalogue" => {
+                self.tool_policy_modal_pending_catalogue = false;
+                self.notify_response_error("Could not load tool catalogue", error);
+            }
             "resume_session" if success => {
                 self.clear_message_recovery();
                 self.handle_resume_success(data);
@@ -258,6 +264,19 @@ impl App {
             "agent_error" => self.handle_agent_error(error),
             _ => {}
         }
+    }
+
+    fn handle_get_tool_catalogue(&mut self, data: Option<serde_json::Value>) {
+        let Some(data) = data else {
+            self.open_pending_tool_policy_modal_after_catalogue_update();
+            return;
+        };
+        let tools = data
+            .get("tools")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<Vec<ToolCatalogueEntry>>(value).ok())
+            .unwrap_or_default();
+        self.merge_tool_catalogue(tools);
     }
 
     /// Correlate a successful master `get_messages` response (#1061 / #1237).
