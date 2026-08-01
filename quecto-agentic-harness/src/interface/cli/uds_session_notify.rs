@@ -50,7 +50,7 @@ impl AgentSession {
     /// Enqueue a subagent completion note for delivery at the parent's NEXT
     /// idle boundary (#816). The note is buffered as a
     /// [`PendingMessage::SubagentNotification`] so it is drained as a single
-    /// `role:"system"` turn by `drain_pending_and_nudge` — never injected into
+    /// `role:"user"` turn by `drain_pending_and_nudge` — never injected into
     /// an in-flight parent turn.
     ///
     /// Deduped per-agent via [`Self::record_subagent_notification`] (a stale or

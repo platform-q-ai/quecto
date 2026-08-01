@@ -58,7 +58,12 @@ fn ledger_entries(refs: &[String], responses: &HashMap<String, LedgerMessage>) -
     for message in ordered_by_refs(refs, responses) {
         let content = message.content();
         match message.role() {
-            "user" if !content.is_empty() => {
+            // Sub-agent notes are user-role turns on the wire but operator
+            // status in the UI; the live event path already renders them (#1338).
+            "user"
+                if !content.is_empty()
+                    && !crate::protocol::presentation_payloads::is_subagent_note(content) =>
+            {
                 entries.push(LedgerEntry::User {
                     text: content.to_string(),
                 });

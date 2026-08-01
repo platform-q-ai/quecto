@@ -83,6 +83,16 @@ impl PendingMessage {
         }
     }
 
+    /// Convert to the message injected into the parent conversation.
+    ///
+    /// Sub-agent notes are `Role::User`, not `Role::System` (#1338). A system
+    /// message is not a conversational turn: the Anthropic provider hoists it
+    /// into the top-level `system` field, so the request ended on the parent's
+    /// own last assistant message and the model merely continued its previous
+    /// answer ("OK, will do") instead of acting on the note. It also rewrote
+    /// the cached system block every time, missing the prompt cache for the
+    /// whole request. The `<subagent_notification>` wrapper marks the note as
+    /// harness-injected so clients can render it distinctly from user input.
     pub fn into_message(self) -> Message {
         match self {
             Self::User(content) => Message::user(content),
@@ -91,13 +101,13 @@ impl PendingMessage {
                 sequence,
                 content,
                 ..
-            } => Message::system(format!(
+            } => Message::user(format!(
                 "<subagent_notification source=\"spawn_tool\" agent_id=\"{}\" sequence=\"{}\">\n{}\n</subagent_notification>",
                 escape_attr(&agent_id),
                 sequence,
                 escape_text(&content)
             )),
-            Self::CoalescedSubagentNotification { content } => Message::system(format!(
+            Self::CoalescedSubagentNotification { content } => Message::user(format!(
                 "<subagent_notification source=\"spawn_tool\" coalesced=\"true\">\n{}\n</subagent_notification>",
                 escape_text(&content)
             )),
@@ -595,7 +605,7 @@ mod pending_message_provenance_tests {
     use super::*;
 
     #[test]
-    fn subagent_pending_message_renders_as_system_with_provenance() {
+    fn subagent_pending_message_renders_as_user_with_provenance() {
         let pending = PendingMessage::subagent_notification(
             "worker".into(),
             7,
@@ -604,7 +614,7 @@ mod pending_message_provenance_tests {
         );
         let msg = pending.into_message();
 
-        assert_eq!(msg.role, Role::System);
+        assert_eq!(msg.role, Role::User);
         assert!(msg.content.contains("<subagent_notification"));
         assert!(msg.content.contains("source=\"spawn_tool\""));
         assert!(msg.content.contains("agent_id=\"worker\""));
